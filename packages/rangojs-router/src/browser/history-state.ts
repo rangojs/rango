@@ -184,13 +184,14 @@ export function clearLocationStateOnDocumentLoad(): void {
 }
 
 /**
- * Merge server-set location state into the current history entry. Readers see
- * it when the caller commits it (EventController.commitLocationState).
+ * Merge server-set location state into the current history entry and return
+ * the entry state written. Readers see it when the caller commits it
+ * (EventController.commitLocationState).
  */
 export function mergeLocationState(
   locationState: Record<string, unknown>,
-): void {
-  replaceCurrentHistoryState(
-    addLocationState(window.history.state, locationState),
-  );
+): Record<string, unknown> {
+  const entryState = addLocationState(window.history.state, locationState);
+  replaceCurrentHistoryState(entryState);
+  return entryState;
 }

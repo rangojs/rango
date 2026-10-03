@@ -6,7 +6,10 @@ import * as clientEntry from "../client.js";
 import * as browserEntry from "../browser/index.js";
 import * as testingEntry from "../testing/index.js";
 import * as testingDomEntry from "../testing/dom.entry.js";
-import { resetBrowserAppContext } from "../browser/rsc-router.js";
+import {
+  resetBrowserAppContext,
+  type BrowserAppContext,
+} from "../browser/rsc-router.js";
 import { mergeLocationState } from "../browser/history-state.js";
 import type { RscBrowserDependencies, RscPayload } from "../browser/types.js";
 
@@ -24,12 +27,14 @@ const ENTRIES: Record<string, Record<string, unknown>> = {
   "@rangojs/router/testing/dom": testingDomEntry,
 };
 
-async function loadDocument(version: string | undefined): Promise<void> {
+async function loadDocument(
+  version: string | undefined,
+): Promise<BrowserAppContext> {
   resetBrowserAppContext();
   const payload = {
     metadata: { version, pathname: "/", segments: [], matched: [], params: {} },
   } as unknown as RscPayload;
-  await browserEntry.initBrowserApp({
+  return browserEntry.initBrowserApp({
     rscStream: new ReadableStream<Uint8Array>(),
     deps: {
       createFromReadableStream: async () => payload,
@@ -86,8 +91,11 @@ describe("the version of location state is not public", () => {
       createLocationState<{ count: number }>(),
       "SurfaceGrid",
     );
-    await loadDocument(SENTINEL);
-    mergeLocationState({ [GridState.__rsc_ls_key]: { count: 3 } });
+    const app = await loadDocument(SENTINEL);
+    // Server-set state merged into the entry and committed, as an action's.
+    app.eventController.commitLocationState(
+      mergeLocationState({ [GridState.__rsc_ls_key]: { count: 3 } }),
+    );
     // The premise: the client runs SENTINEL and recorded it on the entry, and
     // the walk below would see it on an export.
     expect(JSON.stringify(window.history.state)).toContain(SENTINEL);
@@ -134,7 +142,17 @@ describe("the version of location state is not public", () => {
       return null;
     }
     await act(async () => {
-      render(<Reader />);
+      render(
+        <clientEntry.NavigationProvider
+          store={app.store}
+          eventController={app.eventController}
+          bridge={app.bridge}
+          initialPayload={{
+            root: <Reader />,
+            metadata: app.initialPayload.metadata!,
+          }}
+        />,
+      );
     });
     expect(typed).toStrictEqual({ count: 3 });
     expect(plain).toBeUndefined();

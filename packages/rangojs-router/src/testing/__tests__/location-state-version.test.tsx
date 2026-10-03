@@ -9,10 +9,7 @@ import {
   resetBrowserAppContext,
   type BrowserAppContext,
 } from "../../browser/rsc-router.js";
-import {
-  NavigationStoreContext,
-  type NavigationStoreContextValue,
-} from "../../browser/react/context.js";
+import { NavigationProvider } from "../../browser/react/NavigationProvider.js";
 import {
   buildHistoryState,
   mergeLocationState,
@@ -29,9 +26,9 @@ import { withLocationStateKey } from "../index.js";
 // client's version arrives with the document payload (initBrowserApp), as in
 // production; a renderRoute tree has none.
 //
-// Readers hear about the entry's state from the document's event controller
-// (#1029): `commitEntry` does what a commit site does, as a back/forward
-// (`traversal`) or on the current entry.
+// Readers take the entry's state from the document's NavigationProvider
+// (#1029), which holds what the event controller last committed: `commitEntry`
+// does what a commit site without a payload does.
 
 let app: BrowserAppContext;
 
@@ -68,12 +65,11 @@ async function loadDocument(
 
 async function commitEntry(
   eventController: BrowserAppContext["eventController"],
-  traversal: boolean,
   write: () => void,
 ): Promise<void> {
   await act(async () => {
     write();
-    eventController.commitLocationState(traversal);
+    eventController.commitLocationState(window.history.state, true);
     eventController.flushRouteState();
   });
 }
@@ -95,6 +91,8 @@ async function entryWrittenUnder(
     [GridState.__rsc_ls_key]: { count },
     [FlashState.__rsc_ls_key]: { count },
   });
+  // The navigation and the server merge that wrote it committed it.
+  app.eventController.commitLocationState(window.history.state);
   return window.history.state;
 }
 
@@ -122,11 +120,15 @@ async function hydrateReaders(): Promise<{
   const recoverable: string[] = [];
   await act(async () => {
     const routed = (
-      <NavigationStoreContext.Provider
-        value={app as unknown as NavigationStoreContextValue}
-      >
-        <Readers />
-      </NavigationStoreContext.Provider>
+      <NavigationProvider
+        store={app.store}
+        eventController={app.eventController}
+        bridge={app.bridge}
+        initialPayload={{
+          root: <Readers />,
+          metadata: app.initialPayload.metadata!,
+        }}
+      />
     );
     root = hydrateRoot(container, routed, {
       onRecoverableError(error: unknown) {
@@ -179,12 +181,12 @@ describe("useLocationState under the implicit version", () => {
     const { text } = await hydrateReaders();
     expect(text()).toBe("2|2|plain-2");
 
-    await commitEntry(app.eventController, true, () =>
+    await commitEntry(app.eventController, () =>
       window.history.replaceState(older, ""),
     );
     expect(text()).toBe("none|none|none");
 
-    await commitEntry(app.eventController, true, () =>
+    await commitEntry(app.eventController, () =>
       window.history.replaceState(
         { ...(current as object), [FlashState.__rsc_ls_key]: { count: 2 } },
         "",
@@ -199,7 +201,7 @@ describe("useLocationState under the implicit version", () => {
     const { text } = await hydrateReaders();
     expect(text()).toBe("none|none|none");
 
-    await commitEntry(app.eventController, false, () =>
+    await commitEntry(app.eventController, () =>
       mergeLocationState({ [FlashState.__rsc_ls_key]: { count: 9 } }),
     );
     expect(text()).toBe("none|9|none");
@@ -214,7 +216,7 @@ describe("useLocationState under the implicit version", () => {
     const { text } = await hydrateReaders();
     expect(text()).toBe("4|4|plain-4");
 
-    await commitEntry(eventController, true, () => {
+    await commitEntry(eventController, () => {
       bridge.updateVersion("dev-2");
       window.history.replaceState(entry, "");
     });

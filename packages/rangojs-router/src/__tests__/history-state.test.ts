@@ -117,14 +117,16 @@ describe("mergeLocationState", () => {
     expect(merged).toEqual({ existing: "value", newKey: "newValue" });
   });
 
-  // #1029: the merge only writes the entry. Telling readers is the caller's
-  // step (EventController.commitLocationState), in the lane of its commit.
+  // #1029: the merge writes the entry and returns what it wrote. Committing
+  // that state for readers is the caller's step
+  // (EventController.commitLocationState).
   it.each([{ __rsc_ls_flash: "message" }, { plain: "data" }])(
-    "writes %j without notifying anyone",
+    "writes %j, returns the entry state written, and notifies nobody",
     (state) => {
-      mergeLocationState(state);
+      const written = mergeLocationState(state);
 
       expect(replaceStateSpy).toHaveBeenCalledOnce();
+      expect(written).toBe(replaceStateSpy.mock.calls[0][0]);
       expect(dispatchEventSpy).not.toHaveBeenCalled();
     },
   );

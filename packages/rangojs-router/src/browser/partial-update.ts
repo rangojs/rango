@@ -500,6 +500,7 @@ export function createPartialUpdater(
         );
         tx.commit(matchedIds, existingSegments, {
           routeName: payload.metadata.routeName,
+          treeless: true,
         });
         debugLog("[Browser] Navigation complete (no re-render)");
         return;

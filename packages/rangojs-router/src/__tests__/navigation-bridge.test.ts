@@ -271,9 +271,14 @@ describe("navigation-bridge revalidate: false", () => {
       state: { from: "filter" },
     });
 
-    // After the entry exists, as a push (not a traversal).
+    // After the entry exists, as a treeless commit of the pushed state: no
+    // payload follows a shallow navigation, so the provider takes it with
+    // the location notification.
     expect(order).toEqual(["pushState", "commit", "setLocation"]);
-    expect(commitLocationState).toHaveBeenCalledExactlyOnceWith();
+    expect(commitLocationState).toHaveBeenCalledExactlyOnceWith(
+      { state: { from: "filter" } },
+      true,
+    );
     expect(dispatchEvent).not.toHaveBeenCalled();
   });
 
@@ -374,7 +379,7 @@ describe("navigation-bridge revalidate: false", () => {
 
     await bridge.navigate("/products?color=blue", { revalidate: false });
 
-    expect(commitLocationState).toHaveBeenCalledExactlyOnceWith();
+    expect(commitLocationState).toHaveBeenCalledExactlyOnceWith(null, true);
     expect(dispatchEvent).not.toHaveBeenCalled();
   });
 });

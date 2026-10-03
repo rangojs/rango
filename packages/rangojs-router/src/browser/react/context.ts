@@ -4,6 +4,7 @@ import { createContext, type Context } from "react";
 import type { NavigationStore, NavigateOptionsInternal } from "../types.js";
 import type { EventController } from "../event-controller.js";
 import type { PrefetchStrategy } from "../../router/prefetch-default.js";
+import type { LocationStateSnapshot } from "./location-state-shared.js";
 
 /**
  * Navigation context value provided by NavigationProvider
@@ -66,3 +67,15 @@ export interface NavigationStoreContextValue {
  */
 export const NavigationStoreContext: Context<NavigationStoreContextValue | null> =
   createContext<NavigationStoreContextValue | null>(null);
+
+/**
+ * The location state of the history entry whose tree is on screen, for
+ * useLocationState. NavigationProvider holds it as React state next to the
+ * payload and sets both in one update, so a render sees an entry's state
+ * exactly when it sees that entry's tree: a transition React holds renders
+ * the destination's value, an urgent render of the content still on screen
+ * (a reader mounting there included) the value of the entry being left
+ * (#1029). Undefined on the server and outside a provider.
+ */
+export const LocationStateContext: Context<LocationStateSnapshot> =
+  createContext<LocationStateSnapshot>(undefined);

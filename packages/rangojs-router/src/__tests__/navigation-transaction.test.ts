@@ -237,10 +237,10 @@ describe("createNavigationTransaction", () => {
     expect(replaceStateSpy).not.toHaveBeenCalled();
   });
 
-  // #1029: commit() moves history and the controller's location-state commit
-  // identity, and tells no reader itself. Readers are state listeners: they
-  // run when the caller's payload update flushes the notification, so the
-  // read lands in that update's lane, with the destination's tree.
+  // #1029: commit() hands the controller the entry state it pushed, restored
+  // or merged, and notifies no reader. NavigationProvider takes the recorded
+  // state in the update that renders the entry's payload; only a commit the
+  // caller marks treeless rides the state notification.
   describe("location state commit", () => {
     type CommitFlags = {
       replace?: boolean;
@@ -250,16 +250,17 @@ describe("createNavigationTransaction", () => {
       intercept?: boolean;
       interceptSourceUrl?: string;
       state?: unknown;
+      serverState?: Record<string, unknown>;
+      treeless?: boolean;
     };
-    function commitOf(
-      flags: CommitFlags,
-      previous: unknown = { __rsc_ls_product: { name: "Widget" }, key: "abc" },
-    ) {
+    const SOURCE = { __rsc_ls_product: { name: "Widget" }, key: "abc" };
+    function commitOf(flags: CommitFlags, previous: unknown = SOURCE) {
       const { store, eventController } = createTestContext();
       historyState = previous;
-      const before = eventController.getLocationStateCommit();
-      const heard: unknown[] = [];
-      eventController.subscribe(() => heard.push(historyState));
+      eventController.commitLocationState(previous);
+      const before = eventController.getLocationState();
+      const heard = vi.fn();
+      eventController.subscribe(heard);
       const tx = createNavigationTransaction(
         store,
         eventController,
@@ -267,20 +268,20 @@ describe("createNavigationTransaction", () => {
       );
       // startNavigation's own notification: out of the way.
       eventController.flushRouteState();
-      heard.length = 0;
+      heard.mockClear();
+      const commitSpy = vi.spyOn(eventController, "commitLocationState");
       tx.commit({
         url: "http://localhost/other",
         segmentIds: ["root"],
         segments: [],
         ...flags,
       });
-      return { tx, eventController, before, heard };
+      return { tx, eventController, before, heard, commitSpy };
     }
 
     it.each([
-      { label: "push", options: {}, traversal: false },
-      { label: "replace", options: { replace: true }, traversal: false },
-      { label: "back/forward", options: { traversal: true }, traversal: true },
+      { label: "push", options: {} },
+      { label: "replace", options: { replace: true } },
       {
         // A modal over the page: its entry carries the Link's state only.
         label: "intercept push",
@@ -288,33 +289,82 @@ describe("createNavigationTransaction", () => {
           intercept: true,
           interceptSourceUrl: "http://localhost/start",
         },
-        traversal: false,
       },
+    ])("a $label commit records the state object it pushes", ({ options }) => {
+      const { tx, eventController, commitSpy } = commitOf({
+        ...options,
+        state: { from: "list" },
+      });
+
+      // The object handed to history, before the idx stamp: one source.
+      const pushed = (
+        options.replace ? replaceStateSpy : pushStateSpy
+      ).mock.calls.at(-1)![0];
+      expect(commitSpy).toHaveBeenCalledOnce();
+      expect(pushed).toMatchObject(commitSpy.mock.calls[0][0] as object);
+      expect(eventController.getLocationState()).toEqual({
+        state: { from: "list" },
+      });
+      expect(window.dispatchEvent).not.toHaveBeenCalled();
+      tx[Symbol.dispose]();
+    });
+
+    it("a back/forward commit records the entry history restored, with server-set state merged in", () => {
+      // history is already at the destination entry.
+      const restored = { __rsc_ls_product: { name: "Restored" }, key: "dest" };
+      const plain = commitOf({ traversal: true }, restored);
+      expect(plain.commitSpy).toHaveBeenCalledWith(restored, undefined);
+      expect(pushStateSpy).not.toHaveBeenCalled();
+      plain.tx[Symbol.dispose]();
+
+      const merged = commitOf(
+        { traversal: true, serverState: { __rsc_ls_flash: "saved" } },
+        restored,
+      );
+      expect(merged.eventController.getLocationState()).toEqual({
+        __rsc_ls_product: { name: "Restored" },
+        __rsc_ls_flash: "saved",
+      });
+      // What was recorded is what was written to the entry.
+      expect(merged.commitSpy.mock.calls[0][0]).toBe(
+        replaceStateSpy.mock.calls.at(-1)![0],
+      );
+      merged.tx[Symbol.dispose]();
+    });
+
+    it("notifies no listener: the provider takes the state with the payload", () => {
+      const { tx, eventController, heard } = commitOf({
+        state: { from: "list" },
+      });
+      // handle.complete() notifies once; that notification carries no cue to
+      // take location state.
+      eventController.flushRouteState();
+      expect(heard).toHaveBeenCalledOnce();
+      expect(eventController.takeTreelessLocationState()).toBe(false);
+      tx[Symbol.dispose]();
+    });
+
+    it.each([
+      { label: "push", options: {} },
+      { label: "back/forward", options: { traversal: true } },
     ])(
-      "a $label commit moves the identity (traversal: $traversal) and notifies on the flush, not before",
-      ({ options, traversal }) => {
-        const { tx, eventController, before, heard } = commitOf({
+      "a treeless $label commit hands the state over with its notification",
+      ({ options }) => {
+        const { tx, eventController } = commitOf({
           ...options,
           state: { from: "list" },
+          treeless: true,
         });
-
-        const after = eventController.getLocationStateCommit();
-        expect(after).not.toBe(before);
-        expect(after.traversal).toBe(traversal);
-        expect(heard).toEqual([]);
-
-        eventController.flushRouteState();
-        // One notification, with history already at the committed entry.
-        expect(heard).toEqual([window.history.state]);
-        expect(window.dispatchEvent).not.toHaveBeenCalled();
+        expect(eventController.takeTreelessLocationState()).toBe(true);
         tx[Symbol.dispose]();
       },
     );
 
-    it("moves the identity when neither entry carries location state", () => {
-      // A reader mounted over a static write() has to drop it with the entry.
-      const { tx, eventController, before } = commitOf({}, { key: "abc" });
-      expect(eventController.getLocationStateCommit()).not.toBe(before);
+    it("records an entry without location state as none", () => {
+      // A reader has to drop the previous entry's value with the entry.
+      const { tx, eventController, before } = commitOf({});
+      expect(before).toEqual({ __rsc_ls_product: { name: "Widget" } });
+      expect(eventController.getLocationState()).toBeUndefined();
       tx[Symbol.dispose]();
     });
 
@@ -322,8 +372,9 @@ describe("createNavigationTransaction", () => {
       { label: "storeOnly (action refetch)", options: { storeOnly: true } },
       { label: "cacheOnly (stale revalidation)", options: { cacheOnly: true } },
     ])("a $label commit leaves the entry's state alone", ({ options }) => {
-      const { tx, eventController, before } = commitOf(options);
-      expect(eventController.getLocationStateCommit()).toBe(before);
+      const { tx, eventController, before, commitSpy } = commitOf(options);
+      expect(commitSpy).not.toHaveBeenCalled();
+      expect(eventController.getLocationState()).toBe(before);
       expect(window.dispatchEvent).not.toHaveBeenCalled();
       tx[Symbol.dispose]();
     });

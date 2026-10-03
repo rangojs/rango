@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { memo, use, useState, type ReactNode } from "react";
+import { memo, use, useEffect, useState, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   act,
@@ -265,6 +265,51 @@ describe("renderRoute: location state commits with its entry's tree (#1029)", ()
     ]);
   });
 
+  it("a reader that mounts while a navigation is held sees the state of the entry on screen", async () => {
+    const pairs: string[] = [];
+    function Late(): ReactNode {
+      const carried = useLocationState(Carried) ?? [];
+      const { data } = useLoader(ProductsLoader);
+      const pair = `page ${data.page}: ${carried.join("+") || "none"}`;
+      pairs.push(pair);
+      return <p data-testid="late">{pair}</p>;
+    }
+    function Page(): ReactNode {
+      const [open, setOpen] = useState(false);
+      // The page's own read is what holds the navigation.
+      useLoader(ProductsLoader);
+      return (
+        <div>
+          <button data-testid="open" onClick={() => setOpen(true)} />
+          {open && <Late />}
+        </div>
+      );
+    }
+    const result = await renderRoute(
+      [{ path: "/products", Component: Page, transition: {} }],
+      { request: "/products?page=1", loaders: [[ProductsLoader, pageData(1)]] },
+    );
+
+    const next = deferred<Page>();
+    await result.router.navigate("/products?page=2", {
+      state: [Carried(pageItems(1))],
+      loaders: [[ProductsLoader, next.promise]],
+    });
+    expect(Carried.read()).toEqual(pageItems(1));
+
+    // An urgent update in the tree on screen: the entry being left.
+    await act(async () => {
+      fireEvent.click(result.getByTestId("open"));
+    });
+    expect(result.getByTestId("late").textContent).toBe("page 1: none");
+
+    await act(async () => next.resolve(pageData(2)));
+    expect(result.getByTestId("late").textContent).toBe(
+      `page 2: ${pageItems(1).join("+")}`,
+    );
+    expect(pairs).not.toContain(`page 1: ${pageItems(1).join("+")}`);
+  });
+
   it("a held navigation superseded by another never shows its state", async () => {
     const { List, renders } = loadMore();
     const result = await renderRoute(
@@ -322,7 +367,7 @@ describe("renderRoute: flash state and static writes under #1029", () => {
     "CommitNote",
   );
 
-  it("a flash value on a held navigation is shown with the destination, then cleared from history and kept on screen", async () => {
+  it("a flash value on a held navigation is shown with the destination, cleared from history, and shown until the entry's state next changes", async () => {
     const pairs: string[] = [];
     function Page(): ReactNode {
       const flash = useLocationState(Flash);
@@ -350,17 +395,53 @@ describe("renderRoute: flash state and static writes under #1029", () => {
     expect(pair()).toBe("page 2: saved");
     expect(Flash.read()).toBeUndefined();
 
-    // A later commit that finds the slot empty does not take the shown value
-    // away: its own clear emptied it.
+    // The clear changed history, not what the entry was committed with: a
+    // tree update of the same entry keeps the message.
+    // (refresh() renders the render-time loader seed, page 1.)
+    await result.router.refresh();
+    expect(pair()).toBe("page 1: saved");
+
+    // The next entry carries no flash.
     await result.router.navigate("/products?page=3", {
       state: [Note({ text: "n" })],
       loaders: [[ProductsLoader, pageData(3)]],
     });
-    expect(pair()).toBe("page 3: saved");
-    expect(pairs).not.toContain("page 1: saved");
+    expect(pair()).toBe("page 3: none");
+    // Never on the entry being left while the navigation was held.
+    expect(pairs.indexOf("page 1: saved")).toBeGreaterThan(
+      pairs.indexOf("page 2: saved"),
+    );
   });
 
-  it("write() and delete() stay invisible to a mounted reader; a reader mounted later and the next commit see them", async () => {
+  it("a flash reader that mounts after the clear shows the value the entry was committed with", async () => {
+    function Late(): ReactNode {
+      return (
+        <p data-testid="late">{useLocationState(Flash)?.text ?? "none"}</p>
+      );
+    }
+    function Page(): ReactNode {
+      const flash = useLocationState(Flash);
+      const [late, setLate] = useState(false);
+      return (
+        <div>
+          <p data-testid="first">{flash?.text ?? "none"}</p>
+          <button data-testid="show-late" onClick={() => setLate(true)} />
+          {late && <Late />}
+        </div>
+      );
+    }
+    const result = await renderRoute([{ path: "/notes", Component: Page }], {
+      request: "/notes",
+      locationState: [[Flash, { text: "saved" }]],
+    });
+    expect(result.getByTestId("first").textContent).toBe("saved");
+    expect(Flash.read()).toBeUndefined();
+
+    fireEvent.click(result.getByTestId("show-late"));
+    expect(result.getByTestId("late").textContent).toBe("saved");
+  });
+
+  it("write() and delete() change the history entry, not what readers show: a reader sees them when the entry is next committed", async () => {
     function Page(): ReactNode {
       const note = useLocationState(Note);
       const [late, setLate] = useState(false);
@@ -384,40 +465,48 @@ describe("renderRoute: flash state and static writes under #1029", () => {
     expect(Note.read()).toEqual({ text: "written" });
     expect(text("mounted")).toBe("none");
 
+    // A reader that mounts now shows what the others show.
     fireEvent.click(result.getByTestId("show-late"));
-    expect(text("late")).toBe("written");
+    expect(text("late")).toBe("none");
     expect(text("mounted")).toBe("none");
 
-    // The next commit of the entry's state applies what the entry holds.
-    await result.router.navigate("/notes?step=2", {
-      state: [Note({ text: "pushed" })],
+    // A return to the entry commits it as history holds it.
+    await act(async () => {
+      window.dispatchEvent(new Event("popstate"));
     });
-    expect(text("mounted")).toBe("pushed");
-    expect(text("late")).toBe("pushed");
+    expect(text("mounted")).toBe("written");
+    expect(text("late")).toBe("written");
 
     act(() => Note.delete());
     expect(Note.read()).toBeUndefined();
-    expect(text("mounted")).toBe("pushed");
+    expect(text("mounted")).toBe("written");
+
+    await act(async () => {
+      window.dispatchEvent(new Event("popstate"));
+    });
+    expect(text("mounted")).toBe("none");
   });
 
-  // Every reader hears every location-state commit. One whose slot the commit
-  // leaves as it was must not render for it, not even to bail out: the hook
-  // has to cost what the store subscription it replaced cost.
-  it("a navigation renders the readers whose slot it changes, and no other", async () => {
-    const renders = { note: 0, untouched: 0 };
+  // Readers are context consumers: a commit that changes the entry's location
+  // state renders each of them once, in the update that renders the tree. A
+  // commit that leaves every reader's value as it was renders none.
+  it("a navigation renders readers once when the entry's state changes, and not at all when it does not", async () => {
+    const renders = { note: 0, other: 0 };
+    let note: { text: string } | undefined;
     const NoteReader = memo(function NoteReader(): ReactNode {
       renders.note += 1;
-      return <p data-testid="note">{useLocationState(Note)?.text ?? "none"}</p>;
+      note = useLocationState(Note);
+      return <p data-testid="note">{note?.text ?? "none"}</p>;
     });
-    const UntouchedReader = memo(function UntouchedReader(): ReactNode {
-      renders.untouched += 1;
+    const OtherReader = memo(function OtherReader(): ReactNode {
+      renders.other += 1;
       return <p>{useLocationState(Flash)?.text ?? "none"}</p>;
     });
     function Page(): ReactNode {
       return (
         <div>
           <NoteReader />
-          <UntouchedReader />
+          <OtherReader />
         </div>
       );
     }
@@ -425,22 +514,155 @@ describe("renderRoute: flash state and static writes under #1029", () => {
       [{ path: "/notes", Component: Page }],
       { request: "/notes" },
     );
-    expect(renders).toEqual({ note: 1, untouched: 1 });
+    expect(renders).toEqual({ note: 1, other: 1 });
 
     await router.navigate("/notes?step=2", {
       state: [Note({ text: "pushed" })],
     });
     expect(getByTestId("note").textContent).toBe("pushed");
-    expect(renders).toEqual({ note: 2, untouched: 1 });
+    expect(renders).toEqual({ note: 2, other: 2 });
+
+    // The reader's own value carried to the next entry.
+    await router.navigate("/notes?step=3", { state: [Note(note!)] });
+    expect(renders).toEqual({ note: 2, other: 2 });
 
     // An entry without state: the Note reader drops its value.
-    await router.navigate("/notes?step=3", { replace: true });
-    expect(getByTestId("note").textContent).toBe("none");
-    expect(renders).toEqual({ note: 3, untouched: 1 });
-
-    // And a navigation between two entries without state renders neither.
     await router.navigate("/notes?step=4", { replace: true });
-    expect(renders).toEqual({ note: 3, untouched: 1 });
+    expect(getByTestId("note").textContent).toBe("none");
+    expect(renders).toEqual({ note: 3, other: 3 });
+
+    // Between two entries without state, and on a navigation that leaves
+    // history alone.
+    await router.navigate("/notes?step=5", { replace: true });
+    await router.navigate("/notes?step=6");
+    expect(renders).toEqual({ note: 3, other: 3 });
+  });
+
+  it("an object-valued slot keeps its identity when another slot changes: its reader's effects and memoized children do not run again", async () => {
+    type FilterValue = { colors: string[]; range: { min: number } };
+    const Filter = withLocationStateKey(
+      createLocationState<FilterValue>(),
+      "CommitFilter",
+    );
+    const seen: Array<FilterValue | undefined> = [];
+    let renders = 0;
+    let effects = 0;
+    let childRenders = 0;
+    const Child = memo(function Child({
+      filter,
+    }: {
+      filter: FilterValue | undefined;
+    }): ReactNode {
+      childRenders += 1;
+      return <p data-testid="colors">{filter?.colors.join("+") ?? "none"}</p>;
+    });
+    const FilterReader = memo(function FilterReader(): ReactNode {
+      const filter = useLocationState(Filter);
+      renders += 1;
+      seen.push(filter);
+      useEffect(() => {
+        effects += 1;
+      }, [filter]);
+      return <Child filter={filter} />;
+    });
+    function Page(): ReactNode {
+      return (
+        <div>
+          <FilterReader />
+          <p data-testid="note">{useLocationState(Note)?.text ?? "none"}</p>
+        </div>
+      );
+    }
+    const { getByTestId, router } = await renderRoute(
+      [{ path: "/list", Component: Page }],
+      { request: "/list" },
+    );
+
+    await router.navigate("/list?step=2", {
+      state: [
+        Filter({ colors: ["red", "blue"], range: { min: 3 } }),
+        Note({ text: "one" }),
+      ],
+    });
+    expect(getByTestId("colors").textContent).toBe("red+blue");
+    const held = seen.at(-1)!;
+    const before = { renders, effects, childRenders };
+
+    // The filter is carried forward as the reader holds it; the note changes.
+    await router.navigate("/list?step=3", {
+      state: [Filter(held), Note({ text: "two" })],
+    });
+    expect(getByTestId("note").textContent).toBe("two");
+    expect(seen.at(-1)).toBe(held);
+    // One render: the context value changed. Nothing below it ran.
+    expect({ renders, effects, childRenders }).toEqual({
+      ...before,
+      renders: before.renders + 1,
+    });
+
+    // An equal object that is not the one the reader holds is a new value.
+    await router.navigate("/list?step=4", {
+      state: [
+        Filter({ colors: ["red", "blue"], range: { min: 3 } }),
+        Note({ text: "two" }),
+      ],
+    });
+    expect(seen.at(-1)).toEqual(held);
+    expect(seen.at(-1)).not.toBe(held);
+    expect(effects).toBe(before.effects + 1);
+  });
+
+  it("a reader's value is a copy: changing the object passed to the navigation afterwards does not reach it", async () => {
+    const List = withLocationStateKey(
+      createLocationState<string[]>(),
+      "CommitList",
+    );
+    function Page(): ReactNode {
+      return (
+        <p data-testid="list">{(useLocationState(List) ?? []).join("+")}</p>
+      );
+    }
+    const { getByTestId, router } = await renderRoute(
+      [{ path: "/list", Component: Page }],
+      { request: "/list" },
+    );
+    const passed = ["a"];
+    await router.navigate("/list?step=2", { state: [List(passed)] });
+    passed.push("b");
+    await router.refresh();
+    expect(getByTestId("list").textContent).toBe("a");
+  });
+
+  it("router.navigate() writes a history entry only for `state` or `replace: true`", async () => {
+    function Page(): ReactNode {
+      return <p data-testid="note">{useLocationState(Note)?.text ?? "none"}</p>;
+    }
+    const { getByTestId, router } = await renderRoute(
+      [{ path: "/notes", Component: Page }],
+      { request: "/notes", locationState: [[Note, { text: "seeded" }]] },
+    );
+    const pushState = vi.spyOn(window.history, "pushState");
+    const replaceState = vi.spyOn(window.history, "replaceState");
+    const note = () => getByTestId("note").textContent;
+
+    // No history write: the entry, and what readers show, stay.
+    await router.navigate("/notes?step=2");
+    await router.navigate("/notes?step=3", { replace: false });
+    expect(pushState).not.toHaveBeenCalled();
+    expect(replaceState).not.toHaveBeenCalled();
+    expect(note()).toBe("seeded");
+
+    await router.navigate("/notes?step=4", {
+      state: [Note({ text: "pushed" })],
+    });
+    expect(pushState).toHaveBeenCalledOnce();
+    expect(note()).toBe("pushed");
+
+    // A replace without state drops the entry's location state.
+    await router.navigate("/notes?step=5", { replace: true });
+    expect(replaceState).toHaveBeenCalledOnce();
+    expect(pushState).toHaveBeenCalledOnce();
+    expect(note()).toBe("none");
   });
 
   // renderRoute has one location, so a back/forward restores no tree: a

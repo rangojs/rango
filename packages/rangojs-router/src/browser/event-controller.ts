@@ -15,6 +15,10 @@ import {
   filterRouteSegmentIds,
 } from "./react/filter-segment-order.js";
 import { notifyListeners } from "./notify-listeners.js";
+import {
+  locationStateSnapshot,
+  type LocationStateSnapshot,
+} from "./react/location-state-shared.js";
 
 // Polyfill Symbol.dispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -135,16 +139,6 @@ export interface HandleState {
   data: HandleData;
   segmentOrder: string[];
   routeSegmentIds: string[];
-}
-
-/**
- * Identity of the last commit that changed the displayed history entry's
- * location state. A new object per commit; `traversal` marks a back/forward,
- * which applies the destination entry as it is (a flash reader drops the
- * value it kept on screen).
- */
-export interface LocationStateCommit {
-  readonly traversal: boolean;
 }
 
 /**
@@ -280,16 +274,19 @@ export interface EventController {
   getParams(): Record<string, string>;
 
   /**
-   * The displayed history entry's location state changed: a navigation
-   * committed an entry (`traversal` for back/forward), or server-set state
-   * was merged into the current one. useLocationState readers re-read
-   * history.state when the commit identity moves. They are state listeners,
-   * so the commit site's payload update delivers the read in its own lane
-   * (NavigationProvider, flushRouteState): a held transition keeps the entry
-   * being left on screen with that entry's state (#1029).
+   * Record the committed history entry's location state from `entryState`:
+   * the state object the commit pushed, restored or merged into the entry,
+   * so the entry and its readers have one source. Notifies nobody:
+   * NavigationProvider takes the snapshot with the entry's payload
+   * (LocationStateContext). `treeless` marks a commit no payload follows (a
+   * shallow navigation, a commit that keeps every segment, an action's
+   * state): the provider takes it with this commit's state notification, in
+   * the batch of the location.
    */
-  commitLocationState(traversal?: boolean): void;
-  getLocationStateCommit(): LocationStateCommit;
+  commitLocationState(entryState: unknown, treeless?: boolean): void;
+  getLocationState(): LocationStateSnapshot;
+  /** True once after a `treeless` commit. */
+  takeTreelessLocationState(): boolean;
 
   // Direct state access for advanced use
   getCurrentNavigation(): NavigationEntry | null;
@@ -485,7 +482,8 @@ export function createEventController(
 
   let routeParams: Record<string, string> = {};
 
-  let locationStateCommit: LocationStateCommit = { traversal: false };
+  let locationState: LocationStateSnapshot;
+  let treelessLocationState = false;
 
   const stateListeners = new Set<StateListener>();
   const actionListeners = new Map<string, Set<ActionStateListener>>();
@@ -1118,9 +1116,18 @@ export function createEventController(
     return routeParams;
   }
 
-  function commitLocationState(traversal = false): void {
-    locationStateCommit = { traversal };
-    notify();
+  function commitLocationState(entryState: unknown, treeless?: boolean): void {
+    locationState = locationStateSnapshot(entryState, locationState);
+    if (treeless) {
+      treelessLocationState = true;
+      notify();
+    }
+  }
+
+  function takeTreelessLocationState(): boolean {
+    const taken = treelessLocationState;
+    treelessLocationState = false;
+    return taken;
   }
 
   // ========================================================================
@@ -1153,7 +1160,8 @@ export function createEventController(
 
     // Location state
     commitLocationState,
-    getLocationStateCommit: () => locationStateCommit,
+    getLocationState: () => locationState,
+    takeTreelessLocationState,
 
     // Subscriptions
     subscribe,

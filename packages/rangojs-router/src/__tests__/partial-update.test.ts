@@ -525,6 +525,13 @@ describe("partial-update", () => {
       // Should commit but NOT call onUpdate (no UI change)
       expect(tx.commit).toHaveBeenCalled();
       expect(onUpdate).not.toHaveBeenCalled();
+      // No payload follows, and the commit says so: the entry's location
+      // state has no tree to wait for (#1029).
+      expect(tx.commit).toHaveBeenCalledWith(
+        ["R0"],
+        [cached],
+        expect.objectContaining({ treeless: true }),
+      );
     });
 
     it("renders cached segments when navigating with targetCacheSegments", async () => {

@@ -39,6 +39,8 @@ export interface ClientUrlDestination {
    * params minus these are the mount's (include prefix) params.
    */
   readonly originLocalParamNames: readonly string[];
+  /** `history.state` the navigation will push (ClientUrlNavigationIntent.state). */
+  readonly state: unknown;
 }
 
 interface ActiveClientUrlGroup {
@@ -126,7 +128,8 @@ export function registerClientUrlGroup(
 export function beginClientUrlNavigation(
   targetUrl: URL,
   signal: AbortSignal,
-  state?: unknown,
+  /** Builds the entry state; called only when the group presents the target. */
+  buildState?: () => unknown,
   decideTransition?: (destination: ClientUrlDestination) => boolean,
 ): ClientUrlNavigationPresentation | null {
   const group = activeGroup;
@@ -152,6 +155,8 @@ export function beginClientUrlNavigation(
     : undefined;
   if (canonicalName && activeInterceptTargets.has(canonicalName)) return null;
 
+  const state = buildState?.();
+
   // A same-route intent never swaps (ClientUrlsRoot), so transition({ when })
   // decides at the canonical commit; a cross-route one decides here, at the
   // navigation's first presentation.
@@ -166,6 +171,7 @@ export function beginClientUrlNavigation(
       routeName: canonicalName,
       when: typeof when === "function" ? when : undefined,
       originLocalParamNames: Object.keys(originMatch?.params ?? {}),
+      state,
     });
   }
 

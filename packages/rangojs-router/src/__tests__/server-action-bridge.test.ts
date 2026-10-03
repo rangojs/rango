@@ -123,12 +123,12 @@ describe("server-action-bridge partial invariant", () => {
   });
 });
 
-// #1029 left this lane as it was: an action does not change the history
-// entry, so its location state reaches readers when the response is
-// processed, ahead of the revalidated tree. What changed is the carrier: the
-// controller's commit, flushed at once, instead of a window event.
+// An action does not change the history entry or wait for a tree: its
+// location state is a treeless commit of the merged entry, flushed at once,
+// so readers have it when the response is processed, ahead of the revalidated
+// tree.
 describe("server-action-bridge location state", () => {
-  it("commits and flushes an action's location state before its tree renders", async () => {
+  it("commits the action's slots as treeless, on top of what readers hold, and flushes before the action's tree renders", async () => {
     const replaceState = vi.fn();
     vi.stubGlobal("window", {
       location: {
@@ -155,11 +155,15 @@ describe("server-action-bridge location state", () => {
       getRouterId: vi.fn(() => undefined),
     };
     const eventController = createEventController();
-    const before = eventController.getLocationStateCommit();
+    // A flash value on screen: committed with the entry, cleared from
+    // history since (window.history.state above holds no slot).
+    eventController.commitLocationState({ __rsc_ls_flash: { text: "saved" } });
+    const shownFlash = eventController.getLocationState()!.__rsc_ls_flash;
     const order: string[] = [];
+    // NavigationProvider's listener: takes a treeless commit when notified.
     eventController.subscribe(() => {
-      if (eventController.getLocationStateCommit() !== before) {
-        order.push("readers notified");
+      if (eventController.takeTreelessLocationState()) {
+        order.push("provider took the state");
       }
     });
     const setServerCallback = vi.fn();
@@ -197,11 +201,15 @@ describe("server-action-bridge location state", () => {
     expect(replaceState.mock.calls[0]![0]).toMatchObject({
       __rsc_ls_note: "from-action",
     });
-    const commit = eventController.getLocationStateCommit();
-    expect(commit).not.toBe(before);
-    expect(commit.traversal).toBe(false);
+    // Added to what readers hold, not re-read from the entry: the flash
+    // value stays, as the object its reader has.
+    expect(eventController.getLocationState()).toEqual({
+      __rsc_ls_flash: { text: "saved" },
+      __rsc_ls_note: "from-action",
+    });
+    expect(eventController.getLocationState()!.__rsc_ls_flash).toBe(shownFlash);
     expect(order.slice(0, 3)).toEqual([
-      "readers notified",
+      "provider took the state",
       "tree rendered",
       "tree committed",
     ]);

@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { StrictMode, useState, type ReactNode } from "react";
+import { StrictMode, useEffect, useState, type ReactNode } from "react";
 import { createRoot, hydrateRoot, type Root } from "react-dom/client";
 import { act, cleanup } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -8,10 +8,7 @@ import {
   createEventController,
   type EventController,
 } from "../../browser/event-controller.js";
-import {
-  NavigationStoreContext,
-  type NavigationStoreContextValue,
-} from "../../browser/react/context.js";
+import { LocationStateContext } from "../../browser/react/context.js";
 import { withLocationStateKey } from "../index.js";
 
 // #992: a reader that hydrates after the root effect has set `data-hydrated`
@@ -21,9 +18,10 @@ import { withLocationStateKey } from "../index.js";
 // contract through the public primitive (`renderRoute({ hydrate: true })`,
 // which produces the server HTML itself) is in render-route-hydrate.test.tsx.
 //
-// A reader hears about the entry's state from its router's event controller
-// (#1029), so the trees below get one through NavigationStoreContext, and
-// `commitEntry` does what a commit site does: write history, commit, flush.
+// A reader takes the entry's state from LocationStateContext (#1029). `Entry`
+// provides it the way NavigationProvider does for a commit without a payload
+// (the provider itself is covered through renderRoute), and `commitEntry` does
+// what such a commit site does: write history, commit that entry, flush.
 
 const GridState = withLocationStateKey(
   createLocationState<{ count: number }>(),
@@ -45,16 +43,31 @@ beforeEach(() => {
   });
 });
 
-/**
- * `traversal`: back/forward to the entry (the router's popstate commit).
- * Without `state` the entry is committed as it stands.
- */
-async function commitEntry(traversal: boolean, state?: object): Promise<void> {
+/** Without `state` the entry is committed as history holds it. */
+async function commitEntry(state?: object): Promise<void> {
   await act(async () => {
     if (state) window.history.replaceState(state, "");
-    controller.commitLocationState(traversal);
+    controller.commitLocationState(window.history.state, true);
     controller.flushRouteState();
   });
+}
+
+function Entry({ children }: { children: ReactNode }): ReactNode {
+  const [state, setState] = useState(controller.getLocationState);
+  useEffect(
+    () =>
+      controller.subscribe(() => {
+        if (controller.takeTreelessLocationState()) {
+          setState(controller.getLocationState());
+        }
+      }),
+    [],
+  );
+  return (
+    <LocationStateContext.Provider value={state}>
+      {children}
+    </LocationStateContext.Provider>
+  );
 }
 
 afterEach(async () => {
@@ -72,19 +85,19 @@ afterEach(async () => {
 });
 
 function tree(node: ReactNode, strict = false): ReactNode {
-  const routed = (
-    <NavigationStoreContext.Provider
-      value={{ eventController: controller } as NavigationStoreContextValue}
-    >
-      {node}
-    </NavigationStoreContext.Provider>
-  );
+  const routed = <Entry>{node}</Entry>;
   return strict ? <StrictMode>{routed}</StrictMode> : routed;
+}
+
+/** The entry a document load starts on (initBrowserApp commits it). */
+function seedEntry(state: unknown): void {
+  window.history.replaceState(state, "");
+  controller.commitLocationState(window.history.state);
 }
 
 function seedHydrated(state: unknown): void {
   document.documentElement.setAttribute("data-hydrated", "");
-  window.history.replaceState(state, "");
+  seedEntry(state);
 }
 
 async function hydrate(
@@ -211,34 +224,12 @@ describe("useLocationState late hydration (#992)", () => {
     expect(container.textContent).toBe("4");
   });
 
-  it("back/forward updates a persistent reader and can clear a shown flash value", async () => {
-    function Persistent() {
-      const state = useLocationState(GridState);
-      return <p data-testid="count">{state?.count ?? 0}</p>;
-    }
-    seedHydrated({ [GridState.__rsc_ls_key]: { count: 4 } });
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    await act(async () => {
-      root = createRoot(container);
-      root.render(tree(<Persistent />));
-    });
-    expect(container.textContent).toBe("4");
-
-    await commitEntry(true, { [GridState.__rsc_ls_key]: { count: 9 } });
-    expect(container.textContent).toBe("9");
-
-    await act(async () => {
-      root?.unmount();
-    });
-    root = undefined;
-    container.remove();
-
+  it("a flash value stays on screen after its clear, until a commit of the entry's state replaces it", async () => {
     function Flash() {
       const state = useLocationState(FlashCount);
       return <p data-testid="count">{state?.count ?? 0}</p>;
     }
-    seedHydrated({ [FlashCount.__rsc_ls_key]: { count: 2 }, idx: 1 });
+    seedEntry({ [FlashCount.__rsc_ls_key]: { count: 2 } });
     const flashHost = document.createElement("div");
     document.body.appendChild(flashHost);
     await act(async () => {
@@ -246,61 +237,25 @@ describe("useLocationState late hydration (#992)", () => {
       root.render(tree(<Flash />, true));
     });
     expect(flashHost.textContent).toBe("2");
+    // Cleared from the entry: a reload or a return to it shows nothing.
     expect(window.history.state).not.toHaveProperty(FlashCount.__rsc_ls_key);
 
-    await commitEntry(true, {
-      [FlashCount.__rsc_ls_key]: { count: 5 },
-      idx: 1,
-    });
-    expect(flashHost.textContent).toBe("5");
-    expect(window.history.state).not.toHaveProperty(FlashCount.__rsc_ls_key);
-
-    await commitEntry(true, { idx: 0 });
-    expect(flashHost.textContent).toBe("0");
-  });
-
-  it("a commit on the current entry updates persistent state and does not wipe a shown flash value", async () => {
-    function Persistent() {
-      const state = useLocationState(GridState);
-      return <p data-testid="count">{state?.count ?? 0}</p>;
-    }
-    seedHydrated({ [GridState.__rsc_ls_key]: { count: 1 } });
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    await act(async () => {
-      root = createRoot(container);
-      root.render(tree(<Persistent />));
-    });
-
-    await commitEntry(false, { [GridState.__rsc_ls_key]: { count: 6 } });
-    expect(container.textContent).toBe("6");
-
-    await act(async () => {
-      root?.unmount();
-    });
-    root = undefined;
-    container.remove();
-
-    function Flash() {
-      const state = useLocationState(FlashCount);
-      return <p data-testid="count">{state?.count ?? 0}</p>;
-    }
-    seedHydrated({ [FlashCount.__rsc_ls_key]: { count: 2 } });
-    const flashHost = document.createElement("div");
-    document.body.appendChild(flashHost);
-    await act(async () => {
-      root = createRoot(flashHost);
-      root.render(tree(<Flash />, true));
-    });
+    // An unrelated re-render keeps it: the clear changed history only.
+    await act(async () => root?.render(tree(<Flash />, true)));
     expect(flashHost.textContent).toBe("2");
 
-    // The slot is empty because this reader cleared it after paint.
-    await commitEntry(false);
-    expect(flashHost.textContent).toBe("2");
-
-    await commitEntry(false, { [FlashCount.__rsc_ls_key]: { count: 8 } });
+    await commitEntry({ [FlashCount.__rsc_ls_key]: { count: 8 } });
     expect(flashHost.textContent).toBe("8");
     expect(window.history.state).not.toHaveProperty(FlashCount.__rsc_ls_key);
+
+    // The same message again is a new value: shown, and cleared again.
+    await commitEntry({ [FlashCount.__rsc_ls_key]: { count: 8 } });
+    expect(flashHost.textContent).toBe("8");
+    expect(window.history.state).not.toHaveProperty(FlashCount.__rsc_ls_key);
+
+    // The entry as history now holds it carries no flash.
+    await commitEntry();
+    expect(flashHost.textContent).toBe("0");
   });
 
   it("plain useLocationState() late-hydrates from history.state.state and follows back/forward", async () => {
@@ -322,7 +277,7 @@ describe("useLocationState late hydration (#992)", () => {
     expect(recoverable).toEqual([]);
     expect(container.textContent).toBe("checkout");
 
-    await commitEntry(true, { state: { from: "back" } });
+    await commitEntry({ state: { from: "back" } });
     expect(container.textContent).toBe("back");
   });
 
@@ -340,7 +295,7 @@ describe("useLocationState late hydration (#992)", () => {
       );
     }
 
-    window.history.replaceState({}, "");
+    seedEntry({});
     const container = document.createElement("div");
     document.body.appendChild(container);
     await act(async () => {
@@ -364,7 +319,7 @@ describe("useLocationState late hydration (#992)", () => {
       "0",
     );
 
-    await commitEntry(true);
+    await commitEntry();
     expect(container.querySelector("[data-testid='count']")?.textContent).toBe(
       "9",
     );
@@ -377,13 +332,10 @@ describe("useLocationState late hydration (#992)", () => {
       seen.push(`${flash ? "flash" : "grid"}:${state?.count ?? "none"}`);
       return <p data-testid="count">{state?.count ?? 0}</p>;
     }
-    window.history.replaceState(
-      {
-        [GridState.__rsc_ls_key]: { count: 4 },
-        [FlashCount.__rsc_ls_key]: { count: 7 },
-      },
-      "",
-    );
+    seedEntry({
+      [GridState.__rsc_ls_key]: { count: 4 },
+      [FlashCount.__rsc_ls_key]: { count: 7 },
+    });
     const container = document.createElement("div");
     document.body.appendChild(container);
     await act(async () => {
@@ -398,7 +350,7 @@ describe("useLocationState late hydration (#992)", () => {
     // The new slot is a flash one: read once, then cleared.
     expect(window.history.state).not.toHaveProperty(FlashCount.__rsc_ls_key);
 
-    await commitEntry(false, {
+    await commitEntry({
       [GridState.__rsc_ls_key]: { count: 5 },
     });
     await act(async () => root?.render(tree(<Count flash={false} />)));
@@ -406,22 +358,28 @@ describe("useLocationState late hydration (#992)", () => {
     expect(seen).not.toContain("grid:7");
   });
 
-  it("outside a NavigationProvider a reader takes the entry's state at mount and hears no commit", async () => {
+  // The entry on screen is the provider's: with none there is no entry to
+  // pair a value with, and history.state is not read in its place.
+  it("outside a NavigationProvider a reader has no location state", async () => {
     function Count() {
       const state = useLocationState(GridState);
-      return <p data-testid="count">{state?.count ?? 0}</p>;
+      const plain = useLocationState<{ from?: string }>();
+      return (
+        <p data-testid="count">{`${state?.count ?? 0}|${plain?.from ?? "none"}`}</p>
+      );
     }
-    window.history.replaceState({ [GridState.__rsc_ls_key]: { count: 4 } }, "");
+    window.history.replaceState(
+      { [GridState.__rsc_ls_key]: { count: 4 }, state: { from: "list" } },
+      "",
+    );
     const container = document.createElement("div");
     document.body.appendChild(container);
     await act(async () => {
       root = createRoot(container);
       root.render(<Count />);
     });
-    expect(container.textContent).toBe("4");
-
-    // No router, so nothing commits an entry for it.
-    await commitEntry(true, { [GridState.__rsc_ls_key]: { count: 9 } });
-    expect(container.textContent).toBe("4");
+    expect(container.textContent).toBe("0|none");
+    // The definition's own read is not a hook and needs no provider.
+    expect(GridState.read()).toEqual({ count: 4 });
   });
 });

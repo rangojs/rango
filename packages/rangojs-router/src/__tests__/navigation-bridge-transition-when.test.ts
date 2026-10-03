@@ -141,16 +141,18 @@ describe("navigation-bridge transition({ when })", () => {
     await bridge.handlePopstate();
 
     // #1029: history.state belongs to the restored entry since the popstate
-    // event, but readers take it with the restored tree: committed as a
-    // traversal once the tree is built, in the update that renders it.
+    // event, but readers take it with the restored tree: the entry state the
+    // handler found at the event is committed once the tree is built, right
+    // before the update that renders it.
     expect(order).toEqual([
       "renderSegments",
       "commitLocationState",
       "onUpdate",
     ]);
-    expect(controller.commitLocationState).toHaveBeenCalledExactlyOnceWith(
-      true,
-    );
+    expect(controller.commitLocationState).toHaveBeenCalledExactlyOnceWith({
+      key: "entry-a",
+      __rsc_ls_s: "a-state",
+    });
 
     expect(when).toHaveBeenCalledTimes(1);
     expect(seen[0].kind).toBe("pop");

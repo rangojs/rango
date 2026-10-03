@@ -58,6 +58,11 @@ interface CommitOptions {
    * partial updater reuses it instead of deciding again.
    */
   transitionGatedOff?: boolean;
+  /**
+   * No payload follows this commit: every segment is kept and the tree on
+   * screen stays (EventController.commitLocationState).
+   */
+  treeless?: boolean;
 }
 
 /**
@@ -80,6 +85,8 @@ interface BoundCommitOverrides {
   serverState?: Record<string, unknown>;
   /** The committed route's name (payload metadata), remembered per history entry. */
   routeName?: string;
+  /** No payload follows this commit (CommitOptions.treeless). */
+  treeless?: boolean;
 }
 
 /**
@@ -186,11 +193,13 @@ export function createNavigationTransaction(
     }
 
     if (traversal) {
-      if (serverState && Object.keys(serverState).length > 0) {
-        mergeLocationState(serverState);
-      }
+      // The entry as history restored it, plus what the server adds.
+      const entryState: unknown =
+        serverState && Object.keys(serverState).length > 0
+          ? mergeLocationState(serverState)
+          : window.history.state;
       store.rememberDisplayedEntry(opts.routeName);
-      eventController.commitLocationState(true);
+      eventController.commitLocationState(entryState, opts.treeless);
       handle.complete(parsedUrl);
       debugLog("[Browser] Traversal committed, historyKey:", historyKey);
       return { scroll };
@@ -205,9 +214,7 @@ export function createNavigationTransaction(
     pushHistoryWithIdx(historyState, url, replace ?? false);
     ensureHistoryKey();
     store.rememberDisplayedEntry(opts.routeName);
-    // History has moved, the tree has not: readers take the entry's state
-    // from the notification the caller's payload update flushes.
-    eventController.commitLocationState();
+    eventController.commitLocationState(historyState, opts.treeless);
 
     handle.complete(parsedUrl);
 
@@ -266,6 +273,7 @@ export function createNavigationTransaction(
             cacheOnly,
             serverState,
             routeName: overrides?.routeName ?? opts.routeName,
+            treeless: overrides?.treeless,
           });
         },
       };

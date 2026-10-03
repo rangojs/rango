@@ -9,13 +9,12 @@ import {
   useLocationState,
   useOutlet,
 } from "../../client.js";
-import { createEventController } from "../../browser/event-controller.js";
 import { buildHistoryState } from "../../browser/history-state.js";
+import { LocationStateContext } from "../../browser/react/context.js";
 import {
-  NavigationStoreContext,
-  type NavigationStoreContextValue,
-} from "../../browser/react/context.js";
-import { resolveLocationStateEntries } from "../../browser/react/location-state-shared.js";
+  locationStateSnapshot,
+  resolveLocationStateEntries,
+} from "../../browser/react/location-state-shared.js";
 import { withLocationStateKey } from "../../testing/index.js";
 import { MountContextProvider } from "../../browser/react/mount-context.js";
 import { OutletProvider } from "../../outlet-provider.js";
@@ -343,9 +342,9 @@ describe("ClientUrlsRoot", () => {
     );
   });
 
-  // #1029: history still holds the entry being left while the destination is
-  // presented optimistically. Inside the branch a reader gets the entry the
-  // navigation will push; outside it, the committed entry's.
+  // #1029: the provider still holds the entry being left while the
+  // destination is presented optimistically. Inside the branch a reader gets
+  // the entry the navigation will push; outside it, the committed entry's.
   describe("location state in the optimistic branch", () => {
     const Note = withLocationStateKey(
       createLocationState<{ text: string }>(),
@@ -386,14 +385,17 @@ describe("ClientUrlsRoot", () => {
     const entry = (
       ...entries: Parameters<typeof resolveLocationStateEntries>[0]
     ) => buildHistoryState(resolveLocationStateEntries(entries));
+    const source = entry(Note({ text: "source" }));
+    // What NavigationProvider provides: the committed entry's state.
+    const tree = (routeId: string, committed: unknown): ReactNode => (
+      <LocationStateContext.Provider value={locationStateSnapshot(committed)}>
+        <Chrome />
+        <ClientUrlsRoot definition={definition} routeId={routeId} />
+      </LocationStateContext.Provider>
+    );
     const mount = () => {
-      window.history.replaceState(entry(Note({ text: "source" })), "");
-      return render(
-        <>
-          <Chrome />
-          <ClientUrlsRoot definition={definition} routeId="client-route-0" />
-        </>,
-      );
+      window.history.replaceState(source, "");
+      return render(tree("client-route-0", source));
     };
     const text = (result: ReturnType<typeof render>, where: string) =>
       result.queryByTestId(where)?.textContent ?? null;
@@ -409,7 +411,7 @@ describe("ClientUrlsRoot", () => {
         presentation = beginClientUrlNavigation(
           new URL("http://localhost/items/42"),
           abort.signal,
-          entry(Note({ text: "destination" }), Flash({ text: "saved" })),
+          () => entry(Note({ text: "destination" }), Flash({ text: "saved" })),
         );
       });
 
@@ -419,7 +421,7 @@ describe("ClientUrlsRoot", () => {
       expect(text(result, "home")).toBeNull();
       // Presentation only: the entry being left is untouched, and a flash
       // reader has not consumed a slot history does not hold yet.
-      expect(window.history.state).toEqual(entry(Note({ text: "source" })));
+      expect(window.history.state).toEqual(source);
 
       // Cancelled or superseded before the commit: the branch and its state
       // are discarded.
@@ -430,19 +432,7 @@ describe("ClientUrlsRoot", () => {
     });
 
     it("the canonical commit hands every reader the pushed entry, and a flash slot read in the branch is cleared only then", async () => {
-      const controller = createEventController({
-        initialLocation: new URL("http://localhost/"),
-      });
-      window.history.replaceState(entry(Note({ text: "source" })), "");
-      const tree = (routeId: string): ReactNode => (
-        <NavigationStoreContext.Provider
-          value={{ eventController: controller } as NavigationStoreContextValue}
-        >
-          <Chrome />
-          <ClientUrlsRoot definition={definition} routeId={routeId} />
-        </NavigationStoreContext.Provider>
-      );
-      const result = render(tree("client-route-0"));
+      const result = mount();
       const pushed = entry(
         Note({ text: "destination" }),
         Flash({ text: "saved" }),
@@ -452,21 +442,19 @@ describe("ClientUrlsRoot", () => {
         presentation = beginClientUrlNavigation(
           new URL("http://localhost/items/42"),
           new AbortController().signal,
-          pushed,
+          () => pushed,
         );
       });
       expect(text(result, "item")).toBe("item: destination/saved");
       expect(text(result, "chrome")).toBe("chrome: source/none");
-      expect(window.history.state).toEqual(entry(Note({ text: "source" })));
+      expect(window.history.state).toEqual(source);
 
-      // What the canonical commit does: the entry is pushed and committed,
-      // the payload re-renders the group on the destination's route, and the
-      // presentation clears.
+      // What the canonical commit does: the entry is pushed, the payload
+      // re-renders the group on the destination's route with the entry's
+      // state, and the presentation clears.
       await act(async () => {
         window.history.replaceState(pushed, "");
-        controller.commitLocationState();
-        result.rerender(tree("client-route-1"));
-        controller.flushRouteState();
+        result.rerender(tree("client-route-1", pushed));
         presentation?.clear();
       });
       for (const where of ["item", "layout", "chrome"]) {
@@ -482,7 +470,7 @@ describe("ClientUrlsRoot", () => {
         beginClientUrlNavigation(
           new URL("http://localhost/items/42"),
           new AbortController().signal,
-          entry(),
+          () => entry(),
         );
       });
       expect(text(result, "item")).toBe("item: none/none");
@@ -496,7 +484,7 @@ describe("ClientUrlsRoot", () => {
         beginClientUrlNavigation(
           new URL("http://localhost/?tab=2"),
           new AbortController().signal,
-          entry(Note({ text: "destination" })),
+          () => entry(Note({ text: "destination" })),
         );
       });
       expect(text(result, "home")).toBe("home: source/none");

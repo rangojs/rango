@@ -36,6 +36,7 @@ import {
   isForeignRouterId,
 } from "./response-adapter.js";
 import { mergeLocationState } from "./history-state.js";
+import { stampLocationState } from "./react/location-state-shared.js";
 import { classifyActionOutcome } from "./action-coordinator.js";
 import { getAppVersion } from "./app-version.js";
 import { collectClientRevalidationDecisions } from "../client-urls/navigation.js";
@@ -85,11 +86,15 @@ function applyActionLocationState(
   const winning = handle.claimLocationState(locationState);
   if (Object.keys(winning).length > 0) {
     mergeLocationState(winning);
-    // The entry does not change, so readers take the merged state now, not
-    // with the action's revalidated tree: several terminals commit no tree,
-    // and a navigation during that render drops it. Flushed here so the lane
-    // does not depend on whether the render outlasts the notify debounce.
-    eventController.commitLocationState();
+    // The entry and its tree stay, so readers take the action's slots now,
+    // not with its revalidated tree: several terminals commit no tree, and a
+    // navigation during that render drops it. Added to what readers hold,
+    // not re-read from the entry: a flash value on screen was already cleared
+    // from history, and a write()/delete() stays unseen until the entry is
+    // restored.
+    const shown = { ...eventController.getLocationState(), ...winning };
+    stampLocationState(shown);
+    eventController.commitLocationState(shown, true);
     eventController.flushRouteState();
   }
 }
