@@ -74,6 +74,8 @@ export const NamedRoutes = {
   loaderCacheTag: "/loader-cache-tag",
   loaderCtxItem: "/loader-ctx/:id",
   localeInfo: "/:locale(en|fr)/info",
+  locationStateLateSuspense: "/location-state-late-suspense/:gate",
+  locationStateLateSuspenseRelease: "/location-state-late-suspense/:gate/release",
   markerAfter: "/marker-after",
   markerBefore: "/marker-before",
   "mixedClient.detail": "/mixed-client-routes/:slug",

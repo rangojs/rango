@@ -2,7 +2,7 @@
 
 **Layer:** unit (DOM) · **Import:** `@rangojs/router/testing/dom` · **DSL it tests:** a client component reading router context (see `/hooks`)
 
-`renderRoute(routes, options?)` is an RTL-style stub (peer of React Router's `createRoutesStub` / Expo's `renderRouter`), and it is async — `await` it. It mounts the router's REAL `NavigationProvider` plus a synthetic segment tree built from the `routes` you pass, so client hooks resolve against production context — no server, no Vite build, no Flight round-trip. Loader data, location state, and handle output are SEEDED into client context; nothing is executed.
+`renderRoute(routes, options?)` is an RTL-style stub (peer of React Router's `createRoutesStub` / Expo's `renderRouter`), and it is async — `await` it. It mounts the router's REAL `NavigationProvider` plus a synthetic segment tree built from the `routes` you pass, so client hooks resolve against production context — no server, no Vite build, no Flight round-trip. Loader data, location state, and handle output are SEEDED into client context; nothing is executed. With `hydrate: true` it renders that same tree to HTML first and hydrates it ([Hydration](#hydration)).
 
 ## API
 
@@ -24,6 +24,7 @@
 | `theme`           | `ThemeConfig \| true`                                                  | Theme config (`createRouter({ theme })` shape) to wrap the tree in a `ThemeProvider`. Defaults to no provider. A component calling `useTheme()` REQUIRES one.                                                                                 |
 | `nonce`           | `string`                                                               | CSP nonce to seed via `NonceContext`, so a component calling `useNonce()` (e.g. an analytics/GTM head script) sees it — mirroring SSR. Defaults to `undefined` (the browser default).                                                         |
 | `defaultPrefetch` | `PrefetchStrategy`                                                     | Router default for `<Link>` and eligible plain anchors. `data-prefetch="false"`/`"none"` opts out one anchor; ancestor `data-prefetch-scope="false"`/`"none"` hard-disables the subtree; `"true"` permits routed resource suffixes elsewhere. |
+| `hydrate`         | `boolean`                                                              | Render the same tree to HTML first (`renderToString`, no `window`/`document`), then hydrate that HTML instead of mounting fresh. The result gains `serverHtml` and `recoverableErrors`. See [Hydration](#hydration).                          |
 
 `RenderRouteSpec = { path, Component, layout?, loaderIds?, name?, transition? }` — one node of the route definition. The array is the layout chain root-to-leaf; the LAST entry is the leaf route (its pattern is matched against `request` to extract params; layout patterns are informational). `loaderIds` attaches seeded loaders to THIS node's segment; `layout` on the leaf wraps it; `name` is informational. `transition` is the `transition()` config this node declares (`{}` for a bare `transition()`), attached to its segment exactly as the DSL does — see [Held navigation](#held-navigation).
 
@@ -72,6 +73,12 @@ type RenderRouteResult = RenderResult & {
     store: NavigationStore; // advanced
     eventController: EventController; // advanced
   };
+};
+
+// With `hydrate: true` (see Hydration):
+type RenderRouteHydrateResult = RenderRouteResult & {
+  serverHtml: string; // what the server pass rendered, as placed in the container
+  recoverableErrors: string[]; // messages React passed to onRecoverableError (live)
 };
 ```
 
@@ -155,6 +162,59 @@ it("shows the count it pushed", async () => {
 });
 ```
 
+## Hydration
+
+A plain `renderRoute` mounts with `createRoot`, so a component never runs its hydration render: `useSyncExternalStore` skips `getServerSnapshot`, and nothing compares the first client render with server HTML. `hydrate: true` runs the document-load sequence instead. renderRoute renders the same element (same providers, seeds, and RTL `reactStrictMode`) to HTML with `react-dom/server`'s `renderToString`, puts that HTML in the container, and hydrates it through RTL (`render(ui, { hydrate: true, onRecoverableError })`), so `cleanup()` unmounts it like any other render. `serverHtml` is what the server pass produced; `recoverableErrors` holds the message of every error React recovered from, which is where a hydration mismatch arrives.
+
+```tsx
+// @vitest-environment happy-dom
+import { Suspense } from "react";
+import { afterEach, expect, it } from "vitest";
+import { cleanup } from "@testing-library/react";
+import { renderRoute } from "@rangojs/router/testing/dom";
+import { Grid } from "../src/components/Grid"; // <p data-testid="count">{useLocationState(GridState)?.count ?? 0}</p>
+import { GridState } from "../src/location-states";
+
+afterEach(cleanup);
+
+// A <Suspense> boundary hydrates after the root has marked the page hydrated,
+// as a streamed boundary does in production.
+function GridPage() {
+  return (
+    <Suspense fallback={null}>
+      <Grid />
+    </Suspense>
+  );
+}
+
+it("hydrates as the server rendered it, then shows the stored count", async () => {
+  const { serverHtml, recoverableErrors, getByTestId } = await renderRoute(
+    [{ path: "/grid", Component: GridPage }],
+    { hydrate: true, locationState: [[GridState, { count: 3 }]] },
+  );
+  expect(serverHtml).toContain('<p data-testid="count">0</p>'); // no history.state on the server
+  expect(recoverableErrors).toEqual([]); // the first client render matched it
+  expect(getByTestId("count").textContent).toBe("3"); // then the stored value
+});
+```
+
+| In your component                                                                     | Under `hydrate: true`                                                                                                                                                                                                                        |
+| ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `typeof window` / `typeof document` in render                                         | `"undefined"` in the server pass: both globals are removed for it and restored before hydration. A branch renders its server side; if the client side differs, React reports the mismatch.                                                   |
+| An unguarded `window.x` / `document.x` in render                                      | Throws `ReferenceError` in the server pass, as in SSR. Inside a `<Suspense>` the boundary is client-rendered and reported; outside one `renderRoute` rejects.                                                                                |
+| `useSyncExternalStore`                                                                | The server pass and the hydration render read `getServerSnapshot`; the render after it reads `getSnapshot`.                                                                                                                                  |
+| A text or element mismatch                                                            | React re-renders that tree on the client and reports it: `recoverableErrors` gets `"Hydration failed because ..."` with the diff.                                                                                                            |
+| An attribute-only mismatch (`className`, `href`)                                      | NOT in `recoverableErrors`. React keeps the server attribute and logs `console.error` in development; assert it with `vi.spyOn(console, "error")`.                                                                                           |
+| `<Suspense>` whose content renders synchronously                                      | In `serverHtml`. It hydrates in a later pass than the tree above it, after that tree's effects, before `renderRoute` resolves.                                                                                                               |
+| Content that suspends in the server pass (`lazy`, a pending or plain `use()` promise) | NOT hydrated: `serverHtml` has the fallback, the client renders the content, and `recoverableErrors` reports the boundary. With no `<Suspense>` above it `renderRoute` rejects. A settled promise (Caveats, below) stays in the server HTML. |
+| Render counts and module state                                                        | Every component renders once in the server pass before its hydration render. Both passes share one module realm, so module state written while rendering is still there at hydration.                                                        |
+| `history`, `localStorage`, `navigator` read outside a server snapshot                 | FIDELITY LIMIT: still defined in the server pass (only `window` and `document` are removed), so the read renders the same in both passes here and can still mismatch in real SSR.                                                            |
+| `data-hydrated` on `<html>`                                                           | Set after hydration, as the production root sets it from its effect, and removed on unmount. A `<Suspense>` boundary therefore hydrates with it already set.                                                                                 |
+
+- Needs `@testing-library/react` 16.2.0 or newer. 16.0 and 16.1 never pass `onRecoverableError` to `hydrateRoot`, so a mismatch would be invisible; `renderRoute` throws there instead.
+- `recoverableErrors` is live: React appends to it for as long as the root is mounted.
+- The server pass is the HTML render of the CLIENT tree. It runs no handler, loader, middleware, or Flight, and it is not the streamed document: streaming order, client-reference identity, and the browser's HTML parser stay at e2e.
+
 ## Held navigation
 
 A stale indicator driven by `useLoader().isLoading` (see `/hooks` data.md, "A held navigation flags the data it keeps on screen") IS unit-testable. Put `transition` on the spec that declares `transition()` in your `urls()`, and pass the next navigation's loader data to `router.navigate(url, { loaders })` as a PENDING Promise. navigate() then commits through production's `commitInTransition` (browser/partial-update.ts), which calls `loaderStore.announcePendingStreams` inside the `startTransition`. The harness does not fake the flag: React holds the reader on screen and the real `useLoader` pin reports `isLoading: true` until the promise settles.
@@ -205,7 +265,7 @@ it("dims the held price while the next product streams", async () => {
 
 ## Caveats
 
-- Client tree ONLY. Does NOT catch server/client boundary reference-identity remount bugs, real Flight serialization errors, loader execution, middleware, or handler ordering — those are `renderServerTree` / `renderHandler` / e2e territory. Loader data is SEEDED, never run.
+- Client tree ONLY. Does NOT catch server/client boundary reference-identity remount bugs, real Flight serialization errors, loader execution, middleware, or handler ordering — those are `renderServerTree` / `renderHandler` / e2e territory. Loader data is SEEDED, never run. `hydrate: true` adds an HTML pass of this same client tree ([Hydration](#hydration)), not a render of your routes on a server.
 - `router.navigate()` bypasses the navigation lifecycle, so the controller never leaves `idle`. `useNavigation()` / `useLinkStatus()` / `useAction()` non-idle states (loading/streaming/pending, action result/error) are NOT reachable — test those at e2e. The one modeled pending state is held-navigation `useLoader().isLoading` ([Held navigation](#held-navigation)).
 - `outletPending` seeds only the production-shaped outlet context. It is useful
   for the two settled render states of a layout that reads `useOutlet()`, but it
@@ -215,7 +275,7 @@ it("dims the held price while the next product streams", async () => {
 - ARIA gotcha — an explicit `role` on a `<Link>` (e.g. `<Link role="tab">` in a tablist) OVERRIDES the implicit `link` role, so `getByRole("link")` finds nothing. Query the explicit role (`getByRole("tab")`) or fall back to `getByText` / `getByTestId` and assert `getAttribute("href")`.
 - `useTheme()` throws unless `theme` is passed (it needs the `ThemeProvider` that option mounts). Search state comes only from the `request` URL — there is no typed-search seed here (that is `runLoader`'s `searchData`).
 - Use `mount` only for an `include()` prefix. An OPTIONAL param in the matched pattern (`/:locale?/c/:group` at `/en/c/wine`) auto-fills `locale` from the match — production parity, `useReverse` merges `useParams()` — so no `mount` is needed; a locale "dropping" from a reversed URL is usually a missing `mount` seed, not an auto-fill gap.
-- Needs a DOM env (`// @vitest-environment happy-dom`, or jsdom) and `@testing-library/react` (optional peers).
+- Needs a DOM env (`// @vitest-environment happy-dom`, or jsdom) and `@testing-library/react` (optional peers; `hydrate` needs 16.2.0 or newer).
 - Don't hand-roll a `NavigationProvider`/router-context mock to test a client component — `renderRoute` mounts the REAL provider, so a hand-mock both duplicates effort and drifts from the production context shape.
 - MULTI-APP `href` typing. When a `renderRoute` suite imports client components across apps, the global `Rango.GeneratedRouteMap` augmentations collide and `href()` stops typechecking (app A's route union rejects app B's name). Runtime is unaffected — it is purely the global `href` typing. Keep the suite single-app, or split tsconfig programs per app (see [`./reverse-and-types.md`](./reverse-and-types.md) and `/typesafety`).
 

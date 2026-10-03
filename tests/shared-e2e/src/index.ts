@@ -1,4 +1,5 @@
 import { expect, type ConsoleMessage, type Page } from "@playwright/test";
+import { randomUUID } from "node:crypto";
 import { utimesSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -574,6 +575,41 @@ export async function returnToEvictedEntry(
     await routerNavigate(page, fillerUrl(n));
   }
   await page.evaluate((delta) => window.history.go(-delta), fillers);
+}
+
+/**
+ * #992: after a reload, a useLocationState reader inside a `<Suspense>`
+ * boundary that hydrates after the root must hydrate as the server rendered it
+ * (`undefined`) and show the stored value on the next render.
+ *
+ * The fixture (both apps: `<url>/:gate`, released by GET `<url>/:gate/release`)
+ * holds the boundary's server content until this body releases it. "After the
+ * root" is therefore asserted, not left to a timer: the fallback is still on
+ * screen once the root has hydrated. A held boundary keeps the document stream
+ * open, so each load waits for "commit" and hydration is awaited with
+ * waitForShellHydration (an app's waitForHydration waits for DOMContentLoaded,
+ * which does not come before the release).
+ */
+export async function expectLateSuspenseReaderHydratesClean(
+  page: Page,
+  url: string,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const byTestId = (id: string) => page.locator(`[data-testid="${id}"]`);
+  const gateUrl = `${url}/${randomUUID()}`;
+  const loadHeld = async (load: () => Promise<unknown>): Promise<void> => {
+    await load();
+    await waitForShellHydration(page);
+    await expect(byTestId("late-ls-fallback")).toBeVisible();
+    expect((await page.request.get(`${gateUrl}/release`)).ok()).toBe(true);
+  };
+
+  await loadHeld(() => page.goto(gateUrl, { waitUntil: "commit" }));
+  await expect(byTestId("late-ls-value")).toHaveText("empty");
+  await byTestId("late-ls-write").click();
+
+  await loadHeld(() => page.reload({ waitUntil: "commit" }));
+  await expect(byTestId("late-ls-value")).toHaveText("stored-value");
 }
 
 /**

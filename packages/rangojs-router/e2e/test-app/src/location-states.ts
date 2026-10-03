@@ -81,3 +81,7 @@ export interface TxWhenStateShape {
 }
 
 export const TxWhenState = createLocationState<TxWhenStateShape>();
+
+// Persistent slot read by a useLocationState reader inside a Suspense boundary
+// that hydrates after the root (#992).
+export const LateSuspenseState = createLocationState<{ label: string }>();

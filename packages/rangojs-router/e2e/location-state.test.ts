@@ -1,5 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
-import { returnToEvictedEntry } from "@shared/e2e";
+import {
+  expectLateSuspenseReaderHydratesClean,
+  returnToEvictedEntry,
+} from "@shared/e2e";
 import { useFixture, type Fixture } from "./fixture";
 import {
   waitForHydration,
@@ -1442,4 +1445,25 @@ test.describe("location-state.action-ls (production)", () => {
   const f = useFixture({ root: "./e2e/test-app", mode: "build" });
   test.setTimeout(120000);
   actionLocationStateSuite(f);
+});
+
+function lateSuspenseSuite(f: Fixture) {
+  test("reader inside a late-hydrating Suspense boundary hydrates without a mismatch", async ({
+    page,
+  }) => {
+    await expectLateSuspenseReaderHydratesClean(
+      page,
+      f.url("/location-state/late-suspense"),
+    );
+  });
+}
+
+test.describe("location-state.late-suspense", () => {
+  const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
+  lateSuspenseSuite(f);
+});
+
+test.describe("location-state.late-suspense (production)", () => {
+  const f = useFixture({ root: "./e2e/test-app", mode: "build" });
+  lateSuspenseSuite(f);
 });
