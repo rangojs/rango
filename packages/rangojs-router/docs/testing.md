@@ -627,10 +627,19 @@ A reader keeps the state of the entry on screen while a navigation is pending
 `transition` spec writes the entry as `router.push(url, { state })` does and
 commits through production's `commitInTransition`, so the assertion between
 the call and the promise settling sees the page being left with its own state.
-A `popstate` event on `window` is a back/forward onto the entry `history.state`
+A reader that mounts during that window reads the entry on screen too. A
+`popstate` event on `window` is a back/forward onto the entry `history.state`
 holds: readers take that entry as it is (the tree has one location, so no page
-is restored with it). The skill's "State while a navigation is pending" has
-the worked example.
+is restored with it). `router.navigate()` writes history only for `state` or
+`replace: true`; `navigate(url)` and `navigate(url, { replace: false })` leave
+it alone. The skill's "State while a navigation is pending" has the worked
+example.
+
+`renderRoute` listens for `popstate` through the bridge's
+`registerLinkInterception`, the slot production's bridge uses, and both commit
+an entry with `EventController.commitLocationState(entryState)`. A component
+rendered without `renderRoute` has no provider, so `useLocationState` returns
+`undefined` there.
 
 `clearOnReload` does not change what you seed. The option lives in the slot's
 key, not in its value: the definition appends `~r` to whatever name you key it

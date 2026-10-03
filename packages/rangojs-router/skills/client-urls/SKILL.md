@@ -388,7 +388,10 @@ a hard load of the target URL renders the full route.
   `setLocationState` without a redirect is applied when its response
   arrives), and a navigation that is superseded or cancelled leaves none
   behind. A `flash` slot read in the branch is cleared from history once the
-  navigation commits, not before.
+  navigation commits, not before. In the branch the value is the object the
+  navigation passed; from the commit on it is the entry's copy (a structured
+  clone), so an object-valued slot is a new, equal object at that point.
+  Do not key an effect on its identity across the two.
 - **Editing the module in dev:** projections refresh via HMR discovery; if a
   route-shape edit ever serves stale routes, restart dev — and if you are
   developing the router itself, rebuild the router dist before `pnpm dev`

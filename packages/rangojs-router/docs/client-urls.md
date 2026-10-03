@@ -415,6 +415,16 @@ a `flash` slot read in the branch is cleared from history only after the
 commit. Pinned dev+prod in `e2e/client-urls-slow.test.ts` (both apps) and
 `src/client-urls/__tests__/client-root.test.tsx`.
 
+One difference between the two phases is deliberate. The optimistic entry is
+the state object the navigation passed, as `buildHistoryState` assembled it,
+not a copy: no history entry exists yet to hold one, and cloning here would
+turn a value history cannot store into an error before the fetch instead of
+at the commit, where it surfaces today. The committed value is the entry's
+copy (`locationStateSnapshot` structured-clones what is new), so an
+object-valued slot changes identity, not content, at the canonical commit.
+The entry state is built only when the group presents the target
+(`beginClientUrlNavigation`'s `buildState`).
+
 `useReverse` works in groups through its local form: name your group routes
 (`path("/items/:itemId", Item, { name: "item" })`) and the per-module gen
 writer emits a sibling `<module>.gen.ts` route map for the default-exported

@@ -334,7 +334,9 @@ const state = useLocationState(ProductState); // { name; price } | undefined
 </Link>;
 ```
 
-A reader gets an entry's state in the same commit as that entry's page. While a navigation is pending (its loader still streaming, a `transition()` holding the page), the content on screen keeps the state of the entry being left, the way `usePathname` and `useParams` keep its location; back/forward restores an entry's state together with its page. Inside an optimistically presented `clientUrls()` destination the hook returns the state the navigation carries, before the server has answered.
+A reader gets an entry's state in the same commit as that entry's page. While a navigation is pending (its loader still streaming, a `transition()` holding the page), the content on screen keeps the state of the entry being left, including for a reader that mounts during the wait; back/forward restores an entry's state together with its page. Inside an optimistically presented `clientUrls()` destination the hook returns the state the navigation carries, before the server has answered. A navigation that carries no state re-renders no reader; a value keeps its identity when a navigation passes the reader's own value forward or a server action changes another slot.
+
+One limit remains on back/forward (issue #1031): `usePathname()` and `useSearchParams()` change at the `popstate` event, before a restored page that has to be fetched commits, so for that window the page on screen reads the destination's URL from them and its own entry's state from `useLocationState`.
 
 `useLocationState<T>()` with no definition reads plain, untyped state. The same `state` option exists on `router.push()` and `router.replace()`, typed `HistoryState`: typed entries in an array (`[ProductState(value)]`) or plain structured-clone-safe data (`PlainHistoryState`). An entry passed without the array (`state: ProductState(value)`), a definition passed without calling it (`state: [ProductState]`), or an array mixing entries with plain values is a compile error, and in development a runtime error for untyped callers.
 
@@ -342,9 +344,9 @@ Plain state is checked at the top level only: functions, symbols, `Promise`, `We
 
 `createLocationState<T>()` rejects types that cannot survive `history.state`'s structured clone (functions, symbols, React/RSC content, `unknown` fields). The compile error names the failing field and the reason, for example `LocationStateUnsafe<"...", "items[].info.values">` for an `unknown` field inside each element of `items`.
 
-`createLocationState<T>({ flash: true })` makes read-once flash state that clears after it is read, so back/forward will not show it again. Set it from the server with `redirect(url, { state: [...] })` or `ctx.setLocationState(...)`.
+`createLocationState<T>({ flash: true })` makes read-once flash state that is cleared from the history entry after it is read, so back/forward and a reload will not show it again. It stays on screen until the next navigation commits. Set it from the server with `redirect(url, { state: [...] })` or `ctx.setLocationState(...)`.
 
-Static access: `.read()` returns a snapshot (`undefined` during SSR, so call it post-mount, not during the initial render). `.write()` and `.delete()` mutate `history.state` via `replaceState`, are client-only (they throw on the server), and do not trigger `useLocationState` re-renders. `.read(location)` reads the slot from any `{ state }` snapshot instead of the current entry, such as a `transition({ when })` context's `from` / `to`; it works without `window` and never clears flash state.
+Static access: `.read()` returns a snapshot (`undefined` during SSR, so call it post-mount, not during the initial render). `.write()` and `.delete()` mutate `history.state` via `replaceState`, are client-only (they throw on the server), and do not change what `useLocationState` readers show, mounted or mounting later: readers get the written value when the entry is next restored (back/forward to it, or a reload). `.read(location)` reads the slot from any `{ state }` snapshot instead of the current entry, such as a `transition({ when })` context's `from` / `to`; it works without `window` and never clears flash state.
 
 ### invalidateClientCache()
 
