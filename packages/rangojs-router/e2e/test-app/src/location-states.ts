@@ -110,9 +110,9 @@ export interface GridSnapshot {
   page: number;
 }
 
-// #994: the e2e stores what other deploys of this definition would have, under
-// version 1's key and under the key from before it had a version.
-export const VersionedGrid = createLocationState<GridSnapshot>({ version: 2 });
+// #994: no options. The e2e rewrites the app version its entry records, the
+// way an entry an older build wrote would carry another one.
+export const GridState = createLocationState<GridSnapshot>();
 
 // Unguarded on purpose: a slot that is not an object makes it throw, which
 // must read as undefined instead of failing the render.

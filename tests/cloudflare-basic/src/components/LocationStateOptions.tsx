@@ -1,12 +1,13 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { Link, useLocationState } from "@rangojs/router/client";
 import {
   CarriedItems,
+  GridState,
   ListSort,
   ServerPageStamp,
   ValidatedGrid,
-  VersionedGrid,
 } from "../location-states.js";
 
 /**
@@ -64,22 +65,41 @@ export function LoadMoreList({
 }
 
 /**
- * #994 version / validate. Each reader shows `order:page` or "none"; the keys
- * are rendered so the e2e can store what another deploy would have.
+ * #994 state another app version stored, and `validate`. Each reader shows its
+ * value or "none": a typed slot (`grid-value`), plain state (`plain-value`)
+ * and a validated slot (`val-value`, with its key so the e2e can store a value
+ * the guard rejects). `step` is the server-rendered `?step`, so the e2e can
+ * tell which entry is committed.
+ *
+ * Nothing in location state survives a version change, so no slot can signal
+ * that the client snapshots are applied: `grid-mounted` turns "yes" in an
+ * effect, which runs after them.
  */
-export function GridOptionsPanel({ basePath }: { basePath: string }) {
-  const versioned = useLocationState(VersionedGrid);
+export function GridOptionsPanel({
+  basePath,
+  step,
+}: {
+  basePath: string;
+  step: string;
+}) {
+  const grid = useLocationState(GridState);
+  const plain = useLocationState<{ from?: string }>();
   const validated = useLocationState(ValidatedGrid);
-  const control = useLocationState(ListSort);
-  const grid = { order: "desc", page: 3 } as const;
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const snapshot = { order: "desc", page: 3 } as const;
   return (
     <section>
       <p>
-        versioned{" "}
-        <span data-testid="vg-value">
-          {versioned ? `${versioned.order}:${versioned.page}` : "none"}
-        </span>{" "}
-        <code data-testid="vg-key">{VersionedGrid.__rsc_ls_key}</code>
+        step <span data-testid="grid-step">{step}</span>, mounted{" "}
+        <span data-testid="grid-mounted">{mounted ? "yes" : "no"}</span>
+      </p>
+      <p>
+        typed{" "}
+        <span data-testid="grid-value">
+          {grid ? `${grid.order}:${grid.page}` : "none"}
+        </span>
+        , plain <span data-testid="plain-value">{plain?.from ?? "none"}</span>
       </p>
       <p>
         validated{" "}
@@ -88,20 +108,22 @@ export function GridOptionsPanel({ basePath }: { basePath: string }) {
         </span>{" "}
         <code data-testid="val-key">{ValidatedGrid.__rsc_ls_key}</code>
       </p>
-      <p>
-        control{" "}
-        <span data-testid="grid-control">{control?.order ?? "none"}</span>
-      </p>
       <Link
-        to={`${basePath}?written=1`}
-        state={[
-          VersionedGrid(grid),
-          ValidatedGrid(grid),
-          ListSort({ order: "control" }),
-        ]}
+        to={`${basePath}?step=typed`}
+        state={[GridState(snapshot), ValidatedGrid(snapshot)]}
         data-testid="grid-write"
       >
-        Write grid state
+        Write typed state
+      </Link>{" "}
+      <Link
+        to={`${basePath}?step=plain`}
+        state={{ from: "panel" }}
+        data-testid="plain-write"
+      >
+        Write plain state
+      </Link>{" "}
+      <Link to={`${basePath}?step=next`} data-testid="grid-next">
+        Next entry, no state
       </Link>
     </section>
   );

@@ -636,8 +636,8 @@ export async function expectLateSuspenseReaderHydratesClean(
 /**
  * The entry's typed location-state slots, keyed by `<ExportName><suffix>`: the
  * tail of the injected key (`__rsc_ls_<path or hash>#<ExportName>`) that is
- * the same in dev and in a build, plus the suffix the definition's `version` /
- * `clearOnReload` add. Values are stored raw.
+ * the same in dev and in a build, plus the suffix the definition's
+ * `clearOnReload` adds. Values are stored raw.
  */
 async function locationStateSlots(
   page: Page,
@@ -772,75 +772,160 @@ export async function expectClearOnReloadDropsStateOnTraversalLoad(
 }
 
 /**
- * #994 `version` and `validate` in a real build: what the plugin-injected key
- * becomes, and that a reload reads nothing another deploy stored.
- *
- * The fixture (both apps) has a `version: 2` reader (`vg-value`), a `validate`
- * reader (`val-value`), each definition's key (`vg-key`, `val-key`), and a
- * `grid-write` Link that writes both plus a slot without options
- * (`grid-control`, awaited after each reload for the reason given on
- * expectLoadMorePageTwoAsServerRendered).
+ * Rewrites the app version the current entry records for its location state
+ * (`__rsc_lsv`), the way an entry written by another build carries another
+ * one. `undefined` removes the record: an entry from a release that did not
+ * write one. This is how the bodies below get "a newer build is now running"
+ * without building twice.
  */
-export async function expectStaleLocationStateReadsAsNone(
+async function recordEntryVersion(
+  page: Page,
+  version: string | undefined,
+): Promise<void> {
+  await page.evaluate((recorded) => {
+    const { __rsc_lsv: _was, ...rest } = window.history.state;
+    window.history.replaceState(
+      recorded === undefined ? rest : { ...rest, __rsc_lsv: recorded },
+      "",
+    );
+  }, version);
+}
+
+/**
+ * Reloads the #994 grid fixture (both apps) and waits until its readers hold
+ * their client snapshots. The server HTML says "none" for every reader, so
+ * "none" alone would pass before the client read anything; the fixture's
+ * `grid-mounted` turns "yes" in an effect, after the snapshots are applied.
+ */
+async function reloadGridFixture(page: Page): Promise<void> {
+  await page.reload();
+  await waitForShellHydration(page);
+  await expect(byTestId(page, "grid-mounted")).toHaveText("yes");
+}
+
+/**
+ * #994: location state is versioned by the app version. A document load keeps
+ * the state its own version wrote and reads nothing another version wrote,
+ * typed or plain, with a clean hydration.
+ *
+ * The fixture (both apps: `<url>?step=...`) has a typed reader (`grid-value`,
+ * written by `grid-write`) and a plain-state reader (`plain-value`, written by
+ * `plain-write`).
+ */
+export async function expectOtherVersionLocationStateDroppedOnLoad(
+  page: Page,
+  url: string,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+
+  await page.goto(url);
+  await waitForShellHydration(page);
+
+  for (const [write, readerId, value] of [
+    ["grid-write", "grid-value", "desc:3"],
+    ["plain-write", "plain-value", "panel"],
+  ] as const) {
+    const reader = byTestId(page, readerId);
+    await byTestId(page, write).click();
+    await expect(reader).toHaveText(value);
+    // The running app recorded its version on the entry it wrote.
+    const recorded = await page.evaluate(
+      () => (window.history.state as { __rsc_lsv?: unknown }).__rsc_lsv,
+    );
+    expect(recorded).toEqual(expect.stringMatching(/./));
+
+    await reloadGridFixture(page);
+    await expect(reader).toHaveText(value);
+
+    for (const otherVersion of ["another-build", undefined]) {
+      await recordEntryVersion(page, otherVersion);
+      await reloadGridFixture(page);
+      await expect(reader).toHaveText("none");
+    }
+  }
+
+  // A write under the running version is read again.
+  await byTestId(page, "grid-write").click();
+  await expect(byTestId(page, "grid-value")).toHaveText("desc:3");
+}
+
+/**
+ * #994: the same rule without a document load. After a deploy and a reload the
+ * session history still holds entries the older build wrote; back/forward
+ * reaches them through popstate.
+ *
+ * `grid-step` is the server-rendered `?step`: once it names the entry, the
+ * traversal is committed and the readers have handled its popstate.
+ */
+export async function expectOtherVersionLocationStateDroppedOnTraversal(
+  page: Page,
+  url: string,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const grid = byTestId(page, "grid-value");
+  const step = byTestId(page, "grid-step");
+  const leaveAndComeBack = async (): Promise<void> => {
+    await byTestId(page, "grid-next").click();
+    await expect(step).toHaveText("next");
+    await expect(grid).toHaveText("none");
+    await page.goBack();
+    await expect(step).toHaveText("typed");
+  };
+
+  await page.goto(url);
+  await waitForShellHydration(page);
+  await byTestId(page, "grid-write").click();
+  await expect(grid).toHaveText("desc:3");
+  await markDocument(page);
+
+  // Its own version: back/forward applies the entry's state, as always.
+  await leaveAndComeBack();
+  await expect(grid).toHaveText("desc:3");
+
+  await recordEntryVersion(page, "another-build");
+  await leaveAndComeBack();
+  expect(await isMarkedDocument(page)).toBe(true);
+  await expect(grid).toHaveText("none");
+
+  await byTestId(page, "grid-write").click();
+  await expect(grid).toHaveText("desc:3");
+}
+
+/**
+ * #994 `validate` in a real build: a slot whose value the guard rejects (here
+ * it throws) reads as no state after a reload, without failing the render.
+ *
+ * The fixture's `grid-write` writes the validated slot (`val-value`, key in
+ * `val-key`) and an unvalidated one in the same entry (`grid-value`), which
+ * shows that the entry itself is still read.
+ */
+export async function expectRejectedLocationStateReadsAsNone(
   page: Page,
   url: string,
 ): Promise<void> {
   using _ = guardHydrationErrors(page);
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
-  const versioned = byTestId(page, "vg-value");
   const validated = byTestId(page, "val-value");
-  const reload = async (): Promise<void> => {
-    await page.reload();
-    await waitForShellHydration(page);
-    await expect(byTestId(page, "grid-control")).toHaveText("control");
-  };
-  const grid = { order: "desc", page: 3 };
 
   await page.goto(url);
   await waitForShellHydration(page);
   await byTestId(page, "grid-write").click();
-  await expect(versioned).toHaveText("desc:3");
-  await expect(validated).toHaveText("desc:3");
-  expect(await locationStateSlots(page)).toEqual({
-    "VersionedGrid~v2": grid,
-    ValidatedGrid: grid,
-    ListSort: { order: "control" },
-  });
-
-  // The deploy that wrote them reads them again after a reload.
-  await reload();
-  await expect(versioned).toHaveText("desc:3");
   await expect(validated).toHaveText("desc:3");
 
-  // What other deploys of the versioned definition stored: version 1, and
-  // the plain key from before it had a version. The validated slot gets a
-  // value its guard throws on.
-  const versionedKey = (await byTestId(page, "vg-key").textContent())!;
-  const validatedKey = (await byTestId(page, "val-key").textContent())!;
-  await page.evaluate(
-    ([ownKey, throwingKey]) => {
-      const { [ownKey]: _own, ...rest } = window.history.state;
-      window.history.replaceState(
-        {
-          ...rest,
-          [ownKey.replace("~v2", "~v1")]: { sort: "desc", page: 3 },
-          [ownKey.replace("~v2", "")]: { sort: "desc", page: 3 },
-          [throwingKey]: null,
-        },
-        "",
-      );
-    },
-    [versionedKey, validatedKey] as const,
-  );
-  await reload();
-  await expect(versioned).toHaveText("none");
+  const key = (await byTestId(page, "val-key").textContent())!;
+  await page.evaluate((validatedKey) => {
+    window.history.replaceState(
+      { ...window.history.state, [validatedKey]: null },
+      "",
+    );
+  }, key);
+  await reloadGridFixture(page);
+  await expect(byTestId(page, "grid-value")).toHaveText("desc:3");
   await expect(validated).toHaveText("none");
   expect(pageErrors).toEqual([]);
 
-  // The next write lands under the current key and is read again.
   await byTestId(page, "grid-write").click();
-  await expect(versioned).toHaveText("desc:3");
   await expect(validated).toHaveText("desc:3");
 }
 

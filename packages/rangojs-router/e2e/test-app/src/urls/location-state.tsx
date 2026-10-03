@@ -332,10 +332,16 @@ export const locationStatePatterns = urls(({ path, middleware }) => [
     { name: "loadMore" },
   ),
 
-  // #994 version / validate: readers of a versioned and a validated slot.
+  // #994 app version / validate: readers of a typed slot, plain state and a
+  // validated slot.
   path(
     "/grid-options",
-    () => <GridOptionsPanel basePath="/location-state/grid-options" />,
+    (ctx) => (
+      <GridOptionsPanel
+        basePath="/location-state/grid-options"
+        step={ctx.searchParams.get("step") ?? "start"}
+      />
+    ),
     { name: "gridOptions" },
   ),
 

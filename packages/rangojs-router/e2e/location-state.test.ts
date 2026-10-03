@@ -3,7 +3,9 @@ import {
   expectClearOnReloadDropsCarriedState,
   expectClearOnReloadDropsStateOnTraversalLoad,
   expectLateSuspenseReaderHydratesClean,
-  expectStaleLocationStateReadsAsNone,
+  expectOtherVersionLocationStateDroppedOnLoad,
+  expectOtherVersionLocationStateDroppedOnTraversal,
+  expectRejectedLocationStateReadsAsNone,
   returnToEvictedEntry,
 } from "@shared/e2e";
 import { useFixture, type Fixture } from "./fixture";
@@ -1471,7 +1473,8 @@ test.describe("location-state.late-suspense (production)", () => {
   lateSuspenseSuite(f);
 });
 
-// #994: createLocationState({ clearOnReload }), ({ version }), ({ validate }).
+// #994: createLocationState({ clearOnReload }), ({ validate }), and the app
+// version every entry's location state is recorded under.
 function optionsSuite(f: Fixture) {
   test("clearOnReload state is carried by a client navigation and dropped by a reload", async ({
     page,
@@ -1491,10 +1494,28 @@ function optionsSuite(f: Fixture) {
     );
   });
 
-  test("a versioned or validated slot another deploy stored reads as no state after a reload", async ({
+  test("state another app version stored reads as no state after a reload, its own is kept", async ({
     page,
   }) => {
-    await expectStaleLocationStateReadsAsNone(
+    await expectOtherVersionLocationStateDroppedOnLoad(
+      page,
+      f.url("/location-state/grid-options"),
+    );
+  });
+
+  test("back/forward to an entry another app version wrote reads no state", async ({
+    page,
+  }) => {
+    await expectOtherVersionLocationStateDroppedOnTraversal(
+      page,
+      f.url("/location-state/grid-options"),
+    );
+  });
+
+  test("a slot whose value validate rejects reads as no state after a reload", async ({
+    page,
+  }) => {
+    await expectRejectedLocationStateReadsAsNone(
       page,
       f.url("/location-state/grid-options"),
     );

@@ -1,19 +1,19 @@
 // @vitest-environment happy-dom
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { runMiddleware, withLocationStateKey } from "@rangojs/router/testing";
 import { renderRoute } from "@rangojs/router/testing/dom";
-import { createLocationState, type Middleware } from "@rangojs/router";
+import type { Middleware } from "@rangojs/router";
 import {
   GridOptionsPanel,
   LoadMoreList,
 } from "../src/components/LocationStateOptions.js";
 import {
   CarriedItems,
+  GridState,
   ListSort,
   ServerPageStamp,
   ValidatedGrid,
-  VersionedGrid,
   type GridSnapshot,
 } from "../src/location-states.js";
 
@@ -22,14 +22,14 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-// Dogfood of the createLocationState options (#994) against cloudflare-basic's
-// REAL components and definitions, through the published testing entries. No
-// Vite plugin here, so each definition is keyed by name; a definition with
-// `version` / `clearOnReload` appends its suffix to that name.
+// Dogfood of location state's options and its app version (#994) against
+// cloudflare-basic's REAL components and definitions, through the published
+// testing entries. No Vite plugin here, so each definition is keyed by name; a
+// definition with `clearOnReload` appends its suffix to that name.
 withLocationStateKey(CarriedItems, "CarriedItems");
 withLocationStateKey(ListSort, "ListSort");
 withLocationStateKey(ServerPageStamp, "ServerPageStamp");
-withLocationStateKey(VersionedGrid, "VersionedGrid");
+withLocationStateKey(GridState, "GridState");
 withLocationStateKey(ValidatedGrid, "ValidatedGrid");
 
 const carried = ["p1-1", "p1-2", "p1-3"];
@@ -78,61 +78,83 @@ it("clearOnReload: a client mount shows the carried items, a document load does 
   );
 });
 
-it("version and validate: another deploy's state, and a value validate throws on, read as none", async () => {
-  // What version 1 of src/location-states.ts#VersionedGrid stored.
-  const VersionedGridV1 = withLocationStateKey(
-    createLocationState<{ sort: string; page: number }>({ version: 1 }),
-    "VersionedGrid",
-  );
-  const error = vi.spyOn(console, "error").mockImplementation(() => {});
-  const routes = [
-    {
-      path: "/location-state-grid-options",
-      Component: () => (
-        <GridOptionsPanel basePath="/location-state-grid-options" />
-      ),
-    },
-  ];
+const gridRoutes = [
+  {
+    path: "/location-state-grid-options",
+    Component: () => (
+      <GridOptionsPanel basePath="/location-state-grid-options" step="start" />
+    ),
+  },
+];
 
-  const current = await renderRoute(routes, {
-    locationState: [
-      [VersionedGrid, grid],
-      [ValidatedGrid, grid],
-    ],
+// The app version location state is recorded under never shows up in a test:
+// a seed is a definition and a value, and it reads back on a mount and on a
+// document load.
+it("the app version: seeds read back without one; an entry another version wrote does not", async () => {
+  const seeds = [[GridState, grid]] as const;
+  const mounted = await renderRoute(gridRoutes, { locationState: seeds });
+  expect(mounted.getByTestId("grid-value").textContent).toBe("desc:3");
+  expect(window.history.state).toEqual({ __rsc_ls_GridState: grid });
+  mounted.unmount();
+
+  const loaded = await renderRoute(gridRoutes, {
+    hydrate: true,
+    locationState: seeds,
   });
-  expect(current.getByTestId("vg-value").textContent).toBe("desc:3");
-  expect(current.getByTestId("val-value").textContent).toBe("desc:3");
-  current.unmount();
+  expect(loaded.serverHtml).toContain(">none<");
+  expect(loaded.recoverableErrors).toEqual([]);
+  expect(loaded.getByTestId("grid-value").textContent).toBe("desc:3");
 
-  const stale = await renderRoute(routes, {
+  // An entry as a deployed build leaves it: back/forward onto it reads nothing.
+  await act(async () => {
+    window.history.replaceState(
+      { __rsc_ls_GridState: grid, state: { from: "panel" }, __rsc_lsv: "b1" },
+      "",
+    );
+    window.dispatchEvent(new Event("popstate"));
+  });
+  expect(loaded.getByTestId("grid-value").textContent).toBe("none");
+  expect(loaded.getByTestId("plain-value").textContent).toBe("none");
+});
+
+it("validate: a value the guard throws on reads as none", async () => {
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+
+  const accepted = await renderRoute(gridRoutes, {
+    locationState: [[ValidatedGrid, grid]],
+  });
+  expect(accepted.getByTestId("val-value").textContent).toBe("desc:3");
+  accepted.unmount();
+
+  const rejected = await renderRoute(gridRoutes, {
     hydrate: true,
     locationState: [
-      [VersionedGridV1, { sort: "desc", page: 3 }],
+      [GridState, grid],
       [ValidatedGrid, null],
     ],
   });
-  expect(stale.recoverableErrors).toEqual([]);
-  expect(stale.getByTestId("vg-value").textContent).toBe("none");
-  expect(stale.getByTestId("val-value").textContent).toBe("none");
+  expect(rejected.recoverableErrors).toEqual([]);
+  expect(rejected.getByTestId("grid-value").textContent).toBe("desc:3");
+  expect(rejected.getByTestId("val-value").textContent).toBe("none");
   expect(error).toHaveBeenCalledWith(
     expect.stringContaining('"__rsc_ls_ValidatedGrid" threw'),
     expect.any(TypeError),
   );
 });
 
-it("a middleware's state is keyed by the definition's key, options included", async () => {
+it("a middleware's state is keyed by the definition's key and carries no version", async () => {
   const remember: Middleware = async (ctx, next) => {
-    ctx.setLocationState([VersionedGrid(grid), CarriedItems(carried)]);
+    ctx.setLocationState([GridState(grid), CarriedItems(carried)]);
     return next();
   };
   const { locationState } = await runMiddleware(remember, { request: "/" });
 
-  expect(locationState).toEqual({
-    "__rsc_ls_VersionedGrid~v2": grid,
+  expect(locationState).toStrictEqual({
+    __rsc_ls_GridState: grid,
     "__rsc_ls_CarriedItems~r": carried,
   });
-  expect(locationState).toEqual({
-    [VersionedGrid.__rsc_ls_key]: grid,
+  expect(locationState).toStrictEqual({
+    [GridState.__rsc_ls_key]: grid,
     [CarriedItems.__rsc_ls_key]: carried,
   });
 });

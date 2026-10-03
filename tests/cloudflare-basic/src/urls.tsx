@@ -2227,11 +2227,16 @@ export const urlpatterns = urls(
           { name: "locationStateLoadMore" },
         ),
 
-        // #994 version / validate: readers of a versioned and a validated
-        // slot.
+        // #994 app version / validate: readers of a typed slot, plain state
+        // and a validated slot.
         path(
           "/location-state-grid-options",
-          () => <GridOptionsPanel basePath="/location-state-grid-options" />,
+          (ctx) => (
+            <GridOptionsPanel
+              basePath="/location-state-grid-options"
+              step={ctx.searchParams.get("step") ?? "start"}
+            />
+          ),
           { name: "locationStateGridOptions" },
         ),
 
