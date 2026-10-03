@@ -38,12 +38,31 @@ export interface ResolveNavigationDeps {
  * never produce a partial match, so the replay path must decide
  * `no-navigation-context` BEFORE spending shell-store reads — the two
  * predicates drifting apart would misattribute the bypass again.
+ *
+ * `requestOrigin` is the origin pathname matching uses (`url.origin`), which
+ * may not be `request.url`'s. `X-RSC-Router-Client-Path` is returned as sent.
+ * A Referer counts only when it resolves against that origin and stays there.
+ * A cross-origin Referer is dropped: resolveNavigation matches only the
+ * pathname, so a foreign URL would be treated as a route on this app. A value
+ * that does not parse is no context either.
  */
-export function getNavigationContextHeader(request: Request): string | null {
-  return (
-    requestHeaders(request).get("X-RSC-Router-Client-Path") ||
-    requestHeaders(request).get("Referer")
-  );
+export function getNavigationContextHeader(
+  request: Request,
+  requestOrigin: string,
+): string | null {
+  const headers = requestHeaders(request);
+  const clientPath = headers.get("X-RSC-Router-Client-Path");
+  if (clientPath) return clientPath;
+
+  const referer = headers.get("Referer");
+  if (!referer) return null;
+
+  try {
+    if (new URL(referer, requestOrigin).origin !== requestOrigin) return null;
+  } catch {
+    return null;
+  }
+  return referer;
 }
 
 /**
@@ -84,7 +103,7 @@ export async function resolveNavigation(
   const clientSegmentIds =
     url.searchParams.get("_rsc_segments")?.split(",").filter(Boolean) || [];
   const stale = url.searchParams.get("_rsc_stale") === "true";
-  const previousUrl = getNavigationContextHeader(request);
+  const previousUrl = getNavigationContextHeader(request, url.origin);
   const interceptSourceUrl = getInterceptSourceHeader(request);
   const isHmr = !!requestHeaders(request).get("X-RSC-HMR");
 
