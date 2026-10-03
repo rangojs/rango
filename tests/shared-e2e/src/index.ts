@@ -1,4 +1,9 @@
-import { expect, type ConsoleMessage, type Page } from "@playwright/test";
+import {
+  expect,
+  type ConsoleMessage,
+  type Locator,
+  type Page,
+} from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { utimesSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -409,17 +414,36 @@ export async function expectClientLinkNavigation(
   linkTestId: string,
   pathname: string,
 ): Promise<void> {
-  await page.evaluate(() => {
-    (window as unknown as { __noReload?: boolean }).__noReload = true;
-  });
+  await markDocument(page);
   await page.getByTestId(linkTestId).first().click();
   await page.waitForURL((url) => url.pathname === pathname);
   expect(
-    await page.evaluate(
-      () => (window as unknown as { __noReload?: boolean }).__noReload,
-    ),
+    await isMarkedDocument(page),
     "client navigation kept the document (no reload)",
   ).toBe(true);
+}
+
+function byTestId(page: Page, id: string): Locator {
+  return page.locator(`[data-testid="${id}"]`);
+}
+
+type MarkedWindow = { __e2eMarkedDocument?: boolean };
+
+/**
+ * A window global does not survive a document load, so the pair tells a
+ * client navigation (still marked) from a reload or a back/forward that
+ * loaded the document (no longer marked).
+ */
+async function markDocument(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    (window as unknown as MarkedWindow).__e2eMarkedDocument = true;
+  });
+}
+
+async function isMarkedDocument(page: Page): Promise<boolean> {
+  return page.evaluate(
+    () => (window as unknown as MarkedWindow).__e2eMarkedDocument === true,
+  );
 }
 
 /**
@@ -484,9 +508,7 @@ export async function expectStreamedBoundariesAdopted(
   options: { url: string; mode: "dev" | "build"; contentTestIds: string[] },
 ): Promise<void> {
   const { url, mode, contentTestIds } = options;
-  const content = contentTestIds.map((id) =>
-    page.locator(`[data-testid="${id}"]`),
-  );
+  const content = contentTestIds.map((id) => byTestId(page, id));
 
   if (mode === "dev") {
     // Warm the module graph so hydration reliably beats the loaders; a build
@@ -595,29 +617,37 @@ export async function expectLateSuspenseReaderHydratesClean(
   url: string,
 ): Promise<void> {
   using _ = guardHydrationErrors(page);
-  const byTestId = (id: string) => page.locator(`[data-testid="${id}"]`);
   const gateUrl = `${url}/${randomUUID()}`;
   const loadHeld = async (load: () => Promise<unknown>): Promise<void> => {
     await load();
     await waitForShellHydration(page);
-    await expect(byTestId("late-ls-fallback")).toBeVisible();
+    await expect(byTestId(page, "late-ls-fallback")).toBeVisible();
     expect((await page.request.get(`${gateUrl}/release`)).ok()).toBe(true);
   };
 
   await loadHeld(() => page.goto(gateUrl, { waitUntil: "commit" }));
-  await expect(byTestId("late-ls-value")).toHaveText("empty");
-  await byTestId("late-ls-write").click();
+  await expect(byTestId(page, "late-ls-value")).toHaveText("empty");
+  await byTestId(page, "late-ls-write").click();
 
   await loadHeld(() => page.reload({ waitUntil: "commit" }));
-  await expect(byTestId("late-ls-value")).toHaveText("stored-value");
+  await expect(byTestId(page, "late-ls-value")).toHaveText("stored-value");
 }
 
-/** The typed location-state slots (`__rsc_ls_*`) of the current entry. */
-async function locationStateSlots(page: Page): Promise<unknown[]> {
+/**
+ * The entry's typed location-state slots, keyed by `<ExportName><suffix>`: the
+ * tail of the injected key (`__rsc_ls_<path or hash>#<ExportName>`) that is
+ * the same in dev and in a build, plus the suffix the definition's `version` /
+ * `clearOnReload` add. Values are stored raw.
+ */
+async function locationStateSlots(
+  page: Page,
+): Promise<Record<string, unknown>> {
   return page.evaluate(() =>
-    Object.entries((window.history.state ?? {}) as Record<string, unknown>)
-      .filter(([key]) => key.startsWith("__rsc_ls_"))
-      .map(([, slot]) => slot),
+    Object.fromEntries(
+      Object.entries((window.history.state ?? {}) as Record<string, unknown>)
+        .filter(([key]) => key.startsWith("__rsc_ls_"))
+        .map(([key, value]) => [key.slice(key.lastIndexOf("#") + 1), value]),
+    ),
   );
 }
 
@@ -625,28 +655,18 @@ const loadMoreItems = (pageNumber: number): string[] =>
   [1, 2, 3].map((item) => `p${pageNumber}-${item}`);
 
 /**
- * #994 `createLocationState({ clearOnReload: true })` on a "load more" page.
+ * Opening steps of the #994 "load more" bodies. The fixture (both apps:
+ * `<url>?page=N`) renders page N's three items on the server. Its `lm-more`
+ * Link goes to page N+1 carrying every item on screen as a `clearOnReload`
+ * slot, plus a slot without options (`lm-sort`). The route's handler sets a
+ * `clearOnReload` slot of its own on every request (`lm-server-page`),
+ * document loads included.
  *
- * The fixture (both apps: `<url>?page=N`) renders page N's three items on the
- * server. Its `lm-more` Link goes to page N+1 carrying every item on screen
- * as a `clearOnReload` slot, plus a slot without options (`lm-sort`). The
- * route's handler also sets a `clearOnReload` slot of its own on every
- * request (`lm-server-page`), document loads included.
- *
- * The server HTML never contains carried items, so "not shown after a
- * reload" would pass before the client applied anything. Each document load
- * therefore waits for `lm-sort`, which comes from `history.state` too: once
- * it shows, the client snapshots are in.
+ * Loads page 1, then navigates to page 2 on the client. Leaves the page on an
+ * entry holding all three slots.
  */
-export async function expectClearOnReloadDropsCarriedState(
-  page: Page,
-  url: string,
-): Promise<void> {
-  using _ = guardHydrationErrors(page);
-  const byTestId = (id: string) => page.locator(`[data-testid="${id}"]`);
-  const items = byTestId("lm-items").locator("li");
-  const carried = byTestId("lm-carried-count");
-  const serverPage = byTestId("lm-server-page");
+async function openLoadMorePageTwo(page: Page, url: string): Promise<void> {
+  const items = byTestId(page, "lm-items").locator("li");
 
   // A document response carries no location state: what the handler set for
   // this load does not reach history.state, so start-up has nothing of the
@@ -654,53 +674,71 @@ export async function expectClearOnReloadDropsCarriedState(
   await page.goto(`${url}?page=1`);
   await waitForShellHydration(page);
   await expect(items).toHaveText(loadMoreItems(1));
-  await expect(carried).toHaveText("0");
-  await expect(serverPage).toHaveText("none");
-  expect(await locationStateSlots(page)).toEqual([]);
+  await expect(byTestId(page, "lm-server-page")).toHaveText("none");
+  expect(await locationStateSlots(page)).toEqual({});
 
   // A client navigation shows the carried items above the new page's, and
   // delivers the state the handler set for it.
-  await byTestId("lm-more").click();
+  await byTestId(page, "lm-more").click();
   await expect(page).toHaveURL(`${url}?page=2`);
   await expect(items).toHaveText([...loadMoreItems(1), ...loadMoreItems(2)]);
-  await expect(carried).toHaveText("3");
-  await expect(serverPage).toHaveText("2");
-  const stored = await locationStateSlots(page);
-  expect(stored).toHaveLength(3);
-  expect(stored).toContainEqual({
-    __rsc_ls_env: 1,
-    clearOnReload: true,
-    value: loadMoreItems(1),
+  await expect(byTestId(page, "lm-server-page")).toHaveText("2");
+  expect(await locationStateSlots(page)).toEqual({
+    "CarriedItems~r": loadMoreItems(1),
+    "ServerPageStamp~r": { page: 2 },
+    ListSort: { order: "asc" },
   });
-  expect(stored).toContainEqual({
-    __rsc_ls_env: 1,
-    clearOnReload: true,
-    value: { page: 2 },
-  });
-  expect(stored).toContainEqual({ order: "asc" });
+}
 
-  // A document load of the entry: only what the server rendered, and both
-  // marked slots are gone from history.state. The slot without options
-  // survives.
-  await page.reload();
+/**
+ * What a document load of that entry must leave: the page as the server
+ * rendered it, both `~r` slots gone from history.state, the slot without
+ * options still applied.
+ *
+ * The server HTML never contains carried items, so "not shown" would pass
+ * before the client applied anything. `lm-sort` comes from history.state too:
+ * once it shows, the client snapshots are in.
+ */
+async function expectLoadMorePageTwoAsServerRendered(
+  page: Page,
+): Promise<void> {
   await waitForShellHydration(page);
-  await expect(byTestId("lm-sort")).toHaveText("asc");
-  await expect(carried).toHaveText("0");
-  await expect(serverPage).toHaveText("none");
-  await expect(items).toHaveText(loadMoreItems(2));
-  expect(await locationStateSlots(page)).toEqual([{ order: "asc" }]);
+  await expect(byTestId(page, "lm-sort")).toHaveText("asc");
+  await expect(byTestId(page, "lm-carried-count")).toHaveText("0");
+  await expect(byTestId(page, "lm-server-page")).toHaveText("none");
+  await expect(byTestId(page, "lm-items").locator("li")).toHaveText(
+    loadMoreItems(2),
+  );
+  expect(await locationStateSlots(page)).toEqual({
+    ListSort: { order: "asc" },
+  });
+}
 
-  // The next client navigation carries state again, the server's included.
-  await byTestId("lm-more").click();
+/**
+ * #994 `createLocationState({ clearOnReload: true })`: carried by a client
+ * navigation, dropped by a reload, carried again by the next navigation.
+ */
+export async function expectClearOnReloadDropsCarriedState(
+  page: Page,
+  url: string,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const items = byTestId(page, "lm-items").locator("li");
+  const carried = byTestId(page, "lm-carried-count");
+
+  await openLoadMorePageTwo(page, url);
+  await page.reload();
+  await expectLoadMorePageTwoAsServerRendered(page);
+
+  await byTestId(page, "lm-more").click();
   await expect(page).toHaveURL(`${url}?page=3`);
   await expect(items).toHaveText([...loadMoreItems(2), ...loadMoreItems(3)]);
-  await expect(carried).toHaveText("3");
-  await expect(serverPage).toHaveText("3");
+  await expect(byTestId(page, "lm-server-page")).toHaveText("3");
 
   // Back inside the running app: the cleared entry is not resurrected.
   await page.goBack();
   await expect(page).toHaveURL(`${url}?page=2`);
-  await expect(byTestId("lm-page")).toHaveText("2");
+  await expect(byTestId(page, "lm-page")).toHaveText("2");
   await expect(carried).toHaveText("0");
   await expect(items).toHaveText(loadMoreItems(2));
 
@@ -713,53 +751,35 @@ export async function expectClearOnReloadDropsCarriedState(
 
 /**
  * #994 `clearOnReload` when a back/forward loads the document from the server
- * instead of a reload (same fixture as expectClearOnReloadDropsCarriedState).
- * The window marker proves the return was a new document, not a back/forward
- * cache restore, which keeps its state and is not this case.
+ * instead of a reload. A back/forward cache restore would keep the marked
+ * document and its state, and is not this case.
  */
 export async function expectClearOnReloadDropsStateOnTraversalLoad(
   page: Page,
   url: string,
 ): Promise<void> {
   using _ = guardHydrationErrors(page);
-  const byTestId = (id: string) => page.locator(`[data-testid="${id}"]`);
-  const carried = byTestId("lm-carried-count");
 
-  await page.goto(`${url}?page=1`);
-  await waitForShellHydration(page);
-  await byTestId("lm-more").click();
-  await expect(page).toHaveURL(`${url}?page=2`);
-  await expect(carried).toHaveText("3");
-  await page.evaluate(() => {
-    (window as { __lsLeftDocument?: boolean }).__lsLeftDocument = true;
-  });
-
+  await openLoadMorePageTwo(page, url);
+  await markDocument(page);
   await page.goto(`${url}?page=9`);
   await waitForShellHydration(page);
   await page.goBack();
   await expect(page).toHaveURL(`${url}?page=2`);
-  await waitForShellHydration(page);
-  expect(await page.evaluate(() => "__lsLeftDocument" in window)).toBe(false);
+  expect(await isMarkedDocument(page)).toBe(false);
 
-  await expect(byTestId("lm-sort")).toHaveText("asc");
-  await expect(carried).toHaveText("0");
-  await expect(byTestId("lm-server-page")).toHaveText("none");
-  await expect(byTestId("lm-items").locator("li")).toHaveText(loadMoreItems(2));
-  expect(await locationStateSlots(page)).toEqual([{ order: "asc" }]);
+  await expectLoadMorePageTwoAsServerRendered(page);
 }
 
 /**
- * #994 `version` and `validate`: a slot another deploy stored is read as no
- * state after a reload.
+ * #994 `version` and `validate` in a real build: what the plugin-injected key
+ * becomes, and that a reload reads nothing another deploy stored.
  *
- * The fixture (both apps) has a `version: 2` reader (`vg-value`), a
- * `validate` reader (`val-value`), each definition's slot key (`vg-key`,
- * `val-key`), and a `grid-write` Link that writes both plus a slot without
- * options (`grid-control`). "Another deploy wrote this" is modelled by
- * rewriting the slot under the same key in `history.state`: the key is the
- * file path and export name, so it is what a previous build of the same
- * definition wrote to. `grid-control` gates each reload for the reason given
- * on expectClearOnReloadDropsCarriedState.
+ * The fixture (both apps) has a `version: 2` reader (`vg-value`), a `validate`
+ * reader (`val-value`), each definition's key (`vg-key`, `val-key`), and a
+ * `grid-write` Link that writes both plus a slot without options
+ * (`grid-control`, awaited after each reload for the reason given on
+ * expectLoadMorePageTwoAsServerRendered).
  */
 export async function expectStaleLocationStateReadsAsNone(
   page: Page,
@@ -768,84 +788,60 @@ export async function expectStaleLocationStateReadsAsNone(
   using _ = guardHydrationErrors(page);
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
-  const byTestId = (id: string) => page.locator(`[data-testid="${id}"]`);
-  const versioned = byTestId("vg-value");
-  const validated = byTestId("val-value");
+  const versioned = byTestId(page, "vg-value");
+  const validated = byTestId(page, "val-value");
   const reload = async (): Promise<void> => {
     await page.reload();
     await waitForShellHydration(page);
-    await expect(byTestId("grid-control")).toHaveText("control");
+    await expect(byTestId(page, "grid-control")).toHaveText("control");
   };
-  const storeSlot = (key: string, slot: unknown): Promise<void> =>
-    page.evaluate(
-      ([slotKey, value]) =>
-        window.history.replaceState(
-          { ...window.history.state, [slotKey as string]: value },
-          "",
-        ),
-      [key, slot] as const,
-    );
+  const grid = { order: "desc", page: 3 };
 
   await page.goto(url);
   await waitForShellHydration(page);
-  await expect(versioned).toHaveText("none");
-  await expect(validated).toHaveText("none");
-
-  await byTestId("grid-write").click();
-  await expect(page).toHaveURL(`${url}?written=1`);
+  await byTestId(page, "grid-write").click();
   await expect(versioned).toHaveText("desc:3");
   await expect(validated).toHaveText("desc:3");
-
-  const versionedKey = (await byTestId("vg-key").textContent())!;
-  const validatedKey = (await byTestId("val-key").textContent())!;
-  const grid = { order: "desc", page: 3 };
-  const state = (await page.evaluate(() => window.history.state)) as Record<
-    string,
-    unknown
-  >;
-  expect(state[versionedKey]).toEqual({ __rsc_ls_env: 1, v: 2, value: grid });
-  // validate alone does not change what is stored.
-  expect(state[validatedKey]).toEqual(grid);
+  expect(await locationStateSlots(page)).toEqual({
+    "VersionedGrid~v2": grid,
+    ValidatedGrid: grid,
+    ListSort: { order: "control" },
+  });
 
   // The deploy that wrote them reads them again after a reload.
   await reload();
   await expect(versioned).toHaveText("desc:3");
   await expect(validated).toHaveText("desc:3");
 
-  const staleVersioned: Array<[label: string, slot: unknown]> = [
-    [
-      "version 1 of the definition",
-      { __rsc_ls_env: 1, v: 1, value: { sort: "desc", page: 3 } },
-    ],
-    ["a value stored before the definition had a version", grid],
-    ["a raw value that is shaped { v, value }", { v: 2, value: grid }],
-  ];
-  for (const [label, slot] of staleVersioned) {
-    await storeSlot(versionedKey, slot);
-    await reload();
-    await expect(versioned, label).toHaveText("none");
-    await expect(validated).toHaveText("desc:3");
-  }
+  // What other deploys of the versioned definition stored: version 1, and
+  // the plain key from before it had a version. The validated slot gets a
+  // value its guard throws on.
+  const versionedKey = (await byTestId(page, "vg-key").textContent())!;
+  const validatedKey = (await byTestId(page, "val-key").textContent())!;
+  await page.evaluate(
+    ([ownKey, throwingKey]) => {
+      const { [ownKey]: _own, ...rest } = window.history.state;
+      window.history.replaceState(
+        {
+          ...rest,
+          [ownKey.replace("~v2", "~v1")]: { sort: "desc", page: 3 },
+          [ownKey.replace("~v2", "")]: { sort: "desc", page: 3 },
+          [throwingKey]: null,
+        },
+        "",
+      );
+    },
+    [versionedKey, validatedKey] as const,
+  );
+  await reload();
+  await expect(versioned).toHaveText("none");
+  await expect(validated).toHaveText("none");
+  expect(pageErrors).toEqual([]);
 
-  const staleValidated: Array<[label: string, slot: unknown]> = [
-    ["a value validate rejects", { sort: "desc", page: 3 }],
-    ["a value validate throws on", null],
-    [
-      "a slot a versioned definition wrote",
-      { __rsc_ls_env: 1, v: 2, value: grid },
-    ],
-  ];
-  for (const [label, slot] of staleValidated) {
-    await storeSlot(validatedKey, slot);
-    await reload();
-    await expect(validated, label).toHaveText("none");
-  }
-
-  // The next write replaces both stale slots.
-  await byTestId("grid-write").click();
+  // The next write lands under the current key and is read again.
+  await byTestId(page, "grid-write").click();
   await expect(versioned).toHaveText("desc:3");
   await expect(validated).toHaveText("desc:3");
-  expect(pageErrors).toEqual([]);
 }
 
 /**
@@ -867,7 +863,6 @@ export async function expectBackLeavesScrollToBrowser(
   },
 ): Promise<void> {
   const originY = 1500;
-  const byTestId = (id: string) => page.locator(`[data-testid="${id}"]`);
   const scrollY = () => page.evaluate(() => window.scrollY);
 
   await page.addInitScript(() => {
@@ -900,12 +895,14 @@ export async function expectBackLeavesScrollToBrowser(
   await expect.poll(scrollY).toBe(originY);
 
   // A DOM click: a locator click would scroll the link into view first.
-  await byTestId(options.linkTestId).evaluate((a: HTMLElement) => a.click());
-  await expect(byTestId(options.destinationTestId)).toBeVisible();
+  await byTestId(page, options.linkTestId).evaluate((a: HTMLElement) =>
+    a.click(),
+  );
+  await expect(byTestId(page, options.destinationTestId)).toBeVisible();
   await expect(page).toHaveURL(options.destinationUrl);
 
   await page.goBack();
-  await expect(byTestId(options.originTestId)).toBeVisible();
+  await expect(byTestId(page, options.originTestId)).toBeVisible();
   await expect.poll(scrollY).toBe(originY);
   expect(
     await page.evaluate(() => (window as any).__scrollCallsAfterPopstate),

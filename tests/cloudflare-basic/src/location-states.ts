@@ -118,7 +118,10 @@ export interface GridSnapshot {
   page: number;
 }
 
-/** #994: the e2e rewrites this slot the way an older deploy stored it. */
+/**
+ * #994: the e2e stores what other deploys of this definition would have, under
+ * version 1's key and under the key from before it had a version.
+ */
 export const VersionedGrid = createLocationState<GridSnapshot>({ version: 2 });
 
 /**

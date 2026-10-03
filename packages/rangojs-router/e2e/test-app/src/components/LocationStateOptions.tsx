@@ -16,10 +16,11 @@ import {
  * `items`, as the server rendered them. ServerPageStamp is the state the
  * route's handler sets on every request.
  *
- * `items` is filtered against the carried ones: a navigation applies the new
- * entry's state to a mounted reader (navigation-transaction.ts dispatches
- * `__rsc_locationstate` in commit) before the new page's props commit, so for
- * one render the carried items already include the page still on screen.
+ * `items` is filtered against the carried ones to work around a router
+ * ordering defect: a navigation applies the destination entry's state to a
+ * mounted reader (navigation-transaction.ts dispatches `__rsc_locationstate`
+ * in commit) before the destination's tree commits (partial-update.ts), and
+ * until it does the carried items include the page still on screen.
  */
 export function LoadMoreList({
   basePath,
@@ -38,7 +39,7 @@ export function LoadMoreList({
     ...items.filter((item) => !carried.includes(item)),
   ];
   return (
-    <section data-testid="lm-list">
+    <section>
       <p>
         page <span data-testid="lm-page">{page}</span>, carried{" "}
         <span data-testid="lm-carried-count">{carried.length}</span>, sort{" "}
@@ -63,8 +64,8 @@ export function LoadMoreList({
 }
 
 /**
- * #994 version / validate. Each reader shows `order:page` or "none"; the slot
- * keys are rendered so the e2e can rewrite a slot as another deploy stored it.
+ * #994 version / validate. Each reader shows `order:page` or "none"; the keys
+ * are rendered so the e2e can store what another deploy would have.
  */
 export function GridOptionsPanel({ basePath }: { basePath: string }) {
   const versioned = useLocationState(VersionedGrid);
@@ -72,7 +73,7 @@ export function GridOptionsPanel({ basePath }: { basePath: string }) {
   const control = useLocationState(ListSort);
   const grid = { order: "desc", page: 3 } as const;
   return (
-    <section data-testid="grid-options">
+    <section>
       <p>
         versioned{" "}
         <span data-testid="vg-value">
