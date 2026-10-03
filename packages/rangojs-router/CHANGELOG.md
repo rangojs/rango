@@ -216,6 +216,76 @@ with `originCheck`: behind a proxy that hands the app an internal URL, a
 header-less partial request whose `Referer` is on the public origin now takes
 the full match.
 
+### Fixed: on a `ppr` route, a loader's handle pushes come from the same run as its data on every replay of the shell ([#1001](https://github.com/rangojs/rango/issues/1001), [#1003](https://github.com/rangojs/rango/issues/1003))
+
+A loader can push handle values next to the data it returns
+(`ctx.use(Meta)({ title })`, a breadcrumb, a note). On a `ppr` route the shell
+keeps both for an `ssr: false` loader: its data as a pin, its settled pushes
+in the recorded handler layer. A replay of the shell decided the two
+separately. The data followed the pin. The pushes followed the kind of
+request: a document HIT kept the shell's, a client navigation took the ones
+the loader made on that navigation. So a soft navigation to a page could show
+a title that did not belong to the data under it, and differ from a reload of
+the same page.
+
+Both now follow the pin. Where a replay serves a loader's data from the
+shell, it shows the shell's pushes for it; where the loader runs, or reads its
+own `cache()` entry, it shows that run's or that entry's pushes.
+
+```tsx
+const PriceNote = createHandle<string>();
+
+const Price = createLoader(async (ctx) => {
+  const price = await db.price(ctx.params.id);
+  ctx.use(PriceNote)(price.label);
+  return { price, related: db.related(ctx.params.id) }; // a promise: runs on every replay
+});
+
+path("/product/:id", ProductPage, { name: "product", ppr: true }, () => [
+  loader(Price, { ssr: false }),
+]);
+```
+
+| Replay of the shell of `/product/42`, after the price changed                                               | Before                                                | Now                                |
+| ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- | ---------------------------------- |
+| Document HIT                                                                                                | captured price, captured note                         | unchanged                          |
+| Client navigation or prefetch that replays the shell (`x-rango-ppr-replay: HIT`)                            | captured price, **new** note (#1003)                  | captured price, captured note      |
+| The same, when the route's own `cache()` missed and the shell supplied the match                            | captured price, **new** note                          | captured price, captured note      |
+| Client navigation, `ssr: false` loader with its own `cache()` that pushes a deferred (promise) value        | settled push shown, deferred push **missing** (#1001) | both shown, as on the document HIT |
+| Document HIT of a shell stored without loader pins (over `ppr.maxSnapshotBytes`)                            | new price, **captured** note                          | new price, new note                |
+| The same, for a note pushed by a loader the `ssr: false` loader awaits with `ctx.use()`                     | new data, **captured** note                           | new data, new note                 |
+| Replay of a shell without pins when the loader's run makes no push                                          | new price, **captured** note                          | new price, no note                 |
+| Replay of a shell without pins, loader with its own `cache()` whose entry is newer than the shell           | entry's price, **shell's** note                       | entry's price, entry's note        |
+| `ppr` route under a route `cache()`, document request that hits the route record and the loader's own entry | entry's price, **record's** note                      | entry's price, entry's note        |
+| Client navigation that replays a shell captured by a navigation alone (no pins), loader pushes on its run   | new price, new note                                   | unchanged                          |
+| Loader without `ssr: false` (a hole)                                                                        | its run's or its entry's data and pushes              | unchanged                          |
+
+Nothing to change in app code, and nothing stored changes shape: shell
+entries, route `cache()` records and loader `cache()` entries written by
+earlier versions are read as they are, and take the new behavior on the next
+request.
+
+What an app that never saw these bugs can notice:
+
+- On a `ppr` route with an `ssr: false` loader that returns a promise (so it
+  runs on every replay), a client navigation that replays the shell now shows
+  the pushes the shell captured, not the ones that navigation's run made. The
+  data on that navigation was already the captured data; the pushes now match
+  it. They change when the shell is recaptured (TTL/SWR or a tag), or make the
+  value live: push it from a loader without `ssr: false`, or push a promise.
+- When a shell is stored without loader pins, a run that pushes nothing, or
+  pushes in a different order, now decides the handle output on a document
+  HIT too. A loader that pushes, awaits another loader that pushes, and
+  pushes again gets its own pushes next to each other on such a replay.
+
+Not fixed here: a loader that reads a `cache()`-bound loader with `ctx.use()`
+before that binding starts (a loader declared ahead of it, a parent layout)
+still runs it live while the binding serves its cache entry, so the page can
+show the entry's data next to the live run's push (#1002). Declare the cached
+loader first, or read it from the handler, until that lands. And an
+`ssr: false` loader that pushed nothing when the shell was captured but pushes
+on a replay still shows that push next to its captured data.
+
 ## 0.20.0 (2026-10-03)
 
 ### Breaking: the default `clientChunks` strategy splits `app/routes/<id>` per route instead of one `app-routes` group ([#1023](https://github.com/rangojs/rango/pull/1023))

@@ -420,9 +420,14 @@ not know who was reading, though. A live loader sharing the key, and a
 promise nested in the bake-lane loader's own return, read the capture's copy
 too, for the shell's whole lifetime, past the entry's ttl and past a
 same-request `revalidateTag()` mask. The handles are now kept equal by rule
-instead: a document HIT restores the bake-lane loader's settled pushes as
-authoritative (`HandleStore.pushRestored`) and drops the settled pushes a run
-of the loader makes there, so nothing needs the item records.
+instead: a replay that serves the bake-lane loader from its pin restores the
+loader's settled pushes as authoritative (`HandleStore.pushRestored`) and
+drops the settled pushes a run of the loader makes there, so nothing needs
+the item records. The rule follows the pin, not the request: a document HIT
+and a navigation replay of an entry that kept its pins restore the same way,
+and an entry that lost them (the `maxSnapshotBytes` case below, a
+navigation-only entry) restores the pushes as placeholders the fresh run
+replaces (`docs/design/handle-push-ownership.md`).
 
 A capture without a doc record keeps its loader pins alone. Only a
 prerender-served capture stores such an entry (its HIT tail takes the handler

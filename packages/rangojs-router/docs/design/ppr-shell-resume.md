@@ -1090,8 +1090,10 @@ tells them apart with `isInsideLoaderScope()`:
   (`maskNestedContainerThenables`) and stays a hole the HIT's run fills.
   Settled, thenable-free pushes from a bake-lane (`ssr: false`) loader are
   the exception: they carry their loader as `owner`, the record stores them,
-  and a document HIT restores them through `HandleStore.pushRestored`, which
-  makes them authoritative for that request. A run of that loader on the HIT
+  and a replay that serves the loader from its pin (a document HIT, or a
+  client navigation that replays the shell) restores them through
+  `HandleStore.pushRestored`, which makes them authoritative for that
+  request. A run of that loader on the HIT
   (a promise-carrying one, one whose record asks for a run, a live loader
   awaiting it) reads the store, so its settled pushes are dropped, not
   swapped in: the HIT's handles stay byte-identical to the prelude without
@@ -1117,17 +1119,31 @@ tells them apart with `isInsideLoaderScope()`:
   (a recapture's `"use cache"` hit) is credited to that hole, unless it is
   made inside another live-lane loader's body, which then takes it. A
   hole's run that ends without a push drops its replayed values
-  (`HandleStore.settleLoaderRun`); a bake-lane loader's stay, like its pin.
-  The restore leaves a hole's values unclaimed, so its own `cache()` HIT
+  (`HandleStore.settleLoaderRun`); a pinned bake-lane loader's stay, like its
+  pin. The restore leaves a hole's values unclaimed, so its own `cache()` HIT
   delivers the pushes the entry recorded, none when it recorded none, in
   their place (`redeliverReplays`), unless a reader already ran the hole in
   that request. A
   dependency the route registers on neither lane that the capture ran only
-  under a bake-lane loader is no hole: its pushes are restored under its own
-  id and stay as captured. And a client
-  navigation that replays the record restores every owner through
-  `pushReplayed`, where a push made inside the loader's body, a replay
-  included, replaces the restored copies in place.
+  under a bake-lane loader is no hole while every `ssr: false` loader of the
+  route is pinned: its pushes are restored under its own id and stay as
+  captured.
+
+  The third case is an entry without the loader's pin (its pins were dropped
+  over `maxSnapshotBytes`, or it is a navigation-only entry). The loader then
+  runs fresh on the replay, so it is a hole there too, whatever its lane:
+  the record's copies of its pushes are placeholders, its run's pushes
+  replace them, and a run without a push drops them. The rule is one
+  question, "does this request serve the loader from its pin", asked of the
+  loader seed for the value (`resolveLoaderData`) and for the pushes
+  (`loaderPins`), so a document HIT and a client navigation that replay one
+  entry cannot answer it differently. Until issues #1001 and #1003 the
+  request's type answered for the pushes: a navigation restored every owner
+  through `pushReplayed` and claimed it, which showed pinned data next to
+  the run's push and blocked the loader's own `cache()` entry from adding
+  the deferred push; and a document HIT restored a bake-lane loader's pushes
+  as authoritative with or without its pin
+  (`docs/design/handle-push-ownership.md`).
 
 The capture gate holds nothing open: `settleCaptureRecord` waited for the
 top-level await (`getData().then(resolveDeferredHandleValues)`) and the
