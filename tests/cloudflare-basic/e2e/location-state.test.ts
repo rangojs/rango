@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 import {
+  expectClearOnReloadDropsCarriedState,
+  expectClearOnReloadDropsStateOnTraversalLoad,
   expectLateSuspenseReaderHydratesClean,
+  expectStaleLocationStateReadsAsNone,
   returnToEvictedEntry,
 } from "@shared/e2e";
 import { useFixture } from "./fixture";
@@ -272,7 +275,44 @@ function describeLateSuspense(mode: "dev" | "build") {
   });
 }
 
+// #994: createLocationState({ clearOnReload }), ({ version }), ({ validate }).
+function describeOptions(mode: "dev" | "build") {
+  const label = mode === "build" ? "production" : "dev";
+  test.describe(`location-state.options (${label})`, () => {
+    const f = useFixture({ root: ".", mode });
+
+    test("clearOnReload state is carried by a client navigation and dropped by a reload", async ({
+      page,
+    }) => {
+      await expectClearOnReloadDropsCarriedState(
+        page,
+        f.url("/location-state-load-more"),
+      );
+    });
+
+    test("clearOnReload state is dropped by a back/forward that loads the document", async ({
+      page,
+    }) => {
+      await expectClearOnReloadDropsStateOnTraversalLoad(
+        page,
+        f.url("/location-state-load-more"),
+      );
+    });
+
+    test("a versioned or validated slot another deploy stored reads as no state after a reload", async ({
+      page,
+    }) => {
+      await expectStaleLocationStateReadsAsNone(
+        page,
+        f.url("/location-state-grid-options"),
+      );
+    });
+  });
+}
+
 describeLocationState("dev");
 describeLocationState("build");
 describeLateSuspense("dev");
 describeLateSuspense("build");
+describeOptions("dev");
+describeOptions("build");
