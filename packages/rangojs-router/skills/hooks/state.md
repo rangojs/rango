@@ -221,7 +221,9 @@ import { FlashMessage } from "../location-states";
 };
 ```
 
-Or via `ctx.setLocationState()` on any response (handlers and middleware):
+Or via `ctx.setLocationState()` from a handler or middleware. It is delivered
+with a client navigation's or an action's response; a document response
+carries no location state (there is no history entry to write it to yet):
 
 ```tsx
 (ctx) => {
@@ -229,6 +231,150 @@ Or via `ctx.setLocationState()` on any response (handlers and middleware):
   return <Dashboard />;
 };
 ```
+
+### State from another deploy
+
+History entries survive reloads and back/forward, so a tab left open across a
+release still holds the state the older build wrote. The router drops it for
+you: every entry records the app version its location state was written under,
+and a read under any other version returns `undefined`, for typed slots and
+for plain state alike. You do not manage a version and there is none to read;
+the app version is the one the router already uses to reload a client that is
+behind the server, and it changes with every build.
+
+| An entry's location state, read by                             | Result      |
+| -------------------------------------------------------------- | ----------- |
+| the build that wrote it: navigation, back/forward, refresh     | the value   |
+| a later build, after a refresh or a restored tab               | `undefined` |
+| a later build, on back/forward to an entry the older one wrote | `undefined` |
+| any build, when the entry predates this behavior               | `undefined` |
+
+So location state is for the current session of the current build: a filter
+carried on a link, a flash message, a scroll target. State that has to outlive
+a deploy belongs in the URL, a cookie or storage. In development a
+server-module edit (HMR) changes the version too; the running page keeps its
+state, and the next document load drops it.
+
+### createLocationState options
+
+```ts
+createLocationState<TState>({
+  flash?: boolean, // read once, cleared after paint (above)
+  clearOnReload?: boolean, // drop the state on a document load (below)
+});
+```
+
+The value is always stored as-is. `clearOnReload` changes the slot's KEY in
+`history.state` instead, by a suffix on the key the Vite plugin injects
+(`<key>` below, `__rsc_ls_<file>#<ExportName>`):
+
+| Options         | Key in `history.state` | Reads `undefined` when                          |
+| --------------- | ---------------------- | ----------------------------------------------- |
+| none, `flash`   | `<key>`                | the slot is empty (`flash`: once read)          |
+| `clearOnReload` | `<key>~r`              | the entry's document was loaded since the write |
+
+`Def.__rsc_ls_key` is that key, suffix included. `~` cannot appear in an export
+name, so no other definition can end up with a suffixed key.
+
+`flash` with `clearOnReload` is rejected: `createLocationState` throws in
+development.
+
+### clearOnReload: state the server did not render with
+
+Location state lives in the browser, so the server renders a document without
+it. `useLocationState` therefore hydrates as `undefined` and applies the stored
+value right after. For most state that is invisible. For state that decides
+how much content is on the page, it is a layout shift on every refresh.
+
+The case this option exists for is a "load more" list. `?page=6` loads that
+page's 50 products through a loader, and the 250 already on screen ride along
+as location state on the link, so the next page shows them at once and
+streams the new ones:
+
+```ts
+// location-states.ts
+import { createLocationState } from "@rangojs/router";
+
+export const CarriedProducts = createLocationState<Product[]>({
+  clearOnReload: true,
+});
+```
+
+```tsx
+"use client";
+import { Link, useLoader, useLocationState } from "@rangojs/router/client";
+import { ProductsLoader } from "./loaders"; // the page named by ?page
+import { CarriedProducts } from "./location-states";
+
+export function ProductList() {
+  const { data } = useLoader(ProductsLoader);
+  const carried = useLocationState(CarriedProducts) ?? [];
+  const carriedIds = new Set(carried.map((product) => product.id));
+  const products = [
+    ...carried,
+    ...data.products.filter((product) => !carriedIds.has(product.id)),
+  ];
+
+  return (
+    <>
+      <ul>
+        {products.map((product) => (
+          <li key={product.id}>{product.name}</li>
+        ))}
+      </ul>
+      <Link
+        to={`/products?page=${data.page + 1}`}
+        state={[CarriedProducts(products)]}
+        scroll={false}
+      >
+        Load more
+      </Link>
+    </>
+  );
+}
+```
+
+The `carriedIds` filter is a workaround, not part of the pattern. Today a
+navigation applies the destination entry's location state to a mounted reader
+as soon as the entry is pushed, before the destination's loader data commits,
+so until that data lands `carried` already contains the page still on screen.
+This is a known router ordering defect; once location state commits together
+with the page it belongs to, the filter is unnecessary.
+
+Without the option, a refresh of `?page=6` renders 50 products on the server
+and then inserts the stored 250 above them. With it, the refreshed page stays
+as the server rendered it:
+
+| What happens to the entry                                                 | A `clearOnReload` slot                                               |
+| ------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| The reader mounts during a client navigation (`<Link>`, `router.push`)    | applied, as without the option                                       |
+| back/forward inside the running app (popstate), a server action's state   | applied, as without the option                                       |
+| A document load: refresh, or a back/forward that loads the document       | not applied, and removed from `history.state`                        |
+| Later on that page: a reader mounts, or a navigation returns to the entry | still `undefined`; the next write (the next "Load more") stores anew |
+| The page is restored from the browser's back/forward cache                | untouched: nothing is loaded or hydrated                             |
+
+- The rule is any document load of the entry, not only the Reload button:
+  restoring a closed tab or duplicating a tab loads the document too.
+- Only the entry being loaded is cleared. Going back from it to an earlier
+  entry inside the running app is a client navigation and applies that
+  entry's state.
+- The router removes every `~r` key when the client starts, before hydration.
+  It goes by the key alone, so it does not matter whether a reader is mounted,
+  where it sits (a `<Suspense>` boundary that hydrates late included), or
+  whether the definition's module is loaded at all. Other slots on the entry
+  are left alone.
+- State the server sets is never dropped by this: a document response carries
+  no location state, and `ctx.setLocationState()` / `redirect(url, { state })`
+  reach `history.state` only through navigations and actions in the running
+  app, after start-up.
+- `.write()` stores under the same key, so it does not survive a refresh
+  either.
+- Adding the option to an existing definition moves it to the `~r` key: state
+  stored before, under the plain key, is no longer read (and is not removed).
+  Removing the option moves it back to the plain key; what was stored under
+  `~r` is removed at the next document load.
+- It cannot be combined with `flash`: flash state is removed at its first
+  read, so the pair could only drop a message nobody has seen yet.
 
 ### .read() (non-hook access)
 

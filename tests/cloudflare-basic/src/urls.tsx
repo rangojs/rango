@@ -18,6 +18,10 @@ import {
   LateSuspenseReader,
   LateSuspenseWriter,
 } from "./components/LateSuspenseReader.js";
+import {
+  AppVersionPanel,
+  LoadMoreList,
+} from "./components/LocationStateOptions.js";
 import { StreamTest } from "./components/StreamTest.js";
 import { NavLayout } from "./components/NavLayout.js";
 import { RootLayout } from "./components/SlowRootLayout.js";
@@ -102,7 +106,7 @@ import {
 } from "./pages/ppr-shell.js";
 import { PprShellBadge } from "./components/PprShellBadge.js";
 import { pprExecWhen } from "./components/transition-when.js";
-import { PprExecMark } from "./location-states.js";
+import { PprExecMark, ServerPageStamp } from "./location-states.js";
 import {
   CfPhgDynamicPage,
   CfPhgHandlerPage,
@@ -2201,6 +2205,38 @@ export const urlpatterns = urls(
             return { releases };
           },
           { name: "locationStateLateSuspenseRelease" },
+        ),
+
+        // #994 clearOnReload: a "load more" list. The handler renders the page
+        // the URL names; the earlier pages ride along as location state on
+        // the Link. It also sets state of its own on every request, document
+        // loads included.
+        path(
+          "/location-state-load-more",
+          (ctx) => {
+            const page = Number(ctx.searchParams.get("page") ?? "1");
+            ctx.setLocationState(ServerPageStamp({ page }));
+            return (
+              <LoadMoreList
+                basePath="/location-state-load-more"
+                page={page}
+                items={[1, 2, 3].map((item) => `p${page}-${item}`)}
+              />
+            );
+          },
+          { name: "locationStateLoadMore" },
+        ),
+
+        // #994 app version: readers of a typed slot and of plain state.
+        path(
+          "/location-state-app-version",
+          (ctx) => (
+            <AppVersionPanel
+              basePath="/location-state-app-version"
+              step={ctx.searchParams.get("step") ?? "start"}
+            />
+          ),
+          { name: "locationStateAppVersion" },
         ),
 
         // Action location state test route (non-redirect flow)

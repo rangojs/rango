@@ -34,6 +34,23 @@ refs at match time, called from
 which shares action-id resolution with `runClientRevalidate` through
 [`testing/internal/action-id.ts`](../../src/testing/internal/action-id.ts).
 
+Location state is owned by
+[`browser/react/location-state-shared.ts`](../../src/browser/react/location-state-shared.ts)
+(`createLocationState`, its options, the `__rsc_ls_` key prefix, the key
+suffix `clearOnReload` adds, and the per-entry app version stamp with its
+readers and writers; importable from server code) and
+[`browser/react/location-state.ts`](../../src/browser/react/location-state.ts)
+(`useLocationState`). How a slot reaches or leaves `history.state` is owned by
+[`browser/history-state.ts`](../../src/browser/history-state.ts): navigation
+state resolution, server-set state merging, and the start-up removal of
+`clearOnReload` slots, which
+[`browser/rsc-router.tsx`](../../src/browser/rsc-router.tsx) (`initBrowserApp`)
+and [`testing/render-route.tsx`](../../src/testing/render-route.tsx) (`hydrate`
+mode) both call. Key injection is the Vite plugin's
+([`vite/plugins/expose-ids/handler-transform.ts`](../../src/vite/plugins/expose-ids/handler-transform.ts));
+[`testing/location-state-key.ts`](../../src/testing/location-state-key.ts) is
+its stand-in for unit tests.
+
 Delegated prefetch eligibility, parked location-dependent anchors,
 container-scope lookup, and shared subtree-only DOM re-evaluation are owned by
 [`browser/link-interceptor.ts`](../../src/browser/link-interceptor.ts), strategy

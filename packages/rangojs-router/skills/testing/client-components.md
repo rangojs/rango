@@ -15,7 +15,7 @@
 | `outletPending`   | `boolean`                                                              | Seed `useOutlet().pending` through each synthetic segment's production `OutletProvider`. Defaults to `false`; this is context seeding, not a simulated navigation/Suspense/action lifecycle.                                                  |
 | `loaders`         | `ReadonlyArray<readonly [LoaderDefinition<any>, unknown]>`             | Seed by REFERENCE: `[loader, data]` pairs. Robust for real `createLoader()` handles whose `$$id` is empty in a bare test. Prefer over `loaderData`.                                                                                           |
 | `params`          | `Record<string, string>`                                               | Explicit params, merged over (and overriding) params extracted from the `request` URL.                                                                                                                                                        |
-| `locationState`   | `ReadonlyArray<readonly [LocationStateDefinition<any, any>, unknown]>` | Seed `useLocationState(def)` by REFERENCE: `[def, value]` pairs; keys an unkeyed `def` (like `withLocationStateKey(def)`) and writes to `history.state`. See [Location state](#location-state).                                               |
+| `locationState`   | `ReadonlyArray<readonly [LocationStateDefinition<any, any>, unknown]>` | Seed `useLocationState(def)` by REFERENCE: `[def, value]` pairs; keys an unkeyed `def` (like `withLocationStateKey(def)`) and writes `value` to `history.state` under `def.__rsc_ls_key`. See [Location state](#location-state).              |
 | `handles`         | `ReadonlyArray<readonly [Handle<any, any>, unknown[]]>`                | Seed `useHandle(handle)` by REFERENCE: `[handle, pushedValues[]]`. Accumulated GLOBALLY (not segment-scoped).                                                                                                                                 |
 | `handle`          | `HandleDataSeed`                                                       | Advanced: raw wire format `{ [handleId]: { [segmentId]: pushedValues[] } }`. Prefer `handles`. Merged with it.                                                                                                                                |
 | `routeMap`        | `Record<string, string>`                                               | Name -> pattern map (informational; client `useReverse` takes its map as an argument, so this is not consumed).                                                                                                                               |
@@ -162,6 +162,55 @@ it("shows the count it pushed", async () => {
 });
 ```
 
+### Definitions with `clearOnReload`
+
+The option never changes the stored value. It changes the key: it appends `~r` to the name you key the definition with (`__rsc_ls_CarriedProducts~r`, see `/hooks`, state.md). So a seed is the plain value for every definition, and a stored-state assertion uses `[CarriedProducts.__rsc_ls_key]` instead of spelling the key.
+
+| To test                                         | Do                                                                                                                                                                                 |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `clearOnReload` state after a client navigation | plain `renderRoute(routes, { locationState })`: the tree mounts as during a navigation, the seed is applied                                                                        |
+| `clearOnReload` state after a refresh           | `renderRoute(routes, { hydrate: true, locationState })`: a document load of the seeded entry. The slot is removed before hydration, by the same function production start-up calls |
+
+In the browser the router also drops location state another app version wrote (see `/hooks`, state.md). A test has no app version, so there is nothing to set up: seeds read back on a mount and on a `hydrate: true` load, and nothing in `window.history.state` or in a server primitive's `locationState` names a version.
+
+A name passed to `withLocationStateKey` may not contain `~`; the definition appends its own suffix.
+
+```tsx
+// @vitest-environment happy-dom
+import { afterEach, expect, it } from "vitest";
+import { cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { renderRoute } from "@rangojs/router/testing/dom";
+import { ProductList } from "../src/components/ProductList"; // the "load more" list of /hooks state.md: useLoader(ProductsLoader) + useLocationState(CarriedProducts)
+import { ProductsLoader } from "../src/loaders";
+import { CarriedProducts } from "../src/location-states"; // createLocationState<Product[]>({ clearOnReload: true })
+
+afterEach(cleanup);
+const routes = [{ path: "/products", Component: ProductList }];
+const carried = [{ id: "p1", name: "Wine" }];
+const loaders = [[ProductsLoader, { page: 6, products: [] }]] as const; // this page's own products: none, to count only carried ones
+
+it("shows the carried products after a client navigation", async () => {
+  const { getAllByRole } = await renderRoute(routes, {
+    loaders,
+    locationState: [[CarriedProducts, carried]],
+  });
+  expect(getAllByRole("listitem")).toHaveLength(1);
+});
+
+it("drops them on a refresh and carries again on the next navigation", async () => {
+  const { recoverableErrors, queryAllByRole, getByText } = await renderRoute(
+    routes,
+    { loaders, hydrate: true, locationState: [[CarriedProducts, carried]] },
+  );
+  expect(recoverableErrors).toEqual([]);
+  expect(queryAllByRole("listitem")).toHaveLength(0);
+  expect(CarriedProducts.read()).toBeUndefined(); // removed from history.state
+
+  fireEvent.click(getByText("Load more"));
+  await waitFor(() => expect(CarriedProducts.read()).toBeDefined());
+});
+```
+
 ## Hydration
 
 A plain `renderRoute` mounts with `createRoot`, so a component never runs its hydration render: `useSyncExternalStore` skips `getServerSnapshot`, and nothing compares the first client render with server HTML. `hydrate: true` runs the document-load sequence instead. renderRoute renders the same element (same providers, seeds, and RTL `reactStrictMode`) to HTML with `react-dom/server`'s `renderToString`, puts that HTML in the container, and hydrates it through RTL (`render(ui, { hydrate: true, onRecoverableError })`), so `cleanup()` unmounts it like any other render. `serverHtml` is what the server pass produced; `recoverableErrors` holds the message of every error React recovered from, which is where a hydration mismatch arrives.
@@ -210,6 +259,7 @@ it("hydrates as the server rendered it, then shows the stored count", async () =
 | Render counts and module state                                                        | Every component renders once in the server pass before its hydration render. Both passes share one module realm, so module state written while rendering is still there at hydration.                                                        |
 | `history`, `localStorage`, `navigator` read outside a server snapshot                 | FIDELITY LIMIT: still defined in the server pass (only `window` and `document` are removed), so the read renders the same in both passes here and can still mismatch in real SSR.                                                            |
 | `data-hydrated` on `<html>`                                                           | Set after hydration, as the production root sets it from its effect, and removed on unmount. A `<Suspense>` boundary therefore hydrates with it already set.                                                                                 |
+| `useLocationState` of a seeded definition                                             | `undefined` in the server pass and the hydration render, the seeded value on the render after. A `clearOnReload` definition stays `undefined`: its seeded slot is removed from `history.state` before hydration, as on a real document load. |
 
 - Needs `@testing-library/react` 16.2.0 or newer. 16.0 and 16.1 never pass `onRecoverableError` to `hydrateRoot`, so a mismatch would be invisible; `renderRoute` throws there instead.
 - `recoverableErrors` is live: React appends to it for as long as the root is mounted.

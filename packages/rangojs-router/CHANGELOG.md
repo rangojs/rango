@@ -2,6 +2,135 @@
 
 ## Unreleased
 
+### Breaking: location state written by another app version reads as no state ([#1020](https://github.com/rangojs/rango/pull/1020))
+
+A history entry outlives a deploy: a tab left open across a release keeps its
+`history.state` through reloads and back/forward. A location state key is the
+file path plus the export name, so it is the same in every deploy, and the read
+was an unchecked cast. After a release that changed a state's shape, the new
+code got the old value typed as the new one (#994).
+
+Location state is now versioned by the app version, the one the router already
+uses to reload a client that is behind the server. Every history entry records
+the version its location state was written under, and a read returns only
+state recorded under the version the page was loaded with. This covers all
+location state: `createLocationState` definitions (`useLocationState(Def)`,
+`Def.read()`, `flash` included), plain state (`<Link state={{ ... }}>` read
+with `useLocationState()`), and state the server sets
+(`ctx.setLocationState()`, `redirect(url, { state })`).
+
+There is nothing to configure and no version to manage: no option sets it and
+no API returns it.
+
+| An entry's location state, read by                               | Before                          | After                                  |
+| ---------------------------------------------------------------- | ------------------------------- | -------------------------------------- |
+| the build that wrote it: navigation, back/forward, refresh       | the value                       | the value (unchanged)                  |
+| a later build, after a refresh or a restored tab                 | the old value, typed as the new | `undefined`                            |
+| a later build, on back/forward to an entry the older build wrote | the old value, typed as the new | `undefined`                            |
+| any build, when a release older than this one wrote the entry    | the value                       | `undefined`                            |
+| a release older than this one, after a rollback                  | the value                       | the value: it does not read the record |
+
+- **This happens on every deploy.** The default app version is generated per
+  build, so each deploy is another version. State a user had in an open tab (a
+  filter carried on a link, a flash message not shown yet) is gone after the
+  deploy, as if the entry never had any. Readers already handle `undefined`.
+  State that has to outlive a deploy belongs in the URL, a cookie or storage.
+- An app that pins its own app version instead of the generated one keeps
+  location state for as long as that value stays the same.
+- On the first release with this change, every entry written before the
+  upgrade counts as another version: open tabs lose their location state once.
+- Keys and values are stored as before. The record is one extra field on the
+  entry (`__rsc_lsv`). A write into an entry another version wrote drops that
+  entry's older location state first; the router's own bookkeeping on the
+  entry (scroll key, intercept context) is kept.
+- In development a server-module edit changes the version (HMR). The running
+  page keeps its location state; a document load after the edit drops it, as
+  after a deploy.
+- Unit tests need no version: `renderRoute` seeds read back as before, and the
+  `.locationState` of `runMiddleware`, `runLoaderResult`,
+  `runInRequestContext` and `renderHandler` is still
+  `{ [Def.__rsc_ls_key]: value }`.
+
+### Added: `createLocationState({ clearOnReload: true })` drops the state when the entry's document is loaded ([#1020](https://github.com/rangojs/rango/pull/1020))
+
+The server renders a document without `history.state`, so `useLocationState`
+hydrates as `undefined` and applies the stored value right after. For state
+that decides how much content is on the page, that is a layout shift on every
+refresh. A "load more" list is the case: `?page=6` loads 50 products through a
+loader and the 250 already on screen ride along as location state on the
+link. After a client navigation that is what you want. After a refresh the
+server renders 50 products and the client then inserts 250 above them.
+
+```ts
+export const CarriedProducts = createLocationState<Product[]>({
+  clearOnReload: true,
+});
+```
+
+```tsx
+const { data } = useLoader(ProductsLoader); // the page named by ?page
+const carried = useLocationState(CarriedProducts) ?? [];
+const carriedIds = new Set(carried.map((product) => product.id));
+const products = [
+  ...carried,
+  ...data.products.filter((product) => !carriedIds.has(product.id)),
+];
+
+<Link
+  to={`/products?page=${data.page + 1}`}
+  state={[CarriedProducts(products)]}
+  scroll={false}
+>
+  Load more
+</Link>;
+```
+
+| What happens to the entry                                                 | Without the option      | With `clearOnReload: true`                            |
+| ------------------------------------------------------------------------- | ----------------------- | ----------------------------------------------------- |
+| The reader mounts during a client navigation                              | state applied           | unchanged                                             |
+| back/forward inside the running app, a server action's state              | state applied           | unchanged                                             |
+| Refresh, or a back/forward that loads the document from the server        | applied after hydration | not applied; the slot is removed from `history.state` |
+| Later on that page: a reader mounts, or a navigation returns to the entry | state applied           | still `undefined` until the next write                |
+| The page is restored from the back/forward cache                          | state and DOM kept      | unchanged                                             |
+
+- The slot is stored under `<key>~r` (`<key>` is the key the Vite plugin
+  injects), value as-is. When the client starts, before it hydrates, the
+  router removes every `~r` key from the entry. It goes by the key alone, so
+  it does not depend on a reader being mounted, on where the reader sits (a
+  `<Suspense>` boundary that hydrates late included), or on the definition's
+  module being loaded. Other slots on the entry are kept.
+- Any document load of the entry counts, not only the Reload button:
+  restoring a closed tab and duplicating a tab load the document too. Only
+  the loaded entry is cleared; going back from it to an earlier entry is a
+  client navigation and applies that entry's state.
+- State the server sets is not affected. A document response carries no
+  location state; `ctx.setLocationState()` and `redirect(url, { state })`
+  reach `history.state` through navigations and actions in the running app,
+  which start after the slot was removed.
+- Adding the option to an existing definition moves it to the `~r` key: what
+  was stored before, under the plain key, is no longer read and is not
+  removed. Removing the option moves it back; what was stored under `~r` is
+  removed at the next document load. A rollback behaves like removing it.
+- It cannot be combined with `flash`: `createLocationState` throws in
+  development, since flash state is removed at its first read and the option
+  could only drop a message nobody has seen.
+- The `carriedIds` filter in the example works around a known ordering in the
+  router, with or without the option: a navigation applies the destination
+  entry's state to a mounted reader before the destination's loader data
+  commits, so until it lands `carried` includes the page still on screen.
+
+To test it, plain `renderRoute(routes, { locationState })` is the client
+navigation and `renderRoute(routes, { hydrate: true, locationState })` is the
+document load: hydrate mode removes the seeded slot with the same function the
+client start-up calls. `Def.__rsc_ls_key` returns the key with its suffix:
+`withLocationStateKey(CarriedProducts, "CarriedProducts")` still names the
+definition, the key is then `__rsc_ls_CarriedProducts~r`, and
+`{ [CarriedProducts.__rsc_ls_key]: value }` is the assertion that holds for
+any definition. The helper rejects a name that contains `~`.
+
+Definitions that do not set the option keep their key, and the client start-up
+writes nothing to `history.state` when no key carries the suffix.
+
 ### Fixed: `useLocationState` no longer causes a hydration mismatch when its reader hydrates inside `<Suspense>` ([#1017](https://github.com/rangojs/rango/pull/1017))
 
 After a reload or a back/forward navigation, `history.state` still holds the

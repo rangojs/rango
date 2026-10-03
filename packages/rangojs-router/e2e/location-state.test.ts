@@ -1,6 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 import {
+  expectClearOnReloadDropsCarriedState,
+  expectClearOnReloadDropsStateOnTraversalLoad,
   expectLateSuspenseReaderHydratesClean,
+  expectOtherVersionLocationStateDroppedOnLoad,
+  expectOtherVersionLocationStateDroppedOnTraversal,
   returnToEvictedEntry,
 } from "@shared/e2e";
 import { useFixture, type Fixture } from "./fixture";
@@ -1466,4 +1470,54 @@ test.describe("location-state.late-suspense", () => {
 test.describe("location-state.late-suspense (production)", () => {
   const f = useFixture({ root: "./e2e/test-app", mode: "build" });
   lateSuspenseSuite(f);
+});
+
+// #994: createLocationState({ clearOnReload }) and the app version every
+// entry's location state is recorded under.
+function optionsSuite(f: Fixture) {
+  test("clearOnReload state is carried by a client navigation and dropped by a reload", async ({
+    page,
+  }) => {
+    await expectClearOnReloadDropsCarriedState(
+      page,
+      f.url("/location-state/load-more"),
+    );
+  });
+
+  test("clearOnReload state is dropped by a back/forward that loads the document", async ({
+    page,
+  }) => {
+    await expectClearOnReloadDropsStateOnTraversalLoad(
+      page,
+      f.url("/location-state/load-more"),
+    );
+  });
+
+  test("state another app version stored reads as no state after a reload, its own is kept", async ({
+    page,
+  }) => {
+    await expectOtherVersionLocationStateDroppedOnLoad(
+      page,
+      f.url("/location-state/app-version"),
+    );
+  });
+
+  test("back/forward to an entry another app version wrote reads no state", async ({
+    page,
+  }) => {
+    await expectOtherVersionLocationStateDroppedOnTraversal(
+      page,
+      f.url("/location-state/app-version"),
+    );
+  });
+}
+
+test.describe("location-state.options", () => {
+  const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
+  optionsSuite(f);
+});
+
+test.describe("location-state.options (production)", () => {
+  const f = useFixture({ root: "./e2e/test-app", mode: "build" });
+  optionsSuite(f);
 });

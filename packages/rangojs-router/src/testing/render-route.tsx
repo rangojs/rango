@@ -85,9 +85,13 @@ import type {
   TransitionConfig,
   TransitionWhenKind,
 } from "../types.js";
-import type { LocationStateDefinition } from "../browser/react/location-state-shared.js";
+import {
+  setLocationStateVersion,
+  type LocationStateDefinition,
+} from "../browser/react/location-state-shared.js";
 import {
   buildHistoryState,
+  clearLocationStateOnDocumentLoad,
   hasLocationState,
   pushHistoryWithIdx,
   resolveNavigationState,
@@ -235,6 +239,8 @@ export interface RenderRouteOptions {
    * `useLocationState(StateDef)`. Like loaders, a real `createLocationState()`
    * handle has an empty injected key in a bare test, so pass `[def, value]`
    * pairs; renderRoute assigns a synthetic key and writes it to `history.state`.
+   * With `hydrate: true` a `clearOnReload` definition's seed is removed before
+   * hydration, as on a document load.
    *
    * @example
    * renderRoute([{ path: "/", Component: FlashBanner }], {
@@ -600,11 +606,17 @@ export async function renderRoute(
   const loaderData = seedLoaders(options.loaderData ?? {}, options.loaders);
 
   if (typeof window !== "undefined") {
+    // The tree has no app version (its bridge reports none), so a seed needs
+    // none either. Reset what an initBrowserApp in the same file may have left.
+    setLocationStateVersion(undefined);
     const stateObj: Record<string, unknown> = {};
     for (const [def, value] of options.locationState ?? []) {
       stateObj[withLocationStateKey(def).__rsc_ls_key] = value;
     }
     window.history.replaceState(stateObj, "");
+    // Hydrate mode is a document load of the seeded entry: run start-up's
+    // step (initBrowserApp), not a copy of it.
+    if (options.hydrate) clearLocationStateOnDocumentLoad();
   }
 
   const resolve = (pathname: string): ResolvedMatch => {

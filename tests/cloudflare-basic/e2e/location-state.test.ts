@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 import {
+  expectClearOnReloadDropsCarriedState,
+  expectClearOnReloadDropsStateOnTraversalLoad,
   expectLateSuspenseReaderHydratesClean,
+  expectOtherVersionLocationStateDroppedOnLoad,
+  expectOtherVersionLocationStateDroppedOnTraversal,
   returnToEvictedEntry,
 } from "@shared/e2e";
 import { useFixture } from "./fixture";
@@ -272,7 +276,54 @@ function describeLateSuspense(mode: "dev" | "build") {
   });
 }
 
+// #994: createLocationState({ clearOnReload }) and the app version every
+// entry's location state is recorded under.
+function describeOptions(mode: "dev" | "build") {
+  const label = mode === "build" ? "production" : "dev";
+  test.describe(`location-state.options (${label})`, () => {
+    const f = useFixture({ root: ".", mode });
+
+    test("clearOnReload state is carried by a client navigation and dropped by a reload", async ({
+      page,
+    }) => {
+      await expectClearOnReloadDropsCarriedState(
+        page,
+        f.url("/location-state-load-more"),
+      );
+    });
+
+    test("clearOnReload state is dropped by a back/forward that loads the document", async ({
+      page,
+    }) => {
+      await expectClearOnReloadDropsStateOnTraversalLoad(
+        page,
+        f.url("/location-state-load-more"),
+      );
+    });
+
+    test("state another app version stored reads as no state after a reload, its own is kept", async ({
+      page,
+    }) => {
+      await expectOtherVersionLocationStateDroppedOnLoad(
+        page,
+        f.url("/location-state-app-version"),
+      );
+    });
+
+    test("back/forward to an entry another app version wrote reads no state", async ({
+      page,
+    }) => {
+      await expectOtherVersionLocationStateDroppedOnTraversal(
+        page,
+        f.url("/location-state-app-version"),
+      );
+    });
+  });
+}
+
 describeLocationState("dev");
 describeLocationState("build");
 describeLateSuspense("dev");
 describeLateSuspense("build");
+describeOptions("dev");
+describeOptions("build");

@@ -3,6 +3,7 @@ import {
   createLocationState,
   isLocationStateEntry,
   resolveLocationStateEntries,
+  type LocationStateOptions,
 } from "../browser/react/location-state-shared";
 
 const originalWindowDescriptor = Object.getOwnPropertyDescriptor(
@@ -363,5 +364,102 @@ describe("location-state-shared", () => {
         "LocationState.delete() is client-only",
       );
     });
+  });
+});
+
+// #994: `clearOnReload` lives in the storage KEY, never in the stored value.
+// The key is the persistence contract: slots outlive deploys, so the exact
+// strings are pinned here.
+describe("createLocationState storage key", () => {
+  type GridSnapshot = { rows: number[] };
+  // What the Vite plugin injects: `__rsc_ls_<path or hash>#<ExportName>`.
+  const INJECTED = "__rsc_ls_a1b2c3d4#Grid";
+
+  afterEach(() => {
+    restoreWindow();
+    vi.unstubAllEnvs();
+  });
+
+  function define(options?: LocationStateOptions) {
+    const definition = createLocationState<GridSnapshot>(options);
+    definition.__rsc_ls_key = INJECTED;
+    return definition;
+  }
+
+  function stubHistory() {
+    const history = {
+      state: { idx: 1 } as unknown,
+      replaceState: vi.fn((next: unknown) => {
+        history.state = next;
+      }),
+    };
+    vi.stubGlobal("window", {
+      history,
+      location: { href: "https://example.test/grid" },
+    });
+    return history;
+  }
+
+  it.each([
+    ["no options", undefined, INJECTED],
+    ["flash", { flash: true }, INJECTED],
+    ["clearOnReload: false", { clearOnReload: false }, INJECTED],
+    ["clearOnReload", { clearOnReload: true }, `${INJECTED}~r`],
+  ] as const)(
+    "%s: every writer stores the raw value under one key",
+    (_label, options, key) => {
+      const Grid = define(options);
+      const history = stubHistory();
+      const snapshot = { rows: [1, 2] };
+
+      expect(Grid.__rsc_ls_key).toBe(key);
+      expect(Grid(snapshot)).toEqual({
+        __rsc_ls_key: key,
+        __rsc_ls_value: snapshot,
+      });
+      expect(Grid(snapshot).__rsc_ls_value).toBe(snapshot);
+      const lazy = Grid(() => snapshot);
+      expect(lazy.__rsc_ls_lazy).toBe(true);
+      expect(resolveLocationStateEntries([lazy])[key]).toBe(snapshot);
+
+      Grid.write(snapshot);
+      expect(history.replaceState).toHaveBeenCalledTimes(1);
+      expect(history.state).toEqual({ idx: 1, [key]: snapshot });
+      expect((history.state as Record<string, unknown>)[key]).toBe(snapshot);
+      expect(Grid.read()).toBe(snapshot);
+      expect(Grid.read({ state: history.state })).toBe(snapshot);
+
+      Grid.delete();
+      expect(history.state).toEqual({ idx: 1 });
+      expect(Grid.read()).toBeUndefined();
+    },
+  );
+
+  // Adopting the option, removing it, and a release older than the option all
+  // come down to this: the two keys never read each other.
+  it("a definition with clearOnReload and one without read separate slots", () => {
+    const history = stubHistory();
+    const [Carried, Plain] = [define({ clearOnReload: true }), define()];
+    const [carried, plain] = [{ rows: [1] }, { rows: [2] }];
+
+    Carried.write(carried);
+    // The read of a release without the option: history.state[<injected key>].
+    expect(
+      (history.state as Record<string, unknown>)[INJECTED],
+    ).toBeUndefined();
+    expect(Plain.read()).toBeUndefined();
+
+    Plain.write(plain);
+    expect(Plain.read()).toBe(plain);
+    expect(Carried.read()).toBe(carried);
+  });
+
+  it("rejects flash with clearOnReload outside production", () => {
+    const both = { flash: true, clearOnReload: true };
+    expect(() => createLocationState<string>(both)).toThrow(
+      /`flash` and `clearOnReload` cannot be combined/,
+    );
+    vi.stubEnv("NODE_ENV", "production");
+    expect(() => createLocationState<string>(both)).not.toThrow();
   });
 });

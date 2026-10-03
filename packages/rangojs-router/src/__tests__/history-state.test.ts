@@ -43,6 +43,7 @@ let mergeLocationState: typeof import("../browser/history-state").mergeLocationS
 let resolveNavigationState: typeof import("../browser/history-state").resolveNavigationState;
 let pushHistoryWithIdx: typeof import("../browser/history-state").pushHistoryWithIdx;
 let stripShellMissMarker: typeof import("../browser/history-state").stripShellMissMarker;
+let clearLocationStateOnDocumentLoad: typeof import("../browser/history-state").clearLocationStateOnDocumentLoad;
 let SHELL_MISS_MARKER: string;
 
 beforeEach(async () => {
@@ -52,6 +53,7 @@ beforeEach(async () => {
   resolveNavigationState = mod.resolveNavigationState;
   pushHistoryWithIdx = mod.pushHistoryWithIdx;
   stripShellMissMarker = mod.stripShellMissMarker;
+  clearLocationStateOnDocumentLoad = mod.clearLocationStateOnDocumentLoad;
   SHELL_MISS_MARKER = mod.SHELL_MISS_MARKER;
 });
 
@@ -155,6 +157,77 @@ describe("stripShellMissMarker", () => {
 
     stripShellMissMarker();
     expect(replaceStateSpy).not.toHaveBeenCalled();
+  });
+});
+
+// Start-up has no definitions to ask (their modules may not be loaded), so a
+// clearOnReload slot is recognised by its key alone: the `~r` suffix.
+describe("clearLocationStateOnDocumentLoad", () => {
+  it("removes every key that ends in ~r, with no definition loaded, and nothing else", () => {
+    const kept = {
+      "__rsc_ls_a1b2c3d4#Sort": { order: "asc" },
+      "__rsc_ls_src/~r/state.ts#InDirNamedLikeTheSuffix": ["kept"],
+      state: { from: "list" },
+      "foreign~r": "not a location-state key",
+      __rsc_lsv: "build-1",
+      idx: 4,
+      key: "scroll-key",
+    };
+    historyState = {
+      ...kept,
+      "__rsc_ls_a1b2c3d4#Carried~r": ["a"],
+      "__rsc_ls_src/state.ts#Carried~r": ["dev key"],
+    };
+
+    clearLocationStateOnDocumentLoad();
+
+    expect(replaceStateSpy).toHaveBeenCalledOnce();
+    expect(replaceStateSpy.mock.calls[0]).toEqual([kept, ""]);
+  });
+
+  it.each([
+    ["null", null],
+    ["a primitive", "primitive"],
+    ["no location state", { idx: 1 }],
+    [
+      "slots without the suffix",
+      {
+        "__rsc_ls_a1b2c3d4#Sort": { order: "asc" },
+        state: { from: "list" },
+        __rsc_lsv: "build-1",
+      },
+    ],
+    ["the suffix outside the __rsc_ls_ prefix", { "other~r": 1, state: 2 }],
+  ])("writes nothing for %s", (_label, state) => {
+    historyState = state;
+    clearLocationStateOnDocumentLoad();
+    expect(historyState).toBe(state);
+    expect(replaceStateSpy).not.toHaveBeenCalled();
+  });
+
+  it("clearOnReload adopted or removed later: the plain key is neither read with the option nor swept", () => {
+    const base = "Adopted";
+    const Before = withLocationStateKey(createLocationState<string[]>(), base);
+    const With = withLocationStateKey(
+      createLocationState<string[]>({ clearOnReload: true }),
+      base,
+    );
+    historyState = {};
+    Before.write(["before"]);
+    With.write(["while set"]);
+    expect(historyState).toEqual({
+      __rsc_ls_Adopted: ["before"],
+      "__rsc_ls_Adopted~r": ["while set"],
+    });
+    replaceStateSpy.mockClear();
+
+    clearLocationStateOnDocumentLoad();
+
+    // The slot from before the option (and the one a definition reads again
+    // after dropping it) stays; the suffixed leftover is swept.
+    expect(historyState).toEqual({ __rsc_ls_Adopted: ["before"] });
+    expect(With.read()).toBeUndefined();
+    expect(Before.read()).toEqual(["before"]);
   });
 });
 

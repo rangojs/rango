@@ -3,6 +3,7 @@ import type { ReactNode, ReactElement } from "react";
 import {
   createLocationState,
   type LocationStateEntry,
+  type LocationStateOptions,
   type LocationStateUnsafe,
   type ValidateLocationState,
 } from "../browser/react/location-state-shared.js";
@@ -342,5 +343,18 @@ describe("navigation state typing", () => {
     expectTypeOf<ReturnType<typeof GridState>>().not.toExtend<LinkState>();
     expectTypeOf<(typeof GridState)[]>().not.toExtend<LinkState>();
     expectTypeOf<typeof GridState>().not.toExtend<LinkState>();
+  });
+});
+
+describe("createLocationState options typing", () => {
+  it("LocationStateOptions is two optional booleans, and does not change the state type", () => {
+    expectTypeOf<LocationStateOptions>().toEqualTypeOf<{
+      flash?: boolean;
+      clearOnReload?: boolean;
+    }>();
+    const options: LocationStateOptions = { clearOnReload: true };
+    expectTypeOf(
+      createLocationState<{ count: number }>(options).read(),
+    ).toEqualTypeOf<{ count: number } | undefined>();
   });
 });

@@ -620,6 +620,41 @@ production's history path, so `useLocationState(Def)` re-reads after the click;
 wait for it with RTL's `waitFor` (see the testing skill,
 `client-components.md` "Location state").
 
+`clearOnReload` does not change what you seed. The option lives in the slot's
+key, not in its value: the definition appends `~r` to whatever name you key it
+with, and `renderRoute` writes the plain value under that key. That gives you
+both sides of the option. Plain `renderRoute` is a client mount, the way a
+reader mounts during a navigation, so the seed is applied. `hydrate: true`
+(next section) is a document load of the seeded entry: before hydrating,
+`renderRoute` calls `clearLocationStateOnDocumentLoad`
+(`src/browser/history-state.ts`), the same function `initBrowserApp` calls at
+production start-up, so the slot is gone from `history.state` and the reader
+stays `undefined`.
+
+You may wonder where the app version went, since the browser drops location
+state another build wrote. A `renderRoute` tree has no app version (it never
+runs `initBrowserApp`, and `renderRoute` resets what an earlier one left), so a
+seed is written without one and reads back on a mount and on a `hydrate: true`
+load. The server primitives return `{ [Def.__rsc_ls_key]: value }` and nothing
+else: the client records its version when it stores the state in an entry.
+
+```tsx
+const routes = [{ path: "/products", Component: ProductList }];
+const seed = {
+  loaders: [[ProductsLoader, { page: 6, products: [] }]] as const, // this page's own: none
+  locationState: [[CarriedProducts, products]] as const,
+};
+
+const mounted = await renderRoute(routes, seed); // a client navigation
+expect(mounted.getAllByRole("listitem")).toHaveLength(products.length);
+mounted.unmount();
+
+const loaded = await renderRoute(routes, { ...seed, hydrate: true }); // a refresh
+expect(loaded.recoverableErrors).toEqual([]);
+expect(loaded.queryAllByRole("listitem")).toHaveLength(0);
+expect(CarriedProducts.read()).toBeUndefined(); // removed from history.state
+```
+
 Model an `include('/shop', …)` mount with the `mount` option: it wraps the
 segment chain in a MountContext exactly as production does, so `useMount()`
 returns the prefix and `useHref`/`useReverse` resolve mount-prefixed URLs. A
@@ -1022,7 +1057,9 @@ from the Vite plugin, and a unit-test project doesn't run it. Without a key,
 runs, so `thrown` holds that missing-key error instead of the redirect. In the
 react-server project (`NODE_ENV=production`) nothing throws and the value lands
 under `"undefined"`. The helper always adds the `__rsc_ls_` prefix, so assert
-`__rsc_ls_Flash`, or `{ [Flash.__rsc_ls_key]: value }` for any key.
+`__rsc_ls_Flash`, or `{ [Flash.__rsc_ls_key]: value }` for any key. Prefer the
+second form once a definition sets `clearOnReload`: the option is part of the
+key (`__rsc_ls_Flash~r`), while the value stays what the handler passed.
 
 Reading **vars the handler set** is via the context, not the snapshot: pass
 `vars` to seed, and read with `ctx.get(token)` (the `fn` receives `ctx`, or use
@@ -1575,7 +1612,8 @@ renderRoute(                            // async; lazy-loads RTL at call time
     mount?,                             // include('/shop', …) prefix -> useMount/useHref/useReverse resolve it
     theme?,                             // createRouter({ theme }) shape (enables useTheme)
     defaultPrefetch?,                   // createRouter({ defaultPrefetch }) value for Links / plain anchors
-    hydrate?: boolean,                  // render to HTML (no window/document), then hydrate it instead of mounting fresh
+    hydrate?: boolean,                  // render to HTML (no window/document), then hydrate it instead of mounting fresh;
+                                        // a document load: seeded clearOnReload slots are removed first
   },
 ): Promise<RenderResult & { router }>; // + { serverHtml: string; recoverableErrors: string[] } when hydrate: true
 // const { getByTestId, router } = await renderRoute([{ path: "/p/:id", Component: P }], { request: "/p/1" });

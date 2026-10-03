@@ -68,6 +68,9 @@ the one for your case.
 - [`./state.md`](./state.md) — `useLocationState` (persistent + flash state,
   `.read()`/`.read(location)`/`.write()`/`.delete()`, typed `state` on `router.push()` /
   `router.replace()`, serializability errors that name the failing field),
+  state from another deploy (dropped by the router, no version to manage), the
+  `createLocationState` options (`flash`; `clearOnReload` for state that must
+  not come back after a refresh, such as a "load more" list),
   `invalidateClientCache()`.
 - [`./outlets.md`](./outlets.md) — `Outlet`, `ParallelOutlet`, `useOutlet`.
 - [`./urls.md`](./urls.md) — `useParams`, `usePathname`, `useSearchParams`,

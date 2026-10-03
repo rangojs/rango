@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import {
+  readableLocationState,
   replaceCurrentHistoryState,
   type LocationStateDefinition,
 } from "./location-state-shared.js";
@@ -18,12 +19,9 @@ export {
 function readLocationStateValue<TState>(
   key: string | undefined,
 ): TState | undefined {
-  if (typeof window === "undefined") return undefined;
-  if (key) {
-    return window.history.state?.[key] as TState | undefined;
-  }
-  // Plain state: stored under history.state.state
-  return window.history.state?.state as TState | undefined;
+  // Typed state: history.state[key]. Plain state: history.state.state. Either
+  // is read only when the entry recorded this client's app version.
+  return readableLocationState()?.[key || "state"] as TState | undefined;
 }
 
 /**

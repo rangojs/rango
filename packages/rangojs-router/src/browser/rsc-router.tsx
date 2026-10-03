@@ -39,7 +39,11 @@ import {
 } from "./intercept-utils.js";
 import { createAppShellRef } from "./app-shell.js";
 import { bootLog, IS_BROWSER_DEBUG } from "./logging.js";
-import { stripShellMissMarker } from "./history-state.js";
+import {
+  clearLocationStateOnDocumentLoad,
+  stripShellMissMarker,
+} from "./history-state.js";
+import { setLocationStateVersion } from "./react/location-state-shared.js";
 import { setActiveInterceptTargets } from "../client-urls/navigation.js";
 
 // Vite HMR types are provided by vite/client
@@ -174,6 +178,9 @@ export async function initBrowserApp(
   // event controller): the server rendered the marked request for the clean
   // URL, so the client starts from the same one and hydration agrees.
   stripShellMissMarker();
+  // Before the first await: the store's entry memory, readers and the
+  // navigation / action lanes that deliver server-set state all come later.
+  clearLocationStateOnDocumentLoad();
   bootLog("flight decode: awaiting initial payload from document stream");
   const initialPayload =
     await deps.createFromReadableStream<RscPayload>(rscStream);
@@ -211,6 +218,8 @@ export async function initBrowserApp(
   // default name active during that wait would discard this router's messages.
   const version = initialPayload.metadata?.version;
   initRangoState(version ?? "0", initialPayload.metadata?.stateCookieName);
+  // Before anything can read location state: hydration starts further down.
+  setLocationStateVersion(version);
 
   // Seed the intercept-target set for the initial location so the FIRST
   // clientUrls navigation already declines intercepted targets (refreshed on

@@ -87,3 +87,39 @@ export const PprExecMark = createLocationState<PprExecMarkShape>();
 // Persistent slot read by a useLocationState reader inside a Suspense boundary
 // that hydrates after the root (#992).
 export const LateSuspenseState = createLocationState<{ label: string }>();
+
+/**
+ * #994 "load more": the items of the pages already on screen ride along on
+ * the Link. The server renders only the page its URL names, so the slot must
+ * not come back after a document load.
+ */
+export const CarriedItems = createLocationState<string[]>({
+  clearOnReload: true,
+});
+
+/**
+ * Written by the same Link without options: survives a document load. The e2e
+ * reads it to know the client snapshots are applied before it asserts that
+ * another slot stayed empty.
+ */
+export const ListSort = createLocationState<{ order: string }>();
+
+/**
+ * Set by the load-more handler on every request (ctx.setLocationState). A
+ * document response carries no location state, so it reaches the client only
+ * with a client navigation's payload, after start-up removed the stale slot.
+ */
+export const ServerPageStamp = createLocationState<{ page: number }>({
+  clearOnReload: true,
+});
+
+export interface GridSnapshot {
+  order: "asc" | "desc";
+  page: number;
+}
+
+/**
+ * #994: no options. The e2e rewrites the app version its entry records, the
+ * way an entry an older build wrote would carry another one.
+ */
+export const GridState = createLocationState<GridSnapshot>();

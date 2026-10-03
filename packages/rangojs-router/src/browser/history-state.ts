@@ -1,9 +1,13 @@
 import {
+  addLocationState,
+  CLEAR_ON_RELOAD_KEY_SUFFIX,
   isLocationStateDefinition,
   isLocationStateEntry,
+  isLocationStateKey,
   peekLocationStateKey,
   replaceCurrentHistoryState,
   resolveLocationStateEntries,
+  stampLocationState,
 } from "./react/location-state-shared.js";
 
 /**
@@ -13,7 +17,7 @@ function isTypedLocationState(
   state: unknown,
 ): state is Record<string, unknown> {
   if (state === null || typeof state !== "object") return false;
-  return Object.keys(state).some((key) => key.startsWith("__rsc_ls_"));
+  return Object.keys(state).some(isLocationStateKey);
 }
 
 /**
@@ -100,16 +104,15 @@ export function buildHistoryState(
     Object.assign(result, serverState);
   }
 
+  if (hasLocationState(result)) stampLocationState(result);
+
   return Object.keys(result).length > 0 ? result : null;
 }
 
 /** Check if a history state object contains location state keys. */
 export function hasLocationState(state: unknown): boolean {
   if (!state || typeof state !== "object") return false;
-  return (
-    "state" in state ||
-    Object.keys(state).some((k) => k.startsWith("__rsc_ls_"))
-  );
+  return "state" in state || Object.keys(state).some(isLocationStateKey);
 }
 
 /**
@@ -157,6 +160,30 @@ export function stripShellMissMarker(): void {
 }
 
 /**
+ * Remove the `clearOnReload` slots of the entry a document load starts on:
+ * the server rendered this document without them. One pass before hydration
+ * (initBrowserApp; renderRoute's `hydrate` mode), so no reader needs to know
+ * the page began as a document load, and a slot nobody reads is removed too.
+ * No server-set state exists yet to lose: a document response carries none
+ * (rsc-rendering.ts attaches it to partial payloads only).
+ *
+ * A slot is recognised by its key alone (the `~r` suffix): at start-up the
+ * module that defines it may not be loaded.
+ */
+export function clearLocationStateOnDocumentLoad(): void {
+  const state: unknown = window.history.state;
+  if (state === null || typeof state !== "object") return;
+  let next: Record<string, unknown> | undefined;
+  for (const key in state) {
+    if (isLocationStateKey(key) && key.endsWith(CLEAR_ON_RELOAD_KEY_SUFFIX)) {
+      next ??= { ...state };
+      delete next[key];
+    }
+  }
+  if (next) window.history.replaceState(next, "");
+}
+
+/**
  * Merge server-set location state into the current history entry.
  * Replaces the current history state and dispatches notification event
  * so useLocationState hooks re-read from history.state.
@@ -164,12 +191,10 @@ export function stripShellMissMarker(): void {
 export function mergeLocationState(
   locationState: Record<string, unknown>,
 ): void {
-  const merged = {
-    ...window.history.state,
-    ...locationState,
-  };
-  replaceCurrentHistoryState(merged);
-  if (Object.keys(locationState).some((k) => k.startsWith("__rsc_ls_"))) {
+  replaceCurrentHistoryState(
+    addLocationState(window.history.state, locationState),
+  );
+  if (Object.keys(locationState).some(isLocationStateKey)) {
     window.dispatchEvent(new Event("__rsc_locationstate"));
   }
 }

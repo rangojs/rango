@@ -1,4 +1,9 @@
-import { expect, type ConsoleMessage, type Page } from "@playwright/test";
+import {
+  expect,
+  type ConsoleMessage,
+  type Locator,
+  type Page,
+} from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { utimesSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -409,17 +414,36 @@ export async function expectClientLinkNavigation(
   linkTestId: string,
   pathname: string,
 ): Promise<void> {
-  await page.evaluate(() => {
-    (window as unknown as { __noReload?: boolean }).__noReload = true;
-  });
+  await markDocument(page);
   await page.getByTestId(linkTestId).first().click();
   await page.waitForURL((url) => url.pathname === pathname);
   expect(
-    await page.evaluate(
-      () => (window as unknown as { __noReload?: boolean }).__noReload,
-    ),
+    await isMarkedDocument(page),
     "client navigation kept the document (no reload)",
   ).toBe(true);
+}
+
+function byTestId(page: Page, id: string): Locator {
+  return page.locator(`[data-testid="${id}"]`);
+}
+
+type MarkedWindow = { __e2eMarkedDocument?: boolean };
+
+/**
+ * A window global does not survive a document load, so the pair tells a
+ * client navigation (still marked) from a reload or a back/forward that
+ * loaded the document (no longer marked).
+ */
+async function markDocument(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    (window as unknown as MarkedWindow).__e2eMarkedDocument = true;
+  });
+}
+
+async function isMarkedDocument(page: Page): Promise<boolean> {
+  return page.evaluate(
+    () => (window as unknown as MarkedWindow).__e2eMarkedDocument === true,
+  );
 }
 
 /**
@@ -484,9 +508,7 @@ export async function expectStreamedBoundariesAdopted(
   options: { url: string; mode: "dev" | "build"; contentTestIds: string[] },
 ): Promise<void> {
   const { url, mode, contentTestIds } = options;
-  const content = contentTestIds.map((id) =>
-    page.locator(`[data-testid="${id}"]`),
-  );
+  const content = contentTestIds.map((id) => byTestId(page, id));
 
   if (mode === "dev") {
     // Warm the module graph so hydration reliably beats the loaders; a build
@@ -595,21 +617,278 @@ export async function expectLateSuspenseReaderHydratesClean(
   url: string,
 ): Promise<void> {
   using _ = guardHydrationErrors(page);
-  const byTestId = (id: string) => page.locator(`[data-testid="${id}"]`);
   const gateUrl = `${url}/${randomUUID()}`;
   const loadHeld = async (load: () => Promise<unknown>): Promise<void> => {
     await load();
     await waitForShellHydration(page);
-    await expect(byTestId("late-ls-fallback")).toBeVisible();
+    await expect(byTestId(page, "late-ls-fallback")).toBeVisible();
     expect((await page.request.get(`${gateUrl}/release`)).ok()).toBe(true);
   };
 
   await loadHeld(() => page.goto(gateUrl, { waitUntil: "commit" }));
-  await expect(byTestId("late-ls-value")).toHaveText("empty");
-  await byTestId("late-ls-write").click();
+  await expect(byTestId(page, "late-ls-value")).toHaveText("empty");
+  await byTestId(page, "late-ls-write").click();
 
   await loadHeld(() => page.reload({ waitUntil: "commit" }));
-  await expect(byTestId("late-ls-value")).toHaveText("stored-value");
+  await expect(byTestId(page, "late-ls-value")).toHaveText("stored-value");
+}
+
+/**
+ * The entry's typed location-state slots, keyed by `<ExportName><suffix>`: the
+ * tail of the injected key (`__rsc_ls_<path or hash>#<ExportName>`) that is
+ * the same in dev and in a build, plus the suffix the definition's
+ * `clearOnReload` adds. Values are stored raw.
+ */
+async function locationStateSlots(
+  page: Page,
+): Promise<Record<string, unknown>> {
+  return page.evaluate(() =>
+    Object.fromEntries(
+      Object.entries((window.history.state ?? {}) as Record<string, unknown>)
+        .filter(([key]) => key.startsWith("__rsc_ls_"))
+        .map(([key, value]) => [key.slice(key.lastIndexOf("#") + 1), value]),
+    ),
+  );
+}
+
+const loadMoreItems = (pageNumber: number): string[] =>
+  [1, 2, 3].map((item) => `p${pageNumber}-${item}`);
+
+/**
+ * Opening steps of the #994 "load more" bodies. The fixture (both apps:
+ * `<url>?page=N`) renders page N's three items on the server. Its `lm-more`
+ * Link goes to page N+1 carrying every item on screen as a `clearOnReload`
+ * slot, plus a slot without options (`lm-sort`). The route's handler sets a
+ * `clearOnReload` slot of its own on every request (`lm-server-page`),
+ * document loads included.
+ *
+ * Loads page 1, then navigates to page 2 on the client. Leaves the page on an
+ * entry holding all three slots.
+ */
+async function openLoadMorePageTwo(page: Page, url: string): Promise<void> {
+  const items = byTestId(page, "lm-items").locator("li");
+
+  // A document response carries no location state: what the handler set for
+  // this load does not reach history.state, so start-up has nothing of the
+  // server's to drop.
+  await page.goto(`${url}?page=1`);
+  await waitForShellHydration(page);
+  await expect(items).toHaveText(loadMoreItems(1));
+  await expect(byTestId(page, "lm-server-page")).toHaveText("none");
+  expect(await locationStateSlots(page)).toEqual({});
+
+  // A client navigation shows the carried items above the new page's, and
+  // delivers the state the handler set for it.
+  await byTestId(page, "lm-more").click();
+  await expect(page).toHaveURL(`${url}?page=2`);
+  await expect(items).toHaveText([...loadMoreItems(1), ...loadMoreItems(2)]);
+  await expect(byTestId(page, "lm-server-page")).toHaveText("2");
+  expect(await locationStateSlots(page)).toEqual({
+    "CarriedItems~r": loadMoreItems(1),
+    "ServerPageStamp~r": { page: 2 },
+    ListSort: { order: "asc" },
+  });
+}
+
+/**
+ * What a document load of that entry must leave: the page as the server
+ * rendered it, both `~r` slots gone from history.state, the slot without
+ * options still applied.
+ *
+ * The server HTML never contains carried items, so "not shown" would pass
+ * before the client applied anything. `lm-sort` comes from history.state too:
+ * once it shows, the client snapshots are in.
+ */
+async function expectLoadMorePageTwoAsServerRendered(
+  page: Page,
+): Promise<void> {
+  await waitForShellHydration(page);
+  await expect(byTestId(page, "lm-sort")).toHaveText("asc");
+  await expect(byTestId(page, "lm-carried-count")).toHaveText("0");
+  await expect(byTestId(page, "lm-server-page")).toHaveText("none");
+  await expect(byTestId(page, "lm-items").locator("li")).toHaveText(
+    loadMoreItems(2),
+  );
+  expect(await locationStateSlots(page)).toEqual({
+    ListSort: { order: "asc" },
+  });
+}
+
+/**
+ * #994 `createLocationState({ clearOnReload: true })`: carried by a client
+ * navigation, dropped by a reload, carried again by the next navigation.
+ */
+export async function expectClearOnReloadDropsCarriedState(
+  page: Page,
+  url: string,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const items = byTestId(page, "lm-items").locator("li");
+  const carried = byTestId(page, "lm-carried-count");
+
+  await openLoadMorePageTwo(page, url);
+  await page.reload();
+  await expectLoadMorePageTwoAsServerRendered(page);
+
+  await byTestId(page, "lm-more").click();
+  await expect(page).toHaveURL(`${url}?page=3`);
+  await expect(items).toHaveText([...loadMoreItems(2), ...loadMoreItems(3)]);
+  await expect(byTestId(page, "lm-server-page")).toHaveText("3");
+
+  // Back inside the running app: the cleared entry is not resurrected.
+  await page.goBack();
+  await expect(page).toHaveURL(`${url}?page=2`);
+  await expect(byTestId(page, "lm-page")).toHaveText("2");
+  await expect(carried).toHaveText("0");
+  await expect(items).toHaveText(loadMoreItems(2));
+
+  // Forward: popstate applies the entry's state, as it always did.
+  await page.goForward();
+  await expect(page).toHaveURL(`${url}?page=3`);
+  await expect(carried).toHaveText("3");
+  await expect(items).toHaveText([...loadMoreItems(2), ...loadMoreItems(3)]);
+}
+
+/**
+ * #994 `clearOnReload` when a back/forward loads the document from the server
+ * instead of a reload. A back/forward cache restore would keep the marked
+ * document and its state, and is not this case.
+ */
+export async function expectClearOnReloadDropsStateOnTraversalLoad(
+  page: Page,
+  url: string,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+
+  await openLoadMorePageTwo(page, url);
+  await markDocument(page);
+  await page.goto(`${url}?page=9`);
+  await waitForShellHydration(page);
+  await page.goBack();
+  await expect(page).toHaveURL(`${url}?page=2`);
+  expect(await isMarkedDocument(page)).toBe(false);
+
+  await expectLoadMorePageTwoAsServerRendered(page);
+}
+
+/**
+ * Rewrites the app version the current entry records for its location state
+ * (`__rsc_lsv`), the way an entry written by another build carries another
+ * one. `undefined` removes the record: an entry from a release that did not
+ * write one. This is how the bodies below get "a newer build is now running"
+ * without building twice.
+ */
+async function recordEntryVersion(
+  page: Page,
+  version: string | undefined,
+): Promise<void> {
+  await page.evaluate((recorded) => {
+    const { __rsc_lsv: _was, ...rest } = window.history.state;
+    window.history.replaceState(
+      recorded === undefined ? rest : { ...rest, __rsc_lsv: recorded },
+      "",
+    );
+  }, version);
+}
+
+/**
+ * Reloads the #994 app-version fixture (both apps) and waits until its readers hold
+ * their client snapshots. The server HTML says "none" for every reader, so
+ * "none" alone would pass before the client read anything; the fixture's
+ * `grid-mounted` turns "yes" in an effect, after the snapshots are applied.
+ */
+async function reloadAppVersionFixture(page: Page): Promise<void> {
+  await page.reload();
+  await waitForShellHydration(page);
+  await expect(byTestId(page, "grid-mounted")).toHaveText("yes");
+}
+
+/**
+ * #994: location state is versioned by the app version. A document load keeps
+ * the state its own version wrote and reads nothing another version wrote,
+ * typed or plain, with a clean hydration.
+ *
+ * The fixture (both apps: `<url>?step=...`) has a typed reader (`grid-value`,
+ * written by `grid-write`) and a plain-state reader (`plain-value`, written by
+ * `plain-write`).
+ */
+export async function expectOtherVersionLocationStateDroppedOnLoad(
+  page: Page,
+  url: string,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+
+  await page.goto(url);
+  await waitForShellHydration(page);
+
+  for (const [write, readerId, value] of [
+    ["grid-write", "grid-value", "desc:3"],
+    ["plain-write", "plain-value", "panel"],
+  ] as const) {
+    const reader = byTestId(page, readerId);
+    await byTestId(page, write).click();
+    await expect(reader).toHaveText(value);
+    // The running app recorded its version on the entry it wrote.
+    const recorded = await page.evaluate(
+      () => (window.history.state as { __rsc_lsv?: unknown }).__rsc_lsv,
+    );
+    expect(recorded).toEqual(expect.stringMatching(/./));
+
+    await reloadAppVersionFixture(page);
+    await expect(reader).toHaveText(value);
+
+    for (const otherVersion of ["another-build", undefined]) {
+      await recordEntryVersion(page, otherVersion);
+      await reloadAppVersionFixture(page);
+      await expect(reader).toHaveText("none");
+    }
+  }
+
+  // A write under the running version is read again.
+  await byTestId(page, "grid-write").click();
+  await expect(byTestId(page, "grid-value")).toHaveText("desc:3");
+}
+
+/**
+ * #994: the same rule without a document load. After a deploy and a reload the
+ * session history still holds entries the older build wrote; back/forward
+ * reaches them through popstate.
+ *
+ * `grid-step` is the server-rendered `?step`: once it names the entry, the
+ * traversal is committed and the readers have handled its popstate.
+ */
+export async function expectOtherVersionLocationStateDroppedOnTraversal(
+  page: Page,
+  url: string,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const grid = byTestId(page, "grid-value");
+  const step = byTestId(page, "grid-step");
+  const leaveAndComeBack = async (): Promise<void> => {
+    await byTestId(page, "grid-next").click();
+    await expect(step).toHaveText("next");
+    await expect(grid).toHaveText("none");
+    await page.goBack();
+    await expect(step).toHaveText("typed");
+  };
+
+  await page.goto(url);
+  await waitForShellHydration(page);
+  await byTestId(page, "grid-write").click();
+  await expect(grid).toHaveText("desc:3");
+  await markDocument(page);
+
+  // Its own version: back/forward applies the entry's state, as always.
+  await leaveAndComeBack();
+  await expect(grid).toHaveText("desc:3");
+
+  await recordEntryVersion(page, "another-build");
+  await leaveAndComeBack();
+  expect(await isMarkedDocument(page)).toBe(true);
+  await expect(grid).toHaveText("none");
+
+  await byTestId(page, "grid-write").click();
+  await expect(grid).toHaveText("desc:3");
 }
 
 /**
@@ -631,7 +910,6 @@ export async function expectBackLeavesScrollToBrowser(
   },
 ): Promise<void> {
   const originY = 1500;
-  const byTestId = (id: string) => page.locator(`[data-testid="${id}"]`);
   const scrollY = () => page.evaluate(() => window.scrollY);
 
   await page.addInitScript(() => {
@@ -664,12 +942,14 @@ export async function expectBackLeavesScrollToBrowser(
   await expect.poll(scrollY).toBe(originY);
 
   // A DOM click: a locator click would scroll the link into view first.
-  await byTestId(options.linkTestId).evaluate((a: HTMLElement) => a.click());
-  await expect(byTestId(options.destinationTestId)).toBeVisible();
+  await byTestId(page, options.linkTestId).evaluate((a: HTMLElement) =>
+    a.click(),
+  );
+  await expect(byTestId(page, options.destinationTestId)).toBeVisible();
   await expect(page).toHaveURL(options.destinationUrl);
 
   await page.goBack();
-  await expect(byTestId(options.originTestId)).toBeVisible();
+  await expect(byTestId(page, options.originTestId)).toBeVisible();
   await expect.poll(scrollY).toBe(originY);
   expect(
     await page.evaluate(() => (window as any).__scrollCallsAfterPopstate),
