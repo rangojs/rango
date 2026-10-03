@@ -648,9 +648,11 @@ second copy. On a document HIT a bake-lane owner's values go through
 and the settled pushes a run of that loader makes on the HIT (it reads the
 store, not the capture), anywhere inside its body, are dropped; only its
 thenable pushes, which the record could not keep, are added. An owner the
-route also runs on the live lane is a hole and keeps `pushReplayed`, as does
-every owner on a client navigation replaying the record: there the run's
-pushes replace the restored copies. A hole's body also ends the search for a
+route also runs on the live lane is a hole and keeps `pushReplayed`. A
+client navigation whose doc record hits restores bake-lane owners the same
+way as the document HIT (`pushRestored`, unclaimed); a live-lane owner on
+that replay stays `pushReplayed`, and so does an explicit route `cache()`
+hit, which is not the shell record. A hole's body also ends the search for a
 restored loader around a push (`pushRestored`'s `liveLane`), so a live loader
 that a running bake-lane loader awaits keeps its live pushes. A dependency
 the route registers on neither lane is credited at capture to the first

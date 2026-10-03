@@ -424,6 +424,40 @@ const EarlyBakeLoader = createLoader(async (ctx) => {
   return { early: `early-${earlyHole}`, later: Promise.resolve("early-later") };
 });
 
+/** Body runs of SchHole, across the #1002 cases. */
+const schRuns = { hole: 0 };
+
+/** A handle only SchHole pushes to. */
+const SchNotes = createHandle<string>();
+
+/** A cached hole. A reader declared before its binding must not run it live. */
+const SchHole = createLoader(async (ctx) => {
+  schRuns.hole += 1;
+  ctx.use(SchNotes)(`sch-note@g${source.generation}`);
+  return { sch: `sch@g${source.generation}` };
+});
+
+/** Declared before SchHole: ctx.use starts before the hole's cache() binding. */
+const SchReader = createLoader(async (ctx) => {
+  const { sch } = await ctx.use(SchHole);
+  return { reader: `reader-${sch}`, later: Promise.resolve("reader-later") };
+});
+
+/** Same read, promise-free, for a non-ppr route. */
+const SchReaderPlain = createLoader(async (ctx) => {
+  const { sch } = await ctx.use(SchHole);
+  return { reader: `reader-${sch}` };
+});
+
+/**
+ * A promise-carrying bake-lane loader (#1003): it runs on every shell HIT
+ * and every navigation replay, and pushes a settled generation-stamped value.
+ */
+const EbBake = createLoader(async (ctx) => {
+  ctx.use(HoleyNotes)(`eb-after@g${source.generation}`);
+  return { eb: `eb@g${source.generation}`, later: Promise.resolve("eb-later") };
+});
+
 /** Reads readRecaptureLive during a capture only. */
 const RecaptureBakeLoader = createLoader(async (ctx) => ({
   baked:
@@ -750,6 +784,50 @@ function makeRouter(options: RangoOptions = {}) {
             loader(EarlyCachedHoleLoader, () => [cache({ ttl: 300 })]),
             loading(<p>loading early hole</p>),
           ],
+        ),
+        path(
+          "/eb",
+          () => <p>eb</p>,
+          { name: "eb", ppr: true },
+          () => [loader(EbBake, { ssr: false })],
+        ),
+        path(
+          "/sch",
+          () => <p>sch</p>,
+          { name: "sch", ppr: true },
+          () => [
+            loader(SchReader, { ssr: false }),
+            loader(SchHole, () => [cache({ ttl: 300 })]),
+            loading(<p>loading sch</p>),
+          ],
+        ),
+        path(
+          "/sch-hole-first",
+          () => <p>sch hole first</p>,
+          { name: "schHoleFirst", ppr: true },
+          () => [
+            loader(SchHole, () => [cache({ ttl: 300 })]),
+            loader(SchReader, { ssr: false }),
+            loading(<p>loading sch</p>),
+          ],
+        ),
+        path(
+          "/sch-plain",
+          () => <p>sch plain</p>,
+          { name: "schPlain" },
+          () => [
+            loader(SchReaderPlain),
+            loader(SchHole, () => [cache({ ttl: 300 })]),
+          ],
+        ),
+        path(
+          "/sch-handler",
+          async (ctx) => {
+            const { sch } = await ctx.use(SchHole);
+            return <p>{`handler-${sch}`}</p>;
+          },
+          { name: "schHandler" },
+          () => [loader(SchHole, () => [cache({ ttl: 300 })])],
         ),
         path(
           "/recapture-live",
@@ -1460,9 +1538,69 @@ describe("serveShellRequest: a hole never reads the shell snapshot", () => {
       `deferred-note-${captured}`,
     ]);
   });
+
+  // #1001: the navigation path used to claim the loader, so the cache() HIT
+  // refused the deferred push the shell record could not keep. A document HIT
+  // does not claim. The settled push is the record's copy, once.
+  it("a deferred push by a runs: 1 loader reaches a navigation replay when the loader's own cache() entry hits", async () => {
+    const cacheStore = new MemorySegmentCacheStore();
+    const { serve } = setup({ cacheStore });
+    const getItem = cacheStore.getItem.bind(cacheStore);
+    const loaderMiss = vi
+      .spyOn(cacheStore, "getItem")
+      .mockImplementation(async (key) =>
+        key.startsWith("loader:") ? null : getItem(key),
+      );
+    const miss = await serve("/deferred-owned");
+    expect(miss.shellStatus).toBe("MISS");
+    loaderMiss.mockRestore();
+    const captured = deferredOwnedRuns.body;
+    const pushes = (flight: string | undefined) => ({
+      settled: flight?.match(/settled-note-\d+/g) ?? [],
+      deferred: flight?.match(/deferred-note-\d+/g) ?? [],
+    });
+
+    const nav = await serve("/deferred-owned", { partial: { from: "/about" } });
+    const hit = await serve("/deferred-owned");
+
+    expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
+    expect(hit.shellStatus).toBe("HIT");
+    expect(deferredOwnedRuns.body).toBe(captured);
+    for (const flight of [nav.flight, hit.flight]) {
+      const seen = pushes(flight);
+      expect(seen.deferred.length).toBeGreaterThan(0);
+      expect(seen.settled.length).toBe(seen.deferred.length);
+      expect(new Set(seen.settled)).toEqual(
+        new Set([`settled-note-${captured}`]),
+      );
+      expect(new Set(seen.deferred)).toEqual(
+        new Set([`deferred-note-${captured}`]),
+      );
+    }
+  });
 });
 
 describe("serveShellRequest: restored handle pushes on a HIT and a navigation replay", () => {
+  // #1003: a navigation replay used pushReplayed, so the live run replaced
+  // the capture's settled push. The data pin already stayed at the capture.
+  it("a navigation replay keeps a bake-lane loader's captured push, like a document HIT", async () => {
+    const { serve } = setup();
+    expect((await serve("/eb")).shellStatus).toBe("MISS");
+    source.generation = 2;
+
+    const hit = await serve("/eb");
+    source.generation = 3;
+    const nav = await serve("/eb", { partial: { from: "/about" } });
+
+    expect(hit.shellStatus).toBe("HIT");
+    expect(hit.flight).toContain('"eb":"eb@g1"');
+    expect(hit.flight?.match(/eb-after@g\d/g)?.at(-1)).toBe("eb-after@g1");
+    expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
+    expect(nav.flight).toContain('"eb":"eb@g1"');
+    expect(nav.flight).not.toContain('"eb":"eb@g3"');
+    expect(nav.flight?.match(/eb-after@g\d/g)?.at(-1)).toBe("eb-after@g1");
+  });
+
   it("a \"use cache\" hit inside a bake-lane loader's body pushes its dependency's handle once on a document HIT", async () => {
     const { serve } = setup();
     // The MISS writes readCachedDep's entry, so the capture hits it and
@@ -1718,10 +1856,11 @@ describe("serveShellRequest: restored handle pushes on a HIT and a navigation re
     expect(nav.flight).not.toContain("quiet-note");
   });
 
-  // A reader that starts the hole before its cache() binding runs it live:
-  // the binding's HIT then delivers nothing, and the live push keeps the
-  // shell copy's place.
-  it("a cached hole a bake-lane loader starts first keeps its push in the captured place", async () => {
+  // #1002: a bake-lane loader declared before the cached hole used to start
+  // the hole live. The binding's HIT then served the entry's data while the
+  // live push stood. The reader yields to the binding, so both are the entry
+  // the MISS stored.
+  it("a cached hole a bake-lane loader starts first keeps the cache entry's data and push", async () => {
     const { serve } = setup();
     const notes = /early-(hole-note@g\d|bake-note|handler-note)/g;
     const miss = await serve("/early-cached-hole");
@@ -1738,18 +1877,104 @@ describe("serveShellRequest: restored handle pushes on a HIT and a navigation re
     });
 
     expect(hit.shellStatus).toBe("HIT");
+    expect(hit.flight).toContain('"earlyHole":"early-hole@g1"');
+    expect(hit.flight).toContain('"early":"early-early-hole@g1"');
     expect(hit.flight?.match(notes)).toEqual([
-      "early-hole-note@g2",
+      "early-hole-note@g1",
       "early-bake-note",
       "early-handler-note",
     ]);
     // A navigation streams each handle update as the full state: the last
     // one is what the client ends with.
+    expect(nav.flight).toContain('"earlyHole":"early-hole@g1"');
     expect(nav.flight?.match(notes)?.slice(-3)).toEqual([
-      "early-hole-note@g2",
+      "early-hole-note@g1",
       "early-bake-note",
       "early-handler-note",
     ]);
+  });
+
+  // #1002. The g2 serve forces one loader-cache miss so the hole entry is
+  // rewritten there; g3 must serve that entry, not a live run the reader
+  // started ahead of the binding. Hole-declared-first and a handler reader
+  // already kept one source.
+  it("a cached hole a reader starts before its binding serves the entry's data and push", async () => {
+    const forceLoaderMiss = (cacheStore: MemorySegmentCacheStore) => {
+      const getItem = cacheStore.getItem.bind(cacheStore);
+      return vi
+        .spyOn(cacheStore, "getItem")
+        .mockImplementation(async (key) =>
+          key.startsWith("loader:") ? null : getItem(key),
+        );
+    };
+    const note = (flight: string | undefined) =>
+      flight?.match(/sch-note@g\d/g)?.at(-1);
+
+    schRuns.hole = 0;
+    const cacheStore = new MemorySegmentCacheStore();
+    const ppr = setup({ cacheStore });
+    expect((await ppr.serve("/sch")).shellStatus).toBe("MISS");
+    expect((await ppr.serve("/sch-hole-first")).shellStatus).toBe("MISS");
+    source.generation = 2;
+    const refillMiss = forceLoaderMiss(cacheStore);
+    await ppr.serve("/sch");
+    await ppr.serve("/sch-hole-first");
+    refillMiss.mockRestore();
+    const afterRefill = schRuns.hole;
+    source.generation = 3;
+
+    const hit = await ppr.serve("/sch");
+    const nav = await ppr.serve("/sch", { partial: { from: "/about" } });
+    const holeFirstHit = await ppr.serve("/sch-hole-first");
+    const holeFirstNav = await ppr.serve("/sch-hole-first", {
+      partial: { from: "/about" },
+    });
+
+    expect(schRuns.hole).toBe(afterRefill);
+    expect(hit.shellStatus).toBe("HIT");
+    expect(hit.flight).toContain('"sch":"sch@g2"');
+    expect(hit.flight).not.toContain('"sch":"sch@g3"');
+    expect(note(hit.flight)).toBe("sch-note@g2");
+    expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
+    expect(nav.flight).toContain('"sch":"sch@g2"');
+    expect(nav.flight).not.toContain('"sch":"sch@g3"');
+    expect(note(nav.flight)).toBe("sch-note@g2");
+    expect(holeFirstHit.flight).toContain('"sch":"sch@g2"');
+    expect(note(holeFirstHit.flight)).toBe("sch-note@g2");
+    expect(holeFirstNav.flight).toContain('"sch":"sch@g2"');
+    expect(note(holeFirstNav.flight)).toBe("sch-note@g2");
+
+    schRuns.hole = 0;
+    source.generation = 1;
+    const plain = setup();
+    const first = await plain.serve("/sch-plain");
+    expect(schRuns.hole).toBe(1);
+    expect(first.flight).toContain('"sch":"sch@g1"');
+    expect(first.flight).toContain('"reader":"reader-sch@g1"');
+    expect(note(first.flight)).toBe("sch-note@g1");
+    source.generation = 2;
+    const second = await plain.serve("/sch-plain");
+    expect(schRuns.hole).toBe(1);
+    expect(second.flight).toContain('"sch":"sch@g1"');
+    expect(second.flight).toContain('"reader":"reader-sch@g1"');
+    expect(second.flight).not.toContain("sch@g2");
+    expect(note(second.flight)).toBe("sch-note@g1");
+
+    schRuns.hole = 0;
+    source.generation = 1;
+    const handler = setup();
+    const handlerFirst = await handler.serve("/sch-handler");
+    expect(schRuns.hole).toBe(1);
+    expect(handlerFirst.flight).toContain("handler-sch@g1");
+    expect(handlerFirst.flight).toContain('"sch":"sch@g1"');
+    expect(note(handlerFirst.flight)).toBe("sch-note@g1");
+    source.generation = 2;
+    const handlerSecond = await handler.serve("/sch-handler");
+    expect(schRuns.hole).toBe(1);
+    expect(handlerSecond.flight).toContain("handler-sch@g1");
+    expect(handlerSecond.flight).toContain('"sch":"sch@g1"');
+    expect(handlerSecond.flight).not.toContain("sch@g2");
+    expect(note(handlerSecond.flight)).toBe("sch-note@g1");
   });
 
   // A recapture whose "use cache" call hits the entry the first capture

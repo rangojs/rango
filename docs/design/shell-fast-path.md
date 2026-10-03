@@ -217,12 +217,17 @@ produces is baked" below):
    HIT awaits it. A dependency the route registers on neither lane is
    credited at capture to the first registered loader around it: under a
    live-lane loader its pushes are that hole's and stay live; run only under
-   a bake-lane loader, they are restored and stand. A client navigation replaying the record
-   uses `pushReplayed` for every owner. Until issue #929 they were restored
-   as plain values and showed twice unless the handle deduped by key. A push
-   that lands after the document's handle snapshot reaches the client after
-   hydration (the late channel). A record written before `handleOwners`
-   existed restores as a plain replay.
+   a bake-lane loader, they are restored and stand. A client navigation whose
+   doc record hits (`x-rango-ppr-replay: HIT`) restores bake-lane owners the
+   same way (`pushRestored`, unclaimed, `withCacheLookup`): the run's settled
+   pushes are dropped, and a thenable the record could not keep still arrives
+   from that loader's own `cache()` HIT. A live-lane owner stays on
+   `pushReplayed`. An explicit route `cache()` hit on that navigation is not
+   the shell record, so it still replays through `pushReplayed`. Until issue
+   #929 every owner was restored as a plain value and showed twice unless the
+   handle deduped by key. A push that lands after the document's handle
+   snapshot reaches the client after hydration (the late channel). A record
+   written before `handleOwners` existed restores as a plain replay.
 
 ## Everything a handler produces is baked
 
