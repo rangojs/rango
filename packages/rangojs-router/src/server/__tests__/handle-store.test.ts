@@ -523,7 +523,7 @@ describe("HandleStore.pushReplayed (loader-cache HIT replay)", () => {
   });
 });
 
-describe("HandleStore.pushRestored (a document HIT's record copies stand)", () => {
+describe("HandleStore.pushRestored (a pinned loader's record copies stand)", () => {
   const bodyPush = (
     store: ReturnType<typeof createHandleStore>,
     id: string,
@@ -647,11 +647,11 @@ describe("HandleStore.pushRestored (a document HIT's record copies stand)", () =
     expect(store.getDataForSegment("seg1").crumbs).toEqual(["dep-captured"]);
   });
 
-  // A loader the route runs live is a hole: its body ends the walk for a
-  // restored loader, whether or not it has a replayed push to replace.
-  it("a push made in a live-lane loader's body, or in an unrestored body it entered, is not counted for a restored loader around it", () => {
+  // A loader the record does not serve is a hole: its body ends the walk for
+  // a restored loader, whether or not it has a replayed push to replace.
+  it("a push made in a hole's body, or in an unrestored body it entered, is not counted for a restored loader around it", () => {
     const store = createHandleStore();
-    store.markLiveLane(new Set(["LiveDep"]));
+    store.markHoles(["LiveDep"]);
     store.pushRestored("crumbs", "seg1", "outer-captured", "Outer");
 
     runInsideLoaderBodyScope(
@@ -673,9 +673,9 @@ describe("HandleStore.pushRestored (a document HIT's record copies stand)", () =
     ]);
   });
 
-  it("a replay of a live-lane loader's push made inside a restored loader's body stays", () => {
+  it("a replay of a hole's push made inside a restored loader's body stays", () => {
     const store = createHandleStore();
-    store.markLiveLane(new Set(["LiveDep"]));
+    store.markHoles(["LiveDep"]);
     store.pushRestored("crumbs", "seg1", "outer-captured", "Outer");
 
     runInsideLoaderBodyScope(
@@ -731,10 +731,25 @@ describe("HandleStore.pushReplayed inside a replayed loader's body (navigation r
   });
 });
 
-describe("HandleStore.settleLoaderRun (a replayed loader's run ended)", () => {
-  it("drops the copies a live-lane loader's run did not replace", () => {
+describe("HandleStore.markHoles", () => {
+  it("adds to the holes already marked", () => {
     const store = createHandleStore();
-    store.markLiveLane(new Set(["Live"]));
+    store.markHoles(["First"]);
+    store.markHoles(new Set(["Second"]));
+    store.pushReplayed("crumbs", "seg1", "first-captured", "First");
+    store.pushReplayed("crumbs", "seg1", "second-captured", "Second");
+
+    store.settleLoaderRun("First");
+    store.settleLoaderRun("Second");
+
+    expect(store.getDataForSegment("seg1").crumbs).toEqual([]);
+  });
+});
+
+describe("HandleStore.settleLoaderRun (a replayed loader's run ended)", () => {
+  it("drops the copies a hole's run did not replace", () => {
+    const store = createHandleStore();
+    store.markHoles(["Live"]);
     store.pushReplayed("crumbs", "seg1", "live-captured", "Live");
     store.pushReplayed("crumbs", "seg2", "live-captured-2", "Live");
     store.push("crumbs", "seg1", "handler");
@@ -747,7 +762,7 @@ describe("HandleStore.settleLoaderRun (a replayed loader's run ended)", () => {
 
   it("keeps the live pushes of a loader that replaced its copies, and a later push lands after them", () => {
     const store = createHandleStore();
-    store.markLiveLane(new Set(["Live"]));
+    store.markHoles(["Live"]);
     store.pushReplayed("crumbs", "seg1", "live-captured", "Live");
     runInsideLoaderBodyScope(
       () => store.push("crumbs", "seg1", "live-a"),
@@ -765,7 +780,7 @@ describe("HandleStore.settleLoaderRun (a replayed loader's run ended)", () => {
 
   it("leaves restored copies and other loaders' copies alone", () => {
     const store = createHandleStore();
-    store.markLiveLane(new Set(["Live"]));
+    store.markHoles(["Live"]);
     store.pushRestored("crumbs", "seg1", "bake-captured", "Bake");
     store.pushReplayed("crumbs", "seg1", "other-captured", "Other");
 
@@ -778,28 +793,28 @@ describe("HandleStore.settleLoaderRun (a replayed loader's run ended)", () => {
     ]);
   });
 
-  // A bake-lane loader's record stays authoritative, as its pin is for its
-  // data: a navigation run that skips its push does not drop the replay.
-  it("keeps the replayed copies of a loader outside the live lane", () => {
+  // A copy another cached unit's HIT replayed for a dependency: no record
+  // marked that loader a hole, so a run that skips the push keeps it.
+  it("keeps the replayed copies of a loader that is not a hole", () => {
     const store = createHandleStore();
-    store.markLiveLane(new Set(["Live"]));
-    store.pushReplayed("crumbs", "seg1", "bake-captured", "Bake");
+    store.markHoles(["Live"]);
+    store.pushReplayed("crumbs", "seg1", "dep-cached", "Dep");
 
-    store.settleLoaderRun("Bake");
+    store.settleLoaderRun("Dep");
 
-    expect(store.getDataForSegment("seg1").crumbs).toEqual(["bake-captured"]);
+    expect(store.getDataForSegment("seg1").crumbs).toEqual(["dep-cached"]);
   });
 });
 
-describe("HandleStore.redeliverReplays (a hole's own cache() HIT)", () => {
+describe("HandleStore.redeliverReplays (a cached unit's HIT over a record's placeholders)", () => {
   it("takes the place of the values replayed for the hole before, a dependency's included", () => {
     const store = createHandleStore();
-    store.markLiveLane(new Set(["Hole"]));
+    store.markHoles(["Hole"]);
     store.pushReplayed("crumbs", "seg1", "hole-captured-a", "Hole");
     store.pushReplayed("crumbs", "seg1", "hole-captured-b", "Hole");
     store.push("crumbs", "seg1", "handler");
 
-    store.redeliverReplays("Hole", () => {
+    store.redeliverReplays(["Hole"], () => {
       store.pushReplayed("crumbs", "seg1", "hole-cached-a", "Hole");
       store.pushReplayed("crumbs", "seg1", "dep-cached", "Dep");
     });
@@ -821,17 +836,77 @@ describe("HandleStore.redeliverReplays (a hole's own cache() HIT)", () => {
     ]);
   });
 
-  it("delivers as a plain replay for a loader outside the live lane", () => {
+  // The gate is the caller's claim, not the lane: any loader whose earlier
+  // copies are still pending gives way to the unit that claimed it.
+  it("applies to every loader given, whatever its lane", () => {
     const store = createHandleStore();
-    store.markLiveLane(new Set(["Hole"]));
     store.pushReplayed("crumbs", "seg1", "bake-captured", "Bake");
+    store.push("crumbs", "seg1", "handler");
 
-    store.redeliverReplays("Bake", () => {
+    store.redeliverReplays(["Bake"], () => {
       store.pushReplayed("crumbs", "seg1", "bake-cached", "Bake");
     });
 
     expect(store.getDataForSegment("seg1").crumbs).toEqual([
-      "bake-captured",
+      "bake-cached",
+      "handler",
+    ]);
+  });
+
+  it("an entry that recorded no push removes the placeholders", () => {
+    const store = createHandleStore();
+    store.pushReplayed("crumbs", "seg1", "bake-captured", "Bake");
+    store.push("crumbs", "seg1", "handler");
+
+    store.redeliverReplays(["Bake"], () => {});
+
+    expect(store.getDataForSegment("seg1").crumbs).toEqual(["handler"]);
+  });
+
+  // The cached loader and a dependency its entry recorded, each with a
+  // placeholder of its own in one array: the entry's pushes keep their
+  // recorded order at the first placeholder's position.
+  it("several loaders sharing an array get one anchor, and the delivery keeps its order", () => {
+    const store = createHandleStore();
+    store.push("crumbs", "seg1", "handler-before");
+    store.pushReplayed("crumbs", "seg1", "bake-captured-a", "Bake");
+    store.pushReplayed("crumbs", "seg1", "dep-captured", "Dep");
+    store.pushReplayed("crumbs", "seg1", "bake-captured-b", "Bake");
+    store.push("crumbs", "seg1", "handler-after");
+    store.pushReplayed("crumbs", "seg2", "dep-captured-2", "Dep");
+
+    store.redeliverReplays(["Bake", "Dep"], () => {
+      store.pushReplayed("crumbs", "seg1", "bake-cached-a", "Bake");
+      store.pushReplayed("crumbs", "seg1", "dep-cached", "Dep");
+      store.pushReplayed("crumbs", "seg1", "bake-cached-b", "Bake");
+    });
+
+    expect(store.getDataForSegment("seg1").crumbs).toEqual([
+      "handler-before",
+      "bake-cached-a",
+      "dep-cached",
+      "bake-cached-b",
+      "handler-after",
+    ]);
+    // The entry recorded no push of the dependency for seg2.
+    expect(store.getDataForSegment("seg2").crumbs).toEqual([]);
+  });
+
+  it("leaves a loader it was not given, and restored copies, alone", () => {
+    const store = createHandleStore();
+    store.pushRestored("crumbs", "seg1", "pinned-captured", "Pinned");
+    store.pushReplayed("crumbs", "seg1", "other-captured", "Other");
+    store.pushReplayed("crumbs", "seg1", "bake-captured", "Bake");
+
+    store.redeliverReplays(["Bake", "Pinned"], () => {
+      store.pushReplayed("crumbs", "seg1", "bake-cached", "Bake");
+      // Dropped: the pinned loader's settled copy stands.
+      store.pushReplayed("crumbs", "seg1", "pinned-cached", "Pinned");
+    });
+
+    expect(store.getDataForSegment("seg1").crumbs).toEqual([
+      "pinned-captured",
+      "other-captured",
       "bake-cached",
     ]);
   });
@@ -840,7 +915,7 @@ describe("HandleStore.redeliverReplays (a hole's own cache() HIT)", () => {
     const store = createHandleStore();
     store.push("crumbs", "seg1", "handler");
 
-    store.redeliverReplays("Hole", () => {
+    store.redeliverReplays(["Hole"], () => {
       store.pushReplayed("crumbs", "seg1", "hole-cached", "Hole");
     });
 

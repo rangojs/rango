@@ -761,10 +761,13 @@ export type SegmentHandleData = Record<string, unknown[]>;
  * index (null: not owned). Only a PPR shell capture writes owners: the
  * settled pushes of the loader bodies it ran (an `ssr: false` loader's own,
  * the loaders it awaits, and its own cache() replays), which the record keeps
- * because the prelude rendered them. A document HIT restores a bake-lane
- * owner's value through HandleStore.pushRestored, and it stands against a run
- * of its loader there; a live-lane owner's (a hole), and every owner's on
- * any other replay of the record (a client navigation), go through
- * pushReplayed, so a run of the loader replaces it with its live push.
+ * because the prelude rendered them. A restore of the record
+ * (handle-snapshot.ts restoreHandles) keeps an owner's value where the
+ * request serves that loader from the pin stored with the record
+ * (HandleStore.pushRestored: it stands against a run of the loader), on a
+ * document HIT and on a navigation replay alike. Every other owner's value
+ * is a placeholder (pushReplayed): a live-lane loader's, and every owner's
+ * where the record has no pin for it. The loader's run, or its own cache()
+ * entry, replaces it.
  */
 export type HandleOwners = Record<string, Record<string, (string | null)[]>>;

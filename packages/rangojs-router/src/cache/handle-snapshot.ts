@@ -134,27 +134,26 @@ export function captureHandleOwners(
   return owners;
 }
 
-/** How restoreHandles delivers a record's loader-owned values. */
+/**
+ * Which loaders the request serves from a pin stored with the record being
+ * restored: how restoreHandles delivers the record's loader-owned values.
+ * Built by loaderPins (loader-cache.ts) over the seed resolveLoaderData reads
+ * a loader's value from, so a value and its record copies get one answer.
+ * Read when a record hits, not before: a navigation replay arms its seed
+ * from the hit (CacheScope.lookupRouteDetailed).
+ */
 export interface OwnedPushDelivery {
+  /** The request serves at least one loader from a pin. */
+  readonly seeded: boolean;
   /**
-   * Asked once per owner delivered through pushReplayed
-   * (setupLoaderAccess _claimLoaderPushes); an owner it refuses is skipped.
+   * The record supplies `loaderId`'s value: a registered loader the request
+   * serves from its pin, or a dependency the route does not register while
+   * every `ssr: false` loader of the route is pinned (one of them ran it at
+   * capture, and the record does not say which).
    */
-  claim?: (loaderId: string) => boolean;
-  /**
-   * A PPR shell's record (capture, document HIT tail, navigation replay): the
-   * loaders the route runs on the live lane (liveLaneLoaderIds), marked on
-   * the store (HandleStore.markLiveLane). A hole's values are replayed
-   * unclaimed, so its own cache() HIT redelivers its entry's pushes in their
-   * place (HandleStore.redeliverReplays), and its run ending without a push
-   * drops them (HandleStore.settleLoaderRun).
-   */
-  liveLane?: ReadonlySet<string>;
-  /**
-   * A document HIT tail: every owner outside `liveLane` goes through
-   * pushRestored and stands, unclaimed.
-   */
-  restore?: boolean;
+  pinned(loaderId: string): boolean;
+  /** The registered loaders that are not pinned: holes on this request. */
+  unpinned(): ReadonlySet<string>;
 }
 
 /**
@@ -163,24 +162,29 @@ export interface OwnedPushDelivery {
  * cache() record owns its segments' arrays, so it REPLACES them.
  *
  * A segment with `owners` is replaced with empty arrays and re-pushed in
- * recorded order, an owned value through pushReplayed: if the owning loader
- * runs (a client navigation replaying a ppr route's cache() record runs its
- * `ssr: false` loaders), its live pushes replace the recorded ones in place
- * instead of appending a second copy. `owned.claim` is asked once per
- * owner, so the loader's own cache() HIT does not replay its pushes a second
- * time (loader-cache.ts replayLoaderHandles). A record without owners
- * restores as a plain replay.
+ * recorded order. A loader-owned value is a copy of a push that loader made
+ * in the run that wrote the record; whether it stands depends on where this
+ * request takes that loader's value from (`owned`, the one-source rule,
+ * docs/design/handle-push-ownership.md):
  *
- * `owned.restore`: a document HIT tail restoring the shell's doc record
- * (withCacheLookup). A bake-lane owner's values are the prelude's, so they go
- * through pushRestored and stand: a run of that loader on the HIT (a
- * promise-carrying `ssr: false` loader, one whose record asks for a run)
- * reads the store, and its settled pushes are dropped, not swapped in.
- * Nothing is claimed, so the loader's own cache() HIT still replays the
- * pushes the record could not keep (the thenable ones pushRestored lets
- * through). A loader the route also runs on the live lane is a hole: its
- * values keep pushReplayed, unclaimed, and its live run replaces them
- * (#936), even inside a restored loader's body (`owned.liveLane`).
+ * - Pinned (`owned.pinned`): the record supplies the value too. The copy
+ *   goes through pushRestored and stands: a run of that loader on this
+ *   request (a promise-carrying `ssr: false` loader, one whose pin asks for a
+ *   run) reads the store, and its settled pushes are dropped, not swapped in.
+ *   Nothing is claimed, so the loader's own cache() HIT still replays the
+ *   pushes the record could not keep (the thenable ones pushRestored lets
+ *   through). The same on a document HIT, a navigation replay and a prefetch.
+ * - Anything else is a placeholder: pushReplayed, unclaimed, and its loader
+ *   a hole (HandleStore.markHoles). Its run's pushes replace it (#936), a
+ *   run that ends without one drops it (settleLoaderRun), and its own
+ *   cache() HIT delivers that entry's pushes in its place (redeliverReplays).
+ *   That is every owner of a record without pins: a shell entry that lost
+ *   them (a navigation-only entry, `maxSnapshotBytes`), a route cache()
+ *   record, any record during a capture. Without `owned`, every owner.
+ *
+ * The holes are marked when the record has owners or the request is seeded:
+ * a record without owners on an unseeded request restores as a plain replay,
+ * as every record of a route without `ppr` does.
  */
 export function restoreHandles(
   handles: Record<string, SegmentHandleData>,
@@ -188,8 +192,10 @@ export function restoreHandles(
   owners?: HandleOwners,
   owned?: OwnedPushDelivery,
 ): void {
-  let delivers: Map<string, boolean> | undefined;
-  if (owned?.liveLane) handleStore.markLiveLane(owned.liveLane);
+  let placeholders: Set<string> | undefined;
+  if (owned && (owners || owned.seeded)) {
+    handleStore.markHoles(owned.unpinned());
+  }
   for (const [segId, segHandles] of Object.entries(handles)) {
     if (Object.keys(segHandles).length === 0) continue;
     const segOwners = owners?.[segId];
@@ -208,24 +214,15 @@ export function restoreHandles(
           handleStore.push(handleName, segId, values[i]);
           continue;
         }
-        const hole = owned?.liveLane?.has(owner) === true;
-        if (owned?.restore && !hole) {
+        if (owned?.pinned(owner)) {
           handleStore.pushRestored(handleName, segId, values[i], owner);
           continue;
         }
-        if (hole) {
-          handleStore.pushReplayed(handleName, segId, values[i], owner);
-          continue;
+        if (!placeholders?.has(owner)) {
+          (placeholders ??= new Set()).add(owner);
+          handleStore.markHoles([owner]);
         }
-        delivers ??= new Map();
-        let deliver = delivers.get(owner);
-        if (deliver === undefined) {
-          deliver = owned?.claim ? owned.claim(owner) : true;
-          delivers.set(owner, deliver);
-        }
-        if (deliver) {
-          handleStore.pushReplayed(handleName, segId, values[i], owner);
-        }
+        handleStore.pushReplayed(handleName, segId, values[i], owner);
       }
     }
   }
@@ -242,7 +239,12 @@ export function restoreHandles(
  * pushes, which reach the page once per request: `claim` (setupLoaderAccess
  * _claimLoaderPushes) skips a loader that already ran or was replayed in this
  * request, and a claimed loader that runs later replaces its replayed values
- * (HandleStore.pushReplayed). `${seq}:` groups are the function's own pushes.
+ * (HandleStore.pushReplayed). A record's placeholders for a claimed loader
+ * (restoreHandles leaves them unclaimed) give way to this entry's copies
+ * (HandleStore.redeliverReplays), so the push shows once. Not without
+ * `claim`: a stale refresh's pushes are diverted (cache-runtime.ts
+ * refreshView), and removing the page's placeholders for them would leave
+ * the page without the push. `${seq}:` groups are the function's own pushes.
  * A key without ":" is a segment id (records written before owner keys) and
  * replays unchanged. A loader's own cache() replays through loader-cache.ts
  * replayLoaderHandles.
@@ -254,27 +256,45 @@ export function appendHandles(
   claim?: (loaderId: string) => boolean,
 ): void {
   let claims: Map<string, boolean> | undefined;
-  for (const [key, segHandles] of Object.entries(handles)) {
-    const colon = key.indexOf(":");
-    const owner = colon < 0 ? "" : key.slice(colon + 1);
-    if (owner) {
-      claims ??= new Map();
-      let deliver = claims.get(owner);
-      if (deliver === undefined) {
-        deliver = claim ? claim(owner) : true;
-        claims.set(owner, deliver);
-      }
-      if (!deliver) continue;
+  const claimed = (owner: string): boolean => {
+    let deliver = claims?.get(owner);
+    if (deliver === undefined) {
+      deliver = claim ? claim(owner) : true;
+      (claims ??= new Map()).set(owner, deliver);
     }
-    const target = segmentId ?? key;
-    for (const [handleName, values] of Object.entries(segHandles)) {
-      for (const value of values) {
-        if (owner) {
-          replayLoaderPush(handleStore, handleName, target, value, owner);
-        } else {
-          handleStore.push(handleName, target, value);
+    return deliver;
+  };
+  const ownerOf = (key: string): string => {
+    const colon = key.indexOf(":");
+    return colon < 0 ? "" : key.slice(colon + 1);
+  };
+  const deliver = (): void => {
+    for (const [key, segHandles] of Object.entries(handles)) {
+      const owner = ownerOf(key);
+      if (owner && !claimed(owner)) continue;
+      const target = segmentId ?? key;
+      for (const [handleName, values] of Object.entries(segHandles)) {
+        for (const value of values) {
+          if (owner) {
+            replayLoaderPush(handleStore, handleName, target, value, owner);
+          } else {
+            handleStore.push(handleName, target, value);
+          }
         }
       }
     }
+  };
+  if (!claim) {
+    deliver();
+    return;
   }
+  let granted: string[] | undefined;
+  for (const key in handles) {
+    const owner = ownerOf(key);
+    if (owner && !claims?.has(owner) && claimed(owner)) {
+      (granted ??= []).push(owner);
+    }
+  }
+  if (granted) handleStore.redeliverReplays(granted, deliver);
+  else deliver();
 }

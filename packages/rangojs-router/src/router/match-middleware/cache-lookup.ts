@@ -91,15 +91,14 @@
  *   - Request object
  *   - Action context (if POST)
  */
-import type { InternalHandlerContext, ResolvedSegment } from "../../types.js";
-import type { OwnedPushDelivery } from "../../cache/handle-snapshot.js";
+import type { ResolvedSegment } from "../../types.js";
 import type { EntryData } from "../../server/context.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { getRouterContext, type RouterContext } from "../router-context.js";
 import { observeEvent } from "../instrument.js";
 import { pushRevalidationTraceEntry, isTraceActive } from "../logging.js";
 import { treeHasStreaming } from "./segment-resolution.js";
-import { liveLaneLoaderIds } from "../segment-resolution/loader-cache.js";
+import { loaderPins } from "../segment-resolution/loader-cache.js";
 import type { PrerenderStore, PrerenderEntry } from "../../prerender/store.js";
 import {
   _getRequestContext,
@@ -546,20 +545,15 @@ export function withCacheLookup<TEnv>(
       return;
     }
 
-    // A record's loader-owned handle values claim their loader, so its own
-    // cache() HIT does not replay them again (restoreHandles). A document
-    // HIT tail restores a bake-lane owner's values as the prelude's, unclaimed:
-    // they stand against any later push of that loader
-    // (HandleStore.pushRestored). An owner the route runs on the live lane is
-    // a hole, so its live run still replaces them, even inside a restored
-    // loader's body.
-    const ownedPushes: OwnedPushDelivery = {
-      claim: (ctx.handlerContext as InternalHandlerContext)._claimLoaderPushes,
-    };
-    if (tailMarker) {
-      ownedPushes.liveLane = liveLaneLoaderIds(ctx.entries);
-      ownedPushes.restore = tailMarker.docTail === true;
-    }
+    // A record's loader-owned handle values follow the loader's value
+    // (restoreHandles): they stand for a loader this request serves from the
+    // pin stored with the record, and are placeholders for every other one.
+    // Not decided here: the pins answer when a record hits, the same answer
+    // resolveLoaderData gets for the value, so a document HIT tail, a
+    // navigation replay, a prefetch and the seeded fallback below cannot
+    // differ (#1001, #1003), and an entry without pins restores nothing as
+    // authoritative.
+    const ownedPushes = loaderPins(ctx.entries, pipelineReqCtx);
     const explicitLookup = await ctx.cacheScope.lookupRouteDetailed(
       ctx.pathname,
       ctx.matched.params,

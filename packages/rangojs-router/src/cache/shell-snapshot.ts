@@ -18,7 +18,9 @@
  * the capture's copy of a value: it is dynamic or has its own cache. A
  * bake-lane loader body that runs on a HIT reads the store too; its pinned
  * container paths stay the pin's (overlayLoaderContainer), and its settled
- * pushes stay the record's (HandleStore.pushRestored).
+ * pushes stay the record's (HandleStore.pushRestored). The two go together:
+ * a loader whose pin the entry lost runs fresh, and the record's copies of
+ * its pushes give way to that run's (restoreHandles).
  */
 
 import type {

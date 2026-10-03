@@ -462,11 +462,13 @@ export type InternalHandlerContext<
    */
   _loaderCacheOriginalUse?: (item: any) => any;
   /**
-   * @internal A loader-cache HIT asks before replaying a loader's recorded
-   * pushes: true when that loader has not run in this request and no other
-   * replay delivered it; its later run then replaces the replayed values
-   * (HandleStore.pushReplayed). One copy per loader per request. See
-   * setupLoaderAccess.
+   * @internal A loader-cache or "use cache" HIT asks before replaying a
+   * loader's recorded pushes: true when that loader has not run in this
+   * request and no other replay delivered it; its later run then replaces
+   * the replayed values (HandleStore.pushReplayed). One copy per loader per
+   * request. A record's restore does not ask (restoreHandles): its copies
+   * are the pinned loader's own, or placeholders the claimed replay
+   * replaces. See setupLoaderAccess.
    */
   _claimLoaderPushes?: (loaderId: string) => boolean;
   /**

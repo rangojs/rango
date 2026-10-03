@@ -1970,12 +1970,14 @@ export function deriveShellCaptureContext(
   //    loader (loader-cache.ts), so the stored record carries them: each
   //    settled, thenable-free push from a loader body keeps that loader as
   //    `owner` (HandleStore.push), the record stores it
-  //    (CachedEntryData.handleOwners), and the HIT restores it through
-  //    pushRestored. Those copies stand: a promise-carrying bake-lane loader
-  //    that runs on the HIT reads the store, so its settled pushes (and those
-  //    replayed inside its body) are dropped and only its thenable ones are
-  //    added. A loader the route also runs on the live lane is a hole: its
-  //    live run replaces its copies (pushReplayed, #936), those of the
+  //    (CachedEntryData.handleOwners), and a replay that serves the loader
+  //    from its pin restores it through pushRestored (restoreHandles). Those
+  //    copies stand: a promise-carrying bake-lane loader that runs on the
+  //    replay reads the store, so its settled pushes (and those replayed
+  //    inside its body) are dropped and only its thenable ones are added. A
+  //    loader the replay does not serve from a pin is a hole: one the route
+  //    also runs on the live lane, or one whose pin the entry lost. Its run
+  //    replaces its copies (pushReplayed, #936), those of the
   //    dependencies it awaits included (they are credited to it). Nested
   //    thenables stay masked (the promise shape is the liveness
   //    declaration, mask-nested.ts). A deferred (thenable) push,

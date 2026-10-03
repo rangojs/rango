@@ -317,9 +317,10 @@ export class CacheScope {
      */
     readonly boundary?: string,
     /**
-     * Awaited on every lookup HIT: the implicit doc scope's marker `onHit`
-     * (createShellImplicitDocScope), which arms a partial replay's bake-lane
-     * loader pins before the route's loaders resolve.
+     * Awaited on every lookup HIT, before the record's handles are restored:
+     * the implicit doc scope's marker `onHit` (createShellImplicitDocScope),
+     * which arms a partial replay's bake-lane loader pins before the restore
+     * reads them and the route's loaders resolve.
      */
     private readonly onHit?: () => void | Promise<void>,
     /**
@@ -736,8 +737,8 @@ export class CacheScope {
    * @param params - Route params for cache key generation
    * @param isIntercept - Whether this is an intercept navigation (uses different cache key)
    * @param ownedPushes - How restoreHandles delivers the record's
-   *   loader-owned values (withCacheLookup: the handler context's
-   *   _claimLoaderPushes, and on a document HIT tail the owners it restores)
+   *   loader-owned values (withCacheLookup: the pins this request serves
+   *   loaders from, loader-cache.ts loaderPins)
    */
   async lookupRoute(
     pathname: string,
@@ -870,6 +871,12 @@ export class CacheScope {
         cached.tags,
       );
 
+      // Before the handle replay: the implicit doc scope's marker arms the
+      // loader pins of a navigation replay here (matchPartialWithPprReplay),
+      // and restoreHandles reads them to decide which loader-owned values
+      // stand. The segments decoded, so the record serves from here on.
+      await this.onHit?.();
+
       // Replay handle data. An empty string means the route pushed no handles —
       // skip the decode entirely (the common case). Otherwise decode the
       // Flight-encoded blob; a decode failure skips handle restore but keeps the
@@ -905,7 +912,6 @@ export class CacheScope {
       if (ambientContext)
         this.noteRecordWindow(ambientContext, cached.expiresAt, false);
 
-      await this.onHit?.();
       return { status: "hit", result: { segments, shouldRevalidate } };
     } catch (error) {
       // Covers a store.get() failure AND a throwing consumer key()/keyGenerator

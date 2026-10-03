@@ -45,6 +45,7 @@ import {
   SeededShellStore,
   buildShellLoaderSeed,
   type RecordingShellStore,
+  type ShellLoaderSeedEntry,
 } from "../shell-snapshot.js";
 import type { CachedEntryData, ShellSnapshotRecord } from "../types.js";
 import {
@@ -168,8 +169,9 @@ const BakeRepushLoader = (createLoader as Function)(
   "test#ShellRepushBakeLoader",
 );
 // Same, with its own cache(): when the capture runs the body (its loader
-// cache missed), a HIT that hits the loader cache replays those pushes a
-// second time unless the shell restore claims the loader.
+// cache missed), a HIT that hits the loader cache replays those pushes. The
+// store drops them for a pinned loader's restored copies, and puts them in
+// the record's copies' place for a loader without a pin: one copy either way.
 let cachedRepushRun = 0;
 const CachedRepushLoader = (createLoader as Function)(
   async (ctx: any) => {
@@ -341,11 +343,15 @@ describe("cache() record vs a loader with its own cache()", () => {
  * Run the real PPR capture match (deriveShellCaptureContext + router.match),
  * fire its onResponse callbacks as captureAndStoreShell does, and return the
  * shell snapshot plus the Crumbs values in the doc segment record that a
- * document HIT replays.
+ * document HIT replays. The snapshot holds the doc record only: the loader
+ * pins are written by captureAndStoreShell's drain, which this does not run.
+ * `pinKeys` are the segment keys that drain would pin.
  */
-async function captureShell(
-  pathname: string,
-): Promise<{ snapshot: ShellSnapshotRecord[]; recorded: unknown[] }> {
+async function captureShell(pathname: string): Promise<{
+  snapshot: ShellSnapshotRecord[];
+  recorded: unknown[];
+  pinKeys: string[];
+}> {
   const request = new Request(`https://example.com${pathname}`, {
     headers: { accept: "text/html" },
   });
@@ -378,7 +384,8 @@ async function captureShell(
   const recorded = Object.values(handles ?? {}).flatMap(
     (segHandles) => segHandles[Crumbs.$$id] ?? [],
   );
-  return { snapshot, recorded };
+  const pinKeys = [...(derivedCtx._shellCaptureLoaderRecords?.keys() ?? [])];
+  return { snapshot, recorded, pinKeys };
 }
 
 async function captureDocRecordCrumbs(pathname: string): Promise<unknown[]> {
@@ -388,12 +395,15 @@ async function captureDocRecordCrumbs(pathname: string): Promise<unknown[]> {
 /**
  * Serve a shell HIT tail armed as serveShellHit arms it: the snapshot seeds
  * the bake-lane loader seed, and the document tail's implicit doc scope
- * (`docTail`) HITs the recorded doc record (handler layer replayed, a
- * promise-carrying bake-lane loader run). Cache reads go to the store.
+ * (`docTail`) HITs the recorded doc record (handler layer replayed). Cache
+ * reads go to the store. `pins` stands in for the loader pins of a stored
+ * entry (see captureShell); without it the tail is one whose entry lost its
+ * pins (`maxSnapshotBytes`), and every bake-lane loader runs fresh.
  */
 async function serveShellHitTail(
   pathname: string,
   snapshot: ShellSnapshotRecord[],
+  pins?: Map<string, ShellLoaderSeedEntry>,
 ): Promise<RequestContext<any>> {
   const request = new Request(`https://example.com${pathname}`, {
     headers: { accept: "text/html" },
@@ -406,7 +416,7 @@ async function serveShellHitTail(
   } as any) as RequestContext<any>;
   const inner = new MemorySegmentCacheStore();
   reqCtx._cacheStore = inner;
-  const loaderSeed = await buildShellLoaderSeed(snapshot);
+  const loaderSeed = pins ?? (await buildShellLoaderSeed(snapshot));
   if (loaderSeed) reqCtx._shellLoaderSeed = loaderSeed;
   reqCtx._shellImplicitCache = {
     ttl: 60,
@@ -470,18 +480,35 @@ describe("PPR shell capture record vs loader handle pushes", () => {
   });
 });
 
-describe("PPR shell HIT vs a bake-lane loader's recorded handle pushes", () => {
+/**
+ * The pin of a promise-carrying bake-lane loader: its record has holes, so
+ * the tail runs the body and overlays the recorded container.
+ */
+function holeyPins(pinKeys: string[]): Map<string, ShellLoaderSeedEntry> {
+  return new Map(
+    pinKeys.map((key) => [
+      key,
+      { container: { baked: true }, holes: true, runs: false },
+    ]),
+  );
+}
+
+describe("PPR shell HIT vs a pinned bake-lane loader's recorded handle pushes", () => {
   let snapshot: ShellSnapshotRecord[];
   let recorded: unknown[];
+  let pins: Map<string, ShellLoaderSeedEntry>;
   let hit: RequestContext<any>;
 
   beforeAll(async () => {
-    ({ snapshot, recorded } = await captureShell("/ppr-bake-repush"));
+    const captured = await captureShell("/ppr-bake-repush");
+    ({ snapshot, recorded } = captured);
+    pins = holeyPins(captured.pinKeys);
+    expect(pins.size).toBe(1);
     repushPageHandler.mockClear();
-    hit = await serveShellHitTail("/ppr-bake-repush", snapshot);
+    hit = await serveShellHitTail("/ppr-bake-repush", snapshot, pins);
   });
 
-  it("the capture records the pushes; the HIT replays the handler and re-runs the loader", () => {
+  it("the capture records the pushes; the HIT replays the handler and runs the loader", () => {
     expect(recorded).toEqual([
       "bake-string-1",
       { label: "bake-object-1" },
@@ -491,8 +518,9 @@ describe("PPR shell HIT vs a bake-lane loader's recorded handle pushes", () => {
     expect(bakeRepushRun).toBe(2);
   });
 
-  // The prelude rendered the record's values, and the loader's run on the HIT
-  // reads the store: its settled pushes are dropped, not swapped in.
+  // The pin serves the loader's data, so the record's values stand: the
+  // loader's run on the HIT reads the store, and its settled pushes are
+  // dropped, not swapped in.
   it("a string and an object push appear once, the record's values in the recorded position", async () => {
     expect(await crumbValues(hit)).toEqual([
       "bake-string-1",
@@ -516,7 +544,7 @@ describe("PPR shell HIT vs a bake-lane loader's recorded handle pushes", () => {
       const { handleOwners: _, ...value } = r.value as CachedEntryData;
       return { ...r, value };
     });
-    const legacyHit = await serveShellHitTail("/ppr-bake-repush", legacy);
+    const legacyHit = await serveShellHitTail("/ppr-bake-repush", legacy, pins);
     expect(await crumbValues(legacyHit)).toEqual([
       "bake-string-1",
       { label: "bake-object-1" },
@@ -535,10 +563,64 @@ describe("PPR shell HIT vs a bake-lane loader's recorded handle pushes", () => {
     const cachedHit = await serveShellHitTail(
       "/ppr-cached-bake-repush",
       captured.snapshot,
+      holeyPins(captured.pinKeys),
     );
     expect(cachedRepushRun).toBe(1);
     expect(await crumbValues(cachedHit)).toEqual([
       "cached-repush-1",
+      "handler-string",
+    ]);
+  });
+});
+
+// The entry lost its pins (`maxSnapshotBytes`, or a navigation-only entry):
+// the bake-lane loader runs fresh, so the record's copies of its pushes are
+// placeholders. Its data and its pushes come from that one run.
+describe("PPR shell HIT of an entry without loader pins vs the record's loader pushes", () => {
+  it("the loader's run replaces the record's copies in place, each once", async () => {
+    const { snapshot, recorded } = await captureShell("/ppr-bake-repush");
+    const captureRun = bakeRepushRun;
+    expect(recorded).toEqual([
+      `bake-string-${captureRun}`,
+      { label: `bake-object-${captureRun}` },
+      "handler-string",
+    ]);
+
+    const hit = await serveShellHitTail("/ppr-bake-repush", snapshot);
+
+    const run = captureRun + 1;
+    expect(bakeRepushRun).toBe(run);
+    expect(await crumbValues(hit)).toEqual([
+      `bake-string-${run}`,
+      { label: `bake-object-${run}` },
+      "handler-string",
+    ]);
+    const data = await hit._handleStore.getData();
+    const titles = collectHandleData(
+      Meta,
+      data,
+      Object.keys(data[Meta.$$id] ?? {}),
+    ).filter((d) => "title" in d);
+    expect(titles).toEqual([{ title: `bake-title-${run}` }]);
+  });
+
+  it("with its own cache(): the loader's entry takes the place of the record's copy", async () => {
+    // The capture hits the loader's cache() entry (written above) and
+    // records the replayed push under the loader.
+    const captured = await captureShell("/ppr-cached-bake-repush");
+    const run = cachedRepushRun;
+    expect(captured.recorded).toContain(`cached-repush-${run}`);
+
+    const hit = await serveShellHitTail(
+      "/ppr-cached-bake-repush",
+      captured.snapshot,
+    );
+
+    // The loader's cache() entry hit: no run, and its recorded push shows
+    // once, where the record's copy was.
+    expect(cachedRepushRun).toBe(run);
+    expect(await crumbValues(hit)).toEqual([
+      `cached-repush-${run}`,
       "handler-string",
     ]);
   });

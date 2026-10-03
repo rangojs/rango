@@ -385,7 +385,9 @@ export interface RequestContext<
    * and does not run the loader. Two owners: serveShellHit sets it on the
    * HIT tail's derived context, and matchPartialWithPprReplay sets it on the
    * request context of a PPR partial replay once its doc record hits, and
-   * restores the previous value after the match.
+   * restores the previous value after the match. Read through servedPins
+   * (loader-cache.ts) only: it also decides which of the record's
+   * loader-owned handle pushes stand (loaderPins).
    */
   _shellLoaderSeed?: Map<
     string,
@@ -422,8 +424,9 @@ export interface RequestContext<
     keyPrefix?: "doc";
     /**
      * @internal Called only after the implicit cache hit decodes
-     * successfully; the lookup awaits it before returning the hit, so work
-     * it starts lands before the route's loaders resolve.
+     * successfully; the lookup awaits it before it restores the record's
+     * handles, so the loader seed it arms is there for that restore
+     * (handle-snapshot.ts restoreHandles) and for the route's loaders.
      */
     onHit?: () => void | Promise<void>;
     /**
@@ -446,9 +449,9 @@ export interface RequestContext<
      * scope replaces any route-derived cache() scope for the tail's match
      * (resolveShellImplicitCacheScope), and a lookup that does not hit throws
      * ShellRecordUnavailableError instead of resolving segments
-     * (withCacheLookup): a HIT never runs a handler. The record's
-     * loader-owned handle pushes restore as authoritative
-     * (HandleStore.pushRestored): the prelude rendered them.
+     * (withCacheLookup): a HIT never runs a handler. It does not decide how
+     * the record's loader-owned handle pushes restore: the loader seed does
+     * (loader-cache.ts loaderPins), as on a navigation replay.
      */
     docTail?: true;
     /**
