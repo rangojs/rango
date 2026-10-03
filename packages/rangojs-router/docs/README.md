@@ -86,6 +86,10 @@ Read these before changing the corresponding subsystem.
 - [Shell entry layout](../../../docs/design/shell-entry-layout.md) - what a
   PPR shell HIT reads, parses, and decodes before its first byte, and the
   stored entry layout that keeps it to the prelude (issue #941)
+- [Handle push ownership](../../../docs/design/handle-push-ownership.md) -
+  design under review: a loader's data and the handle values it pushed come
+  from one run on every path (#1001, #1002, #1003), with the failing tests
+  that pin today's behavior
 - [Vercel cache store](../../../docs/design/vercel-cache-store.md) -
   `VercelCacheStore` and the `vercel` preset design
 - [Rango state cookie storage & single invalidation API](../../../docs/design/rango-state-cookie.md) -
