@@ -243,26 +243,32 @@ createLocationState<TState>({
 });
 ```
 
-A definition that sets none of them stores the value as-is and reads it back
-unchecked. `version`, `validate` and `clearOnReload` each make one kind of
-stored state read as `undefined`, which is what a reader already handles: it
-is the same result as no state.
+A definition that sets none of them stores the value under its key and reads
+it back unchecked, as it always did. `version`, `validate` and `clearOnReload`
+each make one kind of stored state read as `undefined`, which is what a reader
+already handles: it is the same result as no state.
 
-| Option          | Stored in `history.state`                   | Reads `undefined` when                                                   |
-| --------------- | ------------------------------------------- | ------------------------------------------------------------------------ |
-| none            | the value                                   | the slot is empty, or holds another definition's envelope with a version |
-| `flash`         | the value, removed after the first read     | it has been read once                                                    |
-| `version`       | `{ __rsc_ls_env: 1, v, value }`             | the slot is not an envelope with the same `v`                            |
-| `validate`      | the value                                   | `validate` returns `false` or throws                                     |
-| `clearOnReload` | `{ __rsc_ls_env: 1, clearOnReload, value }` | the entry's document was loaded since the write (the slot is removed)    |
+The value is always stored as-is. `version` and `clearOnReload` change the
+slot's KEY in `history.state` instead, by a suffix on the key the Vite plugin
+injects (`<key>` below, `__rsc_ls_<file>#<ExportName>`):
 
-`version`, `validate` and one of `flash` / `clearOnReload` can be combined;
-`flash` with `clearOnReload` is rejected: a compile error, and for untyped
-callers `createLocationState` throws in development.
+| Options                        | Key in `history.state` | Reads `undefined` when                                    |
+| ------------------------------ | ---------------------- | --------------------------------------------------------- |
+| none, `flash`, `validate`      | `<key>`                | the slot is empty (`flash`: once read; `validate`: below) |
+| `version: 2`                   | `<key>~v2`             | nothing was stored under version 2                        |
+| `clearOnReload`                | `<key>~r`              | the entry's document was loaded since the write           |
+| `version: 2` + `clearOnReload` | `<key>~v2~r`           | either of the above                                       |
+
+`Def.__rsc_ls_key` is that key, suffix included. `~` cannot appear in an export
+name, so no other definition can end up with a suffixed key.
+
+`version`, `validate` and one of `flash` / `clearOnReload` can be combined.
+`flash` with `clearOnReload` is rejected: `createLocationState` throws in
+development.
 
 ### version and validate: state from another deploy
 
-The slot key is the file path plus the export name, so it stays the same across
+The key is the file path plus the export name, so it stays the same across
 deploys. History entries survive reloads and back/forward. A tab left open
 across a release that changed the shape would otherwise restore the old value
 typed as the new one.
@@ -274,18 +280,15 @@ shape changes:
 export const GridState = createLocationState<GridSnapshot>({ version: 2 });
 ```
 
-Writers store the value in an envelope, `{ __rsc_ls_env: 1, v: 2, value }`,
-and a read returns `value` (the same reference that was stored) only from an
-envelope whose `v` is this number. Everything else reads `undefined`:
-
-- an envelope with another `v` (an older or newer deploy);
-- a raw value written before the definition had a `version`;
-- a raw value that happens to look like `{ v, value }`: the `__rsc_ls_env`
-  mark, in the router's reserved `__rsc_ls_` prefix, is what makes an envelope.
+Version 2 reads and writes `<key>~v2` and nothing else. State stored by
+version 1 (`<key>~v1`), or before the definition had a version (`<key>`), is
+under another key, so the reader finds nothing and gets `undefined`. Nothing
+is decoded and nothing is deleted: the older slot stays in that history entry
+as a key nobody reads, until the entry is replaced or dropped by the browser.
 
 `validate` checks the value itself, so it also covers state written by other
-code under the same key. It does not change what is stored. It runs on every
-read of a non-empty slot; `false` reads as `undefined`.
+code under the same key. It runs on every read of a non-empty slot; `false`
+reads as `undefined`.
 
 ```ts
 export const GridState = createLocationState<GridSnapshot>({
@@ -297,22 +300,26 @@ export const GridState = createLocationState<GridSnapshot>({
 - A `validate` that throws counts as `false`. It never fails the render or
   the navigation; in development the error is logged once per definition,
   with the definition's key.
-- With `version`, a mismatch returns `undefined` without calling `validate`,
-  and a match runs it on the inner value.
+- With `version`, it only ever sees values stored under that version.
 
 The type of `validate` is exported as `LocationStateGuard<TState>` (not to be
 confused with `ValidateLocationState<T>`, the compile-time serializability
 check above).
 
-**Removing `version`, and rollbacks.** A definition without `version` reads
-`undefined` for a slot a versioned definition wrote; it never returns the
-envelope as the state. So dropping `version` in a later release, or running
-two releases side by side, is safe in both directions. The one case nothing
-can fix is a rollback to a router release older than these options: that code
-reads the slot unchecked and gets the envelope object typed as `TState`. The
-same holds for `clearOnReload`, which stores an envelope too. If you may roll
-back that far, keep the definition's shape tolerant of it (or give the new
-shape a new export name, which is a new key).
+**Rollbacks, and adding or removing an option.** Because the options are in
+the key and the value is plain, no release ever reads a format it does not
+know:
+
+| Change                                          | What the definition reads afterwards                                                               |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| add `version` (or `clearOnReload`)              | `<key>~v1` (or `<key>~r`): empty. State stored before the option, under `<key>`, is no longer read |
+| bump `version`                                  | the new key: empty. The previous version's slot stays in its entries, unread                       |
+| roll back to the previous release               | that release's own key, including whatever it stored there before the upgrade                      |
+| roll back to a release older than these options | `<key>`, as always. It never sees a suffixed slot                                                  |
+| remove `version` (or `clearOnReload`)           | `<key>` again, including values from before the option was added if their entries still exist      |
+
+The last row is the one to know: removing `version` is not a reset. To drop
+state, bump the version.
 
 ### clearOnReload: state the server did not render with
 
@@ -369,9 +376,12 @@ export function ProductList() {
 }
 ```
 
-The filter is there because a navigation applies the new entry's state to a
-mounted reader before the new page's loader data commits: for one render
-`carried` already contains the page that is still on screen.
+The `carriedIds` filter is a workaround, not part of the pattern. Today a
+navigation applies the destination entry's location state to a mounted reader
+as soon as the entry is pushed, before the destination's loader data commits,
+so until that data lands `carried` already contains the page still on screen.
+This is a known router ordering defect; once location state commits together
+with the page it belongs to, the filter is unnecessary.
 
 Without the option, a refresh of `?page=6` renders 50 products on the server
 and then inserts the stored 250 above them. With it, the refreshed page stays
@@ -390,19 +400,21 @@ as the server rendered it:
 - Only the entry being loaded is cleared. Going back from it to an earlier
   entry inside the running app is a client navigation and applies that
   entry's state.
-- The router removes the slot when the client starts, before hydration, so it
-  does not matter whether a reader is mounted, where it sits (a `<Suspense>`
-  boundary that hydrates late included), or whether the definition's module is
-  loaded at all. Other slots on the entry are left alone.
+- The router removes every `~r` key when the client starts, before hydration.
+  It goes by the key alone, so it does not matter whether a reader is mounted,
+  where it sits (a `<Suspense>` boundary that hydrates late included), or
+  whether the definition's module is loaded at all. Other slots on the entry
+  are left alone.
 - State the server sets is never dropped by this: a document response carries
   no location state, and `ctx.setLocationState()` / `redirect(url, { state })`
   reach `history.state` only through navigations and actions in the running
   app, after start-up.
-- `.write()` stores the same marked slot, so it does not survive a refresh
+- `.write()` stores under the same key, so it does not survive a refresh
   either.
-- A slot written before the definition had the option is not marked and is
-  not cleared. Set or bump `version` in the same release to make those read
-  `undefined`.
+- Adding the option to an existing definition moves it to the `~r` key: state
+  stored before, under the plain key, is no longer read (and is not removed).
+  Removing the option moves it back to the plain key; what was stored under
+  `~r` is removed at the next document load.
 - Combine it with `version` and `validate` freely. It cannot be combined with
   `flash`: flash state is removed at its first read, so the pair could only
   drop a message nobody has seen yet.

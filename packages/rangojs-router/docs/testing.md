@@ -620,16 +620,18 @@ production's history path, so `useLocationState(Def)` re-reads after the click;
 wait for it with RTL's `waitFor` (see the testing skill,
 `client-components.md` "Location state").
 
-A seed is always the value you would pass to the definition, whatever options
-the definition has. `renderRoute` writes the slot through the definition, so
-one with `version` or `clearOnReload` gets its envelope
-(`{ __rsc_ls_env: 1, v, clearOnReload, value }`) without your test knowing the
-stored form. That gives you the two cases those options are about:
+The `createLocationState` options (`version`, `validate`, `clearOnReload`) do
+not change what you seed. `version` and `clearOnReload` live in the slot's key,
+not in its value: the definition appends `~v2` / `~r` to whatever name you key
+it with, and `renderRoute` writes the plain value under that key. That gives
+you the two cases those options are about:
 
-- **State from another deploy.** Key the older definition onto the same slot
-  (`withLocationStateKey(GridV1, "GridState")`) and seed through it; the
-  component under test reads the current definition and must render as with no
-  state. A value `validate` rejects, or throws on, is seeded directly.
+- **State from another deploy.** Give the older definition the same name
+  (`withLocationStateKey(GridV1, "GridState")`): with another `version` it gets
+  another key (`__rsc_ls_GridState~v1`), exactly as it would in the browser.
+  Seed through it; the component under test reads the current definition and
+  must render as with no state. A value `validate` rejects, or throws on, is
+  seeded directly.
 - **`clearOnReload`.** Plain `renderRoute` is a client mount, the way a reader
   mounts during a navigation, so the seed is applied. `hydrate: true` (next
   section) is a document load of the seeded entry: before hydrating,
@@ -1040,7 +1042,7 @@ const { result, thrown, response, cookies, headers, locationState } =
 | `response`        | the merged `Response` (status + headers + Set-Cookie); a thrown redirect's `Location` merged with the accumulated cookies                                                                                            |
 | `cookies`         | effective `{ name: value }` cookie view (request cookies + run mutations, last-write-wins)                                                                                                                           |
 | `headers`         | response headers as `{ name: value }`, **excluding** `set-cookie` (that's `cookies`), including a thrown redirect's `Location`; names lowercased. A `keepClientCache()` call shows here as `x-rango-keep-cache: "1"` |
-| `locationState`   | the flash the handler set (`ctx.setLocationState()` / `redirect({ state })`), as the `{ key: slot }` record `history.state` receives; decode a slot with `Def.read({ state: locationState })`                        |
+| `locationState`   | the flash the handler set (`ctx.setLocationState()` / `redirect({ state })`), as the `{ key: value }` the client reads                                                                                               |
 | `stateCookieName` | the resolved rango state cookie name seeded for the run (default `rango-state_router_0`, or composed from `opts.stateCookie`); assert an `invalidateClientCache()` rotation against it without recomputing           |
 
 ```ts
@@ -1057,24 +1059,10 @@ from the Vite plugin, and a unit-test project doesn't run it. Without a key,
 runs, so `thrown` holds that missing-key error instead of the redirect. In the
 react-server project (`NODE_ENV=production`) nothing throws and the value lands
 under `"undefined"`. The helper always adds the `__rsc_ls_` prefix, so assert
-`__rsc_ls_Flash`, or `{ [Flash.__rsc_ls_key]: value }` for any key.
-
-One thing changes once a definition sets `version` or `clearOnReload`. The
-record holds what `history.state` receives, and such a definition stores an
-envelope there, `{ __rsc_ls_env: 1, v, clearOnReload, value }`, so the
-equality above stops matching. That is deliberate: the stored form is real, it
-is what a later deploy will find. But a test of a flash message should not
-depend on it, so read the slot back through the definition, which decodes
-either form:
-
-```ts
-expect(Flash.read({ state: locationState })).toEqual({ text: "Welcome back" });
-```
-
-The same line works for `runMiddleware`, `runLoaderResult` and `renderHandler`,
-and it is the counterpart of `renderRoute`'s `locationState` seeds, which take
-the value and let the definition encode it. On both sides the test speaks in
-values and the definition owns the stored form.
+`__rsc_ls_Flash`, or `{ [Flash.__rsc_ls_key]: value }` for any key. Prefer the
+second form once a definition sets `version` or `clearOnReload`: those options
+are part of the key (`__rsc_ls_Flash~v2`), while the value stays what the
+handler passed.
 
 Reading **vars the handler set** is via the context, not the snapshot: pass
 `vars` to seed, and read with `ctx.get(token)` (the `fn` receives `ctx`, or use
@@ -1620,7 +1608,7 @@ renderRoute(                            // async; lazy-loads RTL at call time
     outletPending?: boolean,             // seed useOutlet().pending; context only, no lifecycle
     loaders?: [loader, data][],         // seed useLoader by REFERENCE (real handles)
     loaderData?: Record<$$id, data>,    // seed useLoader by explicit $$id
-    locationState?: [def, value][],     // seed useLocationState by REFERENCE; value as passed to def(value), stored through def
+    locationState?: [def, value][],     // seed useLocationState by REFERENCE
     handles?: [handle, pushedValues[]][],// seed useHandle by REFERENCE, RAW pushes[] (reaches layouts too)
     handle?,                            // advanced: raw handle wire data
     basename?,                          // createRouter({ basename }) value (Link/href/reverse prefixing)
