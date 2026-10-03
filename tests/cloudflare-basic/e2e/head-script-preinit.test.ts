@@ -22,9 +22,7 @@ import { waitForHydration, expectNoPageError } from "./helper";
  * copy pins that the preinit path (node:async_hooks import included) loads and
  * renders in the workerd SSR environment. The nonce VALUE assertion lives in
  * tests/react-experimental/e2e/gtm.test.ts (the only CSP-wired fixture, node
- * preset) — workerd has no nonce'd fixture, a known coverage gap. The
- * opt-in `fetchPriority: "low"` build is covered by
- * head-script-priority-low.test.ts.
+ * preset) — workerd has no nonce'd fixture, a known coverage gap.
  */
 
 test.describe("head-script-preinit (dev)", () => {
@@ -48,9 +46,9 @@ test.describe("head-script-preinit (dev)", () => {
     await waitForHydration(page);
   });
 
-  test("no head chunk scripts to prioritize", async () => {
+  test("no head chunk scripts", async () => {
     // plugin-rsc reports no JS deps per client reference in dev, so the
-    // fetchpriority assertions live in the production describes. A dev
+    // head chunk assertions live in the production describes. A dev
     // document that starts carrying head chunk scripts fails here first.
     expect(headChunkScripts(await fetchDocument(f.url("/")))).toEqual([]);
   });
@@ -88,7 +86,9 @@ test.describe("head-script-preinit (production)", () => {
     expect(html.indexOf(hint)).toBeGreaterThan(html.indexOf(chunks.at(-1)!));
   });
 
-  test("head chunk scripts carry no fetchpriority by default", async () => {
+  test("head chunk scripts carry no fetchpriority", async () => {
+    // Lowering them was measured and rejected (#1021): on pages with images
+    // above the fold the Low chunks queue behind the images and delay hydration.
     const scripts = headChunkScripts(await fetchDocument(f.url("/")));
     expect(scripts.length).toBeGreaterThan(0);
     for (const tag of scripts) {

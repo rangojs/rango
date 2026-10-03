@@ -107,7 +107,6 @@ export default defineConfig({
           testIgnore: [
             "**/hmr*.test.ts",
             "**/head-script-preload.test.ts",
-            "**/head-script-priority-low.test.ts",
             "**/edge-only-ppr.test.ts",
             "**/*.setup.ts",
           ],
@@ -121,7 +120,6 @@ export default defineConfig({
           grep: /\(production\)/,
           testIgnore: [
             "**/head-script-preload.test.ts",
-            "**/head-script-priority-low.test.ts",
             "**/edge-only-ppr.test.ts",
             "**/*.setup.ts",
           ],
@@ -152,7 +150,6 @@ export default defineConfig({
           testIgnore: [
             "**/hmr*.test.ts",
             "**/head-script-preload.test.ts",
-            "**/head-script-priority-low.test.ts",
             "**/edge-only-ppr.test.ts",
             "**/*.setup.ts",
           ],
@@ -167,7 +164,6 @@ export default defineConfig({
           grep: /\(production\)/,
           testIgnore: [
             "**/head-script-preload.test.ts",
-            "**/head-script-priority-low.test.ts",
             "**/edge-only-ppr.test.ts",
             "**/*.setup.ts",
           ],

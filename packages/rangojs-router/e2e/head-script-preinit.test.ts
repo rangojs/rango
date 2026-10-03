@@ -18,8 +18,6 @@ import { waitForHydration, expectNoPageError } from "./helper";
  * (default fetch priority, after the head chunk scripts, #1025) paired with
  * the executing `<script type="module" id="_R_" async>` at end of shell. See
  * src/ssr/preinit-client-references.ts and src/ssr/entry-preload-priority.ts.
- * The opt-in `fetchPriority: "low"`
- * build is covered by head-script-priority-low.test.ts.
  */
 
 test.describe("head-script-preinit", () => {
@@ -47,9 +45,9 @@ test.describe("head-script-preinit", () => {
     await waitForHydration(page);
   });
 
-  test("dev: no head chunk scripts to prioritize", async () => {
+  test("dev: no head chunk scripts", async () => {
     // plugin-rsc reports no JS deps per client reference in dev, so the
-    // fetchpriority assertions live in the production describes. A dev
+    // head chunk assertions live in the production describes. A dev
     // document that starts carrying head chunk scripts fails here first.
     expect(headChunkScripts(await fetchDocument(f.url("/")))).toEqual([]);
   });
@@ -95,7 +93,9 @@ test.describe("head-script-preinit (production)", () => {
     expect(html.indexOf(hint)).toBeGreaterThan(html.indexOf(chunks.at(-1)!));
   });
 
-  test("head chunk scripts carry no fetchpriority by default", async () => {
+  test("head chunk scripts carry no fetchpriority", async () => {
+    // Lowering them was measured and rejected (#1021): on pages with images
+    // above the fold the Low chunks queue behind the images and delay hydration.
     const scripts = headChunkScripts(await fetchDocument(f.url("/")));
     expect(scripts.length).toBeGreaterThan(0);
     for (const tag of scripts) {

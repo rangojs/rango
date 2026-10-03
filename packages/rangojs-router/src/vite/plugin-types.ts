@@ -118,22 +118,9 @@ export type ClientChunks =
 // -- Plugin options ---------------------------------------------------------
 
 /**
- * Document script strategy mode. See {@link RangoBaseOptions.headScripts}.
- */
-export type HeadScriptsMode = "preinit" | "preload";
-
-/**
- * `fetchpriority` for the `"preinit"` head chunk scripts: `"low"` stamps
- * `fetchpriority="low"`, `"auto"` omits the attribute (browser default).
- */
-export type HeadScriptFetchPriority = "low" | "auto";
-
-/**
  * Document script strategy. See {@link RangoBaseOptions.headScripts}.
  */
-export type HeadScriptsOption =
-  | HeadScriptsMode
-  | { mode: "preinit"; fetchPriority?: HeadScriptFetchPriority };
+export type HeadScriptsOption = "preinit" | "preload";
 
 /**
  * Base options shared by all presets
@@ -169,27 +156,8 @@ interface RangoBaseOptions {
    * - `"preload"`: the previous behavior — `<link rel="modulepreload">` hints
    *   only, entry as an inline `import()` script at end of shell. Chunks
    *   fetch+compile early but execute only when hydration imports them.
-   * - `{ mode: "preinit", fetchPriority }`: `"preinit"` with a `fetchpriority`
-   *   for the head chunk scripts. `"auto"` (**default**) omits the attribute,
-   *   the same output as `"preinit"`. `"low"` stamps `fetchpriority="low"` on
-   *   every head chunk script: the shared dependency chunks (react, router,
-   *   entry.rsc, the bundler runtime) and every client-component chunk. The
-   *   entry is not one of them; its `modulepreload` hint keeps the default
-   *   priority.
-   *   Chromium fetches these scripts at High otherwise, sharing bandwidth
-   *   with the render-blocking stylesheet and the LCP image; #1021 measured
-   *   `"low"` under Slow 4G at 200-290 ms earlier FCP and 120-520 ms earlier
-   *   LCP with hydration unchanged. The risk: on image-heavy pages and on
-   *   HTTP/1.1 the Low chunks can queue behind images, so hydration (and the
-   *   first interaction) waits for them. The object form is preinit-only:
-   *   `"preload"` hints already carry plugin-rsc's `fetchpriority="low"`.
-   *   Needs react-dom >= 19.3.0: 19.2.x and the experimental channel up to
-   *   at least `0.0.0-experimental-247fbb45-20260622` drop `fetchPriority`
-   *   in `ReactDOM.preinitModule`, so the tags render unchanged there.
    *
-   * Any other value (an unknown mode string, an object form outside
-   * `"preinit"`, an unknown priority) throws when the generated SSR entry is
-   * built.
+   * Any other value throws when the generated SSR entry is built.
    *
    * Build-only for the chunk half: plugin-rsc resolves no JS deps per client
    * reference in dev, so dev documents carry no head chunk scripts in either

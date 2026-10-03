@@ -25,8 +25,6 @@ export type {
   ClientChunks,
   ClientChunkMeta,
   HeadScriptsOption,
-  HeadScriptsMode,
-  HeadScriptFetchPriority,
   BuildEnvOption,
   BuildEnvFactory,
   BuildEnvFactoryContext,

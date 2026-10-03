@@ -558,11 +558,6 @@ jobs:
           - project: preload-production
             config: playwright.preload.config.ts
             noDeps: true
-          # App built with the opt-in headScripts { mode: "preinit",
-          # fetchPriority: "low" }. One job: priority-low-production depends on
-          # priority-low-dev, so both modes share one build (deps NOT severed).
-          - project: priority-low-production
-            config: playwright.priority-low.config.ts
           # HMR tests run serially (workers=1) to avoid filesystem interference.
           # hmr-routes (route-types-hmr.test.ts) is intentionally absent: it is
           # test.skip(isCI)'d because the file watcher is unreliable on GitHub
@@ -691,11 +686,6 @@ jobs:
           - project: preload-production
             config: playwright.preload.config.ts
             noDeps: true
-          # App built with the opt-in headScripts { mode: "preinit",
-          # fetchPriority: "low" }. One job: priority-low-production depends on
-          # priority-low-dev, so both modes share one build (deps NOT severed).
-          - project: priority-low-production
-            config: playwright.priority-low.config.ts
           # Edge-only ppr shells: own config (KV-less app store via
           # RANGO_E2E_EDGE_ONLY_CACHE) — a store-level change the main
           # config's KV-backed suites must not run under.

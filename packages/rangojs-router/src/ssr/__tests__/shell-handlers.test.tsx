@@ -202,6 +202,12 @@ describe("createShellCaptureHandler", () => {
     ).toThrow(/Missing bootstrap dependency/);
   });
 
+  it("throws at creation on an unknown headScripts", () => {
+    expect(() =>
+      createShellCaptureHandler(makeDeps({ headScripts: "prenit" as never })),
+    ).toThrow(/headScripts must be "preinit" or "preload", received "prenit"/);
+  });
+
   it("(a) returns a prelude with shell + fallback + bootstrap, not the hole; postponed round-trips", async () => {
     const result = await captureShell(makeDeps(), "cap");
     expect(result).not.toBeNull();

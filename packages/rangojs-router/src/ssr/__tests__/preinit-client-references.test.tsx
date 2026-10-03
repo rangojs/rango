@@ -6,10 +6,7 @@ import {
   installClientReferencePreinit,
   type SSRDependencies,
 } from "../index";
-import type {
-  ClientReferencePreinitOptions,
-  OnClientReference,
-} from "../preinit-client-references.js";
+import type { OnClientReference } from "../preinit-client-references.js";
 
 // Mock renderSegments so SsrRoot can render without the full segment system
 // (same setup as ssr-handler.test.tsx).
@@ -215,6 +212,16 @@ describe("bootstrapModules conversion (resolveBootstrapOptions)", () => {
     );
     warnSpy.mockRestore();
   });
+
+  it("throws at construction on an unknown headScripts instead of running it as preload", () => {
+    for (const value of ["prenit", null, { mode: "preinit" }]) {
+      const { deps } = renderSpyDeps('import("/assets/index-abc123.js")');
+      deps.headScripts = value as never;
+      expect(() => createSSRHandler(deps)).toThrow(
+        /headScripts must be "preinit" or "preload", received/,
+      );
+    }
+  });
 });
 
 describe("installClientReferencePreinit (real fizz render)", () => {
@@ -237,14 +244,13 @@ describe("installClientReferencePreinit (real fizz render)", () => {
     href: string;
     nonce?: string;
     preloadFirst?: boolean;
-    install?: ClientReferencePreinitOptions;
     /** Client-reference accesses of the same chunk within one render. */
     uses?: number;
   }) => {
     let onRef: OnClientReference | undefined;
     installClientReferencePreinit((cb) => {
       onRef = cb;
-    }, opts.install);
+    });
     function ChunkUser() {
       if (opts.preloadFirst) {
         // plugin-rsc's preloadDeps shape for a non-entry chunk (a variable:
@@ -311,7 +317,9 @@ describe("installClientReferencePreinit (real fizz render)", () => {
       ),
     ) ?? [];
 
-  it("leaves fetchpriority off by default, even after plugin-rsc's low preload", async () => {
+  // Lowering the head chunks was measured and rejected (#1021): the upgrade
+  // must not inherit the `low` of the plugin-rsc hint it replaces.
+  it("leaves fetchpriority off the head chunk script, even after plugin-rsc's low preload", async () => {
     const html = await installAndRender({
       href: "/assets/chunk-d.js",
       preloadFirst: true,
@@ -322,38 +330,14 @@ describe("installClientReferencePreinit (real fizz render)", () => {
     expect(tags[0]).toContain('type="module"');
   });
 
-  it('fetchPriority "auto" omits the attribute', async () => {
-    const html = await installAndRender({
-      href: "/assets/chunk-e.js",
-      install: { fetchPriority: "auto" },
-    });
-    const tags = chunkTags(html, "/assets/chunk-e.js");
-    expect(tags).toHaveLength(1);
-    expect(tags[0]).not.toMatch(/fetchpriority/i);
-  });
-
-  it('fetchPriority "low" stamps fetchpriority="low" on the head chunk script (#1021)', async () => {
-    const html = await installAndRender({
-      href: "/assets/chunk-g.js",
-      install: { fetchPriority: "low" },
-    });
-    const tags = chunkTags(html, "/assets/chunk-g.js");
-    expect(tags).toHaveLength(1);
-    expect(tags[0]).toMatch(/fetchpriority="low"/i);
-    expect(tags[0]).toContain('type="module"');
-    expect(tags[0]).toContain("async");
-  });
-
-  it('a chunk referenced twice after plugin-rsc\'s low preload emits one "low" tag', async () => {
+  it("a chunk referenced twice after plugin-rsc's low preload emits one tag", async () => {
     const html = await installAndRender({
       href: "/assets/chunk-f.js",
       preloadFirst: true,
       uses: 2,
-      install: { fetchPriority: "low" },
     });
     const tags = chunkTags(html, "/assets/chunk-f.js");
     expect(tags).toHaveLength(1);
-    expect(tags[0]).toMatch(/fetchpriority="low"/i);
     expect(html).not.toContain('rel="modulepreload"');
     // Hoisted ahead of the body content.
     expect(html.indexOf(tags[0]!)).toBeLessThan(html.indexOf(">ok<"));

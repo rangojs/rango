@@ -1,8 +1,4 @@
-import type {
-  HeadScriptFetchPriority,
-  HeadScriptsMode,
-  HeadScriptsOption,
-} from "../plugin-types.js";
+import type { HeadScriptsOption } from "../plugin-types.js";
 
 export const VIRTUAL_ENTRY_BROWSER: string = `
 import {
@@ -65,60 +61,24 @@ function emitProgressiveChunkSize(value: number): string {
 }
 
 /**
- * Split the rango({ headScripts }) option into the mode the SSR handlers take
- * and the optional head chunk script priority. The object form is
- * preinit-only (under "preload" plugin-rsc's hints already carry
- * fetchpriority="low"). Any shape outside the type throws at config time.
- * Before the object form an unknown string such as "prenit" silently ran as
- * "preinit" (`headScripts !== "preload"` since #694, an implementation
- * shortcut rather than a documented contract).
- */
-function resolveHeadScripts(headScripts: HeadScriptsOption): {
-  mode: HeadScriptsMode;
-  fetchPriority?: HeadScriptFetchPriority;
-} {
-  if (headScripts === "preinit" || headScripts === "preload") {
-    return { mode: headScripts };
-  }
-  if (typeof headScripts !== "object" || headScripts === null) {
-    throw new Error(
-      `rango({ headScripts }) must be "preinit", "preload" or { mode: "preinit", fetchPriority }, received ${JSON.stringify(headScripts)}`,
-    );
-  }
-  const { mode, fetchPriority } = headScripts;
-  if (mode !== "preinit") {
-    throw new Error(
-      `rango({ headScripts }) object form requires mode: "preinit", received ${JSON.stringify(mode)}; ` +
-        'use headScripts: "preload" for the hint-only strategy.',
-    );
-  }
-  if (
-    fetchPriority !== undefined &&
-    fetchPriority !== "low" &&
-    fetchPriority !== "auto"
-  ) {
-    throw new Error(
-      `rango({ headScripts: { fetchPriority } }) must be "low" or "auto", received ${JSON.stringify(fetchPriority)}`,
-    );
-  }
-  return { mode, fetchPriority };
-}
-
-/**
  * Generate the virtual SSR entry. `headScripts` mirrors the rango() plugin
  * option: "preinit" (default) installs the client-reference preinit hook and
  * threads `getClientEntryUrl` so Fizz emits `bootstrapModules`;
  * "preload" omits the hook and uses the deprecated inline
- * `loadBootstrapScriptContent` bootstrap. An explicit object-form
- * `fetchPriority` is passed to the hook; omitted, the hook applies
- * DEFAULT_HEAD_SCRIPT_FETCH_PRIORITY (src/ssr/preinit-client-references.ts).
+ * `loadBootstrapScriptContent` bootstrap. Any other value throws: an unknown
+ * string such as "prenit" used to run as "preinit" silently
+ * (`headScripts !== "preload"` since #694).
  */
 export function getVirtualEntrySSR(
   headScripts: HeadScriptsOption = "preinit",
   progressiveChunkSize?: number,
 ): string {
-  const { mode, fetchPriority } = resolveHeadScripts(headScripts);
-  const preinit = mode === "preinit";
+  if (headScripts !== "preinit" && headScripts !== "preload") {
+    throw new Error(
+      `rango({ headScripts }) must be "preinit" or "preload", received ${JSON.stringify(headScripts)}`,
+    );
+  }
+  const preinit = headScripts === "preinit";
   // The preload variant drops the preinit-only imports/install and swaps the
   // bootstrap dep, all built here so the template below stays a single
   // unconditional shape.
@@ -131,14 +91,14 @@ export function getVirtualEntrySSR(
 // Upgrade client-reference modulepreload hints to executing module scripts in
 // the document head, for every render pass (live SSR, shell capture, resume).
 // See src/ssr/preinit-client-references.ts for the full rationale.
-installClientReferencePreinit(setOnClientReference${fetchPriority ? `, { fetchPriority: ${JSON.stringify(fetchPriority)} }` : ""});
+installClientReferencePreinit(setOnClientReference);
 `
     : "";
   const bootstrapDep = preinit
     ? "getClientEntryUrl,"
     : `loadBootstrapScriptContent: () =>
     import.meta.viteRsc.loadBootstrapScriptContent("index"),`;
-  const hs = JSON.stringify(mode);
+  const hs = JSON.stringify(headScripts);
   // Emitted into all three handlers: live SSR and shell capture consume it
   // directly; the resume handler receives it for dep-shape uniformity (resume()
   // itself inherits the capture value from the postponed state). Finite numbers

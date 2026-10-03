@@ -384,9 +384,7 @@ export function expectEntryHintAfterHeadChunks(html: string): string {
 
 /**
  * The executing `<script type="module" async src>` client-reference chunk tags
- * in `<head>` (the `headScripts: "preinit"` upgrade). Fizz renders the
- * attribute as `fetchPriority=`; HTML attribute names are case-insensitive, so
- * match `fetchpriority` with the `i` flag.
+ * in `<head>` (the `headScripts: "preinit"` upgrade).
  */
 export function headChunkScripts(html: string): string[] {
   const headEnd = html.indexOf("</head>");
