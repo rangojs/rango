@@ -797,11 +797,19 @@ describe("a bake-lane loader pinned on a PPR shell HIT", () => {
       const { v } = await ctx.use(pinned);
       return `read ${v}`;
     });
-    const bakeKey = "R0D0.localhost/account#Pinned";
+    const bakeKey = "R0D0.Pinned#L";
     const reqCtx = newRequestContext("b");
     armLoaderTagSets(reqCtx);
     reqCtx._shellLoaderSeed = new Map([
-      [bakeKey, { container: { v: "shell" }, holes: false, runs: false }],
+      [
+        "Pinned#L",
+        {
+          container: { v: "shell" },
+          holes: false,
+          runs: false,
+          complete: true,
+        },
+      ],
     ]);
     const { pinnedValue, readerValue } = await runWithRequestContext(
       reqCtx,
@@ -817,7 +825,7 @@ describe("a bake-lane loader pinned on a PPR shell HIT", () => {
         );
         setupLoaderAccess(ctx, new Map());
         const pinnedValue = await resolveLoaderData(
-          pinnedEntry,
+          { ...pinnedEntry, bake: true },
           ctx,
           "/account",
           bakeKey,

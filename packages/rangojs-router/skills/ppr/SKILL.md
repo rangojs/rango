@@ -898,31 +898,60 @@ value once it refreshes, while the baked container keeps the capture's. If a
 hole needs a stable value, give it its own cache (`"use cache"` with a
 profile, or a loader `cache()`); the shell never provides one.
 
-**Handle pushes from a bake-lane loader appear once.** The capture records
-the settled, thenable-free handle pushes of every loader body it runs (the
+**Handle pushes from a bake-lane loader appear once, and they match its
+data.** A loader's title, meta or breadcrumb describes the data next to it,
+so both come from the same run on every way a shell can be replayed: a
+document HIT, a client navigation, a prefetch. The capture records the
+settled, thenable-free handle pushes of every loader body it runs (the
 prelude rendered them): the `ssr: false` loader's own, those of the loaders
-it awaits with `ctx.use()`, and those its own `cache()` entry replays. Every
-HIT restores them with the handler layer, and they stand: a bake-lane loader
-that does run on the HIT (a hole-carrying one) reads the store, so its settled
-pushes, and those a `"use cache"` hit inside its body replays, are dropped
-instead of replacing the restored ones. Any handle, deduping or not, shows
-each value once, and it is the value the prelude rendered. A loader the route
-also registers on the live lane is a hole: its live run replaces its restored
-pushes, and those of the loaders it awaits, so they show its live value, even
-when a bake-lane loader running on the HIT awaits it. A run that throws or
-makes no push shows none of the capture's once its run ends; a hole slower
-than the handler barrier shows the shell's copy in the first snapshot until
-then. A hole with its own loader `cache()` that hits shows the pushes that
-entry recorded, none if it recorded none, matching its data. A dependency the route does not
-register, which an `ssr: false` loader awaited at capture outside any live
-loader, is on neither lane: its settled pushes stay as the prelude rendered
-them, even where a live loader also awaits it, while its data is fresh. To
-keep its pushes live, declare it as its own `loader()` on the route. A push the capture cannot record (a
-deferred push, or one holding a promise) marks every loader record of the
-page to run: those bodies then still run on each HIT, in the background, and
-that push reaches the page (from the loader's own `cache()` entry when it
-hits) with the run's value; a push that lands after the document's handle snapshot
-reaches the client after hydration.
+it awaits with `ctx.use()`, and those its own `cache()` entry replays. What
+a replay does with a loader's recorded pushes follows what it does with that
+loader's data:
+
+| The replay serves the loader's data from                                    | Its settled pushes are                                                                                                                                                                      |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| the shell (its pinned container)                                            | the shell's: restored with the handler layer, and they stand. A loader that does run on the replay (a hole-carrying one) reads the store, and the settled pushes that run makes are dropped |
+| a run on this request (a live-lane loader, or one the shell has no pin for) | that run's: they replace the shell's copies in place; a run that throws or makes no push shows none                                                                                         |
+| the loader's own `cache()` entry                                            | that entry's: the pushes it recorded, none if it recorded none                                                                                                                              |
+
+So any handle, deduping or not, shows each value once. A pinned loader's
+pushes are the values the prelude rendered, also for the pushes a `"use
+cache"` hit inside its body replays. A loader the route also registers on
+the live lane is a hole: its live run replaces its restored pushes, and those
+of the loaders it awaits, so they show its live value, even when a bake-lane
+loader running on the replay awaits it; a hole slower than the handler
+barrier shows the shell's copy in the first snapshot until its run ends. An
+`ssr: false` loader is served from the shell only while the entry holds its
+pin: a snapshot captured by a navigation alone carries none, and a shell over
+`ppr.maxSnapshotBytes` drops them. There the loader runs fresh, and its
+pushes are that run's, like its data.
+
+A dependency the route does not register, which an `ssr: false` loader
+awaited at capture outside any live loader, is on neither lane: its settled
+pushes stay as the prelude rendered them, even where a live loader also
+awaits it, while its data is fresh. (They follow the run instead once the
+entry has lost a pin, because the loader that awaits it then runs.) To keep
+its pushes live, declare it as its own `loader()` on the route. A push the
+capture cannot record (a deferred push, or one holding a promise) marks every
+loader record of the page to run: those bodies then still run on each replay,
+in the background, and that push reaches the page (from the loader's own
+`cache()` entry when it hits) with the run's value, on a document HIT and on
+a client navigation alike; a push that lands after the document's handle
+snapshot reaches the client after hydration.
+
+A pinned loader's pushes are exactly the ones its capture made. If its body
+pushes a settled value only on some runs (behind a condition), a replay that
+runs it shows the capture's answer, a push or none, never a later run's next
+to the pinned data. A deferred push is the exception by design: it is
+delivered on every replay.
+
+One arrangement still mixes sources, tracked in
+`docs/design/handle-push-ownership.md`. A loader that reads a `cache()`-bound
+loader with `ctx.use()` before that binding starts (a loader declared ahead
+of it, a parent layout) runs it live while the binding serves its entry
+(#1002): declare the cached loader first, or read it from the handler. An
+entry such a request writes holds no pushes, and a later HIT of it then
+shows none for that loader.
 
 Four hard edges (each e2e/unit-pinned):
 
@@ -1236,13 +1265,13 @@ path(
 );
 ```
 
-| Field              | Default | Notes                                                                                                                                                                                                                                                                                                      |
-| ------------------ | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ttl`              | `300`   | shell freshness window in seconds (`ppr: true` uses the default)                                                                                                                                                                                                                                           |
-| `swr`              | —       | stale window: serve the stale shell + background recapture                                                                                                                                                                                                                                                 |
-| `tags`             | —       | operational tags UNIONED with the tags the capture collects — see "Invalidation" below                                                                                                                                                                                                                     |
-| `maxSnapshotBytes` | 8 MiB   | cap on the loader pins in the entry's snapshot (the bake-lane loader records). The recorded handler layer is exempt. Over the cap the pins are dropped and the shell is stored with its handler layer (warned once per key); bake-lane loaders then read the live store, and drift is repaired client-side |
-| `captureTimeout`   | 15000ms | ONE capture deadline: the handler layer settling (promises it passes or pushes, async server components, loaders it awaits), bake-lane loaders, and the prerender; a capture that misses it stores nothing rather than a partial shell                                                                     |
+| Field              | Default | Notes                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------ | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ttl`              | `300`   | shell freshness window in seconds (`ppr: true` uses the default)                                                                                                                                                                                                                                                                                                                                            |
+| `swr`              | —       | stale window: serve the stale shell + background recapture                                                                                                                                                                                                                                                                                                                                                  |
+| `tags`             | —       | operational tags UNIONED with the tags the capture collects — see "Invalidation" below                                                                                                                                                                                                                                                                                                                      |
+| `maxSnapshotBytes` | 8 MiB   | cap on the loader pins in the entry's snapshot (the bake-lane loader records). The recorded handler layer is exempt. Over the cap the pins are dropped and the shell is stored with its handler layer (warned once per key); bake-lane loaders then run on every replay and read the live store, their handle pushes come from that run like their data, and drift from the prelude is repaired client-side |
+| `captureTimeout`   | 15000ms | ONE capture deadline: the handler layer settling (promises it passes or pushes, async server components, loaders it awaits), bake-lane loaders, and the prerender; a capture that misses it stores nothing rather than a partial shell                                                                                                                                                                      |
 
 A shell never outlives the route `cache()` entry it was captured from: under
 a route `cache()`, the shell is fresh no longer than that entry is (at most

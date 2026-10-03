@@ -55,13 +55,23 @@ function createLateHandlePushError(
 interface SlotTag {
   /** Pushed inside a DSL loader scope; captureHandles drops it. */
   loader?: boolean;
-  /** A loader-cache replay of this loader's recorded push (pushReplayed). */
+  /** A cached unit's replay of this loader's recorded push (pushReplayed). */
   replayOf?: string;
-  /** Pushed by this loader's live run after it replaced its replayed slots. */
+  /**
+   * A record's copy for a loader that record does not supply the value of
+   * (pushPlaceholder): it stands in until the loader's own source delivers.
+   */
+  placeholderOf?: string;
+  /** Pushed by this loader's live run after it replaced its copies. */
   liveOf?: string;
+  /**
+   * The loaders around that run's body whose runs replaced copies too: their
+   * next push follows this one, so a run's pushes keep their order.
+   */
+  under?: readonly string[];
   /** Pushed by this loader's body and kept in records (push `owner`). */
   owner?: string;
-  /** A document HIT's restore of this loader's record copy (pushRestored). */
+  /** A record's copy for a loader served from that record's pin (pushRestored). */
   restoredOf?: string;
   /** A restored slot a dropped settled push of its loader stood in for. */
   matched?: true;
@@ -69,6 +79,26 @@ interface SlotTag {
 
 // Shared by every plain DSL-loader push; tags are never mutated in place.
 const LOADER_SLOT: SlotTag = Object.freeze({ loader: true });
+
+/**
+ * What a restored record is to one loader's handle pushes on this request
+ * (loader-cache.ts loaderPins; docs/design/handle-push-ownership.md). Two
+ * answers let the record's copies stand, two make them placeholders, and in
+ * each pair one also speaks for the loader's other pushes:
+ * - "pin": the request serves the loader's value from the pin stored with
+ *   the record, and the record lists every settled push of that run. Its
+ *   copies stand, and any other settled push of the loader is dropped.
+ * - "copies": its copies stand and nothing else is known: a dependency of
+ *   pinned loaders, or a pin written before captures recorded every push.
+ * - "hole": the route runs the loader on this request (it registers it and
+ *   the record does not pin it). Its copies are placeholders and a push made
+ *   in its body is its own, with or without copies.
+ * - "placeholders": its copies are placeholders and nothing else is known: a
+ *   dependency the route does not register while a pin is missing (the
+ *   record does not name the loader that ran it). Without copies its push
+ *   counts for the loader that awaits it.
+ */
+export type RecordAuthority = "pin" | "copies" | "hole" | "placeholders";
 
 function cloneHandleData(data: HandleData): HandleData {
   const clone: HandleData = {};
@@ -158,15 +188,17 @@ export interface HandleStore {
   ): void;
 
   /**
-   * push() a loader-cache HIT's replayed value, recorded from `loaderId`'s
-   * body (loader-cache.ts replayLoaderHandles). If that loader then runs live
-   * in this request, its first push removes every value replayed for it and
-   * takes the first one's position (later live pushes follow it), so the
-   * handle output stays live without a duplicate. A push counts as that
-   * loader's when it is made in its body, or in a body it entered that has
-   * no replayed values of its own (the capture credits a dependency's push
-   * under a live-lane loader to that loader); a hole's run that ends without
-   * one drops them (settleLoaderRun).
+   * push() a cached unit's copy of a value `loaderId`'s body pushed
+   * (handle-snapshot.ts appendHandles: a loader-cache or "use cache" HIT). If
+   * that loader then runs live in this request, its first push removes every
+   * copy pushed for it (replays and placeholders) and takes the first one's
+   * position, and the pushes of that run follow in push order, a dependency's
+   * included, so the handle output stays live without a duplicate. A push
+   * counts as that loader's when it is made in its body, or in a body it
+   * entered that has no copies of its own (the capture credits a dependency's
+   * push under a live-lane loader to that loader). A run that ends without a
+   * push leaves a replay in place, unless the loader is a hole
+   * (settleLoaderRun).
    */
   pushReplayed(
     handleName: string,
@@ -176,16 +208,27 @@ export interface HandleStore {
   ): void;
 
   /**
-   * push() a document HIT's copy of `loaderId`'s settled push, restored from
-   * the shell's doc record (handle-snapshot.ts restoreHandles). The record is
-   * authoritative for that loader's settled pushes: the prelude was rendered
-   * from it, and a run of the loader on the HIT reads the store, not the
-   * capture's values. So from then on this request drops every settled,
-   * thenable-free push the loader makes (live, or replayed from a cache
-   * entry, anywhere inside its body), and keeps the ones holding a thenable
-   * (holdsThenable: what the record could not keep, `runs`), placed among the
-   * restored copies in the loader's push order. Only bake-lane owners are
-   * restored this way (withCacheLookup): a live-lane loader is a hole.
+   * push() a record's copy of `loaderId`'s push as a placeholder
+   * (handle-snapshot.ts restoreHandles): the record does not supply that
+   * loader's value on this request, so its own source decides its pushes. A
+   * live run replaces it as it does a replay; a run that ends without a push
+   * drops it (settleLoaderRun); a cached unit that claims the loader delivers
+   * in its place (replacePlaceholders).
+   */
+  pushPlaceholder(
+    handleName: string,
+    segmentId: string,
+    data: unknown,
+    loaderId: string,
+  ): void;
+
+  /**
+   * push() a record's copy of `loaderId`'s settled push that stands
+   * (restoreHandles): the record supplies the loader's value too. From then
+   * on this request drops every settled, thenable-free push the loader makes
+   * (live, or replayed from a cache entry, anywhere inside its body), and
+   * keeps the ones holding a thenable (holdsThenable: what the record could
+   * not keep), placed among the restored copies in the loader's push order.
    */
   pushRestored(
     handleName: string,
@@ -195,41 +238,34 @@ export interface HandleStore {
   ): void;
 
   /**
-   * The loaders the route runs on the live lane (liveLaneLoaderIds), from a
-   * PPR shell record's restore (handle-snapshot.ts restoreHandles): the
-   * holes. A push counts for a restored loader when that loader is the
-   * replayed one or the innermost enclosing loader body that restored
-   * copies; the walk out through enclosing bodies stops at a hole's body,
-   * and a replay of a hole's push counts for none. So a restored loader
-   * never takes a push made inside a hole it awaited, while a body inside the
-   * hole that restored copies of its own (a dependency the capture ran under
-   * a bake-lane loader) still takes its pushes.
+   * What the record this request restored is to each loader (RecordAuthority;
+   * CacheScope.lookupRouteDetailed sets it on a hit). A "pin" loader counts
+   * as restored with or without copies. A hole is a "hole" loader or one with
+   * placeholders: the walk out through enclosing loader bodies that finds the
+   * loader a push counts for stops at its body, so a pinned loader never
+   * takes a push made inside a hole it awaited.
    */
-  markLiveLane(loaderIds: ReadonlySet<string>): void;
+  setRecordAuthority(authority: (loaderId: string) => RecordAuthority): void;
 
   /**
    * `loaderId`'s run in this request settled (resolved or rejected), its
-   * pushes made (loader-resolution.ts createLoaderExecutor). When the loader
-   * is a hole (markLiveLane), values replayed for it that no push of the run
-   * replaced are dropped: the run's output decides, so a hole that throws or
-   * skips its push shows none rather than the capture's. Any other loader's
-   * replayed values stay: a bake-lane loader's record is authoritative for
-   * its settled pushes, as its pin is for its data. Restored copies are not
-   * replays and stand.
+   * pushes made (loader-resolution.ts createLoaderExecutor). Its placeholders
+   * that no push of the run replaced are dropped: the run's output decides,
+   * so a loader that throws or skips its push shows none rather than the
+   * record's. A hole's replays go with them. Any other loader's replays stay
+   * (a dependency another entry's HIT replayed), and so do restored copies.
    */
   settleLoaderRun(loaderId: string): void;
 
   /**
-   * A hole's own cache() HIT (loader-cache.ts replayLoaderHandles, once it
-   * claims the hole): the values replayed for hole `loaderId` before (its
-   * shell copies, which restoreHandles leaves unclaimed, those of the
-   * dependencies credited to it included) give way to the pushes the entry
-   * recorded, none when it recorded none, so they match the entry's data.
-   * `deliver` makes the pushReplayed calls, which take the removed values'
-   * place in each array. Any other loader, or a hole with nothing replayed,
-   * delivers as a plain replay.
+   * A cached unit's HIT delivering the pushes it recorded for `loaderIds`,
+   * the loaders it claimed (appendHandles). Their placeholders give way to
+   * what `deliver` pushes for them, nothing when it pushes nothing, so the
+   * page shows the pushes of the run that produced the unit's value. The
+   * pushReplayed calls `deliver` makes take the removed values' place in each
+   * array, in order. Without placeholders it is a plain replay.
    */
-  redeliverReplays(loaderId: string, deliver: () => void): void;
+  replacePlaceholders(loaderIds: readonly string[], deliver: () => void): void;
 
   /**
    * Get all collected handle data after all handlers have settled.
@@ -317,45 +353,51 @@ export function createHandleStore(): HandleStore {
   // (not value identity) so primitive values are covered too.
   // replaySegmentData installs fresh arrays, so restored values are untagged.
   const slotTags = new WeakMap<unknown[], (SlotTag | undefined)[]>();
-  // Replayed loaders that have not pushed live yet: loaderId -> the arrays
-  // holding their replayed slots.
+  // Copies standing in for a loader that has not pushed live yet: loaderId ->
+  // the arrays holding them. Kept apart by kind: only a placeholder gives way
+  // to a run that ends without a push, or to a cached unit's delivery.
   const pendingReplays = new Map<string, Set<unknown[]>>();
-  // Replayed loaders whose live run already replaced those slots.
-  const replacedReplays = new Set<string>();
-  // Loaders a document HIT restored record copies for (pushRestored).
+  const pendingPlaceholders = new Map<string, Set<unknown[]>>();
+  // Loaders whose live run already replaced its copies.
+  const replaced = new Set<string>();
+  // Loaders a record restored standing copies for (pushRestored), and those
+  // it restored placeholders for (pushPlaceholder).
   const restoredLoaders = new Set<string>();
+  const placeholderLoaders = new Set<string>();
+  let authority: ((loaderId: string) => RecordAuthority) | undefined;
   const isRestored = (loaderId: string): boolean =>
-    restoredLoaders.has(loaderId);
-  // The route's live-lane loaders (markLiveLane): holes a restore never
-  // reaches into.
-  let liveLane: ReadonlySet<string> | undefined;
+    restoredLoaders.has(loaderId) || authority?.(loaderId) === "pin";
   const isHole = (loaderId: string): boolean =>
-    liveLane?.has(loaderId) ?? false;
+    placeholderLoaders.has(loaderId) || authority?.(loaderId) === "hole";
 
-  const hasReplays = (loaderId: string): boolean =>
-    pendingReplays.has(loaderId) || replacedReplays.has(loaderId);
+  const hasCopies = (loaderId: string): boolean =>
+    pendingReplays.has(loaderId) ||
+    pendingPlaceholders.has(loaderId) ||
+    replaced.has(loaderId);
 
   // The restored loader a push counts for, as the capture credits it
   // (shell-capture.ts deriveShellCaptureContext): the replayed loader when it
-  // restored one, else the innermost enclosing loader body that did. A
+  // is restored, else the innermost enclosing loader body that is. A
   // "use cache" hit inside a restored body replays a dependency's push the
   // capture recorded under that body. A hole's body, or a replay of a hole's
   // push, ends the search: a live loader a restored loader awaits is still
   // live.
   function restoringLoader(replayOf: string | undefined): string | undefined {
     if (replayOf !== undefined) {
-      if (restoredLoaders.has(replayOf)) return replayOf;
+      if (isRestored(replayOf)) return replayOf;
       // Defensive: a hole's own cache() replay runs outside any loader body,
       // so the walk below finds no restored loader either.
       if (isHole(replayOf)) return undefined;
     }
     return findEnclosingLoaderBody(isRestored, isHole);
   }
-  // The replay or restore whose this.push() is in flight, as the tag its
-  // slot takes. Set around the call, not passed, so a capture wrapping
-  // push() sees it as a push.
-  let replaying: Pick<SlotTag, "replayOf" | "restoredOf"> | undefined;
-  // A redeliverReplays delivery in flight: per array, where its next
+  // The copy whose this.push() is in flight, as the tag its slot takes. Set
+  // around the call, not passed, so a capture wrapping push() sees it as a
+  // push.
+  let replaying:
+    | Pick<SlotTag, "replayOf" | "placeholderOf" | "restoredOf">
+    | undefined;
+  // A replacePlaceholders delivery in flight: per array, where its next
   // pushReplayed value goes (the removed values' place).
   let redelivery: Map<unknown[], number> | undefined;
 
@@ -383,22 +425,23 @@ export function createHandleStore(): HandleStore {
     tags.splice(at, 0, tag);
   }
 
-  // Remove `loaderId`'s replayed slots; returns the first one's position.
-  function removeReplayedSlots(
+  // Remove the slots `drops` accepts; returns the first one's position.
+  function removeSlots(
     values: unknown[],
-    loaderId: string,
+    drops: (tag: SlotTag) => boolean,
   ): number | undefined {
     const tags = slotTags.get(values);
     if (!tags) return undefined;
     let first: number | undefined;
     let kept = 0;
     for (let i = 0; i < values.length; i++) {
-      if (tags[i]?.replayOf === loaderId) {
+      const tag = tags[i];
+      if (tag && drops(tag)) {
         first ??= kept;
         continue;
       }
       values[kept] = values[i];
-      tags[kept] = tags[i];
+      tags[kept] = tag;
       kept++;
     }
     values.length = kept;
@@ -406,30 +449,78 @@ export function createHandleStore(): HandleStore {
     return first;
   }
 
-  // Where a live push by a replayed loader lands in `values`: its first push
-  // removes all of its replayed slots and takes the first one's position in
-  // this array; later pushes follow its previous live push. undefined appends.
+  // After the last push of `loaderId`'s run in `values`: its own, or one made
+  // in a body it entered. undefined: none yet.
+  function runCursor(loaderId: string, values: unknown[]): number | undefined {
+    const tags = slotTags.get(values);
+    if (!tags) return undefined;
+    for (let i = tags.length - 1; i >= 0; i--) {
+      const tag = tags[i];
+      if (tag?.liveOf === loaderId || tag?.under?.includes(loaderId)) {
+        return i + 1;
+      }
+    }
+    return undefined;
+  }
+
+  // The loaders around `pusher`'s body, innermost first, whose runs replaced
+  // copies (SlotTag.under).
+  function replacedAround(pusher: string): string[] | undefined {
+    let around: string[] | undefined;
+    let outside = false;
+    findEnclosingLoaderBody((loaderId) => {
+      if (outside && replaced.has(loaderId)) (around ??= []).push(loaderId);
+      if (loaderId === pusher) outside = true;
+      return false;
+    });
+    return around;
+  }
+
+  // Remove `loaderId`'s pending placeholders, and its replays with `replays`.
+  // Returns the first position removed from `values`.
+  function dropCopies(
+    loaderId: string,
+    replays: boolean,
+    values?: unknown[],
+  ): number | undefined {
+    const placeholderArrays = pendingPlaceholders.get(loaderId);
+    const replayArrays = replays ? pendingReplays.get(loaderId) : undefined;
+    if (!placeholderArrays && !replayArrays) return undefined;
+    pendingPlaceholders.delete(loaderId);
+    if (replayArrays) pendingReplays.delete(loaderId);
+    replaced.add(loaderId);
+    const own = (tag: SlotTag): boolean =>
+      tag.placeholderOf === loaderId || (replays && tag.replayOf === loaderId);
+    let at: number | undefined;
+    for (const arrays of [placeholderArrays, replayArrays]) {
+      if (!arrays) continue;
+      for (const copied of arrays) {
+        const first = removeSlots(copied, own);
+        if (copied === values) at ??= first;
+      }
+    }
+    return at;
+  }
+
+  // Where a live push by a loader with copies lands in `values`: its first
+  // push removes all of its copies and takes the first one's position in this
+  // array; later pushes follow the last push of its run. undefined: no place
+  // of its own here.
   function liveReplacementIndex(
     loaderId: string,
     values: unknown[],
   ): number | undefined {
-    const pending = pendingReplays.get(loaderId);
-    if (pending) {
-      pendingReplays.delete(loaderId);
-      replacedReplays.add(loaderId);
-      let at: number | undefined;
-      for (const replayed of pending) {
-        const first = removeReplayedSlots(replayed, loaderId);
-        if (replayed === values) at = first;
-      }
-      return at;
-    }
-    const tags = slotTags.get(values);
-    if (!tags) return undefined;
-    for (let i = tags.length - 1; i >= 0; i--) {
-      if (tags[i]?.liveOf === loaderId) return i + 1;
-    }
-    return undefined;
+    return dropCopies(loaderId, true, values) ?? runCursor(loaderId, values);
+  }
+
+  function addPending(
+    pending: Map<string, Set<unknown[]>>,
+    loaderId: string,
+    values: unknown[],
+  ): void {
+    let arrays = pending.get(loaderId);
+    if (!arrays) pending.set(loaderId, (arrays = new Set()));
+    arrays.add(values);
   }
 
   // A restored loader's settled push: the first of its restored slots here
@@ -631,21 +722,27 @@ export function createHandleStore(): HandleStore {
         throw error;
       }
 
-      const { replayOf, restoredOf } = replaying ?? {};
-      // A restore is no loader's push. Any other push, while a loader has
-      // replayed or restored slots to reconcile, is attributed as the capture
+      const { replayOf, placeholderOf, restoredOf } = replaying ?? {};
+      // A record's copy is no loader's push. Any other push, while a loader
+      // has copies or a restore to reconcile, is attributed as the capture
       // credits it: to the innermost loader body it is made in that has
-      // replayed slots, up to a hole's body, so a replay made in a body
-      // replaces that body's replayed copies and a dependency's push replaces
-      // those of the live-lane loader it ran under. Its record copy stands
-      // when a restored loader counts it (restoringLoader).
+      // copies, up to a hole's body, so a replay made in a body replaces
+      // that body's copies and a dependency's push replaces those of the
+      // live-lane loader it ran under. Its record copy stands when a
+      // restored loader counts it (restoringLoader).
       let pusher: string | undefined;
       let restoredBy: string | undefined;
-      if (!restoredOf) {
-        if (pendingReplays.size > 0 || replacedReplays.size > 0) {
-          pusher = findEnclosingLoaderBody(hasReplays, isHole);
+      if (restoredOf === undefined && placeholderOf === undefined) {
+        if (
+          pendingReplays.size > 0 ||
+          pendingPlaceholders.size > 0 ||
+          replaced.size > 0
+        ) {
+          pusher = findEnclosingLoaderBody(hasCopies, isHole);
         }
-        if (restoredLoaders.size > 0) restoredBy = restoringLoader(replayOf);
+        if (restoredLoaders.size > 0 || authority) {
+          restoredBy = restoringLoader(replayOf);
+        }
       }
       if (restoredBy !== undefined && !holdsThenable(value)) {
         const existing = data[handleName]?.[segmentId];
@@ -663,32 +760,52 @@ export function createHandleStore(): HandleStore {
       const loader = (loaderPush ?? isInsideLoaderScope()) || undefined;
       let at: number | undefined;
       let liveOf: string | undefined;
-      if (restoredOf) {
+      let under: string[] | undefined;
+      if (restoredOf !== undefined) {
         restoredLoaders.add(restoredOf);
+      } else if (placeholderOf !== undefined) {
+        placeholderLoaders.add(placeholderOf);
       } else if (replayOf !== undefined && redelivery?.has(values)) {
         at = redelivery.get(values)!;
         redelivery.set(values, at + 1);
       } else if (pusher !== undefined) {
+        under = replacedAround(pusher);
         at = liveReplacementIndex(pusher, values);
+        // No place of its own here: it follows the run it was made in.
+        for (let i = 0; at === undefined && under && i < under.length; i++) {
+          at = runCursor(under[i]!, values);
+        }
         liveOf = pusher;
       } else if (restoredBy !== undefined) {
         at = restoredInsertIndex(values, restoredBy);
-        if (!replayOf) liveOf = restoredBy;
+        if (replayOf === undefined) liveOf = restoredBy;
       }
       insertSlot(
         values,
         at,
         value,
-        replayOf || liveOf || owner || restoredOf
-          ? { loader, replayOf, liveOf, owner, restoredOf }
+        replayOf !== undefined ||
+          placeholderOf !== undefined ||
+          restoredOf !== undefined ||
+          liveOf !== undefined ||
+          owner !== undefined
+          ? {
+              loader,
+              replayOf,
+              placeholderOf,
+              restoredOf,
+              liveOf,
+              under,
+              owner,
+            }
           : loader
             ? LOADER_SLOT
             : undefined,
       );
-      if (replayOf) {
-        let arrays = pendingReplays.get(replayOf);
-        if (!arrays) pendingReplays.set(replayOf, (arrays = new Set()));
-        arrays.add(values);
+      if (replayOf !== undefined) {
+        addPending(pendingReplays, replayOf, values);
+      } else if (placeholderOf !== undefined) {
+        addPending(pendingPlaceholders, placeholderOf, values);
       }
 
       // Bump the version; each consumer's cursor decides when to clone+yield.
@@ -696,7 +813,7 @@ export function createHandleStore(): HandleStore {
       signalEmission();
     },
 
-    // Both go through this.push: active captures see a replay like a live
+    // All three go through this.push: active captures see a copy like a live
     // push, and a diverting capture keeps it out of the store.
     pushReplayed(
       handleName: string,
@@ -705,6 +822,21 @@ export function createHandleStore(): HandleStore {
       loaderId: string,
     ): void {
       replayPush(this, { replayOf: loaderId }, handleName, segmentId, value);
+    },
+
+    pushPlaceholder(
+      handleName: string,
+      segmentId: string,
+      value: unknown,
+      loaderId: string,
+    ): void {
+      replayPush(
+        this,
+        { placeholderOf: loaderId },
+        handleName,
+        segmentId,
+        value,
+      );
     },
 
     pushRestored(
@@ -716,30 +848,52 @@ export function createHandleStore(): HandleStore {
       replayPush(this, { restoredOf: loaderId }, handleName, segmentId, value);
     },
 
-    markLiveLane(loaderIds: ReadonlySet<string>): void {
-      liveLane = loaderIds;
+    setRecordAuthority(of: (loaderId: string) => RecordAuthority): void {
+      authority = of;
     },
 
     settleLoaderRun(loaderId: string): void {
-      const pending = pendingReplays.get(loaderId);
-      if (!pending || completed || !isHole(loaderId)) return;
-      pendingReplays.delete(loaderId);
-      replacedReplays.add(loaderId);
-      for (const values of pending) removeReplayedSlots(values, loaderId);
+      if (completed) return;
+      const hole = isHole(loaderId);
+      if (
+        !pendingPlaceholders.has(loaderId) &&
+        !(hole && pendingReplays.has(loaderId))
+      ) {
+        return;
+      }
+      dropCopies(loaderId, hole);
       version++;
       signalEmission();
     },
 
-    redeliverReplays(loaderId: string, deliver: () => void): void {
-      const pending = pendingReplays.get(loaderId);
-      if (!pending || completed || !isHole(loaderId)) {
+    replacePlaceholders(
+      loaderIds: readonly string[],
+      deliver: () => void,
+    ): void {
+      // One pass per array over every loader's placeholders: an array two of
+      // them share gets one anchor, the first removed position.
+      let given: Set<string> | undefined;
+      let arrays: Set<unknown[]> | undefined;
+      if (!completed) {
+        for (const loaderId of loaderIds) {
+          const pending = pendingPlaceholders.get(loaderId);
+          if (!pending) continue;
+          pendingPlaceholders.delete(loaderId);
+          (given ??= new Set()).add(loaderId);
+          arrays ??= new Set();
+          for (const values of pending) arrays.add(values);
+        }
+      }
+      if (!given || !arrays) {
         deliver();
         return;
       }
-      pendingReplays.delete(loaderId);
+      const owners = given;
+      const ofGiven = (tag: SlotTag): boolean =>
+        tag.placeholderOf !== undefined && owners.has(tag.placeholderOf);
       const anchors = new Map<unknown[], number>();
-      for (const values of pending) {
-        const first = removeReplayedSlots(values, loaderId);
+      for (const values of arrays) {
+        const first = removeSlots(values, ofGiven);
         if (first !== undefined) anchors.set(values, first);
       }
       const outer = redelivery;

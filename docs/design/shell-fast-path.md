@@ -204,25 +204,43 @@ produces is baked" below):
    rendered them. A run of the loader on a HIT would push them again, so the
    wrapper also passes the loader's id as `owner` (the innermost loader body
    the push was made in, else the loader a replay names). The record carries
-   the owners in `CachedEntryData.handleOwners`. On a document HIT,
-   `restoreHandles` puts a bake-lane owner's values back through
-   `HandleStore.pushRestored`, and they stand: the loader's run on the HIT
-   reads the store, so its settled pushes, and those made anywhere inside its
-   body (a `"use cache"` hit replaying a dependency's push), are dropped, and
-   only its thenable pushes are added. An owner the route also runs on the
-   live lane is a hole, so its values go back through `pushReplayed` (the
-   mechanism a loader's own `cache()` replay uses) and its live run's first
-   push removes them and takes the first one's position: each value appears
-   once and the live value wins, even when a restored loader running on the
-   HIT awaits it. A dependency the route registers on neither lane is
-   credited at capture to the first registered loader around it: under a
-   live-lane loader its pushes are that hole's and stay live; run only under
-   a bake-lane loader, they are restored and stand. A client navigation replaying the record
-   uses `pushReplayed` for every owner. Until issue #929 they were restored
-   as plain values and showed twice unless the handle deduped by key. A push
-   that lands after the document's handle snapshot reaches the client after
-   hydration (the late channel). A record written before `handleOwners`
-   existed restores as a plain replay.
+   the owners in `CachedEntryData.handleOwners`. On a replay,
+   `restoreHandles` decides each owner's values by where the request takes
+   that loader's data from, and the answer comes from the loader seed, the
+   same thing `resolveLoaderData` serves the data from (`servedPins` and
+   `loaderPins` in `router/segment-resolution/loader-cache.ts`; the seed is
+   keyed by loader id). A loader the replay serves from its pin gets its
+   values back through `HandleStore.pushRestored`, and they stand: its run
+   on the replay reads the store, so its settled pushes, and those made
+   anywhere inside its body (a `"use cache"` hit replaying a dependency's
+   push), are dropped, and only its thenable pushes are added. That holds
+   for a pinned loader the record has no copy for too: its capture pushed
+   nothing, so its run on the replay adds no settled push. Every other owner
+   is a hole, and its values are placeholders (`pushPlaceholder`): its run's
+   first push removes them and takes the first one's position, so each value
+   appears once and the run's value wins, even when a restored loader
+   running on the replay awaits it.
+   A loader the route runs on the live lane is always a hole. An `ssr: false`
+   loader is one exactly when the entry has no pin for it: a navigation-only
+   entry, an entry whose pins `maxSnapshotBytes` dropped, a pin that failed
+   to decode. A dependency the route registers on neither lane is credited
+   at capture to the first registered loader around it: under a live-lane
+   loader its pushes are that hole's and stay live; run only under a
+   bake-lane loader, they are recorded under its own id, and stand while
+   every `ssr: false` loader of the route is pinned.
+
+   A document HIT, a client navigation and a prefetch that replay the record
+   therefore agree, because none of them is asked. Until issues #1001 and
+   #1003 the request's type decided: a document tail restored every
+   bake-lane owner and a navigation replayed and claimed every owner, so a
+   navigation showed pinned data next to the push of the run it made and
+   lost the deferred push of the loader's own `cache()` entry, and a document
+   HIT of an entry without pins showed fresh data next to the capture's push
+   (`docs/design/handle-push-ownership.md`). Until issue #929 owned values
+   were restored as plain values and showed twice unless the handle deduped
+   by key. A push that lands after the document's handle snapshot reaches
+   the client after hydration (the late channel). A record written before
+   `handleOwners` existed restores as a plain replay.
 
 ## Everything a handler produces is baked
 

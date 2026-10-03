@@ -50,19 +50,29 @@ import {
   type LoaderIdentityRead,
 } from "../../server/context.js";
 import type { HandlerContext, InternalHandlerContext } from "../../types.js";
-import type { HandleStore } from "../../server/handle-store.js";
+import type {
+  HandleStore,
+  RecordAuthority,
+} from "../../server/handle-store.js";
 import type { CacheItemResult } from "../../cache/types.js";
 import {
   startHandleCapture,
   type HandleCapture,
 } from "../../cache/handle-capture.js";
-import { encodeHandles, decodeHandles } from "../../cache/handle-snapshot.js";
+import {
+  appendHandles,
+  encodeHandles,
+  decodeHandles,
+  type OwnedPushDelivery,
+} from "../../cache/handle-snapshot.js";
+import type { ShellLoaderSeedEntry } from "../../cache/shell-snapshot.js";
 import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
 import { runIdentityExempt } from "../../cache/cache-exec-scope.js";
 import {
   getRequestContext,
   _getRequestContext,
   runWithRequestContext,
+  type RequestContext,
 } from "../../server/request-context.js";
 import { observePhase, PHASES } from "../instrument.js";
 import {
@@ -257,26 +267,6 @@ function chainLoaderEntries(entry: EntryData): readonly LoaderEntry[] {
 }
 
 /**
- * The ids of the loaders a request over the matched chain `entries` runs on
- * the live lane (no `ssr: false`), on a chain entry, its orphan layouts or
- * its parallel slots. A document HIT tail restores the record's pushes of
- * every other owner as authoritative (withCacheLookup, HandleStore
- * pushRestored); a live-lane loader is a hole, so its live run replaces its
- * recorded pushes instead. Memoized per entry.
- */
-export function liveLaneLoaderIds(
-  entries: readonly EntryData[],
-): ReadonlySet<string> {
-  const ids = new Set<string>();
-  for (const entry of entries) {
-    for (const l of chainLoaderEntries(entry)) {
-      if (!l.bake) ids.add(l.loader.$$id);
-    }
-  }
-  return ids;
-}
-
-/**
  * The lane of each loader the matched chain `entries` registers: "live" (no
  * `ssr: false`) or "bake". A loader registered on both is "live". A PPR
  * capture credits a push to the first registered loader around it when that
@@ -293,6 +283,75 @@ export function routeLoaderLanes(
     }
   }
   return lanes;
+}
+
+/**
+ * The pins this request serves loaders from, by loader id: the seed a
+ * document HIT tail (serveShellHit) or a navigation replay whose doc record
+ * hit (matchPartialWithPprReplay) armed from the shell entry's loader
+ * records. A capture serves none: its bake-lane loaders execute.
+ *
+ * The one answer to "is this loader served from the shell record on this
+ * request", for its value (resolveLoaderData) and for the record's copies of
+ * its handle pushes (loaderPins): both look the loader up here and nowhere
+ * else. A condition that makes pins, or one loader's pin, not apply belongs
+ * here or in the seed's decode (shell-snapshot.ts buildShellLoaderSeed),
+ * never after a lookup, or the two disagree: issues #1001 and #1003 were the
+ * pushes decided from the request's type while the value was decided from
+ * the pin.
+ */
+function servedPins(
+  reqCtx: RequestContext<any> | undefined,
+): ReadonlyMap<string, ShellLoaderSeedEntry> | undefined {
+  return isShellCaptureActive(reqCtx) ? undefined : reqCtx?._shellLoaderSeed;
+}
+
+/**
+ * What a record restored on a request over the matched chain `entries` is to
+ * each loader's handle pushes (HandleStore RecordAuthority), from the pins
+ * the request serves (servedPins). Call it when the record hits: the pins are
+ * read here, once, because a navigation replay arms its seed for the match
+ * only and the store asks while loader bodies run.
+ *
+ * Each side applies its own lane to the pin. The value is per registration
+ * (resolveLoaderData: an `ssr: false` registration is served its pin). The
+ * pushes are per loader: one the route also registers without `ssr: false`
+ * is a hole whatever its other registration's pin says, because the capture
+ * credited its pushes to the live registration's run (routeLoaderLanes).
+ *
+ * A dependency the route does not register has no pin of its own, and the
+ * record does not name the loader that ran it at capture: its copies stand
+ * only while every `ssr: false` loader is pinned (exact when the pins are
+ * all there or all gone).
+ */
+export function loaderPins(
+  entries: readonly EntryData[],
+  reqCtx: RequestContext<any> | undefined,
+): OwnedPushDelivery {
+  const pins = servedPins(reqCtx);
+  let lanes: ReadonlyMap<string, "live" | "bake"> | undefined;
+  let dependency: RecordAuthority | undefined;
+  return (loaderId) => {
+    lanes ??= routeLoaderLanes(entries);
+    const lane = lanes.get(loaderId);
+    if (lane === "live") return "hole";
+    if (lane === "bake") {
+      const pin = pins?.get(loaderId);
+      return pin ? (pin.complete ? "pin" : "copies") : "hole";
+    }
+    if (dependency === undefined) {
+      let bakeLane = 0;
+      let pinned = 0;
+      for (const [id, registered] of lanes) {
+        if (registered !== "bake") continue;
+        bakeLane++;
+        if (pins?.has(id)) pinned++;
+      }
+      dependency =
+        bakeLane > 0 && pinned === bakeLane ? "copies" : "placeholders";
+    }
+    return dependency;
+  };
 }
 
 function getLoaderStore(
@@ -323,11 +382,12 @@ function getLoaderStore(
  * replay; and the store reads the body scope to tell a live push from a
  * replayed one.
  * A PPR shell capture records the replayed pushes under this loader (its
- * push funnel reads the pushReplayed owner, shell-capture.ts), so a shell
- * HIT restores them owned (HandleStore.pushRestored). This replay still
- * runs on that HIT: the store drops its settled values, which the record
- * already restored, and keeps the thenable ones the record could not keep
- * (a deferred push, the reason the loader's record carries `runs`).
+ * push funnel reads the pushReplayed owner, shell-capture.ts), so a replay
+ * of that shell that serves this loader from its pin restores them owned
+ * (HandleStore.pushRestored), on a document HIT and on a navigation alike.
+ * This replay still runs there: the store drops its settled values, which
+ * the record already restored, and keeps the thenable ones the record could
+ * not keep (a deferred push, the reason the loader's pin carries `runs`).
  */
 async function replayLoaderHandles(
   encoded: string | undefined,
@@ -338,34 +398,7 @@ async function replayLoaderHandles(
 ): Promise<void> {
   const recorded = encoded ? await decodeHandles(encoded) : {};
   if (!recorded) return;
-  const delivers = new Map<string, boolean>();
-  const claims = (owner: string): boolean => {
-    let deliver = delivers.get(owner);
-    if (deliver === undefined) {
-      deliver = claim ? claim(owner) : true;
-      delivers.set(owner, deliver);
-    }
-    return deliver;
-  };
-  const replay = (): void => {
-    for (const key in recorded) {
-      const owner = key.slice(key.indexOf(":") + 1);
-      if (!claims(owner)) continue;
-      for (const [handleName, values] of Object.entries(recorded[key])) {
-        for (const value of values) {
-          handleStore.pushReplayed(handleName, segmentId, value, owner);
-        }
-      }
-    }
-  };
-  // A hole's entry, pushes or none, takes the place of the shell copies of
-  // its pushes (HandleStore.redeliverReplays). Not once the hole delivered
-  // in this request: a run a reader started first replaces them itself.
-  if (claims(cachedLoaderId)) {
-    handleStore.redeliverReplays(cachedLoaderId, replay);
-  } else {
-    replay();
-  }
+  appendHandles(recorded, handleStore, segmentId, claim, cachedLoaderId);
 }
 
 /**
@@ -492,10 +525,11 @@ export function resolveLoaderData<TEnv>(
     return createMaskedLoaderPromise();
   }
 
-  if (bakeSegmentKey) {
-    const seed = reqCtx?._shellLoaderSeed;
-    if (seed && seed.has(bakeSegmentKey)) {
-      const recorded = seed.get(bakeSegmentKey)!;
+  // `bake`: the pin is the `ssr: false` registration's. The caller's key is
+  // passed for an unflagged loader of an entry without loading() too.
+  if (bakeSegmentKey && loaderEntry.bake) {
+    const recorded = servedPins(reqCtx)?.get(loaderEntry.loader.$$id);
+    if (recorded) {
       if (!recorded.holes) {
         // Pin-first (hole-free record): the pinned container is what the
         // payload serves (recorded paths win wholesale), resolved
@@ -800,7 +834,8 @@ function executeLoaderData<TEnv>(
     });
 
     // An entry without handles (none recorded, or dropped by an encode
-    // timeout) replays none, and still stands for a hole's shell copies.
+    // timeout) replays none, and still takes the place of the loader's
+    // placeholders (appendHandles): a claimed entry is the loader's source.
     if (cachedRead && handleStore && owningSegmentId) {
       await replayLoaderHandles(
         hitHandles,

@@ -80,10 +80,15 @@ global middleware
   loader's pushes at most once per request: a dependency that a sibling loader
   or the handler already ran keeps its live pushes, and a dependency that
   runs after the replay replaces its replayed values with its live pushes,
-  in their position (handle output stays live like the data). A stale hit's
+  in their position (handle output stays live like the data). The order is
+  the push order of the run that produced the value, whether an entry
+  replays it or a run replaces copies: a loader that pushes, awaits a
+  dependency that pushes, and pushes again shows `[own, dependency, own]`
+  on both. A stale hit's
   background refresh runs on its own loader executor, so it never takes the
   page's run of a dependency. Source: `replayLoaderHandles` in
-  `loader-cache.ts`, `_claimLoaderPushes` in `loader-resolution.ts`
+  `loader-cache.ts`, `appendHandles` in `handle-snapshot.ts`,
+  `_claimLoaderPushes` in `loader-resolution.ts`
   (`setupLoaderAccess`), `pushReplayed` in `handle-store.ts`; pinned by
   `loader-cache-handles.test.ts` and `handle-store.test.ts`.
 - One value per loader per request: once a loader's `cache()` binding
@@ -111,36 +116,59 @@ global middleware
   `recordLoaderIdentityRead` in `server/context.ts`, `recordedIdentityRead`
   in `cache/cache-tag.ts`; pinned by `loader-cache-identity-guard.test.ts`
   (#972).
-- A PPR shell HIT that replays the handler layer restores the settled pushes
-  of each loader body the capture ran (an `ssr: false` loader's own and those
-  of the loaders it awaits) from the shell record. A bake-lane owner's pushes
-  go through `pushRestored` and stand, unclaimed: the prelude rendered them.
-  A promise-free `ssr: false` loader does not run on the HIT, so they are the
-  only copy; a loader that does run (a hole-carrying `ssr: false` loader)
-  reads the store, and its settled pushes, and those made anywhere inside its
-  body (a `"use cache"` hit replaying a dependency's push), are dropped, while
-  its deferred ones are added; its own `cache()` HIT replays the same way. A
-  loader the route also runs on the live lane is a hole: its pushes are
-  restored through `pushReplayed` and claimed, and its live run replaces them
-  in place (#936), even when a running bake-lane loader awaits it: a hole's
-  body ends the search for an enclosing restored loader. A dependency the
-  route registers on neither lane is credited at capture to the first
-  registered loader around it: under a live-lane loader its pushes are that
-  hole's and stay live; run only under a bake-lane loader, they are restored
-  and stand. A hole whose run settles without replacing its replayed values
-  drops them (`settleLoaderRun`); a bake-lane loader's stay, as its pin
-  does. A hole's own `cache()` HIT delivers the pushes the entry recorded
-  (none when it recorded none) in place of
-  the shell's copies (`redeliverReplays`), which the restore leaves
-  unclaimed for it. Owned values a capture
-  restores from a route `cache()` record keep their owner in the shell record
-  too. A PPR partial replay whose doc record hits serves the same loader pins
-  as the document HIT, by each loader's own `ssr: false` flag
-  (`LoaderEntry.bake`), whatever `loading()` sits on its entry. Source: `restoreHandles` in `handle-snapshot.ts`
-  (`CachedEntryData.handleOwners`, written from the capture's push wrapper
-  in `shell-capture.ts`), `matchPartialWithPprReplay` in `rsc-rendering.ts`;
-  pinned by `cache-record-loader-pushes.test.ts` and
-  `serve-shell-request.rsc-test.tsx`.
+- A loader's data and the settled handle values it pushed come from one
+  source on every replay of a PPR shell: the entry's pin, the loader's own
+  `cache()` entry, or a run in this request. The shell record holds the
+  settled pushes of each loader body the capture ran (an `ssr: false`
+  loader's own and those of the loaders it awaits), and a replay restores
+  them by where it takes each loader's data from, which the loader seed
+  answers for both (`servedPins` / `loaderPins` in `loader-cache.ts`, the
+  seed keyed by loader id), not the request's type:
+  - A loader served from its pin: its pushes go through `pushRestored` and
+    stand, unclaimed. A promise-free `ssr: false` loader does not run on the
+    replay, so they are the only copy; a loader that does run (a
+    hole-carrying `ssr: false` loader) reads the store, and its settled
+    pushes, and those made anywhere inside its body (a `"use cache"` hit
+    replaying a dependency's push), are dropped, while its deferred ones are
+    added; its own `cache()` HIT replays the same way. The record is the
+    whole of that loader's settled pushes, so this holds when it has no copy
+    too: a push the capture's run did not make is not shown next to the
+    pinned data. This holds on a
+    document HIT, a client navigation and a prefetch that replay the shell,
+    and on the seeded fallback after an explicit route `cache()` miss (#1001,
+    #1003).
+  - Any other loader is a hole: one the route runs on the live lane, or an
+    `ssr: false` loader the entry has no pin for (a navigation-only entry,
+    pins dropped by `maxSnapshotBytes`). Its pushes are restored through
+    `pushPlaceholder`, unclaimed. Its run replaces them in place
+    (#936), even when a running pinned loader awaits it (a hole's body ends
+    the search for an enclosing restored loader); a run that settles without
+    a push drops them (`settleLoaderRun`); and its own `cache()` HIT delivers
+    the pushes the entry recorded, none when it recorded none, in their
+    place, for itself and for the dependencies the entry recorded
+    (`replacePlaceholders`).
+  - A dependency the route registers on neither lane is credited at capture
+    to the first registered loader around it: under a live-lane loader its
+    pushes are that hole's; run only under a bake-lane loader, they are
+    recorded under its own id and stand while every `ssr: false` loader of
+    the route is pinned (the record does not name the loader that ran it).
+
+  A route `cache()` record a capture wrote has no pins, so every owner in it
+  is a placeholder: the loader's run or its own `cache()` entry replaces the
+  copy. Owned values a capture restores from such a record keep their owner
+  in the shell record too. A PPR partial replay whose doc record hits serves
+  the same loader pins as the document HIT, by each loader's own `ssr: false`
+  flag (`LoaderEntry.bake`), whatever `loading()` sits on its entry. Not
+  covered: a reader that starts a cached loader before its binding (#1002),
+  and a pinned loader whose capture pushed nothing
+  (`docs/design/handle-push-ownership.md`). Source: `restoreHandles` in
+  `handle-snapshot.ts` (`CachedEntryData.handleOwners`, written from the
+  capture's push wrapper in `shell-capture.ts`), `withCacheLookup` in
+  `cache-lookup.ts`, `matchPartialWithPprReplay` in `rsc-rendering.ts`;
+  pinned by `serve-shell-request-push-ownership.rsc-test.tsx`,
+  `cache-lookup-owned-pushes.test.ts`, `cache-record-loader-pushes.test.ts`
+  and `serve-shell-request.rsc-test.tsx`.
+
 - Under PPR shell capture, of the DSL `loader()` registrations only
   `loader(Def, { ssr: false })` executes and bakes; every other registration
   is masked and live, whatever its `loading()`

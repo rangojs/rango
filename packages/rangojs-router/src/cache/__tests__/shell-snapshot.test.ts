@@ -256,17 +256,17 @@ describe("buildShellLoaderSeed", () => {
     const snapshot: ShellSnapshotRecord[] = [
       {
         family: "loader",
-        key: "K-full",
+        key: "R0D0.K-full",
         value: { value: JSON.stringify({ a: 1 }), holes: 0, runs: 0 },
       },
       {
         family: "loader",
-        key: "K-holey",
+        key: "R0D1.K-holey",
         value: { value: JSON.stringify({ a: 1 }), holes: 1, runs: 0 },
       },
       {
         family: "loader",
-        key: "K-runs",
+        key: "R0D2.K-runs",
         value: { value: JSON.stringify({ a: 1 }), holes: 0, runs: 1 },
       },
     ];
@@ -276,44 +276,87 @@ describe("buildShellLoaderSeed", () => {
       container: { a: 1 },
       holes: false,
       runs: false,
+      complete: true,
     });
     expect(seed?.get("K-holey")?.holes).toBe(true);
     // A capture that saw an unrecordable loader push asks the HIT to run it.
-    expect(seed?.get("K-runs")).toMatchObject({ holes: false, runs: true });
+    expect(seed?.get("K-runs")).toMatchObject({
+      holes: false,
+      runs: true,
+      complete: true,
+    });
   });
 
   it("a record stored before the bits existed reads as hole-carrying and as runs (the body supplies what the pin lacks)", async () => {
     // A v0.17 entry: its snapshot lacks the loader-owned pushes, so serving it
-    // pin-only would drop them.
+    // pin-only would drop them, and so would treating its record as the whole
+    // of the loader's pushes (`complete`).
     const legacy = {
       family: "loader",
-      key: "K-legacy",
+      key: "R0D0.K-legacy",
       value: { value: JSON.stringify({ a: 1 }) },
     } as unknown as ShellSnapshotRecord;
     const preRuns = {
       family: "loader",
-      key: "K-pre-runs",
+      key: "R0D1.K-pre-runs",
       value: { value: JSON.stringify({ a: 1 }), holes: 0 },
     } as unknown as ShellSnapshotRecord;
 
     const seed = await buildShellLoaderSeed([legacy, preRuns]);
-    expect(seed?.get("K-legacy")).toMatchObject({ holes: true, runs: true });
+    expect(seed?.get("K-legacy")).toMatchObject({
+      holes: true,
+      runs: true,
+      complete: false,
+    });
     expect(seed?.get("K-pre-runs")).toMatchObject({
       holes: false,
       runs: true,
+      complete: false,
     });
+  });
+
+  // A pin is stored under `${shortCode}D${index}.${loaderId}`: a shortCode
+  // holds no "D" and no ".", a loader id can hold both.
+  it("keys the seed by loader, for ids and shortCodes of every shape", async () => {
+    const ids = [
+      "src/loaders.ts#Product",
+      "D:/app/src/a.bD2.loaders.ts#Detail",
+      "a1b2c3#D0.x",
+    ];
+    const value = { value: JSON.stringify(1), holes: 0, runs: 0 } as const;
+    const seed = await buildShellLoaderSeed([
+      { family: "loader", key: `M0L0D0.${ids[0]}`, value },
+      { family: "loader", key: `M0L0I0R12D0.${ids[1]}`, value },
+      { family: "loader", key: `M0L0I0R12D1.${ids[2]}`, value },
+      // One loader pinned under two segments (a route loader a layout's
+      // parallel slots inherit): one run, one pin.
+      { family: "loader", key: `M0L0I0R12L3D0.${ids[0]}`, value },
+    ]);
+
+    expect([...(seed?.keys() ?? [])]).toEqual(ids);
+  });
+
+  it("drops a pin whose key is not a loader segment id", async () => {
+    const value = { value: JSON.stringify(1), holes: 0, runs: 0 } as const;
+    const seed = await buildShellLoaderSeed([
+      { family: "loader", key: "not-a-pin.x#L", value },
+      { family: "loader", key: "R0.@slotD0.x#Slot", value },
+      { family: "loader", key: "R0D0.x#Good", value },
+    ]);
+
+    expect([...(seed?.keys() ?? [])]).toEqual(["x#Good"]);
   });
 
   it("skips a record that fails to decode (that loader drifts, the pre-snapshot behavior)", async () => {
     const snapshot: ShellSnapshotRecord[] = [
       {
         family: "loader",
-        key: "K-bad",
+        key: "R0D0.K-bad",
         value: { value: "%broken%", holes: 0, runs: 0 },
       },
       {
         family: "loader",
-        key: "K-good",
+        key: "R0D1.K-good",
         value: { value: JSON.stringify(7), holes: 0, runs: 0 },
       },
     ];
@@ -324,6 +367,7 @@ describe("buildShellLoaderSeed", () => {
       container: 7,
       holes: false,
       runs: false,
+      complete: true,
     });
   });
 
@@ -371,7 +415,7 @@ describe("snapshot round-trip", () => {
     );
     expect(hit(await seeded.get("doc:host/p"))?.data.tags).toEqual(["t"]);
     expect(
-      (await buildShellLoaderSeed(got!.entry.snapshot!))?.get("M0L0D0.bake"),
+      (await buildShellLoaderSeed(got!.entry.snapshot!))?.get("bake"),
     ).toMatchObject({ container: { a: 1 } });
   });
 });
