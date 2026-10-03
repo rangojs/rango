@@ -3,7 +3,8 @@
  *
  * Component-render testing: `renderRoute`, the React-Testing-Library-style stub
  * for client components that read router context (useParams / useReverse /
- * Outlet / useOutlet / useNavigation / useLoader).
+ * Outlet / useOutlet / useNavigation / useLoader), optionally hydrating the
+ * tree from its own server HTML (`hydrate: true`).
  *
  * Separate from the main `@rangojs/router/testing` barrel so unit suites that
  * only test loaders, middleware, or `dispatch` never reference React, the
@@ -18,5 +19,6 @@ export type {
   RenderRouteOptions,
   TestRouterHandle,
   RenderRouteResult,
+  RenderRouteHydrateResult,
   HandleDataSeed,
 } from "./render-route.js";

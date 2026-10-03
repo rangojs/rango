@@ -19,7 +19,8 @@ behavior at the wrong layer is higher. The pyramid, bottom (fast, many) to top
 1. **Pure / context-isolated units** — `reverse`, a `revalidate` predicate, one
    loader's data logic, one middleware's branching. Milliseconds, node.
 2. **Client-tree component units** — a component reading router context, in a
-   DOM env, with seeded data. No server, no Flight.
+   DOM env, with seeded data. No server, no Flight. (`renderRoute`'s
+   `hydrate: true` adds an HTML pass of that client tree and hydrates it.)
 3. **In-process integration** — a request to a `Response` (`dispatch`), or a
    real Flight render (`renderToFlightString`). No browser.
 4. **End-to-end** — a real dev or production server, real navigation, real
@@ -55,6 +56,7 @@ Both are made structural by `parityDescribe` and `expectParity`, below.
 | `middleware()` (auth, logging)                         | ordering, short-circuit, cookie/header merge                                        | unit (node)         | `runMiddleware`                                                                                                | `/middleware`                            |
 | a client component reading router context              | it renders given params/loaderData/Outlet                                           | unit (DOM)          | `renderRoute`                                                                                                  | `/hooks`                                 |
 | a component reading `useLocationState`                 | it renders the seeded location-state value                                          | unit (DOM)          | `renderRoute` (`locationState` option)                                                                         | `/hooks`                                 |
+| a client component's hydration                         | its first client render matches its own server HTML (no recoverable error)          | unit (DOM)          | `renderRoute` (`hydrate` option)                                                                               | `/hooks`                                 |
 | a component reading `useHandle` (Breadcrumbs)          | it renders the seeded handle output                                                 | unit (DOM)          | `renderRoute` (`handles` option)                                                                               | `/breadcrumbs`                           |
 | a handle's `collect`/accumulator                       | it maps per-segment pushes to the accumulated value                                 | unit (node)         | `collectHandle`                                                                                                | `/breadcrumbs`                           |
 | a component under an `include('/shop', …)` mount       | `useMount`/`useHref`/`useReverse` resolve the prefix                                | unit (DOM)          | `renderRoute` (`mount` option)                                                                                 | `/composability`                         |
@@ -130,11 +132,15 @@ available in-process via `renderServerTree` (assert a client boundary's typed
 props and inlined-vs-island — see below); what stays e2e is the **hydrate +
 click** half. An interactive, clickable `renderServer` (hydrate the deserialized
 tree and click it in the test) is a deliberate non-goal at the unit layer:
-hydrating in happy-dom re-tests React more than your app and misses the only
-hydration bug worth a dedicated test (server/client divergence needs a real
-browser). So "does my async Server Component render, hydrate, and respond to a
-click" is an **e2e** question by construction. For all of these, reach for
-`createRangoE2E` / `parityDescribe` / `assertCacheStatus`.
+hydrating a Flight tree in happy-dom re-tests React more than your app and
+misses the divergence that needs the real document (streaming order,
+client-reference identity, the browser's HTML parser). So "does my async Server
+Component render, hydrate, and respond to a click" is an **e2e** question by
+construction. For all of these, reach for `createRangoE2E` / `parityDescribe` /
+`assertCacheStatus`. The one hydration question that IS unit-reachable is a
+client component's own: does its first client render match what it rendered on
+the server? `renderRoute` with `hydrate: true` answers that (see "Hydrating a
+client component" below).
 
 There is one more boundary, and it is yours, not a layer ceiling: **platform
 bindings** (`env.DB`, Durable Objects, `env.R2`). The moment a loader/middleware/
@@ -664,6 +670,89 @@ mount like `include("/:locale?", …)`, which resolves to a concrete prefix you
 pass as `mount: "/en"`. (If a locale "drops" from a reversed URL in a test, the
 cause is usually a missing `mount` seed, not an auto-fill gap.)
 
+#### Hydrating a client component
+
+Everything above mounts with `createRoot`. That is the right default, and it has
+one blind spot: a component never runs its **hydration** render. On a document
+load React renders the component on the server, then renders it again in the
+browser against that HTML, and the two must agree. `useSyncExternalStore` reads
+`getServerSnapshot` for both, and only then switches to the client snapshot. A
+fresh mount skips all of that, so a hook can be correct under `renderRoute` and
+still mismatch in production. That is how #992 got through: `useLocationState`
+inside a `<Suspense>` boundary hydrated after the root had marked the page
+hydrated, read `history.state` during that hydration render, and disagreed with
+the server's `undefined`.
+
+Pass `hydrate: true` and `renderRoute` runs the document-load sequence. It
+renders the same element (same providers, same seeds, RTL's `reactStrictMode`)
+to HTML with `react-dom/server`'s `renderToString`, puts that HTML in the
+container, and hydrates it through RTL, so `cleanup()` still unmounts it. The
+result carries two extra fields: `serverHtml`, and `recoverableErrors`, the
+message of every error React recovered from. A hydration mismatch is exactly
+such an error, so an empty array is your "it hydrated as rendered" assertion.
+
+```tsx
+afterEach(() => {
+  cleanup();
+  document.documentElement.removeAttribute("data-hydrated");
+});
+
+it("hydrates as the server rendered it, then shows the stored count", async () => {
+  // Rango's root sets data-hydrated from its first effect, and a streamed
+  // <Suspense> boundary hydrates after that. Set up front, it makes this
+  // hydration render the late one.
+  document.documentElement.setAttribute("data-hydrated", "");
+  const { serverHtml, recoverableErrors, getByTestId } = await renderRoute(
+    [{ path: "/grid", Component: Grid }],
+    { hydrate: true, locationState: [[GridState, { count: 3 }]] },
+  );
+  expect(serverHtml).toBe('<p data-testid="count">0</p>'); // no history.state on the server
+  expect(recoverableErrors).toEqual([]); // the first client render matched it
+  expect(getByTestId("count").textContent).toBe("3"); // then the stored value
+});
+```
+
+You might wonder how a happy-dom test can have a "server" pass when `window` is
+right there. It cannot, unless the harness takes it away, so it does:
+`renderRoute` deletes `window` and `document` from the global scope for the
+synchronous server render and restores them before hydrating. Without that, a
+`typeof window !== "undefined"` branch would take its client side on the
+"server", produce the client HTML, and hydrate clean, hiding the first cause
+React lists for a mismatch. (We measured it on the pre-#992 hook: with the
+globals left in place it rendered the stored value into the server HTML and
+reported nothing.) The flip side is faithful too: an unguarded `document.title`
+in render throws `ReferenceError` in the server pass, as it does in SSR.
+
+What to know before you rely on it:
+
+- **Suspense.** A `<Suspense>` whose content renders synchronously is in
+  `serverHtml`, and React hydrates it in a later pass than the tree above it,
+  after that tree's effects and before `renderRoute` resolves. That is the late
+  hydration a streamed boundary gets. Content that **suspends** in the server
+  pass (`lazy`, a pending or plain `use()` promise) cannot wait, because
+  `renderToString` is synchronous: `serverHtml` has the fallback, the client
+  renders the content instead of hydrating it, and React reports the boundary in
+  `recoverableErrors`. Nothing is hidden, but nothing inside that boundary is
+  hydration-tested either. With no `<Suspense>` above it, `renderRoute` rejects.
+  A settled promise (the `settled()` helper below) stays in the server HTML.
+- **Attribute-only mismatches are not recoverable errors.** For a differing
+  `className` or `href` React keeps the server attribute and logs
+  `console.error` in development. Assert that with `vi.spyOn(console, "error")`.
+- **Only `window` and `document` are removed.** A bare `localStorage` or
+  `navigator` read still succeeds in the server pass.
+- **One realm, two passes.** Every component renders once in the server pass
+  before its hydration render, and module state written while rendering is
+  still there at hydration. Count renders accordingly.
+- **`data-hydrated` is not set for you.** Production's root sets it from an
+  effect; set and remove it in the test if your code reads it.
+- **`@testing-library/react` 16.2.0 or newer.** 16.0 and 16.1 never pass
+  `onRecoverableError` to `hydrateRoot`, so a mismatch would be invisible.
+  `renderRoute` throws there instead of returning an empty array.
+
+It is still the client tree. The server pass runs no handler, loader,
+middleware, or Flight, and it is not the streamed document; those stay with
+`renderHandler` / `renderServerTree` and e2e.
+
 #### Catch: streaming `use(promise)` Suspense content
 
 Some components render an `async`/streamed value via React `use()` inside a
@@ -994,9 +1083,11 @@ snapshotting the payload shape with `toMatchFlight`. To inspect a client
 boundary's props as real values, or to detect inlined-vs-island, use
 `renderServerTree` (below). A fully interactive, clickable DOM `renderServer`
 (hydrated, with state and clicks) is intentionally NOT shipped: in-process
-happy-dom hydration re-tests React more than your app and misses the only
-hydration bug worth a dedicated test (server/client divergence, which needs a
-real browser). Test interactive behavior at e2e.
+happy-dom hydration of a Flight tree re-tests React more than your app and
+misses the divergence that needs the real document (streaming order,
+client-reference identity, the browser's HTML parser). Test interactive behavior
+at e2e. For a client component's own server/client divergence, use `renderRoute`
+with `hydrate: true`.
 
 ### renderServerTree — serialize then deserialize to an inspectable tree
 
@@ -1477,13 +1568,15 @@ renderRoute(                            // async; lazy-loads RTL at call time
     mount?,                             // include('/shop', …) prefix -> useMount/useHref/useReverse resolve it
     theme?,                             // createRouter({ theme }) shape (enables useTheme)
     defaultPrefetch?,                   // createRouter({ defaultPrefetch }) value for Links / plain anchors
+    hydrate?: boolean,                  // render to HTML (no window/document), then hydrate it instead of mounting fresh
   },
-): Promise<RenderResult & { router }>;
+): Promise<RenderResult & { router }>; // + { serverHtml: string; recoverableErrors: string[] } when hydrate: true
 // const { getByTestId, router } = await renderRoute([{ path: "/p/:id", Component: P }], { request: "/p/1" });
 // useLoader:        renderRoute([{ path: "/c", Component: CartBadge }], { loaders: [[CartLoader, cart]] });
 // useLocationState: renderRoute([{ path: "/s", Component: FlashBanner }], { locationState: [[FlashMessage, { text: "Saved" }]] });
 // useHandle:        renderRoute([{ path: "/p", Component: Trail }], { handles: [[Breadcrumbs, [{ label: "Home", href: "/" }]]] });
 // useMount/include:  renderRoute([{ path: "/c/wine", Component: PDP }], { mount: "/shop" }); // useMount() -> "/shop"
+// hydration:        const { serverHtml, recoverableErrors } = await renderRoute([{ path: "/g", Component: Grid }], { hydrate: true });
 
 // Integration — @rangojs/router/testing
 dispatch(router: Rango, opts: { request: Request | string; env? }): Promise<Response>;

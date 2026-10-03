@@ -128,7 +128,7 @@ it("asserts the server-rendered host content", async () => {
 - A client boundary's props come back as REAL JS values after deserialization (a `Date` is a `Date`, not a `$D...` encoding) — but there is NO hydration and NO interaction; boundaries are inert placeholders carrying props.
 - Server COMPONENTS do not survive Flight as identities (they are executed during serialization), so `findElements` matches the host elements they PRODUCED, not the component function. Client islands keep identity — use `findClientBoundaries` for those.
 - `findClientBoundaries` finds islands (`I` rows); `findElements` finds host elements. A `testId` on an island matches with `findClientBoundaries`; a `testId` on a host element matches with `findElements`. Use `textContent(node)` in place of `JSON.stringify(tree).toContain`.
-- A true interactive, clickable DOM `renderServer` is intentionally NOT shipped: in-process happy-dom hydration re-tests React more than your app and misses server/client divergence (the only hydration bug worth a dedicated test, which needs a real browser). Test interaction at e2e.
+- A true interactive, clickable DOM `renderServer` is intentionally NOT shipped: in-process happy-dom hydration of a Flight tree re-tests React more than your app and misses the divergence that needs the real document (streaming order, client-reference identity, the browser's HTML parser). Test interaction at e2e. A CLIENT component's own server/client divergence is unit-reachable: `renderRoute` with `hydrate: true` ([`./client-components.md`](./client-components.md#hydration)).
 
 ## See also
 

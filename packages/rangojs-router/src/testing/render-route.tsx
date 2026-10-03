@@ -11,7 +11,9 @@
  * FIDELITY CONTRACT — read before relying on this helper:
  * This renders the CLIENT tree ONLY. The segment tree is built synthetically
  * from the `routes` you pass; there is no server render and no Flight
- * (de)serialization. Consequences:
+ * (de)serialization. (`hydrate: true` adds an HTML pass of that same client
+ * tree and hydrates it — see RenderRouteOptions.hydrate — still with no Flight
+ * and no server components.) Consequences:
  *   - It will NOT catch server/client boundary reference-identity remount bugs
  *     (a server-serialized component reference differing from the client
  *     reference). Use renderServerTree / e2e for those.
@@ -39,7 +41,8 @@
  * OutletContext — useParams, useReverse, useHref, useMount, useNavigation,
  * useRouter, usePathname, useSearchParams, Outlet/useOutlet nesting and seeded
  * descendant pending state, useLoader/useFetchLoader (seeded data),
- * useLocationState (seeded), and useHandle (seeded).
+ * useLocationState (seeded), and useHandle (seeded) — and, with
+ * `hydrate: true`, what those hooks render on the server and while hydrating.
  * Basename-mounted apps: pass the `basename` option so useRouter().basename,
  * <Link> prefixing, and useMount/useHref resolve against the mount prefix
  * (without it they resolve at the root "/"). For an include("/shop", ...)
@@ -48,7 +51,12 @@
  */
 
 import { decideTransitionGatedOff } from "../browser/transition-when.js";
-import { useEffect, type ReactNode, type ComponentType } from "react";
+import {
+  StrictMode,
+  useEffect,
+  type ReactNode,
+  type ComponentType,
+} from "react";
 import type { RenderResult } from "@testing-library/react";
 import { renderSegments } from "../segment-system.js";
 import {
@@ -326,6 +334,39 @@ export interface RenderRouteOptions {
    * not override a `"none"` default.
    */
   defaultPrefetch?: PrefetchStrategy;
+  /**
+   * Hydrate instead of mounting fresh, as a document load does. renderRoute
+   * renders the same element (providers, seeds, RTL's `reactStrictMode`) to
+   * HTML with react-dom/server's `renderToString`, puts that HTML in the
+   * container and hydrates it. The result gains `serverHtml` and
+   * `recoverableErrors` (RenderRouteHydrateResult).
+   *
+   * The server pass runs with `window` and `document` removed, so a
+   * `typeof window` branch takes its server side and an unguarded read throws
+   * as it does in SSR. Other DOM globals (`localStorage`, `navigator`,
+   * `history`) stay defined, and both passes share one module realm. Every
+   * component therefore renders once before its hydration render.
+   *
+   * Suspense: content that renders synchronously inside a `<Suspense>` is in
+   * `serverHtml` and hydrates in a later pass than the tree above it, after
+   * that tree's effects (the late hydration of #992). Content that SUSPENDS in
+   * the server pass (`lazy`, a pending or untracked `use()` promise) is emitted
+   * as its fallback and client-rendered instead of hydrated; React reports that
+   * boundary in `recoverableErrors`. Suspending outside any `<Suspense>`
+   * rejects.
+   *
+   * Needs @testing-library/react >= 16.2.0; renderRoute throws on older ones.
+   *
+   * @example
+   * const { serverHtml, recoverableErrors, getByTestId } = await renderRoute(
+   *   [{ path: "/grid", Component: Grid }],
+   *   { hydrate: true, locationState: [[GridState, { count: 3 }]] },
+   * );
+   * expect(serverHtml).toContain(">0<"); // the server never sees history.state
+   * expect(recoverableErrors).toEqual([]); // no hydration mismatch
+   * expect(getByTestId("count").textContent).toBe("3");
+   */
+  hydrate?: boolean;
 }
 
 /**
@@ -378,6 +419,21 @@ export interface TestRouterHandle {
 
 /** Result of renderRoute: RTL's render result plus the router handle. */
 export type RenderRouteResult = RenderResult & { router: TestRouterHandle };
+
+/** Result of renderRoute with `hydrate: true`. */
+export type RenderRouteHydrateResult = RenderRouteResult & {
+  /** The HTML the server pass produced, as placed in the container. */
+  serverHtml: string;
+  /**
+   * Messages of the errors React recovered from (`onRecoverableError`): a
+   * hydration mismatch that made it re-render on the client, or a boundary the
+   * server pass could not finish. Empty means the tree hydrated as rendered.
+   * Live: React appends for as long as the root is mounted. An attribute-only
+   * mismatch is NOT here — React keeps the server attribute and only logs it
+   * with `console.error` in development.
+   */
+  recoverableErrors: string[];
+};
 
 interface ResolvedMatch {
   params: Record<string, string>;
@@ -504,6 +560,14 @@ function buildSegments(
   return segments;
 }
 
+export function renderRoute(
+  routes: RenderRouteSpec[],
+  options: RenderRouteOptions & { hydrate: true },
+): Promise<RenderRouteHydrateResult>;
+export function renderRoute(
+  routes: RenderRouteSpec[],
+  options?: RenderRouteOptions,
+): Promise<RenderRouteResult>;
 export async function renderRoute(
   routes: RenderRouteSpec[],
   options: RenderRouteOptions = {},
@@ -518,7 +582,18 @@ export async function renderRoute(
     );
   }
 
-  const { render, act } = await import("@testing-library/react");
+  const { render, act, getConfig } = await import("@testing-library/react");
+  // RTL forwards onRecoverableError to hydrateRoot from 16.2.0. 16.0-16.1 are
+  // inside the peer range and drop it without a trace (their render() never
+  // names the option), which would leave `recoverableErrors` empty on a real
+  // mismatch.
+  if (options.hydrate && !String(render).includes("onRecoverableError")) {
+    throw new Error(
+      "renderRoute: `hydrate` needs @testing-library/react >= 16.2.0. Older " +
+        "versions do not pass onRecoverableError to hydrateRoot, so a " +
+        "hydration mismatch would go unreported.",
+    );
+  }
 
   const leaf = routes[routes.length - 1];
   const requestUrl =
@@ -764,34 +839,57 @@ export async function renderRoute(
     outletPending: options.outletPending,
   });
 
+  const ui = (
+    <>
+      <NavigationProvider
+        store={store}
+        eventController={eventController}
+        initialPayload={{ root: initialTree, metadata: initialMetadata }}
+        bridge={bridge}
+        basename={basename}
+        themeConfig={
+          options.theme === undefined ? null : resolveThemeConfig(options.theme)
+        }
+        nonce={options.nonce}
+      />
+      <DelegatedPrefetchRegistration bridge={bridge} />
+    </>
+  );
+  const hydration:
+    | Pick<RenderRouteHydrateResult, "serverHtml" | "recoverableErrors">
+    | undefined = options.hydrate
+    ? {
+        serverHtml: await renderServerHtml(
+          // RTL wraps the hydrated element the same way.
+          getConfig().reactStrictMode ? <StrictMode>{ui}</StrictMode> : ui,
+        ),
+        recoverableErrors: [],
+      }
+    : undefined;
+
   // Wrap render in an awaited async act so a tree that suspends (async loaders,
   // loading states, deferred handle entries that arrive as a Promise) settles its
   // Suspense within act — otherwise React orphans the resolution ("a component
   // suspended inside an act scope, but the act call was not awaited") and the
-  // resolved content never reaches the asserted DOM.
+  // resolved content never reaches the asserted DOM. The same act flushes the
+  // later hydration passes of `hydrate` (each Suspense boundary).
   let result!: Awaited<ReturnType<typeof render>>;
   const container = document.body.appendChild(document.createElement("div"));
   prefetchRoot = container;
+  if (hydration) container.innerHTML = hydration.serverHtml;
   await act(async () => {
-    result = render(
-      <>
-        <NavigationProvider
-          store={store}
-          eventController={eventController}
-          initialPayload={{ root: initialTree, metadata: initialMetadata }}
-          bridge={bridge}
-          basename={basename}
-          themeConfig={
-            options.theme === undefined
-              ? null
-              : resolveThemeConfig(options.theme)
-          }
-          nonce={options.nonce}
-        />
-        <DelegatedPrefetchRegistration bridge={bridge} />
-      </>,
-      { baseElement: document.body, container },
-    );
+    result = hydration
+      ? render(ui, {
+          baseElement: document.body,
+          container,
+          hydrate: true,
+          onRecoverableError: (error) => {
+            hydration.recoverableErrors.push(
+              error instanceof Error ? error.message : String(error),
+            );
+          },
+        })
+      : render(ui, { baseElement: document.body, container });
   });
 
   const router: TestRouterHandle = {
@@ -803,7 +901,48 @@ export async function renderRoute(
     eventController,
   };
 
-  return Object.assign(result, { router });
+  return Object.assign(result, { router }, hydration);
+}
+
+/**
+ * The server pass of `hydrate`. The synchronous Fizz entry on purpose: the
+ * pass runs with the browser globals removed, and a streaming entry would hold
+ * that gap open across awaits while it waits for suspended content.
+ */
+async function renderServerHtml(ui: ReactNode): Promise<string> {
+  const { renderToString } = await import("react-dom/server");
+  return withoutBrowserGlobals(() => renderToString(ui));
+}
+
+/**
+ * Runs `fn` with `window` and `document` deleted from globalThis — the two
+ * globals SSR-aware code probes — and restores them. A DOM test environment
+ * defines both, so without this the server pass takes the CLIENT side of every
+ * `typeof window` / `typeof document` branch, renders the client HTML, and the
+ * mismatch that branch causes in production never reaches `recoverableErrors`.
+ * (Measured on the pre-#992 useLocationState: with `data-hydrated` set it
+ * rendered the stored history value into the server HTML and hydrated clean.)
+ */
+function withoutBrowserGlobals<T>(fn: () => T): T {
+  const removed: Array<[string, PropertyDescriptor]> = [];
+  try {
+    for (const name of ["window", "document"]) {
+      const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
+      if (!descriptor) continue;
+      if (!Reflect.deleteProperty(globalThis, name)) {
+        throw new Error(
+          `renderRoute: \`hydrate\` cannot remove the \`${name}\` global for ` +
+            "the server pass (it is not configurable in this environment).",
+        );
+      }
+      removed.push([name, descriptor]);
+    }
+    return fn();
+  } finally {
+    for (const [name, descriptor] of removed) {
+      Object.defineProperty(globalThis, name, descriptor);
+    }
+  }
 }
 
 function makeMetadata(
