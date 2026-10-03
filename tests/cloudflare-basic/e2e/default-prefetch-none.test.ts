@@ -80,6 +80,9 @@ function runDefaultPrefetchNoneSpec(f: Fixture): void {
     await waitForHydration(page);
 
     const link = page.getByTestId("pt-offscreen-viewport-link");
+    // Under load the layout arrives as a streamed segment, which React reveals
+    // a moment after the shell has hydrated; until then the link has no box.
+    await expect(link).toBeVisible();
     const top = await link.evaluate(
       (element) => element.getBoundingClientRect().top,
     );
