@@ -42,7 +42,7 @@
 | `useSearchParams`              | Search params from the `request` URL.                                                         |
 | `useNonce`                     | SEEDED CSP nonce (`options.nonce`), else `undefined` (the browser default).                   |
 | `useLoader` / `useFetchLoader` | SEEDED loader data (read path, not run path). Held-navigation `isLoading` is modeled (below). |
-| `useLocationState`             | SEEDED `history.state` value, or the `state` a push/replace/`<Link>` wrote (below).           |
+| `useLocationState`             | SEEDED `history.state` value, or the `state` a navigation or a `popstate` brought (below).    |
 | `useHandle`                    | SEEDED handle output (globally accumulated).                                                  |
 | `Outlet`                       | Renders the next segment in the chain (layout nesting).                                       |
 | `useOutlet`                    | Next-segment `content` plus SEEDED `options.outletPending`.                                   |
@@ -56,12 +56,16 @@ Extends RTL's `RenderResult` (`getByTestId`, `getByText`, `getByRole`, `containe
 type RenderRouteResult = RenderResult & {
   router: {
     // client-only nav, re-resolves the same routes; `loaders` seeds THIS nav.
-    // A spec's transition({ when }) decides it as kind "push";
-    // `transition: false` commits urgently and calls no predicate.
+    // A spec's transition({ when }) decides it as kind "push" ("replace" with
+    // `replace`); `transition: false` commits urgently and calls no predicate.
+    // `state` / `replace` write the history entry as router.push(url, { state })
+    // / router.replace do; without either, history.state is left alone.
     navigate(
       url: string,
       options?: {
         loaders?: ReadonlyArray<readonly [LoaderDefinition<any>, unknown]>;
+        state?: HistoryState;
+        replace?: boolean;
         transition?: boolean;
       },
     ): Promise<void>;
@@ -135,7 +139,7 @@ A `createLocationState()` definition gets its key from the rango Vite plugin, wh
 - `withLocationStateKey(GridState)` keeps a key that is already set, else assigns a synthetic `__rsc_ls_test_<n>` that stays the same for that definition.
 - The `locationState` seed option keys an unkeyed definition the same way, so a seeded definition needs no call. Key every definition a component reads WITHOUT a seed.
 
-A `useRouter().push/replace(url, { state })` or `<Link state>` navigation writes its history entry through production's path (`resolveNavigationState` -> `buildHistoryState` -> `pushHistoryWithIdx`, then the `__rsc_locationstate` event), so `useLocationState(Def)` re-reads after the click. The dev check for a bare entry or an uncalled definition runs too, and, as in production, a push or `<Link>` without `state` starts an entry with no location state. The URL in `window.location` does not change (renderRoute tracks location on its event controller), and `router.navigate()` from the test leaves `history.state` alone. The click starts an async navigation, so wait for the result with RTL's `waitFor`:
+A `useRouter().push/replace(url, { state })` or `<Link state>` navigation writes its history entry through production's path (`resolveNavigationState` -> `buildHistoryState` -> `pushHistoryWithIdx`, then the location-state commit on the event controller), and the provider delivers it to readers with the navigation's tree, so `useLocationState(Def)` shows the new value in the commit that shows the destination. The dev check for a bare entry or an uncalled definition runs too, and, as in production, a push or `<Link>` without `state` starts an entry with no location state. The URL in `window.location` does not change (renderRoute tracks location on its event controller). `router.navigate()` from the test leaves `history.state` alone unless you pass `state` or `replace`, which write the entry the same way. The click starts an async navigation, so wait for the result with RTL's `waitFor`:
 
 ```tsx
 // @vitest-environment happy-dom
@@ -161,6 +165,44 @@ it("shows the count it pushed", async () => {
   });
 });
 ```
+
+### State while a navigation is pending
+
+A reader gets an entry's state in the commit that shows that entry (see `/hooks`, state.md, "When a reader sees an entry's state"). To test a component across a pending navigation, hold the navigation's loader: put `transition` on the spec (see [Held navigation](#held-navigation)) and pass `state` together with a PENDING loader seed to `router.navigate()`:
+
+```tsx
+it("lists no product twice while the next page loads", async () => {
+  const { getAllByRole, router } = await renderRoute(
+    [{ path: "/products", Component: ProductList, transition: {} }],
+    {
+      request: "/products?page=1",
+      loaders: [[ProductsLoader, { page: 1, products: [wine] }]],
+    },
+  );
+
+  let land!: (data: { page: number; products: Product[] }) => void;
+  const next = new Promise<{ page: number; products: Product[] }>(
+    (resolve) => (land = resolve),
+  );
+  await router.navigate("/products?page=2", {
+    state: [CarriedProducts([wine])], // what "Load more" carries
+    loaders: [[ProductsLoader, next]],
+  });
+  // History is on page 2's entry; the list is still page 1's.
+  expect(CarriedProducts.read()).toEqual([wine]);
+  expect(getAllByRole("listitem")).toHaveLength(1);
+
+  await act(async () => land({ page: 2, products: [beer] }));
+  expect(getAllByRole("listitem")).toHaveLength(2);
+});
+```
+
+| To bring state to a mounted reader                  | Do                                                                                                                                                                                                                                            |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| a push / replace, the component's own               | click its `<Link state>` or the control that calls `router.push(url, { state })`, then `waitFor`                                                                                                                                              |
+| a push / replace whose loader the test holds        | `router.navigate(url, { state, replace?, loaders: [[Loader, pendingPromise]] })` on a `transition` spec                                                                                                                                       |
+| back/forward onto an entry                          | `history.replaceState(entry, "")`, then `window.dispatchEvent(new Event("popstate"))` inside `act`. The tree has one location, so no page is restored: readers take the entry as a back/forward applies it (a shown `flash` value is dropped) |
+| a server action's state, a redirect's, an intercept | e2e                                                                                                                                                                                                                                           |
 
 ### Definitions with `clearOnReload`
 

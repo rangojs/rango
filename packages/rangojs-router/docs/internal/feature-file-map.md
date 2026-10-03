@@ -51,6 +51,25 @@ mode) both call. Key injection is the Vite plugin's
 [`testing/location-state-key.ts`](../../src/testing/location-state-key.ts) is
 its stand-in for unit tests.
 
+When a reader hears about an entry's state is owned by the event controller
+([`browser/event-controller.ts`](../../src/browser/event-controller.ts),
+`commitLocationState` / `getLocationStateCommit`), not by the hook: the hook
+re-reads `history.state` only when that commit identity moves, and it is a
+state listener like `usePathname`, so `NavigationProvider`'s `flushRouteState`
+puts the read in the payload's lane (#1029). The sites that commit are the
+ones that change the displayed entry's state:
+[`browser/navigation-transaction.ts`](../../src/browser/navigation-transaction.ts)
+(push, replace, back/forward refetch),
+[`browser/navigation-bridge.ts`](../../src/browser/navigation-bridge.ts)
+(a `revalidate: false` navigation, a back/forward restore from the history
+cache), [`browser/server-action-bridge.ts`](../../src/browser/server-action-bridge.ts)
+(an action's state, flushed at once) and
+[`testing/render-route.tsx`](../../src/testing/render-route.tsx) (its
+navigations, and a `popstate` event as a back/forward). Inside an optimistic
+`clientUrls()` branch the hook reads
+[`client-urls/optimistic-location.ts`](../../src/client-urls/optimistic-location.ts)
+(`OptimisticLocation.state`) instead of history.
+
 Delegated prefetch eligibility, parked location-dependent anchors,
 container-scope lookup, and shared subtree-only DOM re-evaluation are owned by
 [`browser/link-interceptor.ts`](../../src/browser/link-interceptor.ts), strategy

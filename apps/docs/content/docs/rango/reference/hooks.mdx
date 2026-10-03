@@ -334,6 +334,8 @@ const state = useLocationState(ProductState); // { name; price } | undefined
 </Link>;
 ```
 
+A reader gets an entry's state in the same commit as that entry's page. While a navigation is pending (its loader still streaming, a `transition()` holding the page), the content on screen keeps the state of the entry being left, the way `usePathname` and `useParams` keep its location; back/forward restores an entry's state together with its page. Inside an optimistically presented `clientUrls()` destination the hook returns the state the navigation carries, before the server has answered.
+
 `useLocationState<T>()` with no definition reads plain, untyped state. The same `state` option exists on `router.push()` and `router.replace()`, typed `HistoryState`: typed entries in an array (`[ProductState(value)]`) or plain structured-clone-safe data (`PlainHistoryState`). An entry passed without the array (`state: ProductState(value)`), a definition passed without calling it (`state: [ProductState]`), or an array mixing entries with plain values is a compile error, and in development a runtime error for untyped callers.
 
 Plain state is checked at the top level only: functions, symbols, `Promise`, `WeakMap`, `WeakSet`, and `unknown` values are rejected, and array, `Map`, and `Set` elements are checked the same way, but plain object members are not. A function or React element inside a plain object, or a top-level React element or DOM node, still compiles and throws `DataCloneError` when the history entry is written. A typed `createLocationState<T>()` definition checks `T` all the way down.

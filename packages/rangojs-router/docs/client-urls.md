@@ -168,12 +168,13 @@ boundary at all keeps the current branch visible until the response commits
 A wrapping client URL layout sees `useOutlet().pending === true` for the
 optimistic branch in every case.
 
-Inside that branch, `useParams`, `usePathname`, and `useSearchParams` describe
-the destination (the local match's params, the target pathname and search).
+Inside that branch, `useParams`, `usePathname`, `useSearchParams` and
+`useLocationState` describe the destination (the local match's params, the
+target pathname and search, the `state` the navigation carries).
 Everything outside it — chrome above the group, the URL bar, history,
-`useNavigation`, `useLinkStatus` — keeps the committed location until the
-canonical response commits; a redirect or error discards the branch and its
-values with it. A group's route segments share one React key, so the
+`useNavigation`, `useLinkStatus` — keeps the committed location and its
+location state until the canonical response commits; a redirect or error
+discards the branch and its values with it. A group's route segments share one React key, so the
 optimistically rendered instance is the one the canonical response commits
 into: local state entered during the window survives and effects run once.
 Design and rationale:
@@ -397,6 +398,22 @@ flush, so its redirect state rides the loader-result marker and is delivered
 by the redirect nav itself, action-style. There is no commit-coupled
 `ctx.setLocationState`-during-render lane in groups — groups have no
 handlers.
+
+When a reader gets the state follows the rule for every route hook here
+(`src/client-urls/optimistic-location.ts`, `OptimisticLocation.state`). The
+destination and the group's client layouts read the `state` a cross-route
+navigation carries on their first optimistic render: history still holds the
+entry being left, so the branch reads the entry the commit will push. A
+reader outside the branch (chrome above the group), and one in content the
+navigation keeps on screen (a same-route navigation never swaps; a
+destination that suspends with no boundary holds the current page), keeps the
+committed entry's state and changes with the canonical commit, in the same
+React commit as its pathname and params. Server-set state is not part of the
+optimistic entry: it arrives with that commit. A superseded or cancelled
+navigation's state never reaches history or a reader outside the branch, and
+a `flash` slot read in the branch is cleared from history only after the
+commit. Pinned dev+prod in `e2e/client-urls-slow.test.ts` (both apps) and
+`src/client-urls/__tests__/client-root.test.tsx`.
 
 `useReverse` works in groups through its local form: name your group routes
 (`path("/items/:itemId", Item, { name: "item" })`) and the per-module gen

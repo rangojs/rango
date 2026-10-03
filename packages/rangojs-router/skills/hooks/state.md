@@ -84,6 +84,30 @@ definition:
 const state = useLocationState<{ from?: string }>(); // { from?: string } | undefined
 ```
 
+### When a reader sees an entry's state
+
+A reader sees a history entry's location state together with that entry's
+page, never before it. On a navigation the value changes in the same React
+commit as the destination's content: while the navigation is pending (its
+loader still streaming, a `transition()` holding the page) what is on screen
+keeps the state of the entry being left, the way `usePathname` and `useParams`
+keep its location. Back/forward and state the server sets on a navigation
+(`ctx.setLocationState()`, `redirect(url, { state })`) follow the same rule.
+
+| What changes the state                                       | A mounted reader gets it                                      |
+| ------------------------------------------------------------ | ------------------------------------------------------------- |
+| `<Link state>`, `router.push()` / `router.replace()`         | in the commit that shows the destination                      |
+| back/forward                                                 | in the commit that restores the entry (cached or refetched)   |
+| the server, on a navigation (`setLocationState`, a redirect) | in the commit that shows the destination                      |
+| a server action's `setLocationState` (no navigation)         | when the action's response arrives; the entry does not change |
+| `router.push(url, { revalidate: false })` (no server fetch)  | at once, with the new location: the page does not change      |
+| `Def.write()` / `Def.delete()`                               | not until one of the rows above (they notify no reader)       |
+
+A reader that mounts with the destination reads the destination's state on
+its first render. Inside an optimistically rendered `clientUrls()` destination
+that is the state the navigation carries, before the server has answered (see
+`/client-urls`, "Pitfalls").
+
 ### State on router.push() / router.replace()
 
 The same `state` option exists on `router.push()` / `router.replace()` (see
@@ -309,11 +333,7 @@ import { CarriedProducts } from "./location-states";
 export function ProductList() {
   const { data } = useLoader(ProductsLoader);
   const carried = useLocationState(CarriedProducts) ?? [];
-  const carriedIds = new Set(carried.map((product) => product.id));
-  const products = [
-    ...carried,
-    ...data.products.filter((product) => !carriedIds.has(product.id)),
-  ];
+  const products = [...carried, ...data.products];
 
   return (
     <>
@@ -334,12 +354,10 @@ export function ProductList() {
 }
 ```
 
-The `carriedIds` filter is a workaround, not part of the pattern. Today a
-navigation applies the destination entry's location state to a mounted reader
-as soon as the entry is pushed, before the destination's loader data commits,
-so until that data lands `carried` already contains the page still on screen.
-This is a known router ordering defect; once location state commits together
-with the page it belongs to, the filter is unnecessary.
+The list is a plain concatenation. After "Load more" the next page's loader
+streams while the current page stays on screen, and `carried` stays the
+current entry's until that page lands: the carried products and the loader's
+page change in one commit, so no product is ever listed twice.
 
 Without the option, a refresh of `?page=6` renders 50 products on the server
 and then inserts the stored 250 above them. With it, the refreshed page stays
@@ -410,9 +428,10 @@ Static counterparts to `.read()`. Both mutate the current history entry's
 bookkeeping, other location state slots). Both are client-only; they throw
 when called on the server.
 
-Neither dispatches an event, so components reading via `useLocationState`
-will NOT re-render until the next navigation/popstate. Pair with `.read()`
-(or a fresh mount via back/forward/reload) instead.
+Neither notifies readers, so components reading via `useLocationState` will
+NOT re-render until the next navigation, back/forward or server-set state
+changes the entry (see "When a reader sees an entry's state"). Pair with
+`.read()` (or a fresh mount via back/forward/reload) instead.
 
 ```tsx
 "use client";
