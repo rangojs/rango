@@ -955,3 +955,185 @@ export async function expectBackLeavesScrollToBrowser(
     await page.evaluate(() => (window as any).__scrollCallsAfterPopstate),
   ).toEqual([]);
 }
+
+/**
+ * The push-ownership fixture (both apps: issues #1001, #1003). Each route is
+ * a `ppr` route with one `ssr: false` loader whose value and handle pushes
+ * carry the generation of the run that produced them, per `?probe=`:
+ *
+ * - `pinnedUrl`: returns a nested promise (it runs on every replay of its
+ *   shell), value `pinned@g<n>`, one settled push `pinned-note@g<n>`.
+ * - `cappedUrl`: the same loader under `ppr.maxSnapshotBytes: 1`, so the
+ *   stored entry keeps no loader pin.
+ * - `deferredUrl`: promise-free, bound with its own `cache()`, value
+ *   `deferred@g<n>`, a settled push `settled-note@g<n>` and a deferred one
+ *   `deferred-note@g<n>`.
+ * - `bumpUrl`: GET `<bumpUrl>?probe=` moves that probe's generation on and
+ *   returns `{ generation }`.
+ *
+ * The view renders the loader value as `push-value` and one `push-note` row
+ * per push of the fixture's handle.
+ */
+export interface PushOwnershipFixture {
+  pinnedUrl: string;
+  cappedUrl: string;
+  deferredUrl: string;
+  bumpUrl: string;
+  /** A page of the app outside the fixture, to navigate from. */
+  homeUrl: string;
+}
+
+const PUSH_HTML_HEADERS = { Accept: "text/html" };
+
+function pushProbe(kind: string): string {
+  return `${kind}-${randomUUID().slice(0, 8)}`;
+}
+
+/** Request `url` as a document until its shell is captured and HITs. */
+async function warmShellToHit(page: Page, url: string): Promise<void> {
+  await expect(async () => {
+    const res = await page.request.get(url, { headers: PUSH_HTML_HEADERS });
+    expect(res.status()).toBe(200);
+    expect(res.headers()["x-rango-shell"]).toBe("HIT");
+  }).toPass({ timeout: 20_000 });
+}
+
+async function bumpPushGeneration(
+  page: Page,
+  fixture: PushOwnershipFixture,
+  probe: string,
+): Promise<number> {
+  const res = await page.request.get(`${fixture.bumpUrl}?probe=${probe}`);
+  expect(res.ok()).toBe(true);
+  return ((await res.json()) as { generation: number }).generation;
+}
+
+/** Load `url` as a document served from its shell, and wait for hydration. */
+async function gotoShellHit(page: Page, url: string): Promise<void> {
+  const response = await page.goto(url);
+  expect(response?.headers()["x-rango-shell"]).toBe("HIT");
+  await waitForShellHydration(page);
+}
+
+/**
+ * Navigate on the client from `homeUrl` to `url`, and wait for the partial
+ * response to finish: every handle update of the navigation has arrived. The
+ * navigation must have replayed the shell (`x-rango-ppr-replay: HIT`).
+ */
+async function replayShellByNavigation(
+  page: Page,
+  fixture: PushOwnershipFixture,
+  url: string,
+): Promise<void> {
+  await page.goto(fixture.homeUrl);
+  await waitForShellHydration(page);
+  const target = new URL(url);
+  const partial = page.waitForResponse((response) => {
+    const responseUrl = new URL(response.url());
+    return (
+      responseUrl.pathname === target.pathname &&
+      responseUrl.searchParams.has("_rsc_partial")
+    );
+  });
+  await routerNavigate(page, url);
+  const response = await partial;
+  expect(response.headers()["x-rango-ppr-replay"]).toBe("HIT; freshness=fresh");
+  await response.finished();
+}
+
+/** The generation a fixture value was produced at (`<kind>@g<n>`). */
+async function pushValueGeneration(page: Page, kind: string): Promise<number> {
+  const value = byTestId(page, "push-value");
+  await expect(value).toHaveText(new RegExp(`^${kind}@g\\d+$`));
+  return Number((await value.textContent())!.split("@g")[1]);
+}
+
+/**
+ * #1003: a client navigation that replays a shell keeps the captured handle
+ * push of a promise-carrying `ssr: false` loader next to its pinned data, as
+ * the document HIT of the same shell does. Before, the navigation showed the
+ * capture's data next to the push of the run it made.
+ */
+export async function expectReplayKeepsCapturedPushWithPinnedData(
+  page: Page,
+  fixture: PushOwnershipFixture,
+): Promise<void> {
+  // The pin and the record agree, so the document hydrates clean.
+  using _ = guardHydrationErrors(page);
+  const probe = pushProbe("pinned");
+  const url = `${fixture.pinnedUrl}?probe=${probe}`;
+  await warmShellToHit(page, url);
+  // The loader runs on every replay from here on, at a later generation.
+  const current = await bumpPushGeneration(page, fixture, probe);
+  const notes = byTestId(page, "push-note");
+
+  await gotoShellHit(page, url);
+  const captured = await pushValueGeneration(page, "pinned");
+  expect(captured).toBeLessThan(current);
+  await expect(notes).toHaveText([`pinned-note@g${captured}`]);
+
+  await replayShellByNavigation(page, fixture, url);
+  await expect(byTestId(page, "push-value")).toHaveText(`pinned@g${captured}`);
+  await expect(notes).toHaveText([`pinned-note@g${captured}`]);
+}
+
+/**
+ * #1001: a client navigation that replays a shell delivers the deferred
+ * handle push of an `ssr: false` loader with its own `cache()`, from that
+ * loader's cache entry, next to the settled push the shell recorded, each
+ * once. Before, the navigation dropped the deferred push.
+ *
+ * No hydration-error guard: on the document HIT the deferred push reaches
+ * the client after hydration (the late channel), while the prelude already
+ * rendered its row, so React repairs the list. That is the same before and
+ * after this fix, and not what this body pins.
+ */
+export async function expectReplayDeliversDeferredPush(
+  page: Page,
+  fixture: PushOwnershipFixture,
+): Promise<void> {
+  const probe = pushProbe("deferred");
+  const url = `${fixture.deferredUrl}?probe=${probe}`;
+  await warmShellToHit(page, url);
+  // The loader's cache() entry, not a run at this generation, supplies both.
+  const current = await bumpPushGeneration(page, fixture, probe);
+  const notes = byTestId(page, "push-note");
+
+  await gotoShellHit(page, url);
+  const captured = await pushValueGeneration(page, "deferred");
+  expect(captured).toBeLessThan(current);
+  const expected = [`settled-note@g${captured}`, `deferred-note@g${captured}`];
+  await expect(notes).toHaveText(expected);
+
+  await replayShellByNavigation(page, fixture, url);
+  await expect(byTestId(page, "push-value")).toHaveText(
+    `deferred@g${captured}`,
+  );
+  await expect(notes).toHaveText(expected);
+}
+
+/**
+ * A document HIT of a shell entry that kept no loader pin
+ * (`ppr.maxSnapshotBytes`): the `ssr: false` loader runs on the HIT, so the
+ * page shows that run's data and that run's push. Before, it showed the
+ * run's data next to the push the shell recorded at capture.
+ *
+ * The prelude was rendered from the capture's value, so the browser repairs
+ * the data on hydration (the documented drift of an entry without pins);
+ * this asserts the page once it has, and installs no hydration-error guard.
+ */
+export async function expectPinlessHitKeepsRunPushWithRunData(
+  page: Page,
+  fixture: PushOwnershipFixture,
+): Promise<void> {
+  const probe = pushProbe("capped");
+  const url = `${fixture.cappedUrl}?probe=${probe}`;
+  await warmShellToHit(page, url);
+  const current = await bumpPushGeneration(page, fixture, probe);
+
+  await gotoShellHit(page, url);
+  await expect(byTestId(page, "push-value")).toHaveText(`pinned@g${current}`);
+  await expect(byTestId(page, "push-note")).toHaveText([
+    `pinned-note@g${current}`,
+  ]);
+}
