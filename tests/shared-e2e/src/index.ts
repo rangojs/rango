@@ -771,6 +771,476 @@ export async function expectClearOnReloadDropsStateOnTraversalLoad(
   await expectLoadMorePageTwoAsServerRendered(page);
 }
 
+/** How long the load-more fixture's loader holds a page (`?hold=<ms>`). */
+const LOAD_MORE_HOLD_MS = 2500;
+/** A part of the hold long enough to see the list is still held. */
+const LOAD_MORE_HELD_CHECK_MS = 600;
+
+/** What the list shows on page N after carrying pages 1..N-1. */
+const loadMoreThrough = (pageNumber: number): string[] =>
+  Array.from({ length: pageNumber }, (_, index) =>
+    loadMoreItems(index + 1),
+  ).flat();
+
+/**
+ * The fixture's own record of every list it committed (`<page>:<items>`),
+ * consecutive repeats removed: a commit that never survived to a sample is in
+ * here too.
+ */
+async function loadMoreCommits(page: Page): Promise<string[]> {
+  return page.evaluate(
+    () =>
+      (window as unknown as { __loadMoreCommits?: string[] })
+        .__loadMoreCommits ?? [],
+  );
+}
+
+const loadMoreCommit = (pageNumber: number, shown: string[]): string =>
+  `${pageNumber}:${shown.join(",")}`;
+
+/**
+ * The load-more fixture at one instant. `content` is what the shared layout
+ * holds: the list, the other fixture's panel, or neither. `sharedCarried` is
+ * the layout's own reader of the carried items, `carried` the list's, and
+ * `serverPage` the state the route's handler set for the entry ("none" for an
+ * entry a document load started).
+ */
+interface LoadMoreScreen {
+  content: "list" | "panel" | "none";
+  page: string | null;
+  carried: string | null;
+  sharedCarried: string | null;
+  serverPage: string | null;
+  items: string[];
+}
+
+type LoadMoreWindow = {
+  __loadMoreScreen: () => LoadMoreScreen;
+  __loadMoreSamples: LoadMoreScreen[];
+};
+
+/**
+ * Installs a reader of the fixture's screen and records one sample per DOM
+ * mutation from now on, so a state that was on screen between two assertions
+ * is kept. Lost on a document load.
+ */
+async function watchLoadMore(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const scope = window as unknown as LoadMoreWindow;
+    const text = (id: string): string | null =>
+      document.querySelector(`[data-testid="${id}"]`)?.textContent ?? null;
+    scope.__loadMoreScreen = () => ({
+      content: document.querySelector('[data-testid="lm-items"]')
+        ? "list"
+        : document.querySelector('[data-testid="grid-step"]')
+          ? "panel"
+          : "none",
+      page: text("lm-page"),
+      carried: text("lm-carried-count"),
+      sharedCarried: text("ls-shared-carried"),
+      serverPage: text("lm-server-page"),
+      items: Array.from(
+        document.querySelectorAll('[data-testid="lm-items"] li'),
+        (li) => li.textContent ?? "",
+      ),
+    });
+    scope.__loadMoreSamples = [scope.__loadMoreScreen()];
+    new MutationObserver(() => {
+      scope.__loadMoreSamples.push(scope.__loadMoreScreen());
+    }).observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+  });
+}
+
+/** One read of every part, so the parts belong to the same DOM state. */
+async function loadMoreScreen(page: Page): Promise<LoadMoreScreen> {
+  return page.evaluate(() =>
+    (window as unknown as LoadMoreWindow).__loadMoreScreen(),
+  );
+}
+
+/**
+ * The recorded samples that pair one entry's state with another entry's
+ * tree. A list repeats no item, and is its carried items plus its own page;
+ * the layout's reader agrees with the list's; the handler's state names the
+ * page on screen; over the other fixture's panel (an entry without carried
+ * items) the layout's reader reads none.
+ */
+async function tornLoadMoreSamples(page: Page): Promise<LoadMoreScreen[]> {
+  const samples = await page.evaluate(
+    () => (window as unknown as LoadMoreWindow).__loadMoreSamples,
+  );
+  return samples.filter(
+    (sample) =>
+      new Set(sample.items).size !== sample.items.length ||
+      (sample.content === "list" &&
+        (sample.sharedCarried !== sample.carried ||
+          sample.items.length !== Number(sample.carried) + 3 ||
+          (sample.serverPage !== "none" &&
+            sample.serverPage !== sample.page))) ||
+      (sample.content === "panel" && sample.sharedCarried !== "0"),
+  );
+}
+
+/**
+ * #1029: a "load more" navigation whose loader is still streaming. The fixture
+ * (both apps: `<url>?page=N&hold=<ms>`) loads page N's items through a loader
+ * that waits `hold` ms for every page after the first, and its `lm-more` Link
+ * carries every item on screen to the next page. The navigation's payload
+ * arrives at once, so the router commits the next entry (URL, history.state)
+ * and React keeps the current page on screen until the loader lands.
+ *
+ * During that window the screen must be the current entry's: the carried items
+ * of the NEXT entry are the ones on screen, so applying them early shows every
+ * item twice. Checked three ways: the screen while the navigation is pending,
+ * every DOM state in between, and every list the fixture committed.
+ */
+export async function expectHeldLoadMoreShowsNoItemTwice(
+  page: Page,
+  url: string,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const items = byTestId(page, "lm-items").locator("li");
+  const pageOnScreen = byTestId(page, "lm-page");
+  const entry = (pageNumber: number): string =>
+    `${url}?page=${pageNumber}&hold=${LOAD_MORE_HOLD_MS}`;
+
+  await page.goto(entry(1));
+  await waitForShellHydration(page);
+  await expect(items).toHaveText(loadMoreItems(1));
+  await watchLoadMore(page);
+
+  for (const next of [2, 3]) {
+    const leaving: LoadMoreScreen = {
+      content: "list",
+      page: String(next - 1),
+      carried: String(loadMoreThrough(next - 2).length),
+      sharedCarried: String(loadMoreThrough(next - 2).length),
+      // Page 1 came with the document, which carries no location state.
+      serverPage: next === 2 ? "none" : String(next - 1),
+      items: loadMoreThrough(next - 1),
+    };
+    await byTestId(page, "lm-more").click();
+
+    // The router is on the next entry; its tree is not: the loader holds it.
+    await expect(page).toHaveURL(entry(next));
+    expect(await locationStateSlots(page)).toMatchObject({
+      "CarriedItems~r": leaving.items,
+    });
+    expect(await loadMoreScreen(page)).toEqual(leaving);
+    // Still held a good part of the hold later, and still the same screen.
+    await page.waitForTimeout(LOAD_MORE_HELD_CHECK_MS);
+    expect(await loadMoreScreen(page)).toEqual(leaving);
+
+    await expect(pageOnScreen).toHaveText(String(next));
+    await expect(items).toHaveText(loadMoreThrough(next));
+  }
+
+  expect(await tornLoadMoreSamples(page)).toEqual([]);
+  expect(await loadMoreCommits(page)).toEqual(
+    [1, 2, 3].map((n) => loadMoreCommit(n, loadMoreThrough(n))),
+  );
+}
+
+/**
+ * #1029 for back/forward: an entry's carried items come back together with
+ * that entry's page, from the client cache and from a refetch.
+ *
+ * Cached: back and forward across three entries; every list the fixture
+ * committed is one entry's own. Refetch: 21 entries on `otherUrl` (the other
+ * fixture under the same layout, without carried items) evict the list's
+ * entry from the history cache, and the return fetches it with its loader
+ * held. The layout's reader stays mounted through all of it: it reads carried
+ * items only once the list is back under it.
+ */
+export async function expectLoadMoreTraversalRestoresEntryWithItsPage(
+  page: Page,
+  url: string,
+  otherUrl: string,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const items = byTestId(page, "lm-items").locator("li");
+  const pageOnScreen = byTestId(page, "lm-page");
+  const entry = (pageNumber: number): string =>
+    `${url}?page=${pageNumber}&hold=${LOAD_MORE_HOLD_MS}`;
+  const expectEntry = async (pageNumber: number): Promise<void> => {
+    await expect(page).toHaveURL(entry(pageNumber));
+    await expect(pageOnScreen).toHaveText(String(pageNumber));
+    await expect(items).toHaveText(loadMoreThrough(pageNumber));
+  };
+
+  await page.goto(entry(1));
+  await waitForShellHydration(page);
+  await expect(items).toHaveText(loadMoreItems(1));
+  await watchLoadMore(page);
+  for (const pageNumber of [2, 3]) {
+    await byTestId(page, "lm-more").click();
+    await expectEntry(pageNumber);
+  }
+
+  for (const [go, pageNumber] of [
+    [() => page.goBack(), 2],
+    [() => page.goBack(), 1],
+    [() => page.goForward(), 2],
+    [() => page.goForward(), 3],
+  ] as const) {
+    await go();
+    await expectEntry(pageNumber);
+  }
+  expect(await loadMoreCommits(page)).toEqual(
+    [1, 2, 3, 2, 1, 2, 3].map((n) => loadMoreCommit(n, loadMoreThrough(n))),
+  );
+
+  await returnToEvictedEntry(page, (n) => `${otherUrl}?step=filler-${n}`);
+  await expectEntry(3);
+  await expect(byTestId(page, "ls-shared-carried")).toHaveText(
+    String(loadMoreThrough(2).length),
+  );
+  expect((await loadMoreCommits(page)).slice(-1)).toEqual([
+    loadMoreCommit(3, loadMoreThrough(3)),
+  ]);
+
+  expect(await tornLoadMoreSamples(page)).toEqual([]);
+}
+
+/** The slow clientUrls group's middleware (both apps): every canonical request waits this long. */
+const SLOW_GROUP_MIDDLEWARE_MS = 5000;
+/** Anything under this is before the gated response could have arrived. */
+const SLOW_GROUP_IMMEDIATE_MS = 1500;
+const SLOW_GROUP_TIMEOUT = SLOW_GROUP_MIDDLEWARE_MS + 10_000;
+
+/**
+ * Every (identity, note) pair the slow group's readers committed, as
+ * `<where>|<identity>|<note>` (the fixture's `SlowState` probe): `chrome` and
+ * `layout` are identified by their pathname, `b` by its param.
+ */
+async function slowGroupCommits(page: Page): Promise<string[]> {
+  return page.evaluate(() => [
+    ...new Set(
+      (window as unknown as { __cusStateCommits?: string[] })
+        .__cusStateCommits ?? [],
+    ),
+  ]);
+}
+
+async function openSlowGroup(page: Page, url: string): Promise<void> {
+  await page.goto(url, { timeout: SLOW_GROUP_TIMEOUT });
+  await waitForShellHydration(page);
+  await expect(byTestId(page, "cus-a")).toBeVisible();
+  await expect(byTestId(page, "cus-chrome-note")).toHaveText("none");
+}
+
+/**
+ * #1029 for a cross-route `clientUrls()` navigation, which presents its
+ * destination before the server responds. The fixture (both apps: the group at
+ * `<url>`, behind a 5s middleware) has a location-state reader in chrome
+ * outside the group, in the group's layout and in each page; `cus-a-to-b-note`
+ * goes from A to B carrying a note.
+ *
+ * - The destination and the group layout are the optimistic branch: they show
+ *   the note the navigation carries on their first optimistic render, long
+ *   before history holds it.
+ * - Chrome outside the branch keeps the committed entry (no note, A's
+ *   pathname) until the canonical commit, then changes pathname and note in
+ *   one commit.
+ */
+export async function expectOptimisticDestinationReadsItsLocationState(
+  page: Page,
+  url: string,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  await openSlowGroup(page, url);
+
+  await byTestId(page, "cus-a-to-b-note").click();
+
+  await expect(byTestId(page, "cus-b")).toBeVisible({
+    timeout: SLOW_GROUP_IMMEDIATE_MS,
+  });
+  await expect(byTestId(page, "cus-b-note")).toHaveText("for-first", {
+    timeout: SLOW_GROUP_IMMEDIATE_MS,
+  });
+  await expect(byTestId(page, "cus-layout-note")).toHaveText("for-first");
+  // Presentation only: the committed entry is A's, without a note.
+  await expect(page).toHaveURL(url);
+  await expect(byTestId(page, "cus-chrome-note")).toHaveText("none");
+  expect(await locationStateSlots(page)).toEqual({});
+
+  await expect(byTestId(page, "cus-b-loader")).toHaveText("slow-data", {
+    timeout: SLOW_GROUP_TIMEOUT,
+  });
+  await expect(page).toHaveURL(`${url}/b/first`);
+  await expect(byTestId(page, "cus-chrome-note")).toHaveText("for-first");
+  await expect(byTestId(page, "cus-b-note")).toHaveText("for-first");
+  await expect(byTestId(page, "cus-layout-note")).toHaveText("for-first");
+  expect(await locationStateSlots(page)).toEqual({
+    SlowNote: { value: "for-first" },
+  });
+
+  const { pathname } = new URL(url);
+  const commits = await slowGroupCommits(page);
+  expect(commits.filter((commit) => commit.startsWith("chrome|"))).toEqual([
+    `chrome|${pathname}|none`,
+    `chrome|${pathname}/b/first|for-first`,
+  ]);
+  // B never rendered without its note, the layout never showed B's pathname
+  // with A's state.
+  expect(commits.filter((commit) => commit.startsWith("b|"))).toEqual([
+    "b|first|for-first",
+  ]);
+  expect(commits.filter((commit) => commit.startsWith("layout|"))).toEqual([
+    `layout|${pathname}|none`,
+    `layout|${pathname}/b/first|for-first`,
+  ]);
+}
+
+/**
+ * #1029 for `clientUrls()` navigations that keep the current content on
+ * screen: a same-route one (`b/first` to `b/second`, never swapped) and a
+ * cross-route one whose destination suspends with no boundary (B to E). Each
+ * carries a note. Every reader keeps the entry it is showing, note included,
+ * until the canonical commit, and no reader ever commits one entry's identity
+ * with the other's note.
+ */
+export async function expectHeldClientUrlNavigationKeepsLocationState(
+  page: Page,
+  url: string,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const { pathname } = new URL(url);
+  const notes = ["cus-chrome-note", "cus-layout-note", "cus-b-note"];
+  const expectNotes = async (note: string): Promise<void> => {
+    for (const id of notes) await expect(byTestId(page, id)).toHaveText(note);
+  };
+
+  await openSlowGroup(page, url);
+  await byTestId(page, "cus-a-to-b-note").click();
+  await expect(byTestId(page, "cus-b-loader")).toHaveText("slow-data", {
+    timeout: SLOW_GROUP_TIMEOUT,
+  });
+  await expectNotes("for-first");
+
+  // Same route record, another param: the intent never swaps the content.
+  await byTestId(page, "cus-b-to-b-note").click();
+  await expect(byTestId(page, "cus-layout")).toHaveAttribute(
+    "data-pending",
+    "true",
+    { timeout: SLOW_GROUP_IMMEDIATE_MS },
+  );
+  await expect(byTestId(page, "cus-b-param")).toHaveText("first");
+  await expectNotes("for-first");
+  await expect(byTestId(page, "cus-b-param")).toHaveText("second", {
+    timeout: SLOW_GROUP_TIMEOUT,
+  });
+  await expect(page).toHaveURL(`${url}/b/second`);
+  await expectNotes("for-second");
+
+  // E suspends with no boundary: B stays until E commits.
+  await byTestId(page, "cus-b-to-e-note").click();
+  await expect(byTestId(page, "cus-layout")).toHaveAttribute(
+    "data-pending",
+    "true",
+    { timeout: SLOW_GROUP_IMMEDIATE_MS },
+  );
+  await expect(byTestId(page, "cus-b")).toBeVisible();
+  await expectNotes("for-second");
+  await expect(byTestId(page, "cus-e")).toHaveText("slow-data", {
+    timeout: SLOW_GROUP_TIMEOUT,
+  });
+  await expect(byTestId(page, "cus-b")).toHaveCount(0);
+  await expect(byTestId(page, "cus-e-note")).toHaveText("for-e");
+  await expect(byTestId(page, "cus-chrome-note")).toHaveText("for-e");
+
+  const commits = await slowGroupCommits(page);
+  expect(commits.filter((commit) => commit.startsWith("b|"))).toEqual([
+    "b|first|for-first",
+    "b|second|for-second",
+  ]);
+  expect(commits.filter((commit) => commit.startsWith("e|"))).toEqual([
+    "e|e|for-e",
+  ]);
+  expect(commits.filter((commit) => commit.startsWith("chrome|"))).toEqual([
+    `chrome|${pathname}|none`,
+    `chrome|${pathname}/b/first|for-first`,
+    `chrome|${pathname}/b/second|for-second`,
+    `chrome|${pathname}/e|for-e`,
+  ]);
+}
+
+/**
+ * #1029 for a `clientUrls()` navigation that never commits. Superseded: A to
+ * `b/first` carrying one note, then, still inside the optimistic window, on
+ * to `b/second` carrying another. Cancelled: a held same-route navigation
+ * abandoned by going back.
+ *
+ * The note of a navigation that did not commit reaches the optimistic branch
+ * only: never chrome outside it, never history, and it is gone with the
+ * branch.
+ */
+export async function expectUncommittedClientUrlNavigationLeavesNoLocationState(
+  page: Page,
+  url: string,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const { pathname } = new URL(url);
+  await openSlowGroup(page, url);
+
+  await byTestId(page, "cus-a-to-b-note").click();
+  await expect(byTestId(page, "cus-b-note")).toHaveText("for-first", {
+    timeout: SLOW_GROUP_IMMEDIATE_MS,
+  });
+  // Superseded before its response: the branch now presents the second one.
+  await byTestId(page, "cus-b-to-b-note").click();
+  await expect(byTestId(page, "cus-b-param")).toHaveText("second", {
+    timeout: SLOW_GROUP_IMMEDIATE_MS,
+  });
+  await expect(byTestId(page, "cus-b-note")).toHaveText("for-second");
+  await expect(byTestId(page, "cus-chrome-note")).toHaveText("none");
+  await expect(page).toHaveURL(url);
+
+  await expect(byTestId(page, "cus-b-loader")).toHaveText("slow-data", {
+    timeout: SLOW_GROUP_TIMEOUT,
+  });
+  await expect(page).toHaveURL(`${url}/b/second`);
+  await expect(byTestId(page, "cus-chrome-note")).toHaveText("for-second");
+  expect(await locationStateSlots(page)).toEqual({
+    SlowNote: { value: "for-second" },
+  });
+
+  // Cancelled: a held navigation to E, abandoned by going back to A.
+  await byTestId(page, "cus-b-to-e-note").click();
+  await expect(byTestId(page, "cus-layout")).toHaveAttribute(
+    "data-pending",
+    "true",
+    { timeout: SLOW_GROUP_IMMEDIATE_MS },
+  );
+  await page.goBack();
+  await expect(byTestId(page, "cus-a")).toBeVisible();
+  await expect(page).toHaveURL(url);
+  await expect(byTestId(page, "cus-a-note")).toHaveText("none");
+  await expect(byTestId(page, "cus-chrome-note")).toHaveText("none");
+  await expect(byTestId(page, "cus-layout")).toHaveAttribute(
+    "data-pending",
+    "false",
+  );
+  // Past the abandoned response: nothing of it arrives later.
+  await page.waitForTimeout(SLOW_GROUP_MIDDLEWARE_MS + 1000);
+  await expect(byTestId(page, "cus-a")).toBeVisible();
+  await expect(byTestId(page, "cus-chrome-note")).toHaveText("none");
+
+  const commits = await slowGroupCommits(page);
+  expect(commits.filter((commit) => commit.startsWith("chrome|"))).toEqual([
+    `chrome|${pathname}|none`,
+    `chrome|${pathname}/b/second|for-second`,
+  ]);
+  expect(commits.filter((commit) => commit.includes("for-e"))).toEqual([]);
+  expect(commits.filter((commit) => commit.startsWith("a|"))).toEqual([
+    "a|a|none",
+  ]);
+}
+
 /**
  * Rewrites the app version the current entry records for its location state
  * (`__rsc_lsv`), the way an entry written by another build carries another

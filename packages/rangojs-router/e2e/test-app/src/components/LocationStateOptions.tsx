@@ -1,47 +1,52 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Link, useLocationState } from "@rangojs/router/client";
+import {
+  Link,
+  useLoader,
+  useLocationState,
+  useSearchParams,
+} from "@rangojs/router/client";
 import {
   CarriedItems,
   GridState,
   ListSort,
   ServerPageStamp,
 } from "../location-states.js";
+import { LoadMoreLoader } from "../urls/location-state.loader.js";
 
 /**
- * #994 "load more". `items` is the page the server rendered for this URL; the
+ * #994 / #1029 "load more". LoadMoreLoader loads the page the URL names; the
  * pages already on screen arrive as CarriedItems (clearOnReload) on the Link.
- * After a client navigation both are shown; after a document load only
- * `items`, as the server rendered them. ServerPageStamp is the state the
+ * After a client navigation both are shown; after a document load only the
+ * loader's page, as the server rendered it. ServerPageStamp is the state the
  * route's handler sets on every request.
  *
- * `items` is filtered against the carried ones to work around a router
- * ordering defect: a navigation applies the destination entry's state to a
- * mounted reader (navigation-transaction.ts dispatches `__rsc_locationstate`
- * in commit) before the destination's tree commits (partial-update.ts), and
- * until it does the carried items include the page still on screen.
+ * `shown` is the plain concatenation: an entry's carried items change in the
+ * commit that brings that entry's page, so no item appears twice while a
+ * navigation is pending. Every committed list is pushed to
+ * `window.__loadMoreCommits` (as `<page>:<items>`) for the e2e to check the
+ * commits it could not sample.
  */
-export function LoadMoreList({
-  basePath,
-  page,
-  items,
-}: {
-  basePath: string;
-  page: number;
-  items: string[];
-}) {
+export function LoadMoreList({ basePath }: { basePath: string }) {
   const carried = useLocationState(CarriedItems) ?? [];
   const sort = useLocationState(ListSort);
   const serverStamp = useLocationState(ServerPageStamp);
-  const shown = [
-    ...carried,
-    ...items.filter((item) => !carried.includes(item)),
-  ];
+  const { data } = useLoader(LoadMoreLoader);
+  const [search] = useSearchParams();
+  const hold = search.get("hold");
+  const shown = [...carried, ...data.items];
+  const commit = `${data.page}:${shown.join(",")}`;
+  useEffect(() => {
+    const log = ((
+      window as { __loadMoreCommits?: string[] }
+    ).__loadMoreCommits ??= []);
+    if (log.at(-1) !== commit) log.push(commit);
+  });
   return (
     <section>
       <p>
-        page <span data-testid="lm-page">{page}</span>, carried{" "}
+        page <span data-testid="lm-page">{data.page}</span>, carried{" "}
         <span data-testid="lm-carried-count">{carried.length}</span>, sort{" "}
         <span data-testid="lm-sort">{sort?.order ?? "none"}</span>, server stamp{" "}
         <span data-testid="lm-server-page">{serverStamp?.page ?? "none"}</span>
@@ -52,7 +57,7 @@ export function LoadMoreList({
         ))}
       </ul>
       <Link
-        to={`${basePath}?page=${page + 1}`}
+        to={`${basePath}?page=${data.page + 1}${hold ? `&hold=${hold}` : ""}`}
         state={[CarriedItems(shown), ListSort({ order: "asc" })]}
         scroll={false}
         data-testid="lm-more"
@@ -60,6 +65,21 @@ export function LoadMoreList({
         Load more
       </Link>
     </section>
+  );
+}
+
+/**
+ * #1029: a CarriedItems reader in the layout both fixtures of this file share,
+ * so it stays mounted across a navigation between them. It shows how many
+ * items the entry carries: more than none only together with the list.
+ */
+export function SharedCarriedCount() {
+  const carried = useLocationState(CarriedItems) ?? [];
+  return (
+    <p>
+      shared layout, carried{" "}
+      <span data-testid="ls-shared-carried">{carried.length}</span>
+    </p>
   );
 }
 

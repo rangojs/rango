@@ -2,7 +2,9 @@ import { expect, test, type Page } from "@playwright/test";
 import {
   expectClearOnReloadDropsCarriedState,
   expectClearOnReloadDropsStateOnTraversalLoad,
+  expectHeldLoadMoreShowsNoItemTwice,
   expectLateSuspenseReaderHydratesClean,
+  expectLoadMoreTraversalRestoresEntryWithItsPage,
   expectOtherVersionLocationStateDroppedOnLoad,
   expectOtherVersionLocationStateDroppedOnTraversal,
   returnToEvictedEntry,
@@ -1520,4 +1522,40 @@ test.describe("location-state.options", () => {
 test.describe("location-state.options (production)", () => {
   const f = useFixture({ root: "./e2e/test-app", mode: "build" });
   optionsSuite(f);
+});
+
+// #1029: a reader sees an entry's location state together with that entry's
+// tree. The load-more list concatenates carried items and the loader's page,
+// so the wrong pairing is an item on screen twice.
+function commitSuite(f: Fixture) {
+  test.setTimeout(90_000);
+
+  test("a load-more navigation held by its loader shows no item twice", async ({
+    page,
+  }) => {
+    await expectHeldLoadMoreShowsNoItemTwice(
+      page,
+      f.url("/location-state/load-more"),
+    );
+  });
+
+  test("back/forward restores an entry's carried items with its page, cached and refetched", async ({
+    page,
+  }) => {
+    await expectLoadMoreTraversalRestoresEntryWithItsPage(
+      page,
+      f.url("/location-state/load-more"),
+      f.url("/location-state/app-version"),
+    );
+  });
+}
+
+test.describe("location-state.commit", () => {
+  const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
+  commitSuite(f);
+});
+
+test.describe("location-state.commit (production)", () => {
+  const f = useFixture({ root: "./e2e/test-app", mode: "build" });
+  commitSuite(f);
 });

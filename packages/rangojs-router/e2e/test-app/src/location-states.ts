@@ -113,3 +113,7 @@ export interface GridSnapshot {
 // #994: no options. The e2e rewrites the app version its entry records, the
 // way an entry an older build wrote would carry another one.
 export const GridState = createLocationState<GridSnapshot>();
+
+// #1029: carried on the Links of the slow clientUrls group
+// (client-urls-slow.tsx), read inside and outside the optimistic branch.
+export const SlowNote = createLocationState<{ value: string }>();

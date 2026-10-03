@@ -15,6 +15,10 @@ import {
   ServerPageStamp,
   type GridSnapshot,
 } from "../src/location-states.js";
+import {
+  LoadMoreLoader,
+  type LoadMorePage,
+} from "../src/loaders/location-state.js";
 
 afterEach(() => {
   cleanup();
@@ -33,33 +37,44 @@ const carried = ["p1-1", "p1-2", "p1-3"];
 const grid: GridSnapshot = { order: "desc", page: 3 };
 
 function LoadMorePage() {
-  return (
-    <LoadMoreList
-      basePath="/location-state-load-more"
-      page={2}
-      items={["p2-1", "p2-2", "p2-3"]}
-    />
-  );
+  return <LoadMoreList basePath="/location-state-load-more" />;
 }
+const pageItems = (page: number): string[] =>
+  [1, 2, 3].map((item) => `p${page}-${item}`);
+const pageData = (page: number): LoadMorePage => ({
+  page,
+  items: pageItems(page),
+});
 const loadMore = {
-  routes: [{ path: "/location-state-load-more", Component: LoadMorePage }],
+  // `transition`: a navigation whose loader is pending keeps the page on
+  // screen, as the app's same-route navigation does.
+  routes: [
+    {
+      path: "/location-state-load-more",
+      Component: LoadMorePage,
+      transition: {},
+    },
+  ],
+  loaders: [[LoadMoreLoader, pageData(2)]] as const,
   locationState: [
     [CarriedItems, carried],
     [ListSort, { order: "asc" }],
   ] as const,
 };
+const listed = (root: { getAllByRole(role: string): HTMLElement[] }) =>
+  root.getAllByRole("listitem").map((item) => item.textContent);
 
 it("clearOnReload: a client mount shows the carried items, a document load does not", async () => {
   const mounted = await renderRoute(loadMore.routes, {
+    loaders: loadMore.loaders,
     locationState: loadMore.locationState,
   });
-  expect(
-    mounted.getAllByRole("listitem").map((item) => item.textContent),
-  ).toEqual([...carried, "p2-1", "p2-2", "p2-3"]);
+  expect(listed(mounted)).toEqual([...carried, ...pageItems(2)]);
   mounted.unmount();
 
   const loaded = await renderRoute(loadMore.routes, {
     hydrate: true,
+    loaders: loadMore.loaders,
     locationState: loadMore.locationState,
   });
   expect(loaded.serverHtml).not.toContain("p1-1");
@@ -70,9 +85,33 @@ it("clearOnReload: a client mount shows the carried items, a document load does 
 
   // "Load more" carries the items on screen again.
   fireEvent.click(loaded.getByTestId("lm-more"));
-  await waitFor(() =>
-    expect(CarriedItems.read()).toEqual(["p2-1", "p2-2", "p2-3"]),
-  );
+  await waitFor(() => expect(CarriedItems.read()).toEqual(pageItems(2)));
+});
+
+// #1029, on the app's own list: while the next page's loader is pending the
+// list is still the current entry's. Its carried items change in the commit
+// that brings the next page, so the list never shows an item twice.
+it("load more: a pending navigation keeps the current entry's items until the next page lands", async () => {
+  const { router, ...list } = await renderRoute(loadMore.routes, {
+    request: "/location-state-load-more?page=2",
+    loaders: loadMore.loaders,
+    locationState: loadMore.locationState,
+  });
+  const onScreen = [...carried, ...pageItems(2)];
+  expect(listed(list)).toEqual(onScreen);
+
+  let land!: (page: LoadMorePage) => void;
+  const next = new Promise<LoadMorePage>((resolve) => (land = resolve));
+  await router.navigate("/location-state-load-more?page=3", {
+    state: [CarriedItems(onScreen)],
+    loaders: [[LoadMoreLoader, next]],
+  });
+  // The router is on page 3's entry; the page on screen is still page 2.
+  expect(CarriedItems.read()).toEqual(onScreen);
+  expect(listed(list)).toEqual(onScreen);
+
+  await act(async () => land(pageData(3)));
+  expect(listed(list)).toEqual([...onScreen, ...pageItems(3)]);
 });
 
 const appVersionRoutes = [

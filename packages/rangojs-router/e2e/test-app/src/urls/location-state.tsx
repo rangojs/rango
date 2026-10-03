@@ -4,7 +4,7 @@ import {
   LateSuspenseReader,
   LateSuspenseWriter,
 } from "../components/LateSuspenseReader.js";
-import { Link } from "@rangojs/router/client";
+import { Link, Outlet } from "@rangojs/router/client";
 import {
   FlashMessage,
   ServerInfo,
@@ -34,11 +34,13 @@ import { StaticWriteWidget } from "../components/StaticWriteWidget.js";
 import {
   AppVersionPanel,
   LoadMoreList,
+  SharedCarriedCount,
 } from "../components/LocationStateOptions.js";
 import {
   ActionInfoDisplay,
   ActionLocationStateControls,
 } from "../components/ActionLocationState.js";
+import { LoadMoreLoader } from "./location-state.loader.js";
 
 // #992 fixture. The boundary's server content is held until the e2e releases
 // its :gate (GET <page>/release), which it does after seeing the root hydrate.
@@ -65,323 +67,336 @@ async function LateSuspenseContent({ gate }: { gate: string }) {
  * Location state test routes - tests for redirect() with state,
  * ctx.setLocationState(), useLocationState(), and useLocationState()
  */
-export const locationStatePatterns = urls(({ path, middleware }) => [
-  // Index page with links to trigger different scenarios
-  path(
-    "/",
-    () => (
-      <div data-testid="ls-index">
-        <h1>Location State Tests</h1>
-        <FlashBanner />
-        <ServerInfoDisplay />
-        <ul>
-          <li>
-            <Link
-              to="/location-state/trigger-redirect"
-              data-testid="ls-redirect-link"
-            >
-              Trigger redirect with flash
-            </Link>
-          </li>
-          <li>
-            <Link
-              to="/location-state/trigger-ctx-state"
-              data-testid="ls-ctx-state-link"
-            >
-              Trigger ctx.setLocationState
-            </Link>
-          </li>
-          <li>
-            <Link
-              to="/location-state/mw-redirect"
-              data-testid="ls-mw-redirect-link"
-            >
-              Trigger middleware redirect with flash
-            </Link>
-          </li>
-          <li>
-            <Link
-              to="/location-state/redirect-303"
-              data-testid="ls-redirect-303-link"
-            >
-              Trigger 303 redirect with flash
-            </Link>
-          </li>
-          <li>
-            <Link to="/location-state/other" data-testid="ls-other-link">
-              Go to other page
-            </Link>
-          </li>
-        </ul>
-        <ActionRedirectButton />
-        <ActionSimpleRedirectButton />
-        <ThrowRedirectButton />
-        <ThrowSimpleRedirectButton />
-        <ThrowErrorButton />
-        <ThrowFormErrorButton />
-        <ActionRedirectNonSerializableButton />
-      </div>
-    ),
-    { name: "index" },
-  ),
+function OptionsShell() {
+  return (
+    <div>
+      <SharedCarriedCount />
+      <Outlet />
+    </div>
+  );
+}
 
-  // Handler that redirects back to index with flash state
-  path(
-    "/trigger-redirect",
-    (ctx) => {
-      return redirect("/location-state", {
-        state: FlashMessage({ text: "Item saved successfully!" }),
-      });
-    },
-    { name: "triggerRedirect" },
-  ),
-
-  // Handler that renders a page using ctx.setLocationState (non-redirect)
-  path(
-    "/trigger-ctx-state",
-    (ctx) => {
-      ctx.setLocationState(ServerInfo({ data: "server-set-value" }));
-      return (
-        <div data-testid="ls-ctx-state-page">
-          <h1>Page with server-set state</h1>
+export const locationStatePatterns = urls(
+  ({ path, middleware, loader, layout }) => [
+    // Index page with links to trigger different scenarios
+    path(
+      "/",
+      () => (
+        <div data-testid="ls-index">
+          <h1>Location State Tests</h1>
+          <FlashBanner />
           <ServerInfoDisplay />
+          <ul>
+            <li>
+              <Link
+                to="/location-state/trigger-redirect"
+                data-testid="ls-redirect-link"
+              >
+                Trigger redirect with flash
+              </Link>
+            </li>
+            <li>
+              <Link
+                to="/location-state/trigger-ctx-state"
+                data-testid="ls-ctx-state-link"
+              >
+                Trigger ctx.setLocationState
+              </Link>
+            </li>
+            <li>
+              <Link
+                to="/location-state/mw-redirect"
+                data-testid="ls-mw-redirect-link"
+              >
+                Trigger middleware redirect with flash
+              </Link>
+            </li>
+            <li>
+              <Link
+                to="/location-state/redirect-303"
+                data-testid="ls-redirect-303-link"
+              >
+                Trigger 303 redirect with flash
+              </Link>
+            </li>
+            <li>
+              <Link to="/location-state/other" data-testid="ls-other-link">
+                Go to other page
+              </Link>
+            </li>
+          </ul>
+          <ActionRedirectButton />
+          <ActionSimpleRedirectButton />
+          <ThrowRedirectButton />
+          <ThrowSimpleRedirectButton />
+          <ThrowErrorButton />
+          <ThrowFormErrorButton />
+          <ActionRedirectNonSerializableButton />
+        </div>
+      ),
+      { name: "index" },
+    ),
+
+    // Handler that redirects back to index with flash state
+    path(
+      "/trigger-redirect",
+      (ctx) => {
+        return redirect("/location-state", {
+          state: FlashMessage({ text: "Item saved successfully!" }),
+        });
+      },
+      { name: "triggerRedirect" },
+    ),
+
+    // Handler that renders a page using ctx.setLocationState (non-redirect)
+    path(
+      "/trigger-ctx-state",
+      (ctx) => {
+        ctx.setLocationState(ServerInfo({ data: "server-set-value" }));
+        return (
+          <div data-testid="ls-ctx-state-page">
+            <h1>Page with server-set state</h1>
+            <ServerInfoDisplay />
+            <Link to="/location-state" data-testid="ls-back-link">
+              Back to index
+            </Link>
+          </div>
+        );
+      },
+      { name: "triggerCtxState" },
+    ),
+
+    // Target page for redirect with state + flash via middleware redirect
+    path(
+      "/target",
+      () => (
+        <div data-testid="ls-target">
+          <h1>Redirect target</h1>
+          <FlashBanner />
           <Link to="/location-state" data-testid="ls-back-link">
             Back to index
           </Link>
         </div>
-      );
-    },
-    { name: "triggerCtxState" },
-  ),
-
-  // Target page for redirect with state + flash via middleware redirect
-  path(
-    "/target",
-    () => (
-      <div data-testid="ls-target">
-        <h1>Redirect target</h1>
-        <FlashBanner />
-        <Link to="/location-state" data-testid="ls-back-link">
-          Back to index
-        </Link>
-      </div>
+      ),
+      { name: "target" },
     ),
-    { name: "target" },
-  ),
 
-  // Middleware redirect with state to /target
-  path(
-    "/mw-redirect",
-    () => <div>Should not render</div>,
-    { name: "mwRedirect" },
-    () => [
-      middleware(async (ctx, next) => {
+    // Middleware redirect with state to /target
+    path(
+      "/mw-redirect",
+      () => <div>Should not render</div>,
+      { name: "mwRedirect" },
+      () => [
+        middleware(async (ctx, next) => {
+          return redirect("/location-state/target", {
+            state: FlashMessage({ text: "Redirected by middleware!" }),
+          });
+        }),
+      ],
+    ),
+
+    // Redirect with custom status
+    path(
+      "/redirect-303",
+      (ctx) => {
         return redirect("/location-state/target", {
-          state: FlashMessage({ text: "Redirected by middleware!" }),
+          status: 303,
+          state: FlashMessage({ text: "303 redirect flash" }),
         });
-      }),
-    ],
-  ),
-
-  // Redirect with custom status
-  path(
-    "/redirect-303",
-    (ctx) => {
-      return redirect("/location-state/target", {
-        status: 303,
-        state: FlashMessage({ text: "303 redirect flash" }),
-      });
-    },
-    { name: "redirect303" },
-  ),
-
-  // Other page (for testing flash clears on navigation)
-  path(
-    "/other",
-    () => (
-      <div data-testid="ls-other-page">
-        <h1>Other page</h1>
-        <FlashBanner />
-        <Link to="/location-state" data-testid="ls-back-link">
-          Back to index
-        </Link>
-      </div>
+      },
+      { name: "redirect303" },
     ),
-    { name: "other" },
-  ),
 
-  // === Link state prop tests ===
-  // Tests for all 4 state patterns: typed eager, typed JIT, plain static, plain JIT
-
-  // Link state index page with links exercising each pattern
-  path(
-    "/link-state",
-    () => (
-      <div data-testid="link-state-index">
-        <h1>Link State Prop Tests</h1>
-        <ul>
-          <li>
-            <Link
-              to="/location-state/link-state/target"
-              state={[
-                SlowProductLocationState({
-                  productName: "Eager Product",
-                  productPrice: 42,
-                }),
-              ]}
-              data-testid="link-typed-eager"
-            >
-              Typed eager state
-            </Link>
-          </li>
-          <li>
-            <TypedJitLink />
-          </li>
-          <li>
-            <Link
-              to="/location-state/link-state/plain-target"
-              state={{ from: "list", count: 5 }}
-              data-testid="link-plain-static"
-            >
-              Plain static state
-            </Link>
-          </li>
-          <li>
-            <PlainJitLink />
-          </li>
-          <li>
-            <TypedJitTimingLink />
-          </li>
-        </ul>
-        <RouterPushStateButtons />
-      </div>
+    // Other page (for testing flash clears on navigation)
+    path(
+      "/other",
+      () => (
+        <div data-testid="ls-other-page">
+          <h1>Other page</h1>
+          <FlashBanner />
+          <Link to="/location-state" data-testid="ls-back-link">
+            Back to index
+          </Link>
+        </div>
+      ),
+      { name: "other" },
     ),
-    { name: "linkState" },
-  ),
 
-  // Target page for typed state (reads via useLocationState with definition)
-  path(
-    "/link-state/target",
-    () => (
-      <div data-testid="link-state-target">
-        <h1>Typed State Target</h1>
-        <TypedStateDisplay />
-        <Link to="/location-state/link-state" data-testid="link-state-back">
-          Back
-        </Link>
-      </div>
+    // === Link state prop tests ===
+    // Tests for all 4 state patterns: typed eager, typed JIT, plain static, plain JIT
+
+    // Link state index page with links exercising each pattern
+    path(
+      "/link-state",
+      () => (
+        <div data-testid="link-state-index">
+          <h1>Link State Prop Tests</h1>
+          <ul>
+            <li>
+              <Link
+                to="/location-state/link-state/target"
+                state={[
+                  SlowProductLocationState({
+                    productName: "Eager Product",
+                    productPrice: 42,
+                  }),
+                ]}
+                data-testid="link-typed-eager"
+              >
+                Typed eager state
+              </Link>
+            </li>
+            <li>
+              <TypedJitLink />
+            </li>
+            <li>
+              <Link
+                to="/location-state/link-state/plain-target"
+                state={{ from: "list", count: 5 }}
+                data-testid="link-plain-static"
+              >
+                Plain static state
+              </Link>
+            </li>
+            <li>
+              <PlainJitLink />
+            </li>
+            <li>
+              <TypedJitTimingLink />
+            </li>
+          </ul>
+          <RouterPushStateButtons />
+        </div>
+      ),
+      { name: "linkState" },
     ),
-    { name: "linkStateTarget" },
-  ),
 
-  // Target page for plain state (reads via useLocationState without definition)
-  path(
-    "/link-state/plain-target",
-    () => (
-      <div data-testid="link-state-plain-target">
-        <h1>Plain State Target</h1>
-        <PlainStateDisplay />
-        <Link to="/location-state/link-state" data-testid="link-state-back">
-          Back
-        </Link>
-      </div>
+    // Target page for typed state (reads via useLocationState with definition)
+    path(
+      "/link-state/target",
+      () => (
+        <div data-testid="link-state-target">
+          <h1>Typed State Target</h1>
+          <TypedStateDisplay />
+          <Link to="/location-state/link-state" data-testid="link-state-back">
+            Back
+          </Link>
+        </div>
+      ),
+      { name: "linkStateTarget" },
     ),
-    { name: "linkStatePlainTarget" },
-  ),
 
-  // #992: a persistent useLocationState reader inside a Suspense boundary
-  // that the e2e holds until the root has hydrated, then releases.
-  path(
-    "/late-suspense/:gate",
-    (ctx) => (
-      <div>
-        <LateSuspenseWriter />
-        <Suspense fallback={<div data-testid="late-ls-fallback">loading</div>}>
-          <LateSuspenseContent gate={ctx.params.gate} />
-        </Suspense>
-      </div>
+    // Target page for plain state (reads via useLocationState without definition)
+    path(
+      "/link-state/plain-target",
+      () => (
+        <div data-testid="link-state-plain-target">
+          <h1>Plain State Target</h1>
+          <PlainStateDisplay />
+          <Link to="/location-state/link-state" data-testid="link-state-back">
+            Back
+          </Link>
+        </div>
+      ),
+      { name: "linkStatePlainTarget" },
     ),
-    { name: "lateSuspense" },
-  ),
-  path.json(
-    "/late-suspense/:gate/release",
-    (ctx) => {
-      const releases = (lateSuspenseReleases.get(ctx.params.gate) ?? 0) + 1;
-      lateSuspenseReleases.set(ctx.params.gate, releases);
-      return { releases };
-    },
-    { name: "lateSuspenseRelease" },
-  ),
 
-  // #994 clearOnReload: a "load more" list. The handler renders the page the
-  // URL names; the earlier pages ride along as location state on the Link.
-  // It also sets state of its own on every request, document loads included.
-  path(
-    "/load-more",
-    (ctx) => {
-      const page = Number(ctx.searchParams.get("page") ?? "1");
-      ctx.setLocationState(ServerPageStamp({ page }));
-      return (
-        <LoadMoreList
-          basePath="/location-state/load-more"
-          page={page}
-          items={[1, 2, 3].map((item) => `p${page}-${item}`)}
-        />
-      );
-    },
-    { name: "loadMore" },
-  ),
-
-  // #994 app version: readers of a typed slot and of plain state.
-  path(
-    "/app-version",
-    (ctx) => (
-      <AppVersionPanel
-        basePath="/location-state/app-version"
-        step={ctx.searchParams.get("step") ?? "start"}
-      />
+    // #992: a persistent useLocationState reader inside a Suspense boundary
+    // that the e2e holds until the root has hydrated, then releases.
+    path(
+      "/late-suspense/:gate",
+      (ctx) => (
+        <div>
+          <LateSuspenseWriter />
+          <Suspense
+            fallback={<div data-testid="late-ls-fallback">loading</div>}
+          >
+            <LateSuspenseContent gate={ctx.params.gate} />
+          </Suspense>
+        </div>
+      ),
+      { name: "lateSuspense" },
     ),
-    { name: "appVersion" },
-  ),
-
-  // Static write/delete demo: drives LocationState.write() and .delete()
-  // from the client and exposes both .read() and useLocationState() readers.
-  path(
-    "/static-write",
-    () => (
-      <div data-testid="ls-static-write">
-        <h1>Static Write</h1>
-        <StaticWriteWidget />
-        <Link to="/location-state" data-testid="sw-index-link">
-          Back to index
-        </Link>
-        <Link to="/location-state/other" data-testid="sw-other-link">
-          Go to other page
-        </Link>
-      </div>
+    path.json(
+      "/late-suspense/:gate/release",
+      (ctx) => {
+        const releases = (lateSuspenseReleases.get(ctx.params.gate) ?? 0) + 1;
+        lateSuspenseReleases.set(ctx.params.gate, releases);
+        return { releases };
+      },
+      { name: "lateSuspenseRelease" },
     ),
-    { name: "staticWrite" },
-  ),
 
-  // Non-redirect server actions that set location state. Drives the
-  // concurrent-action consolidation e2e: distinct keys survive both terminals
-  // (concurrent-skip + consolidation-needed) and a same-key collision resolves
-  // to the last-initiated action.
-  path(
-    "/action-ls",
-    () => (
-      <div data-testid="ls-action-ls">
-        <h1>Action location state</h1>
-        <ActionInfoDisplay />
-        <ActionLocationStateControls />
-        <Link to="/location-state/other" data-testid="action-ls-other-link">
-          Go to other page
-        </Link>
-        <Link to="/location-state" data-testid="action-ls-index-link">
-          Back to index
-        </Link>
-      </div>
+    // The two fixtures below share a layout whose reader stays mounted across a
+    // navigation between them (#1029).
+    layout(OptionsShell, () => [
+      // #994 clearOnReload, #1029: a "load more" list. LoadMoreLoader loads the
+      // page the URL names; the earlier pages ride along as location state on
+      // the Link. The handler sets state of its own on every request, document
+      // loads included.
+      path(
+        "/load-more",
+        (ctx) => {
+          const page = Number(ctx.searchParams.get("page") ?? "1");
+          ctx.setLocationState(ServerPageStamp({ page }));
+          return <LoadMoreList basePath="/location-state/load-more" />;
+        },
+        { name: "loadMore" },
+        () => [loader(LoadMoreLoader)],
+      ),
+
+      // #994 app version: readers of a typed slot and of plain state.
+      path(
+        "/app-version",
+        (ctx) => (
+          <AppVersionPanel
+            basePath="/location-state/app-version"
+            step={ctx.searchParams.get("step") ?? "start"}
+          />
+        ),
+        { name: "appVersion" },
+      ),
+    ]),
+
+    // Static write/delete demo: drives LocationState.write() and .delete()
+    // from the client and exposes both .read() and useLocationState() readers.
+    path(
+      "/static-write",
+      () => (
+        <div data-testid="ls-static-write">
+          <h1>Static Write</h1>
+          <StaticWriteWidget />
+          <Link to="/location-state" data-testid="sw-index-link">
+            Back to index
+          </Link>
+          <Link to="/location-state/other" data-testid="sw-other-link">
+            Go to other page
+          </Link>
+        </div>
+      ),
+      { name: "staticWrite" },
     ),
-    { name: "actionLs" },
-  ),
-]);
+
+    // Non-redirect server actions that set location state. Drives the
+    // concurrent-action consolidation e2e: distinct keys survive both terminals
+    // (concurrent-skip + consolidation-needed) and a same-key collision resolves
+    // to the last-initiated action.
+    path(
+      "/action-ls",
+      () => (
+        <div data-testid="ls-action-ls">
+          <h1>Action location state</h1>
+          <ActionInfoDisplay />
+          <ActionLocationStateControls />
+          <Link to="/location-state/other" data-testid="action-ls-other-link">
+            Go to other page
+          </Link>
+          <Link to="/location-state" data-testid="action-ls-index-link">
+            Back to index
+          </Link>
+        </div>
+      ),
+      { name: "actionLs" },
+    ),
+  ],
+);
