@@ -357,13 +357,11 @@ export interface CreateRSCHandlerOptions<
   cache?: HandlerCacheConfig | ((env: TEnv) => HandlerCacheConfig);
 
   /**
-   * RSC version string included in metadata.
-   * The browser sends this back on partial requests to detect version mismatches.
+   * Version override for this handler. Same meaning as
+   * `createRouter({ version })`, which it takes precedence over: this exact
+   * value is used for both of the router's versions.
    *
-   * Defaults to the auto-generated VERSION from `rsc-router:version` virtual module.
-   * Only set this if you need a custom versioning strategy.
-   *
-   * @default VERSION from rsc-router:version
+   * @default createRouter({ version }), else the router's build versions
    */
   version?: string;
 

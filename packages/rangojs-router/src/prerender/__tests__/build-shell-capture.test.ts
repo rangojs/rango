@@ -56,6 +56,7 @@ interface CaptureDescriptorStub {
     ) => Promise<void>;
   };
   key: string;
+  buildVersion: string;
   ttl?: number;
   swr?: number;
   tags?: string[];
@@ -67,7 +68,7 @@ function makeOptions(router: unknown): BuildShellCaptureOptions {
     urlPath: "/shop/power-set",
     routeName: "shop.category",
     key: "/shop/power-set:shell",
-    buildVersion: "test-version",
+    versions: { data: "test-data-version", document: "test-version" },
     captureShellHTML: vi.fn() as BuildShellCaptureOptions["captureShellHTML"],
   };
 }
@@ -187,11 +188,14 @@ describe("captureShellForBuild", () => {
 
   it("runs global + route middleware to completion (no opt-out) and stores the shell", async () => {
     captureAndStoreShellMock.mockReset();
+    let versionsDuringCapture: unknown;
     captureAndStoreShellMock.mockImplementation(async (..._args: unknown[]) => {
       const descriptor = _args[3] as CaptureDescriptorStub;
+      versionsDuringCapture = getRequestContext()._versions;
+      // As captureAndStoreShell does: the entry carries the descriptor's stamp.
       await descriptor.store.putShell(
         descriptor.key,
-        { buildVersion: "test-version" },
+        { buildVersion: descriptor.buildVersion },
         descriptor.ttl,
         descriptor.swr,
         descriptor.tags,
@@ -231,7 +235,14 @@ describe("captureShellForBuild", () => {
 
     const result = await captureShellForBuild(makeOptions(router));
     expect(result.outcome).toBe("stored");
+    // Stamped with the router's DOCUMENT version: the serve-side gate compares
+    // the stamp with the handler's version, which is the document version.
     expect(result.entry).toEqual({ buildVersion: "test-version" });
+    // The capture's stores key with the full pair, like a served request.
+    expect(versionsDuringCapture).toEqual({
+      data: "test-data-version",
+      document: "test-version",
+    });
     expect(captureAndStoreShellMock).toHaveBeenCalledTimes(1);
     // Both layers wrapped the capture: global outermost, route innermost.
     expect(events).toEqual([

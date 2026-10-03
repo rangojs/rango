@@ -170,6 +170,21 @@ export async function classifyRequest<TEnv = any>(
   const willFullRender =
     !isAction && !isLoaderFetch && !isPartialReq && !isPeRender;
 
+  // Before the version check: each router has its own version, so a tab of
+  // another app always carries one this router does not have. That request is
+  // an app switch, not a stale client.
+  const clientRouterId = url.searchParams.get("_rsc_rid");
+  if (
+    clientRouterId &&
+    clientRouterId !== deps.routerId &&
+    url.searchParams.has("_rsc_partial")
+  ) {
+    return {
+      mode: "app-switch",
+      reloadUrl: stripInternalParams(url).toString(),
+    };
+  }
+
   const clientVersion = url.searchParams.get("_rsc_v");
   if (
     deps.routerVersion &&
@@ -192,18 +207,6 @@ export async function classifyRequest<TEnv = any>(
     return {
       mode: "version-mismatch",
       reloadUrl,
-    };
-  }
-
-  const clientRouterId = url.searchParams.get("_rsc_rid");
-  if (
-    clientRouterId &&
-    clientRouterId !== deps.routerId &&
-    url.searchParams.has("_rsc_partial")
-  ) {
-    return {
-      mode: "app-switch",
-      reloadUrl: stripInternalParams(url).toString(),
     };
   }
 

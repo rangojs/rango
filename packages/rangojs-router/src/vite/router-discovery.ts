@@ -34,6 +34,7 @@ import {
   internalDebugNoCacheMiddleware,
 } from "./inject-client-debug.js";
 import { createVersionPlugin } from "./plugins/version-plugin.js";
+import { uniformVersions } from "../router-versions.js";
 import { getVirtualEntrySSR, VIRTUAL_IDS } from "./plugins/virtual-entries.js";
 import { createVirtualStubPlugin } from "./plugins/virtual-stub-plugin.js";
 import {
@@ -64,6 +65,14 @@ import {
   refreshRecordedClientUrlProjections,
 } from "./discovery/client-urls-projection.js";
 import { runShellPrerenderPhase } from "./discovery/shell-prerender-phase.js";
+import { runRouterVersionsPhase } from "./discovery/router-versions-phase.js";
+import {
+  recordBundleFileNames,
+  recordClientGraph,
+  recordExternalImports,
+  recordServerGraph,
+  recordVersionModuleFiles,
+} from "./discovery/build-versions.js";
 import { describeDiscoveryFailure } from "./discovery/discovery-errors.js";
 import { findTransitionWhenError } from "../transition-when-ref.js";
 import { transitionWhenHoistPlugin } from "./plugins/transition-when-hoist.js";
@@ -410,6 +419,7 @@ function resetPrerenderCollection(s: DiscoveryState): void {
   s.staticManifestEntries = null;
   s.shellCandidates = null;
   s.prerenderPayloadValues = null;
+  s.buildData = [];
 }
 
 /**
@@ -1533,7 +1543,7 @@ export function createRouterDiscoveryPlugin(
               maxSnapshotBytes,
               captureTimeout,
               buildEnv: s.resolvedBuildEnv,
-              buildVersion: version,
+              versions: uniformVersions(version),
               captureShellHTML: ssrModule.captureShellHTML,
               debug: !!debugDiscovery,
             });
@@ -2261,17 +2271,23 @@ export function createRouterDiscoveryPlugin(
       }
     },
 
-    // Post-build PPR shell capture (producer B, #699): runs after EVERY
-    // environment bundle is written — the shell prelude embeds built client
-    // asset URLs (bootstrap entry), which do not exist at buildStart. The
-    // kept temp server and the buildEnv were deferred AS A PAIR in
-    // buildStart's finally; this finally is the pair's success-path owner
-    // (buildEnd below owns the aborted-build path) — the phase itself is a
-    // pure producer and tears down only the globals it installs.
+    // Post-build phases, after EVERY environment bundle is written.
+    //
+    // 1. Cache versions (discovery/router-versions-phase.ts): hashes the
+    //    server output as postprocessBundle left it and writes the per-router
+    //    table into the built version module. First, because phase 2 stamps
+    //    its entries with these versions and reads the same RSC out dir.
+    // 2. PPR shell capture (producer B, #699): the shell prelude embeds built
+    //    client asset URLs (bootstrap entry), which do not exist at
+    //    buildStart. The kept temp server and the buildEnv were deferred AS A
+    //    PAIR in buildStart's finally; this finally is the pair's success-path
+    //    owner (buildEnd below owns the aborted-build path) — the phase itself
+    //    is a pure producer and tears down only the globals it installs.
     buildApp: {
       order: "post",
       async handler(builder) {
         try {
+          runRouterVersionsPhase(s, builder as any);
           await runShellPrerenderPhase(s, builder as any);
         } finally {
           if (s.isBuildMode) {
@@ -2387,6 +2403,25 @@ export function createRouterDiscoveryPlugin(
     // Record handler chunk metadata and RSC entry filename during RSC build.
     // Used by closeBundle for handler code eviction and prerender data injection.
     generateBundle(_options: any, bundle: any) {
+      // Inputs of the per-router cache versions (discovery/build-versions.ts).
+      // Each pass overwrites its slot: plugin-rsc runs the RSC and SSR builds
+      // twice, and the real pass comes last.
+      if (s.isBuildMode) {
+        const envName = this.environment?.name;
+        if (envName) {
+          s.versionModuleFiles.set(envName, recordVersionModuleFiles(bundle));
+        }
+        if (envName === "rsc") {
+          s.serverBuildGraph = recordServerGraph(this, bundle);
+        } else if (envName === "client") {
+          s.clientBuildGraph = recordClientGraph(this, bundle);
+        } else if (envName === "ssr") {
+          s.ssrBundle = {
+            fileNames: recordBundleFileNames(bundle),
+            externalImports: recordExternalImports(bundle),
+          };
+        }
+      }
       if (this.environment?.name !== "rsc") return;
       const genStart = debugBuild ? performance.now() : 0;
 

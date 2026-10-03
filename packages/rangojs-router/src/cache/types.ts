@@ -49,6 +49,13 @@ export interface CacheGetResult {
  * The store deals with serialized data - RSC serialization is handled
  * by the cache provider layer.
  *
+ * A store that outlives the process has to keep one build from reading what
+ * other code wrote. The built-in stores prefix their keys with the serving
+ * router's cache versions; a custom store reads the same pair with
+ * `getCacheVersions()` (`@rangojs/router/cache`): `data` for segment entries
+ * and items, `document` for responses and shells, and no version on its
+ * tag-invalidation records, so an invalidation reaches every version.
+ *
  * @typeParam TEnv - Platform bindings type (e.g., Cloudflare env)
  */
 export interface SegmentCacheStore<TEnv = unknown> {
@@ -415,13 +422,14 @@ export interface ShellCacheEntry {
   /** React.version captured at prerender time; the read-time invalidation gate. */
   reactVersion: string;
   /**
-   * Build version captured at prerender time (the RSC handler's `version` —
-   * the `@rangojs/router:version` build stamp by default, bumped per build and
-   * on dev RSC-module edits). The second read-time gate: a persistent shared
+   * Build version captured at prerender time: the RSC handler's `version`,
+   * which is the router's DOCUMENT version (router-versions.ts) — a hash of
+   * its server code and the client asset names by default, a stamp bumped on
+   * dev RSC-module edits. The second read-time gate: a persistent shared
    * store (KV/runtime-cache) survives deploys, and an app-code change that
    * keeps the same React version would otherwise leave a stale-build
-   * prelude+postponed live under the same key. A custom store returns it as
-   * putShell received it.
+   * prelude+postponed live under the same key. A deploy that changes neither
+   * keeps the entry. A custom store returns it as putShell received it.
    */
   buildVersion: string;
   /**

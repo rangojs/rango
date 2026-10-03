@@ -23,7 +23,8 @@
  *   3. The platform guardrails: the 2 MB per-item ceiling (oversized writes
  *      silently no-op on Vercel, so we skip + report), the per-item tag cap, and
  *      cross-deploy non-reconciliation (TTL/tag updates are not reconciled across
- *      deployments - bake a build id into `version` or the getCache namespace).
+ *      deployments - every key carries the serving router's cache version, see
+ *      toStoreKey).
  *
  * Dependency stance: this module imports NOTHING from `@vercel/functions`. The
  * runtime cache handle (and `waitUntil`) are injected through the constructor and
@@ -52,6 +53,10 @@ import {
   _getRequestContext,
   type RequestContext,
 } from "../../server/request-context.js";
+import {
+  versionKeyPrefix,
+  type KeyVersion,
+} from "../../server/build-version-table.js";
 import { isPerClientSignalHeader } from "../../browser/cookie-name.js";
 import {
   resolveTtl,
@@ -170,6 +175,15 @@ const REVALIDATION_LOCK_MS = 30_000;
  *  the suffix; `rg:` namespaces every Rango entry. `h` is the PPR shell tier. */
 type CacheFamily = "s" | "i" | "r" | "h" | "tm";
 
+/** Which of the serving router's versions each family's keys carry. */
+const FAMILY_VERSION: Record<CacheFamily, KeyVersion> = {
+  s: "data",
+  i: "data",
+  r: "document",
+  h: "document",
+  tm: null,
+};
+
 /**
  * TTL for tag-invalidation marker entries ("tm" family), written by
  * invalidateTags for isTagsInvalidatedSince (the build-shell read-through,
@@ -177,7 +191,7 @@ type CacheFamily = "s" | "i" | "r" | "h" | "tm";
  * The platform's expireTag() DELETES tagged entries (no queryable
  * history), so the markers are rango's own record of "tag X was invalidated
  * at T". One year: runtime tagged-shell retention is capped to this lifetime,
- * while buildVersion retires build shells on the next deploy. An expired marker
+ * while a build shell is replaced by the next build's. An expired marker
  * therefore cannot resurrect a runtime shell that outlived its invalidation.
  */
 const TAG_MARKER_TTL_SECONDS = 365 * 24 * 60 * 60;
@@ -299,14 +313,20 @@ export type VercelCacheDebug =
 export interface VercelCacheStoreOptions<TEnv = unknown> {
   /**
    * The Vercel Runtime Cache handle - `getCache()` from `@vercel/functions`.
-   * Required. Construct it with a build-hash namespace to bust stale-shaped
-   * entries across deployments, since Vercel does not reconcile TTL/tags between
-   * deploys:
+   * Required.
    *
    * ```ts
    * import { getCache } from "@vercel/functions";
-   * new VercelCacheStore({ cache: getCache({ namespace: BUILD_ID }) });
+   * new VercelCacheStore({ cache: getCache() });
    * ```
+   *
+   * Vercel does not reconcile entries between deployments; the store does it
+   * through its keys, which carry the serving router's cache versions (see
+   * `version`). So a deploy that changes a router's code stops reading that
+   * router's old entries, and a deploy that does not keeps them. A namespace
+   * that changes per deployment (`getCache({ namespace: VERCEL_DEPLOYMENT_ID })`)
+   * still works and clears the cache on every deploy, which is what you want
+   * only if you need that.
    */
   cache: VercelRuntimeCache;
 
@@ -336,9 +356,15 @@ export interface VercelCacheStoreOptions<TEnv = unknown> {
   ) => string | Promise<string>;
 
   /**
-   * Build/version id folded into every stored key as `v/{version}/...`. A second
-   * cross-deploy busting layer in addition to (or instead of) the getCache
-   * namespace. Changing it invalidates everything this store wrote previously.
+   * Version override, folded into every versioned key as `v/{version}/...`.
+   * When set, this exact value is used for cached data and stored HTML alike;
+   * changing it makes everything this store wrote before unreachable.
+   *
+   * Leave it unset for the default: the store keys with the versions of the
+   * router serving the request, as CFCacheStore does. Segments and `"use
+   * cache"` items use the router's data version; responses and PPR shells use
+   * its document version (see `createRouter({ version })`). Tag markers are
+   * never versioned, so an invalidation applies to every version.
    */
   version?: string;
 
@@ -447,8 +473,8 @@ function tagStamp(tags: string[]): { ta?: number } {
  * that propagates expireTag rejections does get the strict guarantee, which is
  * what the unit suite exercises.)
  *
- * Key hashing / family isolation. The store namespaces its three value tiers as
- * `rg:{s|i|r}:{key}` so segment, `"use cache"`, and response entries occupy
+ * Key hashing / family isolation. The store namespaces its value tiers as
+ * `rg:{s|i|r|h}:{key}` so segment, `"use cache"`, response and shell entries occupy
  * disjoint keyspaces. That separation is only as strong as the cache's
  * `keyHashFunction`: `getCache`'s default is djb2, which folds every key to 32
  * bits (8 hex chars), so at a large live-key count a collision can let one
@@ -464,11 +490,9 @@ function tagStamp(tags: string[]): { ta?: number } {
  *
  * // One handle per process: getCache() resolves the platform cache on every
  * // call, and the PPR shell and tag-marker memos are kept per handle.
- * // `process.env` (not `import.meta.env`, which needs a VITE_ prefix and
- * // would be undefined here) so cross-deploy busting via `version` works.
- * const runtimeCache = getCache({
- *   namespace: process.env.VERCEL_DEPLOYMENT_ID,
- * });
+ * // No deployment id in the namespace: the store's keys carry the serving
+ * // router's cache versions, so a deploy keeps what its code did not change.
+ * const runtimeCache = getCache();
  *
  * export const router = createRouter({
  *   cache: () => ({
@@ -493,7 +517,8 @@ export class VercelCacheStore<
 
   private readonly cache: VercelRuntimeCache;
   private readonly waitUntil?: (promise: Promise<unknown>) => void;
-  private readonly version?: string;
+  /** The `version` option: used for every versioned family when set. */
+  private readonly explicitVersion?: string;
   private readonly maxItemBytes: number;
   private readonly memo: ResolvedShellMemoOptions;
   private readonly handleMemos: VercelHandleMemos;
@@ -518,7 +543,7 @@ export class VercelCacheStore<
     this.waitUntil = options.waitUntil;
     this.defaults = options.defaults;
     this.keyGenerator = options.keyGenerator;
-    this.version = options.version;
+    this.explicitVersion = options.version;
     this.maxItemBytes = options.maxItemBytes ?? VERCEL_MAX_ITEM_BYTES;
     this.maxShellEntryBytes = Math.floor((this.maxItemBytes * 3) / 4);
     this.memo = resolveShellMemoOptions(options.memo, {
@@ -1468,9 +1493,18 @@ export class VercelCacheStore<
   // large live-key count a same-family collision can serve the wrong body and a
   // cross-family one reads as corrupt. See the class doc for passing a wider
   // hash (sha256) when many keys are live.
+  //
+  // The version prefix depends on the family: segments (`s`) and items (`i`)
+  // are cached RSC data and take the serving router's DATA version; responses
+  // (`r`) and shells (`h`) are stored HTML or carry the handler version in
+  // their bytes and take its DOCUMENT version; tag markers (`tm`) take none,
+  // so an invalidation applies to every version, including one that comes back
+  // in a rollback (isTagsInvalidatedSince only compares times). A store-level
+  // `version` is used for every versioned family. The router's versions are
+  // read from the request context per operation: the cache factory builds the
+  // store without knowing the router.
   private toStoreKey(key: string, family: CacheFamily): string {
-    const versionPrefix = this.version ? `v/${this.version}/` : "";
-    return `${versionPrefix}rg:${family}:${key}`;
+    return `${versionKeyPrefix(this.explicitVersion, FAMILY_VERSION[family])}rg:${family}:${key}`;
   }
 
   private async write(

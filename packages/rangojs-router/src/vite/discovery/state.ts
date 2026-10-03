@@ -10,6 +10,7 @@ import type { ScanFilter } from "../../build/generate-route-types.js";
 import type { ClientUrlProjection } from "../../client-urls/server-projection.js";
 
 export const VIRTUAL_ROUTES_MANIFEST_ID = "virtual:rsc-router/routes-manifest";
+export const VIRTUAL_LOADER_MANIFEST_ID = "virtual:rsc-router/loader-manifest";
 
 export interface PluginOptions {
   enableBuildPrerender?: boolean;
@@ -147,6 +148,24 @@ export interface DiscoveryState {
    * buildEnd (aborted build).
    */
   shellPhaseTempServer: import("vite").ViteDevServer | null;
+  /**
+   * Inputs of the per-router cache versions (build-versions.ts), recorded by
+   * generateBundle. plugin-rsc builds the RSC and SSR environments twice (a
+   * scan pass, then the real pass); each pass overwrites its slot, so the
+   * buildApp post hook reads the real pass.
+   */
+  serverBuildGraph: import("./build-versions.js").ServerBuildGraph | null;
+  clientBuildGraph: import("./build-versions.js").ClientBuildGraph | null;
+  ssrBundle: { fileNames: string[]; externalImports: string[] } | null;
+  /** Per environment, the chunk files holding the version module. */
+  versionModuleFiles: Map<string, string[]>;
+  /** Prerender and Static payloads the build rendered, by content digest. */
+  buildData: import("./build-versions.js").BuildDataRecord[];
+  /**
+   * The versions the buildApp post hook computed and wrote into the built
+   * version module. The shell capture phase stamps its entries with them.
+   */
+  routerVersions: import("../../router-versions.js").RouterVersionsTable | null;
   handlerChunkInfoMap: Map<string, ChunkInfo>;
   staticHandlerChunkInfoMap: Map<string, ChunkInfo>;
   rscEntryFileName: string | null;
@@ -204,6 +223,12 @@ export function createDiscoveryState(
     shellCandidates: null,
     prerenderPayloadValues: null,
     shellPhaseTempServer: null,
+    serverBuildGraph: null,
+    clientBuildGraph: null,
+    ssrBundle: null,
+    versionModuleFiles: new Map(),
+    buildData: [],
+    routerVersions: null,
     handlerChunkInfoMap: new Map(),
     staticHandlerChunkInfoMap: new Map(),
     rscEntryFileName: null,

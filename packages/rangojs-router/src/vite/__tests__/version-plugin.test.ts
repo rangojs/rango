@@ -405,3 +405,44 @@ describe("isViteDepCachePath", () => {
     ).toBe(true);
   });
 });
+
+describe("createVersionPlugin: the module per mode", () => {
+  type Loadable = ReturnType<typeof createVersionPlugin> & {
+    configResolved: (config: any) => void;
+    load: (id: string) => string | null;
+  };
+  const load = (command: "serve" | "build") => {
+    const plugin = createVersionPlugin() as Loadable;
+    plugin.configResolved({ command });
+    return plugin.load("\0@rangojs/router:version")!;
+  };
+
+  it("dev: one stamp for both versions, and no table", async () => {
+    await withMockedNow([0x1a2b], () => {
+      expect(load("serve")).toBe(
+        `export const VERSION = "1a2b";\nexport const ROUTER_VERSIONS = undefined;`,
+      );
+    });
+  });
+
+  it("build: a placeholder for the table, and VERSION read from it", () => {
+    expect(load("build")).toBe(
+      `export const ROUTER_VERSIONS = __RANGO_ROUTER_VERSIONS__;\n` +
+        `export const VERSION = ROUTER_VERSIONS["*"][1];`,
+    );
+  });
+
+  // The build stamp used to be Date.now() and sat in a chunk every router
+  // imports, so no two builds of the same source had the same server output.
+  it("build: holds nothing that differs between two builds", async () => {
+    const first = await withMockedNow([1000], () => load("build"));
+    const second = await withMockedNow([999999], () => load("build"));
+    expect(second).toBe(first);
+    expect(first).not.toMatch(/"[0-9a-f]{3,}"/);
+  });
+
+  it("build: throws when evaluated before the build filled the table", () => {
+    const body = load("build").replaceAll("export const", "const");
+    expect(() => new Function(body)()).toThrow(ReferenceError);
+  });
+});

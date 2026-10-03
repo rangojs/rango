@@ -47,6 +47,7 @@ import { type MetricsStore } from "./context.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import { getFetchableLoader } from "./fetchable-loader-store.js";
 import type { SegmentCacheStore } from "../cache/types.js";
+import type { RouterVersions } from "../router-versions.js";
 import type { Theme, ResolvedThemeConfig } from "../theme/types.js";
 import type { ExecutionContext, RequestScope } from "../types/request-scope.js";
 import type { TransitionWhenRecord } from "../router/transition-when.js";
@@ -858,6 +859,15 @@ export interface RequestContext<
   _routerId?: string;
 
   /**
+   * @internal Cache versions of the router serving this request. The cache
+   * factory builds a store per request without knowing the router, so a store
+   * reads its key versions from here, lazily, the same way CFCacheStore
+   * resolves its base URL (getCacheVersions, server/build-version-table.ts).
+   * Unset on a context no router created; a store then uses the build version.
+   */
+  _versions?: RouterVersions;
+
+  /**
    * @internal RouteSnapshot from classifyRequest, reused by match/matchPartial
    * to avoid a second resolveRoute call. Cleared on HMR invalidation.
    */
@@ -966,6 +976,7 @@ export type PublicRequestContext<
   | "_tracing"
   | "_basename"
   | "_routerId"
+  | "_versions"
   | "_setStatus"
   | "_rotateStateCookie"
   | "_setKeepCacheDirective"
@@ -1130,8 +1141,13 @@ export interface CreateRequestContextOptions<TEnv> {
   themeConfig?: ResolvedThemeConfig | null;
   /** Resolved rango state cookie name, for the server seat of invalidateClientCache(). */
   stateCookieName?: string;
-  /** Build version, used as the prefix of a server-rotated rango state value. */
-  version?: string;
+  /**
+   * The versions of the router serving this request (resolveRouterVersions).
+   * Stored as `_versions` for the cache stores; `document` is also the prefix
+   * of a server-rotated rango state value, which the browser compares with the
+   * payload's `metadata.version`.
+   */
+  versions?: RouterVersions;
 }
 
 /**
@@ -1159,7 +1175,7 @@ export function createRequestContext<TEnv>(
     build = false,
     themeConfig,
     stateCookieName,
-    version: stateVersion,
+    versions,
   } = options;
   // ctx.request.headers is guarded like headers() (#976); every router read
   // of this request's headers goes through requestHeaders().
@@ -1451,7 +1467,7 @@ export function createRequestContext<TEnv>(
       const prevRaw =
         (requestHeaders(request).get("x-rango-state") || null) ??
         getRawCookieValue(cookieHeader, stateCookieName);
-      const value = mintStateValue(stateVersion ?? "0", prevRaw);
+      const value = mintStateValue(versions?.document ?? "0", prevRaw);
       // rawStubHeaders: guard-exempt internal writer — invalidateClientCache()
       // is documented callable from loaders and during shell capture.
       rawStubHeaders.append(
@@ -1527,6 +1543,7 @@ export function createRequestContext<TEnv>(
 
     _handleStore: handleStore,
     _cacheStore: cacheStore,
+    _versions: versions,
     _searchParamsFilter: searchParamsFilter,
     _explicitTaggedStores: explicitTaggedStores,
     _requestTags: new Set<string>(),

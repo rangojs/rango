@@ -203,8 +203,15 @@ const SSR_STUB: SSRModule = {
   },
 };
 
-/** Handlers per router, keyed by the `cacheStore` override or the router. */
-const handlers = new WeakMap<object, WeakMap<object, ShellHandler>>();
+/**
+ * Handlers per router, keyed by the `cacheStore` override or the router. A
+ * handler resolves its router's versions when it is created, so an entry made
+ * before a setBuildVersions() call (a simulated deploy) is not reused.
+ */
+const handlers = new WeakMap<
+  object,
+  WeakMap<object, { handler: ShellHandler; generation: number }>
+>();
 
 async function getHandler(
   router: Rango<any, any>,
@@ -212,8 +219,14 @@ async function getHandler(
 ): Promise<ShellHandler> {
   let byStore = handlers.get(router);
   if (!byStore) handlers.set(router, (byStore = new WeakMap()));
+  // Imported here, like the handler below: the module binds the build-only
+  // `@rangojs/router:version` virtual, which a flight-only test config (one
+  // that never serves a request) does not alias.
+  const { routerVersionsGeneration } =
+    await import("../server/build-version-table.js");
+  const generation = routerVersionsGeneration();
   const cached = byStore.get(cacheStore ?? router);
-  if (cached) return cached;
+  if (cached?.generation === generation) return cached.handler;
 
   const internal = toInternal(router);
   const routerCache = internal.cache;
@@ -230,11 +243,10 @@ async function getHandler(
   const handler = createRSCHandler({
     router: internal,
     nonce: internal.nonce,
-    version: internal.version,
     loadSSRModule: async () => SSR_STUB,
     cache: routerCache || cacheStore ? cache : undefined,
   });
-  byStore.set(cacheStore ?? router, handler);
+  byStore.set(cacheStore ?? router, { handler, generation });
   return handler;
 }
 

@@ -1,5 +1,4 @@
 /// <reference types="@vitejs/plugin-rsc/types" />
-/// <reference path="../vite/plugins/version.d.ts" />
 /**
  * RSC Request Handler
  *
@@ -47,7 +46,7 @@ import {
   type ResponseRouteMatch,
 } from "./response-route-handler.js";
 import { nonce as nonceToken, resolveProviderNonce } from "./nonce.js";
-import { VERSION } from "@rangojs/router:version";
+import { resolveRouterVersions } from "../server/build-version-table.js";
 import type { ErrorPhase } from "../types.js";
 import type { RouterRequestInput } from "../router/router-interfaces.js";
 import {
@@ -169,7 +168,18 @@ export function createRSCHandler<
   TEnv = unknown,
   TRoutes extends Record<string, string> = Record<string, string>,
 >(options: CreateRSCHandlerOptions<TEnv, TRoutes>) {
-  const { router, version = VERSION, nonce: nonceProvider } = options;
+  const { router, nonce: nonceProvider } = options;
+  // A consumer-set version (this option, else createRouter({ version })) is
+  // used for both; otherwise the router's own pair from the build.
+  const versions = resolveRouterVersions(
+    router.id,
+    options.version ?? router.version,
+  );
+  // Everything the handler itself versions is tied to the HTML a tab holds:
+  // payload metadata (what the browser echoes as `_rsc_v`), the reload check,
+  // shell stamping and gating, the rango state value. The data version is only
+  // a cache-key prefix, read by the stores from the request context.
+  const version = versions.document;
 
   // Handler-owned registry of explicit per-scope stores from cache({ store }).
   // Lives in the closure so it is scoped per handler (multi-router deployments
@@ -572,7 +582,7 @@ export function createRSCHandler<
       executionContext: executionCtx,
       themeConfig: router.themeConfig,
       stateCookieName: router.resolvedStateCookieName,
-      version,
+      versions,
     });
     if (unmarkedRequest) requestContext._shellForcedMiss = true;
     // Gate on the SAME enabled-semantics withTimeout uses (isTimeoutEnabled):

@@ -1,0 +1,9 @@
+{
+  "name": "ext-lib",
+  "version": "1.0.0",
+  "type": "module",
+  "exports": "./index.js",
+  "dependencies": {
+    "ext-dep": "1.0.0"
+  }
+}

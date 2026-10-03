@@ -1551,7 +1551,7 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
         store.invalidateTags(["x"]),
       );
       await ctx.flush();
-      const markerBefore = kv.store.get("v/v1/__tag__/x");
+      const markerBefore = kv.store.get("__tag__/x");
       expect(markerBefore).toBeDefined();
 
       // A misconfigured keyGenerator returning "__tag__/x" must NOT overwrite
@@ -1562,7 +1562,7 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       );
       await ctx.flush();
 
-      expect(kv.store.get("v/v1/__tag__/x")).toBe(markerBefore); // untouched
+      expect(kv.store.get("__tag__/x")).toBe(markerBefore); // untouched
       expect(reported.some((r) => r.category === "cache-write")).toBe(true);
     });
 
@@ -1572,7 +1572,7 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
         store.invalidateTags(["x"]),
       );
       await ctx.flush();
-      expect(kv.store.get("v/v1/__tag__/x")).toBeDefined();
+      expect(kv.store.get("__tag__/x")).toBeDefined();
 
       const delSpy = vi.spyOn(kv, "delete");
       const { reqCtx, reported } = ctxWithReporter();
@@ -1586,8 +1586,8 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
 
       expect(got).toBeNull();
       expect(deleted).toBe(false);
-      expect(delSpy).not.toHaveBeenCalledWith("v/v1/__tag__/x"); // marker safe
-      expect(kv.store.get("v/v1/__tag__/x")).toBeDefined();
+      expect(delSpy).not.toHaveBeenCalledWith("__tag__/x"); // marker safe
+      expect(kv.store.get("__tag__/x")).toBeDefined();
       expect(reported.some((r) => r.category === "cache-read")).toBe(true);
       expect(reported.some((r) => r.category === "cache-delete")).toBe(true);
     });

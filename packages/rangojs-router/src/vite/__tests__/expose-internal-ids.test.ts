@@ -1642,3 +1642,40 @@ export const MyPage = Prerender(() => <div>page</div>);
     expect(result.code).toContain("Prerender(");
   });
 });
+
+describe("loader manifest order", () => {
+  const loaderFile = (name: string) =>
+    `import { createLoader } from "@rangojs/router";
+export const ${name} = createLoader(async () => ({ ok: true }));
+`;
+  const FILES = ["zeta", "alpha", "mid"];
+
+  // The registry fills in directory-scan and transform order, both of which
+  // differ between machines and runs; the manifest's bytes feed the cache
+  // version of every router bundled with it (discovery/build-versions.ts).
+  const manifestFor = (order: string[]) => {
+    const plugin = createPlugin();
+    plugin.configResolved({ command: "build", root: ROOT });
+    for (const name of order) {
+      plugin.transform.call(
+        rscCtx(),
+        loaderFile(`${name}Loader`),
+        `${ROOT}/src/${name}.ts`,
+      );
+    }
+    return plugin.load.call(
+      rscCtx(),
+      "\0virtual:rsc-router/loader-manifest",
+    ) as string;
+  };
+
+  it("lists the same loaders in the same order, whatever order they registered in", () => {
+    const manifest = manifestFor(FILES);
+    expect(manifest).toBe(manifestFor([...FILES].reverse()));
+    const ids = [...manifest.matchAll(/^\s+"([^"]+)": \(\) => import/gm)].map(
+      (match) => match[1],
+    );
+    expect(ids).toHaveLength(3);
+    expect(ids).toEqual([...ids].sort());
+  });
+});

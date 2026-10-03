@@ -448,7 +448,7 @@ describe("CFCacheStore purge mode (tagPurge)", () => {
       );
       // The durable marker landed regardless: KV/shell reads are protected
       // even while L1 stays stale until the retried purge.
-      expect(kv.store.get(`v/v1/${TAG_MARKER_PREFIX}products`)).toBeDefined();
+      expect(kv.store.get(`${TAG_MARKER_PREFIX}products`)).toBeDefined();
     });
   });
 

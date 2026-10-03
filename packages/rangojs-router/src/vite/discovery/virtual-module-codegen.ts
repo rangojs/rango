@@ -8,6 +8,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, basename, join } from "node:path";
 import { jsonParseExpression } from "../utils/manifest-utils.js";
+import { compareStrings } from "../utils/compare-strings.js";
 import { VIRTUAL_ROUTES_MANIFEST_ID } from "./state.js";
 import type { DiscoveryState } from "./state.js";
 
@@ -111,8 +112,12 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
 
     if (hasClientUrlModules) {
       lines.push(`clearClientUrlProjections();`);
-      for (const [referenceId, projection] of state.clientUrlProjectionMap ??
-        []) {
+      // Sorted: the map fills in transform order, which varies between runs,
+      // and this module's bytes feed cache versions (build-versions.ts).
+      const projections = [...(state.clientUrlProjectionMap ?? [])].sort(
+        ([a], [b]) => compareStrings(a, b),
+      );
+      for (const [referenceId, projection] of projections) {
         lines.push(
           `setClientUrlProjection(${JSON.stringify(referenceId)}, ${jsonParseExpression(projection)});`,
         );

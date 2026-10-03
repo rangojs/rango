@@ -163,6 +163,24 @@ describe("generateRoutesManifestModule — client URL projections", () => {
     expect(code).toContain("clearClientUrlProjections();");
     expect(code).not.toContain('setClientUrlProjection("');
   });
+
+  // The map fills in transform order, which differs between two builds of the
+  // same source, and this module's bytes feed the cache version of every
+  // router bundled with it (build-versions.ts).
+  it("emits the projections in one order, whatever order they were recorded in", () => {
+    const projection = { version: 1 as const, routes: [] };
+    const codeFor = (ids: string[]) => {
+      const s = makeManifestState(true);
+      s.clientUrlSourceByReferenceId = new Map(ids.map((id) => [id, id]));
+      s.clientUrlProjectionMap = new Map(ids.map((id) => [id, projection]));
+      return generateRoutesManifestModule(s);
+    };
+    const code = codeFor(["ref-c", "ref-a", "ref-b"]);
+    expect(code).toBe(codeFor(["ref-b", "ref-c", "ref-a"]));
+    expect(
+      [...code.matchAll(/setClientUrlProjection\("([^"]+)"/g)].map((m) => m[1]),
+    ).toEqual(["ref-a", "ref-b", "ref-c"]);
+  });
 });
 
 describe("generateRoutesManifestModule — per-router loaders are build-only", () => {
