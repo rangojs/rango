@@ -221,7 +221,9 @@ import { FlashMessage } from "../location-states";
 };
 ```
 
-Or via `ctx.setLocationState()` on any response (handlers and middleware):
+Or via `ctx.setLocationState()` from a handler or middleware. It is delivered
+with a client navigation's or an action's response; a document response
+carries no location state (there is no history entry to write it to yet):
 
 ```tsx
 (ctx) => {
@@ -230,39 +232,180 @@ Or via `ctx.setLocationState()` on any response (handlers and middleware):
 };
 ```
 
-### Version and validate
+### createLocationState options
+
+```ts
+createLocationState<TState>({
+  flash?: boolean, // read once, cleared after paint (above)
+  version?: number, // drop state written under another version
+  validate?: (value: unknown) => value is TState, // check the value on read
+  clearOnReload?: boolean, // drop the state on a document load
+});
+```
+
+A definition that sets none of them stores the value as-is and reads it back
+unchecked. `version`, `validate` and `clearOnReload` each make one kind of
+stored state read as `undefined`, which is what a reader already handles: it
+is the same result as no state.
+
+| Option          | Stored in `history.state`                   | Reads `undefined` when                                                   |
+| --------------- | ------------------------------------------- | ------------------------------------------------------------------------ |
+| none            | the value                                   | the slot is empty, or holds another definition's envelope with a version |
+| `flash`         | the value, removed after the first read     | it has been read once                                                    |
+| `version`       | `{ __rsc_ls_env: 1, v, value }`             | the slot is not an envelope with the same `v`                            |
+| `validate`      | the value                                   | `validate` returns `false` or throws                                     |
+| `clearOnReload` | `{ __rsc_ls_env: 1, clearOnReload, value }` | the entry's document was loaded since the write (the slot is removed)    |
+
+`version`, `validate` and one of `flash` / `clearOnReload` can be combined;
+`flash` with `clearOnReload` is rejected: a compile error, and for untyped
+callers `createLocationState` throws in development.
+
+### version and validate: state from another deploy
 
 The slot key is the file path plus the export name, so it stays the same across
 deploys. History entries survive reloads and back/forward. A tab left open
 across a release that changed the shape would otherwise restore the old value
 typed as the new one.
 
-`version` is the cheap check for a deliberate shape change. Writers store
-`{ v, value }`. A missing `v`, a different `v`, or a non-object reads as
-`undefined` — the same as no state. A pre-version raw object is not treated as
-the new state. The value you get back is the inner `value`, the same reference
-that was stored.
+`version` is the cheap check for a deliberate shape change. Bump it when the
+shape changes:
 
 ```ts
 export const GridState = createLocationState<GridSnapshot>({ version: 2 });
-// stored as { v: 2, value }; a different or missing version reads as undefined
 ```
 
-`validate` also covers state written by other code under the same key. The
-stored shape stays the raw value. The check runs on read; `false` reads as
-`undefined`.
+Writers store the value in an envelope, `{ __rsc_ls_env: 1, v: 2, value }`,
+and a read returns `value` (the same reference that was stored) only from an
+envelope whose `v` is this number. Everything else reads `undefined`:
+
+- an envelope with another `v` (an older or newer deploy);
+- a raw value written before the definition had a `version`;
+- a raw value that happens to look like `{ v, value }`: the `__rsc_ls_env`
+  mark, in the router's reserved `__rsc_ls_` prefix, is what makes an envelope.
+
+`validate` checks the value itself, so it also covers state written by other
+code under the same key. It does not change what is stored. It runs on every
+read of a non-empty slot; `false` reads as `undefined`.
 
 ```ts
 export const GridState = createLocationState<GridSnapshot>({
   validate: (value): value is GridSnapshot => isGridSnapshot(value),
 });
-// run on read; a failing value reads as undefined
 ```
 
-Both may be set. A version mismatch returns `undefined` without calling
-`validate`. A match runs `validate` on the inner value. `flash: true` still
-clears the slot after paint; when `version` is set the slot holds the envelope
-and readers still see `TState | undefined`.
+- An empty slot is `undefined` without calling `validate`.
+- A `validate` that throws counts as `false`. It never fails the render or
+  the navigation; in development the error is logged once per definition,
+  with the definition's key.
+- With `version`, a mismatch returns `undefined` without calling `validate`,
+  and a match runs it on the inner value.
+
+The type of `validate` is exported as `LocationStateGuard<TState>` (not to be
+confused with `ValidateLocationState<T>`, the compile-time serializability
+check above).
+
+**Removing `version`, and rollbacks.** A definition without `version` reads
+`undefined` for a slot a versioned definition wrote; it never returns the
+envelope as the state. So dropping `version` in a later release, or running
+two releases side by side, is safe in both directions. The one case nothing
+can fix is a rollback to a router release older than these options: that code
+reads the slot unchecked and gets the envelope object typed as `TState`. The
+same holds for `clearOnReload`, which stores an envelope too. If you may roll
+back that far, keep the definition's shape tolerant of it (or give the new
+shape a new export name, which is a new key).
+
+### clearOnReload: state the server did not render with
+
+Location state lives in the browser, so the server renders a document without
+it. `useLocationState` therefore hydrates as `undefined` and applies the stored
+value right after. For most state that is invisible. For state that decides
+how much content is on the page, it is a layout shift on every refresh.
+
+The case this option exists for is a "load more" list. `?page=6` loads that
+page's 50 products through a loader, and the 250 already on screen ride along
+as location state on the link, so the next page shows them at once and
+streams the new ones:
+
+```ts
+// location-states.ts
+import { createLocationState } from "@rangojs/router";
+
+export const CarriedProducts = createLocationState<Product[]>({
+  clearOnReload: true,
+});
+```
+
+```tsx
+"use client";
+import { Link, useLoader, useLocationState } from "@rangojs/router/client";
+import { ProductsLoader } from "./loaders"; // the page named by ?page
+import { CarriedProducts } from "./location-states";
+
+export function ProductList() {
+  const { data } = useLoader(ProductsLoader);
+  const carried = useLocationState(CarriedProducts) ?? [];
+  const carriedIds = new Set(carried.map((product) => product.id));
+  const products = [
+    ...carried,
+    ...data.products.filter((product) => !carriedIds.has(product.id)),
+  ];
+
+  return (
+    <>
+      <ul>
+        {products.map((product) => (
+          <li key={product.id}>{product.name}</li>
+        ))}
+      </ul>
+      <Link
+        to={`/products?page=${data.page + 1}`}
+        state={[CarriedProducts(products)]}
+        scroll={false}
+      >
+        Load more
+      </Link>
+    </>
+  );
+}
+```
+
+The filter is there because a navigation applies the new entry's state to a
+mounted reader before the new page's loader data commits: for one render
+`carried` already contains the page that is still on screen.
+
+Without the option, a refresh of `?page=6` renders 50 products on the server
+and then inserts the stored 250 above them. With it, the refreshed page stays
+as the server rendered it:
+
+| What happens to the entry                                                 | A `clearOnReload` slot                                               |
+| ------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| The reader mounts during a client navigation (`<Link>`, `router.push`)    | applied, as without the option                                       |
+| back/forward inside the running app (popstate), a server action's state   | applied, as without the option                                       |
+| A document load: refresh, or a back/forward that loads the document       | not applied, and removed from `history.state`                        |
+| Later on that page: a reader mounts, or a navigation returns to the entry | still `undefined`; the next write (the next "Load more") stores anew |
+| The page is restored from the browser's back/forward cache                | untouched: nothing is loaded or hydrated                             |
+
+- The rule is any document load of the entry, not only the Reload button:
+  restoring a closed tab or duplicating a tab loads the document too.
+- Only the entry being loaded is cleared. Going back from it to an earlier
+  entry inside the running app is a client navigation and applies that
+  entry's state.
+- The router removes the slot when the client starts, before hydration, so it
+  does not matter whether a reader is mounted, where it sits (a `<Suspense>`
+  boundary that hydrates late included), or whether the definition's module is
+  loaded at all. Other slots on the entry are left alone.
+- State the server sets is never dropped by this: a document response carries
+  no location state, and `ctx.setLocationState()` / `redirect(url, { state })`
+  reach `history.state` only through navigations and actions in the running
+  app, after start-up.
+- `.write()` stores the same marked slot, so it does not survive a refresh
+  either.
+- A slot written before the definition had the option is not marked and is
+  not cleared. Set or bump `version` in the same release to make those read
+  `undefined`.
+- Combine it with `version` and `validate` freely. It cannot be combined with
+  `flash`: flash state is removed at its first read, so the pair could only
+  drop a message nobody has seen yet.
 
 ### .read() (non-hook access)
 

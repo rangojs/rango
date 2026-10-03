@@ -620,6 +620,41 @@ production's history path, so `useLocationState(Def)` re-reads after the click;
 wait for it with RTL's `waitFor` (see the testing skill,
 `client-components.md` "Location state").
 
+A seed is always the value you would pass to the definition, whatever options
+the definition has. `renderRoute` writes the slot through the definition, so
+one with `version` or `clearOnReload` gets its envelope
+(`{ __rsc_ls_env: 1, v, clearOnReload, value }`) without your test knowing the
+stored form. That gives you the two cases those options are about:
+
+- **State from another deploy.** Key the older definition onto the same slot
+  (`withLocationStateKey(GridV1, "GridState")`) and seed through it; the
+  component under test reads the current definition and must render as with no
+  state. A value `validate` rejects, or throws on, is seeded directly.
+- **`clearOnReload`.** Plain `renderRoute` is a client mount, the way a reader
+  mounts during a navigation, so the seed is applied. `hydrate: true` (next
+  section) is a document load of the seeded entry: before hydrating,
+  `renderRoute` calls `clearLocationStateOnDocumentLoad`
+  (`src/browser/history-state.ts`), the same function `initBrowserApp` calls at
+  production start-up, so the slot is gone from `history.state` and the reader
+  stays `undefined`.
+
+```tsx
+const routes = [{ path: "/products", Component: ProductList }];
+const seed = {
+  loaders: [[ProductsLoader, { page: 6, products: [] }]] as const, // this page's own: none
+  locationState: [[CarriedProducts, products]] as const,
+};
+
+const mounted = await renderRoute(routes, seed); // a client navigation
+expect(mounted.getAllByRole("listitem")).toHaveLength(products.length);
+mounted.unmount();
+
+const loaded = await renderRoute(routes, { ...seed, hydrate: true }); // a refresh
+expect(loaded.recoverableErrors).toEqual([]);
+expect(loaded.queryAllByRole("listitem")).toHaveLength(0);
+expect(CarriedProducts.read()).toBeUndefined(); // removed from history.state
+```
+
 Model an `include('/shop', …)` mount with the `mount` option: it wraps the
 segment chain in a MountContext exactly as production does, so `useMount()`
 returns the prefix and `useHref`/`useReverse` resolve mount-prefixed URLs. A
@@ -1005,7 +1040,7 @@ const { result, thrown, response, cookies, headers, locationState } =
 | `response`        | the merged `Response` (status + headers + Set-Cookie); a thrown redirect's `Location` merged with the accumulated cookies                                                                                            |
 | `cookies`         | effective `{ name: value }` cookie view (request cookies + run mutations, last-write-wins)                                                                                                                           |
 | `headers`         | response headers as `{ name: value }`, **excluding** `set-cookie` (that's `cookies`), including a thrown redirect's `Location`; names lowercased. A `keepClientCache()` call shows here as `x-rango-keep-cache: "1"` |
-| `locationState`   | the flash the handler set (`ctx.setLocationState()` / `redirect({ state })`), as the `{ key: value }` the client reads                                                                                               |
+| `locationState`   | the flash the handler set (`ctx.setLocationState()` / `redirect({ state })`), as the `{ key: slot }` record `history.state` receives; decode a slot with `Def.read({ state: locationState })`                        |
 | `stateCookieName` | the resolved rango state cookie name seeded for the run (default `rango-state_router_0`, or composed from `opts.stateCookie`); assert an `invalidateClientCache()` rotation against it without recomputing           |
 
 ```ts
@@ -1023,6 +1058,23 @@ runs, so `thrown` holds that missing-key error instead of the redirect. In the
 react-server project (`NODE_ENV=production`) nothing throws and the value lands
 under `"undefined"`. The helper always adds the `__rsc_ls_` prefix, so assert
 `__rsc_ls_Flash`, or `{ [Flash.__rsc_ls_key]: value }` for any key.
+
+One thing changes once a definition sets `version` or `clearOnReload`. The
+record holds what `history.state` receives, and such a definition stores an
+envelope there, `{ __rsc_ls_env: 1, v, clearOnReload, value }`, so the
+equality above stops matching. That is deliberate: the stored form is real, it
+is what a later deploy will find. But a test of a flash message should not
+depend on it, so read the slot back through the definition, which decodes
+either form:
+
+```ts
+expect(Flash.read({ state: locationState })).toEqual({ text: "Welcome back" });
+```
+
+The same line works for `runMiddleware`, `runLoaderResult` and `renderHandler`,
+and it is the counterpart of `renderRoute`'s `locationState` seeds, which take
+the value and let the definition encode it. On both sides the test speaks in
+values and the definition owns the stored form.
 
 Reading **vars the handler set** is via the context, not the snapshot: pass
 `vars` to seed, and read with `ctx.get(token)` (the `fn` receives `ctx`, or use
@@ -1568,14 +1620,15 @@ renderRoute(                            // async; lazy-loads RTL at call time
     outletPending?: boolean,             // seed useOutlet().pending; context only, no lifecycle
     loaders?: [loader, data][],         // seed useLoader by REFERENCE (real handles)
     loaderData?: Record<$$id, data>,    // seed useLoader by explicit $$id
-    locationState?: [def, value][],     // seed useLocationState by REFERENCE
+    locationState?: [def, value][],     // seed useLocationState by REFERENCE; value as passed to def(value), stored through def
     handles?: [handle, pushedValues[]][],// seed useHandle by REFERENCE, RAW pushes[] (reaches layouts too)
     handle?,                            // advanced: raw handle wire data
     basename?,                          // createRouter({ basename }) value (Link/href/reverse prefixing)
     mount?,                             // include('/shop', …) prefix -> useMount/useHref/useReverse resolve it
     theme?,                             // createRouter({ theme }) shape (enables useTheme)
     defaultPrefetch?,                   // createRouter({ defaultPrefetch }) value for Links / plain anchors
-    hydrate?: boolean,                  // render to HTML (no window/document), then hydrate it instead of mounting fresh
+    hydrate?: boolean,                  // render to HTML (no window/document), then hydrate it instead of mounting fresh;
+                                        // a document load: seeded clearOnReload slots are removed first
   },
 ): Promise<RenderResult & { router }>; // + { serverHtml: string; recoverableErrors: string[] } when hydrate: true
 // const { getByTestId, router } = await renderRoute([{ path: "/p/:id", Component: P }], { request: "/p/1" });

@@ -72,6 +72,16 @@ passes and can still mismatch in real SSR. Needs `@testing-library/react` 16.2.0
 or newer; `renderRoute` throws on older versions, which drop
 `onRecoverableError`.
 
+Hydrate mode is also what "a document load" means to the testing surface. A
+`locationState` seed is written through its definition, so it takes the value
+and the definition encodes it; with `hydrate: true` `renderRoute` then calls
+`clearLocationStateOnDocumentLoad()` (`browser/history-state.ts`), the function
+`initBrowserApp` calls at start-up, so a `clearOnReload` slot is gone before
+hydration. A plain `renderRoute` is a client mount and applies every seed. The
+server primitives go the other way: their `locationState` holds what
+`history.state` receives (an envelope for `version` / `clearOnReload`), and
+`Def.read({ state: locationState })` decodes it.
+
 `renderRoute`'s `router.navigate(url, { loaders })` seeds loader data for that
 one navigation (merged over the render-time seeds), and `RenderRouteSpec`
 takes the `transition()` config a node declares. When the chain carries one
@@ -551,7 +561,10 @@ Server action execution pipeline, `useAction()` state tracking, action ID extrac
 
 ### Location State
 
-- `createLocationState()` -- typed state definitions; each definition exposes `.read()`, `.write()`, and `.delete()` for static (non-reactive) access to its slot in `history.state`. `LocationStateOptions` is `{ flash?, version?, validate? }` (`LocationStateValidate<TState>` is `(value: unknown) => value is TState`). `version` stores `{ v, value }` and a missing or different `v` reads as `undefined` (the key is stable across deploys, so an old tab must not see the new shape). `validate` runs on read; `false` reads as `undefined`. Together, a version mismatch does not call `validate`. Neither option keeps the raw slot.
+- `createLocationState()` -- typed state definitions; each definition exposes `.read()`, `.write()`, and `.delete()` for static (non-reactive) access to its slot in `history.state`. `LocationStateOptions` is `{ flash?, version?, validate?, clearOnReload? }`; `flash` with `clearOnReload` is rejected by the type and, for untyped callers, by a throw in `createLocationState` outside production (folded away in a production build, like the missing-key check). `LocationStateGuard<TState>` is the type of `validate`, `(value: unknown) => value is TState` (not the compile-time `ValidateLocationState<T>` below). All of it lives in `browser/react/location-state-shared.ts`.
+  - Stored form. A definition without `version` or `clearOnReload` stores the raw value, as before the options existed. With either, writers store an envelope, `{ __rsc_ls_env: 1, v?, clearOnReload?, value }` (`LocationStateEnvelope`, `isLocationStateEnvelope`). `history.state` is structured-cloned, so the mark is a plain property in the router's reserved `__rsc_ls_` prefix; `{ v, value }` alone could be a user's own value.
+  - Read (`decode` inside `createLocationState`, the one decoder behind `.read()`, `.read(location)` and the hook). An empty slot is `undefined` and never reaches `validate`. An envelope is read only when its `v` equals the reader's `version`, both absent included: a reader without `version` rejects a versioned envelope (it never returns the envelope as the state) and reads one that records only `clearOnReload`. A versioned reader rejects a raw value. `validate` then checks the inner or raw value; `false` or a throw reads `undefined`, and a throw is logged once per definition outside production. A release older than these options reads an envelope unchecked: that rollback is not fixable from here.
+  - `clearOnReload` -- the slot does not survive a document load of its entry. `clearLocationStateOnDocumentLoad()` (`browser/history-state.ts`) removes every marked `__rsc_ls_*` slot from the current entry; `initBrowserApp` (`browser/rsc-router.tsx`) calls it in its synchronous prefix, before the payload is decoded, the store records the entry, or anything hydrates. The flag is in the slot because start-up has only `history.state` (the defining module may not be loaded). Nothing is timed per reader: a reader in a late-hydrating boundary, a reader mounted later and a navigation back to the entry all find the slot gone. Server-set state cannot be dropped by it: a document response carries no location state (`rsc/rsc-rendering.ts` attaches it to partial payloads only), and navigation payloads, action payloads and `LoaderRedirect` write after start-up. Client mounts, popstate and `__rsc_locationstate` are unchanged, and a bfcache restore runs none of this.
 - `useLocationState()` -- reactive hook; updates on popstate / `__rsc_locationstate` (does NOT update on static `.write()` / `.delete()`)
 - `redirect()` integration with location state
 - Serializability check: `ValidateLocationState<T>` rejects values `history.state` cannot structured-clone; the `LocationStateUnsafe<reason, path>` brand names each failing field (`items[].info.values`; an object's own unsafe fields first, so a DOM node stops at its methods; depth-bounded at 8)

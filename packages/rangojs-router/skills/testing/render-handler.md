@@ -46,18 +46,18 @@ A Rango route handler is a pure function `(ctx) => rsc` — the function you pas
 
 ### Returns — `RenderHandlerResult`
 
-| Field             | Type                      | Meaning                                                                                                                                                             |
-| ----------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tree`            | `unknown`                 | Deserialized RSC the handler returned; `undefined` when it returned/threw a `Response`. Inspect with `findClientBoundaries`.                                        |
-| `flight`          | `string \| undefined`     | Raw Flight wire string; `undefined` on a `Response`.                                                                                                                |
-| `thrown`          | `unknown`                 | The value the handler THREW (a `redirect()`/`notFound()` Response), captured not re-thrown.                                                                         |
-| `response`        | `Response`                | Merged Response (status + headers + Set-Cookie), folding a thrown/returned redirect with accumulated effects.                                                       |
-| `cookies`         | `Record<string, string>`  | Effective cookie view after the handler ran.                                                                                                                        |
-| `headers`         | `Record<string, string>`  | Response headers (excludes set-cookie; includes a redirect `Location`). The `keepClientCache()` directive shows here as `x-rango-keep-cache: "1"`.                  |
-| `stateCookieName` | `string`                  | The resolved rango state cookie name this run seeded (default `rango-state_router_0`). Assert an `invalidateClientCache()` rotation against it without recomputing. |
-| `locationState`   | `Record<string, unknown>` | Location state the handler set (`ctx.setLocationState`/`redirect({ state })`).                                                                                      |
-| `handles`         | `Map<Handle, unknown[]>`  | What the handler pushed via `ctx.use(Handle)(...)` (e.g. `Meta`, `Breadcrumbs`), keyed by handle.                                                                   |
-| `dynamic`         | `boolean`                 | Whether the handler called `ctx.dynamic()` (the PPR shell opt-out).                                                                                                 |
+| Field             | Type                      | Meaning                                                                                                                                                                 |
+| ----------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tree`            | `unknown`                 | Deserialized RSC the handler returned; `undefined` when it returned/threw a `Response`. Inspect with `findClientBoundaries`.                                            |
+| `flight`          | `string \| undefined`     | Raw Flight wire string; `undefined` on a `Response`.                                                                                                                    |
+| `thrown`          | `unknown`                 | The value the handler THREW (a `redirect()`/`notFound()` Response), captured not re-thrown.                                                                             |
+| `response`        | `Response`                | Merged Response (status + headers + Set-Cookie), folding a thrown/returned redirect with accumulated effects.                                                           |
+| `cookies`         | `Record<string, string>`  | Effective cookie view after the handler ran.                                                                                                                            |
+| `headers`         | `Record<string, string>`  | Response headers (excludes set-cookie; includes a redirect `Location`). The `keepClientCache()` directive shows here as `x-rango-keep-cache: "1"`.                      |
+| `stateCookieName` | `string`                  | The resolved rango state cookie name this run seeded (default `rango-state_router_0`). Assert an `invalidateClientCache()` rotation against it without recomputing.     |
+| `locationState`   | `Record<string, unknown>` | Location state the handler set (`ctx.setLocationState`/`redirect({ state })`), as `history.state` receives it. Decode a slot with `Def.read({ state: locationState })`. |
+| `handles`         | `Map<Handle, unknown[]>`  | What the handler pushed via `ctx.use(Handle)(...)` (e.g. `Meta`, `Breadcrumbs`), keyed by handle.                                                                       |
+| `dynamic`         | `boolean`                 | Whether the handler called `ctx.dynamic()` (the PPR shell opt-out).                                                                                                     |
 
 ## Recipe
 
@@ -160,6 +160,7 @@ Without the plugin, wrap a function yourself with the call the transform emits, 
 - Same alias requirement as flight tests: without the `@rangojs/router -> index.rsc.ts` alias (see [`./setup.md`](./setup.md)), a handler reading `getRequestContext()`/`cookies()` hits the throwing out-of-react-server stub. `renderHandler` detects this and REJECTS with a setup error naming `rangoTestAliases` (it is not captured on `thrown`).
 - A `throw redirect()` is captured on `thrown` (with `tree` undefined, since it produced a `Response`) — assert on `thrown`/`response`, no try/catch needed.
 - Location state needs a key: a `createLocationState()` definition gets it from the Vite plugin, which a test project does not run. This react-server project runs with `NODE_ENV=production`, so an unkeyed `ctx.setLocationState(Flash(value))` does not throw; the value lands on `locationState["undefined"]`. Call `withLocationStateKey(Flash, "Flash")` from `@rangojs/router/testing` once per definition and assert `{ __rsc_ls_Flash: value }` (the helper adds the `__rsc_ls_` prefix; `{ [Flash.__rsc_ls_key]: value }` works for any key).
+- `locationState` holds what `history.state` receives. A definition with `version` or `clearOnReload` stores an envelope (`{ __rsc_ls_env: 1, v, clearOnReload, value }`), so `{ __rsc_ls_Flash: value }` does not match it. Assert the decoded value with the definition's own reader, `expect(Flash.read({ state: locationState })).toEqual(value)`: it works for every definition and reads `undefined` on a version mismatch.
 - No hydration and no interaction — for clicks, forms, and navigation use e2e.
 - `renderHandler` runs a handler FUNCTION `(ctx) => rsc`; for a plain ELEMENT `<Page/>` use `renderServerTree` (see [`./server-tree.md`](./server-tree.md)).
 - A handler that calls a `"use cache"` function runs UNCACHED unless you seed `cacheStore` (and `cacheProfiles` for a named profile). With nothing seeded the runtime bypasses to the live body and warns once under the test runner. With a store seeded, the body runs once across renders and a render after the background write reads the store — see [A `"use cache"` hit](#a-use-cache-hit), including `rangoUseCacheTransform()`, without which Vitest leaves the directive unwrapped.

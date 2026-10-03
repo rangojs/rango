@@ -8,23 +8,23 @@
 
 ### Options — `RenderRouteOptions`
 
-| Field             | Type                                                                   | Meaning                                                                                                                                                                                                                                       |
-| ----------------- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `request`         | `Request \| string`                                                    | Initial location. Only the URL is read (client render — headers/method ignored). Defaults to the leaf spec's static prefix or `"/"`.                                                                                                          |
-| `loaderData`      | `Record<string, unknown>`                                              | Loader data keyed by loader `$$id`. `useLoader(L)` reads `loaderData[L.$$id]`.                                                                                                                                                                |
-| `outletPending`   | `boolean`                                                              | Seed `useOutlet().pending` through each synthetic segment's production `OutletProvider`. Defaults to `false`; this is context seeding, not a simulated navigation/Suspense/action lifecycle.                                                  |
-| `loaders`         | `ReadonlyArray<readonly [LoaderDefinition<any>, unknown]>`             | Seed by REFERENCE: `[loader, data]` pairs. Robust for real `createLoader()` handles whose `$$id` is empty in a bare test. Prefer over `loaderData`.                                                                                           |
-| `params`          | `Record<string, string>`                                               | Explicit params, merged over (and overriding) params extracted from the `request` URL.                                                                                                                                                        |
-| `locationState`   | `ReadonlyArray<readonly [LocationStateDefinition<any, any>, unknown]>` | Seed `useLocationState(def)` by REFERENCE: `[def, value]` pairs; keys an unkeyed `def` (like `withLocationStateKey(def)`) and writes to `history.state`. See [Location state](#location-state).                                               |
-| `handles`         | `ReadonlyArray<readonly [Handle<any, any>, unknown[]]>`                | Seed `useHandle(handle)` by REFERENCE: `[handle, pushedValues[]]`. Accumulated GLOBALLY (not segment-scoped).                                                                                                                                 |
-| `handle`          | `HandleDataSeed`                                                       | Advanced: raw wire format `{ [handleId]: { [segmentId]: pushedValues[] } }`. Prefer `handles`. Merged with it.                                                                                                                                |
-| `routeMap`        | `Record<string, string>`                                               | Name -> pattern map (informational; client `useReverse` takes its map as an argument, so this is not consumed).                                                                                                                               |
-| `basename`        | `string`                                                               | `createRouter({ basename })` value. Wired into `NavigationProvider` so `useRouter().basename`, `<Link>` prefixing, `useMount`/`useHref` resolve against the mount. Normalized like `createRouter`. Defaults to root.                          |
-| `mount`           | `string`                                                               | `include()` mount prefix. Wraps the segment chain in a `MountContext` so `useMount()` returns the prefix. Normalized like a path prefix. Defaults to `"/"`.                                                                                   |
-| `theme`           | `ThemeConfig \| true`                                                  | Theme config (`createRouter({ theme })` shape) to wrap the tree in a `ThemeProvider`. Defaults to no provider. A component calling `useTheme()` REQUIRES one.                                                                                 |
-| `nonce`           | `string`                                                               | CSP nonce to seed via `NonceContext`, so a component calling `useNonce()` (e.g. an analytics/GTM head script) sees it — mirroring SSR. Defaults to `undefined` (the browser default).                                                         |
-| `defaultPrefetch` | `PrefetchStrategy`                                                     | Router default for `<Link>` and eligible plain anchors. `data-prefetch="false"`/`"none"` opts out one anchor; ancestor `data-prefetch-scope="false"`/`"none"` hard-disables the subtree; `"true"` permits routed resource suffixes elsewhere. |
-| `hydrate`         | `boolean`                                                              | Render the same tree to HTML first (`renderToString`, no `window`/`document`), then hydrate that HTML instead of mounting fresh. The result gains `serverHtml` and `recoverableErrors`. See [Hydration](#hydration).                          |
+| Field             | Type                                                                   | Meaning                                                                                                                                                                                                                                                     |
+| ----------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `request`         | `Request \| string`                                                    | Initial location. Only the URL is read (client render — headers/method ignored). Defaults to the leaf spec's static prefix or `"/"`.                                                                                                                        |
+| `loaderData`      | `Record<string, unknown>`                                              | Loader data keyed by loader `$$id`. `useLoader(L)` reads `loaderData[L.$$id]`.                                                                                                                                                                              |
+| `outletPending`   | `boolean`                                                              | Seed `useOutlet().pending` through each synthetic segment's production `OutletProvider`. Defaults to `false`; this is context seeding, not a simulated navigation/Suspense/action lifecycle.                                                                |
+| `loaders`         | `ReadonlyArray<readonly [LoaderDefinition<any>, unknown]>`             | Seed by REFERENCE: `[loader, data]` pairs. Robust for real `createLoader()` handles whose `$$id` is empty in a bare test. Prefer over `loaderData`.                                                                                                         |
+| `params`          | `Record<string, string>`                                               | Explicit params, merged over (and overriding) params extracted from the `request` URL.                                                                                                                                                                      |
+| `locationState`   | `ReadonlyArray<readonly [LocationStateDefinition<any, any>, unknown]>` | Seed `useLocationState(def)` by REFERENCE: `[def, value]` pairs; keys an unkeyed `def` (like `withLocationStateKey(def)`) and writes the slot to `history.state` through `def`, so `value` is never the stored form. See [Location state](#location-state). |
+| `handles`         | `ReadonlyArray<readonly [Handle<any, any>, unknown[]]>`                | Seed `useHandle(handle)` by REFERENCE: `[handle, pushedValues[]]`. Accumulated GLOBALLY (not segment-scoped).                                                                                                                                               |
+| `handle`          | `HandleDataSeed`                                                       | Advanced: raw wire format `{ [handleId]: { [segmentId]: pushedValues[] } }`. Prefer `handles`. Merged with it.                                                                                                                                              |
+| `routeMap`        | `Record<string, string>`                                               | Name -> pattern map (informational; client `useReverse` takes its map as an argument, so this is not consumed).                                                                                                                                             |
+| `basename`        | `string`                                                               | `createRouter({ basename })` value. Wired into `NavigationProvider` so `useRouter().basename`, `<Link>` prefixing, `useMount`/`useHref` resolve against the mount. Normalized like `createRouter`. Defaults to root.                                        |
+| `mount`           | `string`                                                               | `include()` mount prefix. Wraps the segment chain in a `MountContext` so `useMount()` returns the prefix. Normalized like a path prefix. Defaults to `"/"`.                                                                                                 |
+| `theme`           | `ThemeConfig \| true`                                                  | Theme config (`createRouter({ theme })` shape) to wrap the tree in a `ThemeProvider`. Defaults to no provider. A component calling `useTheme()` REQUIRES one.                                                                                               |
+| `nonce`           | `string`                                                               | CSP nonce to seed via `NonceContext`, so a component calling `useNonce()` (e.g. an analytics/GTM head script) sees it — mirroring SSR. Defaults to `undefined` (the browser default).                                                                       |
+| `defaultPrefetch` | `PrefetchStrategy`                                                     | Router default for `<Link>` and eligible plain anchors. `data-prefetch="false"`/`"none"` opts out one anchor; ancestor `data-prefetch-scope="false"`/`"none"` hard-disables the subtree; `"true"` permits routed resource suffixes elsewhere.               |
+| `hydrate`         | `boolean`                                                              | Render the same tree to HTML first (`renderToString`, no `window`/`document`), then hydrate that HTML instead of mounting fresh. The result gains `serverHtml` and `recoverableErrors`. See [Hydration](#hydration).                                        |
 
 `RenderRouteSpec = { path, Component, layout?, loaderIds?, name?, transition? }` — one node of the route definition. The array is the layout chain root-to-leaf; the LAST entry is the leaf route (its pattern is matched against `request` to extract params; layout patterns are informational). `loaderIds` attaches seeded loaders to THIS node's segment; `layout` on the leaf wraps it; `name` is informational. `transition` is the `transition()` config this node declares (`{}` for a bare `transition()`), attached to its segment exactly as the DSL does — see [Held navigation](#held-navigation).
 
@@ -162,6 +162,53 @@ it("shows the count it pushed", async () => {
 });
 ```
 
+### Definitions with `version`, `validate` or `clearOnReload`
+
+A seed is the value you would pass to the definition, never the stored form: `locationState: [[GridState, { count: 3 }]]` works whatever options `GridState` has, because renderRoute writes the slot through the definition. What lands in `history.state` is what its writers store: the raw value, or `{ __rsc_ls_env: 1, v, clearOnReload, value }` for a definition with `version` or `clearOnReload` (see `/hooks`, state.md). Assert what the component shows, or read the slot back with `GridState.read()`; assert the stored object only when the stored form is the point.
+
+| To test                                                    | Do                                                                                                                                                                                 |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| the reader ignores state from another `version`            | key the older definition onto the same slot (`withLocationStateKey(GridV1, "GridState")`) and seed through it: `locationState: [[GridV1, oldValue]]`                               |
+| the reader ignores a value `validate` rejects or throws on | seed that value: `locationState: [[GridState, badValue]]` (a seed's value is `unknown`, so no cast is needed)                                                                      |
+| `clearOnReload` state after a client navigation            | plain `renderRoute(routes, { locationState })`: the tree mounts as during a navigation, the seed is applied                                                                        |
+| `clearOnReload` state after a refresh                      | `renderRoute(routes, { hydrate: true, locationState })`: a document load of the seeded entry. The slot is removed before hydration, by the same function production start-up calls |
+
+```tsx
+// @vitest-environment happy-dom
+import { afterEach, expect, it } from "vitest";
+import { cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { renderRoute } from "@rangojs/router/testing/dom";
+import { ProductList } from "../src/components/ProductList"; // the "load more" list of /hooks state.md: useLoader(ProductsLoader) + useLocationState(CarriedProducts)
+import { ProductsLoader } from "../src/loaders";
+import { CarriedProducts } from "../src/location-states"; // createLocationState<Product[]>({ clearOnReload: true })
+
+afterEach(cleanup);
+const routes = [{ path: "/products", Component: ProductList }];
+const carried = [{ id: "p1", name: "Wine" }];
+const loaders = [[ProductsLoader, { page: 6, products: [] }]] as const; // this page's own products: none, to count only carried ones
+
+it("shows the carried products after a client navigation", async () => {
+  const { getAllByRole } = await renderRoute(routes, {
+    loaders,
+    locationState: [[CarriedProducts, carried]],
+  });
+  expect(getAllByRole("listitem")).toHaveLength(1);
+});
+
+it("drops them on a refresh and carries again on the next navigation", async () => {
+  const { recoverableErrors, queryAllByRole, getByText } = await renderRoute(
+    routes,
+    { loaders, hydrate: true, locationState: [[CarriedProducts, carried]] },
+  );
+  expect(recoverableErrors).toEqual([]);
+  expect(queryAllByRole("listitem")).toHaveLength(0);
+  expect(CarriedProducts.read()).toBeUndefined(); // removed from history.state
+
+  fireEvent.click(getByText("Load more"));
+  await waitFor(() => expect(CarriedProducts.read()).toBeDefined());
+});
+```
+
 ## Hydration
 
 A plain `renderRoute` mounts with `createRoot`, so a component never runs its hydration render: `useSyncExternalStore` skips `getServerSnapshot`, and nothing compares the first client render with server HTML. `hydrate: true` runs the document-load sequence instead. renderRoute renders the same element (same providers, seeds, and RTL `reactStrictMode`) to HTML with `react-dom/server`'s `renderToString`, puts that HTML in the container, and hydrates it through RTL (`render(ui, { hydrate: true, onRecoverableError })`), so `cleanup()` unmounts it like any other render. `serverHtml` is what the server pass produced; `recoverableErrors` holds the message of every error React recovered from, which is where a hydration mismatch arrives.
@@ -210,6 +257,7 @@ it("hydrates as the server rendered it, then shows the stored count", async () =
 | Render counts and module state                                                        | Every component renders once in the server pass before its hydration render. Both passes share one module realm, so module state written while rendering is still there at hydration.                                                        |
 | `history`, `localStorage`, `navigator` read outside a server snapshot                 | FIDELITY LIMIT: still defined in the server pass (only `window` and `document` are removed), so the read renders the same in both passes here and can still mismatch in real SSR.                                                            |
 | `data-hydrated` on `<html>`                                                           | Set after hydration, as the production root sets it from its effect, and removed on unmount. A `<Suspense>` boundary therefore hydrates with it already set.                                                                                 |
+| `useLocationState` of a seeded definition                                             | `undefined` in the server pass and the hydration render, the seeded value on the render after. A `clearOnReload` definition stays `undefined`: its seeded slot is removed from `history.state` before hydration, as on a real document load. |
 
 - Needs `@testing-library/react` 16.2.0 or newer. 16.0 and 16.1 never pass `onRecoverableError` to `hydrateRoot`, so a mismatch would be invisible; `renderRoute` throws there instead.
 - `recoverableErrors` is live: React appends to it for as long as the root is mounted.

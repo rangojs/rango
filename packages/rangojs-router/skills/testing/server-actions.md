@@ -51,7 +51,7 @@
 | `cookies`         | `Record<string, string>`  | Effective cookie view: request cookies + run mutations, last-write-wins.                                                                                                                          |
 | `headers`         | `Record<string, string>`  | Response headers the run set (plus a thrown redirect's `Location`), EXCLUDING `set-cookie` (use `cookies`). Names lowercased. A `keepClientCache()` call shows here as `x-rango-keep-cache: "1"`. |
 | `stateCookieName` | `string`                  | The resolved rango state cookie name this run seeded (default `rango-state_router_0`). Assert an `invalidateClientCache()` rotation against it without recomputing.                               |
-| `locationState`   | `Record<string, unknown>` | The flash set via `ctx.setLocationState()` / `redirect({ state })`, as the flat `{ key: value }` the client reads.                                                                                |
+| `locationState`   | `Record<string, unknown>` | The flash set via `ctx.setLocationState()` / `redirect({ state })`, as the flat `{ key: slot }` `history.state` receives. Decode a slot with `Def.read({ state: locationState })`.                |
 
 Low-level building blocks (all from `@rangojs/router/testing`):
 
@@ -111,6 +111,7 @@ it("asserts the client-cache directives an action issued", async () => {
 
 - The snapshot fires whether `fn` RETURNS or THROWS. A `throw redirect("/app")` on the success path is captured on `thrown` (NOT re-thrown), so no try/catch is needed; assert on `thrown` for a throwing action.
 - Location state needs a key. A `createLocationState()` definition gets it from the Vite plugin, which a unit-test project does not run, and outside production an unkeyed `Flash(value)` throws before `redirect()` runs: `thrown` is that missing-key error, not the redirect. Call `withLocationStateKey(Flash, "Flash")` once per definition; `locationState` then holds `{ __rsc_ls_Flash: value }` (the helper adds the `__rsc_ls_` prefix; `{ [Flash.__rsc_ls_key]: value }` works for any key).
+- `locationState` holds what `history.state` receives. A definition with `version` or `clearOnReload` stores an envelope (`{ __rsc_ls_env: 1, v, clearOnReload, value }`), so `{ __rsc_ls_Flash: value }` does not match it. Assert the decoded value with the definition's own reader, `expect(Flash.read({ state: locationState })).toEqual(value)`: it works for every definition and reads `undefined` on a version mismatch.
 - There is no cookies / headers option. Seed a request cookie by passing a full `Request` with the `Cookie` header (as in the recipe).
 - An action has no loader context, so `runLoader` is the wrong shape for it even when the action reads cookies or vars; use `runInRequestContext`.
 - Platform bindings are yours to double via `env` (see `./bindings.md`).

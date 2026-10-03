@@ -2,6 +2,144 @@
 
 ## Unreleased
 
+### Added: `createLocationState({ version, validate })` reads state written by another deploy as no state ([#1020](https://github.com/rangojs/rango/pull/1020))
+
+A location state key is the file path plus the export name, so it is the same
+in every deploy, and a history entry outlives a deploy: a tab left open across
+a release keeps its `history.state` through reloads and back/forward. The read
+was an unchecked cast, so after a release that changed a state's shape the new
+code got the old value typed as the new one (#994).
+
+Two options make such a value read as `undefined`, which is what a reader
+already handles for "no state":
+
+```ts
+// A deliberate shape change: bump the number.
+export const GridState = createLocationState<GridSnapshot>({ version: 2 });
+
+// Check the value itself on every read.
+export const GridState = createLocationState<GridSnapshot>({
+  validate: (value): value is GridSnapshot => isGridSnapshot(value),
+});
+```
+
+| Definition      | Stored in `history.state`          | A read returns                                                                                                                                        |
+| --------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| no options      | the value (unchanged)              | the value, unchecked (unchanged); `undefined` for a slot a versioned definition wrote                                                                 |
+| `version: 2`    | `{ __rsc_ls_env: 1, v: 2, value }` | `value` (the stored reference) from an envelope with `v: 2`. `undefined` for another `v`, for a raw value, and for a raw `{ v: 2, value }` look-alike |
+| `validate`      | the value (unchanged)              | the value when `validate` returns `true`; `undefined` when it returns `false` or throws                                                               |
+| both            | the envelope                       | a version mismatch is `undefined` without calling `validate`; a match runs `validate` on the inner value                                              |
+| any, empty slot | nothing                            | `undefined`; `validate` is not called                                                                                                                 |
+
+- A `validate` that throws never fails a render or a navigation. In
+  development the error is logged once per definition, with its key.
+- The envelope is recognised by `__rsc_ls_env`, a key in the `__rsc_ls_`
+  prefix the router reserves in `history.state`, so a value of your own that
+  happens to be shaped `{ v, value }` is not mistaken for one.
+- The type of `validate` is exported as `LocationStateGuard<TState>` from
+  `@rangojs/router` and `@rangojs/router/client`. It is unrelated to
+  `ValidateLocationState<T>`, the existing compile-time serializability check.
+- `flash: true` combines with both: the slot holds the envelope and is still
+  cleared after its first read.
+
+**Rollback.** Adding `version` changes what is stored. Releases from this one
+on handle that in both directions: a definition that later drops `version`
+reads `undefined` for a versioned slot, never the envelope. A release older
+than this one cannot be fixed after the fact. If you add `version` and then
+roll back to such a release, its unchecked read returns the envelope object
+`{ __rsc_ls_env, v, value }` typed as your state, for every entry written in
+between. The same applies to `clearOnReload` below. `validate` alone stores
+the raw value and has no rollback cost.
+
+In unit tests nothing changes for seeds: `renderRoute`'s
+`locationState: [[GridState, value]]` takes the value and stores it through
+the definition. The `locationState` record returned by `runMiddleware`,
+`runLoaderResult`, `renderHandler` and `runInRequestContext` holds what
+`history.state` receives, so for a versioned definition it holds the
+envelope; assert the value with `GridState.read({ state: locationState })`,
+which works for every definition.
+
+Definitions that set none of the options store and read exactly as before.
+
+### Added: `createLocationState({ clearOnReload: true })` drops the state when the entry's document is loaded ([#1020](https://github.com/rangojs/rango/pull/1020))
+
+The server renders a document without `history.state`, so `useLocationState`
+hydrates as `undefined` and applies the stored value right after. For state
+that decides how much content is on the page, that is a layout shift on every
+refresh. A "load more" list is the case: `?page=6` loads 50 products through a
+loader and the 250 already on screen ride along as location state on the
+link. After a client navigation that is what you want. After a refresh the
+server renders 50 products and the client then inserts 250 above them.
+
+```ts
+export const CarriedProducts = createLocationState<Product[]>({
+  clearOnReload: true,
+});
+```
+
+```tsx
+const { data } = useLoader(ProductsLoader); // the page named by ?page
+const carried = useLocationState(CarriedProducts) ?? [];
+const carriedIds = new Set(carried.map((product) => product.id));
+const products = [
+  ...carried,
+  ...data.products.filter((product) => !carriedIds.has(product.id)),
+];
+
+<Link
+  to={`/products?page=${data.page + 1}`}
+  state={[CarriedProducts(products)]}
+  scroll={false}
+>
+  Load more
+</Link>;
+```
+
+| What happens to the entry                                                 | Without the option      | With `clearOnReload: true`                            |
+| ------------------------------------------------------------------------- | ----------------------- | ----------------------------------------------------- |
+| The reader mounts during a client navigation                              | state applied           | unchanged                                             |
+| back/forward inside the running app, a server action's state              | state applied           | unchanged                                             |
+| Refresh, or a back/forward that loads the document from the server        | applied after hydration | not applied; the slot is removed from `history.state` |
+| Later on that page: a reader mounts, or a navigation returns to the entry | state applied           | still `undefined` until the next write                |
+| The page is restored from the back/forward cache                          | state and DOM kept      | unchanged                                             |
+
+- The router removes the slot once, when the client starts and before it
+  hydrates. It does not depend on a reader being mounted, on where the reader
+  sits (a `<Suspense>` boundary that hydrates late included), or on the
+  definition's module being loaded. Other slots on the entry are kept.
+- Any document load of the entry counts, not only the Reload button:
+  restoring a closed tab and duplicating a tab load the document too. Only
+  the loaded entry is cleared; going back from it to an earlier entry is a
+  client navigation and applies that entry's state.
+- State the server sets is not affected. A document response carries no
+  location state; `ctx.setLocationState()` and `redirect(url, { state })`
+  reach `history.state` through navigations and actions in the running app,
+  which start after the slot was removed.
+- Writers store `{ __rsc_ls_env: 1, clearOnReload: true, value }`, because
+  the client start-up sees only `history.state`. The rollback note above
+  applies. A slot written before the definition had the option is not marked
+  and is not cleared; set or bump `version` in the same release to drop those.
+- `version` and `validate` combine with it. `flash` does not: the pair is a
+  compile error, and for untyped callers `createLocationState` throws in
+  development, since flash state is removed at its first read and the option
+  could only drop a message nobody has seen.
+- To make that pair a compile error, the exported `LocationStateOptions` is
+  now a union type, and it takes the state type (`LocationStateOptions<TState>`,
+  default `unknown`) for `validate`. Passing options is unaffected. A
+  declaration that extended it (`interface Mine extends LocationStateOptions`)
+  no longer compiles; write `type Mine = LocationStateOptions & { ... }`.
+- The filter in the example is needed with or without the option: a
+  navigation applies the new entry's state to a mounted reader before the new
+  page's loader data commits.
+
+To test it, plain `renderRoute(routes, { locationState })` is the client
+navigation and `renderRoute(routes, { hydrate: true, locationState })` is the
+document load: hydrate mode removes the seeded slot with the same function the
+client start-up calls.
+
+Definitions that do not set the option store and read exactly as before, and
+the client start-up writes nothing to `history.state` when no slot is marked.
+
 ### Fixed: `useLocationState` no longer causes a hydration mismatch when its reader hydrates inside `<Suspense>` ([#1017](https://github.com/rangojs/rango/pull/1017))
 
 After a reload or a back/forward navigation, `history.state` still holds the
