@@ -12,7 +12,8 @@
     "test:e2e": "playwright test",
     "bench": "npx tsx bench/run.ts",
     "bench:dev": "npx tsx bench/run.ts --mode=dev",
-    "bench:compare": "npx tsx bench/compare.ts"
+    "bench:compare": "npx tsx bench/compare.ts",
+    "bench:retention": "npx tsx bench/retention.ts"
   },
   "dependencies": {
     "@rangojs/router": "workspace:*",

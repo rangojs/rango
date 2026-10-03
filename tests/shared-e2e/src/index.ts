@@ -18,6 +18,10 @@ export type {
   ExistingServerIdentity,
   ExistingServerKind,
 } from "./assert-existing-server.js";
+export { createDeployFixture, readBuiltVersions } from "./deploy-fixture.js";
+export type { DeployFixture, DeployFixtureOptions } from "./deploy-fixture.js";
+export { runCacheVersionScenario } from "./cache-version-scenario.js";
+export type { CacheVersionScenarioOptions } from "./cache-version-scenario.js";
 
 /**
  * Shared end-to-end test utilities for HMR-driven tests across apps.

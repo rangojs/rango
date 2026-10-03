@@ -14,3 +14,6 @@ lefthook-local.yml
 MIDDLEWARE_RESEARCH.md
 .vite*
 .dev.vars
+
+# Working copies of the cache-version e2e fixtures
+.cache-version-work
