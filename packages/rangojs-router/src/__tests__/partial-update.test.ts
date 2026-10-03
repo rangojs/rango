@@ -659,6 +659,80 @@ describe("partial-update", () => {
       const fetchCall = (client.fetchPartial as any).mock.calls[0][0];
       expect(fetchCall.previousUrl).toBe("http://localhost/shop/product/42");
     });
+
+    // #1030: back/forward to an entry the history cache no longer holds. The
+    // popstate event moved window.location to the target before the
+    // transaction was created, so tx.currentUrl names the target. Sent as the
+    // page the client is on, the server compares the target with itself:
+    // on the same route nothing revalidates, the diff is empty, and the
+    // commit below keeps the page being left on screen under the target's URL.
+    describe("the page the server is told the client is on", () => {
+      const route = seg("R0");
+      const noChanges = {
+        metadata: {
+          isPartial: true,
+          segments: [],
+          matched: ["R0"],
+          diff: [],
+        },
+      };
+      const sentFrom = async (
+        tx: ReturnType<typeof createMockTx> & { traversal?: boolean },
+        mode?: Parameters<ReturnType<typeof createPartialUpdater>>[5],
+      ): Promise<string> => {
+        const store = createMockStore({
+          cachedSegments: [route],
+          segmentIds: ["R0"],
+          // The entry on screen: the one being left.
+          currentUrl: "http://localhost/list?page=6",
+        });
+        const { client } = createMockClient(noChanges);
+        const updater = createPartialUpdater({
+          getVersion: () => undefined,
+          store: store as any,
+          client: client as any,
+          onUpdate: vi.fn(),
+          renderSegments: vi.fn(async () => "tree"),
+        });
+        await updater(
+          "http://localhost/list?page=3",
+          undefined,
+          false,
+          undefined,
+          tx,
+          mode,
+        );
+        return (client.fetchPartial as any).mock.calls[0][0].previousUrl;
+      };
+
+      it("a back/forward fetch names the entry on screen, not the target the URL bar already shows", async () => {
+        expect(
+          await sentFrom({
+            ...createMockTx("http://localhost/list?page=3"),
+            traversal: true,
+          }),
+        ).toBe("http://localhost/list?page=6");
+      });
+
+      it("a back/forward onto an intercept entry still names the intercept's source", async () => {
+        expect(
+          await sentFrom(
+            {
+              ...createMockTx("http://localhost/list?page=3"),
+              traversal: true,
+            },
+            { type: "navigate", interceptSourceUrl: "http://localhost/shop" },
+          ),
+        ).toBe("http://localhost/shop");
+      });
+
+      it("a push or replace names the URL it started from", async () => {
+        // window.location has not moved: the transaction's URL is the page.
+        expect(
+          await sentFrom(createMockTx("http://localhost/list?page=6#top")),
+        ).toBe("http://localhost/list?page=6#top");
+      });
+    });
   });
 
   describe("redirect payload validation", () => {

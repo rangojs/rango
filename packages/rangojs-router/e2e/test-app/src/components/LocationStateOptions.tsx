@@ -31,6 +31,11 @@ import { LoadMoreLoader } from "../urls/location-state.loader.js";
  * `lm-open-late` mounts a second CarriedItems reader (LateCarried) on demand:
  * pressed while a navigation is pending, it mounts in the page still on
  * screen and has to read that page's entry, like the readers around it.
+ *
+ * `lm-more-cold` is the same link to a URL of its own (`&cold=1`) that is
+ * never prefetched. An app that prefetches keeps a prefetched response for
+ * its TTL and serves a return to that URL from it; the entry this link
+ * creates can only come back from the history cache or the server (#1030).
  */
 export function LoadMoreList({ basePath }: { basePath: string }) {
   const carried = useLocationState(CarriedItems) ?? [];
@@ -76,6 +81,15 @@ export function LoadMoreList({ basePath }: { basePath: string }) {
         data-testid="lm-more"
       >
         Load more
+      </Link>{" "}
+      <Link
+        to={`${basePath}?page=${data.page + 1}&cold=1${hold ? `&hold=${hold}` : ""}`}
+        state={[CarriedItems(shown), ListSort({ order: "asc" })]}
+        scroll={false}
+        prefetch="none"
+        data-testid="lm-more-cold"
+      >
+        Load more, never prefetched
       </Link>
     </section>
   );

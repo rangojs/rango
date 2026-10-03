@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import {
   expectClearOnReloadDropsCarriedState,
   expectClearOnReloadDropsStateOnTraversalLoad,
+  expectEvictedSameRouteTraversalRestoresItsPage,
   expectHeldLoadMoreShowsNoItemTwice,
   expectLateSuspenseReaderHydratesClean,
   expectLoadMoreTraversalRestoresEntryWithItsPage,
@@ -1556,6 +1557,16 @@ function commitSuite(f: Fixture) {
       page,
       f.url("/location-state/load-more"),
       f.url("/location-state/app-version"),
+    );
+  });
+
+  // #1030
+  test("back/forward to an evicted entry of the same route restores that entry's page", async ({
+    page,
+  }) => {
+    await expectEvictedSameRouteTraversalRestoresItsPage(
+      page,
+      f.url("/location-state/load-more"),
     );
   });
 }

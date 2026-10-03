@@ -1058,6 +1058,68 @@ export async function expectLoadMoreTraversalRestoresEntryWithItsPage(
   expect(await tornLoadMoreSamples(page)).toEqual([]);
 }
 
+/**
+ * #1030: back/forward to an entry of the SAME route that differs only in its
+ * search params, after the history cache dropped it. The load-more fixture is
+ * that case once the list is long: 21 more pages of the list evict page 2's
+ * entry, and the return to it is a refetch.
+ *
+ * The page the URL names must come back, with its entry's carried items. The
+ * refetch is held by the loader (`hold`), so the page being left stays on
+ * screen meanwhile with its own entry's state, for a reader that mounts then
+ * too (#1029): history.state is the destination's from the popstate event on.
+ *
+ * Page 2 is reached through `lm-more-cold`, a URL nothing prefetches: a
+ * prefetched response is kept for its TTL and would serve the return without
+ * asking the server.
+ */
+export async function expectEvictedSameRouteTraversalRestoresItsPage(
+  page: Page,
+  url: string,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const items = byTestId(page, "lm-items").locator("li");
+  const pageOnScreen = byTestId(page, "lm-page");
+  const evicted = `${url}?page=2&cold=1&hold=${LOAD_MORE_HOLD_MS}`;
+
+  await page.goto(`${url}?page=1&hold=${LOAD_MORE_HOLD_MS}`);
+  await waitForShellHydration(page);
+  await byTestId(page, "lm-more-cold").click();
+  await expect(page).toHaveURL(evicted);
+  await expect(items).toHaveText(loadMoreThrough(2));
+  await watchLoadMore(page);
+
+  // Entries of the same route, without state or hold, each committed before
+  // the next: page 23 is on screen when the return starts.
+  const lastFiller = 23;
+  await returnToEvictedEntry(page, (n) => `${url}?page=${2 + n}`);
+
+  // The URL is the entry's at once; its page is not: the loader holds it.
+  await expect(page).toHaveURL(evicted);
+  expect(await locationStateSlots(page)).toMatchObject({
+    "CarriedItems~r": loadMoreItems(1),
+  });
+  await byTestId(page, "lm-open-late").click();
+  expect(await loadMoreScreen(page)).toMatchObject({
+    page: String(lastFiller),
+    carried: "0",
+    sharedCarried: "0",
+    late: `${lastFiller}:0`,
+    items: loadMoreItems(lastFiller),
+  });
+
+  await expect(pageOnScreen).toHaveText("2");
+  await expect(items).toHaveText(loadMoreThrough(2));
+  await expect(byTestId(page, "lm-late")).toHaveText(
+    `2:${loadMoreItems(1).length}`,
+  );
+  await expect(byTestId(page, "lm-server-page")).toHaveText("2");
+  expect((await loadMoreCommits(page)).slice(-1)).toEqual([
+    loadMoreCommit(2, loadMoreThrough(2)),
+  ]);
+  expect(await tornLoadMoreSamples(page)).toEqual([]);
+}
+
 /** The slow clientUrls group's middleware (both apps): every canonical request waits this long. */
 const SLOW_GROUP_MIDDLEWARE_MS = 5000;
 /** Anything under this is before the gated response could have arrived. */
