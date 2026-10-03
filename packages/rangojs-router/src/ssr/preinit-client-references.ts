@@ -1,42 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { preinitModule } from "react-dom";
-import type { HeadScriptFetchPriority } from "../vite/plugin-types.js";
-
-/**
- * Head chunk script priority when neither `rango({ headScripts })` nor
- * {@link installClientReferencePreinit} names one. `"auto"`: no attribute, the
- * output before the option existed.
- *
- * The option exists because of issue #1021: Chromium fetches a parser-inserted
- * `<script type="module" async>` at High, so the head chunks share bandwidth
- * with the render-blocking stylesheet and the LCP image. Marking them
- * `fetchpriority="low"` measured, under Slow 4G + 4x CPU on three pages,
- * FCP -200..-290 ms and LCP -120..-520 ms with the first React commit
- * unchanged. The default stays `"auto"` until a measurement also covers
- * image-heavy pages, HTTP/1.1 and early interaction, where Low chunks can
- * queue behind images and delay hydration.
- */
-export const DEFAULT_HEAD_SCRIPT_FETCH_PRIORITY: HeadScriptFetchPriority =
-  "auto";
-
-/** Options for {@link installClientReferencePreinit}. */
-export interface ClientReferencePreinitOptions {
-  /**
-   * `fetchpriority` for the emitted head chunk scripts; `"auto"` omits the
-   * attribute.
-   * @default "auto"
-   */
-  fetchPriority?: HeadScriptFetchPriority;
-}
-
-/**
- * react-dom >= 19.3.0 forwards `fetchPriority` from `preinitModule` to Fizz's
- * preinitModuleScript, which spreads every option onto the tag; the published
- * PreinitModuleOptions type does not declare it.
- */
-type PreinitModuleWithPriority = NonNullable<
-  Parameters<typeof preinitModule>[1]
-> & { fetchPriority?: "low" };
 
 /**
  * JS/CSS asset deps plugin-rsc resolves for a client reference. Structural
@@ -127,16 +90,14 @@ export function runWithPreinitNonce<T>(
  *   hint, not a preinit (Fizz claims its URL, so this hook's call for it is
  *   inert); the handlers serve that hint at default priority, High as well,
  *   after these scripts (entry-preload-priority.ts, #1025).
- *   `fetchPriority: "low"` opts the chunks down; the default is `"auto"`
- *   ({@link DEFAULT_HEAD_SCRIPT_FETCH_PRIORITY}). react-dom < 19.3.0 and the
- *   experimental channel up to at least 0.0.0-experimental-247fbb45-20260622
- *   drop `fetchPriority` in the public `preinitModule`, so there the tags
- *   render without the attribute. A hoistable
- *   `<script async type="module" fetchPriority>` element would render the
- *   attribute on every version (Fizz routes it through the same
- *   moduleScriptResources dedupe and spreads its props), but this hook is a
- *   callback from plugin-rsc's module proxy, not a component: it has no tree
- *   position to render an element into.
+ *   Lowering the chunks to `fetchpriority="low"` was measured and rejected
+ *   (#1021; Chromium 153, 20 interleaved runs per variant and cell). On pages
+ *   with images above the fold the Low chunks queue behind the boosted
+ *   images: hydration came 206 to 6407 ms later on HTTP/1.1 and 65 to 642 ms
+ *   later on HTTP/2. The one gain, FCP -136 ms, needed an image-free page
+ *   with 35 KB of render-blocking CSS on HTTP/1.1 Slow 4G, and hydration was
+ *   still 98 ms later there. `headScripts: "preload"` is the way to get Low
+ *   chunk fetches.
  * - Build only: plugin-rsc's dev load path reports `js: []` per reference, so
  *   dev documents have no head chunk scripts — a client module whose module
  *   scope assumes body-parsed DOM can break in production only. The
@@ -147,20 +108,11 @@ export function runWithPreinitNonce<T>(
  */
 export function installClientReferencePreinit(
   setOnClientReference: SetOnClientReference,
-  options?: ClientReferencePreinitOptions,
 ): void {
-  const priority = options?.fetchPriority ?? DEFAULT_HEAD_SCRIPT_FETCH_PRIORITY;
-  const fetchPriority = priority === "auto" ? undefined : priority;
   setOnClientReference(({ deps }) => {
     const nonce = preinitNonceStorage.getStore();
     for (const href of deps.js) {
-      const preinitOptions: PreinitModuleWithPriority = {
-        as: "script",
-        crossOrigin: "",
-        nonce,
-        fetchPriority,
-      };
-      preinitModule(href, preinitOptions);
+      preinitModule(href, { as: "script", crossOrigin: "", nonce });
     }
   });
 }

@@ -212,7 +212,7 @@ rango({
   preset: "node", // "node" | "cloudflare" | "vercel"
   banner: true, // Print the startup banner
   clientChunks: true, // Per-route client chunk splitting; false, or a function
-  headScripts: "preinit", // "preinit" (executing head module scripts) | "preload" (modulepreload hints only) | { mode: "preinit", fetchPriority }
+  headScripts: "preinit", // "preinit" (executing head module scripts) | "preload" (modulepreload hints only)
   prerender: { onError: "fail" }, // "fail" | "warn" when a Prerender/Static render throws (/prerender)
   buildEnv: false, // Build-time ctx.env for Prerender/Static handlers (/prerender)
 });
@@ -254,20 +254,6 @@ Notes:
   renders and PPR shell capture. Unset, documents whose route has a
   `loader(Def, { ssr: false })` raise it automatically so that content stays
   in place; see `/loader`.
-- `headScripts: { mode: "preinit", fetchPriority: "low" }` (opt-in; the
-  default `"auto"` adds no attribute) stamps `fetchpriority="low"` on every
-  head chunk script: the shared dependency chunks (react, router, entry.rsc,
-  the bundler runtime) and every client-component chunk. The entry is not one
-  of them: its `modulepreload` hint stays at the default priority, so
-  hydration does not wait behind images (#1025). Chromium otherwise fetches
-  those scripts at High, next to the stylesheet and the LCP image; #1021
-  measured earlier FCP and LCP under Slow 4G with hydration unchanged. The
-  risk: on image-heavy pages and on HTTP/1.1 the Low chunks can queue behind
-  images and delay hydration. The object form takes `mode: "preinit"` only,
-  and an unknown `headScripts` value throws at config time. Needs react-dom
-  19.3.0 or later: 19.2.x and the experimental channel
-  (`0.0.0-experimental-247fbb45-20260622`) render the tags unchanged.
-  Production builds only (dev documents have no chunk scripts in `<head>`).
 - `@rangojs/router/vite` also exports `poke()`, a dev-server plugin: type `e`
   then Enter (or Ctrl+R where the terminal passes it through) to full-reload
   the browser.

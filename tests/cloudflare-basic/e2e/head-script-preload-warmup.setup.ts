@@ -1,6 +1,6 @@
 import { test as setup, expect } from "@playwright/test";
 
-setup("warmup head-script variant dev server", async ({ page, baseURL }) => {
+setup("warmup preload dev server", async ({ page, baseURL }) => {
   setup.setTimeout(60_000);
 
   await expect(async () => {

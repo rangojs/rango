@@ -3,18 +3,15 @@ import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { rango, type HeadScriptsOption } from "@rangojs/router/vite";
+import { rango } from "@rangojs/router/vite";
 import { analyze } from "../../tools/bundle-analyze";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-function testHeadScripts(): HeadScriptsOption | undefined {
+function testHeadScripts(): "preload" | undefined {
   const value = process.env.RANGO_E2E_HEAD_SCRIPTS;
   if (!value) return;
   if (value === "preload") return value;
-  // playwright.priority-low.config.ts: the opt-in fetchpriority="low".
-  if (value === "priority-low")
-    return { mode: "preinit", fetchPriority: "low" };
   throw new Error(`Invalid RANGO_E2E_HEAD_SCRIPTS value: ${value}`);
 }
 

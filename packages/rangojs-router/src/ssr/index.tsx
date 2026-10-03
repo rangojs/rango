@@ -12,10 +12,9 @@ import {
 } from "../rsc/shell-capture-constants.js";
 import { isThenable } from "../handles/is-thenable.js";
 import type { ErrorPhase } from "../types.js";
-import type { HeadScriptsMode } from "../vite/plugin-types.js";
+import type { HeadScriptsOption } from "../vite/plugin-types.js";
 
 export { installClientReferencePreinit } from "./preinit-client-references.js";
-export type { ClientReferencePreinitOptions } from "./preinit-client-references.js";
 
 /**
  * Options for injectRSCPayload
@@ -194,11 +193,9 @@ export interface SSRDependencies<TEnv = unknown> {
    * undefined keeps the inline bootstrap verbatim, so a custom SSR entry that
    * never installed the preinit hook cannot drift into the half-converted
    * state on upgrade (the generated entry always passes an explicit value).
-   * Only the mode lands here; the head chunk script priority is the
-   * `installClientReferencePreinit(setOnClientReference, { fetchPriority })`
-   * argument.
+   * Any other value throws when the handler is created.
    */
-  headScripts?: HeadScriptsMode;
+  headScripts?: HeadScriptsOption;
 
   /**
    * Fizz `progressiveChunkSize`, forwarded verbatim to renderToReadableStream
@@ -529,9 +526,23 @@ const MISSING_BOOTSTRAP_MSG =
  * getClientEntryUrl only counts under an explicit `headScripts: "preinit"` —
  * any other headScripts keeps the inline path, so its presence alone is a
  * misconfiguration worth flagging rather than silently ignoring.
+ * An unknown headScripts value throws: a custom SSR entry bypasses the
+ * rango({ headScripts }) check in getVirtualEntrySSR, and a typo such as
+ * "prenit" would otherwise run the inline path as if it were "preload".
+ * undefined stays valid (see {@link resolveBootstrap}).
  */
 function assertBootstrapDeps(deps: SSRDependencies): void {
-  const preinit = deps.headScripts === "preinit";
+  const { headScripts } = deps;
+  if (
+    headScripts !== undefined &&
+    headScripts !== "preinit" &&
+    headScripts !== "preload"
+  ) {
+    throw new Error(
+      `[ssr] headScripts must be "preinit" or "preload", received ${JSON.stringify(headScripts)}`,
+    );
+  }
+  const preinit = headScripts === "preinit";
   if (deps.getClientEntryUrl && !preinit) {
     console.warn(
       '[ssr] getClientEntryUrl is ignored without headScripts: "preinit"; ' +

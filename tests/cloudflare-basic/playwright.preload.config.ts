@@ -50,7 +50,7 @@ export default defineConfig({
   projects: [
     {
       name: "preload-dev-warmup",
-      testMatch: "**/head-script-variant-warmup.setup.ts",
+      testMatch: "**/head-script-preload-warmup.setup.ts",
       use: {
         ...browserConfig,
         baseURL: `http://localhost:${DEV_PORT}`,
