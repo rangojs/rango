@@ -36,8 +36,9 @@ which shares action-id resolution with `runClientRevalidate` through
 
 Location state is owned by
 [`browser/react/location-state-shared.ts`](../../src/browser/react/location-state-shared.ts)
-(`createLocationState`, its options, the `__rsc_ls_` key prefix and the key
-suffixes `version` / `clearOnReload` add; importable from server code) and
+(`createLocationState`, its options, the `__rsc_ls_` key prefix, the key
+suffix `clearOnReload` adds, and the per-entry app version stamp with its
+readers and writers; importable from server code) and
 [`browser/react/location-state.ts`](../../src/browser/react/location-state.ts)
 (`useLocationState`). How a slot reaches or leaves `history.state` is owned by
 [`browser/history-state.ts`](../../src/browser/history-state.ts): navigation

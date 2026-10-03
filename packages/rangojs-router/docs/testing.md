@@ -620,18 +620,14 @@ production's history path, so `useLocationState(Def)` re-reads after the click;
 wait for it with RTL's `waitFor` (see the testing skill,
 `client-components.md` "Location state").
 
-The `createLocationState` options (`version`, `validate`, `clearOnReload`) do
-not change what you seed. `version` and `clearOnReload` live in the slot's key,
-not in its value: the definition appends `~v2` / `~r` to whatever name you key
-it with, and `renderRoute` writes the plain value under that key. That gives
-you the two cases those options are about:
+The `createLocationState` options (`clearOnReload`, `validate`) do not change
+what you seed. `clearOnReload` lives in the slot's key, not in its value: the
+definition appends `~r` to whatever name you key it with, and `renderRoute`
+writes the plain value under that key. That gives you the cases those options
+are about:
 
-- **State from another deploy.** Give the older definition the same name
-  (`withLocationStateKey(GridV1, "GridState")`): with another `version` it gets
-  another key (`__rsc_ls_GridState~v1`), exactly as it would in the browser.
-  Seed through it; the component under test reads the current definition and
-  must render as with no state. A value `validate` rejects, or throws on, is
-  seeded directly.
+- **A value `validate` rejects, or throws on,** is seeded directly; the
+  component under test must render as with no state.
 - **`clearOnReload`.** Plain `renderRoute` is a client mount, the way a reader
   mounts during a navigation, so the seed is applied. `hydrate: true` (next
   section) is a document load of the seeded entry: before hydrating,
@@ -639,6 +635,13 @@ you the two cases those options are about:
   (`src/browser/history-state.ts`), the same function `initBrowserApp` calls at
   production start-up, so the slot is gone from `history.state` and the reader
   stays `undefined`.
+
+You may wonder where the app version went, since the browser drops location
+state another build wrote. A `renderRoute` tree has no app version (it never
+runs `initBrowserApp`, and `renderRoute` resets what an earlier one left), so a
+seed is written without one and reads back on a mount and on a `hydrate: true`
+load. The server primitives return `{ [Def.__rsc_ls_key]: value }` and nothing
+else: the client records its version when it stores the state in an entry.
 
 ```tsx
 const routes = [{ path: "/products", Component: ProductList }];
@@ -1060,9 +1063,8 @@ runs, so `thrown` holds that missing-key error instead of the redirect. In the
 react-server project (`NODE_ENV=production`) nothing throws and the value lands
 under `"undefined"`. The helper always adds the `__rsc_ls_` prefix, so assert
 `__rsc_ls_Flash`, or `{ [Flash.__rsc_ls_key]: value }` for any key. Prefer the
-second form once a definition sets `version` or `clearOnReload`: those options
-are part of the key (`__rsc_ls_Flash~v2`), while the value stays what the
-handler passed.
+second form once a definition sets `clearOnReload`: the option is part of the
+key (`__rsc_ls_Flash~r`), while the value stays what the handler passed.
 
 Reading **vars the handler set** is via the context, not the snapshot: pass
 `vars` to seed, and read with `ctx.get(token)` (the `fn` receives `ctx`, or use

@@ -2,64 +2,81 @@
 
 ## Unreleased
 
-### Added: `createLocationState({ version, validate })` reads state written by another deploy as no state ([#1020](https://github.com/rangojs/rango/pull/1020))
+### Breaking: location state written by another app version reads as no state ([#1020](https://github.com/rangojs/rango/pull/1020))
 
-A location state key is the file path plus the export name, so it is the same
-in every deploy, and a history entry outlives a deploy: a tab left open across
-a release keeps its `history.state` through reloads and back/forward. The read
-was an unchecked cast, so after a release that changed a state's shape the new
+A history entry outlives a deploy: a tab left open across a release keeps its
+`history.state` through reloads and back/forward. A location state key is the
+file path plus the export name, so it is the same in every deploy, and the read
+was an unchecked cast. After a release that changed a state's shape, the new
 code got the old value typed as the new one (#994).
 
-Two options make such a value read as `undefined`, which is what a reader
-already handles for "no state":
+Location state is now versioned by the app version, the one the router already
+uses to reload a client that is behind the server. Every history entry records
+the version its location state was written under, and a read returns only
+state recorded under the version the page was loaded with. This covers all
+location state: `createLocationState` definitions (`useLocationState(Def)`,
+`Def.read()`, `flash` included), plain state (`<Link state={{ ... }}>` read
+with `useLocationState()`), and state the server sets
+(`ctx.setLocationState()`, `redirect(url, { state })`).
+
+There is nothing to configure and no version to manage: no option sets it and
+no API returns it.
+
+| An entry's location state, read by                               | Before                          | After                                  |
+| ---------------------------------------------------------------- | ------------------------------- | -------------------------------------- |
+| the build that wrote it: navigation, back/forward, refresh       | the value                       | the value (unchanged)                  |
+| a later build, after a refresh or a restored tab                 | the old value, typed as the new | `undefined`                            |
+| a later build, on back/forward to an entry the older build wrote | the old value, typed as the new | `undefined`                            |
+| any build, when a release older than this one wrote the entry    | the value                       | `undefined`                            |
+| a release older than this one, after a rollback                  | the value                       | the value: it does not read the record |
+
+- **This happens on every deploy.** The default app version is generated per
+  build, so each deploy is another version. State a user had in an open tab (a
+  filter carried on a link, a flash message not shown yet) is gone after the
+  deploy, as if the entry never had any. Readers already handle `undefined`.
+  State that has to outlive a deploy belongs in the URL, a cookie or storage.
+- If you set `version` on the router yourself, location state lives as long
+  as that value does.
+- On the first release with this change, every entry written before the
+  upgrade counts as another version: open tabs lose their location state once.
+- Keys and values are stored as before. The record is one extra field on the
+  entry (`__rsc_lsv`). A write into an entry another version wrote drops that
+  entry's older location state first; the router's own bookkeeping on the
+  entry (scroll key, intercept context) is kept.
+- In development a server-module edit changes the version (HMR). The running
+  page keeps its location state; a document load after the edit drops it, as
+  after a deploy.
+- Unit tests need no version: `renderRoute` seeds read back as before, and the
+  `.locationState` of `runMiddleware`, `runLoaderResult`,
+  `runInRequestContext` and `renderHandler` is still
+  `{ [Def.__rsc_ls_key]: value }`.
+
+### Added: `createLocationState({ validate })` checks a stored value on every read ([#1020](https://github.com/rangojs/rango/pull/1020))
+
+For state whose shape you want checked at the read instead of trusted from its
+type:
 
 ```ts
-// A deliberate shape change: bump the number.
-export const GridState = createLocationState<GridSnapshot>({ version: 2 });
-
-// Check the value itself on every read.
 export const GridState = createLocationState<GridSnapshot>({
   validate: (value): value is GridSnapshot => isGridSnapshot(value),
 });
 ```
 
-`version` is part of the slot's key in `history.state`; the value is stored
-as-is. With `<key>` for the key the Vite plugin injects:
+| The slot holds                               | A read returns                        |
+| -------------------------------------------- | ------------------------------------- |
+| a value `validate` returns `true` for        | the value                             |
+| a value it returns `false` for, or throws on | `undefined`                           |
+| nothing                                      | `undefined`; `validate` is not called |
 
-| Definition      | Reads and writes | A read returns                                                                          |
-| --------------- | ---------------- | --------------------------------------------------------------------------------------- |
-| no options      | `<key>`          | the value, unchecked (unchanged)                                                        |
-| `version: 2`    | `<key>~v2`       | the value stored under version 2; `undefined` for anything stored under another key     |
-| `validate`      | `<key>`          | the value when `validate` returns `true`; `undefined` when it returns `false` or throws |
-| both            | `<key>~v2`       | `validate` runs on what version 2 stored                                                |
-| any, empty slot | nothing          | `undefined`; `validate` is not called                                                   |
-
-- A reader of version 2 never sees what version 1, or the definition before it
-  had a version, stored: it is under another key. Nothing is decoded and no
-  stored format exists to get out of date.
-- **Rollback is safe.** A release that predates the option, or the previous
-  release of your app, reads its own key and finds its own state or nothing.
-- **What a version bump leaves behind:** the previous version's slot stays in
-  each history entry that has it, as a key nothing reads, until that entry is
-  replaced or dropped by the browser.
-- Removing `version` is not a reset: the definition reads `<key>` again,
-  including a value stored before the option was added. To drop state, bump
-  the version.
 - A `validate` that throws never fails a render or a navigation. In
   development the error is logged once per definition, with its key.
+- The key and the stored value do not change, so adding or removing the option
+  needs no migration.
 - The type of `validate` is exported as `LocationStateGuard<TState>` from
   `@rangojs/router` and `@rangojs/router/client`. It is unrelated to
   `ValidateLocationState<T>`, the existing compile-time serializability check.
   `LocationStateOptions` now takes the state type
   (`LocationStateOptions<TState>`, default `unknown`).
-- `Def.__rsc_ls_key` returns the key with its suffix. In unit tests
-  `withLocationStateKey(GridState, "GridState")` still names the definition,
-  the key is then `__rsc_ls_GridState~v2`, and
-  `{ [GridState.__rsc_ls_key]: value }` is the assertion that holds for any
-  definition. The helper rejects a name that contains `~`.
-
-Definitions that set none of the options store and read exactly as before:
-same key, same value, no added work on a read or a write.
 
 ### Added: `createLocationState({ clearOnReload: true })` drops the state when the entry's document is loaded ([#1020](https://github.com/rangojs/rango/pull/1020))
 
@@ -103,8 +120,8 @@ const products = [
 | Later on that page: a reader mounts, or a navigation returns to the entry | state applied           | still `undefined` until the next write                |
 | The page is restored from the back/forward cache                          | state and DOM kept      | unchanged                                             |
 
-- The slot is stored under `<key>~r` (`<key>~v2~r` with a version), value
-  as-is. When the client starts, before it hydrates, the router removes every
+- The slot is stored under `<key>~r` (`<key>` is the key the Vite plugin
+  injects), value as-is. When the client starts, before it hydrates, the router removes every
   `~r` key from the entry. It goes by the key alone, so it does not depend on
   a reader being mounted, on where the reader sits (a `<Suspense>` boundary
   that hydrates late included), or on the definition's module being loaded.
@@ -121,7 +138,7 @@ const products = [
   was stored before, under the plain key, is no longer read and is not
   removed. Removing the option moves it back; what was stored under `~r` is
   removed at the next document load. A rollback behaves like removing it.
-- `version` and `validate` combine with it. `flash` does not:
+- `validate` combines with it. `flash` does not:
   `createLocationState` throws in development, since flash state is removed at
   its first read and the option could only drop a message nobody has seen.
 - The `carriedIds` filter in the example works around a known ordering in the
@@ -132,7 +149,11 @@ const products = [
 To test it, plain `renderRoute(routes, { locationState })` is the client
 navigation and `renderRoute(routes, { hydrate: true, locationState })` is the
 document load: hydrate mode removes the seeded slot with the same function the
-client start-up calls.
+client start-up calls. `Def.__rsc_ls_key` returns the key with its suffix:
+`withLocationStateKey(CarriedProducts, "CarriedProducts")` still names the
+definition, the key is then `__rsc_ls_CarriedProducts~r`, and
+`{ [CarriedProducts.__rsc_ls_key]: value }` is the assertion that holds for
+any definition. The helper rejects a name that contains `~`.
 
 Definitions that do not set the option store and read exactly as before, and
 the client start-up writes nothing to `history.state` when no key carries the

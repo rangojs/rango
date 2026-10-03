@@ -67,10 +67,11 @@ the one for your case.
   `<form action={...}>` flow.
 - [`./state.md`](./state.md) — `useLocationState` (persistent + flash state,
   `.read()`/`.read(location)`/`.write()`/`.delete()`, typed `state` on `router.push()` /
-  `router.replace()`, serializability errors that name the failing field), the
-  `createLocationState` options (`version` / `validate` for state written by
-  another deploy, `clearOnReload` for state that must not come back after a
-  refresh, such as a "load more" list), `invalidateClientCache()`.
+  `router.replace()`, serializability errors that name the failing field),
+  state from another deploy (dropped by the router, no version to manage), the
+  `createLocationState` options (`clearOnReload` for state that must not come
+  back after a refresh, such as a "load more" list; `validate` to check a
+  stored value on read), `invalidateClientCache()`.
 - [`./outlets.md`](./outlets.md) — `Outlet`, `ParallelOutlet`, `useOutlet`.
 - [`./urls.md`](./urls.md) — `useParams`, `usePathname`, `useSearchParams`,
   `useHref`, `useMount`, `useReverse`.

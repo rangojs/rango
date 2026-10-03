@@ -232,63 +232,64 @@ carries no location state (there is no history entry to write it to yet):
 };
 ```
 
+### State from another deploy
+
+History entries survive reloads and back/forward, so a tab left open across a
+release still holds the state the older build wrote. The router drops it for
+you: every entry records the app version its location state was written under,
+and a read under any other version returns `undefined`, for typed slots and
+for plain state alike. You do not manage a version and there is none to read;
+the app version is the one the router already uses to reload a client that is
+behind the server, and it changes with every build.
+
+| An entry's location state, read by                             | Result      |
+| -------------------------------------------------------------- | ----------- |
+| the build that wrote it: navigation, back/forward, refresh     | the value   |
+| a later build, after a refresh or a restored tab               | `undefined` |
+| a later build, on back/forward to an entry the older one wrote | `undefined` |
+| any build, when the entry predates this behavior               | `undefined` |
+
+So location state is for the current session of the current build: a filter
+carried on a link, a flash message, a scroll target. State that has to outlive
+a deploy belongs in the URL, a cookie or storage. In development a
+server-module edit (HMR) changes the version too; the running page keeps its
+state, and the next document load drops it.
+
 ### createLocationState options
 
 ```ts
 createLocationState<TState>({
   flash?: boolean, // read once, cleared after paint (above)
-  version?: number, // drop state written under another version
-  validate?: (value: unknown) => value is TState, // check the value on read
   clearOnReload?: boolean, // drop the state on a document load
+  validate?: (value: unknown) => value is TState, // check the value on read
 });
 ```
 
 A definition that sets none of them stores the value under its key and reads
-it back unchecked, as it always did. `version`, `validate` and `clearOnReload`
-each make one kind of stored state read as `undefined`, which is what a reader
-already handles: it is the same result as no state.
+it back unchecked. `clearOnReload` and `validate` each make one kind of stored
+state read as `undefined`, which is what a reader already handles: it is the
+same result as no state.
 
-The value is always stored as-is. `version` and `clearOnReload` change the
-slot's KEY in `history.state` instead, by a suffix on the key the Vite plugin
-injects (`<key>` below, `__rsc_ls_<file>#<ExportName>`):
+The value is always stored as-is. `clearOnReload` changes the slot's KEY in
+`history.state` instead, by a suffix on the key the Vite plugin injects
+(`<key>` below, `__rsc_ls_<file>#<ExportName>`):
 
-| Options                        | Key in `history.state` | Reads `undefined` when                                    |
-| ------------------------------ | ---------------------- | --------------------------------------------------------- |
-| none, `flash`, `validate`      | `<key>`                | the slot is empty (`flash`: once read; `validate`: below) |
-| `version: 2`                   | `<key>~v2`             | nothing was stored under version 2                        |
-| `clearOnReload`                | `<key>~r`              | the entry's document was loaded since the write           |
-| `version: 2` + `clearOnReload` | `<key>~v2~r`           | either of the above                                       |
+| Options                   | Key in `history.state` | Reads `undefined` when                                    |
+| ------------------------- | ---------------------- | --------------------------------------------------------- |
+| none, `flash`, `validate` | `<key>`                | the slot is empty (`flash`: once read; `validate`: below) |
+| `clearOnReload`           | `<key>~r`              | the entry's document was loaded since the write           |
 
 `Def.__rsc_ls_key` is that key, suffix included. `~` cannot appear in an export
 name, so no other definition can end up with a suffixed key.
 
-`version`, `validate` and one of `flash` / `clearOnReload` can be combined.
-`flash` with `clearOnReload` is rejected: `createLocationState` throws in
-development.
+`validate` combines with `flash` or `clearOnReload`. `flash` with
+`clearOnReload` is rejected: `createLocationState` throws in development.
 
-### version and validate: state from another deploy
+### validate: check the value on read
 
-The key is the file path plus the export name, so it stays the same across
-deploys. History entries survive reloads and back/forward. A tab left open
-across a release that changed the shape would otherwise restore the old value
-typed as the new one.
-
-`version` is the cheap check for a deliberate shape change. Bump it when the
-shape changes:
-
-```ts
-export const GridState = createLocationState<GridSnapshot>({ version: 2 });
-```
-
-Version 2 reads and writes `<key>~v2` and nothing else. State stored by
-version 1 (`<key>~v1`), or before the definition had a version (`<key>`), is
-under another key, so the reader finds nothing and gets `undefined`. Nothing
-is decoded and nothing is deleted: the older slot stays in that history entry
-as a key nobody reads, until the entry is replaced or dropped by the browser.
-
-`validate` checks the value itself, so it also covers state written by other
-code under the same key. It runs on every read of a non-empty slot; `false`
-reads as `undefined`.
+`validate` checks the stored value itself, so it also covers state written by
+other code under the same key. It runs on every read of a non-empty slot;
+`false` reads as `undefined`.
 
 ```ts
 export const GridState = createLocationState<GridSnapshot>({
@@ -300,26 +301,12 @@ export const GridState = createLocationState<GridSnapshot>({
 - A `validate` that throws counts as `false`. It never fails the render or
   the navigation; in development the error is logged once per definition,
   with the definition's key.
-- With `version`, it only ever sees values stored under that version.
+- The key and the stored value do not change, so adding or removing the
+  option needs no migration.
 
 The type of `validate` is exported as `LocationStateGuard<TState>` (not to be
 confused with `ValidateLocationState<T>`, the compile-time serializability
 check above).
-
-**Rollbacks, and adding or removing an option.** Because the options are in
-the key and the value is plain, no release ever reads a format it does not
-know:
-
-| Change                                          | What the definition reads afterwards                                                               |
-| ----------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| add `version` (or `clearOnReload`)              | `<key>~v1` (or `<key>~r`): empty. State stored before the option, under `<key>`, is no longer read |
-| bump `version`                                  | the new key: empty. The previous version's slot stays in its entries, unread                       |
-| roll back to the previous release               | that release's own key, including whatever it stored there before the upgrade                      |
-| roll back to a release older than these options | `<key>`, as always. It never sees a suffixed slot                                                  |
-| remove `version` (or `clearOnReload`)           | `<key>` again, including values from before the option was added if their entries still exist      |
-
-The last row is the one to know: removing `version` is not a reset. To drop
-state, bump the version.
 
 ### clearOnReload: state the server did not render with
 
@@ -415,8 +402,7 @@ as the server rendered it:
   stored before, under the plain key, is no longer read (and is not removed).
   Removing the option moves it back to the plain key; what was stored under
   `~r` is removed at the next document load.
-- Combine it with `version` and `validate` freely. It cannot be combined with
-  `flash`: flash state is removed at its first read, so the pair could only
+- Combine it with `validate` freely. It cannot be combined with `flash`: flash state is removed at its first read, so the pair could only
   drop a message nobody has seen yet.
 
 ### .read() (non-hook access)
