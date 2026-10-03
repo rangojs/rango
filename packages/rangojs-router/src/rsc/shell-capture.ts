@@ -1961,8 +1961,8 @@ export function deriveShellCaptureContext(
   //    (settleCaptureRecord) can wait for its promises, top-level and nested,
   //    before the doc record encodes the handles a HIT replays. A route
   //    cache() record's restore (handle-snapshot.ts restoreHandles) lands
-  //    here too: a value it restores through pushReplayed keeps that loader
-  //    as owner, so a HIT restores it as that loader's (pushRestored).
+  //    here too: a value it restores as a placeholder keeps that loader as
+  //    owner, so a HIT restores it as that loader's (pushRestored).
   //  - DSL-LOADER pushes. Only bake-lane { ssr: false } loaders and the
   //    loaders they await via ctx.use execute at capture (live loaders are
   //    masked), their pushes are in the captured HTML (<head> title/meta,
@@ -1977,7 +1977,7 @@ export function deriveShellCaptureContext(
   //    inside its body) are dropped and only its thenable ones are added. A
   //    loader the replay does not serve from a pin is a hole: one the route
   //    also runs on the live lane, or one whose pin the entry lost. Its run
-  //    replaces its copies (pushReplayed, #936), those of the
+  //    replaces its copies (pushPlaceholder, #936), those of the
   //    dependencies it awaits included (they are credited to it). Nested
   //    thenables stay masked (the promise shape is the liveness
   //    declaration, mask-nested.ts). A deferred (thenable) push,
@@ -1991,9 +1991,9 @@ export function deriveShellCaptureContext(
   const handlerPushSettles: Promise<void>[] = [];
   // A replay (a loader-cache HIT, loader-cache.ts replayLoaderHandles, or a
   // route cache() record's owned values, restoreHandles) re-pushes a loader's
-  // recorded values through pushReplayed, which calls push() outside any
-  // loader body: name that loader for the funnel so the record keeps them
-  // under it too.
+  // recorded values through pushReplayed or pushPlaceholder, which call
+  // push() outside any loader body: name that loader for the funnel so the
+  // record keeps them under it too.
   let replayOwner: string | undefined;
   // The live-lane loader whose body a push is made in, at any depth, unless
   // a bake-lane loader's body is nearer (createMatchContextForFull sets the
@@ -2013,15 +2013,17 @@ export function deriveShellCaptureContext(
         : undefined)
     );
   };
-  const rawPushReplayed = freshHandleStore.pushReplayed.bind(freshHandleStore);
-  freshHandleStore.pushReplayed = (handleName, segmentId, value, loaderId) => {
-    replayOwner = loaderId;
-    try {
-      rawPushReplayed(handleName, segmentId, value, loaderId);
-    } finally {
-      replayOwner = undefined;
-    }
-  };
+  for (const copy of ["pushReplayed", "pushPlaceholder"] as const) {
+    const raw = freshHandleStore[copy].bind(freshHandleStore);
+    freshHandleStore[copy] = (handleName, segmentId, value, loaderId) => {
+      replayOwner = loaderId;
+      try {
+        raw(handleName, segmentId, value, loaderId);
+      } finally {
+        replayOwner = undefined;
+      }
+    };
+  }
   const rawCapturePush = freshHandleStore.push.bind(freshHandleStore);
   freshHandleStore.push = (
     handleName: string,

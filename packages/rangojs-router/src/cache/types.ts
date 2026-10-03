@@ -766,8 +766,8 @@ export type SegmentHandleData = Record<string, unknown[]>;
  * request serves that loader from the pin stored with the record
  * (HandleStore.pushRestored: it stands against a run of the loader), on a
  * document HIT and on a navigation replay alike. Every other owner's value
- * is a placeholder (pushReplayed): a live-lane loader's, and every owner's
- * where the record has no pin for it. The loader's run, or its own cache()
- * entry, replaces it.
+ * is a placeholder (pushPlaceholder): a live-lane loader's, and every
+ * owner's where the record has no pin for it. The loader's run, or its own
+ * cache() entry, replaces it.
  */
 export type HandleOwners = Record<string, Record<string, (string | null)[]>>;

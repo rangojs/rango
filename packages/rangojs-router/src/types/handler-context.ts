@@ -468,7 +468,8 @@ export type InternalHandlerContext<
    * the replayed values (HandleStore.pushReplayed). One copy per loader per
    * request. A record's restore does not ask (restoreHandles): its copies
    * are the pinned loader's own, or placeholders the claimed replay
-   * replaces. See setupLoaderAccess.
+   * replaces. Absent on a stale refresh's ctx, whose pushes are diverted
+   * (handle-snapshot.ts appendHandles). See setupLoaderAccess.
    */
   _claimLoaderPushes?: (loaderId: string) => boolean;
   /**

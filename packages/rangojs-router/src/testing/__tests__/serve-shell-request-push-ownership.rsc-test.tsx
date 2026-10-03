@@ -10,7 +10,7 @@
  *
  * The pin groups (#1001, #1003 and the paths that fall out of the same
  * change) are plain tests; the design doc records the assertion each one
- * failed with before the fix. The last group is #1002, still open: its `red`
+ * failed with before the fix. The two PENDING groups are open: their `red`
  * tests are vitest's `it.fails`, which keeps the suite green while a test
  * fails and turns it red the moment the test passes.
  */
@@ -28,8 +28,8 @@ vi.mock(
 
 import {
   resetShellTestState,
-  serveShellRequest,
   type ServeShellRequestOptions,
+  type ServeShellRequestResult,
 } from "../flight.entry.js";
 import {
   createHandle,
@@ -38,14 +38,20 @@ import {
   urls,
   type HandlerContext,
 } from "../../index.rsc.js";
-import { MemorySegmentCacheStore } from "../../cache/index.js";
 import { navigationShellKey } from "../../rsc/shell-capture-constants.js";
-import { readCachedDep, source } from "./fixtures/shell-request-data.js";
+import {
+  DeferredOwnedLoader,
+  deferredOwnedRuns,
+  OnceNotedBakeLoader,
+  OuterDepLoader,
+  shellHarness,
+  source,
+} from "./fixtures/shell-request-data.js";
 
 const red = it.fails;
 
 /** Body runs, across requests of one test. */
-const runs = { deferred: 0, sch: 0, owned: 0, ownedDep: 0 };
+const runs = { sch: 0, owned: 0, ownedDep: 0, order: 0 };
 
 const Notes = createHandle<string>();
 
@@ -62,20 +68,8 @@ const EbBake = createLoader(async (ctx) => {
 });
 
 /**
- * A promise-free `ssr: false` loader with its own cache() that pushes a
- * settled and a deferred value (#1001).
- */
-const DeferredOwned = createLoader(async (ctx) => {
-  runs.deferred += 1;
-  const run = runs.deferred;
-  ctx.use(Notes)(`settled-note-${run}`);
-  ctx.use(Notes)(Promise.resolve(`deferred-note-${run}`));
-  return { deferredOwned: `deferred-owned-run-${run}` };
-});
-
-/**
- * A promise-carrying `ssr: false` loader with its own cache(), under a route
- * cache(): the route record a capture writes keeps its push as owned.
+ * A promise-carrying `ssr: false` loader with its own cache(): a route
+ * cache() record or a shell record a capture writes keeps its push as owned.
  */
 const OwnedBake = createLoader(async (ctx) => {
   runs.owned += 1;
@@ -86,7 +80,7 @@ const OwnedBake = createLoader(async (ctx) => {
   };
 });
 
-/** Awaited by BakeAwaitsDep only: the route registers it on neither lane. */
+/** Awaited by other loaders only: no route registers it on either lane. */
 const DepNoted = createLoader(async (ctx) => {
   ctx.use(Notes)(`dep-note@g${source.generation}`);
   return { dep: `dep@g${source.generation}` };
@@ -95,6 +89,20 @@ const DepNoted = createLoader(async (ctx) => {
 /** A promise-free `ssr: false` loader whose value derives from DepNoted's. */
 const BakeAwaitsDep = createLoader(async (ctx) => ({
   baked: `baked-${(await ctx.use(DepNoted)).dep}`,
+}));
+
+/**
+ * A promise-carrying `ssr: false` loader whose value derives from DepNoted's:
+ * it runs on a HIT, and DepNoted runs inside it.
+ */
+const HoleyAwaitsDep = createLoader(async (ctx) => ({
+  holey: `holey-${(await ctx.use(DepNoted)).dep}`,
+  later: Promise.resolve("holey-later"),
+}));
+
+/** A promise-free `ssr: false` loader that neither pushes nor awaits. */
+const PlainBake = createLoader(async () => ({
+  plain: `plain@g${source.generation}`,
 }));
 
 /**
@@ -108,13 +116,29 @@ const OwnedAwaitsDep = createLoader(async (ctx) => {
   return { ownedDep: `owned-${dep}` };
 });
 
-/** A promise-carrying `ssr: false` loader that pushes at the capture only. */
-const OnceNoted = createLoader(async (ctx) => {
-  if (source.generation === 1) ctx.use(Notes)("once-note@g1");
-  return {
-    once: `once@g${source.generation}`,
-    later: Promise.resolve("once-later"),
-  };
+/** A dependency that pushes at the capture only. */
+const DepOnce = createLoader(async (ctx) => {
+  if (source.generation === 1) ctx.use(Notes)("dep-once-note@g1");
+  return { depOnce: `dep-once@g${source.generation}` };
+});
+
+/** An `ssr: false` loader with its own cache() that awaits DepOnce. */
+const OwnedAwaitsDepOnce = createLoader(async (ctx) => {
+  const { depOnce } = await ctx.use(DepOnce);
+  ctx.use(Notes)(`owned-once-note@g${source.generation}`);
+  return { ownedOnce: `owned-${depOnce}` };
+});
+
+/**
+ * An `ssr: false` loader with its own cache() that pushes, awaits DepNoted
+ * (which pushes), and pushes again.
+ */
+const OrderBake = createLoader(async (ctx) => {
+  runs.order += 1;
+  ctx.use(Notes)(`order-a@g${source.generation}`);
+  const { dep } = await ctx.use(DepNoted);
+  ctx.use(Notes)(`order-b@g${source.generation}`);
+  return { order: `order-${dep}` };
 });
 
 /** A promise-carrying `ssr: false` loader that pushes after the capture only. */
@@ -128,14 +152,11 @@ const LateNoted = createLoader(async (ctx) => {
   };
 });
 
-/**
- * A promise-carrying `ssr: false` loader whose body reads a "use cache"
- * function that awaits a pushing loader (fixtures: readCachedDep).
- */
-const OuterDep = createLoader(async (ctx) => ({
-  outer: await readCachedDep(ctx),
-  later: Promise.resolve("outer-later"),
-}));
+/** A promise-free `ssr: false` loader a navigation never revalidates. */
+const HeldNoted = createLoader(async (ctx) => {
+  ctx.use(Notes)(`held-note@g${source.generation}`);
+  return { held: `held@g${source.generation}` };
+});
 
 /** A loader with its own cache() that other loaders and handlers read (#1002). */
 const SchHole = createLoader(async (ctx) => {
@@ -166,9 +187,12 @@ async function SchReadingPage(ctx: HandlerContext): Promise<React.ReactNode> {
   return <p>{`page-${sch}`}</p>;
 }
 
+/** The pins are over the cap: the entry keeps its doc record only. */
+const NO_PINS = { maxSnapshotBytes: 1 };
+
 function makeRouter() {
   return createRouter({}).routes(
-    urls(({ path, layout, loader, loading, cache, intercept }) => [
+    urls(({ path, layout, loader, loading, cache, intercept, revalidate }) => [
       path("/about", () => <p>about</p>, { name: "about" }),
       path(
         "/eb",
@@ -176,27 +200,29 @@ function makeRouter() {
         { name: "eb", ppr: true },
         () => [loader(EbBake, { ssr: false })],
       ),
-      // The pins are over the cap: the entry keeps its doc record only.
       path(
         "/eb-capped",
         () => <p>eb capped</p>,
-        { name: "ebCapped", ppr: { maxSnapshotBytes: 1 } },
+        { name: "ebCapped", ppr: NO_PINS },
         () => [loader(EbBake, { ssr: false })],
-      ),
-      path(
-        "/dep",
-        () => <p>dep</p>,
-        { name: "dep", ppr: true },
-        () => [loader(BakeAwaitsDep, { ssr: false })],
       ),
       path(
         "/dep-capped",
         () => <p>dep capped</p>,
-        { name: "depCapped", ppr: { maxSnapshotBytes: 1 } },
+        { name: "depCapped", ppr: NO_PINS },
         () => [loader(BakeAwaitsDep, { ssr: false })],
       ),
+      path(
+        "/two-bake",
+        () => <p>two bake</p>,
+        { name: "twoBake", ppr: true },
+        () => [
+          loader(HoleyAwaitsDep, { ssr: false }),
+          loader(PlainBake, { ssr: false }),
+        ],
+      ),
       // The app-wide shape: the `ssr: false` loader sits on the layout, so
-      // its pin's key carries the layout's shortCode.
+      // its pin is stored under the layout's shortCode.
       layout(
         () => <header>eb layout</header>,
         () => [
@@ -210,8 +236,8 @@ function makeRouter() {
       path(
         "/once-capped",
         () => <p>once capped</p>,
-        { name: "onceCapped", ppr: { maxSnapshotBytes: 1 } },
-        () => [loader(OnceNoted, { ssr: false })],
+        { name: "onceCapped", ppr: NO_PINS },
+        () => [loader(OnceNotedBakeLoader, { ssr: false })],
       ),
       path(
         "/late",
@@ -220,18 +246,48 @@ function makeRouter() {
         () => [loader(LateNoted, { ssr: false })],
       ),
       path(
+        "/held",
+        () => <p>held</p>,
+        { name: "held", ppr: true },
+        () => [
+          loader(HeldNoted, { ssr: false }, () => [revalidate(() => false)]),
+        ],
+      ),
+      path(
+        "/owned-capped",
+        () => <p>owned capped</p>,
+        { name: "ownedCapped", ppr: NO_PINS },
+        () => [loader(OwnedBake, { ssr: false }, () => [cache({ ttl: 300 })])],
+      ),
+      path(
         "/owned-dep-capped",
         () => <p>owned dep capped</p>,
-        { name: "ownedDepCapped", ppr: { maxSnapshotBytes: 1 } },
+        { name: "ownedDepCapped", ppr: NO_PINS },
         () => [
           loader(OwnedAwaitsDep, { ssr: false }, () => [cache({ ttl: 300 })]),
         ],
       ),
       path(
+        "/owned-dep-once-capped",
+        () => <p>owned dep once capped</p>,
+        { name: "ownedDepOnceCapped", ppr: NO_PINS },
+        () => [
+          loader(OwnedAwaitsDepOnce, { ssr: false }, () => [
+            cache({ ttl: 300 }),
+          ]),
+        ],
+      ),
+      path(
+        "/order-capped",
+        () => <p>order capped</p>,
+        { name: "orderCapped", ppr: NO_PINS },
+        () => [loader(OrderBake, { ssr: false }, () => [cache({ ttl: 300 })])],
+      ),
+      path(
         "/outer-dep-capped",
         () => <p>outer dep capped</p>,
-        { name: "outerDepCapped", ppr: { maxSnapshotBytes: 1 } },
-        () => [loader(OuterDep, { ssr: false })],
+        { name: "outerDepCapped", ppr: NO_PINS },
+        () => [loader(OuterDepLoader, { ssr: false })],
       ),
       cache({ ttl: 3000 }, () => [
         path(
@@ -254,7 +310,9 @@ function makeRouter() {
         () => <p>deferred owned</p>,
         { name: "deferredOwned", ppr: true },
         () => [
-          loader(DeferredOwned, { ssr: false }, () => [cache({ ttl: 300 })]),
+          loader(DeferredOwnedLoader, { ssr: false }, () => [
+            cache({ ttl: 300 }),
+          ]),
         ],
       ),
       path(
@@ -328,35 +386,7 @@ function makeRouter() {
   );
 }
 
-function setup() {
-  const router = makeRouter();
-  const cacheStore = new MemorySegmentCacheStore();
-  const serve = (
-    url: string,
-    extra: Omit<ServeShellRequestOptions, "cacheStore"> = {},
-  ) => serveShellRequest(router, url, { cacheStore, ...extra });
-  /** Item reads under `prefix` miss while `fn` runs: that entry refills. */
-  const withItemMiss = async <T,>(
-    prefix: string,
-    fn: () => Promise<T>,
-  ): Promise<T> => {
-    const getItem = cacheStore.getItem.bind(cacheStore);
-    const spy = vi
-      .spyOn(cacheStore, "getItem")
-      .mockImplementation(async (key) =>
-        key.startsWith(prefix) ? null : getItem(key),
-      );
-    try {
-      return await fn();
-    } finally {
-      spy.mockRestore();
-    }
-  };
-  /** `loader:` reads miss while `fn` runs: a cached loader refills its entry. */
-  const withLoaderMiss = <T,>(fn: () => Promise<T>): Promise<T> =>
-    withItemMiss("loader:", fn);
-  return { router, cacheStore, serve, withItemMiss, withLoaderMiss };
-}
+const setup = () => shellHarness(makeRouter());
 
 /** The distinct values of `pattern` in the payload. */
 function distinct(flight: string | undefined, pattern: RegExp): string[] {
@@ -372,12 +402,19 @@ function final(flight: string | undefined, pattern: RegExp): string[] {
   return rows.at(-1)?.match(pattern) ?? [];
 }
 
+/** The segment ids a response matched, as the client then holds them. */
+function matchedSegments(result: ServeShellRequestResult): string[] {
+  const row = result.flight?.split("\n").find((line) => line.startsWith("0:"));
+  return (JSON.parse(row!.slice(2)).metadata as { matched: string[] }).matched;
+}
+
 beforeEach(async () => {
   source.generation = 1;
-  runs.deferred = 0;
+  deferredOwnedRuns.body = 0;
   runs.sch = 0;
   runs.owned = 0;
   runs.ownedDep = 0;
+  runs.order = 0;
   await resetShellTestState();
 });
 
@@ -455,7 +492,7 @@ describe("one run per loader: a shell record's pushes follow the loader's pin", 
     expect(final(nav.flight, /eb-after@g\d/g)).toEqual(["eb-after@g2"]);
   });
 
-  it("a document HIT of an entry whose pins maxSnapshotBytes dropped keeps the fresh run's data and push", async () => {
+  it("an entry whose pins maxSnapshotBytes dropped: a document HIT and a navigation replay keep the fresh run's data and push", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const { serve } = setup();
     const miss = await serve("/eb-capped");
@@ -464,42 +501,18 @@ describe("one run per loader: a shell record's pushes follow the loader's pin", 
     expect(entry?.snapshot?.map((record) => record.family)).toEqual([
       "segment",
     ]);
-    source.generation = 2;
 
+    source.generation = 2;
     const hit = await serve("/eb-capped");
+    source.generation = 3;
+    const nav = await serve("/eb-capped", { partial: { from: "/about" } });
 
     expect(hit.shellStatus).toBe("HIT");
     expect(distinct(hit.flight, /"eb":"eb@g\d"/g)).toEqual(['"eb":"eb@g2"']);
     expect(final(hit.flight, /eb-after@g\d/g)).toEqual(["eb-after@g2"]);
-  });
-
-  it("a navigation replay of an entry whose pins maxSnapshotBytes dropped keeps the fresh run's data and push", async () => {
-    vi.spyOn(console, "warn").mockImplementation(() => {});
-    const { serve } = setup();
-    expect((await serve("/eb-capped")).shellStatus).toBe("MISS");
-    source.generation = 3;
-
-    const nav = await serve("/eb-capped", { partial: { from: "/about" } });
-
     expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
     expect(distinct(nav.flight, /"eb":"eb@g\d"/g)).toEqual(['"eb":"eb@g3"']);
     expect(final(nav.flight, /eb-after@g\d/g)).toEqual(["eb-after@g3"]);
-  });
-
-  it("a dependency's captured push stays next to the pinned loader that awaited it", async () => {
-    const { serve } = setup();
-    expect((await serve("/dep")).shellStatus).toBe("MISS");
-    source.generation = 2;
-
-    const hit = await serve("/dep");
-    const nav = await serve("/dep", { partial: { from: "/about" } });
-
-    expect(hit.shellStatus).toBe("HIT");
-    expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
-    for (const flight of [hit.flight, nav.flight]) {
-      expect(distinct(flight, /baked-dep@g\d/g)).toEqual(["baked-dep@g1"]);
-      expect(final(flight, /dep-note@g\d/g)).toEqual(["dep-note@g1"]);
-    }
   });
 
   it("without pins a dependency's push follows the fresh run of the loader that awaits it", async () => {
@@ -563,8 +576,8 @@ describe("one run per loader: a shell record's pushes follow the loader's pin", 
     expect(final(nav.flight, /eb-after@g\d/g)).toEqual(["eb-after@g3"]);
   });
 
-  // The app-wide shape: the pin's key carries the layout's shortCode, and
-  // the restore has to name the pin's loader from it.
+  // The app-wide shape: the pin is stored under the layout's shortCode, and
+  // both the value and the pushes find it by loader.
   it("an ssr: false loader on a layout: a HIT and a navigation replay keep the captured push next to the pinned data", async () => {
     const { serve } = setup();
     expect((await serve("/eb-layout")).shellStatus).toBe("MISS");
@@ -579,6 +592,79 @@ describe("one run per loader: a shell record's pushes follow the loader's pin", 
       expect(distinct(flight, /"eb":"eb@g\d"/g)).toEqual(['"eb":"eb@g1"']);
       expect(final(flight, /eb-after@g\d/g)).toEqual(["eb-after@g1"]);
     }
+  });
+
+  // The pin says the record lists every settled push of the capture's run.
+  // It lists none here, so the replay's run adds none next to the pinned data.
+  it("a pinned loader whose capture pushed nothing: a push its run makes on a replay does not show next to the pinned data", async () => {
+    const { serve } = setup();
+    expect((await serve("/late")).shellStatus).toBe("MISS");
+    source.generation = 2;
+
+    const hit = await serve("/late");
+    const nav = await serve("/late", { partial: { from: "/about" } });
+
+    expect(hit.shellStatus).toBe("HIT");
+    expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
+    expect({
+      hit: {
+        data: distinct(hit.flight, /"late":"late@g\d"/g),
+        push: final(hit.flight, /late-note@g\d/g),
+      },
+      nav: {
+        data: distinct(nav.flight, /"late":"late@g\d"/g),
+        push: final(nav.flight, /late-note@g\d/g),
+      },
+    }).toEqual({
+      hit: { data: ['"late":"late@g1"'], push: [] },
+      nav: { data: ['"late":"late@g1"'], push: [] },
+    });
+  });
+
+  // A pin stored before captures recorded loader pushes (v0.17) carries no
+  // `runs` bit and its record may hold none of them: the run supplies them.
+  it("a pin without the runs bit keeps the push its run makes", async () => {
+    const { serve } = setup();
+    const miss = await serve("/late");
+    expect(miss.shellStatus).toBe("MISS");
+    const pin = (await miss.readEntry())?.snapshot?.find(
+      (record) => record.family === "loader",
+    );
+    expect(pin?.value).toMatchObject({ holes: 1, runs: 0 });
+    delete (pin!.value as { runs?: number }).runs;
+    source.generation = 2;
+
+    const hit = await serve("/late");
+
+    expect(hit.shellStatus).toBe("HIT");
+    expect(distinct(hit.flight, /"late":"late@g\d"/g)).toEqual([
+      '"late":"late@g1"',
+    ]);
+    expect(final(hit.flight, /late-note@g\d/g)).toEqual(["late-note@g2"]);
+  });
+
+  // The navigation resolves no value for the loader: the client keeps the one
+  // it has. The record's copy of its push stands, which matches that value
+  // when it came from this shell (a HIT or a replay of it), as here. The
+  // restore runs before the revalidation decision, and dropping the copy
+  // would take the push off a page that still shows the loader's data.
+  it("a pinned loader a navigation does not revalidate: no value is sent, and the captured push stands", async () => {
+    const { serve } = setup();
+    expect((await serve("/held")).shellStatus).toBe("MISS");
+    const hit = await serve("/held");
+    expect(hit.shellStatus).toBe("HIT");
+    expect(distinct(hit.flight, /"held":"held@g\d"/g)).toEqual([
+      '"held":"held@g1"',
+    ]);
+    source.generation = 2;
+
+    const nav = await serve("/held", {
+      partial: { from: "/held", segments: matchedSegments(hit) },
+    });
+
+    expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
+    expect(distinct(nav.flight, /"held":"held@g\d"/g)).toEqual([]);
+    expect(final(nav.flight, /held-note@g\d/g)).toEqual(["held-note@g1"]);
   });
 });
 
@@ -643,6 +729,87 @@ describe("one run per loader: without a pin the record's copy is a placeholder",
     }
   });
 
+  // The order contract: the push order of the run that produced the value.
+  // The loader's entry replays it (its HIT), and a run over the record's
+  // placeholders keeps it (its MISS): the same shell gives one order.
+  it("a loader that pushes around its dependency's push: its entry's HIT and its run give the push order", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { serve, withLoaderMiss } = setup();
+    expect((await serve("/order-capped")).shellStatus).toBe("MISS");
+    const order = (flight: string | undefined) =>
+      final(flight, /(?:order-[ab]|dep-note)@g\d/g);
+    const pushOrder = (g: number) => [
+      `order-a@g${g}`,
+      `dep-note@g${g}`,
+      `order-b@g${g}`,
+    ];
+
+    source.generation = 2;
+    const ran = runs.order;
+    const run = await withLoaderMiss(() => serve("/order-capped"));
+    const runNav = await withLoaderMiss(() =>
+      serve("/order-capped", { partial: { from: "/about" } }),
+    );
+    expect(runs.order).toBe(ran + 2);
+    const entryHit = await serve("/order-capped");
+    const entryNav = await serve("/order-capped", {
+      partial: { from: "/about" },
+    });
+    expect(runs.order).toBe(ran + 2);
+
+    for (const result of [run, entryHit]) {
+      expect(result.shellStatus).toBe("HIT");
+    }
+    for (const flight of [run.flight, runNav.flight]) {
+      expect(order(flight)).toEqual(pushOrder(2));
+    }
+    for (const flight of [entryHit.flight, entryNav.flight]) {
+      expect(order(flight)).toEqual(pushOrder(2));
+    }
+  });
+
+  // A claimed entry is the loader's source on this request, whatever it
+  // holds: one written without handles (a MISS a reader started first, #1002,
+  // or a handle encode that timed out) shows no push for the loader. Before,
+  // the record's copy stayed. An entry that is whole belongs to change 2.
+  it("a loader's cache() entry stored without its pushes shows none: the record's copy does not stand in", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { serve, cacheStore, withLoaderMiss } = setup();
+    expect((await serve("/owned-capped")).shellStatus).toBe("MISS");
+    source.generation = 2;
+    const setItem = cacheStore.setItem.bind(cacheStore);
+    const pushless = vi
+      .spyOn(cacheStore, "setItem")
+      .mockImplementation((key, value, options) =>
+        setItem(
+          key,
+          value,
+          key.startsWith("loader:")
+            ? { ...options, handles: undefined }
+            : options,
+        ),
+      );
+    await withLoaderMiss(() =>
+      serve("/owned-capped", { partial: { from: "/about" } }),
+    );
+    pushless.mockRestore();
+    const filled = runs.owned;
+    source.generation = 3;
+
+    const hit = await serve("/owned-capped");
+    const nav = await serve("/owned-capped", { partial: { from: "/about" } });
+
+    expect(hit.shellStatus).toBe("HIT");
+    expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
+    expect(runs.owned).toBe(filled);
+    for (const flight of [hit.flight, nav.flight]) {
+      expect({
+        data: distinct(flight, /"owned":"owned@g\d"/g),
+        push: final(flight, /owned-note@g\d/g),
+      }).toEqual({ data: ['"owned":"owned@g2"'], push: [] });
+    }
+  });
+
   for (const captured of [
     'hits its "use cache" entry',
     "runs the dependency",
@@ -679,37 +846,64 @@ describe("one run per loader: without a pin the record's copy is a placeholder",
   }
 });
 
-// PENDING, not a regression and not filed: a pinned loader that pushed
-// nothing settled at capture has no copy in the record, so the store cannot
-// tell it is pinned, and the push its run makes on a replay is shown next to
-// the pinned data. Dropping it needs the record to say "this loader pushed
-// nothing", which a record written before handleOwners cannot say either
-// (docs/design/handle-push-ownership.md, "What is not built").
-describe("PENDING (unfiled): a pinned loader whose capture pushed nothing", () => {
+// PENDING, not regressions and not filed. The shell record names the loader
+// that pushed a value, not the registered loader that ran it. So a
+// dependency no route registers follows an approximation: its copies stand
+// while every `ssr: false` loader is pinned, and are placeholders otherwise
+// (loader-cache.ts loaderPins). Each `red` test is a case where that is not
+// the loader's own source (docs/design/handle-push-ownership.md, "What is
+// not built").
+describe("PENDING (unfiled): a dependency the record does not attribute to the loader that ran it", () => {
   red(
-    "a push its run makes on a replay does not show next to the pinned data",
+    "a dependency of a pinned loader, while another ssr: false loader lost its pin: the captured push stays next to the pinned data",
     async () => {
       const { serve } = setup();
-      expect((await serve("/late")).shellStatus).toBe("MISS");
+      const miss = await serve("/two-bake");
+      expect(miss.shellStatus).toBe("MISS");
+      // The entry loses the pin of the loader that does not await it.
+      const snapshot = (await miss.readEntry())!.snapshot!;
+      const plainPin = snapshot.findIndex(
+        (record) =>
+          record.family === "loader" &&
+          (record.value as { holes: number }).holes === 0,
+      );
+      expect(plainPin).toBeGreaterThan(-1);
+      snapshot.splice(plainPin, 1);
       source.generation = 2;
 
-      const hit = await serve("/late");
-      const nav = await serve("/late", { partial: { from: "/about" } });
+      const hit = await serve("/two-bake");
 
       expect(hit.shellStatus).toBe("HIT");
-      expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
       expect({
-        hit: {
-          data: distinct(hit.flight, /"late":"late@g\d"/g),
-          push: final(hit.flight, /late-note@g\d/g),
-        },
-        nav: {
-          data: distinct(nav.flight, /"late":"late@g\d"/g),
-          push: final(nav.flight, /late-note@g\d/g),
-        },
+        data: distinct(hit.flight, /holey-dep@g\d/g),
+        push: final(hit.flight, /dep-note@g\d/g),
+      }).toEqual({ data: ["holey-dep@g1"], push: ["dep-note@g1"] });
+    },
+  );
+
+  red(
+    "a dependency whose push the awaiting loader's cache() entry did not record: the record's copy does not outlive the entry's run",
+    async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const { serve, withLoaderMiss } = setup();
+      expect((await serve("/owned-dep-once-capped")).shellStatus).toBe("MISS");
+      source.generation = 2;
+      // The entry refills at g2, from a run in which the dependency pushed
+      // nothing.
+      await withLoaderMiss(() =>
+        serve("/owned-dep-once-capped", { partial: { from: "/about" } }),
+      );
+      source.generation = 3;
+
+      const hit = await serve("/owned-dep-once-capped");
+
+      expect(hit.shellStatus).toBe("HIT");
+      expect({
+        data: distinct(hit.flight, /"ownedOnce":"owned-dep-once@g\d"/g),
+        push: final(hit.flight, /(?:owned-once|dep-once)-note@g\d/g),
       }).toEqual({
-        hit: { data: ['"late":"late@g1"'], push: [] },
-        nav: { data: ['"late":"late@g1"'], push: [] },
+        data: ['"ownedOnce":"owned-dep-once@g2"'],
+        push: ["owned-once-note@g2"],
       });
     },
   );
@@ -729,7 +923,7 @@ describe("one run per loader: a deferred push reaches every replay of its pin (#
           ? await withLoaderMiss(() => serve("/deferred-owned"))
           : await serve("/deferred-owned");
       expect(miss.shellStatus).toBe("MISS");
-      const captured = runs.deferred;
+      const captured = deferredOwnedRuns.body;
 
       const hit = await serve("/deferred-owned");
       const nav = await serve("/deferred-owned", {
@@ -755,7 +949,7 @@ describe("one run per loader: a deferred push reaches every replay of its pin (#
         outcome: "HIT",
         freshness: "fresh",
       });
-      expect(runs.deferred).toBe(captured);
+      expect(deferredOwnedRuns.body).toBe(captured);
       expect(notes(nav.flight)).toEqual(captureOnly);
     });
   }

@@ -377,7 +377,7 @@ export interface RequestContext<
 
   /**
    * @internal Loader-family snapshot seed for a shell HIT's tail render:
-   * segment-key -> the capture's elided container (already Flight-deserialized
+   * loader id -> the capture's elided container (already Flight-deserialized
    * by serveShellHit) plus its capture-computed hole bit. resolveLoaderData
    * overlays it onto the fresh run's container (recorded paths pinned,
    * hole-marker paths keep the fresh nested promises) so the payload's baked
@@ -424,9 +424,8 @@ export interface RequestContext<
     keyPrefix?: "doc";
     /**
      * @internal Called only after the implicit cache hit decodes
-     * successfully; the lookup awaits it before it restores the record's
-     * handles, so the loader seed it arms is there for that restore
-     * (handle-snapshot.ts restoreHandles) and for the route's loaders.
+     * successfully; the lookup awaits it before returning the hit, so work
+     * it starts lands before the route's loaders resolve.
      */
     onHit?: () => void | Promise<void>;
     /**
@@ -449,9 +448,7 @@ export interface RequestContext<
      * scope replaces any route-derived cache() scope for the tail's match
      * (resolveShellImplicitCacheScope), and a lookup that does not hit throws
      * ShellRecordUnavailableError instead of resolving segments
-     * (withCacheLookup): a HIT never runs a handler. It does not decide how
-     * the record's loader-owned handle pushes restore: the loader seed does
-     * (loader-cache.ts loaderPins), as on a navigation replay.
+     * (withCacheLookup): a HIT never runs a handler.
      */
     docTail?: true;
     /**

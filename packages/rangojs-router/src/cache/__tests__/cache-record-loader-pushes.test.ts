@@ -482,13 +482,18 @@ describe("PPR shell capture record vs loader handle pushes", () => {
 
 /**
  * The pin of a promise-carrying bake-lane loader: its record has holes, so
- * the tail runs the body and overlays the recorded container.
+ * the tail runs the body and overlays the recorded container. Keyed by
+ * loader, as buildShellLoaderSeed keys the seed. `complete: false` is a pin
+ * stored before captures recorded every loader push.
  */
-function holeyPins(pinKeys: string[]): Map<string, ShellLoaderSeedEntry> {
+function holeyPins(
+  pinKeys: string[],
+  complete = true,
+): Map<string, ShellLoaderSeedEntry> {
   return new Map(
     pinKeys.map((key) => [
-      key,
-      { container: { baked: true }, holes: true, runs: false },
+      key.replace(/^[^D.]*D\d+\./, ""),
+      { container: { baked: true }, holes: true, runs: false, complete },
     ]),
   );
 }
@@ -496,13 +501,14 @@ function holeyPins(pinKeys: string[]): Map<string, ShellLoaderSeedEntry> {
 describe("PPR shell HIT vs a pinned bake-lane loader's recorded handle pushes", () => {
   let snapshot: ShellSnapshotRecord[];
   let recorded: unknown[];
+  let pinKeys: string[];
   let pins: Map<string, ShellLoaderSeedEntry>;
   let hit: RequestContext<any>;
 
   beforeAll(async () => {
     const captured = await captureShell("/ppr-bake-repush");
-    ({ snapshot, recorded } = captured);
-    pins = holeyPins(captured.pinKeys);
+    ({ snapshot, recorded, pinKeys } = captured);
+    pins = holeyPins(pinKeys);
     expect(pins.size).toBe(1);
     repushPageHandler.mockClear();
     hit = await serveShellHitTail("/ppr-bake-repush", snapshot, pins);
@@ -538,13 +544,19 @@ describe("PPR shell HIT vs a pinned bake-lane loader's recorded handle pushes", 
     expect(titles).toEqual([{ title: "bake-title-1" }]);
   });
 
+  // Its pins predate the `runs` bit too, so the record is not taken for the
+  // whole of the loader's pushes: the run's are kept.
   it("a record without owner info (written before it) restores every recorded value as before", async () => {
     const legacy = snapshot.map((r) => {
       if (r.family !== "segment" || !r.key.startsWith("doc:")) return r;
       const { handleOwners: _, ...value } = r.value as CachedEntryData;
       return { ...r, value };
     });
-    const legacyHit = await serveShellHitTail("/ppr-bake-repush", legacy, pins);
+    const legacyHit = await serveShellHitTail(
+      "/ppr-bake-repush",
+      legacy,
+      holeyPins(pinKeys, false),
+    );
     expect(await crumbValues(legacyHit)).toEqual([
       "bake-string-1",
       { label: "bake-object-1" },

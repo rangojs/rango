@@ -727,34 +727,50 @@ describe("loader-level cache: a HIT over a record's copies of the loader's pushe
 
   /** The record's copies, as restoreHandles leaves them for an unpinned owner. */
   function placeholders(reqCtx: any, copies: [label: string, owner: string][]) {
-    const handleStore = reqCtx._handleStore;
-    handleStore.markHoles(copies.map(([, owner]) => owner));
     for (const [label, owner] of copies) {
-      handleStore.pushReplayed(Crumbs.$$id, "R0", { label }, owner);
+      reqCtx._handleStore.pushPlaceholder(Crumbs.$$id, "R0", { label }, owner);
     }
   }
 
-  it("the entry's pushes take the placeholders' place, for the cached loader and the dependency it recorded, in recorded order", async () => {
+  /** A record whose loader pushed around its dependency's push. */
+  function interleaved(g: ReturnType<typeof productGraph>) {
+    return (reqCtx: any): void => {
+      reqCtx._handleStore.push(Crumbs.$$id, "R0", { label: "Handler" });
+      placeholders(reqCtx, [
+        ["Shop record", g.product.$$id],
+        ["Category record", g.category.$$id],
+        ["Widget record", g.product.$$id],
+      ]);
+      reqCtx._handleStore.push(Crumbs.$$id, "R0", { label: "Footer" });
+    };
+  }
+
+  // The order contract: the push order of the run that produced the value,
+  // whether the entry replays it (HIT) or the loader runs (MISS).
+  it("the entry's pushes take the placeholders' place, for the cached loader and the dependency it recorded, in push order", async () => {
     const store = new MemorySegmentCacheStore();
     const g = productGraph();
     const entry = entryWith([cachedEntry(g.product, store)]);
     await runRequest(entry);
 
-    const hit = await runRequest(entry, {
-      beforeLoaders: (reqCtx) => {
-        reqCtx._handleStore.push(Crumbs.$$id, "R0", { label: "Handler" });
-        placeholders(reqCtx, [
-          ["Shop record", g.product.$$id],
-          ["Category record", g.category.$$id],
-          ["Widget record", g.product.$$id],
-        ]);
-        reqCtx._handleStore.push(Crumbs.$$id, "R0", { label: "Footer" });
-      },
-    });
+    const hit = await runRequest(entry, { beforeLoaders: interleaved(g) });
 
     expect(g.product.calls).toBe(1);
     expect(g.category.calls).toBe(1);
     expect(hit.handles[Crumbs.$$id]).toEqual(
+      crumbs("Handler", "Shop v1", "Category v1", "Widget v1", "Footer"),
+    );
+  });
+
+  it("a MISS replaces the placeholders with the run's pushes, the dependency's included, in the same order", async () => {
+    const store = new MemorySegmentCacheStore();
+    const g = productGraph();
+    const entry = entryWith([cachedEntry(g.product, store)]);
+
+    const miss = await runRequest(entry, { beforeLoaders: interleaved(g) });
+
+    expect(g.product.calls).toBe(1);
+    expect(miss.handles[Crumbs.$$id]).toEqual(
       crumbs("Handler", "Shop v1", "Category v1", "Widget v1", "Footer"),
     );
   });
@@ -774,35 +790,6 @@ describe("loader-level cache: a HIT over a record's copies of the loader's pushe
 
     expect(quiet.calls).toBe(1);
     expect(hit.handles[Crumbs.$$id]).toEqual(crumbs("Handler"));
-  });
-
-  it("a MISS replaces the placeholders with the run's pushes, the dependency's included", async () => {
-    const store = new MemorySegmentCacheStore();
-    const category = defineLoader("CategoryLoader#L", async (ctx) => {
-      ctx.use(Crumbs)({ label: `Category v${category.calls}` });
-      return { slug: "c" };
-    });
-    const product = defineLoader("ProductLoader#L", async (ctx) => {
-      await ctx.use(category);
-      ctx.use(Crumbs)({ label: `Widget v${product.calls}` });
-      return { name: "Widget" };
-    });
-    const entry = entryWith([cachedEntry(product, store)]);
-
-    const miss = await runRequest(entry, {
-      beforeLoaders: (reqCtx) => {
-        reqCtx._handleStore.push(Crumbs.$$id, "R0", { label: "Handler" });
-        placeholders(reqCtx, [
-          ["Category record", category.$$id],
-          ["Widget record", product.$$id],
-        ]);
-      },
-    });
-
-    expect(product.calls).toBe(1);
-    expect(miss.handles[Crumbs.$$id]).toEqual(
-      crumbs("Handler", "Category v1", "Widget v1"),
-    );
   });
 
   it("a run that makes no push drops the cached loader's placeholders", async () => {

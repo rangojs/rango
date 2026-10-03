@@ -92,7 +92,7 @@
  *   - Action context (if POST)
  */
 import type { ResolvedSegment } from "../../types.js";
-import type { EntryData } from "../../server/context.js";
+import { isPprEntry, type EntryData } from "../../server/context.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { getRouterContext, type RouterContext } from "../router-context.js";
 import { observeEvent } from "../instrument.js";
@@ -545,15 +545,14 @@ export function withCacheLookup<TEnv>(
       return;
     }
 
-    // A record's loader-owned handle values follow the loader's value
-    // (restoreHandles): they stand for a loader this request serves from the
-    // pin stored with the record, and are placeholders for every other one.
-    // Not decided here: the pins answer when a record hits, the same answer
-    // resolveLoaderData gets for the value, so a document HIT tail, a
-    // navigation replay, a prefetch and the seeded fallback below cannot
-    // differ (#1001, #1003), and an entry without pins restores nothing as
-    // authoritative.
-    const ownedPushes = loaderPins(ctx.entries, pipelineReqCtx);
+    // Only a ppr route's records hold loader pushes, and only its shell pins
+    // loaders (CachedEntryData.handleOwners, the loader seed): any other
+    // route's record restores as a plain replay.
+    const leaf = ctx.entries[ctx.entries.length - 1];
+    const ownedPushes =
+      leaf !== undefined && isPprEntry(leaf)
+        ? () => loaderPins(ctx.entries, pipelineReqCtx)
+        : undefined;
     const explicitLookup = await ctx.cacheScope.lookupRouteDetailed(
       ctx.pathname,
       ctx.matched.params,

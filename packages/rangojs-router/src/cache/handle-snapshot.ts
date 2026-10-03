@@ -8,7 +8,7 @@
 
 import { replayLoaderPush } from "./handle-capture.js";
 import type { ResolvedSegment } from "../types.js";
-import type { HandleStore } from "../server/handle-store.js";
+import type { HandleStore, RecordAuthority } from "../server/handle-store.js";
 import type { HandleOwners, SegmentHandleData } from "./types.js";
 // segment-codec eagerly pulls @vitejs/plugin-rsc (a virtual: module unresolvable
 // in plain node/vitest). It is imported LAZILY inside the two async encode/decode
@@ -135,26 +135,12 @@ export function captureHandleOwners(
 }
 
 /**
- * Which loaders the request serves from a pin stored with the record being
- * restored: how restoreHandles delivers the record's loader-owned values.
- * Built by loaderPins (loader-cache.ts) over the seed resolveLoaderData reads
- * a loader's value from, so a value and its record copies get one answer.
- * Read when a record hits, not before: a navigation replay arms its seed
- * from the hit (CacheScope.lookupRouteDetailed).
+ * What the record being restored is to each loader's handle pushes on this
+ * request (HandleStore RecordAuthority). Built by loaderPins (loader-cache.ts)
+ * over the pins resolveLoaderData serves a loader's value from, so a value
+ * and its record copies get one answer.
  */
-export interface OwnedPushDelivery {
-  /** The request serves at least one loader from a pin. */
-  readonly seeded: boolean;
-  /**
-   * The record supplies `loaderId`'s value: a registered loader the request
-   * serves from its pin, or a dependency the route does not register while
-   * every `ssr: false` loader of the route is pinned (one of them ran it at
-   * capture, and the record does not say which).
-   */
-  pinned(loaderId: string): boolean;
-  /** The registered loaders that are not pinned: holes on this request. */
-  unpinned(): ReadonlySet<string>;
-}
+export type OwnedPushDelivery = (loaderId: string) => RecordAuthority;
 
 /**
  * Restore handle data from a cached snapshot into the handle store.
@@ -162,29 +148,12 @@ export interface OwnedPushDelivery {
  * cache() record owns its segments' arrays, so it REPLACES them.
  *
  * A segment with `owners` is replaced with empty arrays and re-pushed in
- * recorded order. A loader-owned value is a copy of a push that loader made
- * in the run that wrote the record; whether it stands depends on where this
- * request takes that loader's value from (`owned`, the one-source rule,
- * docs/design/handle-push-ownership.md):
- *
- * - Pinned (`owned.pinned`): the record supplies the value too. The copy
- *   goes through pushRestored and stands: a run of that loader on this
- *   request (a promise-carrying `ssr: false` loader, one whose pin asks for a
- *   run) reads the store, and its settled pushes are dropped, not swapped in.
- *   Nothing is claimed, so the loader's own cache() HIT still replays the
- *   pushes the record could not keep (the thenable ones pushRestored lets
- *   through). The same on a document HIT, a navigation replay and a prefetch.
- * - Anything else is a placeholder: pushReplayed, unclaimed, and its loader
- *   a hole (HandleStore.markHoles). Its run's pushes replace it (#936), a
- *   run that ends without one drops it (settleLoaderRun), and its own
- *   cache() HIT delivers that entry's pushes in its place (redeliverReplays).
- *   That is every owner of a record without pins: a shell entry that lost
- *   them (a navigation-only entry, `maxSnapshotBytes`), a route cache()
- *   record, any record during a capture. Without `owned`, every owner.
- *
- * The holes are marked when the record has owners or the request is seeded:
- * a record without owners on an unseeded request restores as a plain replay,
- * as every record of a route without `ppr` does.
+ * recorded order. A loader-owned value stands (pushRestored) where `owned`
+ * says the record supplies that loader's value too ("pin", "copies"), and is
+ * a placeholder (pushPlaceholder) everywhere else: without `owned`, every
+ * owner. Neither claims its loader, so the loader's own cache() HIT still
+ * delivers (the thenable pushes a restored copy lets through, or its entry's
+ * pushes in a placeholder's place).
  */
 export function restoreHandles(
   handles: Record<string, SegmentHandleData>,
@@ -192,10 +161,6 @@ export function restoreHandles(
   owners?: HandleOwners,
   owned?: OwnedPushDelivery,
 ): void {
-  let placeholders: Set<string> | undefined;
-  if (owned && (owners || owned.seeded)) {
-    handleStore.markHoles(owned.unpinned());
-  }
   for (const [segId, segHandles] of Object.entries(handles)) {
     if (Object.keys(segHandles).length === 0) continue;
     const segOwners = owners?.[segId];
@@ -214,15 +179,12 @@ export function restoreHandles(
           handleStore.push(handleName, segId, values[i]);
           continue;
         }
-        if (owned?.pinned(owner)) {
+        const authority = owned?.(owner);
+        if (authority === "pin" || authority === "copies") {
           handleStore.pushRestored(handleName, segId, values[i], owner);
-          continue;
+        } else {
+          handleStore.pushPlaceholder(handleName, segId, values[i], owner);
         }
-        if (!placeholders?.has(owner)) {
-          (placeholders ??= new Set()).add(owner);
-          handleStore.markHoles([owner]);
-        }
-        handleStore.pushReplayed(handleName, segId, values[i], owner);
       }
     }
   }
@@ -235,47 +197,55 @@ export function restoreHandles(
  * restoreHandles would wipe those. `segmentId` redirects every value to one
  * segment (the caller's).
  *
- * Owner-keyed groups (useCacheRecordKey, `${seq}:${loaderId}`) are a loader's
- * pushes, which reach the page once per request: `claim` (setupLoaderAccess
- * _claimLoaderPushes) skips a loader that already ran or was replayed in this
- * request, and a claimed loader that runs later replaces its replayed values
- * (HandleStore.pushReplayed). A record's placeholders for a claimed loader
- * (restoreHandles leaves them unclaimed) give way to this entry's copies
- * (HandleStore.redeliverReplays), so the push shows once. Not without
- * `claim`: a stale refresh's pushes are diverted (cache-runtime.ts
- * refreshView), and removing the page's placeholders for them would leave
- * the page without the push. `${seq}:` groups are the function's own pushes.
- * A key without ":" is a segment id (records written before owner keys) and
- * replays unchanged. A loader's own cache() replays through loader-cache.ts
- * replayLoaderHandles.
+ * The replay of every cached unit that records by owner: a "use cache"
+ * function (useCacheRecordKey) and a loader's own cache() (loader-cache.ts
+ * recordOwnerKey, with `unitLoader` the cached loader).
+ *
+ * A `${seq}:${loaderId}` group is that loader's pushes, which reach the page
+ * once per request: `claim` (setupLoaderAccess _claimLoaderPushes) is asked
+ * once per loader and skips one that already ran or was replayed in this
+ * request; a claimed loader that runs later replaces its replayed values
+ * (HandleStore.pushReplayed). A group without an owner (`${seq}:`, or a key
+ * without ":" from a record written before owner keys, which is a segment
+ * id) is the unit's own: `unitLoader`'s, or no loader's for a function,
+ * whose pushes are plain.
+ *
+ * The claimed loaders' placeholders give way to this delivery
+ * (HandleStore.replacePlaceholders), `unitLoader`'s even when the entry
+ * recorded no push for it: the entry stands for that loader's run.
+ *
+ * No `claim` means the caller's pushes are diverted off the page (a stale
+ * refresh: cache-runtime.ts refreshView, setupLoaderAccess
+ * _runLoaderIsolated): every group is delivered, into the diverting capture,
+ * and the page's placeholders stay, or the page would lose the push.
  */
 export function appendHandles(
   handles: Record<string, SegmentHandleData>,
   handleStore: HandleStore,
-  segmentId?: string,
-  claim?: (loaderId: string) => boolean,
+  segmentId: string | undefined,
+  claim: ((loaderId: string) => boolean) | undefined,
+  unitLoader?: string,
 ): void {
-  let claims: Map<string, boolean> | undefined;
-  const claimed = (owner: string): boolean => {
-    let deliver = claims?.get(owner);
-    if (deliver === undefined) {
-      deliver = claim ? claim(owner) : true;
-      (claims ??= new Map()).set(owner, deliver);
-    }
-    return deliver;
-  };
-  const ownerOf = (key: string): string => {
+  const ownerOf = (key: string): string | undefined => {
     const colon = key.indexOf(":");
-    return colon < 0 ? "" : key.slice(colon + 1);
+    return (colon < 0 ? "" : key.slice(colon + 1)) || unitLoader;
   };
+  const claims = new Map<string, boolean>();
+  const ask = (owner: string | undefined): void => {
+    if (owner !== undefined && !claims.has(owner)) {
+      claims.set(owner, claim ? claim(owner) : true);
+    }
+  };
+  ask(unitLoader);
+  for (const key in handles) ask(ownerOf(key));
   const deliver = (): void => {
     for (const [key, segHandles] of Object.entries(handles)) {
       const owner = ownerOf(key);
-      if (owner && !claimed(owner)) continue;
+      if (owner !== undefined && !claims.get(owner)) continue;
       const target = segmentId ?? key;
       for (const [handleName, values] of Object.entries(segHandles)) {
         for (const value of values) {
-          if (owner) {
+          if (owner !== undefined) {
             replayLoaderPush(handleStore, handleName, target, value, owner);
           } else {
             handleStore.push(handleName, target, value);
@@ -284,17 +254,9 @@ export function appendHandles(
       }
     }
   };
-  if (!claim) {
-    deliver();
-    return;
+  const granted: string[] = [];
+  if (claim) {
+    for (const [owner, given] of claims) if (given) granted.push(owner);
   }
-  let granted: string[] | undefined;
-  for (const key in handles) {
-    const owner = ownerOf(key);
-    if (owner && !claims?.has(owner) && claimed(owner)) {
-      (granted ??= []).push(owner);
-    }
-  }
-  if (granted) handleStore.redeliverReplays(granted, deliver);
-  else deliver();
+  handleStore.replacePlaceholders(granted, deliver);
 }

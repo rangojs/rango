@@ -74,25 +74,37 @@ import { seg, gen } from "./helpers.js";
 const DOC_KEY = "doc:localhost/p";
 const BAKE = "Bake#L";
 const LIVE = "Live#L";
-const PIN: ShellLoaderSeedEntry = { container: {}, holes: true, runs: false };
+const PIN: ShellLoaderSeedEntry = {
+  container: {},
+  holes: true,
+  runs: false,
+  complete: true,
+};
 /** The pin of the route's one `ssr: false` loader. */
-const PINS = (): Map<string, ShellLoaderSeedEntry> =>
-  new Map([[`R0D0.${BAKE}`, PIN]]);
+const PINS = (): Map<string, ShellLoaderSeedEntry> => new Map([[BAKE, PIN]]);
+
+function route(loaders: Record<string, unknown>[], ppr: boolean): EntryData[] {
+  return [
+    {
+      id: "route",
+      shortCode: "R0",
+      type: "route",
+      layout: [],
+      parallel: {},
+      ...(ppr ? { ppr: true } : {}),
+      loader: loaders as unknown as LoaderEntry[],
+    },
+  ] as unknown as EntryData[];
+}
 
 /** A ppr route with an `ssr: false` loader and a live one. */
-const ENTRIES = [
-  {
-    id: "route",
-    shortCode: "R0",
-    type: "route",
-    layout: [],
-    parallel: {},
-    loader: [
-      { loader: { $$id: BAKE }, revalidate: [], bake: true },
-      { loader: { $$id: LIVE }, revalidate: [] },
-    ] as unknown as LoaderEntry[],
-  },
-] as unknown as EntryData[];
+const ENTRIES = route(
+  [
+    { loader: { $$id: BAKE }, revalidate: [], bake: true },
+    { loader: { $$id: LIVE }, revalidate: [] },
+  ],
+  true,
+);
 
 /** A record a capture wrote: the handler's push and one copy per loader. */
 async function record(): Promise<CachedEntryData> {
@@ -102,6 +114,17 @@ async function record(): Promise<CachedEntryData> {
       R0: { crumbs: ["handler", "bake-captured", "live-captured"] },
     }),
     handleOwners: { R0: { crumbs: [null, BAKE, LIVE] } },
+    expiresAt: Date.now() + 60_000,
+  };
+}
+
+/** A record that holds no loader push: the handler's only, or none at all. */
+async function ownerlessRecord(handles = true): Promise<CachedEntryData> {
+  return {
+    segments: await serializeSegments([seg("R0")]),
+    handles: handles
+      ? await encodeHandles({ R0: { crumbs: ["handler"] } })
+      : "",
     expiresAt: Date.now() + 60_000,
   };
 }
@@ -123,6 +146,8 @@ async function lookup(options: {
   routeScope?: boolean;
   /** The seed the request serves loaders from, armed as that path arms it. */
   pins?: Map<string, ShellLoaderSeedEntry>;
+  /** The matched chain, in place of the ppr route with both loaders. */
+  entries?: EntryData[];
 }): Promise<{ reqCtx: RequestContext<any>; state: MatchPipelineState }> {
   const store = new MemorySegmentCacheStore();
   const partial = options.kind !== "document-tail";
@@ -191,7 +216,7 @@ async function lookup(options: {
     prevUrl: new URL("http://localhost/from"),
     prevParams: {},
     clientSegmentSet: new Set<string>(),
-    entries: ENTRIES,
+    entries: options.entries ?? ENTRIES,
     matched: { params: {}, routeKey: "p" },
     routeKey: "p",
     metricsStore: undefined,
@@ -329,7 +354,7 @@ describe("withCacheLookup: a record's loader pushes follow the pins, on every pa
     });
     const store = reqCtx._handleStore;
 
-    store.redeliverReplays([BAKE], () => {
+    store.replacePlaceholders([BAKE], () => {
       store.pushReplayed("crumbs", "R0", "bake-entry", BAKE);
     });
 
@@ -338,5 +363,102 @@ describe("withCacheLookup: a record's loader pushes follow the pins, on every pa
       "bake-entry",
       "live-captured",
     ]);
+  });
+});
+
+/** A push by `id`'s run on this request, then the run's end. */
+function runLoader(
+  reqCtx: RequestContext<any>,
+  id: string,
+  value?: unknown,
+): unknown[] {
+  const store = reqCtx._handleStore;
+  if (value !== undefined) {
+    runInsideLoaderScope(() =>
+      runInsideLoaderBodyScope(() => store.push("crumbs", "R0", value), id),
+    );
+  }
+  store.settleLoaderRun(id);
+  return store.getDataForSegment("R0").crumbs ?? [];
+}
+
+describe("withCacheLookup: what a record that holds no loader push still decides", () => {
+  // The pin says the record lists every settled push of the capture's run,
+  // and it lists none: the replay's run adds none next to the pinned data.
+  it.each([
+    ["with the handler's push", true, ["handler"]],
+    ["with no handles blob", false, []],
+  ] as const)(
+    "a pinned loader whose capture pushed nothing, record %s: its run's settled push is dropped",
+    async (_, handles, expected) => {
+      for (const kind of ["document-tail", "navigation-replay"] as const) {
+        const { reqCtx } = await lookup({
+          kind,
+          seeded: await ownerlessRecord(handles),
+          pins: PINS(),
+        });
+
+        expect(runLoader(reqCtx, BAKE, "bake-late"), kind).toEqual(expected);
+      }
+    },
+  );
+
+  it("the same loader without its pin: the run's push is the page's", async () => {
+    const { reqCtx } = await lookup({
+      kind: "document-tail",
+      seeded: await ownerlessRecord(),
+    });
+
+    expect(runLoader(reqCtx, BAKE, "bake-run")).toEqual([
+      "handler",
+      "bake-run",
+    ]);
+  });
+
+  // A hole's run decides every copy of its pushes, another cached unit's
+  // replay included, whether or not the record holds a copy.
+  it("a ppr route without an ssr: false loader: its loaders are holes", async () => {
+    const liveOnly = route([{ loader: { $$id: LIVE }, revalidate: [] }], true);
+    for (const handles of [true, false]) {
+      const { reqCtx } = await lookup({
+        kind: "navigation-replay",
+        seeded: await ownerlessRecord(handles),
+        entries: liveOnly,
+      });
+      reqCtx._handleStore.pushReplayed("crumbs", "R0", "live-cached", LIVE);
+
+      expect(runLoader(reqCtx, LIVE)).toEqual(handles ? ["handler"] : []);
+    }
+  });
+
+  // Its records hold no loader push and it has no pin: no loader is a hole,
+  // and a replay stays when the loader's run makes no push.
+  it("a route without ppr restores its record as a plain replay", async () => {
+    const { reqCtx, state } = await lookup({
+      kind: "plain",
+      explicit: await ownerlessRecord(),
+      entries: route([{ loader: { $$id: LIVE }, revalidate: [] }], false),
+    });
+    reqCtx._handleStore.pushReplayed("crumbs", "R0", "live-cached", LIVE);
+
+    expect(state.cacheHit).toBe(true);
+    expect(runLoader(reqCtx, LIVE)).toEqual(["handler", "live-cached"]);
+  });
+
+  // A record a capture wrote, read after a deploy took `ppr` off the route.
+  it("a route without ppr reading a record with owners: every copy is a placeholder", async () => {
+    const { reqCtx } = await lookup({
+      kind: "plain",
+      explicit: await record(),
+      entries: route(
+        [
+          { loader: { $$id: BAKE }, revalidate: [], bake: true },
+          { loader: { $$id: LIVE }, revalidate: [] },
+        ],
+        false,
+      ),
+    });
+
+    expect(runLoaders(reqCtx)).toEqual(UNPINNED);
   });
 });
