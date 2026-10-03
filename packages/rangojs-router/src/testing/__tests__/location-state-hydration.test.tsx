@@ -2,7 +2,7 @@
 import { StrictMode, useState, type ReactNode } from "react";
 import { createRoot, hydrateRoot, type Root } from "react-dom/client";
 import { act, cleanup } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createLocationState, useLocationState } from "../../client.js";
 import { withLocationStateKey } from "../index.js";
 
@@ -390,7 +390,7 @@ describe("useLocationState version (#994)", () => {
     }
 
     seedHydrated({
-      [VersionedGrid.__rsc_ls_key]: { v: 2, value: inner },
+      [VersionedGrid.__rsc_ls_key]: { __rsc_ls_env: 1, v: 2, value: inner },
       idx: 2,
     });
     const { container, recoverable } = await hydrate(
@@ -404,6 +404,7 @@ describe("useLocationState version (#994)", () => {
     expect(seen.at(-1)).toBe(inner);
     expect(container.textContent).toBe("3");
     expect(window.history.state?.[VersionedGrid.__rsc_ls_key]).toEqual({
+      __rsc_ls_env: 1,
       v: 2,
       value: inner,
     });
@@ -418,7 +419,9 @@ describe("useLocationState version (#994)", () => {
       return <p data-testid="count">{state?.count ?? 0}</p>;
     }
 
-    seedHydrated({ [VersionedGrid.__rsc_ls_key]: { v: 2, value: inner } });
+    seedHydrated({
+      [VersionedGrid.__rsc_ls_key]: { __rsc_ls_env: 1, v: 2, value: inner },
+    });
     const container = document.createElement("div");
     document.body.appendChild(container);
     await act(async () => {
@@ -436,7 +439,9 @@ describe("useLocationState version (#994)", () => {
       return <p data-testid="count">{state?.count ?? 0}</p>;
     }
     const first = { count: 4 };
-    seedHydrated({ [VersionedGrid.__rsc_ls_key]: { v: 2, value: first } });
+    seedHydrated({
+      [VersionedGrid.__rsc_ls_key]: { __rsc_ls_env: 1, v: 2, value: first },
+    });
     const container = document.createElement("div");
     document.body.appendChild(container);
     await act(async () => {
@@ -448,7 +453,9 @@ describe("useLocationState version (#994)", () => {
     const next = { count: 9 };
     await act(async () => {
       window.history.replaceState(
-        { [VersionedGrid.__rsc_ls_key]: { v: 2, value: next } },
+        {
+          [VersionedGrid.__rsc_ls_key]: { __rsc_ls_env: 1, v: 2, value: next },
+        },
         "",
       );
       window.dispatchEvent(new Event("popstate"));
@@ -475,7 +482,7 @@ describe("useLocationState version (#994)", () => {
     }
 
     seedHydrated({
-      [VersionedFlash.__rsc_ls_key]: { v: 2, value: inner },
+      [VersionedFlash.__rsc_ls_key]: { __rsc_ls_env: 1, v: 2, value: inner },
       idx: 1,
     });
     const { container, recoverable } = await hydrate(
@@ -496,7 +503,14 @@ describe("useLocationState version (#994)", () => {
     const again = { count: 5 };
     await act(async () => {
       window.history.replaceState(
-        { [VersionedFlash.__rsc_ls_key]: { v: 2, value: again }, idx: 1 },
+        {
+          [VersionedFlash.__rsc_ls_key]: {
+            __rsc_ls_env: 1,
+            v: 2,
+            value: again,
+          },
+          idx: 1,
+        },
         "",
       );
       window.dispatchEvent(new Event("popstate"));
@@ -506,4 +520,65 @@ describe("useLocationState version (#994)", () => {
       VersionedFlash.__rsc_ls_key,
     );
   });
+});
+
+// #994: a validate that throws reads `undefined`. Thrown out of render it
+// fails the mount; thrown out of the popstate / __rsc_locationstate listeners
+// it leaves the reader on the previous entry's value.
+describe("useLocationState with a validate that throws (#994)", () => {
+  const ThrowingGrid = withLocationStateKey(
+    createLocationState<{ count: number }>({
+      validate: (value): value is { count: number } => {
+        if ((value as { poison?: boolean }).poison) throw new Error("poison");
+        return typeof (value as { count?: unknown }).count === "number";
+      },
+    }),
+    "ThrowingGrid",
+  );
+
+  function Count() {
+    const state = useLocationState(ThrowingGrid);
+    return <p data-testid="count">{state?.count ?? 0}</p>;
+  }
+
+  it("mounting on a slot whose validate throws renders undefined", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    seedHydrated({ [ThrowingGrid.__rsc_ls_key]: { poison: true } });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<Count />);
+    });
+
+    expect(container.textContent).toBe("0");
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error.mock.calls[0]?.[0]).toContain(ThrowingGrid.__rsc_ls_key);
+    error.mockRestore();
+  });
+
+  it.each(["popstate", "__rsc_locationstate"])(
+    "%s to a slot whose validate throws drops the previous entry's value",
+    async (event) => {
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      seedHydrated({ [ThrowingGrid.__rsc_ls_key]: { count: 4 } });
+      const container = document.createElement("div");
+      document.body.appendChild(container);
+      await act(async () => {
+        root = createRoot(container);
+        root.render(<Count />);
+      });
+      expect(container.textContent).toBe("4");
+
+      await act(async () => {
+        window.history.replaceState(
+          { [ThrowingGrid.__rsc_ls_key]: { poison: true } },
+          "",
+        );
+        window.dispatchEvent(new Event(event));
+      });
+      expect(container.textContent).toBe("0");
+      error.mockRestore();
+    },
+  );
 });

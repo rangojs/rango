@@ -391,7 +391,7 @@ describe("createLocationState version", () => {
     vi.unstubAllEnvs();
   });
 
-  it("write stores { v, value } and read returns the same inner reference", () => {
+  it("write stores the marked envelope and read returns the same inner reference", () => {
     const Grid = createLocationState<GridSnapshot>({ version: 2 });
     (Grid as any).__rsc_ls_key = "grid";
     const history = historyWithReplace();
@@ -405,7 +405,7 @@ describe("createLocationState version", () => {
 
     expect(history.state).toEqual({
       idx: 1,
-      grid: { v: 2, value: snapshot },
+      grid: { __rsc_ls_env: 1, v: 2, value: snapshot },
     });
     expect(Grid.read()).toBe(snapshot);
     expect(Grid.read({ state: history.state })).toBe(snapshot);
@@ -427,6 +427,7 @@ describe("createLocationState version", () => {
     const snapshot = { rows: [0] };
     Grid.write(snapshot);
     expect((history.state as { grid: unknown }).grid).toEqual({
+      __rsc_ls_env: 1,
       v: 0,
       value: snapshot,
     });
@@ -439,7 +440,7 @@ describe("createLocationState version", () => {
     const snapshot = { rows: [1] };
     const cases = [
       { grid: snapshot },
-      { grid: { v: 1, value: snapshot } },
+      { grid: { __rsc_ls_env: 1, v: 1, value: snapshot } },
       { grid: "stale" },
     ];
     for (const state of cases) {
@@ -468,7 +469,7 @@ describe("createLocationState version", () => {
     expect(Grid.read()).toBe(snapshot);
     expect(history.state).toEqual({
       idx: 1,
-      grid: { v: 2, value: snapshot },
+      grid: { __rsc_ls_env: 1, v: 2, value: snapshot },
     });
   });
 
@@ -479,7 +480,7 @@ describe("createLocationState version", () => {
     const eager = Grid(snapshot);
     expect(eager).toEqual({
       __rsc_ls_key: "grid",
-      __rsc_ls_value: { v: 2, value: snapshot },
+      __rsc_ls_value: { __rsc_ls_env: 1, v: 2, value: snapshot },
     });
     expect((eager.__rsc_ls_value as { value: GridSnapshot }).value).toBe(
       snapshot,
@@ -489,13 +490,13 @@ describe("createLocationState version", () => {
     const lazy = Grid(() => current);
     expect(lazy.__rsc_ls_lazy).toBe(true);
     expect(resolveLocationStateEntries([eager, lazy])).toEqual({
-      grid: { v: 2, value: snapshot },
+      grid: { __rsc_ls_env: 1, v: 2, value: snapshot },
     });
 
     const next = { rows: [9] };
     current = next;
     const resolved = resolveLocationStateEntries([lazy]);
-    expect(resolved).toEqual({ grid: { v: 2, value: next } });
+    expect(resolved).toEqual({ grid: { __rsc_ls_env: 1, v: 2, value: next } });
     expect((resolved.grid as { value: GridSnapshot }).value).toBe(next);
   });
 });
@@ -584,7 +585,7 @@ describe("createLocationState version and validate", () => {
 
     const mismatches = [
       { grid: snapshot },
-      { grid: { v: 1, value: snapshot } },
+      { grid: { __rsc_ls_env: 1, v: 1, value: snapshot } },
       { grid: "stale" },
     ];
     for (const state of mismatches) {
@@ -595,14 +596,14 @@ describe("createLocationState version and validate", () => {
     expect(seen).not.toHaveBeenCalled();
 
     const badInner = { rows: "nope" };
-    const matchedBad = { grid: { v: 2, value: badInner } };
+    const matchedBad = { grid: { __rsc_ls_env: 1, v: 2, value: badInner } };
     vi.stubGlobal("window", { history: { state: matchedBad } });
     expect(Grid.read()).toBeUndefined();
     expect(Grid.read({ state: matchedBad })).toBeUndefined();
     expect(seen).toHaveBeenCalledWith(badInner);
 
     seen.mockClear();
-    const matched = { grid: { v: 2, value: snapshot } };
+    const matched = { grid: { __rsc_ls_env: 1, v: 2, value: snapshot } };
     vi.stubGlobal("window", { history: { state: matched } });
     expect(Grid.read()).toBe(snapshot);
     expect(Grid.read({ state: matched })).toBe(snapshot);
@@ -614,14 +615,140 @@ describe("createLocationState version and validate", () => {
       location: { href: "https://example.test/grid" },
     });
     Grid.write(snapshot);
-    expect(Grid(snapshot).__rsc_ls_value).toEqual({ v: 2, value: snapshot });
+    expect(Grid(snapshot).__rsc_ls_value).toEqual({
+      __rsc_ls_env: 1,
+      v: 2,
+      value: snapshot,
+    });
     expect(resolveLocationStateEntries([Grid(() => snapshot)])).toEqual({
-      grid: { v: 2, value: snapshot },
+      grid: { __rsc_ls_env: 1, v: 2, value: snapshot },
     });
     expect(history.state).toEqual({
       idx: 1,
-      grid: { v: 2, value: snapshot },
+      grid: { __rsc_ls_env: 1, v: 2, value: snapshot },
     });
     expect(Grid.read()).toBe(snapshot);
+  });
+});
+
+// #994: what a read does with a slot the definition cannot trust.
+describe("createLocationState version/validate: stale and hostile slots", () => {
+  afterEach(() => {
+    restoreWindow();
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  function stubHistory(state: unknown): void {
+    vi.stubGlobal("window", { history: { state } });
+  }
+
+  it("a validate that throws reads as undefined instead of throwing", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const Grid = createLocationState<GridSnapshot>({
+      validate: (value): value is GridSnapshot => {
+        return (value as { rows: { length: number } }).rows.length > 0;
+      },
+    });
+    (Grid as any).__rsc_ls_key = "grid";
+    const state = { grid: { sort: "asc" } };
+    stubHistory(state);
+
+    expect(Grid.read()).toBeUndefined();
+    expect(Grid.read({ state })).toBeUndefined();
+  });
+
+  it("reports a throwing validate once per definition, naming the key", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const boom = new TypeError("rows is undefined");
+    const Grid = createLocationState<GridSnapshot>({
+      validate: (_value): _value is GridSnapshot => {
+        throw boom;
+      },
+    });
+    (Grid as any).__rsc_ls_key = "__rsc_ls_grid";
+    const Other = createLocationState<GridSnapshot>({
+      validate: (_value): _value is GridSnapshot => {
+        throw boom;
+      },
+    });
+    (Other as any).__rsc_ls_key = "__rsc_ls_other";
+    stubHistory({ __rsc_ls_grid: { rows: 1 }, __rsc_ls_other: { rows: 1 } });
+
+    Grid.read();
+    Grid.read();
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error.mock.calls[0]?.[0]).toContain('"__rsc_ls_grid"');
+    expect(error.mock.calls[0]?.[1]).toBe(boom);
+
+    Other.read();
+    expect(error).toHaveBeenCalledTimes(2);
+    expect(error.mock.calls[1]?.[0]).toContain('"__rsc_ls_other"');
+  });
+
+  it("does not report a throwing validate in production", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const Grid = createLocationState<GridSnapshot>({
+      validate: (_value): _value is GridSnapshot => {
+        throw new Error("boom");
+      },
+    });
+    (Grid as any).__rsc_ls_key = "grid";
+    stubHistory({ grid: { rows: [1] } });
+
+    expect(Grid.read()).toBeUndefined();
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it("never calls validate for an empty slot", () => {
+    const seen = vi.fn();
+    const validate = (value: unknown): value is GridSnapshot => {
+      seen(value);
+      return isGridSnapshot(value);
+    };
+    const Grid = createLocationState<GridSnapshot>({ validate });
+    (Grid as any).__rsc_ls_key = "grid";
+
+    for (const state of [null, {}, { other: 1 }, "primitive"]) {
+      stubHistory(state);
+      expect(Grid.read()).toBeUndefined();
+      expect(Grid.read({ state })).toBeUndefined();
+    }
+    expect(seen).not.toHaveBeenCalled();
+  });
+
+  it("a raw user value shaped { v, value } is not read as a versioned slot", () => {
+    const Grid = createLocationState<GridSnapshot>({ version: 2 });
+    (Grid as any).__rsc_ls_key = "grid";
+    const state = { grid: { v: 2, value: { rows: [1] } } };
+    stubHistory(state);
+
+    expect(Grid.read()).toBeUndefined();
+    expect(Grid.read({ state })).toBeUndefined();
+  });
+
+  it("a reader without version reads undefined for a slot a versioned definition wrote", () => {
+    const Versioned = createLocationState<GridSnapshot>({ version: 2 });
+    (Versioned as any).__rsc_ls_key = "grid";
+    const seen = vi.fn();
+    const Plain = createLocationState<GridSnapshot>();
+    (Plain as any).__rsc_ls_key = "grid";
+    const Validated = createLocationState<GridSnapshot>({
+      validate: (value): value is GridSnapshot => {
+        seen(value);
+        return true;
+      },
+    });
+    (Validated as any).__rsc_ls_key = "grid";
+
+    const state = resolveLocationStateEntries([Versioned({ rows: [1] })]);
+    stubHistory(state);
+
+    expect(Versioned.read()).toEqual({ rows: [1] });
+    expect(Plain.read()).toBeUndefined();
+    expect(Plain.read({ state })).toBeUndefined();
+    expect(Validated.read()).toBeUndefined();
+    expect(seen).not.toHaveBeenCalled();
   });
 });

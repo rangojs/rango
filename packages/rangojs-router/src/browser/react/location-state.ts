@@ -13,7 +13,7 @@ export {
   type LocationStateEntry,
   type LocationStateDefinition,
   type LocationStateOptions,
-  type LocationStateValidate,
+  type LocationStateGuard,
 } from "./location-state-shared.js";
 
 function readLocationStateValue<TArgs extends unknown[], TState>(

@@ -12,12 +12,15 @@ export interface LocationStateEntry {
 }
 
 /**
- * Read-time check for one slot. `false` reads as `undefined`, the same as no
- * state. The key is stable across deploys, so a value written by an older
- * shape — or by other code under the same key — must not come back typed as
- * `TState`.
+ * Read-time type guard for one slot (the `validate` option). `false` or a
+ * throw reads as `undefined`, the same as no state. The key is stable across
+ * deploys, so a value written by an older shape — or by other code under the
+ * same key — must not come back typed as `TState`.
+ *
+ * Unrelated to {@link ValidateLocationState}, the compile-time check that a
+ * state type survives `history.state`'s structured clone.
  */
-export type LocationStateValidate<TState> = (value: unknown) => value is TState;
+export type LocationStateGuard<TState> = (value: unknown) => value is TState;
 
 /**
  * Options for createLocationState
@@ -26,17 +29,25 @@ export interface LocationStateOptions<TState = unknown> {
   /** When true, the state is cleared from history after first read (flash message pattern) */
   flash?: boolean;
   /**
-   * Writers store `{ v, value }`. A read whose `v` is missing or not this
-   * number returns `undefined` — the same as no state. The key is stable
-   * across deploys (file path + export name), so an old tab would otherwise
-   * restore the previous shape typed as the new one.
+   * Writers store the value in a marked envelope that records this number. A
+   * read returns `undefined` — the same as no state — unless the slot is such
+   * an envelope with the same number: a raw value from before the definition
+   * had a version, another version, and a non-object all read `undefined`.
+   * The key is stable across deploys (file path + export name), so an old tab
+   * would otherwise restore the previous shape typed as the new one.
+   *
+   * A definition without `version` reads `undefined` for a versioned slot. A
+   * release older than this option cannot: after a rollback to one, it reads
+   * the envelope object as the state.
    */
   version?: number;
   /**
-   * Run on read against the stored value. With `version`, a mismatch returns
-   * `undefined` without calling this, and a match checks the inner value.
+   * Run on read against the stored value; `false` or a throw reads as
+   * `undefined` (a throw is logged once per definition in development). Not
+   * called for an empty slot. With `version`, a mismatch returns `undefined`
+   * without calling this, and a match checks the inner value.
    */
-  validate?: LocationStateValidate<TState>;
+  validate?: LocationStateGuard<TState>;
 }
 
 type LocationStateUnsafeFn = (...args: never[]) => unknown;
@@ -324,9 +335,10 @@ export interface LocationStateDefinition<TArgs extends unknown[], TState> {
  * // Flash state (cleared after first read)
  * export const FlashMessage = createLocationState<{ text: string }>({ flash: true });
  *
- * // Versioned state. Writers store `{ v: 2, value }`. A different or missing
- * // version reads as undefined: the key is stable across deploys, so an old
- * // tab must not see the previous shape typed as this one.
+ * // Versioned state. Writers store the value in an envelope that records the
+ * // version. A different or missing version reads as undefined: the key is
+ * // stable across deploys, so an old tab must not see the previous shape
+ * // typed as this one.
  * export const GridState = createLocationState<GridSnapshot>({ version: 2 });
  *
  * // Read-time check. A failing value reads as undefined, the same as no state.
@@ -380,35 +392,74 @@ export function replaceCurrentHistoryState(state: unknown): void {
   onCurrentStateReplaced?.();
 }
 
-/** `{ v, value }` when `version` is set; otherwise the value itself. */
+/**
+ * Stored form of a slot whose definition sets `version`. `history.state` is
+ * structured-cloned, so the mark has to be a plain property: `__rsc_ls_env`
+ * sits in the `__rsc_ls_` prefix the router already reserves there
+ * (history-state.ts isTypedLocationState, isLocationStateEntry), where
+ * `{ v, value }` alone are field names a user's own state can carry.
+ */
+export interface LocationStateEnvelope {
+  readonly __rsc_ls_env: 1;
+  readonly v?: number;
+  readonly value: unknown;
+}
+
+export function isLocationStateEnvelope(
+  stored: unknown,
+): stored is LocationStateEnvelope {
+  return (
+    stored !== null &&
+    typeof stored === "object" &&
+    (stored as { __rsc_ls_env?: unknown }).__rsc_ls_env === 1
+  );
+}
+
+/** An envelope when `version` is set; otherwise the value itself. */
 function encodeLocationStateSlot<TState>(
   value: TState,
   version: number | undefined,
 ): unknown {
   if (version === undefined) return value;
-  return { v: version, value };
+  const envelope: LocationStateEnvelope = {
+    __rsc_ls_env: 1,
+    v: version,
+    value,
+  };
+  return envelope;
 }
 
 /**
- * One decoder for every read. A version mismatch returns `undefined` without
- * calling `validate`, and does not treat a pre-version raw value as `TState`.
- * A matching version validates the inner value; validate-only checks the raw
- * slot. Either failure reads as `undefined`.
+ * One decoder for every read. An empty slot is `undefined` without consulting
+ * `validate`. An envelope is read only by the version that wrote it (a reader
+ * without `version` included), and a versioned reader does not treat a raw
+ * value as `TState`; neither mismatch calls `validate`. Otherwise `validate`
+ * checks the inner (or raw) value, and `false` or a throw reads as
+ * `undefined`: a throw must not escape into render or the hook's popstate /
+ * `__rsc_locationstate` listeners (location-state.ts), where the reader would
+ * keep the previous entry's value.
  */
 function decodeLocationStateSlot<TState>(
   stored: unknown,
   version: number | undefined,
-  validate: LocationStateValidate<TState> | undefined,
+  validate: LocationStateGuard<TState> | undefined,
+  onValidateThrow: (error: unknown) => void,
 ): TState | undefined {
-  let value = stored;
-  if (version !== undefined) {
-    if (stored === null || typeof stored !== "object") return undefined;
-    const envelope = stored as { v?: unknown; value?: unknown };
-    if (envelope.v !== version) return undefined;
-    value = envelope.value;
+  if (stored === undefined) return undefined;
+  let value: unknown = stored;
+  if (isLocationStateEnvelope(stored)) {
+    if (stored.v !== version) return undefined;
+    value = stored.value;
+  } else if (version !== undefined) {
+    return undefined;
   }
   if (validate !== undefined) {
-    return validate(value) ? value : undefined;
+    try {
+      if (!validate(value)) return undefined;
+    } catch (error) {
+      onValidateThrow(error);
+      return undefined;
+    }
   }
   return value as TState;
 }
@@ -438,6 +489,26 @@ export function createLocationState<TState>(
       );
     }
     return _key!;
+  }
+
+  // Once per definition: reads run in render and on every popstate.
+  let validateThrowReported = false;
+  function reportValidateThrow(error: unknown): void {
+    if (process.env.NODE_ENV === "production" || validateThrowReported) return;
+    validateThrowReported = true;
+    console.error(
+      `[rango] createLocationState({ validate }) for "${_key}" threw; the state reads as undefined.`,
+      error,
+    );
+  }
+
+  function decode(stored: unknown): TState | undefined {
+    return decodeLocationStateSlot(
+      stored,
+      version,
+      validate,
+      reportValidateThrow,
+    );
   }
 
   const fn = (stateOrGetter: TState | (() => TState)): LocationStateEntry => {
@@ -484,14 +555,10 @@ export function createLocationState<TState>(
           state !== null && typeof state === "object"
             ? (state as Record<string, unknown>)[getKey()]
             : undefined;
-        return decodeLocationStateSlot(stored, version, validate);
+        return decode(stored);
       }
       if (typeof window === "undefined") return undefined;
-      return decodeLocationStateSlot(
-        window.history.state?.[getKey()],
-        version,
-        validate,
-      );
+      return decode(window.history.state?.[getKey()]);
     },
     enumerable: true,
   });

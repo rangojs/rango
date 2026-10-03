@@ -107,7 +107,7 @@ export {
   type LocationStateDefinition,
   type LocationStateEntry,
   type LocationStateOptions,
-  type LocationStateValidate,
+  type LocationStateGuard,
 } from "./browser/react/location-state-shared.js";
 
 export { useHref } from "./browser/react/use-href.js";
