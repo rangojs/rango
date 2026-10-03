@@ -1,7 +1,8 @@
 import {
+  isClearOnReloadLocationStateKey,
   isLocationStateDefinition,
   isLocationStateEntry,
-  isLocationStateEnvelope,
+  isLocationStateKey,
   peekLocationStateKey,
   replaceCurrentHistoryState,
   resolveLocationStateEntries,
@@ -14,7 +15,7 @@ function isTypedLocationState(
   state: unknown,
 ): state is Record<string, unknown> {
   if (state === null || typeof state !== "object") return false;
-  return Object.keys(state).some((key) => key.startsWith("__rsc_ls_"));
+  return Object.keys(state).some(isLocationStateKey);
 }
 
 /**
@@ -107,10 +108,7 @@ export function buildHistoryState(
 /** Check if a history state object contains location state keys. */
 export function hasLocationState(state: unknown): boolean {
   if (!state || typeof state !== "object") return false;
-  return (
-    "state" in state ||
-    Object.keys(state).some((k) => k.startsWith("__rsc_ls_"))
-  );
+  return "state" in state || Object.keys(state).some(isLocationStateKey);
 }
 
 /**
@@ -158,38 +156,19 @@ export function stripShellMissMarker(): void {
 }
 
 /**
- * Remove the `clearOnReload` slots of the entry a document load starts on
- * (createLocationState's option; the slot's envelope records it). The server
- * rendered this document without `history.state`, so applying those slots
- * after hydration would change content already on screen.
- *
- * Runs once at start-up, before hydration (initBrowserApp; renderRoute's
- * `hydrate` mode calls it for the same reason), not from the readers: a
- * definition with no reader mounted at load would keep a stale slot, and a
- * reader that hydrates late, or mounts later on the page, would have to know
- * the page began as a document load. With the slot gone there is nothing left
- * to time.
- *
- * It cannot drop state the server sets for this load, because none exists
- * yet: a document response carries no location state (rsc-rendering.ts
- * attaches it to partial payloads only), and every lane that writes one
- * (navigation and action payloads, LoaderRedirect's effect) starts after
- * initBrowserApp's synchronous prefix, where this is called.
- *
- * Only `__rsc_ls_*` keys are read: plain state (`history.state.state`) and
- * foreign keys are never the router's to remove. Nothing is written when no
- * slot is marked.
+ * Remove the `clearOnReload` slots of the entry a document load starts on:
+ * the server rendered this document without them. One pass before hydration
+ * (initBrowserApp; renderRoute's `hydrate` mode), so no reader needs to know
+ * the page began as a document load, and a slot nobody reads is removed too.
+ * No server-set state exists yet to lose: a document response carries none
+ * (rsc-rendering.ts attaches it to partial payloads only).
  */
 export function clearLocationStateOnDocumentLoad(): void {
   const state: unknown = window.history.state;
   if (state === null || typeof state !== "object") return;
   let next: Record<string, unknown> | undefined;
-  for (const [key, slot] of Object.entries(state)) {
-    if (
-      key.startsWith("__rsc_ls_") &&
-      isLocationStateEnvelope(slot) &&
-      slot.clearOnReload === true
-    ) {
+  for (const key in state) {
+    if (isClearOnReloadLocationStateKey(key)) {
       next ??= { ...state };
       delete next[key];
     }
@@ -210,7 +189,7 @@ export function mergeLocationState(
     ...locationState,
   };
   replaceCurrentHistoryState(merged);
-  if (Object.keys(locationState).some((k) => k.startsWith("__rsc_ls_"))) {
+  if (Object.keys(locationState).some(isLocationStateKey)) {
     window.dispatchEvent(new Event("__rsc_locationstate"));
   }
 }

@@ -177,10 +177,8 @@ export async function initBrowserApp(
   // event controller): the server rendered the marked request for the clean
   // URL, so the client starts from the same one and hydration agrees.
   stripShellMissMarker();
-  // Before the first await: nothing reads or writes history.state earlier
-  // (the store's entry memory, a reader, a navigation or action payload), so
-  // a clearOnReload slot is gone before anyone can see it and no state the
-  // server sets for this page can be dropped with it.
+  // Before the first await: the store's entry memory, readers and the
+  // navigation / action lanes that deliver server-set state all come later.
   clearLocationStateOnDocumentLoad();
   bootLog("flight decode: awaiting initial payload from document stream");
   const initialPayload =

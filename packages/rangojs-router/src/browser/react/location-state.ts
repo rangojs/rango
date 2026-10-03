@@ -20,11 +20,8 @@ function readLocationStateValue<TArgs extends unknown[], TState>(
   definition: LocationStateDefinition<TArgs, TState> | undefined,
 ): TState | undefined {
   if (typeof window === "undefined") return undefined;
-  if (definition) {
-    // Shared decode. A second unwrap would copy the inner value and break
-    // useSyncExternalStore's snapshot identity.
-    return definition.read();
-  }
+  // history.state[key], through the definition so its `validate` applies.
+  if (definition) return definition.read();
   // Plain state: stored under history.state.state
   return window.history.state?.state as TState | undefined;
 }
@@ -128,7 +125,7 @@ export function useLocationState<TArgs extends unknown[], TState>(
       };
       const handleLocationState = (): void => {
         const next = readLocationStateValue(definition);
-        if (isFlash && key) {
+        if (isFlash) {
           if (next === undefined) return;
           flashSnapshotRef.current = next;
           flashCapturedRef.current = true;
@@ -143,7 +140,7 @@ export function useLocationState<TArgs extends unknown[], TState>(
         window.removeEventListener("__rsc_locationstate", handleLocationState);
       };
     },
-    [definition, key, isFlash],
+    [definition, isFlash],
   );
 
   const state = useSyncExternalStore<TState | undefined>(

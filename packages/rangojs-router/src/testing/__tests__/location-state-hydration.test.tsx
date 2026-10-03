@@ -21,15 +21,6 @@ const FlashCount = withLocationStateKey(
   createLocationState<{ count: number }>({ flash: true }),
   "FlashCount",
 );
-const VersionedGrid = withLocationStateKey(
-  createLocationState<{ count: number }>({ version: 2 }),
-  "VersionedGrid",
-);
-const VersionedFlash = withLocationStateKey(
-  createLocationState<{ count: number }>({ flash: true, version: 2 }),
-  "VersionedFlash",
-);
-
 type CountSample = { count: number | undefined; stored: number | undefined };
 
 let root: Root | undefined;
@@ -379,153 +370,13 @@ describe("useLocationState late hydration (#992)", () => {
   });
 });
 
-describe("useLocationState version (#994)", () => {
-  it("hydrates as undefined, then the client snapshot is the inner value", async () => {
-    const inner = { count: 3 };
-    const seen: Array<{ count: number } | undefined> = [];
-    function Count() {
-      const state = useLocationState(VersionedGrid);
-      seen.push(state);
-      return <p data-testid="count">{state?.count ?? 0}</p>;
-    }
-
-    seedHydrated({
-      [VersionedGrid.__rsc_ls_key]: { __rsc_ls_env: 1, v: 2, value: inner },
-      idx: 2,
-    });
-    const { container, recoverable } = await hydrate(
-      <Count />,
-      '<p data-testid="count">0</p>',
-      true,
-    );
-
-    expect(seen[0]).toBeUndefined();
-    expect(recoverable).toEqual([]);
-    expect(seen.at(-1)).toBe(inner);
-    expect(container.textContent).toBe("3");
-    expect(window.history.state?.[VersionedGrid.__rsc_ls_key]).toEqual({
-      __rsc_ls_env: 1,
-      v: 2,
-      value: inner,
-    });
-  });
-
-  it("a non-hydrating mount reads the inner value, not the envelope", async () => {
-    const inner = { count: 4 };
-    const seen: Array<{ count: number } | undefined> = [];
-    function Count() {
-      const state = useLocationState(VersionedGrid);
-      seen.push(state);
-      return <p data-testid="count">{state?.count ?? 0}</p>;
-    }
-
-    seedHydrated({
-      [VersionedGrid.__rsc_ls_key]: { __rsc_ls_env: 1, v: 2, value: inner },
-    });
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    await act(async () => {
-      root = createRoot(container);
-      root.render(<Count />);
-    });
-
-    expect(seen[0]).toBe(inner);
-    expect(container.textContent).toBe("4");
-  });
-
-  it("popstate and __rsc_locationstate deliver the inner value, or undefined on mismatch", async () => {
-    function Count() {
-      const state = useLocationState(VersionedGrid);
-      return <p data-testid="count">{state?.count ?? 0}</p>;
-    }
-    const first = { count: 4 };
-    seedHydrated({
-      [VersionedGrid.__rsc_ls_key]: { __rsc_ls_env: 1, v: 2, value: first },
-    });
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    await act(async () => {
-      root = createRoot(container);
-      root.render(<Count />);
-    });
-    expect(container.textContent).toBe("4");
-
-    const next = { count: 9 };
-    await act(async () => {
-      window.history.replaceState(
-        {
-          [VersionedGrid.__rsc_ls_key]: { __rsc_ls_env: 1, v: 2, value: next },
-        },
-        "",
-      );
-      window.dispatchEvent(new Event("popstate"));
-    });
-    expect(container.textContent).toBe("9");
-
-    await act(async () => {
-      window.history.replaceState(
-        { [VersionedGrid.__rsc_ls_key]: { count: 1 } },
-        "",
-      );
-      window.dispatchEvent(new Event("__rsc_locationstate"));
-    });
-    expect(container.textContent).toBe("0");
-  });
-
-  it("versioned flash shows the inner value and clears the envelope after paint", async () => {
-    const inner = { count: 2 };
-    const seen: Array<{ count: number } | undefined> = [];
-    function Flash() {
-      const state = useLocationState(VersionedFlash);
-      seen.push(state);
-      return <p data-testid="count">{state?.count ?? 0}</p>;
-    }
-
-    seedHydrated({
-      [VersionedFlash.__rsc_ls_key]: { __rsc_ls_env: 1, v: 2, value: inner },
-      idx: 1,
-    });
-    const { container, recoverable } = await hydrate(
-      <Flash />,
-      '<p data-testid="count">0</p>',
-      true,
-    );
-
-    expect(seen[0]).toBeUndefined();
-    expect(recoverable).toEqual([]);
-    expect(seen.at(-1)).toBe(inner);
-    expect(container.textContent).toBe("2");
-    expect(window.history.state).not.toHaveProperty(
-      VersionedFlash.__rsc_ls_key,
-    );
-    expect(window.history.state).toMatchObject({ idx: 1 });
-
-    const again = { count: 5 };
-    await act(async () => {
-      window.history.replaceState(
-        {
-          [VersionedFlash.__rsc_ls_key]: {
-            __rsc_ls_env: 1,
-            v: 2,
-            value: again,
-          },
-          idx: 1,
-        },
-        "",
-      );
-      window.dispatchEvent(new Event("popstate"));
-    });
-    expect(container.textContent).toBe("5");
-    expect(window.history.state).not.toHaveProperty(
-      VersionedFlash.__rsc_ls_key,
-    );
-  });
-});
-
-// #994: a validate that throws reads `undefined`. Thrown out of render it
-// fails the mount; thrown out of the popstate / __rsc_locationstate listeners
-// it leaves the reader on the previous entry's value.
-describe("useLocationState with a validate that throws (#994)", () => {
+describe("useLocationState with createLocationState options (#994)", () => {
+  const VersionedFlash = withLocationStateKey(
+    createLocationState<{ count: number }>({ flash: true, version: 2 }),
+    "VersionedFlash",
+  );
+  // A validate that throws out of the popstate / __rsc_locationstate listeners
+  // would leave the reader on the previous entry's value.
   const ThrowingGrid = withLocationStateKey(
     createLocationState<{ count: number }>({
       validate: (value): value is { count: number } => {
@@ -541,20 +392,32 @@ describe("useLocationState with a validate that throws (#994)", () => {
     return <p data-testid="count">{state?.count ?? 0}</p>;
   }
 
-  it("mounting on a slot whose validate throws renders undefined", async () => {
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    seedHydrated({ [ThrowingGrid.__rsc_ls_key]: { poison: true } });
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    await act(async () => {
-      root = createRoot(container);
-      root.render(<Count />);
+  it("a versioned flash reader reads and clears the slot under its own key", async () => {
+    function Flash() {
+      const state = useLocationState(VersionedFlash);
+      return <p data-testid="count">{state?.count ?? 0}</p>;
+    }
+    expect(VersionedFlash.__rsc_ls_key).toBe("__rsc_ls_VersionedFlash~v2");
+    seedHydrated({
+      "__rsc_ls_VersionedFlash~v2": { count: 2 },
+      // The previous version's slot and a pre-version one: never read.
+      "__rsc_ls_VersionedFlash~v1": { count: 1 },
+      __rsc_ls_VersionedFlash: { count: 0 },
+      idx: 1,
     });
+    const { container, recoverable } = await hydrate(
+      <Flash />,
+      '<p data-testid="count">0</p>',
+      true,
+    );
 
-    expect(container.textContent).toBe("0");
-    expect(error).toHaveBeenCalledTimes(1);
-    expect(error.mock.calls[0]?.[0]).toContain(ThrowingGrid.__rsc_ls_key);
-    error.mockRestore();
+    expect(recoverable).toEqual([]);
+    expect(container.textContent).toBe("2");
+    expect(window.history.state).toEqual({
+      "__rsc_ls_VersionedFlash~v1": { count: 1 },
+      __rsc_ls_VersionedFlash: { count: 0 },
+      idx: 1,
+    });
   });
 
   it.each(["popstate", "__rsc_locationstate"])(

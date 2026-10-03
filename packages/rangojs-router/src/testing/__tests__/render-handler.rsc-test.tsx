@@ -183,10 +183,8 @@ describe("renderHandler", () => {
     expect(locationState).toEqual({ flash: { text: "Welcome" } });
   });
 
-  // #994: `locationState` holds what history.state receives. A definition
-  // with `version` or `clearOnReload` stores an envelope there, and
-  // Def.read({ state }) is the assertion that decodes either form.
-  test("locationState of a versioned / clearOnReload definition decodes through Def.read", async () => {
+  // #994: the options are in the key, the value is what the handler passed.
+  test("locationState of a definition with version / clearOnReload is keyed by Def.__rsc_ls_key", async () => {
     const Flash = withLocationStateKey(
       createLocationState<{ text: string }>({ flash: true, version: 2 }),
       "RenderHandlerFlash",
@@ -202,19 +200,10 @@ describe("renderHandler", () => {
     const { locationState } = await renderHandler(Page);
 
     expect(locationState).toEqual({
-      __rsc_ls_RenderHandlerFlash: {
-        __rsc_ls_env: 1,
-        v: 2,
-        value: { text: "Welcome" },
-      },
-      __rsc_ls_RenderHandlerCarried: {
-        __rsc_ls_env: 1,
-        clearOnReload: true,
-        value: ["p1"],
-      },
+      "__rsc_ls_RenderHandlerFlash~v2": { text: "Welcome" },
+      "__rsc_ls_RenderHandlerCarried~r": ["p1"],
     });
-    expect(Flash.read({ state: locationState })).toEqual({ text: "Welcome" });
-    expect(Carried.read({ state: locationState })).toEqual(["p1"]);
+    expect(Flash.__rsc_ls_key).toBe("__rsc_ls_RenderHandlerFlash~v2");
   });
 
   test("an unseeded ctx.use(loader) throws a helpful error", async () => {

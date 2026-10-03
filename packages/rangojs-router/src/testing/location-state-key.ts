@@ -1,11 +1,10 @@
 import {
+  isLocationStateKey,
+  LOCATION_STATE_KEY_PREFIX,
+  LOCATION_STATE_KEY_SUFFIX_SEPARATOR,
   peekLocationStateKey,
   type LocationStateDefinition,
 } from "../browser/react/location-state-shared.js";
-
-// Typed history.state slots must carry this prefix: buildHistoryState spreads
-// only `__rsc_ls_*` keys onto history.state (history-state.ts).
-const KEY_PREFIX = "__rsc_ls_";
 
 let syntheticKeyCounter = 0;
 
@@ -16,10 +15,14 @@ let syntheticKeyCounter = 0;
  * use (`MyState(value)`, `useLocationState(MyState)`, `.read()`).
  *
  * - `withLocationStateKey(GridState, "GridState")` sets `__rsc_ls_GridState`
- *   (a name that already starts with `__rsc_ls_` is used as-is).
+ *   (a name that already starts with `__rsc_ls_` is used as-is). A definition
+ *   with `version` / `clearOnReload` appends its suffix, so read the stored
+ *   key back from `GridState.__rsc_ls_key` (`__rsc_ls_GridState~v2`).
  * - Without a name, a key already set (by the plugin or an earlier call) is
  *   kept; otherwise the definition gets a synthetic `__rsc_ls_test_<n>` key,
  *   which then stays on it.
+ *
+ * A name may not contain "~": that separator is reserved for those suffixes.
  *
  * Returns the definition.
  *
@@ -35,11 +38,18 @@ export function withLocationStateKey<
   TDefinition extends LocationStateDefinition<any, any>,
 >(definition: TDefinition, name?: string): TDefinition {
   if (name !== undefined) {
-    definition.__rsc_ls_key = name.startsWith(KEY_PREFIX)
+    if (name.includes(LOCATION_STATE_KEY_SUFFIX_SEPARATOR)) {
+      throw new Error(
+        `withLocationStateKey: "${name}" contains "${LOCATION_STATE_KEY_SUFFIX_SEPARATOR}", ` +
+          "which is reserved for the key suffix of the `version` / `clearOnReload` options. " +
+          "Pass the name without a suffix; the definition appends its own.",
+      );
+    }
+    definition.__rsc_ls_key = isLocationStateKey(name)
       ? name
-      : KEY_PREFIX + name;
+      : LOCATION_STATE_KEY_PREFIX + name;
   } else if (!peekLocationStateKey(definition)) {
-    definition.__rsc_ls_key = `${KEY_PREFIX}test_${syntheticKeyCounter++}`;
+    definition.__rsc_ls_key = `${LOCATION_STATE_KEY_PREFIX}test_${syntheticKeyCounter++}`;
   }
   return definition;
 }

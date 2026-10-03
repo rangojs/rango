@@ -352,38 +352,24 @@ describe("createLocationState options typing", () => {
   const isGrid = (value: unknown): value is Grid =>
     typeof (value as Grid | null)?.count === "number";
 
-  it("accepts each option, and version / validate with either of flash and clearOnReload", () => {
-    const accepted: LocationStateOptions<Grid>[] = [
-      {},
-      { flash: true },
-      { clearOnReload: true },
-      { version: 2 },
-      { validate: isGrid },
-      { flash: true, version: 2, validate: isGrid },
-      { clearOnReload: true, version: 2, validate: isGrid },
-      { flash: true, clearOnReload: false },
-      { flash: false, clearOnReload: true },
-    ];
-    void accepted;
-    expectTypeOf(
-      createLocationState<Grid>({ clearOnReload: true, version: 2 }).read(),
-    ).toEqualTypeOf<Grid | undefined>();
-  });
-
-  it("rejects flash together with clearOnReload", () => {
-    // @ts-expect-error - flash state ends at its first read; the pair is rejected
-    const both: LocationStateOptions<Grid> = {
-      flash: true,
+  it("LocationStateOptions is one interface: every option optional, and extendable", () => {
+    // An interface can only extend an object type, not a union.
+    interface GridOptions extends LocationStateOptions<Grid> {
+      label?: string;
+    }
+    const options: GridOptions = {
+      flash: false,
       clearOnReload: true,
+      version: 2,
+      validate: isGrid,
+      label: "grid",
     };
-    void both;
-    const either: boolean = true;
-    // @ts-expect-error - two booleans may both be true
-    const dynamic: LocationStateOptions<Grid> = {
-      flash: either,
-      clearOnReload: either,
-    };
-    void dynamic;
+    expectTypeOf(createLocationState<Grid>(options).read()).toEqualTypeOf<
+      Grid | undefined
+    >();
+    expectTypeOf<LocationStateOptions>().toEqualTypeOf<
+      LocationStateOptions<unknown>
+    >();
   });
 
   it("validate is a LocationStateGuard: a type predicate, not a boolean function", () => {

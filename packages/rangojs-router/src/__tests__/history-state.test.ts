@@ -160,73 +160,75 @@ describe("stripShellMissMarker", () => {
   });
 });
 
+// Start-up has no definitions to ask (their modules may not be loaded), so a
+// clearOnReload slot is recognised by its key alone: the `~r` suffix.
 describe("clearLocationStateOnDocumentLoad", () => {
-  const Carried = withLocationStateKey(
-    createLocationState<string[]>({ clearOnReload: true }),
-    "Carried",
-  );
-  const CarriedVersioned = withLocationStateKey(
-    createLocationState<string[]>({ clearOnReload: true, version: 3 }),
-    "CarriedVersioned",
-  );
-  const Versioned = withLocationStateKey(
-    createLocationState<string[]>({ version: 3 }),
-    "Versioned",
-  );
-  const Plain = withLocationStateKey(createLocationState<string[]>(), "Plain");
-
-  it("removes every clearOnReload slot and leaves the rest of the entry's state", () => {
+  it("removes every key that ends in ~r, with no definition loaded, and nothing else", () => {
     const kept = {
-      [Versioned.__rsc_ls_key]: Versioned(["v"]).__rsc_ls_value,
-      [Plain.__rsc_ls_key]: ["p"],
+      "__rsc_ls_a1b2c3d4#Sort": { order: "asc" },
+      "__rsc_ls_a1b2c3d4#Grid~v2": { rows: [1] },
+      "__rsc_ls_src/~r/state.ts#InDirNamedLikeTheSuffix": ["kept"],
       state: { from: "list" },
+      "foreign~r": "not a location-state key",
       idx: 4,
       key: "scroll-key",
     };
     historyState = {
       ...kept,
-      [Carried.__rsc_ls_key]: Carried(["a"]).__rsc_ls_value,
-      [CarriedVersioned.__rsc_ls_key]: CarriedVersioned(["b"]).__rsc_ls_value,
+      "__rsc_ls_a1b2c3d4#Carried~r": ["a"],
+      "__rsc_ls_a1b2c3d4#Carried~v3~r": ["b"],
+      "__rsc_ls_src/state.ts#Carried~r": ["dev key"],
     };
 
     clearLocationStateOnDocumentLoad();
 
     expect(replaceStateSpy).toHaveBeenCalledOnce();
     expect(replaceStateSpy.mock.calls[0]).toEqual([kept, ""]);
-    expect(Carried.read()).toBeUndefined();
-    expect(CarriedVersioned.read()).toBeUndefined();
-    expect(Versioned.read()).toEqual(["v"]);
-    expect(Plain.read()).toEqual(["p"]);
   });
 
-  it("leaves history untouched when no slot is marked", () => {
-    const states: unknown[] = [
-      null,
-      "primitive",
-      { idx: 1 },
+  it.each([
+    ["null", null],
+    ["a primitive", "primitive"],
+    ["no location state", { idx: 1 }],
+    [
+      "slots without the suffix",
       {
-        [Plain.__rsc_ls_key]: ["p"],
-        [Versioned.__rsc_ls_key]: Versioned(["v"]).__rsc_ls_value,
+        "__rsc_ls_a1b2c3d4#Sort": { order: "asc" },
+        "__rsc_ls_a1b2c3d4#Grid~v2": { rows: [1] },
         state: { from: "list" },
       },
-      // A raw value written before the definition had the option.
-      { [Carried.__rsc_ls_key]: ["legacy"] },
-    ];
-    for (const state of states) {
-      historyState = state;
-      clearLocationStateOnDocumentLoad();
-      expect(historyState).toBe(state);
-    }
+    ],
+    ["the suffix outside the __rsc_ls_ prefix", { "other~r": 1, state: 2 }],
+  ])("writes nothing for %s", (_label, state) => {
+    historyState = state;
+    clearLocationStateOnDocumentLoad();
+    expect(historyState).toBe(state);
     expect(replaceStateSpy).not.toHaveBeenCalled();
   });
 
-  it("only reads slots under the __rsc_ls_ prefix", () => {
-    const lookalike = Carried(["a"]).__rsc_ls_value;
-    historyState = { state: lookalike, other: lookalike };
+  it("an option adopted or removed later: the plain key is neither read by the option nor swept", () => {
+    const base = "Adopted";
+    const Before = withLocationStateKey(createLocationState<string[]>(), base);
+    const With = withLocationStateKey(
+      createLocationState<string[]>({ clearOnReload: true }),
+      base,
+    );
+    historyState = {};
+    Before.write(["before"]);
+    With.write(["while set"]);
+    expect(historyState).toEqual({
+      __rsc_ls_Adopted: ["before"],
+      "__rsc_ls_Adopted~r": ["while set"],
+    });
+    replaceStateSpy.mockClear();
 
     clearLocationStateOnDocumentLoad();
 
-    expect(replaceStateSpy).not.toHaveBeenCalled();
+    // The slot from before the option (and the one a definition reads again
+    // after dropping it) stays; the suffixed leftover is swept.
+    expect(historyState).toEqual({ __rsc_ls_Adopted: ["before"] });
+    expect(With.read()).toBeUndefined();
+    expect(Before.read()).toEqual(["before"]);
   });
 });
 
