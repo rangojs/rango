@@ -83,3 +83,11 @@ export interface PprExecMarkShape {
  * transition({ when }) reads it from `to.state`, a PPR replay HIT included.
  */
 export const PprExecMark = createLocationState<PprExecMarkShape>();
+
+export interface LateSuspenseStateShape {
+  label: string;
+}
+
+// Persistent slot read by a useLocationState reader inside a Suspense boundary
+// that hydrates after the root (#992).
+export const LateSuspenseState = createLocationState<LateSuspenseStateShape>();

@@ -1,4 +1,9 @@
+import { Suspense } from "react";
 import { urls, redirect } from "@rangojs/router";
+import {
+  LateSuspenseReader,
+  LateSuspenseWriter,
+} from "../components/LateSuspenseReader.js";
 import { Link } from "@rangojs/router/client";
 import {
   FlashMessage,
@@ -34,6 +39,11 @@ import {
  * Location state test routes - tests for redirect() with state,
  * ctx.setLocationState(), useLocationState(), and useLocationState()
  */
+async function LateSuspenseContent() {
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  return <LateSuspenseReader />;
+}
+
 export const locationStatePatterns = urls(({ path, middleware }) => [
   // Index page with links to trigger different scenarios
   path(
@@ -256,6 +266,22 @@ export const locationStatePatterns = urls(({ path, middleware }) => [
       </div>
     ),
     { name: "linkStatePlainTarget" },
+  ),
+
+  // #992: a persistent useLocationState reader inside a Suspense boundary that
+  // resolves after the root hydrates.
+  path(
+    "/late-suspense",
+    () => (
+      <div data-testid="ls-late-suspense">
+        <h1>Late Suspense</h1>
+        <LateSuspenseWriter />
+        <Suspense fallback={<div data-testid="late-ls-fallback">loading</div>}>
+          <LateSuspenseContent />
+        </Suspense>
+      </div>
+    ),
+    { name: "lateSuspense" },
   ),
 
   // Static write/delete demo: drives LocationState.write() and .delete()

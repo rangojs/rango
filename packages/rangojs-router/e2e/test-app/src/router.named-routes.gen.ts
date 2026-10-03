@@ -259,6 +259,7 @@ export const NamedRoutes = {
   "locale.list": "/:locale/blog",
   "locationState.actionLs": "/location-state/action-ls",
   "locationState.index": "/location-state",
+  "locationState.lateSuspense": "/location-state/late-suspense",
   "locationState.linkState": "/location-state/link-state",
   "locationState.linkStatePlainTarget": "/location-state/link-state/plain-target",
   "locationState.linkStateTarget": "/location-state/link-state/target",

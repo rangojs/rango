@@ -14,6 +14,10 @@ import {
 import { CFCacheStore, MemorySegmentCacheStore } from "@rangojs/router/cache";
 import { Suspense, type ReactNode } from "react";
 import { Link, Outlet } from "@rangojs/router/client";
+import {
+  LateSuspenseReader,
+  LateSuspenseWriter,
+} from "./components/LateSuspenseReader.js";
 import { StreamTest } from "./components/StreamTest.js";
 import { NavLayout } from "./components/NavLayout.js";
 import { RootLayout } from "./components/SlowRootLayout.js";
@@ -403,6 +407,11 @@ async function LoaderKeyCraftedPage(ctx: HandlerContext): Promise<ReactNode> {
 /**
  * Main URL patterns - Django-style routing API
  */
+async function LateSuspenseContent() {
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  return <LateSuspenseReader />;
+}
+
 export const urlpatterns = urls(
   ({
     path,
@@ -2148,6 +2157,24 @@ export const urlpatterns = urls(
           CookieOverlayPage,
           { name: "cookieOverlay" },
           () => [middleware(setOverlayCookie), loader(CookieOverlayLoader)],
+        ),
+
+        // #992: persistent useLocationState reader inside a Suspense boundary
+        // that resolves after the root hydrates.
+        path(
+          "/location-state-late-suspense",
+          () => (
+            <div data-testid="ls-late-suspense">
+              <h1>Late Suspense</h1>
+              <LateSuspenseWriter />
+              <Suspense
+                fallback={<div data-testid="late-ls-fallback">loading</div>}
+              >
+                <LateSuspenseContent />
+              </Suspense>
+            </div>
+          ),
+          { name: "locationStateLateSuspense" },
         ),
 
         // Action location state test route (non-redirect flow)
