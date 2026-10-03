@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.20.0 (2026-10-03)
 
 ### Breaking: the default `clientChunks` strategy splits `app/routes/<id>` per route instead of one `app-routes` group ([#1023](https://github.com/rangojs/rango/pull/1023))
 
