@@ -1194,6 +1194,12 @@ export function createRequestContext<TEnv>(
   // Set-Cookie drain (rsc/helpers.ts) run outside any latched funnel scope,
   // where assertCachedHeaderWriteAllowed is a no-op.
   let rawStubHeaders = stubResponse.headers;
+  // Node's util.inspect unwraps this Proxy and calls undici's Headers hook
+  // with the proxy as `this`. That reads `#headersList` and throws (#1000).
+  // Inspect does not consult the get trap, so the hook is an own property of
+  // the target and formats `rawStubHeaders`. Read on each call: setStatus
+  // rebinds that let to a new Headers.
+  const NODE_INSPECT = Symbol.for("nodejs.util.inspect.custom");
   const guardedStubHeaders: Headers = new Proxy(new Headers(), {
     get(_target, prop) {
       const raw = rawStubHeaders;
@@ -1207,6 +1213,22 @@ export function createRequestContext<TEnv>(
       }
       return (value as (...a: unknown[]) => unknown).bind(raw);
     },
+  });
+  Object.defineProperty(guardedStubHeaders, NODE_INSPECT, {
+    value(...args: unknown[]): unknown {
+      const hook = (rawStubHeaders as unknown as Record<symbol, unknown>)[
+        NODE_INSPECT
+      ];
+      if (typeof hook === "function") return hook.apply(rawStubHeaders, args);
+      // DOM Headers has forEach and not entries. Node always has the hook above.
+      const listed: Record<string, string> = {};
+      rawStubHeaders.forEach((value, key) => {
+        listed[key] = value;
+      });
+      return listed;
+    },
+    configurable: true,
+    writable: true,
   });
   const shadowStubHeaders = (res: Response): void => {
     Object.defineProperty(res, "headers", {
