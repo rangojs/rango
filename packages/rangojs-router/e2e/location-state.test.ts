@@ -5,7 +5,6 @@ import {
   expectLateSuspenseReaderHydratesClean,
   expectOtherVersionLocationStateDroppedOnLoad,
   expectOtherVersionLocationStateDroppedOnTraversal,
-  expectRejectedLocationStateReadsAsNone,
   returnToEvictedEntry,
 } from "@shared/e2e";
 import { useFixture, type Fixture } from "./fixture";
@@ -1473,8 +1472,8 @@ test.describe("location-state.late-suspense (production)", () => {
   lateSuspenseSuite(f);
 });
 
-// #994: createLocationState({ clearOnReload }), ({ validate }), and the app
-// version every entry's location state is recorded under.
+// #994: createLocationState({ clearOnReload }) and the app version every
+// entry's location state is recorded under.
 function optionsSuite(f: Fixture) {
   test("clearOnReload state is carried by a client navigation and dropped by a reload", async ({
     page,
@@ -1499,7 +1498,7 @@ function optionsSuite(f: Fixture) {
   }) => {
     await expectOtherVersionLocationStateDroppedOnLoad(
       page,
-      f.url("/location-state/grid-options"),
+      f.url("/location-state/app-version"),
     );
   });
 
@@ -1508,16 +1507,7 @@ function optionsSuite(f: Fixture) {
   }) => {
     await expectOtherVersionLocationStateDroppedOnTraversal(
       page,
-      f.url("/location-state/grid-options"),
-    );
-  });
-
-  test("a slot whose value validate rejects reads as no state after a reload", async ({
-    page,
-  }) => {
-    await expectRejectedLocationStateReadsAsNone(
-      page,
-      f.url("/location-state/grid-options"),
+      f.url("/location-state/app-version"),
     );
   });
 }

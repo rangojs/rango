@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import {
   readableLocationState,
+  replaceCurrentHistoryState,
   type LocationStateDefinition,
 } from "./location-state-shared.js";
 
@@ -13,16 +14,14 @@ export {
   type LocationStateEntry,
   type LocationStateDefinition,
   type LocationStateOptions,
-  type LocationStateGuard,
 } from "./location-state-shared.js";
 
-function readLocationStateValue<TArgs extends unknown[], TState>(
-  definition: LocationStateDefinition<TArgs, TState> | undefined,
+function readLocationStateValue<TState>(
+  key: string | undefined,
 ): TState | undefined {
-  // history.state[key], through the definition so its `validate` applies.
-  if (definition) return definition.read();
-  // Plain state: stored under history.state.state
-  return readableLocationState()?.state as TState | undefined;
+  // Typed state: history.state[key]. Plain state: history.state.state. Either
+  // is read only when the entry recorded this client's app version.
+  return readableLocationState()?.[key || "state"] as TState | undefined;
 }
 
 /**
@@ -95,7 +94,7 @@ export function useLocationState<TArgs extends unknown[], TState>(
 
   const getSnapshot = useCallback((): TState | undefined => {
     if (!clientSnapshotRef.current.read) {
-      const current = readLocationStateValue(definition);
+      const current = readLocationStateValue<TState>(key);
       clientSnapshotRef.current = { read: true, value: current };
       if (isFlash && current !== undefined) {
         flashSnapshotRef.current = current;
@@ -104,7 +103,7 @@ export function useLocationState<TArgs extends unknown[], TState>(
     }
     if (isFlash && flashCapturedRef.current) return flashSnapshotRef.current;
     return clientSnapshotRef.current.value;
-  }, [definition, isFlash]);
+  }, [key, isFlash]);
 
   // popstate always applies the destination entry, including an empty flash
   // slot. `__rsc_locationstate` for flash ignores an empty slot: the
@@ -114,7 +113,7 @@ export function useLocationState<TArgs extends unknown[], TState>(
   const subscribe = useCallback(
     (onStoreChange: () => void): (() => void) => {
       const handlePopstate = (): void => {
-        const next = readLocationStateValue(definition);
+        const next = readLocationStateValue<TState>(key);
         clientSnapshotRef.current = { read: true, value: next };
         if (isFlash) {
           flashSnapshotRef.current = next;
@@ -123,8 +122,8 @@ export function useLocationState<TArgs extends unknown[], TState>(
         onStoreChange();
       };
       const handleLocationState = (): void => {
-        const next = readLocationStateValue(definition);
-        if (isFlash) {
+        const next = readLocationStateValue<TState>(key);
+        if (isFlash && key) {
           if (next === undefined) return;
           flashSnapshotRef.current = next;
           flashCapturedRef.current = true;
@@ -139,7 +138,7 @@ export function useLocationState<TArgs extends unknown[], TState>(
         window.removeEventListener("__rsc_locationstate", handleLocationState);
       };
     },
-    [definition, isFlash],
+    [key, isFlash],
   );
 
   const state = useSyncExternalStore<TState | undefined>(
@@ -151,8 +150,12 @@ export function useLocationState<TArgs extends unknown[], TState>(
   // Flash: clear from history.state after paint so subsequent navigations don't see it.
   // Depends on `state` so it re-runs when state is set via the event listener.
   useEffect(() => {
-    if (isFlash && state !== undefined) definition!.delete();
-  }, [isFlash, definition, state]);
+    if (isFlash && key && state !== undefined) {
+      const cleaned = { ...window.history.state };
+      delete cleaned[key];
+      replaceCurrentHistoryState(cleaned);
+    }
+  }, [isFlash, key, state]);
 
   return state;
 }

@@ -162,15 +162,14 @@ it("shows the count it pushed", async () => {
 });
 ```
 
-### Definitions with `clearOnReload` or `validate`
+### Definitions with `clearOnReload`
 
-The options never change the stored value. `clearOnReload` changes the key: it appends `~r` to the name you key the definition with (`__rsc_ls_CarriedProducts~r`, see `/hooks`, state.md). So a seed is the plain value for every definition, and a stored-state assertion uses `[CarriedProducts.__rsc_ls_key]` instead of spelling the key.
+The option never changes the stored value. It changes the key: it appends `~r` to the name you key the definition with (`__rsc_ls_CarriedProducts~r`, see `/hooks`, state.md). So a seed is the plain value for every definition, and a stored-state assertion uses `[CarriedProducts.__rsc_ls_key]` instead of spelling the key.
 
-| To test                                                    | Do                                                                                                                                                                                 |
-| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| the reader ignores a value `validate` rejects or throws on | seed that value: `locationState: [[GridState, badValue]]` (a seed's value is `unknown`, so no cast is needed)                                                                      |
-| `clearOnReload` state after a client navigation            | plain `renderRoute(routes, { locationState })`: the tree mounts as during a navigation, the seed is applied                                                                        |
-| `clearOnReload` state after a refresh                      | `renderRoute(routes, { hydrate: true, locationState })`: a document load of the seeded entry. The slot is removed before hydration, by the same function production start-up calls |
+| To test                                         | Do                                                                                                                                                                                 |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `clearOnReload` state after a client navigation | plain `renderRoute(routes, { locationState })`: the tree mounts as during a navigation, the seed is applied                                                                        |
+| `clearOnReload` state after a refresh           | `renderRoute(routes, { hydrate: true, locationState })`: a document load of the seeded entry. The slot is removed before hydration, by the same function production start-up calls |
 
 In the browser the router also drops location state another app version wrote (see `/hooks`, state.md). A test has no app version, so there is nothing to set up: seeds read back on a mount and on a `hydrate: true` load, and nothing in `window.history.state` or in a server primitive's `locationState` names a version.
 

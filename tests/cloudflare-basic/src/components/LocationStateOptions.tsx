@@ -7,7 +7,6 @@ import {
   GridState,
   ListSort,
   ServerPageStamp,
-  ValidatedGrid,
 } from "../location-states.js";
 
 /**
@@ -65,17 +64,16 @@ export function LoadMoreList({
 }
 
 /**
- * #994 state another app version stored, and `validate`. Each reader shows its
- * value or "none": a typed slot (`grid-value`), plain state (`plain-value`)
- * and a validated slot (`val-value`, with its key so the e2e can store a value
- * the guard rejects). `step` is the server-rendered `?step`, so the e2e can
- * tell which entry is committed.
+ * #994 location state another app version stored. Each reader shows its value
+ * or "none": a typed slot (`grid-value`) and plain state (`plain-value`).
+ * `step` is the server-rendered `?step`, so the e2e can tell which entry is
+ * committed.
  *
  * Nothing in location state survives a version change, so no slot can signal
  * that the client snapshots are applied: `grid-mounted` turns "yes" in an
  * effect, which runs after them.
  */
-export function GridOptionsPanel({
+export function AppVersionPanel({
   basePath,
   step,
 }: {
@@ -84,10 +82,8 @@ export function GridOptionsPanel({
 }) {
   const grid = useLocationState(GridState);
   const plain = useLocationState<{ from?: string }>();
-  const validated = useLocationState(ValidatedGrid);
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
-  const snapshot = { order: "desc", page: 3 } as const;
   return (
     <section>
       <p>
@@ -101,16 +97,9 @@ export function GridOptionsPanel({
         </span>
         , plain <span data-testid="plain-value">{plain?.from ?? "none"}</span>
       </p>
-      <p>
-        validated{" "}
-        <span data-testid="val-value">
-          {validated ? `${validated.order}:${validated.page}` : "none"}
-        </span>{" "}
-        <code data-testid="val-key">{ValidatedGrid.__rsc_ls_key}</code>
-      </p>
       <Link
         to={`${basePath}?step=typed`}
-        state={[GridState(snapshot), ValidatedGrid(snapshot)]}
+        state={[GridState({ order: "desc", page: 3 })]}
         data-testid="grid-write"
       >
         Write typed state

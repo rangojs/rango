@@ -13,16 +13,15 @@ import { withLocationStateKey } from "../index.js";
 import { resolveLocationStateEntries } from "../../browser/react/location-state-shared.js";
 import { LoaderRedirect } from "../../loader-redirect.js";
 
-// Userland contract for the createLocationState options of #994 through the
-// public primitive. Plain renderRoute() is a client mount (the reader mounts
-// during a client navigation); renderRoute({ hydrate: true }) is a document
-// load of the seeded entry: it runs production's start-up step
+// Userland contract for createLocationState({ clearOnReload }) (#994) through
+// the public primitive. Plain renderRoute() is a client mount (the reader
+// mounts during a client navigation); renderRoute({ hydrate: true }) is a
+// document load of the seeded entry: it runs production's start-up step
 // (history-state.ts clearLocationStateOnDocumentLoad) before hydrating.
 //
-// A seed is `[definition, value]` and lands under the definition's own key,
-// so "state an older release stored" is a seed through that release's
-// definition (the same name, its type and options). The app version of
-// location state is covered in location-state-version.test.tsx.
+// A seed is `[definition, value]` and lands under the definition's own key.
+// The app version of location state is covered in
+// location-state-version.test.tsx.
 
 type Grid = { count: number };
 
@@ -30,80 +29,6 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   window.history.replaceState(null, "");
-});
-
-describe("renderRoute: createLocationState({ validate })", () => {
-  const isGrid = (value: unknown): value is Grid =>
-    typeof (value as Grid | null)?.count === "number";
-  const GridState = withLocationStateKey(
-    createLocationState<Grid>({ validate: isGrid }),
-    "Grid",
-  );
-  // The same slot as an older release typed it.
-  const OlderGridState = withLocationStateKey(
-    createLocationState<{ total: number }>(),
-    "Grid",
-  );
-
-  function Reader() {
-    const router = useRouter();
-    const grid = useLocationState(GridState);
-    return (
-      <div>
-        <p data-testid="count">{grid ? grid.count : "none"}</p>
-        <button
-          data-testid="more"
-          onClick={() =>
-            router.push("/grid?page=2", {
-              state: [GridState({ count: (grid?.count ?? 0) + 1 })],
-            })
-          }
-        />
-      </div>
-    );
-  }
-  const routes = [{ path: "/grid", Component: Reader }];
-
-  it("reads a value it accepts on a mount, after a push and after a document load", async () => {
-    const mounted = await renderRoute(routes, {
-      locationState: [[GridState, { count: 3 }]],
-    });
-    expect(mounted.getByTestId("count").textContent).toBe("3");
-    expect(window.history.state).toEqual({ __rsc_ls_Grid: { count: 3 } });
-
-    fireEvent.click(mounted.getByTestId("more"));
-    await waitFor(() =>
-      expect(mounted.getByTestId("count").textContent).toBe("4"),
-    );
-    expect(window.history.state).toMatchObject({
-      __rsc_ls_Grid: { count: 4 },
-    });
-    mounted.unmount();
-
-    const loaded = await renderRoute(routes, {
-      hydrate: true,
-      locationState: [[GridState, { count: 3 }]],
-    });
-    expect(loaded.serverHtml).toContain(">none<");
-    expect(loaded.recoverableErrors).toEqual([]);
-    expect(loaded.getByTestId("count").textContent).toBe("3");
-  });
-
-  it("a value it rejects reads as none, on a mount and on a document load", async () => {
-    const seeds = [[OlderGridState, { total: 9 }]] as const;
-    const mounted = await renderRoute(routes, { locationState: seeds });
-    expect(mounted.getByTestId("count").textContent).toBe("none");
-    mounted.unmount();
-
-    const loaded = await renderRoute(routes, {
-      hydrate: true,
-      locationState: seeds,
-    });
-    expect(loaded.recoverableErrors).toEqual([]);
-    expect(loaded.getByTestId("count").textContent).toBe("none");
-    // A rejected slot stays where its writer put it.
-    expect(window.history.state).toEqual({ __rsc_ls_Grid: { total: 9 } });
-  });
 });
 
 describe("renderRoute: createLocationState({ clearOnReload })", () => {
@@ -116,8 +41,8 @@ describe("renderRoute: createLocationState({ clearOnReload })", () => {
     "Sort",
   );
 
-  function useCarriedText(definition: typeof Carried): string {
-    return useLocationState(definition)?.join(",") ?? "none";
+  function useCarriedText(): string {
+    return useLocationState(Carried)?.join(",") ?? "none";
   }
 
   // The load-more page: this page's items come from the route (a loader in an
@@ -198,7 +123,7 @@ describe("renderRoute: createLocationState({ clearOnReload })", () => {
 
   it("a reader that mounts later, or hydrates in a late Suspense boundary, does not resurrect it", async () => {
     function Reader({ id }: { id: string }) {
-      return <p data-testid={id}>{useCarriedText(Carried)}</p>;
+      return <p data-testid={id}>{useCarriedText()}</p>;
     }
     function Page() {
       const [shown, setShown] = useState(false);
@@ -232,7 +157,7 @@ describe("renderRoute: createLocationState({ clearOnReload })", () => {
     const seen: string[] = [];
     function Page() {
       const { page } = useParams<{ page: string }>();
-      const carried = useCarriedText(Carried);
+      const carried = useCarriedText();
       seen.push(`${page}:${carried}`);
       return (
         <div>
@@ -269,10 +194,10 @@ describe("renderRoute: createLocationState({ clearOnReload })", () => {
   });
 });
 
-// A definition that sets none of the options: the stored key and value and the
-// number of renders are what they were before the options existed (this
+// A definition without `clearOnReload`: the stored key and value and the
+// number of renders are what they were before the option existed (this
 // describe passes on main's runtime too).
-describe("renderRoute: createLocationState() without options is unchanged", () => {
+describe("renderRoute: a definition without clearOnReload is unchanged", () => {
   const Plain = withLocationStateKey(createLocationState<Grid>(), "PlainGrid");
   const Flash = withLocationStateKey(
     createLocationState<Grid>({ flash: true }),

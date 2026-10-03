@@ -171,9 +171,8 @@ export function stripShellMissMarker(): void {
  * module that defines it may not be loaded.
  */
 export function clearLocationStateOnDocumentLoad(): void {
-  // Typed as the object it usually is; no runtime guard: `for...in` visits
-  // nothing for null and only index keys for a primitive, none a slot key.
-  const state = window.history.state as Record<string, unknown>;
+  const state: unknown = window.history.state;
+  if (state === null || typeof state !== "object") return;
   let next: Record<string, unknown> | undefined;
   for (const key in state) {
     if (isLocationStateKey(key) && key.endsWith(CLEAR_ON_RELOAD_KEY_SUFFIX)) {

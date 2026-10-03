@@ -205,7 +205,7 @@ describe("clearLocationStateOnDocumentLoad", () => {
     expect(replaceStateSpy).not.toHaveBeenCalled();
   });
 
-  it("an option adopted or removed later: the plain key is neither read by the option nor swept", () => {
+  it("clearOnReload adopted or removed later: the plain key is neither read with the option nor swept", () => {
     const base = "Adopted";
     const Before = withLocationStateKey(createLocationState<string[]>(), base);
     const With = withLocationStateKey(

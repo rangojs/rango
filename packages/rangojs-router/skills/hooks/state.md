@@ -260,53 +260,24 @@ state, and the next document load drops it.
 ```ts
 createLocationState<TState>({
   flash?: boolean, // read once, cleared after paint (above)
-  clearOnReload?: boolean, // drop the state on a document load
-  validate?: (value: unknown) => value is TState, // check the value on read
+  clearOnReload?: boolean, // drop the state on a document load (below)
 });
 ```
-
-A definition that sets none of them stores the value under its key and reads
-it back unchecked. `clearOnReload` and `validate` each make one kind of stored
-state read as `undefined`, which is what a reader already handles: it is the
-same result as no state.
 
 The value is always stored as-is. `clearOnReload` changes the slot's KEY in
 `history.state` instead, by a suffix on the key the Vite plugin injects
 (`<key>` below, `__rsc_ls_<file>#<ExportName>`):
 
-| Options                   | Key in `history.state` | Reads `undefined` when                                    |
-| ------------------------- | ---------------------- | --------------------------------------------------------- |
-| none, `flash`, `validate` | `<key>`                | the slot is empty (`flash`: once read; `validate`: below) |
-| `clearOnReload`           | `<key>~r`              | the entry's document was loaded since the write           |
+| Options         | Key in `history.state` | Reads `undefined` when                          |
+| --------------- | ---------------------- | ----------------------------------------------- |
+| none, `flash`   | `<key>`                | the slot is empty (`flash`: once read)          |
+| `clearOnReload` | `<key>~r`              | the entry's document was loaded since the write |
 
 `Def.__rsc_ls_key` is that key, suffix included. `~` cannot appear in an export
 name, so no other definition can end up with a suffixed key.
 
-`validate` combines with `flash` or `clearOnReload`. `flash` with
-`clearOnReload` is rejected: `createLocationState` throws in development.
-
-### validate: check the value on read
-
-`validate` checks the stored value itself, so it also covers state written by
-other code under the same key. It runs on every read of a non-empty slot;
-`false` reads as `undefined`.
-
-```ts
-export const GridState = createLocationState<GridSnapshot>({
-  validate: (value): value is GridSnapshot => isGridSnapshot(value),
-});
-```
-
-- An empty slot is `undefined` without calling `validate`.
-- A `validate` that throws counts as `false`. It never fails the render or
-  the navigation; in development the error is logged once per definition,
-  with the definition's key.
-- The key and the stored value do not change, so adding or removing the
-  option needs no migration.
-
-The type of `validate` is exported as `LocationStateGuard<TState>` (not to be
-confused with `ValidateLocationState<T>`, the compile-time serializability
-check above).
+`flash` with `clearOnReload` is rejected: `createLocationState` throws in
+development.
 
 ### clearOnReload: state the server did not render with
 
@@ -402,8 +373,8 @@ as the server rendered it:
   stored before, under the plain key, is no longer read (and is not removed).
   Removing the option moves it back to the plain key; what was stored under
   `~r` is removed at the next document load.
-- Combine it with `validate` freely. It cannot be combined with `flash`: flash state is removed at its first read, so the pair could only
-  drop a message nobody has seen yet.
+- It cannot be combined with `flash`: flash state is removed at its first
+  read, so the pair could only drop a message nobody has seen yet.
 
 ### .read() (non-hook access)
 

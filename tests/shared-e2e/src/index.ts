@@ -792,12 +792,12 @@ async function recordEntryVersion(
 }
 
 /**
- * Reloads the #994 grid fixture (both apps) and waits until its readers hold
+ * Reloads the #994 app-version fixture (both apps) and waits until its readers hold
  * their client snapshots. The server HTML says "none" for every reader, so
  * "none" alone would pass before the client read anything; the fixture's
  * `grid-mounted` turns "yes" in an effect, after the snapshots are applied.
  */
-async function reloadGridFixture(page: Page): Promise<void> {
+async function reloadAppVersionFixture(page: Page): Promise<void> {
   await page.reload();
   await waitForShellHydration(page);
   await expect(byTestId(page, "grid-mounted")).toHaveText("yes");
@@ -834,12 +834,12 @@ export async function expectOtherVersionLocationStateDroppedOnLoad(
     );
     expect(recorded).toEqual(expect.stringMatching(/./));
 
-    await reloadGridFixture(page);
+    await reloadAppVersionFixture(page);
     await expect(reader).toHaveText(value);
 
     for (const otherVersion of ["another-build", undefined]) {
       await recordEntryVersion(page, otherVersion);
-      await reloadGridFixture(page);
+      await reloadAppVersionFixture(page);
       await expect(reader).toHaveText("none");
     }
   }
@@ -889,44 +889,6 @@ export async function expectOtherVersionLocationStateDroppedOnTraversal(
 
   await byTestId(page, "grid-write").click();
   await expect(grid).toHaveText("desc:3");
-}
-
-/**
- * #994 `validate` in a real build: a slot whose value the guard rejects (here
- * it throws) reads as no state after a reload, without failing the render.
- *
- * The fixture's `grid-write` writes the validated slot (`val-value`, key in
- * `val-key`) and an unvalidated one in the same entry (`grid-value`), which
- * shows that the entry itself is still read.
- */
-export async function expectRejectedLocationStateReadsAsNone(
-  page: Page,
-  url: string,
-): Promise<void> {
-  using _ = guardHydrationErrors(page);
-  const pageErrors: string[] = [];
-  page.on("pageerror", (error) => pageErrors.push(error.message));
-  const validated = byTestId(page, "val-value");
-
-  await page.goto(url);
-  await waitForShellHydration(page);
-  await byTestId(page, "grid-write").click();
-  await expect(validated).toHaveText("desc:3");
-
-  const key = (await byTestId(page, "val-key").textContent())!;
-  await page.evaluate((validatedKey) => {
-    window.history.replaceState(
-      { ...window.history.state, [validatedKey]: null },
-      "",
-    );
-  }, key);
-  await reloadGridFixture(page);
-  await expect(byTestId(page, "grid-value")).toHaveText("desc:3");
-  await expect(validated).toHaveText("none");
-  expect(pageErrors).toEqual([]);
-
-  await byTestId(page, "grid-write").click();
-  await expect(validated).toHaveText("desc:3");
 }
 
 /**

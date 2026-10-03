@@ -8,12 +8,11 @@ import {
 import { createLocationState } from "../../browser/react/location-state-shared.js";
 import { redirect } from "../../route-definition/redirect.js";
 
-// Userland contract for the server primitives' `locationState` with the
-// createLocationState options of #994: `{ [Def.__rsc_ls_key]: value }` for
-// every definition, and nothing else. `clearOnReload` is in the key, the value
-// is what the code under test passed, which is also what a renderRoute seed
-// takes. No app version appears: the client records its own when it stores the
-// state in a history entry.
+// Userland contract for the server primitives' `locationState` (#994):
+// `{ [Def.__rsc_ls_key]: value }` for every definition, and nothing else.
+// `clearOnReload` is in the key, the value is what the code under test passed,
+// which is also what a renderRoute seed takes. No app version appears: the
+// client records its own when it stores the state in a history entry.
 
 const Flash = withLocationStateKey(
   createLocationState<{ text: string }>({ flash: true }),

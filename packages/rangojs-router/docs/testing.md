@@ -620,21 +620,16 @@ production's history path, so `useLocationState(Def)` re-reads after the click;
 wait for it with RTL's `waitFor` (see the testing skill,
 `client-components.md` "Location state").
 
-The `createLocationState` options (`clearOnReload`, `validate`) do not change
-what you seed. `clearOnReload` lives in the slot's key, not in its value: the
-definition appends `~r` to whatever name you key it with, and `renderRoute`
-writes the plain value under that key. That gives you the cases those options
-are about:
-
-- **A value `validate` rejects, or throws on,** is seeded directly; the
-  component under test must render as with no state.
-- **`clearOnReload`.** Plain `renderRoute` is a client mount, the way a reader
-  mounts during a navigation, so the seed is applied. `hydrate: true` (next
-  section) is a document load of the seeded entry: before hydrating,
-  `renderRoute` calls `clearLocationStateOnDocumentLoad`
-  (`src/browser/history-state.ts`), the same function `initBrowserApp` calls at
-  production start-up, so the slot is gone from `history.state` and the reader
-  stays `undefined`.
+`clearOnReload` does not change what you seed. The option lives in the slot's
+key, not in its value: the definition appends `~r` to whatever name you key it
+with, and `renderRoute` writes the plain value under that key. That gives you
+both sides of the option. Plain `renderRoute` is a client mount, the way a
+reader mounts during a navigation, so the seed is applied. `hydrate: true`
+(next section) is a document load of the seeded entry: before hydrating,
+`renderRoute` calls `clearLocationStateOnDocumentLoad`
+(`src/browser/history-state.ts`), the same function `initBrowserApp` calls at
+production start-up, so the slot is gone from `history.state` and the reader
+stays `undefined`.
 
 You may wonder where the app version went, since the browser drops location
 state another build wrote. A `renderRoute` tree has no app version (it never

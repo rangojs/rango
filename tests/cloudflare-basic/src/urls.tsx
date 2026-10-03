@@ -19,7 +19,7 @@ import {
   LateSuspenseWriter,
 } from "./components/LateSuspenseReader.js";
 import {
-  GridOptionsPanel,
+  AppVersionPanel,
   LoadMoreList,
 } from "./components/LocationStateOptions.js";
 import { StreamTest } from "./components/StreamTest.js";
@@ -2227,17 +2227,16 @@ export const urlpatterns = urls(
           { name: "locationStateLoadMore" },
         ),
 
-        // #994 app version / validate: readers of a typed slot, plain state
-        // and a validated slot.
+        // #994 app version: readers of a typed slot and of plain state.
         path(
-          "/location-state-grid-options",
+          "/location-state-app-version",
           (ctx) => (
-            <GridOptionsPanel
-              basePath="/location-state-grid-options"
+            <AppVersionPanel
+              basePath="/location-state-app-version"
               step={ctx.searchParams.get("step") ?? "start"}
             />
           ),
-          { name: "locationStateGridOptions" },
+          { name: "locationStateAppVersion" },
         ),
 
         // Action location state test route (non-redirect flow)

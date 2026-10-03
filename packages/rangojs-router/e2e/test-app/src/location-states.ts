@@ -113,17 +113,3 @@ export interface GridSnapshot {
 // #994: no options. The e2e rewrites the app version its entry records, the
 // way an entry an older build wrote would carry another one.
 export const GridState = createLocationState<GridSnapshot>();
-
-// Unguarded on purpose: a slot that is not an object makes it throw, which
-// must read as undefined instead of failing the render.
-export function isGridSnapshot(value: unknown): value is GridSnapshot {
-  const grid = value as GridSnapshot;
-  return (
-    (grid.order === "asc" || grid.order === "desc") &&
-    typeof grid.page === "number"
-  );
-}
-
-export const ValidatedGrid = createLocationState<GridSnapshot>({
-  validate: isGridSnapshot,
-});

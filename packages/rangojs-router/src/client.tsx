@@ -455,7 +455,6 @@ export {
   type LocationStateDefinition,
   type LocationStateEntry,
   type LocationStateOptions,
-  type LocationStateGuard,
 } from "./browser/react/location-state.js";
 
 // Ambient Rango.Path / Rango.PathResponse types (declared in href-client.ts)

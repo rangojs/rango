@@ -175,7 +175,7 @@ export const HMRAnotherLoader = createLoader(
     const grid = page.getByTestId("grid-value");
     const step = page.getByTestId("grid-step");
 
-    await page.goto(f.url("/location-state/grid-options"));
+    await page.goto(f.url("/location-state/app-version"));
     await waitForShellHydration(page);
     await page.getByTestId("grid-write").click();
     await expect(grid).toHaveText("desc:3");
@@ -196,8 +196,8 @@ export const HMRAnotherLoader = createLoader(
     await versionBumped;
     await refetched;
 
-    // The same document under a bumped version: the mounted reader, a
-    // back/forward and a new write all still see the state.
+    // The same document under a bumped version: the mounted reader keeps the
+    // state, and a back/forward onto the entry reads it again.
     await expect(grid).toHaveText("desc:3");
     await page.getByTestId("grid-next").click();
     await expect(step).toHaveText("next");

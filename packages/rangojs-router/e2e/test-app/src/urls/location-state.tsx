@@ -32,7 +32,7 @@ import {
 } from "../components/LinkStateDisplay.js";
 import { StaticWriteWidget } from "../components/StaticWriteWidget.js";
 import {
-  GridOptionsPanel,
+  AppVersionPanel,
   LoadMoreList,
 } from "../components/LocationStateOptions.js";
 import {
@@ -332,17 +332,16 @@ export const locationStatePatterns = urls(({ path, middleware }) => [
     { name: "loadMore" },
   ),
 
-  // #994 app version / validate: readers of a typed slot, plain state and a
-  // validated slot.
+  // #994 app version: readers of a typed slot and of plain state.
   path(
-    "/grid-options",
+    "/app-version",
     (ctx) => (
-      <GridOptionsPanel
-        basePath="/location-state/grid-options"
+      <AppVersionPanel
+        basePath="/location-state/app-version"
         step={ctx.searchParams.get("step") ?? "start"}
       />
     ),
-    { name: "gridOptions" },
+    { name: "appVersion" },
   ),
 
   // Static write/delete demo: drives LocationState.write() and .delete()

@@ -3,7 +3,7 @@ import {
   createLocationState,
   isLocationStateEntry,
   resolveLocationStateEntries,
-  setLocationStateVersion,
+  type LocationStateOptions,
 } from "../browser/react/location-state-shared";
 
 const originalWindowDescriptor = Object.getOwnPropertyDescriptor(
@@ -367,37 +367,11 @@ describe("location-state-shared", () => {
   });
 });
 
-type GridSnapshot = { rows: number[] };
-
-function historyWithReplace(): {
-  state: unknown;
-  replaceState: ReturnType<typeof vi.fn>;
-} {
-  const history: {
-    state: unknown;
-    replaceState: ReturnType<typeof vi.fn>;
-  } = {
-    state: { idx: 1 },
-    replaceState: vi.fn(),
-  };
-  history.replaceState.mockImplementation((next: unknown) => {
-    history.state = next;
-  });
-  return history;
-}
-
-function isGridSnapshot(value: unknown): value is GridSnapshot {
-  return (
-    value !== null &&
-    typeof value === "object" &&
-    Array.isArray((value as { rows?: unknown }).rows)
-  );
-}
-
 // #994: `clearOnReload` lives in the storage KEY, never in the stored value.
 // The key is the persistence contract: slots outlive deploys, so the exact
 // strings are pinned here.
 describe("createLocationState storage key", () => {
+  type GridSnapshot = { rows: number[] };
   // What the Vite plugin injects: `__rsc_ls_<path or hash>#<ExportName>`.
   const INJECTED = "__rsc_ls_a1b2c3d4#Grid";
 
@@ -406,17 +380,19 @@ describe("createLocationState storage key", () => {
     vi.unstubAllEnvs();
   });
 
-  function define(
-    options?: Parameters<typeof createLocationState<GridSnapshot>>[0],
-  ) {
+  function define(options?: LocationStateOptions) {
     const definition = createLocationState<GridSnapshot>(options);
     definition.__rsc_ls_key = INJECTED;
     return definition;
   }
 
-  function stubHistory(state: Record<string, unknown> = { idx: 1 }) {
-    const history = historyWithReplace();
-    history.state = state;
+  function stubHistory() {
+    const history = {
+      state: { idx: 1 } as unknown,
+      replaceState: vi.fn((next: unknown) => {
+        history.state = next;
+      }),
+    };
     vi.stubGlobal("window", {
       history,
       location: { href: "https://example.test/grid" },
@@ -427,14 +403,8 @@ describe("createLocationState storage key", () => {
   it.each([
     ["no options", undefined, INJECTED],
     ["flash", { flash: true }, INJECTED],
-    ["validate", { validate: isGridSnapshot }, INJECTED],
     ["clearOnReload: false", { clearOnReload: false }, INJECTED],
     ["clearOnReload", { clearOnReload: true }, `${INJECTED}~r`],
-    [
-      "clearOnReload + validate",
-      { clearOnReload: true, validate: isGridSnapshot },
-      `${INJECTED}~r`,
-    ],
   ] as const)(
     "%s: every writer stores the raw value under one key",
     (_label, options, key) => {
@@ -491,107 +461,5 @@ describe("createLocationState storage key", () => {
     );
     vi.stubEnv("NODE_ENV", "production");
     expect(() => createLocationState<string>(both)).not.toThrow();
-  });
-});
-
-describe("createLocationState validate", () => {
-  afterEach(() => {
-    restoreWindow();
-    vi.unstubAllEnvs();
-    vi.restoreAllMocks();
-    setLocationStateVersion(undefined);
-  });
-
-  function stubHistory(state: unknown): void {
-    vi.stubGlobal("window", { history: { state } });
-  }
-
-  it("reads the value it accepts and undefined for the one it rejects", () => {
-    const Grid = createLocationState<GridSnapshot>({
-      validate: isGridSnapshot,
-    });
-    Grid.__rsc_ls_key = "grid";
-    const snapshot = { rows: [1] };
-
-    for (const [stored, read] of [
-      [snapshot, snapshot],
-      [{ rows: "nope" }, undefined],
-    ] as const) {
-      const state = { grid: stored };
-      stubHistory(state);
-      expect(Grid.read()).toBe(read);
-      expect(Grid.read({ state })).toBe(read);
-    }
-  });
-
-  it("is never called for an empty slot, or for state another app version wrote", () => {
-    const seen = vi.fn();
-    const validate = (value: unknown): value is GridSnapshot => {
-      seen(value);
-      return true;
-    };
-    const Grid = createLocationState<GridSnapshot>({ validate });
-    Grid.__rsc_ls_key = "grid";
-    setLocationStateVersion("build-2");
-
-    for (const state of [
-      null,
-      {},
-      "primitive",
-      { __rsc_lsv: "build-2" },
-      { grid: { rows: [1] } },
-      { grid: { rows: [1] }, __rsc_lsv: "build-1" },
-    ]) {
-      stubHistory(state);
-      expect(Grid.read()).toBeUndefined();
-      expect(Grid.read({ state })).toBeUndefined();
-    }
-    expect(seen).not.toHaveBeenCalled();
-
-    stubHistory({ grid: { rows: [1] }, __rsc_lsv: "build-2" });
-    expect(Grid.read()).toEqual({ rows: [1] });
-    expect(seen).toHaveBeenCalledTimes(1);
-  });
-
-  it("a throw reads as undefined and is reported once per definition, naming its key", () => {
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    const boom = new TypeError("rows is undefined");
-    const throwing = (_value: unknown): _value is GridSnapshot => {
-      throw boom;
-    };
-    const Grid = createLocationState<GridSnapshot>({ validate: throwing });
-    Grid.__rsc_ls_key = "__rsc_ls_grid";
-    const Other = createLocationState<GridSnapshot>({
-      validate: throwing,
-      clearOnReload: true,
-    });
-    Other.__rsc_ls_key = "__rsc_ls_other";
-    const state = { __rsc_ls_grid: { rows: 1 }, "__rsc_ls_other~r": 1 };
-    stubHistory(state);
-
-    expect(Grid.read()).toBeUndefined();
-    expect(Grid.read({ state })).toBeUndefined();
-    expect(error).toHaveBeenCalledTimes(1);
-    expect(error.mock.calls[0]?.[0]).toContain('"__rsc_ls_grid"');
-    expect(error.mock.calls[0]?.[1]).toBe(boom);
-
-    expect(Other.read()).toBeUndefined();
-    expect(error).toHaveBeenCalledTimes(2);
-    expect(error.mock.calls[1]?.[0]).toContain('"__rsc_ls_other~r"');
-  });
-
-  it("does not report a throw in production", () => {
-    vi.stubEnv("NODE_ENV", "production");
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    const Grid = createLocationState<GridSnapshot>({
-      validate: (_value): _value is GridSnapshot => {
-        throw new Error("boom");
-      },
-    });
-    Grid.__rsc_ls_key = "grid";
-    stubHistory({ grid: { rows: [1] } });
-
-    expect(Grid.read()).toBeUndefined();
-    expect(error).not.toHaveBeenCalled();
   });
 });

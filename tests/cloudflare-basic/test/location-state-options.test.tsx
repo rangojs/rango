@@ -1,11 +1,11 @@
 // @vitest-environment happy-dom
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it } from "vitest";
 import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { runMiddleware, withLocationStateKey } from "@rangojs/router/testing";
 import { renderRoute } from "@rangojs/router/testing/dom";
 import type { Middleware } from "@rangojs/router";
 import {
-  GridOptionsPanel,
+  AppVersionPanel,
   LoadMoreList,
 } from "../src/components/LocationStateOptions.js";
 import {
@@ -13,24 +13,21 @@ import {
   GridState,
   ListSort,
   ServerPageStamp,
-  ValidatedGrid,
   type GridSnapshot,
 } from "../src/location-states.js";
 
 afterEach(() => {
   cleanup();
-  vi.restoreAllMocks();
 });
 
-// Dogfood of location state's options and its app version (#994) against
-// cloudflare-basic's REAL components and definitions, through the published
-// testing entries. No Vite plugin here, so each definition is keyed by name; a
+// Dogfood of `clearOnReload` and the app version of location state (#994)
+// against cloudflare-basic's REAL components and definitions, through the
+// published testing entries. No Vite plugin here, so each definition is keyed by name; a
 // definition with `clearOnReload` appends its suffix to that name.
 withLocationStateKey(CarriedItems, "CarriedItems");
 withLocationStateKey(ListSort, "ListSort");
 withLocationStateKey(ServerPageStamp, "ServerPageStamp");
 withLocationStateKey(GridState, "GridState");
-withLocationStateKey(ValidatedGrid, "ValidatedGrid");
 
 const carried = ["p1-1", "p1-2", "p1-3"];
 const grid: GridSnapshot = { order: "desc", page: 3 };
@@ -78,11 +75,11 @@ it("clearOnReload: a client mount shows the carried items, a document load does 
   );
 });
 
-const gridRoutes = [
+const appVersionRoutes = [
   {
-    path: "/location-state-grid-options",
+    path: "/location-state-app-version",
     Component: () => (
-      <GridOptionsPanel basePath="/location-state-grid-options" step="start" />
+      <AppVersionPanel basePath="/location-state-app-version" step="start" />
     ),
   },
 ];
@@ -92,12 +89,12 @@ const gridRoutes = [
 // document load.
 it("the app version: seeds read back without one; an entry another version wrote does not", async () => {
   const seeds = [[GridState, grid]] as const;
-  const mounted = await renderRoute(gridRoutes, { locationState: seeds });
+  const mounted = await renderRoute(appVersionRoutes, { locationState: seeds });
   expect(mounted.getByTestId("grid-value").textContent).toBe("desc:3");
   expect(window.history.state).toEqual({ __rsc_ls_GridState: grid });
   mounted.unmount();
 
-  const loaded = await renderRoute(gridRoutes, {
+  const loaded = await renderRoute(appVersionRoutes, {
     hydrate: true,
     locationState: seeds,
   });
@@ -115,31 +112,6 @@ it("the app version: seeds read back without one; an entry another version wrote
   });
   expect(loaded.getByTestId("grid-value").textContent).toBe("none");
   expect(loaded.getByTestId("plain-value").textContent).toBe("none");
-});
-
-it("validate: a value the guard throws on reads as none", async () => {
-  const error = vi.spyOn(console, "error").mockImplementation(() => {});
-
-  const accepted = await renderRoute(gridRoutes, {
-    locationState: [[ValidatedGrid, grid]],
-  });
-  expect(accepted.getByTestId("val-value").textContent).toBe("desc:3");
-  accepted.unmount();
-
-  const rejected = await renderRoute(gridRoutes, {
-    hydrate: true,
-    locationState: [
-      [GridState, grid],
-      [ValidatedGrid, null],
-    ],
-  });
-  expect(rejected.recoverableErrors).toEqual([]);
-  expect(rejected.getByTestId("grid-value").textContent).toBe("desc:3");
-  expect(rejected.getByTestId("val-value").textContent).toBe("none");
-  expect(error).toHaveBeenCalledWith(
-    expect.stringContaining('"__rsc_ls_ValidatedGrid" threw'),
-    expect.any(TypeError),
-  );
 });
 
 it("a middleware's state is keyed by the definition's key and carries no version", async () => {

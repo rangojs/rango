@@ -35,8 +35,8 @@ no API returns it.
   filter carried on a link, a flash message not shown yet) is gone after the
   deploy, as if the entry never had any. Readers already handle `undefined`.
   State that has to outlive a deploy belongs in the URL, a cookie or storage.
-- If you set `version` on the router yourself, location state lives as long
-  as that value does.
+- An app that pins its own app version instead of the generated one keeps
+  location state for as long as that value stays the same.
 - On the first release with this change, every entry written before the
   upgrade counts as another version: open tabs lose their location state once.
 - Keys and values are stored as before. The record is one extra field on the
@@ -50,33 +50,6 @@ no API returns it.
   `.locationState` of `runMiddleware`, `runLoaderResult`,
   `runInRequestContext` and `renderHandler` is still
   `{ [Def.__rsc_ls_key]: value }`.
-
-### Added: `createLocationState({ validate })` checks a stored value on every read ([#1020](https://github.com/rangojs/rango/pull/1020))
-
-For state whose shape you want checked at the read instead of trusted from its
-type:
-
-```ts
-export const GridState = createLocationState<GridSnapshot>({
-  validate: (value): value is GridSnapshot => isGridSnapshot(value),
-});
-```
-
-| The slot holds                               | A read returns                        |
-| -------------------------------------------- | ------------------------------------- |
-| a value `validate` returns `true` for        | the value                             |
-| a value it returns `false` for, or throws on | `undefined`                           |
-| nothing                                      | `undefined`; `validate` is not called |
-
-- A `validate` that throws never fails a render or a navigation. In
-  development the error is logged once per definition, with its key.
-- The key and the stored value do not change, so adding or removing the option
-  needs no migration.
-- The type of `validate` is exported as `LocationStateGuard<TState>` from
-  `@rangojs/router` and `@rangojs/router/client`. It is unrelated to
-  `ValidateLocationState<T>`, the existing compile-time serializability check.
-  `LocationStateOptions` now takes the state type
-  (`LocationStateOptions<TState>`, default `unknown`).
 
 ### Added: `createLocationState({ clearOnReload: true })` drops the state when the entry's document is loaded ([#1020](https://github.com/rangojs/rango/pull/1020))
 
@@ -121,11 +94,11 @@ const products = [
 | The page is restored from the back/forward cache                          | state and DOM kept      | unchanged                                             |
 
 - The slot is stored under `<key>~r` (`<key>` is the key the Vite plugin
-  injects), value as-is. When the client starts, before it hydrates, the router removes every
-  `~r` key from the entry. It goes by the key alone, so it does not depend on
-  a reader being mounted, on where the reader sits (a `<Suspense>` boundary
-  that hydrates late included), or on the definition's module being loaded.
-  Other slots on the entry are kept.
+  injects), value as-is. When the client starts, before it hydrates, the
+  router removes every `~r` key from the entry. It goes by the key alone, so
+  it does not depend on a reader being mounted, on where the reader sits (a
+  `<Suspense>` boundary that hydrates late included), or on the definition's
+  module being loaded. Other slots on the entry are kept.
 - Any document load of the entry counts, not only the Reload button:
   restoring a closed tab and duplicating a tab load the document too. Only
   the loaded entry is cleared; going back from it to an earlier entry is a
@@ -138,9 +111,9 @@ const products = [
   was stored before, under the plain key, is no longer read and is not
   removed. Removing the option moves it back; what was stored under `~r` is
   removed at the next document load. A rollback behaves like removing it.
-- `validate` combines with it. `flash` does not:
-  `createLocationState` throws in development, since flash state is removed at
-  its first read and the option could only drop a message nobody has seen.
+- It cannot be combined with `flash`: `createLocationState` throws in
+  development, since flash state is removed at its first read and the option
+  could only drop a message nobody has seen.
 - The `carriedIds` filter in the example works around a known ordering in the
   router, with or without the option: a navigation applies the destination
   entry's state to a mounted reader before the destination's loader data
@@ -155,9 +128,8 @@ definition, the key is then `__rsc_ls_CarriedProducts~r`, and
 `{ [CarriedProducts.__rsc_ls_key]: value }` is the assertion that holds for
 any definition. The helper rejects a name that contains `~`.
 
-Definitions that do not set the option store and read exactly as before, and
-the client start-up writes nothing to `history.state` when no key carries the
-suffix.
+Definitions that do not set the option keep their key, and the client start-up
+writes nothing to `history.state` when no key carries the suffix.
 
 ### Fixed: `useLocationState` no longer causes a hydration mismatch when its reader hydrates inside `<Suspense>` ([#1017](https://github.com/rangojs/rango/pull/1017))
 

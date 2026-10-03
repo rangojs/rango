@@ -58,21 +58,22 @@ export function setLocationStateVersion(version: string | undefined): void {
 
 /**
  * The state of a `{ state }` snapshot when its location state may be read:
- * recorded under the client's version. Without a snapshot, the current entry
- * (`window.history` is a `{ state }`), and nothing on the server.
- *
- * A null or primitive state comes back as it is when the client has no
- * version; index the result with `?.`, which reads nothing from either.
+ * an object recorded under the client's version. Without a snapshot, the
+ * current entry (`window.history` is a `{ state }`), and nothing on the
+ * server.
  */
 export function readableLocationState(
   location: { readonly state: unknown } | undefined = typeof window ===
   "undefined"
     ? undefined
     : window.history,
-): Record<string, unknown> | null | undefined {
-  const state = location?.state as Record<string, unknown> | null | undefined;
-  return state?.[LOCATION_STATE_VERSION_KEY] === documentVersion
-    ? state
+): Record<string, unknown> | undefined {
+  const state = location?.state;
+  return state !== null &&
+    typeof state === "object" &&
+    (state as Record<string, unknown>)[LOCATION_STATE_VERSION_KEY] ===
+      documentVersion
+    ? (state as Record<string, unknown>)
     : undefined;
 }
 
@@ -118,15 +119,9 @@ export function addLocationState(
 }
 
 /**
- * The `validate` option. Not {@link ValidateLocationState}, the compile-time
- * check that a state type survives structured clone.
- */
-export type LocationStateGuard<TState> = (value: unknown) => value is TState;
-
-/**
  * Options for createLocationState
  */
-export interface LocationStateOptions<TState = unknown> {
+export interface LocationStateOptions {
   /** When true, the state is cleared from history after first read (flash message pattern) */
   flash?: boolean;
   /**
@@ -135,11 +130,6 @@ export interface LocationStateOptions<TState = unknown> {
    * without it. Not together with `flash`.
    */
   clearOnReload?: boolean;
-  /**
-   * Checked on every read of a non-empty slot; `false` or a throw reads as
-   * `undefined`.
-   */
-  validate?: LocationStateGuard<TState>;
 }
 
 type LocationStateUnsafeFn = (...args: never[]) => unknown;
@@ -367,7 +357,8 @@ export interface LocationStateDefinition<TArgs extends unknown[], TState> {
   /** Whether this state auto-clears after first read */
   readonly __rsc_ls_flash: boolean;
   /**
-   * Read the current value from history.state.
+   * Read the current value from history.state. State the entry holds from
+   * another version of the app (an older build) reads as undefined.
    *
    * Returns undefined during SSR (no `window`). To stay hydration-safe, do
    * NOT call read() inline during the initial render — the server returns
@@ -388,7 +379,8 @@ export interface LocationStateDefinition<TArgs extends unknown[], TState> {
   /**
    * Statically write the value into the current history entry under this
    * definition's key, preserving any other keys already on history.state
-   * (e.g. router bookkeeping, other LocationState slots).
+   * (e.g. router bookkeeping, other LocationState slots). Location state
+   * another version of the app left on the entry is dropped.
    *
    * This is the non-reactive counterpart to read(): it does not dispatch any
    * event, so components reading via useLocationState() will NOT re-render
@@ -477,19 +469,19 @@ export function replaceCurrentHistoryState(state: unknown): void {
 }
 
 export function createLocationState<TState>(
-  options?: LocationStateOptions<TState>,
+  options?: LocationStateOptions,
 ): LocationStateDefinition<
   [(TState | (() => TState)) & ValidateLocationState<TState>],
   TState
 > {
   const flash = options?.flash ?? false;
-  const validate = options?.validate;
+  const clearOnReload = options?.clearOnReload ?? false;
   // Empty without `clearOnReload`: the injected key is then the storage key,
   // as it was before the option existed.
-  const keySuffix = options?.clearOnReload ? CLEAR_ON_RELOAD_KEY_SUFFIX : "";
+  const keySuffix = clearOnReload ? CLEAR_ON_RELOAD_KEY_SUFFIX : "";
   // Flash state ends at its first read, so the pair could only drop a message
   // nobody has seen. Folded out of production, like the missing-key check.
-  if (process.env.NODE_ENV !== "production" && flash && keySuffix) {
+  if (process.env.NODE_ENV !== "production" && flash && clearOnReload) {
     throw new Error(
       "[rango] createLocationState: `flash` and `clearOnReload` cannot be combined. " +
         "Flash state is removed at its first read, so `clearOnReload` could only " +
@@ -545,31 +537,11 @@ export function createLocationState<TState>(
     enumerable: true,
   });
 
-  // Once per definition: reads run in render and on every popstate.
-  let validateThrowReported = false;
-  const read = (location?: { readonly state: unknown }): TState | undefined => {
-    const stored = readableLocationState(location)?.[getKey()] as
-      | TState
-      | undefined;
-    if (!validate || stored === undefined) return stored;
-    // A throw reads as undefined. It must not escape into render or into the
-    // hook's popstate / __rsc_locationstate listeners (location-state.ts),
-    // where the reader would keep the previous entry's value.
-    try {
-      return validate(stored) ? stored : undefined;
-    } catch (error) {
-      if (process.env.NODE_ENV !== "production" && !validateThrowReported) {
-        validateThrowReported = true;
-        console.error(
-          `[rango] createLocationState({ validate }) for "${_key}" threw; the state reads as undefined.`,
-          error,
-        );
-      }
-      return undefined;
-    }
-  };
-
-  Object.defineProperty(fn, "read", { value: read, enumerable: true });
+  Object.defineProperty(fn, "read", {
+    value: (location?: { readonly state: unknown }): TState | undefined =>
+      readableLocationState(location)?.[getKey()] as TState | undefined,
+    enumerable: true,
+  });
 
   Object.defineProperty(fn, "write", {
     value: (value: TState): void => {

@@ -258,7 +258,7 @@ export const NamedRoutes = {
   "locale.detail": "/:locale/blog/:slug",
   "locale.list": "/:locale/blog",
   "locationState.actionLs": "/location-state/action-ls",
-  "locationState.gridOptions": "/location-state/grid-options",
+  "locationState.appVersion": "/location-state/app-version",
   "locationState.index": "/location-state",
   "locationState.lateSuspense": "/location-state/late-suspense/:gate",
   "locationState.lateSuspenseRelease": "/location-state/late-suspense/:gate/release",

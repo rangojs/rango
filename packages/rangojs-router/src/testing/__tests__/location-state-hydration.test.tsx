@@ -2,7 +2,7 @@
 import { StrictMode, useState, type ReactNode } from "react";
 import { createRoot, hydrateRoot, type Root } from "react-dom/client";
 import { act, cleanup } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { createLocationState, useLocationState } from "../../client.js";
 import { withLocationStateKey } from "../index.js";
 
@@ -21,6 +21,7 @@ const FlashCount = withLocationStateKey(
   createLocationState<{ count: number }>({ flash: true }),
   "FlashCount",
 );
+
 type CountSample = { count: number | undefined; stored: number | undefined };
 
 let root: Root | undefined;
@@ -368,48 +369,4 @@ describe("useLocationState late hydration (#992)", () => {
       "9",
     );
   });
-});
-
-describe("useLocationState with createLocationState options (#994)", () => {
-  // A validate that throws out of the popstate / __rsc_locationstate listeners
-  // would leave the reader on the previous entry's value.
-  const ThrowingGrid = withLocationStateKey(
-    createLocationState<{ count: number }>({
-      validate: (value): value is { count: number } => {
-        if ((value as { poison?: boolean }).poison) throw new Error("poison");
-        return typeof (value as { count?: unknown }).count === "number";
-      },
-    }),
-    "ThrowingGrid",
-  );
-
-  function Count() {
-    const state = useLocationState(ThrowingGrid);
-    return <p data-testid="count">{state?.count ?? 0}</p>;
-  }
-
-  it.each(["popstate", "__rsc_locationstate"])(
-    "%s to a slot whose validate throws drops the previous entry's value",
-    async (event) => {
-      const error = vi.spyOn(console, "error").mockImplementation(() => {});
-      seedHydrated({ [ThrowingGrid.__rsc_ls_key]: { count: 4 } });
-      const container = document.createElement("div");
-      document.body.appendChild(container);
-      await act(async () => {
-        root = createRoot(container);
-        root.render(<Count />);
-      });
-      expect(container.textContent).toBe("4");
-
-      await act(async () => {
-        window.history.replaceState(
-          { [ThrowingGrid.__rsc_ls_key]: { poison: true } },
-          "",
-        );
-        window.dispatchEvent(new Event(event));
-      });
-      expect(container.textContent).toBe("0");
-      error.mockRestore();
-    },
-  );
 });

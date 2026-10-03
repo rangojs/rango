@@ -74,7 +74,7 @@ export const NamedRoutes = {
   loaderCacheTag: "/loader-cache-tag",
   loaderCtxItem: "/loader-ctx/:id",
   localeInfo: "/:locale(en|fr)/info",
-  locationStateGridOptions: "/location-state-grid-options",
+  locationStateAppVersion: "/location-state-app-version",
   locationStateLateSuspense: "/location-state-late-suspense/:gate",
   locationStateLateSuspenseRelease: "/location-state-late-suspense/:gate/release",
   locationStateLoadMore: "/location-state-load-more",

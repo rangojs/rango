@@ -3,7 +3,6 @@ import type { ReactNode, ReactElement } from "react";
 import {
   createLocationState,
   type LocationStateEntry,
-  type LocationStateGuard,
   type LocationStateOptions,
   type LocationStateUnsafe,
   type ValidateLocationState,
@@ -348,46 +347,14 @@ describe("navigation state typing", () => {
 });
 
 describe("createLocationState options typing", () => {
-  type Grid = { count: number };
-  const isGrid = (value: unknown): value is Grid =>
-    typeof (value as Grid | null)?.count === "number";
-
-  it("LocationStateOptions is one interface: every option optional, and extendable", () => {
-    // An interface can only extend an object type, not a union.
-    interface GridOptions extends LocationStateOptions<Grid> {
-      label?: string;
-    }
-    const options: GridOptions = {
-      flash: false,
-      clearOnReload: true,
-      validate: isGrid,
-      label: "grid",
-    };
-    expectTypeOf(createLocationState<Grid>(options).read()).toEqualTypeOf<
-      Grid | undefined
-    >();
-    expectTypeOf<LocationStateOptions>().toEqualTypeOf<
-      LocationStateOptions<unknown>
-    >();
-  });
-
-  it("validate is a LocationStateGuard: a type predicate, not a boolean function", () => {
-    expectTypeOf(isGrid).toExtend<LocationStateGuard<Grid>>();
-    expectTypeOf<
-      NonNullable<LocationStateOptions<Grid>["validate"]>
-    >().toEqualTypeOf<LocationStateGuard<Grid>>();
-    const loose: LocationStateOptions<Grid> = {
-      // @ts-expect-error - a boolean-returning check does not narrow to Grid
-      validate: (value: unknown): boolean => value !== null,
-    };
-    void loose;
-  });
-
-  it("has no version option: state is versioned by the app version", () => {
-    expectTypeOf<keyof LocationStateOptions>().toEqualTypeOf<
-      "flash" | "clearOnReload" | "validate"
-    >();
-    // @ts-expect-error - not an option
-    createLocationState<Grid>({ version: 2 });
+  it("LocationStateOptions is two optional booleans, and does not change the state type", () => {
+    expectTypeOf<LocationStateOptions>().toEqualTypeOf<{
+      flash?: boolean;
+      clearOnReload?: boolean;
+    }>();
+    const options: LocationStateOptions = { clearOnReload: true };
+    expectTypeOf(
+      createLocationState<{ count: number }>(options).read(),
+    ).toEqualTypeOf<{ count: number } | undefined>();
   });
 });
