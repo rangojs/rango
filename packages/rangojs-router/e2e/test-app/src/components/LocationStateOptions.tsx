@@ -27,6 +27,10 @@ import { LoadMoreLoader } from "../urls/location-state.loader.js";
  * navigation is pending. Every committed list is pushed to
  * `window.__loadMoreCommits` (as `<page>:<items>`) for the e2e to check the
  * commits it could not sample.
+ *
+ * `lm-open-late` mounts a second CarriedItems reader (LateCarried) on demand:
+ * pressed while a navigation is pending, it mounts in the page still on
+ * screen and has to read that page's entry, like the readers around it.
  */
 export function LoadMoreList({ basePath }: { basePath: string }) {
   const carried = useLocationState(CarriedItems) ?? [];
@@ -35,6 +39,7 @@ export function LoadMoreList({ basePath }: { basePath: string }) {
   const { data } = useLoader(LoadMoreLoader);
   const [search] = useSearchParams();
   const hold = search.get("hold");
+  const [late, setLate] = useState(false);
   const shown = [...carried, ...data.items];
   const commit = `${data.page}:${shown.join(",")}`;
   useEffect(() => {
@@ -51,6 +56,14 @@ export function LoadMoreList({ basePath }: { basePath: string }) {
         <span data-testid="lm-sort">{sort?.order ?? "none"}</span>, server stamp{" "}
         <span data-testid="lm-server-page">{serverStamp?.page ?? "none"}</span>
       </p>
+      <button
+        type="button"
+        data-testid="lm-open-late"
+        onClick={() => setLate(true)}
+      >
+        Mount a late reader
+      </button>
+      {late && <LateCarried page={data.page} />}
       <ul data-testid="lm-items">
         {shown.map((item) => (
           <li key={item}>{item}</li>
@@ -66,6 +79,12 @@ export function LoadMoreList({ basePath }: { basePath: string }) {
       </Link>
     </section>
   );
+}
+
+/** `<page of the list it mounted in>:<carried items it reads>`. */
+function LateCarried({ page }: { page: number }) {
+  const carried = useLocationState(CarriedItems) ?? [];
+  return <p data-testid="lm-late">{`${page}:${carried.length}`}</p>;
 }
 
 /**

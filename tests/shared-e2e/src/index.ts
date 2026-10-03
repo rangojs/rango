@@ -803,7 +803,8 @@ const loadMoreCommit = (pageNumber: number, shown: string[]): string =>
  * holds: the list, the other fixture's panel, or neither. `sharedCarried` is
  * the layout's own reader of the carried items, `carried` the list's, and
  * `serverPage` the state the route's handler set for the entry ("none" for an
- * entry a document load started).
+ * entry a document load started). `late` is the reader `lm-open-late` mounts:
+ * `<page of the list it is in>:<carried items it reads>`, null until then.
  */
 interface LoadMoreScreen {
   content: "list" | "panel" | "none";
@@ -811,6 +812,7 @@ interface LoadMoreScreen {
   carried: string | null;
   sharedCarried: string | null;
   serverPage: string | null;
+  late: string | null;
   items: string[];
 }
 
@@ -839,6 +841,7 @@ async function watchLoadMore(page: Page): Promise<void> {
       carried: text("lm-carried-count"),
       sharedCarried: text("ls-shared-carried"),
       serverPage: text("lm-server-page"),
+      late: text("lm-late"),
       items: Array.from(
         document.querySelectorAll('[data-testid="lm-items"] li'),
         (li) => li.textContent ?? "",
@@ -866,8 +869,9 @@ async function loadMoreScreen(page: Page): Promise<LoadMoreScreen> {
  * The recorded samples that pair one entry's state with another entry's
  * tree. A list repeats no item, and is its carried items plus its own page;
  * the layout's reader agrees with the list's; the handler's state names the
- * page on screen; over the other fixture's panel (an entry without carried
- * items) the layout's reader reads none.
+ * page on screen; a reader mounted late agrees with the list it is in; over
+ * the other fixture's panel (an entry without carried items) the layout's
+ * reader reads none.
  */
 async function tornLoadMoreSamples(page: Page): Promise<LoadMoreScreen[]> {
   const samples = await page.evaluate(
@@ -879,8 +883,9 @@ async function tornLoadMoreSamples(page: Page): Promise<LoadMoreScreen[]> {
       (sample.content === "list" &&
         (sample.sharedCarried !== sample.carried ||
           sample.items.length !== Number(sample.carried) + 3 ||
-          (sample.serverPage !== "none" &&
-            sample.serverPage !== sample.page))) ||
+          (sample.serverPage !== "none" && sample.serverPage !== sample.page) ||
+          (sample.late !== null &&
+            sample.late !== `${sample.page}:${sample.carried}`))) ||
       (sample.content === "panel" && sample.sharedCarried !== "0"),
   );
 }
@@ -921,6 +926,7 @@ export async function expectHeldLoadMoreShowsNoItemTwice(
       sharedCarried: String(loadMoreThrough(next - 2).length),
       // Page 1 came with the document, which carries no location state.
       serverPage: next === 2 ? "none" : String(next - 1),
+      late: null,
       items: loadMoreThrough(next - 1),
     };
     await byTestId(page, "lm-more").click();
@@ -943,6 +949,52 @@ export async function expectHeldLoadMoreShowsNoItemTwice(
   expect(await loadMoreCommits(page)).toEqual(
     [1, 2, 3].map((n) => loadMoreCommit(n, loadMoreThrough(n))),
   );
+}
+
+/**
+ * #1029 for a reader that mounts while a navigation is pending. Same fixture
+ * and hold as above; `lm-open-late` mounts a second reader of the carried
+ * items inside the list.
+ *
+ * Pressed during the hold, the reader mounts in the page still on screen,
+ * after history has moved to the next entry: it must read the entry on
+ * screen (no carried items), not the one history holds (three). It then
+ * changes with the list, in the commit that brings the next page.
+ */
+export async function expectReaderMountedDuringHeldNavigationReadsEntryOnScreen(
+  page: Page,
+  url: string,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const late = byTestId(page, "lm-late");
+  const entry = (pageNumber: number): string =>
+    `${url}?page=${pageNumber}&hold=${LOAD_MORE_HOLD_MS}`;
+
+  await page.goto(entry(1));
+  await waitForShellHydration(page);
+  await expect(byTestId(page, "lm-items").locator("li")).toHaveText(
+    loadMoreItems(1),
+  );
+  await watchLoadMore(page);
+
+  await byTestId(page, "lm-more").click();
+  await expect(page).toHaveURL(entry(2));
+  expect(await locationStateSlots(page)).toMatchObject({
+    "CarriedItems~r": loadMoreItems(1),
+  });
+
+  await byTestId(page, "lm-open-late").click();
+  // One read, not a poll: a poll would outlast the hold and see the next page.
+  expect(await late.textContent()).toBe("1:0");
+  expect(await loadMoreScreen(page)).toMatchObject({
+    page: "1",
+    carried: "0",
+    late: "1:0",
+  });
+
+  await expect(byTestId(page, "lm-page")).toHaveText("2");
+  await expect(late).toHaveText(`2:${loadMoreItems(1).length}`);
+  expect(await tornLoadMoreSamples(page)).toEqual([]);
 }
 
 /**

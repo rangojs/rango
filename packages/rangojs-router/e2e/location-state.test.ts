@@ -7,6 +7,7 @@ import {
   expectLoadMoreTraversalRestoresEntryWithItsPage,
   expectOtherVersionLocationStateDroppedOnLoad,
   expectOtherVersionLocationStateDroppedOnTraversal,
+  expectReaderMountedDuringHeldNavigationReadsEntryOnScreen,
   returnToEvictedEntry,
 } from "@shared/e2e";
 import { useFixture, type Fixture } from "./fixture";
@@ -1534,6 +1535,15 @@ function commitSuite(f: Fixture) {
     page,
   }) => {
     await expectHeldLoadMoreShowsNoItemTwice(
+      page,
+      f.url("/location-state/load-more"),
+    );
+  });
+
+  test("a reader that mounts during a held navigation reads the entry on screen", async ({
+    page,
+  }) => {
+    await expectReaderMountedDuringHeldNavigationReadsEntryOnScreen(
       page,
       f.url("/location-state/load-more"),
     );

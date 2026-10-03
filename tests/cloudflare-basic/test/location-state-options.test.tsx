@@ -89,8 +89,9 @@ it("clearOnReload: a client mount shows the carried items, a document load does 
 });
 
 // #1029, on the app's own list: while the next page's loader is pending the
-// list is still the current entry's. Its carried items change in the commit
-// that brings the next page, so the list never shows an item twice.
+// list is still the current entry's, for a reader that mounts meanwhile too.
+// Its carried items change in the commit that brings the next page, so the
+// list never shows an item twice.
 it("load more: a pending navigation keeps the current entry's items until the next page lands", async () => {
   const { router, ...list } = await renderRoute(loadMore.routes, {
     request: "/location-state-load-more?page=2",
@@ -110,8 +111,15 @@ it("load more: a pending navigation keeps the current entry's items until the ne
   expect(CarriedItems.read()).toEqual(onScreen);
   expect(listed(list)).toEqual(onScreen);
 
+  // A reader that mounts now mounts in page 2's list and reads its entry.
+  await act(async () => {
+    fireEvent.click(list.getByTestId("lm-open-late"));
+  });
+  expect(list.getByTestId("lm-late").textContent).toBe(`2:${carried.length}`);
+
   await act(async () => land(pageData(3)));
   expect(listed(list)).toEqual([...onScreen, ...pageItems(3)]);
+  expect(list.getByTestId("lm-late").textContent).toBe(`3:${onScreen.length}`);
 });
 
 const appVersionRoutes = [
