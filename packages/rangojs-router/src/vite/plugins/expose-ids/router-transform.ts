@@ -2,16 +2,19 @@ import type { Plugin } from "vite";
 import MagicString from "magic-string";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import {
   normalizePath,
   findMatchingParen,
   findCallParenAfterGenerics,
   skipStringOrComment,
 } from "../expose-id-utils.js";
-import { escapeRegExp } from "../../../regex-escape.js";
 import {
   getImportedFnNames,
   buildUnsupportedShapeWarning,
+  createCallPattern,
+  createCallStartIndices,
+  offsetToLineColumn,
 } from "./export-analysis.js";
 import { codeMatchIndices } from "../../../build/route-types/source-scan.js";
 import { createRangoDebugger, createCounter, NS } from "../../debug.js";
@@ -42,25 +45,41 @@ function skipLeadingTrivia(code: string, start: number, end: number): number {
   return i;
 }
 
+/** The 1-based line of every createRouter() call in `source`, in order. */
+export function routerCallLines(
+  source: string,
+  routerFnNames: string[],
+): number[] {
+  return createCallStartIndices(source, routerFnNames).map(
+    (index) => offsetToLineColumn(source, index).line,
+  );
+}
+
+/**
+ * @param sourceLines Line of each createRouter() call in the file as written
+ *   ({@link routerCallLines}). `code` is TS-transformed and a dev server keeps
+ *   comments a build drops, so a line taken from `code` gives build-time
+ *   discovery and the bundle different `$$id`s (e2e/test-app,
+ *   tests/cloudflare-basic). A call past the list uses its line in `code`.
+ */
 export function transformRouter(
   code: string,
   filePath: string,
   routerFnNames: string[],
   absolutePath?: string,
   warn?: (message: string) => void,
+  sourceLines?: readonly number[],
 ): { code: string; map: ReturnType<MagicString["generateMap"]> } | null {
   // Match only the callee identifier; the generic list (which may be nested,
   // e.g. createRouter<Config<Env>>(...)) and the opening paren are located
   // separately via findCallParenAfterGenerics so a nested `>` does not defeat
   // the scan (a `<[^>]*>` regex stopped at the first `>`).
-  const pat = new RegExp(
-    `\\b(?:${routerFnNames.map(escapeRegExp).join("|")})\\b`,
-    "g",
-  );
+  const pat = createCallPattern(routerFnNames);
   let match: RegExpExecArray | null;
   const s = new MagicString(code);
   let changed = false;
   const unsupportedSites: Array<{ line: number; column: number }> = [];
+  let callIndex = -1;
 
   // Compute the import path for the generated route names file.
   // filePath is relative to project root (e.g., "src/router.tsx")
@@ -86,6 +105,7 @@ export function transformRouter(
     // type position) yields -1 and is skipped.
     const parenPos = findCallParenAfterGenerics(code, calleeEnd);
     if (parenPos === -1) continue;
+    callIndex++;
 
     const closeParen = findMatchingParen(code, parenPos + 1);
     const callArgs = code.slice(parenPos + 1, closeParen);
@@ -98,7 +118,8 @@ export function transformRouter(
     if (callArgs.includes(`$$routeNames: ${routeNamesVar}`)) continue;
 
     const sourceFilePath = absolutePath ?? filePath;
-    const lineNumber = code.slice(0, callStart).split("\n").length;
+    const lineNumber =
+      sourceLines?.[callIndex] ?? offsetToLineColumn(code, callStart).line;
     const hash = createHash("sha256")
       .update(`${filePath}:${lineNumber}`)
       .digest("hex")
@@ -156,11 +177,19 @@ export function transformRouter(
  */
 export function exposeRouterId(): Plugin {
   let projectRoot = "";
+  // $$sourceFile is read by route discovery and the CLI, which run on a dev
+  // server (the build's discovery temp server included) and need the absolute
+  // path. Nothing reads it when serving, so a production build ships the
+  // root-relative path: an absolute one would put the build machine's checkout
+  // directory in every router's chunk and give the same source a different
+  // cache version per directory (discovery/build-versions.ts hashes the chunk).
+  let rootRelativeSourceFile = false;
   const counter = createCounter(debug, "expose-router-id");
   return {
     name: "@rangojs/router:expose-router-id",
     configResolved(config) {
       projectRoot = config.root;
+      rootRelativeSourceFile = config.command === "build";
     },
     buildEnd() {
       counter?.flush();
@@ -184,12 +213,22 @@ export function exposeRouterId(): Plugin {
           typeof this.warn === "function"
             ? (message: string) => this.warn(message)
             : undefined;
+        let sourceLines: number[] | undefined;
+        try {
+          sourceLines = routerCallLines(
+            readFileSync(id.split("?", 1)[0]!, "utf-8"),
+            routerFnNames,
+          );
+        } catch {
+          // Not a file on disk (a virtual module): lines come from `code`.
+        }
         return transformRouter(
           code,
           filePath,
           routerFnNames,
-          normalizePath(id),
+          rootRelativeSourceFile ? undefined : normalizePath(id),
           warn,
+          sourceLines,
         );
       } finally {
         counter?.record(id, performance.now() - start);

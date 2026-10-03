@@ -1,5 +1,18 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, it, expect } from "vitest";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { exposeRouterId } from "../plugins/expose-internal-ids.js";
+import {
+  routerCallLines,
+  transformRouter,
+} from "../plugins/expose-ids/router-transform.js";
 
 function createPlugin() {
   const plugin = exposeRouterId();
@@ -382,5 +395,178 @@ export const router = createRouter({});
     const result = plugin.transform(code, "/project/src/router.tsx");
     expect(result).toBeDefined();
     expect(result.map).toBeDefined();
+  });
+});
+
+describe("router id and source file across dev and build", () => {
+  const idOf = (code: string) => code.match(/\$\$id:\s*"([^"]+)"/)?.[1];
+  const ids = (code: string) =>
+    [...code.matchAll(/\$\$id:\s*"([^"]+)"/g)].map((match) => match[1]);
+
+  // The file as written: a comment and a blank line above the call.
+  const SOURCE = `/// <reference types="@cloudflare/workers-types" />
+import { createRouter } from "@rangojs/router";
+
+// The app router.
+export const router = createRouter<Env>({
+  // routes
+  routes: [],
+});
+`;
+  // What the transform hook receives. The TypeScript transform has already
+  // run: a dev server keeps the comments, a build prints the module without
+  // them, so the call sits on a different line in each.
+  const DEV_CODE = `/// <reference types="@cloudflare/workers-types" />
+import { createRouter } from "@rangojs/router";
+// The app router.
+export const router = createRouter({
+  // routes
+  routes: [],
+});
+`;
+  const BUILD_CODE = `import { createRouter } from "@rangojs/router";
+export const router = createRouter({
+\troutes: [],
+});
+`;
+  const names = ["createRouter"];
+
+  it("finds the line of each createRouter() call in the source", () => {
+    expect(routerCallLines(SOURCE, names)).toEqual([5]);
+    expect(
+      routerCallLines(
+        `import { createRouter } from "@rangojs/router";
+// createRouter({ in: "a comment" })
+type R = ReturnType<typeof createRouter>;
+const note = "createRouter()";
+export const a = createRouter({});
+
+export const b = createRouter<Env>({});
+`,
+        names,
+      ),
+    ).toEqual([5, 7]);
+  });
+
+  // Regression: the id came from a line of the TRANSFORMED code, so build-time
+  // discovery (a dev server) and the bundle disagreed on a router's id whenever
+  // a comment sat above the call. The build then registered the router's lazy
+  // route manifest and its cache versions under an id no running router had.
+  it("derives the same id from the dev-shaped and the build-shaped code", () => {
+    const lines = routerCallLines(SOURCE, names);
+    const dev = transformRouter(
+      DEV_CODE,
+      "src/router.tsx",
+      names,
+      "/project/src/router.tsx",
+      undefined,
+      lines,
+    )!;
+    const build = transformRouter(
+      BUILD_CODE,
+      "src/router.tsx",
+      names,
+      undefined,
+      undefined,
+      lines,
+    )!;
+    expect(idOf(dev.code)).toBeDefined();
+    expect(idOf(build.code)).toBe(idOf(dev.code));
+  });
+
+  it("without the source lines, the two shapes give different ids", () => {
+    const dev = transformRouter(DEV_CODE, "src/router.tsx", names)!;
+    const build = transformRouter(BUILD_CODE, "src/router.tsx", names)!;
+    expect(idOf(build.code)).not.toBe(idOf(dev.code));
+  });
+
+  it("keeps two routers in one file apart", () => {
+    const source = `import { createRouter } from "@rangojs/router";
+
+export const a = createRouter({});
+
+export const b = createRouter({});
+`;
+    const code = `import { createRouter } from "@rangojs/router";
+export const a = createRouter({});
+export const b = createRouter({});
+`;
+    const result = transformRouter(
+      code,
+      "src/router.tsx",
+      names,
+      undefined,
+      undefined,
+      routerCallLines(source, names),
+    )!;
+    const [a, b] = ids(result.code);
+    expect(a).not.toBe(b);
+  });
+
+  it("uses the code's own line for a call the source scan did not list", () => {
+    const code = `import { createRouter } from "@rangojs/router";
+export const a = createRouter({});
+export const b = createRouter({});
+`;
+    const [a, b] = ids(
+      transformRouter(
+        code,
+        "src/router.tsx",
+        names,
+        undefined,
+        undefined,
+        [40],
+      )!.code,
+    );
+    const [, bFromCode] = ids(
+      transformRouter(code, "src/router.tsx", names)!.code,
+    );
+    expect(a).not.toBe(b);
+    expect(b).toBe(bFromCode);
+  });
+
+  describe("the plugin reads the file on disk", () => {
+    let dir: string;
+    beforeEach(() => {
+      dir = realpathSync(mkdtempSync(join(tmpdir(), "rango-router-id-")));
+      mkdirSync(join(dir, "src"));
+      writeFileSync(join(dir, "src/router.tsx"), SOURCE);
+    });
+    afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+    const transformWith = (command: "serve" | "build", code: string) => {
+      const plugin = exposeRouterId() as ReturnType<typeof exposeRouterId> & {
+        configResolved: (config: any) => void;
+        transform: (code: string, id: string) => any;
+      };
+      plugin.configResolved({ root: dir, command });
+      return plugin.transform.call(
+        { warn: () => {} },
+        code,
+        join(dir, "src/router.tsx"),
+      ).code as string;
+    };
+
+    it("gives the dev server and the build the same id", () => {
+      expect(idOf(transformWith("build", BUILD_CODE))).toBe(
+        idOf(transformWith("serve", DEV_CODE)),
+      );
+    });
+
+    // Discovery and the CLI read $$sourceFile on a dev server and need the
+    // absolute path. A build ships the root-relative one: the checkout
+    // directory in a router's chunk gave the same source a different cache
+    // version on every build machine.
+    it("injects the absolute source file on a dev server", () => {
+      expect(transformWith("serve", DEV_CODE)).toContain(
+        `$$sourceFile: "${join(dir, "src/router.tsx")}"`,
+      );
+    });
+
+    it("injects the root-relative source file in a build", () => {
+      const code = transformWith("build", BUILD_CODE);
+      expect(code).toContain(`$$sourceFile: "src/router.tsx"`);
+      expect(code).not.toContain(dir);
+    });
   });
 });
