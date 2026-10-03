@@ -1,5 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
-import { returnToEvictedEntry } from "@shared/e2e";
+import {
+  expectLateSuspenseReaderHydratesClean,
+  returnToEvictedEntry,
+} from "@shared/e2e";
 import { useFixture, type Fixture } from "./fixture";
 import {
   waitForHydration,
@@ -1444,32 +1447,14 @@ test.describe("location-state.action-ls (production)", () => {
   actionLocationStateSuite(f);
 });
 
-const HYDRATION_ERROR =
-  /hydrat|did not match|server rendered|Minified React error #(418|419|422|423|425)/i;
-
-function lateSuspenseSuite(f: ReturnType<typeof useFixture>) {
+function lateSuspenseSuite(f: Fixture) {
   test("reader inside a late-hydrating Suspense boundary hydrates without a mismatch", async ({
     page,
   }) => {
-    const errors: string[] = [];
-    page.on("console", (msg) => {
-      if (msg.type() === "error") errors.push(msg.text());
-    });
-    page.on("pageerror", (err) => errors.push(err.message));
-
-    await page.goto(f.url("/location-state/late-suspense"));
-    await waitForHydration(page);
-    await page.locator('[data-testid="late-ls-write"]').click();
-
-    await page.reload();
-    await waitForHydration(page);
-
-    // The boundary resolves ~500ms after the root hydrated.
-    await expect(page.locator('[data-testid="late-ls-value"]')).toHaveText(
-      "stored-value",
-      { timeout: 10000 },
+    await expectLateSuspenseReaderHydratesClean(
+      page,
+      f.url("/location-state/late-suspense"),
     );
-    expect(errors.filter((e) => HYDRATION_ERROR.test(e))).toEqual([]);
   });
 }
 

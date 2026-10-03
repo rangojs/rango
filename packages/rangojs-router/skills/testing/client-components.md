@@ -168,27 +168,31 @@ A plain `renderRoute` mounts with `createRoot`, so a component never runs its hy
 
 ```tsx
 // @vitest-environment happy-dom
+import { Suspense } from "react";
 import { afterEach, expect, it } from "vitest";
 import { cleanup } from "@testing-library/react";
 import { renderRoute } from "@rangojs/router/testing/dom";
 import { Grid } from "../src/components/Grid"; // <p data-testid="count">{useLocationState(GridState)?.count ?? 0}</p>
 import { GridState } from "../src/location-states";
 
-afterEach(() => {
-  cleanup();
-  document.documentElement.removeAttribute("data-hydrated");
-});
+afterEach(cleanup);
+
+// A <Suspense> boundary hydrates after the root has marked the page hydrated,
+// as a streamed boundary does in production.
+function GridPage() {
+  return (
+    <Suspense fallback={null}>
+      <Grid />
+    </Suspense>
+  );
+}
 
 it("hydrates as the server rendered it, then shows the stored count", async () => {
-  // Rango's root sets data-hydrated from its first effect, and a streamed
-  // <Suspense> boundary hydrates after that. Set up front, it makes this
-  // hydration render the late one.
-  document.documentElement.setAttribute("data-hydrated", "");
   const { serverHtml, recoverableErrors, getByTestId } = await renderRoute(
-    [{ path: "/grid", Component: Grid }],
+    [{ path: "/grid", Component: GridPage }],
     { hydrate: true, locationState: [[GridState, { count: 3 }]] },
   );
-  expect(serverHtml).toBe('<p data-testid="count">0</p>'); // no history.state on the server
+  expect(serverHtml).toContain('<p data-testid="count">0</p>'); // no history.state on the server
   expect(recoverableErrors).toEqual([]); // the first client render matched it
   expect(getByTestId("count").textContent).toBe("3"); // then the stored value
 });
@@ -204,8 +208,8 @@ it("hydrates as the server rendered it, then shows the stored count", async () =
 | `<Suspense>` whose content renders synchronously                                      | In `serverHtml`. It hydrates in a later pass than the tree above it, after that tree's effects, before `renderRoute` resolves.                                                                                                               |
 | Content that suspends in the server pass (`lazy`, a pending or plain `use()` promise) | NOT hydrated: `serverHtml` has the fallback, the client renders the content, and `recoverableErrors` reports the boundary. With no `<Suspense>` above it `renderRoute` rejects. A settled promise (Caveats, below) stays in the server HTML. |
 | Render counts and module state                                                        | Every component renders once in the server pass before its hydration render. Both passes share one module realm, so module state written while rendering is still there at hydration.                                                        |
-| `localStorage`, `navigator`, `history` as bare globals                                | Still defined in the server pass. Only `window` and `document` are removed.                                                                                                                                                                  |
-| `data-hydrated` on `<html>`                                                           | Not set by `renderRoute` (production's root sets it from an effect). Set and remove it in the test, as above.                                                                                                                                |
+| `history`, `localStorage`, `navigator` read outside a server snapshot                 | FIDELITY LIMIT: still defined in the server pass (only `window` and `document` are removed), so the read renders the same in both passes here and can still mismatch in real SSR.                                                            |
+| `data-hydrated` on `<html>`                                                           | Set after hydration, as the production root sets it from its effect, and removed on unmount. A `<Suspense>` boundary therefore hydrates with it already set.                                                                                 |
 
 - Needs `@testing-library/react` 16.2.0 or newer. 16.0 and 16.1 never pass `onRecoverableError` to `hydrateRoot`, so a mismatch would be invisible; `renderRoute` throws there instead.
 - `recoverableErrors` is live: React appends to it for as long as the root is mounted.

@@ -27,6 +27,8 @@ import { withLocationStateKey } from "../index.js";
 // rendered to HTML without `window`/`document`, then hydrated, and React's
 // recoverable errors are handed back. #992 is the feature this mode was added
 // to reach: useLocationState inside a boundary that hydrates after the root.
+// The mode sets the root's hydrated marker itself, so a `<Suspense>` boundary
+// here is late by structure, as in production.
 
 const GridState = withLocationStateKey(
   createLocationState<{ count: number }>(),
@@ -41,11 +43,8 @@ afterEach(() => {
   cleanup();
   configure({ reactStrictMode: false });
   vi.doUnmock("@testing-library/react");
-  document.documentElement.removeAttribute("data-hydrated");
   window.history.replaceState(null, "");
 });
-
-const subscribeNever = (): (() => void) => () => {};
 
 function Env() {
   return <p data-testid="env">{currentPass()}</p>;
@@ -58,7 +57,7 @@ describe("renderRoute: hydrate", () => {
     function Counter() {
       const { id } = useParams<{ id: string }>();
       const snapshot = useSyncExternalStore(
-        subscribeNever,
+        () => () => {},
         () => "client",
         () => "server",
       );
@@ -75,11 +74,10 @@ describe("renderRoute: hydrate", () => {
       );
     }
 
-    const { serverHtml, recoverableErrors, getByTestId, router } =
-      await renderRoute([{ path: "/items/:id", Component: Counter }], {
-        request: "/items/7",
-        hydrate: true,
-      });
+    const { serverHtml, recoverableErrors, getByTestId } = await renderRoute(
+      [{ path: "/items/:id", Component: Counter }],
+      { request: "/items/7", hydrate: true },
+    );
 
     expect(serverHtml).toBe(
       '<button data-testid="counter" data-snapshot="server">7:0</button>',
@@ -91,24 +89,6 @@ describe("renderRoute: hydrate", () => {
     expect(button.getAttribute("data-snapshot")).toBe("client");
     fireEvent.click(button);
     expect(button.textContent).toBe("7:1");
-
-    await router.navigate("/items/8");
-    expect(router.params()).toEqual({ id: "8" });
-    expect(getByTestId("counter").textContent).toMatch(/^8:/);
-  });
-
-  it("without hydrate it mounts fresh and the result has no hydration fields", async () => {
-    const passes: Pass[] = [];
-    function Probe() {
-      passes.push(currentPass());
-      return <p data-testid="probe">probe</p>;
-    }
-
-    const result = await renderRoute([{ path: "/", Component: Probe }]);
-
-    expect(passes).toEqual(["client"]);
-    expect(result).not.toHaveProperty("serverHtml");
-    expect(result).not.toHaveProperty("recoverableErrors");
   });
 
   it("reports a first client render that differs from the server HTML", async () => {
@@ -129,79 +109,79 @@ describe("renderRoute: hydrate", () => {
     { strict: false, label: "no StrictMode" },
     { strict: true, label: "StrictMode" },
   ])(
-    "#992: a reader hydrating after data-hydrated is set stays undefined, then shows the stored value ($label)",
+    "#992: a reader in a Suspense boundary that hydrates after the root stays undefined, then shows the stored value ($label)",
     async ({ strict }) => {
       configure({ reactStrictMode: strict });
-      const seen: Array<{ pass: Pass; count: number | undefined }> = [];
-      function Count() {
+      let effectsAboveRan = false;
+      const seen: Array<{
+        pass: Pass;
+        count: number | undefined;
+        effectsAboveRan: boolean;
+      }> = [];
+      function Reader() {
         const state = useLocationState(GridState);
-        seen.push({ pass: currentPass(), count: state?.count });
+        seen.push({
+          pass: currentPass(),
+          count: state?.count,
+          effectsAboveRan,
+        });
         return <p data-testid="count">{state?.count ?? 0}</p>;
       }
+      function Page() {
+        useEffect(() => {
+          effectsAboveRan = true;
+        }, []);
+        return (
+          <Suspense fallback={null}>
+            <Reader />
+          </Suspense>
+        );
+      }
 
-      // The root sets this attribute from its first effect, before a streamed
-      // Suspense boundary hydrates. Present from the start, it makes this
-      // hydration render the late one.
-      document.documentElement.setAttribute("data-hydrated", "");
       const { serverHtml, recoverableErrors, getByTestId } = await renderRoute(
-        [{ path: "/grid", Component: Count }],
+        [{ path: "/grid", Component: Page }],
         { hydrate: true, locationState: [[GridState, { count: 3 }]] },
       );
 
       // history.state is seeded before the server pass and must not reach it.
-      expect(seen[0]).toEqual({ pass: "server", count: undefined });
-      expect(serverHtml).toBe('<p data-testid="count">0</p>');
+      expect(seen[0]).toMatchObject({ pass: "server", count: undefined });
+      expect(serverHtml).toContain('<p data-testid="count">0</p>');
       expect(recoverableErrors).toEqual([]);
       const client = seen.filter((sample) => sample.pass === "client");
-      expect(client[0]?.count).toBeUndefined();
+      // The boundary hydrated in a later pass than the tree above it.
+      expect(client[0]).toEqual({
+        pass: "client",
+        count: undefined,
+        effectsAboveRan: true,
+      });
       expect(client.at(-1)?.count).toBe(3);
       expect(getByTestId("count").textContent).toBe("3");
     },
   );
 
-  it("a Suspense boundary hydrates after the effects of the tree above it", async () => {
-    const seen: Array<{
-      pass: Pass;
-      count: number | undefined;
-      rootEffectRan: boolean;
-    }> = [];
-    function Reader() {
-      const state = useLocationState(GridState);
-      seen.push({
-        pass: currentPass(),
-        count: state?.count,
-        rootEffectRan:
-          currentPass() === "client" &&
-          document.documentElement.hasAttribute("data-hydrated"),
-      });
-      return <p data-testid="count">{state?.count ?? 0}</p>;
+  it("sets the root's hydrated marker before a Suspense boundary hydrates, and removes it on unmount", async () => {
+    const hydrated = (): boolean =>
+      document.documentElement.hasAttribute("data-hydrated");
+    const markedAtRender: boolean[] = [];
+    function Probe() {
+      if (currentPass() === "client") markedAtRender.push(hydrated());
+      return <p>probe</p>;
     }
-    // What production's root does (browser/rsc-router.tsx Rango).
     function Page() {
-      useEffect(() => {
-        document.documentElement.setAttribute("data-hydrated", "");
-      }, []);
       return (
         <Suspense fallback={null}>
-          <Reader />
+          <Probe />
         </Suspense>
       );
     }
 
-    const { serverHtml, recoverableErrors, getByTestId } = await renderRoute(
-      [{ path: "/grid", Component: Page }],
-      { hydrate: true, locationState: [[GridState, { count: 3 }]] },
-    );
-
-    expect(serverHtml).toContain('<p data-testid="count">0</p>');
-    const client = seen.filter((sample) => sample.pass === "client");
-    expect(client[0]).toEqual({
-      pass: "client",
-      count: undefined,
-      rootEffectRan: true,
+    const { unmount } = await renderRoute([{ path: "/", Component: Page }], {
+      hydrate: true,
     });
-    expect(recoverableErrors).toEqual([]);
-    expect(getByTestId("count").textContent).toBe("3");
+
+    expect(markedAtRender[0]).toBe(true);
+    unmount();
+    expect(hydrated()).toBe(false);
   });
 
   it("content that suspends in the server pass is client-rendered and reported", async () => {

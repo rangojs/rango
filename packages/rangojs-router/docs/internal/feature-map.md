@@ -59,12 +59,18 @@ reachable through the public DOM primitive (#992: `useLocationState` inside a
 late-hydrating Suspense boundary). It renders the same element to HTML with
 `react-dom/server`'s `renderToString`, with `window` and `document` deleted for
 that synchronous pass so `typeof window` branches take their server side, then
-hydrates the container through RTL's `render({ hydrate: true })`. The result is
-a `RenderRouteHydrateResult`: `serverHtml`, plus `recoverableErrors`, the
-messages React passed to `onRecoverableError` (where a hydration mismatch
-arrives). Content that suspends in the server pass is client-rendered and
-reported there, not hydrated. Needs `@testing-library/react` 16.2.0 or newer;
-`renderRoute` throws on older versions, which drop `onRecoverableError`.
+hydrates the container through RTL's `render({ hydrate: true })`. It also sets
+`data-hydrated` on `<html>` after hydration, as the production root does
+(`browser/rsc-router.tsx`), so a `<Suspense>` boundary hydrates late by
+structure. The result is a `RenderRouteHydrateResult`: `serverHtml`, plus
+`recoverableErrors`, the messages React passed to `onRecoverableError` (where a
+hydration mismatch arrives). Content that suspends in the server pass is
+client-rendered and reported there, not hydrated. The fidelity limit: only
+`window` and `document` are removed, so a hook that reads `history`,
+`localStorage` or `navigator` outside a server snapshot renders the same in both
+passes and can still mismatch in real SSR. Needs `@testing-library/react` 16.2.0
+or newer; `renderRoute` throws on older versions, which drop
+`onRecoverableError`.
 
 `renderRoute`'s `router.navigate(url, { loaders })` seeds loader data for that
 one navigation (merged over the render-time seeds), and `RenderRouteSpec`

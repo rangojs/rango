@@ -16,19 +16,11 @@ export function LateSuspenseWriter() {
 }
 
 /**
- * Rendered inside a <Suspense> whose server content resolves after the root
+ * Rendered inside a <Suspense> whose server content arrives after the root
  * has hydrated. The hydrating render must be `undefined` (what SSR produced);
  * the stored value appears on the next render.
  */
 export function LateSuspenseReader() {
   const state = useLocationState(LateSuspenseState);
-  return (
-    <div data-testid="late-ls-reader">
-      {state ? (
-        <span data-testid="late-ls-value">{state.label}</span>
-      ) : (
-        <span data-testid="late-ls-empty">empty</span>
-      )}
-    </div>
-  );
+  return <span data-testid="late-ls-value">{state?.label ?? "empty"}</span>;
 }

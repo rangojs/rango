@@ -692,25 +692,33 @@ message of every error React recovered from. A hydration mismatch is exactly
 such an error, so an empty array is your "it hydrated as rendered" assertion.
 
 ```tsx
-afterEach(() => {
-  cleanup();
-  document.documentElement.removeAttribute("data-hydrated");
-});
+// A <Suspense> boundary hydrates after the root has marked the page hydrated,
+// as a streamed boundary does in production.
+function GridPage() {
+  return (
+    <Suspense fallback={null}>
+      <Grid />
+    </Suspense>
+  );
+}
 
 it("hydrates as the server rendered it, then shows the stored count", async () => {
-  // Rango's root sets data-hydrated from its first effect, and a streamed
-  // <Suspense> boundary hydrates after that. Set up front, it makes this
-  // hydration render the late one.
-  document.documentElement.setAttribute("data-hydrated", "");
   const { serverHtml, recoverableErrors, getByTestId } = await renderRoute(
-    [{ path: "/grid", Component: Grid }],
+    [{ path: "/grid", Component: GridPage }],
     { hydrate: true, locationState: [[GridState, { count: 3 }]] },
   );
-  expect(serverHtml).toBe('<p data-testid="count">0</p>'); // no history.state on the server
+  expect(serverHtml).toContain('<p data-testid="count">0</p>'); // no history.state on the server
   expect(recoverableErrors).toEqual([]); // the first client render matched it
   expect(getByTestId("count").textContent).toBe("3"); // then the stored value
 });
 ```
+
+That test needs no setup for "late". In production the root sets `data-hydrated`
+on `<html>` from its effect once it has hydrated, and a streamed boundary
+hydrates after that. `renderRoute` does the same in hydrate mode (and removes
+the attribute on unmount), and React hydrates a `<Suspense>` boundary in a later
+pass than the tree above it. Put the reader in a boundary and its hydration
+render is the late one by structure.
 
 You might wonder how a happy-dom test can have a "server" pass when `window` is
 right there. It cannot, unless the harness takes it away, so it does:
@@ -718,10 +726,9 @@ right there. It cannot, unless the harness takes it away, so it does:
 synchronous server render and restores them before hydrating. Without that, a
 `typeof window !== "undefined"` branch would take its client side on the
 "server", produce the client HTML, and hydrate clean, hiding the first cause
-React lists for a mismatch. (We measured it on the pre-#992 hook: with the
-globals left in place it rendered the stored value into the server HTML and
-reported nothing.) The flip side is faithful too: an unguarded `document.title`
-in render throws `ReferenceError` in the server pass, as it does in SSR.
+React lists for a mismatch. The flip side is faithful too: an unguarded
+`document.title` in render throws `ReferenceError` in the server pass, as it
+does in SSR.
 
 What to know before you rely on it:
 
@@ -738,13 +745,13 @@ What to know before you rely on it:
 - **Attribute-only mismatches are not recoverable errors.** For a differing
   `className` or `href` React keeps the server attribute and logs
   `console.error` in development. Assert that with `vi.spyOn(console, "error")`.
-- **Only `window` and `document` are removed.** A bare `localStorage` or
-  `navigator` read still succeeds in the server pass.
+- **Only `window` and `document` are removed.** This is the fidelity limit. A
+  hook that reads a global that stays defined in the server pass (`history`,
+  `localStorage`, `navigator`) outside a server snapshot renders the same in
+  both passes here and can still mismatch in real SSR.
 - **One realm, two passes.** Every component renders once in the server pass
   before its hydration render, and module state written while rendering is
   still there at hydration. Count renders accordingly.
-- **`data-hydrated` is not set for you.** Production's root sets it from an
-  effect; set and remove it in the test if your code reads it.
 - **`@testing-library/react` 16.2.0 or newer.** 16.0 and 16.1 never pass
   `onRecoverableError` to `hydrateRoot`, so a mismatch would be invisible.
   `renderRoute` throws there instead of returning an empty array.

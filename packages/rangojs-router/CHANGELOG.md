@@ -2,6 +2,64 @@
 
 ## Unreleased
 
+### Fixed: `useLocationState` no longer causes a hydration mismatch when its reader hydrates inside `<Suspense>` ([#1017](https://github.com/rangojs/rango/pull/1017))
+
+After a reload or a back/forward navigation, `history.state` still holds the
+location state. The server cannot see it and renders the reader with
+`undefined`. A reader at the top of the tree hydrated with `undefined` too and
+picked the stored value up afterwards. A reader inside a `<Suspense>` boundary
+that hydrated after the root did not: its hydrating render returned the stored
+value, React reported a mismatch (`Minified React error #418` in production)
+and re-rendered the boundary on the client (#992).
+
+Every hydrating render of `useLocationState` now returns `undefined`, wherever
+the reader sits, and the stored value appears on the next render.
+
+| Reader                                             | Hydrating render before | Hydrating render now |
+| -------------------------------------------------- | ----------------------- | -------------------- |
+| Hydrates with the root                             | `undefined`             | unchanged            |
+| Inside a `<Suspense>` that hydrates after the root | the stored value        | `undefined`          |
+| Mounted on the client (a navigation, not a reload) | the stored value        | unchanged            |
+
+Nothing to change in app code. A late-hydrating reader takes one extra render,
+as readers that hydrate with the root always did. Flash state behaves the same
+way and is still cleared after it is read once.
+
+### Added: `renderRoute({ hydrate: true })` hydrates the tree instead of mounting it ([#1017](https://github.com/rangojs/rango/pull/1017))
+
+`renderRoute` from `@rangojs/router/testing/dom` mounted with `createRoot`, so
+a test could not see what a hook renders on the server or while hydrating. With
+`hydrate: true` it renders the same element to HTML first, puts that HTML in
+the container, and hydrates it. The result gains `serverHtml` and
+`recoverableErrors`, the hydration errors React reported:
+
+```tsx
+const { serverHtml, recoverableErrors, getByTestId } = await renderRoute(
+  [{ path: "/grid", Component: Grid }],
+  { hydrate: true, locationState: [[GridState, { count: 3 }]] },
+);
+expect(serverHtml).toContain(">0<"); // the server never sees history.state
+expect(recoverableErrors).toEqual([]); // no hydration mismatch
+expect(getByTestId("count").textContent).toBe("3");
+```
+
+- The server pass runs with `window` and `document` removed, so a
+  `typeof window` branch takes its server side.
+- Hydrate mode sets `data-hydrated` on `<html>` in an effect, as the production
+  root does, and removes it on unmount. A `<Suspense>` boundary that hydrates
+  in a later pass is therefore "late" the way it is in a real document.
+- A global that stays defined in the server pass (`history`, `localStorage`,
+  `navigator`) reads the same in both passes. A hook that reads one outside a
+  server snapshot can pass here and still mismatch in real SSR.
+- Content that suspends in the server pass is emitted as its `<Suspense>`
+  fallback and client-rendered; React reports that in `recoverableErrors`.
+- An attribute-only mismatch is not a recoverable error. React keeps the
+  server attribute and only logs it.
+- It needs `@testing-library/react` 16.2.0 or later and throws on older
+  versions, which do not report hydration errors.
+
+Without `hydrate` nothing changes.
+
 ### Fixed: a partial request ignores a `Referer` from another origin as its navigation context ([#1019](https://github.com/rangojs/rango/pull/1019))
 
 A partial (navigation) request tells the server which page it is leaving. The

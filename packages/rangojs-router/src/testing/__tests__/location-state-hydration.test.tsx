@@ -8,8 +8,10 @@ import { withLocationStateKey } from "../index.js";
 
 // #992: a reader that hydrates after the root effect has set `data-hydrated`
 // must still render the server snapshot (`undefined`) on that hydration pass.
-// renderRoute uses createRoot, so it never hydrates and cannot pin this.
 // `hydrateRoot` with the attribute already set is that late hydration render.
+// These cases hand-write the server HTML to isolate the hook; the same
+// contract through the public primitive (`renderRoute({ hydrate: true })`,
+// which produces the server HTML itself) is in render-route-hydrate.test.tsx.
 
 const GridState = withLocationStateKey(
   createLocationState<{ count: number }>(),
