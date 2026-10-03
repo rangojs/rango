@@ -7,13 +7,17 @@ import { createLocationState, useLocationState } from "../../client.js";
 import {
   initBrowserApp,
   resetBrowserAppContext,
+  type BrowserAppContext,
 } from "../../browser/rsc-router.js";
+import {
+  NavigationStoreContext,
+  type NavigationStoreContextValue,
+} from "../../browser/react/context.js";
 import {
   buildHistoryState,
   mergeLocationState,
 } from "../../browser/history-state.js";
 import type {
-  NavigationBridge,
   RscBrowserDependencies,
   RscPayload,
 } from "../../browser/types.js";
@@ -24,6 +28,12 @@ import { withLocationStateKey } from "../index.js";
 // typed definition, a flash definition and plain state, and renderRoute. The
 // client's version arrives with the document payload (initBrowserApp), as in
 // production; a renderRoute tree has none.
+//
+// Readers hear about the entry's state from the document's event controller
+// (#1029): `commitEntry` does what a commit site does, as a back/forward
+// (`traversal`) or on the current entry.
+
+let app: BrowserAppContext;
 
 const GridState = withLocationStateKey(
   createLocationState<{ count: number }>(),
@@ -37,12 +47,12 @@ const FlashState = withLocationStateKey(
 /** A document load of the current entry under `version`. */
 async function loadDocument(
   version: string | undefined,
-): Promise<NavigationBridge> {
+): Promise<BrowserAppContext> {
   resetBrowserAppContext();
   const payload = {
     metadata: { version, pathname: "/", segments: [], matched: [], params: {} },
   } as unknown as RscPayload;
-  const { bridge } = await initBrowserApp({
+  app = await initBrowserApp({
     rscStream: new ReadableStream<Uint8Array>(),
     deps: {
       createFromReadableStream: async () => payload,
@@ -53,7 +63,19 @@ async function loadDocument(
     } as unknown as RscBrowserDependencies,
     linkInterception: false,
   });
-  return bridge;
+  return app;
+}
+
+async function commitEntry(
+  eventController: BrowserAppContext["eventController"],
+  traversal: boolean,
+  write: () => void,
+): Promise<void> {
+  await act(async () => {
+    write();
+    eventController.commitLocationState(traversal);
+    eventController.flushRouteState();
+  });
 }
 
 /**
@@ -99,7 +121,14 @@ async function hydrateReaders(): Promise<{
   document.body.appendChild(container);
   const recoverable: string[] = [];
   await act(async () => {
-    root = hydrateRoot(container, <Readers />, {
+    const routed = (
+      <NavigationStoreContext.Provider
+        value={app as unknown as NavigationStoreContextValue}
+      >
+        <Readers />
+      </NavigationStoreContext.Provider>
+    );
+    root = hydrateRoot(container, routed, {
       onRecoverableError(error: unknown) {
         recoverable.push(
           error instanceof Error ? error.message : String(error),
@@ -150,19 +179,17 @@ describe("useLocationState under the implicit version", () => {
     const { text } = await hydrateReaders();
     expect(text()).toBe("2|2|plain-2");
 
-    await act(async () => {
-      window.history.replaceState(older, "");
-      window.dispatchEvent(new Event("popstate"));
-    });
+    await commitEntry(app.eventController, true, () =>
+      window.history.replaceState(older, ""),
+    );
     expect(text()).toBe("none|none|none");
 
-    await act(async () => {
+    await commitEntry(app.eventController, true, () =>
       window.history.replaceState(
         { ...(current as object), [FlashState.__rsc_ls_key]: { count: 2 } },
         "",
-      );
-      window.dispatchEvent(new Event("popstate"));
-    });
+      ),
+    );
     expect(text()).toBe("2|2|plain-2");
   });
 
@@ -172,9 +199,9 @@ describe("useLocationState under the implicit version", () => {
     const { text } = await hydrateReaders();
     expect(text()).toBe("none|none|none");
 
-    await act(async () => {
-      mergeLocationState({ [FlashState.__rsc_ls_key]: { count: 9 } });
-    });
+    await commitEntry(app.eventController, false, () =>
+      mergeLocationState({ [FlashState.__rsc_ls_key]: { count: 9 } }),
+    );
     expect(text()).toBe("none|9|none");
     expect(window.history.state).not.toHaveProperty(FlashState.__rsc_ls_key);
     expect(window.history.state).not.toHaveProperty(GridState.__rsc_ls_key);
@@ -183,14 +210,13 @@ describe("useLocationState under the implicit version", () => {
 
   it("a dev HMR version bump keeps what the readers show", async () => {
     const entry = await entryWrittenUnder("dev-1", 4);
-    const bridge = await loadDocument("dev-1");
+    const { bridge, eventController } = await loadDocument("dev-1");
     const { text } = await hydrateReaders();
     expect(text()).toBe("4|4|plain-4");
 
-    await act(async () => {
+    await commitEntry(eventController, true, () => {
       bridge.updateVersion("dev-2");
       window.history.replaceState(entry, "");
-      window.dispatchEvent(new Event("popstate"));
     });
     expect(text()).toBe("4|4|plain-4");
   });
@@ -227,6 +253,7 @@ describe("renderRoute under the implicit version", () => {
     });
     expect(getByTestId("readers").textContent).toBe("5|none|none");
 
+    // Back/forward onto it, the way a consumer test models one.
     await act(async () => {
       window.history.replaceState(written, "");
       window.dispatchEvent(new Event("popstate"));

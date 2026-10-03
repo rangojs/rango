@@ -13,7 +13,6 @@ import type { EventController, NavigationHandle } from "./event-controller.js";
 import { debugLog } from "./logging.js";
 import {
   buildHistoryState,
-  hasLocationState,
   mergeLocationState,
   pushHistoryWithIdx,
 } from "./history-state.js";
@@ -191,6 +190,7 @@ export function createNavigationTransaction(
         mergeLocationState(serverState);
       }
       store.rememberDisplayedEntry(opts.routeName);
+      eventController.commitLocationState(true);
       handle.complete(parsedUrl);
       debugLog("[Browser] Traversal committed, historyKey:", historyKey);
       return { scroll };
@@ -202,15 +202,12 @@ export function createNavigationTransaction(
       serverState,
     );
 
-    const oldState = window.history.state;
-
     pushHistoryWithIdx(historyState, url, replace ?? false);
     ensureHistoryKey();
     store.rememberDisplayedEntry(opts.routeName);
-
-    if (hasLocationState(oldState) || hasLocationState(historyState)) {
-      window.dispatchEvent(new Event("__rsc_locationstate"));
-    }
+    // History has moved, the tree has not: readers take the entry's state
+    // from the notification the caller's payload update flushes.
+    eventController.commitLocationState();
 
     handle.complete(parsedUrl);
 

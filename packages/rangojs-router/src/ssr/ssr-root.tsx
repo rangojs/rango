@@ -124,6 +124,8 @@ function createSsrEventController(opts: {
       params = nextParams;
     },
     getParams: () => params,
+    commitLocationState: () => {},
+    getLocationStateCommit: () => ({ traversal: false }),
     setLocation: () => {},
     startNavigation: () => {
       throw new Error("Navigation not supported during SSR");

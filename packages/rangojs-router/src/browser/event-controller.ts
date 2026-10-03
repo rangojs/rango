@@ -138,6 +138,16 @@ export interface HandleState {
 }
 
 /**
+ * Identity of the last commit that changed the displayed history entry's
+ * location state. A new object per commit; `traversal` marks a back/forward,
+ * which applies the destination entry as it is (a flash reader drops the
+ * value it kept on screen).
+ */
+export interface LocationStateCommit {
+  readonly traversal: boolean;
+}
+
+/**
  * Result from starting a navigation
  * Implements Disposable for use with `using` keyword
  */
@@ -268,6 +278,18 @@ export interface EventController {
   // Params operations
   setParams(params: Record<string, string>): void;
   getParams(): Record<string, string>;
+
+  /**
+   * The displayed history entry's location state changed: a navigation
+   * committed an entry (`traversal` for back/forward), or server-set state
+   * was merged into the current one. useLocationState readers re-read
+   * history.state when the commit identity moves. They are state listeners,
+   * so the commit site's payload update delivers the read in its own lane
+   * (NavigationProvider, flushRouteState): a held transition keeps the entry
+   * being left on screen with that entry's state (#1029).
+   */
+  commitLocationState(traversal?: boolean): void;
+  getLocationStateCommit(): LocationStateCommit;
 
   // Direct state access for advanced use
   getCurrentNavigation(): NavigationEntry | null;
@@ -462,6 +484,8 @@ export function createEventController(
   let routeSegmentIds: string[] = [];
 
   let routeParams: Record<string, string> = {};
+
+  let locationStateCommit: LocationStateCommit = { traversal: false };
 
   const stateListeners = new Set<StateListener>();
   const actionListeners = new Map<string, Set<ActionStateListener>>();
@@ -1094,6 +1118,11 @@ export function createEventController(
     return routeParams;
   }
 
+  function commitLocationState(traversal = false): void {
+    locationStateCommit = { traversal };
+    notify();
+  }
+
   // ========================================================================
   // Return Controller
   // ========================================================================
@@ -1121,6 +1150,10 @@ export function createEventController(
     // Params
     setParams,
     getParams,
+
+    // Location state
+    commitLocationState,
+    getLocationStateCommit: () => locationStateCommit,
 
     // Subscriptions
     subscribe,

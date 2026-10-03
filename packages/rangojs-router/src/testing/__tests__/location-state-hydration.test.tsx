@@ -2,8 +2,16 @@
 import { StrictMode, useState, type ReactNode } from "react";
 import { createRoot, hydrateRoot, type Root } from "react-dom/client";
 import { act, cleanup } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createLocationState, useLocationState } from "../../client.js";
+import {
+  createEventController,
+  type EventController,
+} from "../../browser/event-controller.js";
+import {
+  NavigationStoreContext,
+  type NavigationStoreContextValue,
+} from "../../browser/react/context.js";
 import { withLocationStateKey } from "../index.js";
 
 // #992: a reader that hydrates after the root effect has set `data-hydrated`
@@ -12,6 +20,10 @@ import { withLocationStateKey } from "../index.js";
 // These cases hand-write the server HTML to isolate the hook; the same
 // contract through the public primitive (`renderRoute({ hydrate: true })`,
 // which produces the server HTML itself) is in render-route-hydrate.test.tsx.
+//
+// A reader hears about the entry's state from its router's event controller
+// (#1029), so the trees below get one through NavigationStoreContext, and
+// `commitEntry` does what a commit site does: write history, commit, flush.
 
 const GridState = withLocationStateKey(
   createLocationState<{ count: number }>(),
@@ -25,6 +37,25 @@ const FlashCount = withLocationStateKey(
 type CountSample = { count: number | undefined; stored: number | undefined };
 
 let root: Root | undefined;
+let controller: EventController;
+
+beforeEach(() => {
+  controller = createEventController({
+    initialLocation: new URL("http://localhost/"),
+  });
+});
+
+/**
+ * `traversal`: back/forward to the entry (the router's popstate commit).
+ * Without `state` the entry is committed as it stands.
+ */
+async function commitEntry(traversal: boolean, state?: object): Promise<void> {
+  await act(async () => {
+    if (state) window.history.replaceState(state, "");
+    controller.commitLocationState(traversal);
+    controller.flushRouteState();
+  });
+}
 
 afterEach(async () => {
   if (root) {
@@ -40,8 +71,15 @@ afterEach(async () => {
   document.body.replaceChildren();
 });
 
-function tree(node: ReactNode, strict: boolean): ReactNode {
-  return strict ? <StrictMode>{node}</StrictMode> : node;
+function tree(node: ReactNode, strict = false): ReactNode {
+  const routed = (
+    <NavigationStoreContext.Provider
+      value={{ eventController: controller } as NavigationStoreContextValue}
+    >
+      {node}
+    </NavigationStoreContext.Provider>
+  );
+  return strict ? <StrictMode>{routed}</StrictMode> : routed;
 }
 
 function seedHydrated(state: unknown): void {
@@ -166,14 +204,14 @@ describe("useLocationState late hydration (#992)", () => {
     document.body.appendChild(container);
     await act(async () => {
       root = createRoot(container);
-      root.render(<Count />);
+      root.render(tree(<Count />));
     });
 
     expect(seen[0]).toBe(4);
     expect(container.textContent).toBe("4");
   });
 
-  it("popstate updates a persistent reader and can clear a shown flash value", async () => {
+  it("back/forward updates a persistent reader and can clear a shown flash value", async () => {
     function Persistent() {
       const state = useLocationState(GridState);
       return <p data-testid="count">{state?.count ?? 0}</p>;
@@ -183,17 +221,11 @@ describe("useLocationState late hydration (#992)", () => {
     document.body.appendChild(container);
     await act(async () => {
       root = createRoot(container);
-      root.render(<Persistent />);
+      root.render(tree(<Persistent />));
     });
     expect(container.textContent).toBe("4");
 
-    await act(async () => {
-      window.history.replaceState(
-        { [GridState.__rsc_ls_key]: { count: 9 } },
-        "",
-      );
-      window.dispatchEvent(new Event("popstate"));
-    });
+    await commitEntry(true, { [GridState.__rsc_ls_key]: { count: 9 } });
     expect(container.textContent).toBe("9");
 
     await act(async () => {
@@ -211,33 +243,23 @@ describe("useLocationState late hydration (#992)", () => {
     document.body.appendChild(flashHost);
     await act(async () => {
       root = createRoot(flashHost);
-      root.render(
-        <StrictMode>
-          <Flash />
-        </StrictMode>,
-      );
+      root.render(tree(<Flash />, true));
     });
     expect(flashHost.textContent).toBe("2");
     expect(window.history.state).not.toHaveProperty(FlashCount.__rsc_ls_key);
 
-    await act(async () => {
-      window.history.replaceState(
-        { [FlashCount.__rsc_ls_key]: { count: 5 }, idx: 1 },
-        "",
-      );
-      window.dispatchEvent(new Event("popstate"));
+    await commitEntry(true, {
+      [FlashCount.__rsc_ls_key]: { count: 5 },
+      idx: 1,
     });
     expect(flashHost.textContent).toBe("5");
     expect(window.history.state).not.toHaveProperty(FlashCount.__rsc_ls_key);
 
-    await act(async () => {
-      window.history.replaceState({ idx: 0 }, "");
-      window.dispatchEvent(new Event("popstate"));
-    });
+    await commitEntry(true, { idx: 0 });
     expect(flashHost.textContent).toBe("0");
   });
 
-  it("__rsc_locationstate updates persistent state and does not wipe a shown flash value", async () => {
+  it("a commit on the current entry updates persistent state and does not wipe a shown flash value", async () => {
     function Persistent() {
       const state = useLocationState(GridState);
       return <p data-testid="count">{state?.count ?? 0}</p>;
@@ -247,16 +269,10 @@ describe("useLocationState late hydration (#992)", () => {
     document.body.appendChild(container);
     await act(async () => {
       root = createRoot(container);
-      root.render(<Persistent />);
+      root.render(tree(<Persistent />));
     });
 
-    await act(async () => {
-      window.history.replaceState(
-        { [GridState.__rsc_ls_key]: { count: 6 } },
-        "",
-      );
-      window.dispatchEvent(new Event("__rsc_locationstate"));
-    });
+    await commitEntry(false, { [GridState.__rsc_ls_key]: { count: 6 } });
     expect(container.textContent).toBe("6");
 
     await act(async () => {
@@ -274,31 +290,20 @@ describe("useLocationState late hydration (#992)", () => {
     document.body.appendChild(flashHost);
     await act(async () => {
       root = createRoot(flashHost);
-      root.render(
-        <StrictMode>
-          <Flash />
-        </StrictMode>,
-      );
+      root.render(tree(<Flash />, true));
     });
     expect(flashHost.textContent).toBe("2");
 
-    await act(async () => {
-      window.dispatchEvent(new Event("__rsc_locationstate"));
-    });
+    // The slot is empty because this reader cleared it after paint.
+    await commitEntry(false);
     expect(flashHost.textContent).toBe("2");
 
-    await act(async () => {
-      window.history.replaceState(
-        { [FlashCount.__rsc_ls_key]: { count: 8 } },
-        "",
-      );
-      window.dispatchEvent(new Event("__rsc_locationstate"));
-    });
+    await commitEntry(false, { [FlashCount.__rsc_ls_key]: { count: 8 } });
     expect(flashHost.textContent).toBe("8");
     expect(window.history.state).not.toHaveProperty(FlashCount.__rsc_ls_key);
   });
 
-  it("plain useLocationState() late-hydrates from history.state.state and follows popstate", async () => {
+  it("plain useLocationState() late-hydrates from history.state.state and follows back/forward", async () => {
     const seen: Array<string | undefined> = [];
     function Plain() {
       const state = useLocationState<{ from?: string }>();
@@ -317,14 +322,11 @@ describe("useLocationState late hydration (#992)", () => {
     expect(recoverable).toEqual([]);
     expect(container.textContent).toBe("checkout");
 
-    await act(async () => {
-      window.history.replaceState({ state: { from: "back" } }, "");
-      window.dispatchEvent(new Event("popstate"));
-    });
+    await commitEntry(true, { state: { from: "back" } });
     expect(container.textContent).toBe("back");
   });
 
-  it("replaceState without an event does not update a mounted reader", async () => {
+  it("replaceState without a commit does not update a mounted reader", async () => {
     function Count() {
       const state = useLocationState(GridState);
       const [, bump] = useState(0);
@@ -343,7 +345,7 @@ describe("useLocationState late hydration (#992)", () => {
     document.body.appendChild(container);
     await act(async () => {
       root = createRoot(container);
-      root.render(<Count />);
+      root.render(tree(<Count />));
     });
     expect(container.querySelector("[data-testid='count']")?.textContent).toBe(
       "0",
@@ -362,11 +364,64 @@ describe("useLocationState late hydration (#992)", () => {
       "0",
     );
 
-    await act(async () => {
-      window.dispatchEvent(new Event("popstate"));
-    });
+    await commitEntry(true);
     expect(container.querySelector("[data-testid='count']")?.textContent).toBe(
       "9",
     );
+  });
+
+  it("a reader handed another definition reads that definition's slot, never the previous one's value", async () => {
+    const seen: string[] = [];
+    function Count({ flash }: { flash: boolean }) {
+      const state = useLocationState(flash ? FlashCount : GridState);
+      seen.push(`${flash ? "flash" : "grid"}:${state?.count ?? "none"}`);
+      return <p data-testid="count">{state?.count ?? 0}</p>;
+    }
+    window.history.replaceState(
+      {
+        [GridState.__rsc_ls_key]: { count: 4 },
+        [FlashCount.__rsc_ls_key]: { count: 7 },
+      },
+      "",
+    );
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    await act(async () => {
+      root = createRoot(container);
+      root.render(tree(<Count flash={false} />));
+    });
+    expect(container.textContent).toBe("4");
+
+    await act(async () => root?.render(tree(<Count flash />)));
+    expect(container.textContent).toBe("7");
+    expect(seen).not.toContain("flash:4");
+    // The new slot is a flash one: read once, then cleared.
+    expect(window.history.state).not.toHaveProperty(FlashCount.__rsc_ls_key);
+
+    await commitEntry(false, {
+      [GridState.__rsc_ls_key]: { count: 5 },
+    });
+    await act(async () => root?.render(tree(<Count flash={false} />)));
+    expect(container.textContent).toBe("5");
+    expect(seen).not.toContain("grid:7");
+  });
+
+  it("outside a NavigationProvider a reader takes the entry's state at mount and hears no commit", async () => {
+    function Count() {
+      const state = useLocationState(GridState);
+      return <p data-testid="count">{state?.count ?? 0}</p>;
+    }
+    window.history.replaceState({ [GridState.__rsc_ls_key]: { count: 4 } }, "");
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<Count />);
+    });
+    expect(container.textContent).toBe("4");
+
+    // No router, so nothing commits an entry for it.
+    await commitEntry(true, { [GridState.__rsc_ls_key]: { count: 9 } });
+    expect(container.textContent).toBe("4");
   });
 });

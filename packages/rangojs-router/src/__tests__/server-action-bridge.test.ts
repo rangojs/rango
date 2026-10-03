@@ -123,6 +123,92 @@ describe("server-action-bridge partial invariant", () => {
   });
 });
 
+// #1029 left this lane as it was: an action does not change the history
+// entry, so its location state reaches readers when the response is
+// processed, ahead of the revalidated tree. What changed is the carrier: the
+// controller's commit, flushed at once, instead of a window event.
+describe("server-action-bridge location state", () => {
+  it("commits and flushes an action's location state before its tree renders", async () => {
+    const replaceState = vi.fn();
+    vi.stubGlobal("window", {
+      location: {
+        href: "http://localhost/",
+        pathname: "/",
+        origin: "http://localhost",
+      },
+      history: { state: { key: "k1" }, replaceState },
+      dispatchEvent: vi.fn(),
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 200 })),
+    );
+    const segment = { id: "R0", type: "route", component: "div" };
+    const store = {
+      ...createMockStore(),
+      getHistoryKey: vi.fn(() => "/"),
+      getCachedSegments: vi.fn(() => ({ segments: [segment], stale: false })),
+      setSegmentIds: vi.fn(),
+      cacheSegmentsForHistory: vi.fn(),
+      rememberDisplayedEntry: vi.fn(),
+      getHistoryEntryMemory: vi.fn(() => undefined),
+      getRouterId: vi.fn(() => undefined),
+    };
+    const eventController = createEventController();
+    const before = eventController.getLocationStateCommit();
+    const order: string[] = [];
+    eventController.subscribe(() => {
+      if (eventController.getLocationStateCommit() !== before) {
+        order.push("readers notified");
+      }
+    });
+    const setServerCallback = vi.fn();
+    createServerActionBridge({
+      store: store as any,
+      client: {} as any,
+      eventController,
+      deps: {
+        createTemporaryReferenceSet: vi.fn(() => ({})),
+        encodeReply: vi.fn(async () => ""),
+        createFromFetch: vi.fn(async () => ({
+          metadata: {
+            pathname: "/",
+            segments: [segment],
+            matched: ["R0"],
+            diff: ["R0"],
+            isPartial: true,
+            locationState: { __rsc_ls_note: "from-action" },
+          },
+          returnValue: { ok: true, data: "done" },
+        })),
+        setServerCallback,
+      } as any,
+      onUpdate: vi.fn(() => void order.push("tree committed")),
+      renderSegments: vi.fn(async () => {
+        order.push("tree rendered");
+        return "tree";
+      }),
+    }).register();
+
+    await expect(
+      setServerCallback.mock.calls[0]![0]("hash#save", []),
+    ).resolves.toBe("done");
+
+    expect(replaceState.mock.calls[0]![0]).toMatchObject({
+      __rsc_ls_note: "from-action",
+    });
+    const commit = eventController.getLocationStateCommit();
+    expect(commit).not.toBe(before);
+    expect(commit.traversal).toBe(false);
+    expect(order.slice(0, 3)).toEqual([
+      "readers notified",
+      "tree rendered",
+      "tree committed",
+    ]);
+    expect(window.dispatchEvent).not.toHaveBeenCalled();
+  });
+});
+
 describe("server-action-bridge redirect payload validation", () => {
   it("allows same-origin redirect payload", async () => {
     stubWindow();

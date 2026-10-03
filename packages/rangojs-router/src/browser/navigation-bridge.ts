@@ -14,11 +14,7 @@ import {
   createNavigationTransaction,
   resolveNavigationState,
 } from "./navigation-transaction.js";
-import {
-  buildHistoryState,
-  hasLocationState,
-  pushHistoryWithIdx,
-} from "./history-state.js";
+import { buildHistoryState, pushHistoryWithIdx } from "./history-state.js";
 import {
   handleNavigationStart,
   handleNavigationEnd,
@@ -220,8 +216,6 @@ export function createNavigationBridge(
         // Save current scroll position before changing URL
         handleNavigationStart();
 
-        // Snapshot old state before pushState/replaceState overwrites it
-        const oldState = window.history.state;
         const shallowRouteName = store.getHistoryEntryMemory()?.routeName;
 
         // Update browser URL (carry intercept context into history state)
@@ -239,11 +233,9 @@ export function createNavigationBridge(
         ensureHistoryKey();
         // Same route, new entry (transition({ when }) back/forward source).
         store.rememberDisplayedEntry(shallowRouteName);
-
-        // Notify useLocationState() hooks when state changes
-        if (hasLocationState(oldState) || hasLocationState(historyState)) {
-          window.dispatchEvent(new Event("__rsc_locationstate"));
-        }
+        // No payload follows and the tree stays: readers take the new entry's
+        // state with the location notification below.
+        eventController.commitLocationState();
 
         // Update store history key so future navigations reference the right cache
         store.setHistoryKey(historyKey);
@@ -354,9 +346,13 @@ export function createNavigationBridge(
       // `transition: false` gates the navigation off without calling any
       // predicate, on both the optimistic swap and the canonical commit.
       const transitionOptOut = options?.transition === false;
+      // The entry the commit will push, without what the server adds: the
+      // optimistic destination reads its location state from it.
+      const optimisticState = buildHistoryState(resolvedState);
       const clientUrlPresentation = beginClientUrlNavigation(
         targetUrl,
         tx.handle.signal,
+        optimisticState,
         transitionOptOut
           ? () => true
           : (destination) =>
@@ -378,7 +374,7 @@ export function createNavigationBridge(
                       url: targetUrl,
                       params: { ...params, ...destination.params },
                       routeName: destination.routeName,
-                      state: buildHistoryState(resolvedState),
+                      state: optimisticState,
                     };
                   },
                   extra: destination.when,
@@ -651,6 +647,7 @@ export function createNavigationBridge(
           // Set params on event controller before onUpdate so both location
           // and params are current when the debounced notify() fires.
           eventController.setParams(cachedParams);
+          eventController.commitLocationState(true);
 
           const popstateUpdate = {
             root,

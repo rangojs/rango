@@ -184,9 +184,8 @@ export function clearLocationStateOnDocumentLoad(): void {
 }
 
 /**
- * Merge server-set location state into the current history entry.
- * Replaces the current history state and dispatches notification event
- * so useLocationState hooks re-read from history.state.
+ * Merge server-set location state into the current history entry. Readers see
+ * it when the caller commits it (EventController.commitLocationState).
  */
 export function mergeLocationState(
   locationState: Record<string, unknown>,
@@ -194,7 +193,4 @@ export function mergeLocationState(
   replaceCurrentHistoryState(
     addLocationState(window.history.state, locationState),
   );
-  if (Object.keys(locationState).some(isLocationStateKey)) {
-    window.dispatchEvent(new Event("__rsc_locationstate"));
-  }
 }

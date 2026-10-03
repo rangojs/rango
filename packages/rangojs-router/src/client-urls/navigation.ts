@@ -17,6 +17,8 @@ export interface ClientUrlNavigationIntent {
   /** Absolute destination pathname (mount included) and search ("?..." or ""). */
   readonly pathname: string;
   readonly search: string;
+  /** `history.state` the navigation will push (OptimisticLocation.state). */
+  readonly state: unknown;
   /**
    * transition({ when }) gated this navigation off at the swap: the
    * destination presents urgently instead of in a transition lane.
@@ -124,6 +126,7 @@ export function registerClientUrlGroup(
 export function beginClientUrlNavigation(
   targetUrl: URL,
   signal: AbortSignal,
+  state?: unknown,
   decideTransition?: (destination: ClientUrlDestination) => boolean,
 ): ClientUrlNavigationPresentation | null {
   const group = activeGroup;
@@ -171,6 +174,7 @@ export function beginClientUrlNavigation(
     params: match.params,
     pathname: targetUrl.pathname,
     search: targetUrl.search,
+    state,
     transitionGatedOff,
   };
   group.intent = intent;

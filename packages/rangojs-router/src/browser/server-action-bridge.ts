@@ -79,11 +79,18 @@ export interface ServerActionBridgeConfigWithController extends ServerActionBrid
 function applyActionLocationState(
   handle: ActionHandle,
   locationState: Record<string, unknown> | undefined,
+  eventController: EventController,
 ): void {
   if (!locationState) return;
   const winning = handle.claimLocationState(locationState);
   if (Object.keys(winning).length > 0) {
     mergeLocationState(winning);
+    // The entry does not change, so readers take the merged state now, not
+    // with the action's revalidated tree: several terminals commit no tree,
+    // and a navigation during that render drops it. Flushed here so the lane
+    // does not depend on whether the render outlasts the notify debounce.
+    eventController.commitLocationState();
+    eventController.flushRouteState();
   }
 }
 
@@ -734,7 +741,11 @@ export function createServerActionBridge(
       // before the normal branch's async renderSegments) so a slow render racing
       // a navigation cannot drop it.
       if (scenario.type !== "navigated-away") {
-        applyActionLocationState(handle, metadata?.locationState);
+        applyActionLocationState(
+          handle,
+          metadata?.locationState,
+          eventController,
+        );
       }
       // transition({ when }) `action` for this action's commit, whichever
       // lane applies it (normal, or a refetch below).

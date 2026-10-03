@@ -237,89 +237,96 @@ describe("createNavigationTransaction", () => {
     expect(replaceStateSpy).not.toHaveBeenCalled();
   });
 
-  it("dispatches __rsc_locationstate when clearing typed location state", () => {
-    const { store, eventController } = createTestContext();
+  // #1029: commit() moves history and the controller's location-state commit
+  // identity, and tells no reader itself. Readers are state listeners: they
+  // run when the caller's payload update flushes the notification, so the
+  // read lands in that update's lane, with the destination's tree.
+  describe("location state commit", () => {
+    type CommitFlags = {
+      replace?: boolean;
+      traversal?: boolean;
+      storeOnly?: boolean;
+      cacheOnly?: boolean;
+      intercept?: boolean;
+      interceptSourceUrl?: string;
+      state?: unknown;
+    };
+    function commitOf(
+      flags: CommitFlags,
+      previous: unknown = { __rsc_ls_product: { name: "Widget" }, key: "abc" },
+    ) {
+      const { store, eventController } = createTestContext();
+      historyState = previous;
+      const before = eventController.getLocationStateCommit();
+      const heard: unknown[] = [];
+      eventController.subscribe(() => heard.push(historyState));
+      const tx = createNavigationTransaction(
+        store,
+        eventController,
+        "http://localhost/other",
+      );
+      // startNavigation's own notification: out of the way.
+      eventController.flushRouteState();
+      heard.length = 0;
+      tx.commit({
+        url: "http://localhost/other",
+        segmentIds: ["root"],
+        segments: [],
+        ...flags,
+      });
+      return { tx, eventController, before, heard };
+    }
 
-    // Simulate old history entry with typed location state
-    historyState = { __rsc_ls_product: { name: "Widget" }, key: "abc" };
+    it.each([
+      { label: "push", options: {}, traversal: false },
+      { label: "replace", options: { replace: true }, traversal: false },
+      { label: "back/forward", options: { traversal: true }, traversal: true },
+      {
+        // A modal over the page: its entry carries the Link's state only.
+        label: "intercept push",
+        options: {
+          intercept: true,
+          interceptSourceUrl: "http://localhost/start",
+        },
+        traversal: false,
+      },
+    ])(
+      "a $label commit moves the identity (traversal: $traversal) and notifies on the flush, not before",
+      ({ options, traversal }) => {
+        const { tx, eventController, before, heard } = commitOf({
+          ...options,
+          state: { from: "list" },
+        });
 
-    const tx = createNavigationTransaction(
-      store,
-      eventController,
-      "http://localhost/other",
+        const after = eventController.getLocationStateCommit();
+        expect(after).not.toBe(before);
+        expect(after.traversal).toBe(traversal);
+        expect(heard).toEqual([]);
+
+        eventController.flushRouteState();
+        // One notification, with history already at the committed entry.
+        expect(heard).toEqual([window.history.state]);
+        expect(window.dispatchEvent).not.toHaveBeenCalled();
+        tx[Symbol.dispose]();
+      },
     );
 
-    tx.commit({
-      url: "http://localhost/other",
-      segmentIds: ["root"],
-      segments: [],
+    it("moves the identity when neither entry carries location state", () => {
+      // A reader mounted over a static write() has to drop it with the entry.
+      const { tx, eventController, before } = commitOf({}, { key: "abc" });
+      expect(eventController.getLocationStateCommit()).not.toBe(before);
+      tx[Symbol.dispose]();
     });
 
-    // Event should fire because old state had __rsc_ls_ key
-    const dispatchCalls = (window.dispatchEvent as ReturnType<typeof vi.fn>)
-      .mock.calls;
-    const locationStateEvents = dispatchCalls.filter(
-      (args: unknown[]) => (args[0] as Event).type === "__rsc_locationstate",
-    );
-    expect(locationStateEvents).toHaveLength(1);
-
-    tx[Symbol.dispose]();
-  });
-
-  it("dispatches __rsc_locationstate when clearing plain state", () => {
-    const { store, eventController } = createTestContext();
-
-    // Simulate old history entry with plain state
-    historyState = { state: { from: "/dashboard" }, key: "abc" };
-
-    const tx = createNavigationTransaction(
-      store,
-      eventController,
-      "http://localhost/other",
-    );
-
-    tx.commit({
-      url: "http://localhost/other",
-      segmentIds: ["root"],
-      segments: [],
+    it.each([
+      { label: "storeOnly (action refetch)", options: { storeOnly: true } },
+      { label: "cacheOnly (stale revalidation)", options: { cacheOnly: true } },
+    ])("a $label commit leaves the entry's state alone", ({ options }) => {
+      const { tx, eventController, before } = commitOf(options);
+      expect(eventController.getLocationStateCommit()).toBe(before);
+      expect(window.dispatchEvent).not.toHaveBeenCalled();
+      tx[Symbol.dispose]();
     });
-
-    const dispatchCalls = (window.dispatchEvent as ReturnType<typeof vi.fn>)
-      .mock.calls;
-    const locationStateEvents = dispatchCalls.filter(
-      (args: unknown[]) => (args[0] as Event).type === "__rsc_locationstate",
-    );
-    expect(locationStateEvents).toHaveLength(1);
-
-    tx[Symbol.dispose]();
-  });
-
-  it("does not dispatch __rsc_locationstate when no location state on either side", () => {
-    const { store, eventController } = createTestContext();
-
-    // No location state in old history entry
-    historyState = { key: "abc" };
-
-    const tx = createNavigationTransaction(
-      store,
-      eventController,
-      "http://localhost/other",
-    );
-
-    tx.commit({
-      url: "http://localhost/other",
-      segmentIds: ["root"],
-      segments: [],
-    });
-
-    const dispatchCalls = (window.dispatchEvent as ReturnType<typeof vi.fn>)
-      .mock.calls;
-    const locationStateEvents = dispatchCalls.filter(
-      (args: unknown[]) => (args[0] as Event).type === "__rsc_locationstate",
-    );
-    expect(locationStateEvents).toHaveLength(0);
-
-    tx[Symbol.dispose]();
   });
 
   it("cacheOnly commit completes the navigation handle", () => {

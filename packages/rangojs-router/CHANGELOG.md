@@ -70,11 +70,7 @@ export const CarriedProducts = createLocationState<Product[]>({
 ```tsx
 const { data } = useLoader(ProductsLoader); // the page named by ?page
 const carried = useLocationState(CarriedProducts) ?? [];
-const carriedIds = new Set(carried.map((product) => product.id));
-const products = [
-  ...carried,
-  ...data.products.filter((product) => !carriedIds.has(product.id)),
-];
+const products = [...carried, ...data.products];
 
 <Link
   to={`/products?page=${data.page + 1}`}
@@ -114,10 +110,6 @@ const products = [
 - It cannot be combined with `flash`: `createLocationState` throws in
   development, since flash state is removed at its first read and the option
   could only drop a message nobody has seen.
-- The `carriedIds` filter in the example works around a known ordering in the
-  router, with or without the option: a navigation applies the destination
-  entry's state to a mounted reader before the destination's loader data
-  commits, so until it lands `carried` includes the page still on screen.
 
 To test it, plain `renderRoute(routes, { locationState })` is the client
 navigation and `renderRoute(routes, { hydrate: true, locationState })` is the
@@ -130,6 +122,105 @@ any definition. The helper rejects a name that contains `~`.
 
 Definitions that do not set the option keep their key, and the client start-up
 writes nothing to `history.state` when no key carries the suffix.
+
+### Fixed: `useLocationState` changes together with the page it belongs to, not before it ([#1029](https://github.com/rangojs/rango/issues/1029))
+
+A mounted `useLocationState` reader received the destination entry's state as
+soon as the router pushed the entry, in a render of its own, before the
+destination's content was on screen. For as long as the navigation was held
+(a loader still streaming, a `transition()`), the page showed the new entry's
+state next to the old entry's data. A "load more" list was the visible case:
+`?page=N` loads a page through a loader and the items already on screen ride
+along as location state on the link, so after the click every item of the
+current page was listed twice until the next page landed, with React's
+duplicate-key warning in development. Back/forward had the same shape: the
+reader took the restored entry's state at the `popstate` event, before the
+restored page.
+
+A reader now sees an entry's location state only together with that entry's
+page. State and content change in the same React commit, the way
+`usePathname` and `useParams` already did.
+
+```tsx
+const { data } = useLoader(ProductsLoader); // the page named by ?page
+const carried = useLocationState(CarriedProducts) ?? [];
+const products = [...carried, ...data.products]; // no item twice, at any point
+```
+
+The rows below are for a reader that is mounted across the navigation. State
+on the navigation means `<Link state>`, `router.push()` / `.replace()` with
+`state`, and what the server adds to it (`ctx.setLocationState()`,
+`redirect(url, { state })`).
+
+| What changes the entry's state                                                                               | A mounted reader got it                                                | Now                                                     |
+| ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------- | ------------------------------------------------------- |
+| a navigation React commits in a transition: any same-route navigation, a `transition()` route, a held loader | when the entry was pushed: before the page, for as long as it was held | in the commit that shows the destination                |
+| a navigation to another route that commits at once; an intercept (a modal over the page)                     | with the page                                                          | unchanged                                               |
+| back/forward, entry in the client cache                                                                      | around the restore, in a commit of its own                             | in the commit that restores the entry                   |
+| back/forward, entry refetched                                                                                | at the `popstate` event, for the whole fetch                           | in the commit that shows the refetched entry            |
+| a server action's `setLocationState` (no navigation)                                                         | when the response arrived                                              | unchanged                                               |
+| `router.push(url, { revalidate: false })` (no server fetch)                                                  | at once                                                                | unchanged: at once, with the new location               |
+| `flash` state                                                                                                | shown, and cleared from history, at the moments above                  | shown with the destination, then cleared                |
+| `Def.write()` / `Def.delete()`                                                                               | not until one of the rows above                                        | unchanged                                               |
+| a `clientUrls()` destination presented before the server answers                                             | the entry being left, until the server answered                        | the state the navigation carries, from its first render |
+| a navigation superseded or cancelled before it commits                                                       | nothing                                                                | unchanged: nothing                                      |
+
+`clientUrls()`: inside the optimistic branch (the destination and the group's
+client layouts) a reader gets the `state` the navigation carries on its first
+optimistic render, as `useParams` and `usePathname` describe the destination
+there. Before, it read the entry being left until the server answered, so a
+product page could not show the name its link carried while its loader
+streamed. Chrome outside the group, and content the navigation keeps on
+screen (a same-route navigation, a destination that suspends with no
+boundary), keep the committed entry's state until the canonical commit. State
+the server adds is not part of the optimistic entry and arrives with that
+commit.
+
+What an existing app can notice:
+
+- **A reader in content that stays on screen no longer previews the next
+  entry.** If a layout read `useLocationState` to show something about a
+  navigation still in flight (the name of the product being opened, say), it
+  now shows it when the destination commits. For the pending window use
+  `useNavigation()` or `useLinkStatus()`, or read the state in the
+  destination: a component that mounts with the destination, its `loading()`
+  skeleton and an intercepted modal's skeleton included, reads its entry's
+  state on its first render, as before.
+- **A `flash` slot is cleared from `history.state` after the destination
+  commits**, not when the entry is pushed. Nothing else about flash changes: a
+  reader that keeps showing its value is not wiped by a later push, and
+  back/forward applies the entry as it is.
+- **A reader outside the router's tree reads once.** `useLocationState` now
+  hears about an entry from its router (the provider every rango app renders
+  under). Rendered with no provider, in a separate `createRoot` for example,
+  it returns the entry's state at mount and does not follow navigations.
+- **The `__rsc_locationstate` window event is gone.** It was internal and
+  undocumented; code that listened for it or dispatched it gets nothing.
+- The hook's re-render on a server action's state is an ordinary state update
+  now, where it was a synchronous store update. The value and the moment are
+  the same.
+
+Nothing changes in render counts: a reader whose slot a navigation does not
+touch does not re-render, on hydration a reader with no stored state renders
+once, and one with state renders `undefined` and then the value, as before.
+
+In unit tests, `renderRoute` delivers location state the same way, so a
+component can be tested across a pending navigation. `router.navigate()` takes
+`state` and `replace` next to `loaders`, and writes the entry as
+`router.push(url, { state })` does:
+
+```tsx
+await router.navigate("/products?page=2", {
+  state: [CarriedProducts(onScreen)],
+  loaders: [[ProductsLoader, pending]], // a Promise the test resolves later
+});
+expect(getAllByRole("listitem")).toHaveLength(onScreen.length); // still page 1
+```
+
+A `popstate` event on `window` is a back/forward onto the entry
+`history.state` holds (`history.replaceState(entry, "")` first): readers take
+that entry, a shown `flash` value included. A test that dispatched
+`__rsc_locationstate` itself has to go through one of these instead.
 
 ### Fixed: `useLocationState` no longer causes a hydration mismatch when its reader hydrates inside `<Suspense>` ([#1017](https://github.com/rangojs/rango/pull/1017))
 

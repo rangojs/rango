@@ -117,19 +117,17 @@ describe("mergeLocationState", () => {
     expect(merged).toEqual({ existing: "value", newKey: "newValue" });
   });
 
-  it("dispatches __rsc_locationstate event when keys start with __rsc_ls_", () => {
-    mergeLocationState({ __rsc_ls_flash: "message" });
+  // #1029: the merge only writes the entry. Telling readers is the caller's
+  // step (EventController.commitLocationState), in the lane of its commit.
+  it.each([{ __rsc_ls_flash: "message" }, { plain: "data" }])(
+    "writes %j without notifying anyone",
+    (state) => {
+      mergeLocationState(state);
 
-    expect(dispatchEventSpy).toHaveBeenCalledOnce();
-    const event = dispatchEventSpy.mock.calls[0][0];
-    expect(event.type).toBe("__rsc_locationstate");
-  });
-
-  it("does not dispatch event when no __rsc_ls_ keys", () => {
-    mergeLocationState({ plain: "data" });
-
-    expect(dispatchEventSpy).not.toHaveBeenCalled();
-  });
+      expect(replaceStateSpy).toHaveBeenCalledOnce();
+      expect(dispatchEventSpy).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("stripShellMissMarker", () => {

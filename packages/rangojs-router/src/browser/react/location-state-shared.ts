@@ -382,11 +382,11 @@ export interface LocationStateDefinition<TArgs extends unknown[], TState> {
    * (e.g. router bookkeeping, other LocationState slots). Location state
    * another version of the app left on the entry is dropped.
    *
-   * This is the non-reactive counterpart to read(): it does not dispatch any
-   * event, so components reading via useLocationState() will NOT re-render
-   * until the next navigation/popstate. Use it when you only need the value
-   * to be there on the next read() or on the next mount (including after
-   * back/forward and, unless the definition sets `clearOnReload`, hard
+   * This is the non-reactive counterpart to read(): it notifies no reader, so
+   * components reading via useLocationState() will NOT re-render until the
+   * next navigation or back/forward commits. Use it when you only need the
+   * value to be there on the next read() or on the next mount (including
+   * after back/forward and, unless the definition sets `clearOnReload`, hard
    * refresh of the same entry).
    *
    * Client-only: throws when called on the server (no history available).
@@ -397,7 +397,7 @@ export interface LocationStateDefinition<TArgs extends unknown[], TState> {
    * leaving any other keys on history.state untouched. Idempotent: removing
    * a slot that isn't present is a no-op.
    *
-   * Same non-reactive semantics as write(): no event is dispatched, so
+   * Same non-reactive semantics as write(): no reader is notified, so
    * useLocationState() readers will NOT re-render until the next navigation.
    *
    * Client-only: throws when called on the server (no history available).

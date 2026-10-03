@@ -101,21 +101,30 @@ describe("renderRoute: createLocationState({ clearOnReload })", () => {
     expect(Carried.read()).toEqual(["p6"]);
   });
 
-  it("popstate and __rsc_locationstate in the running app still apply it", async () => {
-    const { getByTestId } = await renderRoute(routes, {
+  it("back/forward and a commit on the current entry in the running app still apply it", async () => {
+    const { getByTestId, router } = await renderRoute(routes, {
       request,
       hydrate: true,
       locationState: seeds,
     });
     expect(getByTestId("items").textContent).toBe("p6");
 
-    for (const [event, value] of [
-      ["popstate", ["p1"]],
-      ["__rsc_locationstate", ["p1", "p2"]],
+    // Back/forward: a popstate event onto the entry, as a consumer test
+    // models it. On the current entry: what a server action's state does
+    // (server-action-bridge.ts), the entry's state, then the commit.
+    for (const [commit, value] of [
+      [() => window.dispatchEvent(new Event("popstate")), ["p1"]],
+      [
+        () => {
+          router.eventController.commitLocationState();
+          router.eventController.flushRouteState();
+        },
+        ["p1", "p2"],
+      ],
     ] as const) {
       await act(async () => {
         window.history.replaceState({ [Carried.__rsc_ls_key]: value }, "");
-        window.dispatchEvent(new Event(event));
+        commit();
       });
       expect(getByTestId("items").textContent).toBe([...value, "p6"].join(","));
     }

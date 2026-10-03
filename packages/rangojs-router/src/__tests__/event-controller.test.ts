@@ -1312,6 +1312,46 @@ describe("createEventController", () => {
       expect(handleListener).toHaveBeenCalledOnce();
     });
 
+    // #1029: a location-state commit is a new identity plus an ordinary state
+    // notification. A reader compares the identity, so only a commit makes it
+    // re-read history.state; flushRouteState() inside the payload update is
+    // what puts that read in the payload's lane.
+    it("a location-state commit moves its identity and rides the state notification", () => {
+      const ctrl = createController();
+      const initial = ctrl.getLocationStateCommit();
+      expect(initial.traversal).toBe(false);
+      const seen: Array<{ moved: boolean; traversal: boolean }> = [];
+      let last = initial;
+      ctrl.subscribe(() => {
+        const commit = ctrl.getLocationStateCommit();
+        seen.push({ moved: commit !== last, traversal: commit.traversal });
+        last = commit;
+      });
+
+      // Other route-state changes notify without moving it.
+      ctrl.startNavigation("/about");
+      ctrl.setParams({ id: "1" });
+      ctrl.flushRouteState();
+      expect(ctrl.getLocationStateCommit()).toBe(initial);
+      expect(seen).toEqual([{ moved: false, traversal: false }]);
+
+      ctrl.commitLocationState();
+      expect(seen).toHaveLength(1);
+      ctrl.flushRouteState();
+      expect(seen[1]).toEqual({ moved: true, traversal: false });
+
+      // Without a flush the debounce delivers it, as for location and params.
+      ctrl.commitLocationState(true);
+      expect(seen).toHaveLength(2);
+      vi.advanceTimersByTime(0);
+      expect(seen[2]).toEqual({ moved: true, traversal: true });
+
+      // Every commit is its own identity, including two of the same kind.
+      const first = ctrl.getLocationStateCommit();
+      ctrl.commitLocationState(true);
+      expect(ctrl.getLocationStateCommit()).not.toBe(first);
+    });
+
     it("aggregates every state-listener error after fan-out", () => {
       const ctrl = createController();
       const firstError = new Error("first state listener failed");
