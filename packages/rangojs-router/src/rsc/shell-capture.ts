@@ -1984,10 +1984,12 @@ export function deriveShellCaptureContext(
   //    one with masked nested promises, or one outside a loader body (a
   //    loader-cache replay names its loader: pushReplayed below) stays
   //    tagged (HandleStore.push loaderPush) so the
-  //    handle encode cannot stall on a never-resolving mask; only the
-  //    captureHandles cache-write call site excludes tagged pushes, and the
-  //    loader records then carry `runs: 1` so a HIT runs those bodies for
-  //    them.
+  //    handle encode cannot stall on a never-resolving mask. A tagged push
+  //    is out of the record (captureHandles) and out of the capture's own
+  //    render (resolvedHandleStream `recordedOnly`, issue #1035): the
+  //    prelude is rendered from what the record keeps, which is what a HIT
+  //    hydrates with. The loader records then carry `runs: 1` so a HIT runs
+  //    those bodies for them.
   const handlerPushSettles: Promise<void>[] = [];
   // A replay (a loader-cache HIT, loader-cache.ts replayLoaderHandles, or a
   // route cache() record's owned values, restoreHandles) re-pushes a loader's
@@ -2047,8 +2049,11 @@ export function deriveShellCaptureContext(
     let owner: string | undefined;
     if (isThenable(value)) {
       // Deferred (thenable) loader pushes always keep the tag — the
-      // carve-out below is for settled values only.
-      masked = value.then(mask);
+      // carve-out below is for settled values only. Promise.resolve first: a
+      // loader cache() entry replays a deferred push as the thenable Flight
+      // decoded it to, whose then() returns nothing, and the slot was
+      // `undefined` (the empty element of issue #1035).
+      masked = Promise.resolve(value).then(mask);
     } else {
       masked = mask(value);
       if (!maskedNestedThenable) {

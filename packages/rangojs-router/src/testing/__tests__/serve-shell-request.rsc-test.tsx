@@ -1415,7 +1415,8 @@ describe("serveShellRequest: a hole never reads the shell snapshot", () => {
 
     expect(hit.shellStatus).toBe("HIT");
     expect(hit.prelude).toContain(`settled-note-${captured}`);
-    expect(hit.prelude).toContain(`deferred-note-${captured}`);
+    // The shell is rendered from what its record keeps (#1035).
+    expect(hit.prelude).not.toContain(`deferred-note-${captured}`);
     // The loader's cache() entry hit on the HIT: its body did not run.
     expect(deferredOwnedRuns.body).toBe(captured);
     expect(hit.flight?.match(/settled-note-\d+/g)).toEqual([

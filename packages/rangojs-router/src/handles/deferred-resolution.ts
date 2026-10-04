@@ -88,9 +88,20 @@ async function resolveValues(values: unknown[]): Promise<unknown[]> {
  * A hung handle promise blocks the full render like any unresolved await (no
  * handle-specific timeout). Partial / action payloads keep streaming via
  * `handleStore.stream()`.
+ *
+ * `recordedOnly` is a PPR shell capture's render (full-payload.ts): the
+ * snapshot is cut down to the pushes the capture's record keeps
+ * (getDataForSegment's `excludeLoaderPushes`, the filter captureHandles
+ * writes the record with). A HIT restores that record and hydrates with it,
+ * so a push the record leaves out must not be in the prelude either: it
+ * rendered an element no HIT's hydration data matched (issue #1035). Which
+ * pushes a record keeps is the capture funnel's decision (shell-capture.ts
+ * deriveShellCaptureContext: today it leaves out a deferred loader push and
+ * one holding a masked promise), not this function's.
  */
 export async function* resolvedHandleStream(
   handleStore: HandleStore,
+  recordedOnly?: boolean,
 ): AsyncGenerator<HandleData, void, unknown> {
   // Drain stream() (NOT getData()) for the converged snapshot: consuming a
   // stream arms the store's late-push guard (LateHandlePushError for pushes
@@ -109,7 +120,27 @@ export async function* resolvedHandleStream(
   for await (const data of handleStore.stream("settled")) {
     snapshot = data;
   }
+  if (recordedOnly) snapshot = recordedHandleData(handleStore, snapshot);
   yield await resolveDeferredHandleValues(snapshot);
+}
+
+/** `snapshot` without the pushes a record leaves out (resolvedHandleStream). */
+function recordedHandleData(
+  handleStore: HandleStore,
+  snapshot: HandleData,
+): HandleData {
+  const segmentIds = new Set<string>();
+  for (const handleName in snapshot) {
+    for (const segmentId in snapshot[handleName]) segmentIds.add(segmentId);
+  }
+  const recorded: HandleData = {};
+  for (const segmentId of segmentIds) {
+    const kept = handleStore.getDataForSegment(segmentId, true);
+    for (const handleName in kept) {
+      (recorded[handleName] ??= {})[segmentId] = kept[handleName];
+    }
+  }
+  return recorded;
 }
 
 /**

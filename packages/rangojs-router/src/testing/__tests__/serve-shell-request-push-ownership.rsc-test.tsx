@@ -1109,6 +1109,36 @@ describe("a shell HIT hydrates from its record (#1035)", () => {
     return { serve, hit, values: await handleValues(hit) };
   }
 
+  describe("the capture renders the shell from the handle data its record keeps", () => {
+    for (const variant of ["misses", "is warm"] as const) {
+      it(`a deferred push is not in the shell (the loader's cache() entry ${variant} at capture)`, async () => {
+        const { serve, withLoaderMiss } = setup();
+        const miss =
+          variant === "misses"
+            ? await withLoaderMiss(() => serve("/deferred-owned"))
+            : await serve("/deferred-owned");
+        expect(miss.shellStatus).toBe("MISS");
+        const captured = deferredOwnedRuns.body;
+
+        const { shell } = await handleValues(await serve("/deferred-owned"));
+
+        expect(shell).toEqual([`settled-note-${captured}`]);
+      });
+    }
+
+    it("a deferred push by a loader that runs at capture is not in the shell", async () => {
+      const { values } = await hitAfterCapture("/deferred-plain");
+
+      expect(values.shell).toEqual(["plain-settled@g1"]);
+    });
+
+    it("a push that holds a promise is not in the shell", async () => {
+      const { values } = await hitAfterCapture("/nested-noted");
+
+      expect(values.shell).toEqual([]);
+    });
+  });
+
   describe("what does not change", () => {
     it("a HIT whose loader pushes settled values only delivers nothing after hydration", async () => {
       const { values } = await hitAfterCapture("/eb");
