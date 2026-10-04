@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import { useContext, useEffect, useSyncExternalStore } from "react";
+import { LocationStateContext } from "./context.js";
+import { OptimisticLocationContext } from "../../client-urls/optimistic-location.js";
 import {
   readableLocationState,
   replaceCurrentHistoryState,
@@ -16,14 +18,6 @@ export {
   type LocationStateOptions,
 } from "./location-state-shared.js";
 
-function readLocationStateValue<TState>(
-  key: string | undefined,
-): TState | undefined {
-  // Typed state: history.state[key]. Plain state: history.state.state. Either
-  // is read only when the entry recorded this client's app version.
-  return readableLocationState()?.[key || "state"] as TState | undefined;
-}
-
 /**
  * Server and hydration renders must match the SSR output (`undefined`).
  * React then re-renders with `getSnapshot`, including a reader whose Suspense
@@ -33,11 +27,18 @@ function getServerSnapshot(): undefined {
   return undefined;
 }
 
+const subscribeToNothing = (): (() => void) => () => {};
+
 /**
- * Hook to read location state from history.state
+ * Hook to read the location state of the history entry on screen
+ *
+ * A reader sees an entry's state together with that entry's tree: on a
+ * navigation the value changes in the React commit that brings the
+ * destination, so content a pending navigation keeps on screen keeps the
+ * state of the entry being left, for a reader that mounts there too (#1029).
  *
  * Behavior depends on the definition:
- * - Normal state: persists across navigations, reactive to popstate
+ * - Normal state: persists across navigations and back/forward
  * - Flash state (created with { flash: true }): read once, cleared after paint
  *
  * Overloaded:
@@ -67,95 +68,34 @@ export function useLocationState<TArgs extends unknown[], TState>(
 ): TState | undefined {
   const key = definition?.__rsc_ls_key;
   const isFlash = definition?.__rsc_ls_flash ?? false;
+  const entry = useContext(LocationStateContext);
+  const optimistic = useContext(OptimisticLocationContext);
 
-  // Flash is shown once, then removed from history after paint. Keep returning
-  // that captured value: under StrictMode the clear effect runs before the
-  // second setup pass, and a re-read would clobber it with the now-cleared
-  // `undefined`. A new definition must not keep the previous slot's capture.
-  const flashSnapshotRef = useRef<TState | undefined>(undefined);
-  const flashCapturedRef = useRef(false);
-  // First client read only. Later renders return this, so write()/delete()
-  // (replaceState, no event) stay invisible until popstate or
-  // __rsc_locationstate. useSyncExternalStore would otherwise re-read history
-  // on any parent render.
-  const clientSnapshotRef = useRef<{
-    read: boolean;
-    value: TState | undefined;
-  }>({ read: false, value: undefined });
-  const slotRef = useRef(key);
-  const slotFlashRef = useRef(isFlash);
-  if (slotRef.current !== key || slotFlashRef.current !== isFlash) {
-    slotRef.current = key;
-    slotFlashRef.current = isFlash;
-    flashSnapshotRef.current = undefined;
-    flashCapturedRef.current = false;
-    clientSnapshotRef.current = { read: false, value: undefined };
-  }
-
-  const getSnapshot = useCallback((): TState | undefined => {
-    if (!clientSnapshotRef.current.read) {
-      const current = readLocationStateValue<TState>(key);
-      clientSnapshotRef.current = { read: true, value: current };
-      if (isFlash && current !== undefined) {
-        flashSnapshotRef.current = current;
-        flashCapturedRef.current = true;
-      }
-    }
-    if (isFlash && flashCapturedRef.current) return flashSnapshotRef.current;
-    return clientSnapshotRef.current.value;
-  }, [key, isFlash]);
-
-  // popstate always applies the destination entry, including an empty flash
-  // slot. `__rsc_locationstate` for flash ignores an empty slot: the
-  // clear-after-paint does not dispatch this event, and a clear-only
-  // notification must not wipe the value already shown. Update the capture
-  // before notifying — the store reads getSnapshot inside that call.
-  const subscribe = useCallback(
-    (onStoreChange: () => void): (() => void) => {
-      const handlePopstate = (): void => {
-        const next = readLocationStateValue<TState>(key);
-        clientSnapshotRef.current = { read: true, value: next };
-        if (isFlash) {
-          flashSnapshotRef.current = next;
-          flashCapturedRef.current = true;
-        }
-        onStoreChange();
-      };
-      const handleLocationState = (): void => {
-        const next = readLocationStateValue<TState>(key);
-        if (isFlash && key) {
-          if (next === undefined) return;
-          flashSnapshotRef.current = next;
-          flashCapturedRef.current = true;
-        }
-        clientSnapshotRef.current = { read: true, value: next };
-        onStoreChange();
-      };
-      window.addEventListener("popstate", handlePopstate);
-      window.addEventListener("__rsc_locationstate", handleLocationState);
-      return () => {
-        window.removeEventListener("popstate", handlePopstate);
-        window.removeEventListener("__rsc_locationstate", handleLocationState);
-      };
-    },
-    [key, isFlash],
-  );
-
+  // Typed state: the slot under its key. Plain state: the `state` slot.
+  // Inside an optimistically rendered clientUrls() destination the provider
+  // still holds the entry being left: read the entry the navigation will push.
+  const shown = (optimistic ? readableLocationState(optimistic) : entry)?.[
+    key || "state"
+  ] as TState | undefined;
+  // useSyncExternalStore only for its server snapshot: no other hook tells a
+  // hydrating render from a client one.
   const state = useSyncExternalStore<TState | undefined>(
-    subscribe,
-    getSnapshot,
+    subscribeToNothing,
+    () => shown,
     getServerSnapshot,
   );
 
-  // Flash: clear from history.state after paint so subsequent navigations don't see it.
-  // Depends on `state` so it re-runs when state is set via the event listener.
+  // Flash: removed from history.state after paint, so a reload or a return to
+  // the entry does not show it again. The provider's snapshot keeps it, so it
+  // stays on screen until the next commit of the entry's state. Not while the
+  // value is the optimistic entry's: history.state is another entry's.
   useEffect(() => {
-    if (isFlash && key && state !== undefined) {
+    if (isFlash && key && !optimistic && state !== undefined) {
       const cleaned = { ...window.history.state };
       delete cleaned[key];
       replaceCurrentHistoryState(cleaned);
     }
-  }, [isFlash, key, state]);
+  }, [isFlash, key, state, optimistic]);
 
   return state;
 }

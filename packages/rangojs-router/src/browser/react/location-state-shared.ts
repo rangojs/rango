@@ -78,6 +78,58 @@ export function readableLocationState(
 }
 
 /**
+ * One history entry's location state as useLocationState readers receive it:
+ * its typed slots and plain `state`, or undefined when it holds none.
+ */
+export type LocationStateSnapshot =
+  | Readonly<Record<string, unknown>>
+  | undefined;
+
+/**
+ * The snapshot of `entryState`: the state object a commit pushes, restores or
+ * merges into its history entry. Only state recorded under the client's
+ * version is in it (readableLocationState).
+ *
+ * The snapshot is a React context value, so identity decides who re-renders.
+ * It is `previous` itself when every slot holds the value `previous` holds:
+ * an entry without state after another, a primitive carried over, or the
+ * object a reader got from `previous` passed back by the navigation. Any
+ * other value is new, equal content included: a link clicked twice announces
+ * its state twice (a flash message, a scroll target). A new value is a
+ * structured clone, as history.state holds it, so a reader never shares an
+ * object with the caller of the navigation.
+ */
+export function locationStateSnapshot(
+  entryState: unknown,
+  previous?: LocationStateSnapshot,
+): LocationStateSnapshot {
+  const state = readableLocationState({ state: entryState });
+  let next: Record<string, unknown> | undefined;
+  let kept = 0;
+  for (const key in state) {
+    if (key !== "state" && !isLocationStateKey(key)) continue;
+    next ??= {};
+    const value = state[key];
+    if (
+      previous &&
+      Object.hasOwn(previous, key) &&
+      Object.is(previous[key], value)
+    ) {
+      next[key] = value;
+      kept++;
+    } else {
+      next[key] = structuredClone(value);
+    }
+  }
+  return previous &&
+    next &&
+    kept === Object.keys(next).length &&
+    kept === Object.keys(previous).length
+    ? previous
+    : next;
+}
+
+/**
  * Record the client's version on a state object that carries location state
  * and no record yet. A client without a version (a renderRoute tree) writes
  * none.
@@ -382,12 +434,11 @@ export interface LocationStateDefinition<TArgs extends unknown[], TState> {
    * (e.g. router bookkeeping, other LocationState slots). Location state
    * another version of the app left on the entry is dropped.
    *
-   * This is the non-reactive counterpart to read(): it does not dispatch any
-   * event, so components reading via useLocationState() will NOT re-render
-   * until the next navigation/popstate. Use it when you only need the value
-   * to be there on the next read() or on the next mount (including after
-   * back/forward and, unless the definition sets `clearOnReload`, hard
-   * refresh of the same entry).
+   * This is the non-reactive counterpart to read(): it changes the history
+   * entry and nothing a useLocationState() reader shows, whether the reader
+   * is mounted now or mounts later. read() returns the value at once; a
+   * reader gets it when the entry is next restored: back/forward to it, or
+   * (unless the definition sets `clearOnReload`) a hard refresh of it.
    *
    * Client-only: throws when called on the server (no history available).
    */
@@ -397,8 +448,8 @@ export interface LocationStateDefinition<TArgs extends unknown[], TState> {
    * leaving any other keys on history.state untouched. Idempotent: removing
    * a slot that isn't present is a no-op.
    *
-   * Same non-reactive semantics as write(): no event is dispatched, so
-   * useLocationState() readers will NOT re-render until the next navigation.
+   * Same non-reactive semantics as write(): useLocationState() readers keep
+   * the value until the entry is next restored.
    *
    * Client-only: throws when called on the server (no history available).
    */
@@ -439,9 +490,8 @@ export interface LocationStateDefinition<TArgs extends unknown[], TState> {
  * const snap = ProductState.read();
  *
  * // Static write to current history entry (non-reactive, client-side only).
- * // Survives back/forward and hard refresh; useLocationState() readers will
- * // NOT see the new value until the next navigation. Pair with .read() or a
- * // fresh mount.
+ * // Survives back/forward and hard refresh; useLocationState() readers see
+ * // the new value when the entry is next restored. Pair with .read().
  * ProductState.write({ name: "Widget", price: 9.99 });
  *
  * // Manually clear the slot (non-reactive, client-side only).

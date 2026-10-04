@@ -123,6 +123,100 @@ describe("server-action-bridge partial invariant", () => {
   });
 });
 
+// An action does not change the history entry or wait for a tree: its
+// location state is a treeless commit of the merged entry, flushed at once,
+// so readers have it when the response is processed, ahead of the revalidated
+// tree.
+describe("server-action-bridge location state", () => {
+  it("commits the action's slots as treeless, on top of what readers hold, and flushes before the action's tree renders", async () => {
+    const replaceState = vi.fn();
+    vi.stubGlobal("window", {
+      location: {
+        href: "http://localhost/",
+        pathname: "/",
+        origin: "http://localhost",
+      },
+      history: { state: { key: "k1" }, replaceState },
+      dispatchEvent: vi.fn(),
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 200 })),
+    );
+    const segment = { id: "R0", type: "route", component: "div" };
+    const store = {
+      ...createMockStore(),
+      getHistoryKey: vi.fn(() => "/"),
+      getCachedSegments: vi.fn(() => ({ segments: [segment], stale: false })),
+      setSegmentIds: vi.fn(),
+      cacheSegmentsForHistory: vi.fn(),
+      rememberDisplayedEntry: vi.fn(),
+      getHistoryEntryMemory: vi.fn(() => undefined),
+      getRouterId: vi.fn(() => undefined),
+    };
+    const eventController = createEventController();
+    // A flash value on screen: committed with the entry, cleared from
+    // history since (window.history.state above holds no slot).
+    eventController.commitLocationState({ __rsc_ls_flash: { text: "saved" } });
+    const shownFlash = eventController.getLocationState()!.__rsc_ls_flash;
+    const order: string[] = [];
+    // NavigationProvider's listener: takes a treeless commit when notified.
+    eventController.subscribe(() => {
+      if (eventController.takeTreelessLocationState()) {
+        order.push("provider took the state");
+      }
+    });
+    const setServerCallback = vi.fn();
+    createServerActionBridge({
+      store: store as any,
+      client: {} as any,
+      eventController,
+      deps: {
+        createTemporaryReferenceSet: vi.fn(() => ({})),
+        encodeReply: vi.fn(async () => ""),
+        createFromFetch: vi.fn(async () => ({
+          metadata: {
+            pathname: "/",
+            segments: [segment],
+            matched: ["R0"],
+            diff: ["R0"],
+            isPartial: true,
+            locationState: { __rsc_ls_note: "from-action" },
+          },
+          returnValue: { ok: true, data: "done" },
+        })),
+        setServerCallback,
+      } as any,
+      onUpdate: vi.fn(() => void order.push("tree committed")),
+      renderSegments: vi.fn(async () => {
+        order.push("tree rendered");
+        return "tree";
+      }),
+    }).register();
+
+    await expect(
+      setServerCallback.mock.calls[0]![0]("hash#save", []),
+    ).resolves.toBe("done");
+
+    expect(replaceState.mock.calls[0]![0]).toMatchObject({
+      __rsc_ls_note: "from-action",
+    });
+    // Added to what readers hold, not re-read from the entry: the flash
+    // value stays, as the object its reader has.
+    expect(eventController.getLocationState()).toEqual({
+      __rsc_ls_flash: { text: "saved" },
+      __rsc_ls_note: "from-action",
+    });
+    expect(eventController.getLocationState()!.__rsc_ls_flash).toBe(shownFlash);
+    expect(order.slice(0, 3)).toEqual([
+      "provider took the state",
+      "tree rendered",
+      "tree committed",
+    ]);
+    expect(window.dispatchEvent).not.toHaveBeenCalled();
+  });
+});
+
 describe("server-action-bridge redirect payload validation", () => {
   it("allows same-origin redirect payload", async () => {
     stubWindow();

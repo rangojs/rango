@@ -36,6 +36,7 @@ import {
   isForeignRouterId,
 } from "./response-adapter.js";
 import { mergeLocationState } from "./history-state.js";
+import { stampLocationState } from "./react/location-state-shared.js";
 import { classifyActionOutcome } from "./action-coordinator.js";
 import { getAppVersion } from "./app-version.js";
 import { collectClientRevalidationDecisions } from "../client-urls/navigation.js";
@@ -79,11 +80,22 @@ export interface ServerActionBridgeConfigWithController extends ServerActionBrid
 function applyActionLocationState(
   handle: ActionHandle,
   locationState: Record<string, unknown> | undefined,
+  eventController: EventController,
 ): void {
   if (!locationState) return;
   const winning = handle.claimLocationState(locationState);
   if (Object.keys(winning).length > 0) {
     mergeLocationState(winning);
+    // The entry and its tree stay, so readers take the action's slots now,
+    // not with its revalidated tree: several terminals commit no tree, and a
+    // navigation during that render drops it. Added to what readers hold,
+    // not re-read from the entry: a flash value on screen was already cleared
+    // from history, and a write()/delete() stays unseen until the entry is
+    // restored.
+    const shown = { ...eventController.getLocationState(), ...winning };
+    stampLocationState(shown);
+    eventController.commitLocationState(shown, true);
+    eventController.flushRouteState();
   }
 }
 
@@ -734,7 +746,11 @@ export function createServerActionBridge(
       // before the normal branch's async renderSegments) so a slow render racing
       // a navigation cannot drop it.
       if (scenario.type !== "navigated-away") {
-        applyActionLocationState(handle, metadata?.locationState);
+        applyActionLocationState(
+          handle,
+          metadata?.locationState,
+          eventController,
+        );
       }
       // transition({ when }) `action` for this action's commit, whichever
       // lane applies it (normal, or a refetch below).

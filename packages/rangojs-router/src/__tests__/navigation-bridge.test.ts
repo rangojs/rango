@@ -42,6 +42,7 @@ function createEventController() {
   return {
     abortNavigation: vi.fn(),
     getHandleState: vi.fn(() => ({ data: {} })),
+    commitLocationState: vi.fn(),
   };
 }
 
@@ -226,8 +227,12 @@ describe("navigation-bridge revalidate: false", () => {
     expect(fetchPartialUpdateMock).toHaveBeenCalledTimes(1);
   });
 
-  it("dispatches __rsc_locationstate when state is passed with revalidate: false", async () => {
+  // A shallow navigation pushes an entry and commits no tree: its location
+  // state reaches readers through the controller, next to the location
+  // notification (#1029). No window event carries it.
+  it("commits the pushed entry's location state with revalidate: false", async () => {
     const dispatchEvent = vi.fn();
+    const order: string[] = [];
     vi.stubGlobal("window", {
       location: {
         href: "http://localhost/products?color=red",
@@ -245,13 +250,17 @@ describe("navigation-bridge revalidate: false", () => {
 
     const store = createStore();
     store.getCachedSegments.mockReturnValue(undefined);
+    const pushState = vi.mocked(window.history.pushState);
+    pushState.mockImplementation(() => void order.push("pushState"));
+    const commitLocationState = vi.fn(() => void order.push("commit"));
 
     const bridge = createNavigationBridge({
       store: store as any,
       client: {} as any,
       eventController: {
         ...createEventController(),
-        setLocation: vi.fn(),
+        commitLocationState,
+        setLocation: vi.fn(() => void order.push("setLocation")),
       } as any,
       onUpdate: vi.fn(),
       renderSegments: vi.fn(async () => "tree"),
@@ -262,10 +271,15 @@ describe("navigation-bridge revalidate: false", () => {
       state: { from: "filter" },
     });
 
-    // __rsc_locationstate should have been dispatched for useLocationState()
-    expect(dispatchEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "__rsc_locationstate" }),
+    // After the entry exists, as a treeless commit of the pushed state: no
+    // payload follows a shallow navigation, so the provider takes it with
+    // the location notification.
+    expect(order).toEqual(["pushState", "commit", "setLocation"]);
+    expect(commitLocationState).toHaveBeenCalledExactlyOnceWith(
+      { state: { from: "filter" } },
+      true,
     );
+    expect(dispatchEvent).not.toHaveBeenCalled();
   });
 
   it("preserves intercept context in history state and cache key", async () => {
@@ -327,8 +341,12 @@ describe("navigation-bridge revalidate: false", () => {
     );
   });
 
-  it("does not dispatch __rsc_locationstate when no state is involved", async () => {
+  // A push without state starts an entry with no location state: a mounted
+  // reader has to drop the value of the entry being left, so the commit is
+  // not conditional on either entry carrying state.
+  it("commits with revalidate: false when no state is involved", async () => {
     const dispatchEvent = vi.fn();
+    const commitLocationState = vi.fn();
     vi.stubGlobal("window", {
       location: {
         href: "http://localhost/products?color=red",
@@ -352,6 +370,7 @@ describe("navigation-bridge revalidate: false", () => {
       client: {} as any,
       eventController: {
         ...createEventController(),
+        commitLocationState,
         setLocation: vi.fn(),
       } as any,
       onUpdate: vi.fn(),
@@ -360,9 +379,82 @@ describe("navigation-bridge revalidate: false", () => {
 
     await bridge.navigate("/products?color=blue", { revalidate: false });
 
-    // No state involved — should not dispatch
+    expect(commitLocationState).toHaveBeenCalledExactlyOnceWith(null, true);
     expect(dispatchEvent).not.toHaveBeenCalled();
   });
+});
+
+// #1029: location state is committed by the transaction's commit and nowhere
+// else on this path. A navigation that never reaches it carried `state` for
+// nothing: no entry is pushed and no reader hears of it, whether the bridge
+// renders an error boundary or drops the navigation.
+describe("navigation-bridge location state on a navigation that does not commit", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    fetchPartialUpdateMock.mockReset();
+    createNavigationTransactionMock.mockReset();
+  });
+
+  it.each([
+    {
+      label: "a network failure",
+      error: new TypeError("Failed to fetch"),
+      aborted: false,
+      boundaryUpdates: 1,
+    },
+    {
+      label: "an unprocessable response",
+      error: new Error("undecodable Flight body"),
+      aborted: false,
+      boundaryUpdates: 1,
+    },
+    {
+      label: "a navigation superseded by another",
+      error: new DOMException("Navigation aborted", "AbortError"),
+      aborted: true,
+      boundaryUpdates: 0,
+    },
+  ])(
+    "$label commits no location state",
+    async ({ error, aborted, boundaryUpdates }) => {
+      const pushState = vi.fn();
+      const replaceState = vi.fn();
+      vi.stubGlobal("window", {
+        location: {
+          href: "http://localhost/current",
+          origin: "http://localhost",
+        },
+        history: { state: { key: "k1" }, pushState, replaceState },
+        dispatchEvent: vi.fn(),
+      });
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const abort = new AbortController();
+      if (aborted) abort.abort();
+      createNavigationTransactionMock.mockReturnValue({
+        handle: { signal: abort.signal },
+        with: vi.fn(() => ({})),
+        [Symbol.dispose]: vi.fn(),
+      });
+      fetchPartialUpdateMock.mockRejectedValue(error);
+      const eventController = createEventController();
+      const onUpdate = vi.fn();
+
+      const bridge = createNavigationBridge({
+        store: createStore() as any,
+        client: {} as any,
+        eventController: eventController as any,
+        onUpdate,
+        renderSegments: vi.fn(async () => "tree"),
+      });
+      await bridge.navigate("/target", { state: { from: "list" } });
+
+      expect(eventController.commitLocationState).not.toHaveBeenCalled();
+      expect(pushState).not.toHaveBeenCalled();
+      expect(replaceState).not.toHaveBeenCalled();
+      expect(onUpdate).toHaveBeenCalledTimes(boundaryUpdates);
+    },
+  );
 });
 
 describe("navigation-bridge redirect validation", () => {

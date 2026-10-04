@@ -7,7 +7,10 @@ import {
 } from "../browser/react/filter-segment-order.js";
 import { ThemeProvider } from "../theme/ThemeProvider.js";
 import { NonceContext } from "../browser/react/nonce-context.js";
-import { NavigationStoreContext } from "../browser/react/context.js";
+import {
+  LocationStateContext,
+  NavigationStoreContext,
+} from "../browser/react/context.js";
 import type { NavigationStoreContextValue } from "../browser/react/context.js";
 import type { HandleData } from "../browser/types.js";
 import type { ResolvedSegment } from "../types.js";
@@ -124,6 +127,9 @@ function createSsrEventController(opts: {
       params = nextParams;
     },
     getParams: () => params,
+    commitLocationState: () => {},
+    getLocationState: () => undefined,
+    takeTreelessLocationState: () => false,
     setLocation: () => {},
     startNavigation: () => {
       throw new Error("Navigation not supported during SSR");
@@ -294,7 +300,7 @@ export function createSsrRootComponent(opts: SsrRootOptions): React.FC {
     };
 
     // Build content tree from segments.
-    // Order must match NavigationProvider: NavigationStoreContext > NonceContext > ThemeProvider > content
+    // Order must match NavigationProvider: NavigationStoreContext > LocationStateContext > NonceContext > ThemeProvider > content
     // Memoize like payload/handles above: renderSegments is async, so
     // React.use() on a fresh promise suspends and replays SsrRoot, which
     // would re-run the entire segment-tree build on every initial render.
@@ -324,10 +330,13 @@ export function createSsrRootComponent(opts: SsrRootOptions): React.FC {
       <NonceContext.Provider value={nonce}>{content}</NonceContext.Provider>
     );
 
-    // Wrap with NavigationStoreContext for useNavigation hook
+    // Wrap with NavigationStoreContext for useNavigation hook. The server has
+    // no history entry: location state is undefined, as readers hydrate.
     return (
       <NavigationStoreContext.Provider value={ssrContextValue!}>
-        {content}
+        <LocationStateContext.Provider value={undefined}>
+          {content}
+        </LocationStateContext.Provider>
       </NavigationStoreContext.Provider>
     );
   };

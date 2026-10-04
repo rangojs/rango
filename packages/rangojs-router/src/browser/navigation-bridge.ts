@@ -14,11 +14,7 @@ import {
   createNavigationTransaction,
   resolveNavigationState,
 } from "./navigation-transaction.js";
-import {
-  buildHistoryState,
-  hasLocationState,
-  pushHistoryWithIdx,
-} from "./history-state.js";
+import { buildHistoryState, pushHistoryWithIdx } from "./history-state.js";
 import {
   handleNavigationStart,
   handleNavigationEnd,
@@ -220,8 +216,6 @@ export function createNavigationBridge(
         // Save current scroll position before changing URL
         handleNavigationStart();
 
-        // Snapshot old state before pushState/replaceState overwrites it
-        const oldState = window.history.state;
         const shallowRouteName = store.getHistoryEntryMemory()?.routeName;
 
         // Update browser URL (carry intercept context into history state)
@@ -239,11 +233,8 @@ export function createNavigationBridge(
         ensureHistoryKey();
         // Same route, new entry (transition({ when }) back/forward source).
         store.rememberDisplayedEntry(shallowRouteName);
-
-        // Notify useLocationState() hooks when state changes
-        if (hasLocationState(oldState) || hasLocationState(historyState)) {
-          window.dispatchEvent(new Event("__rsc_locationstate"));
-        }
+        // Treeless: readers take the entry's state with setLocation below.
+        eventController.commitLocationState(historyState, true);
 
         // Update store history key so future navigations reference the right cache
         store.setHistoryKey(historyKey);
@@ -357,6 +348,8 @@ export function createNavigationBridge(
       const clientUrlPresentation = beginClientUrlNavigation(
         targetUrl,
         tx.handle.signal,
+        // The entry the commit will push, without what the server adds.
+        () => buildHistoryState(resolvedState),
         transitionOptOut
           ? () => true
           : (destination) =>
@@ -378,7 +371,7 @@ export function createNavigationBridge(
                       url: targetUrl,
                       params: { ...params, ...destination.params },
                       routeName: destination.routeName,
-                      state: buildHistoryState(resolvedState),
+                      state: destination.state,
                     };
                   },
                   extra: destination.when,
@@ -651,6 +644,9 @@ export function createNavigationBridge(
           // Set params on event controller before onUpdate so both location
           // and params are current when the debounced notify() fires.
           eventController.setParams(cachedParams);
+          // The entry this handler found at the event, which the cached tree
+          // was built for: history may have moved during the render above.
+          eventController.commitLocationState(historyState);
 
           const popstateUpdate = {
             root,

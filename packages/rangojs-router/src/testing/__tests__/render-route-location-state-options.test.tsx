@@ -101,7 +101,7 @@ describe("renderRoute: createLocationState({ clearOnReload })", () => {
     expect(Carried.read()).toEqual(["p6"]);
   });
 
-  it("popstate and __rsc_locationstate in the running app still apply it", async () => {
+  it("back/forward in the running app still applies it", async () => {
     const { getByTestId } = await renderRoute(routes, {
       request,
       hydrate: true,
@@ -109,16 +109,11 @@ describe("renderRoute: createLocationState({ clearOnReload })", () => {
     });
     expect(getByTestId("items").textContent).toBe("p6");
 
-    for (const [event, value] of [
-      ["popstate", ["p1"]],
-      ["__rsc_locationstate", ["p1", "p2"]],
-    ] as const) {
-      await act(async () => {
-        window.history.replaceState({ [Carried.__rsc_ls_key]: value }, "");
-        window.dispatchEvent(new Event(event));
-      });
-      expect(getByTestId("items").textContent).toBe([...value, "p6"].join(","));
-    }
+    await act(async () => {
+      window.history.replaceState({ [Carried.__rsc_ls_key]: ["p1"] }, "");
+      window.dispatchEvent(new Event("popstate"));
+    });
+    expect(getByTestId("items").textContent).toBe("p1,p6");
   });
 
   it("a reader that mounts later, or hydrates in a late Suspense boundary, does not resurrect it", async () => {
