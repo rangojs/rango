@@ -132,6 +132,20 @@ let _hashParams:
   | typeof import("../../prerender/param-hash.js").hashParams
   | undefined;
 
+/**
+ * @internal Replace the prerender store this module serves from, and return
+ * the one it replaced. For serveShellRequest (testing/serve-shell-request.ts),
+ * which installs the production store over the artifacts it bakes for a call
+ * and puts the previous one back after it.
+ */
+export function setPrerenderStoreForTests(
+  store: PrerenderStore | null | undefined,
+): PrerenderStore | null | undefined {
+  const previous = prerenderStoreInstance;
+  prerenderStoreInstance = store;
+  return previous;
+}
+
 async function ensurePrerenderDeps() {
   if (!_deserializeSegments) {
     const [codec, snapshot, paramHash, store] = await Promise.all([
