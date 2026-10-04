@@ -44,6 +44,8 @@ import {
   SHELL_CAPTURE_MAX_WAIT_MS,
 } from "../rsc/shell-capture-constants.js";
 import { SEGMENT_FRAGMENT_CAPABILITY_HEADER } from "../segment-fragments.js";
+import { resolveDeferredHandleValues } from "../handles/deferred-resolution.js";
+import type { HandleData } from "../server/handle-store.js";
 import { _getRequestContext } from "../server/request-context.js";
 import {
   parsePprReplayStatus,
@@ -75,6 +77,22 @@ export interface ServeShellRequestOptions<TEnv = any> {
    * `result.replayStatus`.
    */
   partial?: true | { from?: string; segments?: readonly string[] };
+}
+
+/** A response's handle data, as the browser consumes it. */
+export interface ShellRequestHandles {
+  /**
+   * What the document hydrates with: `metadata.handles`, read to its end
+   * before hydration starts. For a `partial` request, the last state the
+   * navigation streamed.
+   */
+  hydration: HandleData;
+  /**
+   * The states `metadata.handlesLate` delivered, in order. Each one replaces
+   * the client's handle data after hydration. Empty when nothing arrived
+   * late, and for a `partial` request.
+   */
+  late: HandleData[];
 }
 
 /** Result of {@link serveShellRequest}. */
@@ -113,6 +131,11 @@ export interface ServeShellRequestResult {
    * (CFCacheStore, VercelCacheStore) it warms the memo like any other read.
    */
   readEntry(): Promise<ShellCacheEntry | null>;
+  /**
+   * Decode the handle data of `flight` as the browser reads it, deferred
+   * values resolved. Undefined when no Flight was rendered.
+   */
+  readHandles(): Promise<ShellRequestHandles | undefined>;
 }
 
 type ShellHandler = ReturnType<typeof createRSCHandler>;
@@ -202,6 +225,28 @@ const SSR_STUB: SSRModule = {
     );
   },
 };
+
+type HandleChannel = AsyncIterable<HandleData> | undefined;
+
+/**
+ * Read a payload's two handle channels as browser/rsc-router.tsx does:
+ * `handles` to its end, then every `handlesLate` state.
+ */
+async function decodePayloadHandles(
+  flight: string,
+): Promise<ShellRequestHandles> {
+  const { deserializeResult } = await import("../cache/segment-codec.js");
+  const { metadata } = await deserializeResult<{
+    metadata?: { handles?: HandleChannel; handlesLate?: HandleChannel };
+  }>(flight);
+  let hydration: HandleData = {};
+  for await (const data of metadata?.handles ?? []) hydration = data;
+  const late: HandleData[] = [];
+  for await (const data of metadata?.handlesLate ?? []) {
+    late.push(await resolveDeferredHandleValues(data));
+  }
+  return { hydration: await resolveDeferredHandleValues(hydration), late };
+}
 
 /**
  * Handlers per router, keyed by the `cacheStore` override or the router. A
@@ -377,16 +422,18 @@ export async function serveShellRequest<TEnv = any>(
   const isFlight =
     recorder.rendered ||
     response.headers.get("content-type")?.includes("text/x-component");
+  const prelude =
+    tail !== undefined && body.endsWith(tail)
+      ? body.slice(0, body.length - tail.length)
+      : undefined;
+  const flight = tail ?? (isFlight && body ? body : undefined);
   return {
     response,
     body,
     shellStatus: parseShellStatus(response),
     replayStatus: parsePprReplayStatus(response),
-    prelude:
-      tail !== undefined && body.endsWith(tail)
-        ? body.slice(0, body.length - tail.length)
-        : undefined,
-    flight: tail ?? (isFlight && body ? body : undefined),
+    prelude,
+    flight,
     key,
     async readEntry() {
       // Passive, like the serve path's own reads: a stale entry's SWR
@@ -395,6 +442,9 @@ export async function serveShellRequest<TEnv = any>(
         claimRevalidation: false,
       });
       return read?.entry ?? null;
+    },
+    async readHandles() {
+      return flight ? decodePayloadHandles(flight) : undefined;
     },
   };
 }

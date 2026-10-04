@@ -75,6 +75,19 @@ export function shellHarness<
   };
 }
 
+/**
+ * The handle state a response leaves the client with, as JSON text: the last
+ * state that arrived after hydration, else the state the document hydrated
+ * with (a navigation: the last state it streamed). A document HIT carries
+ * both (issue #1035), so its Flight text holds a push more than once.
+ */
+export async function shownHandles(
+  result: ServeShellRequestResult,
+): Promise<string> {
+  const handles = await result.readHandles();
+  return JSON.stringify(handles?.late.at(-1) ?? handles?.hydration ?? {});
+}
+
 export async function getProduct(id: string): Promise<string> {
   "use cache";
   cacheTag(`product:${id}`);

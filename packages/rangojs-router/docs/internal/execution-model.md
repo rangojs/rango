@@ -253,6 +253,39 @@ global middleware
     segment order, waiter/deadlock state, and the post-settle handle snapshot in
     the same context as tail matching. Otherwise `ctx.rendered()` can inherit a
     premature non-streaming snapshot and miss handles pushed behind `loading()`.
+  - **A shell HIT hydrates with its record's handle data.** The prelude was
+    rendered at capture from the handle pushes the record keeps (a capture's
+    payload carries no other: `resolvedHandleStream` `recordedOnly`), so the
+    document's pre-hydration snapshot (`metadata.handles`) is the record as
+    restored, standing copies and placeholders alike. `serveShellHit` freezes
+    the handle store's document lane when the tail's render barrier resolves
+    (`HandleStore.freezeDocumentSnapshot`): the record is replayed and no
+    loader has run. Everything the request's loaders then push, replace or
+    drop (a live-lane push, a placeholder's replacement, a deferred push, a
+    `cache()` entry's replay) rides `metadata.handlesLate`, whether or not it
+    beat the handler barrier, and the client applies it after the root
+    hydrates. A document MISS, a route without `ppr` and a navigation replay
+    are unchanged: there the snapshot is the store at the handler barrier.
+    Pinned by "a shell HIT hydrates from its record" in
+    `serve-shell-request-push-ownership.rsc-test.tsx`,
+    `handle-store.test.ts`, and `expectShellHitHydratesFromRecord` in both
+    apps (#1035).
+  - **A `useHandle` reader hydrates with the document's handle data, on
+    every document.** "After hydration" above is after the ROOT hydrates.
+    A reader in a boundary that hydrates later (a live loader's `loading()`,
+    a streamed `<Suspense>`) reads, in its hydrating render, the handle state
+    `initBrowserApp` froze before `hydrateRoot`
+    (`EventController.freezeHydrationHandleState` /
+    `getHydrationHandleState`), and its mount effect moves it on to the live
+    state. `useHandle` gets it as `useSyncExternalStore`'s server snapshot;
+    it is `undefined` while the live state is still the frozen one, and the
+    client snapshot is a constant `undefined`, so a reader that hydrated
+    with nothing late renders once and no handle update is a store change to
+    React. Before, the reader took the live state, late updates included, and
+    mismatched its HTML: a loader push after an `await` on any document.
+    Pinned by `use-handle-hydration.test.tsx`,
+    `render-route-hydrate.test.tsx` (`lateHandles`), and
+    `expectLateBoundaryHandleReaderHydratesClean` in both apps (#1035).
   - **`ctx.dynamic()` is the request-level opt-out on this axis.** Runtime
     middleware calls it BEFORE the commit point, so it forces the request onto
     axis 1 — the shell lookup/HIT/MISS-capture is skipped even when a valid

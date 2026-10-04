@@ -371,6 +371,185 @@ describe("HandleStore two-lane settlement (loader handle writes)", () => {
   });
 });
 
+// Issue #1035: a PPR shell HIT hydrates with the handle data its prelude was
+// rendered from (the record, as restored), and everything the request's
+// loaders do to the store afterwards reaches the client after hydration.
+describe("HandleStore.freezeDocumentSnapshot (a shell HIT hydrates from its record)", () => {
+  async function drain<T>(stream: AsyncIterable<T>): Promise<T[]> {
+    const yields: T[] = [];
+    for await (const value of stream) yields.push(value);
+    return yields;
+  }
+
+  it('stream("settled") yields the frozen state, not what a loader did after it', async () => {
+    const store = createHandleStore();
+    store.setRecordAuthority((id) => (id === "Bake" ? "pin" : "hole"));
+    store.pushRestored("notes", "seg1", "bake@g1", "Bake");
+    store.pushPlaceholder("notes", "seg1", "live@g1", "Live");
+    store.freezeDocumentSnapshot();
+    // Each lands before the lane's first read (its setTimeout(0) batch).
+    runInsideLoaderBodyScope(
+      () => store.push("notes", "seg1", "live@g2"),
+      "Live",
+    );
+    runInsideLoaderBodyScope(
+      () => store.push("notes", "seg1", Promise.resolve("deferred")),
+      "Bake",
+    );
+
+    expect(await drain(store.stream("settled"))).toEqual([
+      { notes: { seg1: ["bake@g1", "live@g1"] } },
+    ]);
+  });
+
+  it("streamLate delivers a change made before the handler barrier with the loader lane idle", async () => {
+    const store = createHandleStore();
+    store.push("notes", "seg1", "record");
+    store.freezeDocumentSnapshot();
+    store.push("notes", "seg1", "run");
+
+    expect(await drain(store.streamLate())).toEqual([
+      { notes: { seg1: ["record", "run"] } },
+    ]);
+  });
+
+  it("streamLate delivers a placeholder its loader's run replaced, and one it dropped", async () => {
+    const replaced = createHandleStore();
+    replaced.pushPlaceholder("notes", "seg1", "live@g1", "Live");
+    replaced.freezeDocumentSnapshot();
+    runInsideLoaderBodyScope(
+      () => replaced.push("notes", "seg1", "live@g2"),
+      "Live",
+    );
+    replaced.settleLoaderRun("Live");
+
+    const dropped = createHandleStore();
+    dropped.push("notes", "seg1", "handler");
+    dropped.pushPlaceholder("notes", "seg1", "live@g1", "Live");
+    dropped.freezeDocumentSnapshot();
+    dropped.settleLoaderRun("Live");
+
+    expect((await drain(replaced.streamLate())).at(-1)).toEqual({
+      notes: { seg1: ["live@g2"] },
+    });
+    expect((await drain(dropped.streamLate())).at(-1)).toEqual({
+      notes: { seg1: ["handler"] },
+    });
+  });
+
+  it("streamLate keeps delivering until the loader lane drains", async () => {
+    const store = createHandleStore();
+    store.push("notes", "seg1", "record");
+    store.freezeDocumentSnapshot();
+    let releaseLoader!: () => void;
+    store.trackAuxiliary(
+      new Promise<void>((r) => (releaseLoader = r)).then(() => {
+        store.push("notes", "seg1", "slow");
+      }),
+    );
+    store.push("notes", "seg1", "fast");
+
+    const late = drain(store.streamLate());
+    await store.settled;
+    await delay(5);
+    releaseLoader();
+
+    expect(await late).toEqual([
+      { notes: { seg1: ["record", "fast"] } },
+      { notes: { seg1: ["record", "fast", "slow"] } },
+    ]);
+  });
+
+  it("streamLate returns without yielding when nothing changed after the freeze", async () => {
+    const store = createHandleStore();
+    store.pushRestored("notes", "seg1", "bake@g1", "Bake");
+    store.freezeDocumentSnapshot();
+    // A pinned loader's settled push is dropped: the record's copy stands.
+    runInsideLoaderBodyScope(
+      () => store.push("notes", "seg1", "bake@g2"),
+      "Bake",
+    );
+
+    expect(await drain(store.streamLate())).toEqual([]);
+    expect(await drain(store.stream("settled"))).toEqual([
+      { notes: { seg1: ["bake@g1"] } },
+    ]);
+  });
+
+  it("the first freeze wins, and an empty one yields nothing on the document lane", async () => {
+    const store = createHandleStore();
+    store.freezeDocumentSnapshot();
+    store.push("notes", "seg1", "run");
+    store.freezeDocumentSnapshot();
+
+    expect(await drain(store.stream("settled"))).toEqual([]);
+    expect(await drain(store.streamLate())).toEqual([
+      { notes: { seg1: ["run"] } },
+    ]);
+  });
+
+  // SSR and the pre-hydration drain block on this stream: a frozen state
+  // cannot change, so it does not wait for the batching timer.
+  it('stream("settled") serves the frozen state without a timer tick', async () => {
+    vi.useFakeTimers();
+    try {
+      const store = createHandleStore();
+      store.push("notes", "seg1", "record");
+      store.freezeDocumentSnapshot();
+
+      const stream = store.stream("settled");
+
+      // No timer is advanced: a pending setTimeout would hang these.
+      expect(await stream.next()).toEqual({
+        done: false,
+        value: { notes: { seg1: ["record"] } },
+      });
+      expect((await stream.next()).done).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports a freeze that comes after the document stream was first read (development)", async () => {
+    const store = createHandleStore();
+    const onError = vi.fn();
+    store.onError = onError;
+    store.push("notes", "seg1", "record");
+    const stream = store.stream("settled");
+    const first = stream.next();
+
+    store.freezeDocumentSnapshot();
+    await first;
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0]![0].message).toMatch(
+      /ran after the document's handle stream .* was first read/,
+    );
+  });
+
+  it("reports nothing when the freeze comes first, or twice", async () => {
+    const store = createHandleStore();
+    const onError = vi.fn();
+    store.onError = onError;
+    store.freezeDocumentSnapshot();
+    await drain(store.stream("settled"));
+    store.freezeDocumentSnapshot();
+
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("leaves the default stream (a navigation's) on the live state", async () => {
+    const store = createHandleStore();
+    store.push("notes", "seg1", "record");
+    store.freezeDocumentSnapshot();
+    store.push("notes", "seg1", "run");
+
+    expect((await drain(store.stream())).at(-1)).toEqual({
+      notes: { seg1: ["record", "run"] },
+    });
+  });
+});
+
 describe("HandleStore loader-push tagging (cache() record exclusion)", () => {
   it("getDataForSegment(id, true) drops DSL-loader pushes by position, primitives included", () => {
     const store = createHandleStore();

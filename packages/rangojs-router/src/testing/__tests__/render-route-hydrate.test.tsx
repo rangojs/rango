@@ -17,9 +17,11 @@ import {
 } from "@testing-library/react";
 import {
   createLocationState,
+  useHandle,
   useLocationState,
   useParams,
 } from "../../client.js";
+import { createHandle } from "../../index.js";
 import { renderRoute } from "../dom.entry.js";
 import { withLocationStateKey } from "../index.js";
 
@@ -158,6 +160,95 @@ describe("renderRoute: hydrate", () => {
       expect(getByTestId("count").textContent).toBe("3");
     },
   );
+
+  it.each([
+    { strict: false, label: "no StrictMode" },
+    { strict: true, label: "StrictMode" },
+  ])(
+    "#1035: a useHandle reader in a Suspense boundary that hydrates after a late handle update reads the values its HTML was rendered from, then the update ($label)",
+    async ({ strict }) => {
+      configure({ reactStrictMode: strict });
+      const Notes = createHandle<string, string[]>(
+        (segments) => segments.flat(),
+        "__test_late_notes__",
+      );
+      const seen: Array<{ pass: Pass; reader: string; notes: string[] }> = [];
+      function Rows({ reader }: { reader: string }) {
+        const notes = useHandle(Notes);
+        seen.push({ pass: currentPass(), reader, notes });
+        return (
+          <ul data-testid={reader}>
+            {notes.map((note, index) => (
+              <li key={index}>{note}</li>
+            ))}
+          </ul>
+        );
+      }
+      // "above" hydrates with the root, before the late update is applied;
+      // "boundary" hydrates in a later pass, after it.
+      function Page() {
+        return (
+          <>
+            <Rows reader="above" />
+            <Suspense fallback={null}>
+              <Rows reader="boundary" />
+            </Suspense>
+          </>
+        );
+      }
+      const rows = (element: HTMLElement): (string | null)[] =>
+        Array.from(element.querySelectorAll("li"), (row) => row.textContent);
+
+      const { serverHtml, recoverableErrors, getByTestId } = await renderRoute(
+        [{ path: "/notes", Component: Page }],
+        {
+          hydrate: true,
+          handles: [[Notes, ["from-handler"]]],
+          lateHandles: [[Notes, ["from-handler", "from-loader"]]],
+        },
+      );
+
+      // The HTML is rendered from `handles`, in both readers.
+      expect(serverHtml.match(/<li>[^<]*<\/li>/g)).toEqual([
+        "<li>from-handler</li>",
+        "<li>from-handler</li>",
+      ]);
+      expect(recoverableErrors).toEqual([]);
+      // The boundary's hydrating render, after the update reached the page.
+      const boundary = seen.filter(
+        (sample) => sample.pass === "client" && sample.reader === "boundary",
+      );
+      expect(boundary[0]?.notes).toEqual(["from-handler"]);
+      expect(rows(getByTestId("above"))).toEqual([
+        "from-handler",
+        "from-loader",
+      ]);
+      expect(rows(getByTestId("boundary"))).toEqual([
+        "from-handler",
+        "from-loader",
+      ]);
+    },
+  );
+
+  it("lateHandles on a mounted tree replace the handle's seed after mount", async () => {
+    const Notes = createHandle<string, string[]>(
+      (segments) => segments.flat(),
+      "__test_late_notes_mounted__",
+    );
+    function Rows() {
+      return <p data-testid="notes">{useHandle(Notes).join(", ")}</p>;
+    }
+
+    const { getByTestId } = await renderRoute(
+      [{ path: "/", Component: Rows }],
+      {
+        handles: [[Notes, ["from-handler"]]],
+        lateHandles: [[Notes, ["from-handler", "from-loader"]]],
+      },
+    );
+
+    expect(getByTestId("notes").textContent).toBe("from-handler, from-loader");
+  });
 
   it("sets the root's hydrated marker before a Suspense boundary hydrates, and removes it on unmount", async () => {
     const hydrated = (): boolean =>

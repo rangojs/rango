@@ -1,9 +1,11 @@
 import { test } from "@playwright/test";
 import { useFixture, type Fixture } from "./fixture";
 import {
+  expectLateBoundaryHandleReaderHydratesClean,
   expectPinlessHitKeepsRunPushWithRunData,
   expectReplayDeliversDeferredPush,
   expectReplayKeepsCapturedPushWithPinnedData,
+  expectShellHitHydratesFromRecord,
   type PushOwnershipFixture,
 } from "@shared/e2e";
 
@@ -23,6 +25,7 @@ function runPushOwnershipSpec(f: Fixture) {
     pinnedUrl: f.url("/shell-push/pinned"),
     cappedUrl: f.url("/shell-push/capped"),
     deferredUrl: f.url("/shell-push/deferred"),
+    liveUrl: f.url("/shell-push/live"),
     bumpUrl: f.url("/shell-push/__bump"),
     homeUrl: f.url("/"),
   });
@@ -43,6 +46,18 @@ function runPushOwnershipSpec(f: Fixture) {
     page,
   }) => {
     await expectPinlessHitKeepsRunPushWithRunData(page, fixture());
+  });
+
+  test("a document HIT hydrates clean from the shell's record and shows a deferred push after hydration (#1035)", async ({
+    page,
+  }) => {
+    await expectShellHitHydratesFromRecord(page, fixture());
+  });
+
+  test("a useHandle reader inside a live loader's loading boundary hydrates clean on a document MISS and on a shell HIT (#1035)", async ({
+    page,
+  }) => {
+    await expectLateBoundaryHandleReaderHydratesClean(page, fixture());
   });
 }
 

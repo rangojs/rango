@@ -122,6 +122,9 @@ function createSsrEventController(opts: {
     flushRouteState: () => {},
     setHandleData: () => {},
     getHandleState: () => handleState,
+    freezeHydrationHandleState: () => {},
+    // The server render is the state the document is rendered with.
+    getHydrationHandleState: () => undefined,
     setRouteSegmentIds: () => {},
     setParams: (nextParams) => {
       params = nextParams;

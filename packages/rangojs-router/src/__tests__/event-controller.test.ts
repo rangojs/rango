@@ -1261,6 +1261,92 @@ describe("createEventController", () => {
     });
   });
 
+  // Issue #1035: a render React is hydrating reads the handle state the
+  // document's HTML was rendered with (useHandle), whenever its boundary
+  // hydrates. The controller keeps that state from before hydrateRoot.
+  describe("hydration handle state", () => {
+    it("is undefined until the live state moves on from the frozen one", () => {
+      const ctrl = createController();
+      expect(ctrl.getHydrationHandleState()).toBeUndefined();
+
+      ctrl.setHandleData({ Notes: { R0: ["document"] } }, ["R0"]);
+      ctrl.freezeHydrationHandleState();
+
+      // Nothing arrived since: the live state is the document's state.
+      expect(ctrl.getHydrationHandleState()).toBeUndefined();
+    });
+
+    it("keeps the frozen state after a late (full) update", () => {
+      const ctrl = createController();
+      ctrl.setHandleData({ Notes: { R0: ["document"] } }, ["L0", "R0"]);
+      ctrl.freezeHydrationHandleState();
+
+      ctrl.setHandleData({ Notes: { R0: ["document", "late"] } }, ["L0", "R0"]);
+
+      expect(ctrl.getHydrationHandleState()).toEqual({
+        data: { Notes: { R0: ["document"] } },
+        segmentOrder: ["L0", "R0"],
+        routeSegmentIds: ["L0", "R0"],
+      });
+      expect(ctrl.getHandleState().data).toEqual({
+        Notes: { R0: ["document", "late"] },
+      });
+    });
+
+    it("a partial update merges into the live state, not into the frozen one", () => {
+      const ctrl = createController();
+      ctrl.setHandleData(
+        { Notes: { L0: ["layout"], R0: ["document"] }, Meta: { R0: ["m"] } },
+        ["L0", "R0"],
+      );
+      ctrl.freezeHydrationHandleState();
+
+      // A navigation's partial payload: R0 re-resolved, pushed Notes only.
+      ctrl.setHandleData({ Notes: { R0: ["navigated"] } }, ["L0", "R0"], true, [
+        "R0",
+      ]);
+
+      expect(ctrl.getHydrationHandleState()?.data).toEqual({
+        Notes: { L0: ["layout"], R0: ["document"] },
+        Meta: { R0: ["m"] },
+      });
+      expect(ctrl.getHandleState().data).toEqual({
+        Notes: { L0: ["layout"], R0: ["navigated"] },
+        Meta: {},
+      });
+    });
+
+    // A back/forward restore installs the history cache's own object as the
+    // live state (NavigationProvider, cachedHandleData): a later partial
+    // update must not write into it.
+    it("a partial update never writes into the object the state was set from", () => {
+      const ctrl = createController();
+      const restored = { Notes: { L0: ["layout"], R0: ["entry"] } };
+      ctrl.setHandleData(restored, ["L0", "R0"]);
+
+      ctrl.setHandleData({ Notes: { R0: ["navigated"] } }, ["L0", "R0"], true, [
+        "R0",
+      ]);
+
+      expect(restored).toEqual({ Notes: { L0: ["layout"], R0: ["entry"] } });
+      expect(ctrl.getHandleState().data).toEqual({
+        Notes: { L0: ["layout"], R0: ["navigated"] },
+      });
+    });
+
+    it("a partial update that changes nothing still moves the live state on", () => {
+      const ctrl = createController();
+      ctrl.setHandleData({ Notes: { R0: ["document"] } }, ["R0"]);
+      ctrl.freezeHydrationHandleState();
+
+      ctrl.setHandleData({}, ["R0"], true);
+
+      expect(ctrl.getHydrationHandleState()?.data).toEqual({
+        Notes: { R0: ["document"] },
+      });
+    });
+  });
+
   // ======================================================================
   // Subscriptions & Debounced Notifications
   // ======================================================================

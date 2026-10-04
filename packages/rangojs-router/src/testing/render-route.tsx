@@ -285,6 +285,24 @@ export interface RenderRouteOptions {
    */
   handle?: HandleDataSeed;
   /**
+   * Handle values a document delivers after hydration, as a loader's push
+   * that is not in the document's handle snapshot is (a push made after the
+   * handler output settled, or any loader push on a PPR shell HIT). Each
+   * entry is `[handle, values]`: the handle's values after the update, which
+   * replace its `handles` seed once the root has hydrated (or mounted). With
+   * `hydrate: true` the server HTML is rendered from `handles`, and a reader
+   * inside a `<Suspense>` boundary hydrates after the update was applied, as
+   * a boundary that hydrates after the root does in production.
+   *
+   * @example
+   * const { serverHtml, recoverableErrors } = await renderRoute(routes, {
+   *   hydrate: true,
+   *   handles: [[Notes, ["from-handler"]]],
+   *   lateHandles: [[Notes, ["from-handler", "from-loader"]]],
+   * });
+   */
+  lateHandles?: ReadonlyArray<readonly [Handle<any, any>, unknown[]]>;
+  /**
    * Route name -> pattern map. Informational for parity with the server test
    * context; client useReverse takes its map directly as an argument, so this
    * is not consumed by the client hooks.
@@ -510,6 +528,17 @@ function HydratedMarker(): null {
   return null;
 }
 
+/**
+ * Applies `lateHandles` from an effect after the tree's: where production's
+ * root effect releases the document's late handle channel
+ * (browser/rsc-router.tsx hydrationCommitted). A boundary that hydrates in a
+ * later pass finds the update applied.
+ */
+function LateHandles({ apply }: { apply: () => void }): null {
+  useEffect(apply, [apply]);
+  return null;
+}
+
 function matchLeaf(
   pattern: string,
   pathname: string,
@@ -720,10 +749,27 @@ export async function renderRoute(
   // before applying, so the seeded handles reach collect/useHandle resolved —
   // matching what the server/client do in a real app.
   const resolvedSeed = await resolveDeferredHandleValues(handleSeed);
-  eventController.setHandleData(
-    resolvedSeed,
-    initialSegments.map((s) => s.id),
-  );
+  const initialSegmentIds = initialSegments.map((s) => s.id);
+  eventController.setHandleData(resolvedSeed, initialSegmentIds);
+  // As initBrowserApp before hydrateRoot: what a hydrating reader reads.
+  eventController.freezeHydrationHandleState();
+  // A late update carries the full state: the seed with these handles' values
+  // replaced, resolved as the browser resolves a late yield before applying.
+  let applyLateHandles: (() => void) | undefined;
+  if (options.lateHandles && leafRouteSegmentId !== undefined) {
+    const lateSeed = cloneHandleSeed(resolvedSeed);
+    for (const [handle, values] of options.lateHandles) {
+      const id = (handle as unknown as { $$id: string }).$$id;
+      (lateSeed[id] ??= {})[leafRouteSegmentId] = values;
+    }
+    const lateState = await resolveDeferredHandleValues(lateSeed);
+    // Flushed, not left to the notify timer: renderRoute's act() has
+    // returned by then.
+    applyLateHandles = () => {
+      eventController.setHandleData(lateState, initialSegmentIds);
+      eventController.flushRouteState();
+    };
+  }
 
   let warnedNavLifecycle = false;
   const navigate = async (
@@ -896,6 +942,7 @@ export async function renderRoute(
       <DelegatedPrefetchRegistration bridge={bridge} />
       <LinkInterceptionRegistration bridge={bridge} />
       {options.hydrate && <HydratedMarker />}
+      {applyLateHandles && <LateHandles apply={applyLateHandles} />}
     </>
   );
 

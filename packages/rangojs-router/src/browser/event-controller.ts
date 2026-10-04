@@ -15,6 +15,7 @@ import {
   filterRouteSegmentIds,
 } from "./react/filter-segment-order.js";
 import { notifyListeners } from "./notify-listeners.js";
+import { cloneHandleData } from "./navigation-store.js";
 import {
   locationStateSnapshot,
   type LocationStateSnapshot,
@@ -262,6 +263,23 @@ export interface EventController {
   ): void;
   getHandleState(): HandleState;
   /**
+   * Keep the current handle state as the one the document's HTML was rendered
+   * with. initBrowserApp calls it before hydrateRoot, once the document's
+   * handle snapshot is applied.
+   */
+  freezeHydrationHandleState(): void;
+  /**
+   * The handle state the document's HTML was rendered with, once the live
+   * state has moved on from it; undefined while the live state is still that
+   * state (nothing changed since the freeze, or nothing was frozen: a tree
+   * that was mounted, an SSR pass). A render React is hydrating reads it
+   * (useHandle), whenever its boundary hydrates: the late handle channel
+   * (rsc-router.tsx) waits for the root to hydrate, not for a `<Suspense>`
+   * boundary that hydrates after it, and by then the live state can hold
+   * values that boundary's HTML does not (issue #1035).
+   */
+  getHydrationHandleState(): HandleState | undefined;
+  /**
    * Update ONLY `routeSegmentIds` (what `useSegments` reads) from `matched`,
    * leaving `data` and `segmentOrder` (what `useHandle` collects over) untouched.
    * Used while a deferred handle is resolving: the route has changed (so
@@ -480,6 +498,8 @@ export function createEventController(
   let handleData: HandleData = {};
   let handleSegmentOrder: string[] = [];
   let routeSegmentIds: string[] = [];
+  // freezeHydrationHandleState: what the document's HTML was rendered with.
+  let hydrationHandleState: HandleState | undefined;
 
   let routeParams: Record<string, string> = {};
 
@@ -1015,7 +1035,11 @@ export function createEventController(
     const newRouteSegmentIds = filterRouteSegmentIds(rawMatched);
 
     if (isPartial && newSegmentOrder.length > 0) {
-      // Partial update: merge new data with existing
+      // Partial update: merge new data with existing, into a copy of the
+      // containers. The object a reader was handed is never written to: the
+      // hydration snapshot (freezeHydrationHandleState) and a history entry
+      // restored from the store's cache can be that object.
+      handleData = cloneHandleData(handleData);
       for (const handleName of Object.keys(data)) {
         if (!handleData[handleName]) {
           handleData[handleName] = {};
@@ -1153,6 +1177,13 @@ export function createEventController(
     // Handles
     setHandleData,
     getHandleState,
+    freezeHydrationHandleState: () => {
+      hydrationHandleState = getHandleState();
+    },
+    getHydrationHandleState: () =>
+      hydrationHandleState?.data === handleData
+        ? undefined
+        : hydrationHandleState,
     setRouteSegmentIds,
 
     // Params

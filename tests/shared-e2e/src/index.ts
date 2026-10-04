@@ -2015,6 +2015,9 @@ export async function expectBackLeavesScrollToBrowser(
  * - `deferredUrl`: promise-free, bound with its own `cache()`, value
  *   `deferred@g<n>`, a settled push `settled-note@g<n>` and a deferred one
  *   `deferred-note@g<n>`.
+ * - `liveUrl`: a loader WITHOUT `ssr: false` under `loading()`, value
+ *   `live@g<n>`, one push `live-note@g<n>` made after an await. The view
+ *   reads the loader, so it renders inside the `loading()` boundary.
  * - `bumpUrl`: GET `<bumpUrl>?probe=` moves that probe's generation on and
  *   returns `{ generation }`.
  *
@@ -2025,6 +2028,7 @@ export interface PushOwnershipFixture {
   pinnedUrl: string;
   cappedUrl: string;
   deferredUrl: string;
+  liveUrl: string;
   bumpUrl: string;
   /** A page of the app outside the fixture, to navigate from. */
   homeUrl: string;
@@ -2130,15 +2134,15 @@ export async function expectReplayKeepsCapturedPushWithPinnedData(
  * loader's cache entry, next to the settled push the shell recorded, each
  * once. Before, the navigation dropped the deferred push.
  *
- * No hydration-error guard: on the document HIT the deferred push reaches
- * the client after hydration (the late channel), while the prelude already
- * rendered its row, so React repairs the list. That is the same before and
- * after this fix, and not what this body pins.
+ * The document HIT it starts from hydrates clean (#1035,
+ * expectShellHitHydratesFromRecord): the shell has no row for the deferred
+ * push, which arrives after hydration.
  */
 export async function expectReplayDeliversDeferredPush(
   page: Page,
   fixture: PushOwnershipFixture,
 ): Promise<void> {
+  using _ = guardHydrationErrors(page);
   const probe = pushProbe("deferred");
   const url = `${fixture.deferredUrl}?probe=${probe}`;
   await warmShellToHit(page, url);
@@ -2159,6 +2163,85 @@ export async function expectReplayDeliversDeferredPush(
   await expect(notes).toHaveText(expected);
 }
 
+/** The text of each `push-note` row in a document's HTML, before any script runs. */
+function pushNoteRowsInHtml(html: string): string[] {
+  return [
+    ...html.matchAll(/<li data-testid="push-note"[^>]*>([^<]*)<\/li>/g),
+  ].map((match) => match[1]!);
+}
+
+/**
+ * #1035: a document served from a shell hydrates with the handle data the
+ * shell's HTML was rendered from. The shell's record keeps the settled push
+ * of `deferredUrl`'s loader and leaves its deferred one out, so the HIT's
+ * HTML has one row, the page hydrates without a hydration error, and the
+ * deferred row shows after hydration (the late channel).
+ *
+ * Before, the shell had a second, empty row (the capture rendered a slot for
+ * the push it did not record), and the HIT's hydration data carried the
+ * deferred value or not depending on a race: React error #418 in
+ * production, "Hydration failed" in dev, on every HIT.
+ */
+export async function expectShellHitHydratesFromRecord(
+  page: Page,
+  fixture: PushOwnershipFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const probe = pushProbe("hit-handles");
+  const url = `${fixture.deferredUrl}?probe=${probe}`;
+  await warmShellToHit(page, url);
+
+  const hit = await page.request.get(url, { headers: PUSH_HTML_HEADERS });
+  expect(hit.headers()["x-rango-shell"]).toBe("HIT");
+  expect(pushNoteRowsInHtml(await hit.text())).toEqual(["settled-note@g1"]);
+
+  await gotoShellHit(page, url);
+  await expect(byTestId(page, "push-note")).toHaveText([
+    "settled-note@g1",
+    "deferred-note@g1",
+  ]);
+}
+
+/** The `push-note` rows on screen, and whether the root had hydrated. */
+interface PushNoteSample {
+  hydrated: boolean;
+  rows: string[];
+}
+
+/**
+ * Record the `push-note` rows and the root's hydrated marker every time
+ * either changes, from the first parsed HTML on. Call it before the
+ * navigation; the returned reader gives the current document's samples.
+ */
+async function recordPushNoteRows(
+  page: Page,
+): Promise<() => Promise<PushNoteSample[]>> {
+  await page.addInitScript(() => {
+    const samples: { hydrated: boolean; rows: (string | null)[] }[] = [];
+    (window as any).__pushNoteSamples = samples;
+    let last = "";
+    const sample = () => {
+      const rows = [
+        ...document.querySelectorAll('[data-testid="push-note"]'),
+      ].map((row) => row.textContent);
+      const hydrated =
+        document.documentElement?.hasAttribute("data-hydrated") ?? false;
+      const key = JSON.stringify([hydrated, rows]);
+      if (key === last) return;
+      last = key;
+      samples.push({ hydrated, rows });
+    };
+    new MutationObserver(sample).observe(document, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ["data-hydrated"],
+    });
+  });
+  return () => page.evaluate(() => (window as any).__pushNoteSamples);
+}
+
 /**
  * A document HIT of a shell entry that kept no loader pin
  * (`ppr.maxSnapshotBytes`): the `ssr: false` loader runs on the HIT, so the
@@ -2166,8 +2249,11 @@ export async function expectReplayDeliversDeferredPush(
  * run's data next to the push the shell recorded at capture.
  *
  * The prelude was rendered from the capture's value, so the browser repairs
- * the data on hydration (the documented drift of an entry without pins);
- * this asserts the page once it has, and installs no hydration-error guard.
+ * the loader DATA on hydration (the documented drift of an entry without
+ * pins), and this installs no hydration-error guard. The handle rows are
+ * not part of that drift (#1035): the page hydrates with the capture's push,
+ * as the HTML has it, and the run's push takes its place after hydration.
+ * Before, the hydration data already held the run's push.
  */
 export async function expectPinlessHitKeepsRunPushWithRunData(
   page: Page,
@@ -2177,12 +2263,54 @@ export async function expectPinlessHitKeepsRunPushWithRunData(
   const url = `${fixture.cappedUrl}?probe=${probe}`;
   await warmShellToHit(page, url);
   const current = await bumpPushGeneration(page, fixture, probe);
+  const samples = await recordPushNoteRows(page);
 
   await gotoShellHit(page, url);
   await expect(byTestId(page, "push-value")).toHaveText(`pinned@g${current}`);
   await expect(byTestId(page, "push-note")).toHaveText([
     `pinned-note@g${current}`,
   ]);
+  // The rows on screen when the root hydrated: still the shell's.
+  expect((await samples()).find((sample) => sample.hydrated)?.rows).toEqual([
+    `pinned-note@g${current - 1}`,
+  ]);
+}
+
+/**
+ * #1035: a `useHandle` reader hydrates with the handle data its HTML was
+ * rendered from, whenever its boundary hydrates. `liveUrl`'s view sits
+ * inside the `loading()` boundary of a live loader that pushes after an
+ * await. That boundary hydrates after the root, and by then the push has
+ * reached the client (the late channel is released when the root hydrates),
+ * while the boundary's HTML was rendered without it.
+ *
+ * Before, the reader initialized from the live handle state and rendered a
+ * row its HTML did not have: "Hydration failed" in dev, React error #418 in
+ * production, on a document rendered without a shell and on a shell HIT.
+ */
+export async function expectLateBoundaryHandleReaderHydratesClean(
+  page: Page,
+  fixture: PushOwnershipFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const probe = pushProbe("live");
+  const url = `${fixture.liveUrl}?probe=${probe}`;
+  const expectLivePage = async (): Promise<void> => {
+    await waitForShellHydration(page);
+    await expect(byTestId(page, "push-value")).toHaveText("live@g1");
+    // The row shows once the boundary has hydrated and moved on to the
+    // live handle state.
+    await expect(byTestId(page, "push-note")).toHaveText(["live-note@g1"]);
+  };
+
+  // The first request of the probe: rendered without a shell.
+  const miss = await page.goto(url);
+  expect(miss?.headers()["x-rango-shell"]).toBe("MISS");
+  await expectLivePage();
+
+  await warmShellToHit(page, url);
+  await gotoShellHit(page, url);
+  await expectLivePage();
 }
 
 // ---------------------------------------------------------------------------

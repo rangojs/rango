@@ -52,3 +52,17 @@ export const PprPushDeferredLoader = createLoader(
     return { value: `deferred@g${generation}` };
   },
 );
+
+/**
+ * A live-lane loader (no `ssr: false`), read under loading(): it pushes
+ * after an await, so its push is never in the document's handle snapshot
+ * and reaches the client after the root has hydrated (#1035).
+ */
+export const PprPushLiveLoader = createLoader(
+  async (ctx): Promise<PprPushData> => {
+    const generation = generationOf(ctx.searchParams.get("probe") ?? "");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    ctx.use(PprPushNotes)(`live-note@g${generation}`);
+    return { value: `live@g${generation}` };
+  },
+);

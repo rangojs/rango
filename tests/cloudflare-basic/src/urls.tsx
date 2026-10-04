@@ -143,10 +143,12 @@ import {
 import { PprJsxPage } from "./pages/ppr-jsx.js";
 import {
   PprPushDeferredPage,
+  PprPushLivePage,
   PprPushPinnedPage,
 } from "./pages/ppr-push-ownership.js";
 import {
   PprPushDeferredLoader,
+  PprPushLiveLoader,
   PprPushPinnedLoader,
   bumpPprPushGeneration,
 } from "./loaders/ppr-push-ownership.js";
@@ -1169,6 +1171,18 @@ export const urlpatterns = urls(
             loader(PprPushDeferredLoader, { ssr: false }, () => [
               cache({ ttl: 300 }),
             ]),
+          ],
+        ),
+        // #1035: a live loader that pushes after an await, read (data and
+        // handle) inside its loading() boundary, which hydrates after the
+        // root.
+        path(
+          "/ppr-push/live",
+          PprPushLivePage,
+          { name: "pprPushLive", ppr: { ttl: 300, swr: 120 } },
+          () => [
+            loader(PprPushLiveLoader),
+            loading(<p data-testid="push-loading">Loading note...</p>),
           ],
         ),
         // Storefront shape: ppr routes under an ancestor cache() scope (the

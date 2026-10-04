@@ -39,6 +39,12 @@ the capture, so its pushes always apply client-side; with `ssr: false` they
 bake into the shell. See `/loader` → "Writing Handles from Loaders". `useHandle`
 re-renders on every handle update, late loader pushes included.
 
+On a document load `useHandle` hydrates with the handle data its HTML was
+rendered from, then takes whatever arrived since. That holds wherever the
+reader sits: a reader inside a `<Suspense>` or `loading()` boundary, which
+hydrates after the rest of the page, does not see a late loader push during
+its hydration render, so it cannot mismatch its server HTML.
+
 Handles can be passed as props from server to client components:
 
 ```tsx

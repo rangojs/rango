@@ -20,6 +20,7 @@ import {
   subscribeToPrefetchScopeChange,
 } from "../link-interceptor.js";
 import { subscribeToLocationChange } from "../event-controller.js";
+import { subscribeToNothing } from "./subscribe-to-nothing.js";
 import { isLocationStateDefinition } from "./location-state-shared.js";
 
 export type StateOrGetter<T = unknown> = T | (() => T);
@@ -50,8 +51,6 @@ import type { PrefetchStrategy } from "../../router/prefetch-default.js";
 // so the public `PrefetchStrategy` import path via client.tsx is unchanged.
 export type { PrefetchStrategy } from "../../router/prefetch-default.js";
 export { resolveAdaptiveStrategy } from "../prefetch/default-strategy.js";
-
-const IGNORE_STRATEGY_CHANGES = (_listener: () => void) => () => {};
 
 /**
  * Link component props
@@ -274,7 +273,7 @@ export const Link: ForwardRefExoticComponent<
   const resolvedStrategy = useSyncExternalStore(
     configuredStrategy === "adaptive"
       ? subscribeToAdaptiveStrategyChange
-      : IGNORE_STRATEGY_CHANGES,
+      : subscribeToNothing,
     () => resolveAdaptiveStrategy(configuredStrategy),
     () => (configuredStrategy === "adaptive" ? "hover" : configuredStrategy),
   );

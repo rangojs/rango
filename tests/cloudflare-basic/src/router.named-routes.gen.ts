@@ -113,6 +113,7 @@ export const NamedRoutes = {
   pprNonce: "/ppr-nonce",
   pprPushCapped: "/ppr-push/capped",
   pprPushDeferred: "/ppr-push/deferred",
+  pprPushLive: "/ppr-push/live",
   pprPushPinned: "/ppr-push/pinned",
   pprRestock: "/ppr-restock",
   pprScoped: "/ppr-scoped",

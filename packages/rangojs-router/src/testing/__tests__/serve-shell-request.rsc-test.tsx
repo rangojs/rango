@@ -59,6 +59,7 @@ import {
   readRecaptureLive,
   RecaptureLiveLoader,
   shellHarness,
+  shownHandles,
   source,
 } from "./fixtures/shell-request-data.js";
 
@@ -1415,13 +1416,14 @@ describe("serveShellRequest: a hole never reads the shell snapshot", () => {
 
     expect(hit.shellStatus).toBe("HIT");
     expect(hit.prelude).toContain(`settled-note-${captured}`);
-    expect(hit.prelude).toContain(`deferred-note-${captured}`);
+    // The shell is rendered from what its record keeps (#1035).
+    expect(hit.prelude).not.toContain(`deferred-note-${captured}`);
     // The loader's cache() entry hit on the HIT: its body did not run.
     expect(deferredOwnedRuns.body).toBe(captured);
-    expect(hit.flight?.match(/settled-note-\d+/g)).toEqual([
+    expect((await shownHandles(hit)).match(/settled-note-\d+/g)).toEqual([
       `settled-note-${captured}`,
     ]);
-    expect(hit.flight?.match(/deferred-note-\d+/g)).toEqual([
+    expect((await shownHandles(hit)).match(/deferred-note-\d+/g)).toEqual([
       `deferred-note-${captured}`,
     ]);
   });
@@ -1438,7 +1440,9 @@ describe("serveShellRequest: restored handle pushes on a HIT and a navigation re
 
     expect(hit.shellStatus).toBe("HIT");
     expect(hit.prelude?.match(/dep-note@g\d/g)).toEqual(["dep-note@g1"]);
-    expect(hit.flight?.match(/dep-note@g\d/g)).toEqual(["dep-note@g1"]);
+    expect((await shownHandles(hit)).match(/dep-note@g\d/g)).toEqual([
+      "dep-note@g1",
+    ]);
     expect(hit.flight).toContain("outer-later");
   });
 
@@ -1463,7 +1467,7 @@ describe("serveShellRequest: restored handle pushes on a HIT and a navigation re
     // The bake-lane loader is served from its pin; the live loader is a hole.
     expect(hit.flight).toContain('"baked":"baked-live-dep@g1"');
     expect(hit.flight).toContain('"liveDep":"live-dep@g2"');
-    expect(hit.flight?.match(/live-dep-note@g\d/g)).toEqual([
+    expect((await shownHandles(hit)).match(/live-dep-note@g\d/g)).toEqual([
       "live-dep-note@g2",
     ]);
   });
@@ -1485,11 +1489,13 @@ describe("serveShellRequest: restored handle pushes on a HIT and a navigation re
       expect(hit.shellStatus).toBe("HIT");
       expect(hit.flight).toContain("holey-later");
       expect(hit.flight).toContain('"liveDep":"live-dep@g2"');
-      expect(hit.flight?.match(/live-dep-note@g\d/g)).toEqual([
+      expect((await shownHandles(hit)).match(/live-dep-note@g\d/g)).toEqual([
         "live-dep-note@g2",
       ]);
       // The bake-lane loader's own settled push stands as the prelude has it.
-      expect(hit.flight?.match(/holey-note@g\d/g)).toEqual(["holey-note@g1"]);
+      expect((await shownHandles(hit)).match(/holey-note@g\d/g)).toEqual([
+        "holey-note@g1",
+      ]);
     });
 
     it(`the live push stays live on a client navigation that replays the shell (declared ${order} it)`, async () => {
@@ -1518,7 +1524,7 @@ describe("serveShellRequest: restored handle pushes on a HIT and a navigation re
 
     expect(hit.shellStatus).toBe("HIT");
     expect(hit.flight).toContain('"lateDep":"late-dep@g2"');
-    expect(hit.flight?.match(/late-dep-note@g\d/g)).toEqual([
+    expect((await shownHandles(hit)).match(/late-dep-note@g\d/g)).toEqual([
       "late-dep-note@g2",
     ]);
   });
@@ -1541,8 +1547,12 @@ describe("serveShellRequest: restored handle pushes on a HIT and a navigation re
 
       expect(hit.shellStatus).toBe("HIT");
       expect(hit.flight).toContain('"liveWrap":"wrap-inner@g2"');
-      expect(hit.flight?.match(/inner-note@g\d/g)).toEqual(["inner-note@g2"]);
-      expect(hit.flight?.match(/holey-note@g\d/g)).toEqual(["holey-note@g1"]);
+      expect((await shownHandles(hit)).match(/inner-note@g\d/g)).toEqual([
+        "inner-note@g2",
+      ]);
+      expect((await shownHandles(hit)).match(/holey-note@g\d/g)).toEqual([
+        "holey-note@g1",
+      ]);
       expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
       expect(nav.flight?.match(/inner-note@g\d/g)).toEqual(["inner-note@g2"]);
     });
@@ -1566,7 +1576,7 @@ describe("serveShellRequest: restored handle pushes on a HIT and a navigation re
 
       expect(hit.shellStatus).toBe("HIT");
       expect(hit.flight).toContain("holey-later");
-      expect(hit.flight).not.toContain(note);
+      expect(await shownHandles(hit)).not.toContain(note);
       expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
       expect(nav.flight).not.toContain(note);
     });
@@ -1588,7 +1598,7 @@ describe("serveShellRequest: restored handle pushes on a HIT and a navigation re
     const nav = await serve("/after-live", { partial: { from: "/about" } });
 
     expect(hit.shellStatus).toBe("HIT");
-    expect(hit.flight?.match(notes)).toEqual([
+    expect((await shownHandles(hit)).match(notes)).toEqual([
       "live-dep-note@g2",
       "after-note@g1",
     ]);
@@ -1611,7 +1621,9 @@ describe("serveShellRequest: restored handle pushes on a HIT and a navigation re
 
     expect(hit.shellStatus).toBe("HIT");
     expect(hit.flight).toContain("once-later");
-    expect(hit.flight?.match(/once-note@g\d/g)).toEqual(["once-note@g1"]);
+    expect((await shownHandles(hit)).match(/once-note@g\d/g)).toEqual([
+      "once-note@g1",
+    ]);
     expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
     expect(nav.flight).toContain('"once":"once@g1"');
     expect(nav.flight?.match(/once-note@g\d/g)).toEqual(["once-note@g1"]);
@@ -1633,9 +1645,9 @@ describe("serveShellRequest: restored handle pushes on a HIT and a navigation re
       );
     const refill = await serve("/cached-hole");
     loaderMiss.mockRestore();
-    expect(refill.flight?.match(/cached-hole-note@g\d/g)).toEqual([
-      "cached-hole-note@g2",
-    ]);
+    expect((await shownHandles(refill)).match(/cached-hole-note@g\d/g)).toEqual(
+      ["cached-hole-note@g2"],
+    );
     source.generation = 3;
 
     const hit = await serve("/cached-hole");
@@ -1643,7 +1655,7 @@ describe("serveShellRequest: restored handle pushes on a HIT and a navigation re
 
     expect(hit.shellStatus).toBe("HIT");
     expect(hit.flight).toContain('"cachedHole":"cached-hole@g2"');
-    expect(hit.flight?.match(/cached-hole-note@g\d/g)).toEqual([
+    expect((await shownHandles(hit)).match(/cached-hole-note@g\d/g)).toEqual([
       "cached-hole-note@g2",
     ]);
     expect(nav.flight?.match(/cached-hole-note@g\d/g)).toEqual([
@@ -1677,7 +1689,7 @@ describe("serveShellRequest: restored handle pushes on a HIT and a navigation re
 
     expect(hit.shellStatus).toBe("HIT");
     expect(hit.flight).toContain('"quiet":"quiet@g2"');
-    expect(hit.flight).not.toContain("quiet-note");
+    expect(await shownHandles(hit)).not.toContain("quiet-note");
     expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
     expect(nav.flight).toContain('"quiet":"quiet@g2"');
     expect(nav.flight).not.toContain("quiet-note");
@@ -1703,7 +1715,7 @@ describe("serveShellRequest: restored handle pushes on a HIT and a navigation re
     });
 
     expect(hit.shellStatus).toBe("HIT");
-    expect(hit.flight?.match(notes)).toEqual([
+    expect((await shownHandles(hit)).match(notes)).toEqual([
       "early-hole-note@g2",
       "early-bake-note",
       "early-handler-note",
@@ -1738,7 +1750,7 @@ describe("serveShellRequest: restored handle pushes on a HIT and a navigation re
     });
 
     expect(hit.flight).toContain('"recaptureLive":"recapture-live@g2"');
-    expect(hit.flight?.match(/recapture-note@g\d/g)).toEqual([
+    expect((await shownHandles(hit)).match(/recapture-note@g\d/g)).toEqual([
       "recapture-note@g2",
     ]);
     expect(nav.flight?.match(/recapture-note@g\d/g)).toEqual([
@@ -1762,12 +1774,12 @@ describe("serveShellRequest: restored handle pushes on a HIT and a navigation re
 
     expect(shared.shellStatus).toBe("HIT");
     expect(shared.flight).toContain('"liveShared":"live-shared@g2"');
-    expect(shared.flight?.match(/shared-note@g\d/g)).toEqual([
+    expect((await shownHandles(shared)).match(/shared-note@g\d/g)).toEqual([
       "shared-note@g1",
     ]);
     expect(declared.shellStatus).toBe("HIT");
     expect(declared.flight).toContain('"liveShared":"live-shared@g2"');
-    expect(declared.flight?.match(/shared-note@g\d/g)).toEqual([
+    expect((await shownHandles(declared)).match(/shared-note@g\d/g)).toEqual([
       "shared-note@g2",
     ]);
   });

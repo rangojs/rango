@@ -609,7 +609,12 @@ the same plugin-injected-id reason. Handle data is accumulated GLOBALLY (not
 scoped per segment like loaders), so a LAYOUT component reading a handle (a
 `DetailLayout`/`ActionToolbar`) sees the seeded values just as the leaf does. A
 component reading only `useParams` / `useReverse` / `useNavigation` needs no
-seeding.
+seeding. `lateHandles` takes the same pairs for handle values that reach the
+page after hydration (a loader push made after an `await`, any loader push on
+a PPR shell HIT): each replaces that handle's seed once the root has hydrated
+or mounted. With `hydrate: true` the server HTML is rendered from `handles`
+and a reader inside a `<Suspense>` hydrates after the update was applied, so
+`recoverableErrors` tells you whether it hydrated with the document's values.
 
 A location-state definition the component reads WITHOUT a seed needs a key:
 outside production an unkeyed definition throws on first use (the Vite plugin
@@ -1391,9 +1396,12 @@ Options: `cacheStore` (replaces the store your `cache` config returns; its
 decision is `replayStatus`. `key` is the shell key the serve path resolved
 for a document, request partition included (a route whose `cache({ key })`
 or store `keyGenerator` partitions its record partitions its shell too). Result: `{ response, body, shellStatus,
-replayStatus, prelude, flight, key, readEntry }`. `readEntry()` reads the stored
+replayStatus, prelude, flight, key, readEntry, readHandles }`. `readEntry()` reads the stored
 document entry through a passive `getShell`, which warms a shell memo like any
-read, so call it after the reads you count. A HIT's tail carries replayed
+read, so call it after the reads you count. `readHandles()` decodes the
+response's handle data as the browser reads it: `hydration` (what the document
+hydrates with, which on a HIT is what the stored shell was rendered from) and
+`late` (the states that arrive after hydration). A HIT's tail carries replayed
 segments as Flight fragments inside JSON strings, with escaped quotes, so match
 plain text. To evict by tag, call `updateTag()` through
 `runInRequestContext(fn, { cacheStore })` or your app's own endpoint via
@@ -1661,7 +1669,8 @@ renderHandler(handler, opts?: { request?, params?, env?, vars?, loaders?, routeM
 // inActionRevalidation: render as if inside a server action's revalidation render, so a stale "use cache"
 // entry whose profile sets foregroundOnAction:true re-executes in the FOREGROUND (fresh) instead of SWR.
 serveShellRequest(router, url: string | URL, opts?: { cacheStore?, env?, headers?, partial?: true | { from?, segments? } }):
-  Promise<{ response, body, shellStatus, replayStatus, prelude, flight, key, readEntry(): Promise<ShellCacheEntry | null> }>;
+  Promise<{ response, body, shellStatus, replayStatus, prelude, flight, key, readEntry(): Promise<ShellCacheEntry | null>,
+    readHandles(): Promise<{ hydration: HandleData, late: HandleData[] } | undefined> }>;
 // One GET through the router's production handler, background capture settled. HTML step stubbed:
 // prelude = the capture's Flight text, flight = this request's Flight (a HIT's tail).
 resetShellTestState(): Promise<void>; // beforeEach: capture backoff/guards + CFCacheStore isolate memos

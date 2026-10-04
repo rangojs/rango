@@ -274,6 +274,24 @@ export interface HandleStore {
   getData(): Promise<HandleData>;
 
   /**
+   * Fix the document lane at the store's current state. From then on
+   * `stream("settled")` yields this state and nothing newer, and
+   * `streamLate()` delivers every change made after it, whether or not it
+   * beat the handler barrier. The first call wins. It must run before the
+   * document stream is first read: a stream that started on the live state
+   * stays on it (reported through `onError` in development).
+   *
+   * A PPR shell HIT calls it once its record is replayed and before a loader
+   * runs (rsc-rendering.ts serveShellHit). The prelude was rendered from the
+   * record's handle data (resolvedHandleStream `recordedOnly`), so that is
+   * what the client must hydrate with. What the request's loaders then push,
+   * replace or drop is theirs, not the shell's: in the document snapshot it
+   * rendered elements the prelude never had, or left out ones it has (issue
+   * #1035), and it got there or not by a race with the lane's first read.
+   */
+  freezeDocumentSnapshot(): void;
+
+  /**
    * Get an async iterator that yields handle data on each push.
    * Completes at the chosen settlement barrier: "fullySettled" (default —
    * nav/action payloads, whose consumer applies each yield progressively) or
@@ -281,6 +299,9 @@ export interface HandleStore {
    * blocking positions and must not wait on loader bodies).
    * Each yield contains the full accumulated state (not just the delta).
    * Safe for concurrent consumers (per-consumer version cursor).
+   * The "settled" lane of a frozen store (freezeDocumentSnapshot) yields the
+   * frozen state once, at once, and ends. That yield is the store's own
+   * frozen object: a consumer must not write to it.
    */
   stream(
     until?: "settled" | "fullySettled",
@@ -292,7 +313,9 @@ export interface HandleStore {
    * fullySettled. Returns without yielding when the auxiliary lane is empty
    * by the time `settled` resolves. The client consumes this post-hydration
    * (rsc-router.tsx) and merges via the same application path as nav-lane
-   * progressive handle updates.
+   * progressive handle updates. On a frozen store (freezeDocumentSnapshot)
+   * it starts from the frozen state instead: a change made before the
+   * handler barrier is late too.
    */
   streamLate(): AsyncGenerator<HandleData, void, unknown>;
 
@@ -652,6 +675,12 @@ export function createHandleStore(): HandleStore {
   let emissionWaiters: (() => void)[] = [];
   let completed = false;
   let streamConsumed = false;
+  // freezeDocumentSnapshot: the state the document lane serves, and the
+  // version the late channel starts after.
+  let documentSnapshot: { version: number; data: HandleData } | undefined;
+  // A stream("settled") consumer started on the live state: a freeze after
+  // that does not reach it.
+  let documentStreamRead = false;
 
   // Wake every waiting consumer (new push or a settlement barrier fired).
   function signalEmission() {
@@ -912,6 +941,23 @@ export function createHandleStore(): HandleStore {
       return this.settled.then(() => cloneHandleData(data));
     },
 
+    freezeDocumentSnapshot(): void {
+      if (documentSnapshot) return;
+      if (process.env.NODE_ENV !== "production" && documentStreamRead) {
+        const error = new Error(
+          "HandleStore.freezeDocumentSnapshot() ran after the document's " +
+            'handle stream (stream("settled")) was first read. That stream ' +
+            "keeps reading the live store, so the document hydrates with " +
+            "whatever a loader pushed by then instead of the frozen state " +
+            "(issue #1035). Freeze before the payload that carries the " +
+            "stream starts rendering.",
+        );
+        if (this.onError) this.onError(error);
+        else console.error(error);
+      }
+      documentSnapshot = { version, data: cloneHandleData(data) };
+    },
+
     async *stream(
       until: "settled" | "fullySettled" = "fullySettled",
     ): AsyncGenerator<HandleData, void, unknown> {
@@ -921,6 +967,22 @@ export function createHandleStore(): HandleStore {
       // consumer existed (seal() then stream()); sealInternal early-returns
       // then, so the completed flag must be armed here.
       notifyDrain();
+
+      if (until === "settled") {
+        // A frozen document lane cannot change, so it is served at once:
+        // SSR and the pre-hydration drain block on this stream, and the
+        // batching hop below would cost every shell HIT a timer tick. It is
+        // yielded as the frozen object itself, already a copy: the lane's
+        // one consumer (resolvedHandleStream) builds a new object from a
+        // yield and never writes to it.
+        if (documentSnapshot) {
+          if (Object.keys(documentSnapshot.data).length > 0) {
+            yield documentSnapshot.data;
+          }
+          return;
+        }
+        documentStreamRead = true;
+      }
 
       // Per-consumer termination flag driven by the chosen barrier. The
       // global `completed` (late-push guard) always keys on FULL drain via
@@ -960,8 +1022,9 @@ export function createHandleStore(): HandleStore {
       // state. This channel exists only for pushes that land AFTER `settled`
       // — streaming loader bodies writing meta/breadcrumbs mid-body.
       await this.settled;
-      let seen = version;
-      if (auxInflightCount === 0) {
+      // A frozen document snapshot carried nothing newer than its version.
+      let seen = documentSnapshot?.version ?? version;
+      if (auxInflightCount === 0 && version === seen) {
         // Auxiliary lane already drained: every loader push (if any) beat the
         // handler barrier and rode the normal snapshot. Nothing late follows —
         // handler pushes after settled are illegal by contract.

@@ -218,4 +218,44 @@ describe("resolvedHandleStream (full-render drop-in for handleStore.stream())", 
       /pushed after handle collection completed/,
     );
   });
+
+  // Issue #1035: a PPR shell capture renders its prelude from the handle
+  // data its record keeps, so a HIT that restores the record hydrates clean.
+  // The store tags the pushes a record leaves out (HandleStore.push
+  // `loaderPush`): a capture tags a deferred loader push.
+  describe("recordedOnly (a shell capture's render)", () => {
+    function captureStore() {
+      const store = createHandleStore();
+      store.push("H", "seg1", "handler");
+      store.push("H", "seg1", "settled-loader", false, "Loader");
+      store.push("H", "seg1", Promise.resolve("deferred-loader"), true);
+      store.push("H", "seg2", "tagged-only", true);
+      store.push("H", "seg3", Promise.resolve("deferred-handler"));
+      return store;
+    }
+
+    it("leaves out every push the record does not keep, and resolves the rest", async () => {
+      const value = (await resolvedHandleStream(captureStore(), true).next())
+        .value;
+
+      expect(value).toEqual({
+        H: {
+          seg1: ["handler", "settled-loader"],
+          seg3: ["deferred-handler"],
+        },
+      });
+    });
+
+    it("is off by default: a document render carries every push", async () => {
+      const value = (await resolvedHandleStream(captureStore()).next()).value;
+
+      expect(value).toEqual({
+        H: {
+          seg1: ["handler", "settled-loader", "deferred-loader"],
+          seg2: ["tagged-only"],
+          seg3: ["deferred-handler"],
+        },
+      });
+    });
+  });
 });

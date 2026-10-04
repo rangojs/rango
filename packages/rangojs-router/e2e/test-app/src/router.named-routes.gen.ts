@@ -450,6 +450,7 @@ export const NamedRoutes = {
   shellPushBump: "/shell-push/__bump",
   shellPushCapped: "/shell-push/capped",
   shellPushDeferred: "/shell-push/deferred",
+  shellPushLive: "/shell-push/live",
   shellPushPinned: "/shell-push/pinned",
   shellSecure: "/shell-secure",
   shellSecureDsl: "/shell-secure-dsl",

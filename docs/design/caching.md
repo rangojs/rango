@@ -1177,7 +1177,10 @@ This requires separating:
   partial one (an emptied array is sent as `[]`). A replacement after the
   handler barrier reaches the document through `metadata.handlesLate`, so the
   SSR HTML shows the replayed value and the client swaps in the live one after
-  hydration, like any late loader push. The render-barrier snapshot that
+  hydration, like any late loader push. On a PPR shell HIT every replacement
+  is late, before or after the barrier: the document hydrates with the
+  record's copies (`freezeDocumentSnapshot`, #1035). The render-barrier
+  snapshot that
   `ctx.rendered()` readers see is taken once and keeps whichever value was
   there.
 
