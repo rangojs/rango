@@ -658,7 +658,10 @@ The visitor's theme reads (the handler and middleware `ctx.theme`, `getRequestCo
 - `ctx.passthrough()` per-param artifact skip (defers to Passthrough live handler)
 - `PRERENDER_PASSTHROUGH` sentinel, `isPrerenderPassthrough()` type guard
 - `buildEnv` Vite plugin option for build-time `ctx.env` access (KV, D1, etc.)
-- `"auto"` mode calls `wrangler.getPlatformProxy()` for Cloudflare presets
+- `"auto"` mode calls `wrangler.getPlatformProxy()` for Cloudflare presets,
+  with the wrangler config found upward from the Vite root (not `process.cwd()`)
+  and persisted state under the Vite root's `.wrangler/state/v3`
+  (`wranglerProxyOptions` in `vite/router-discovery.ts`)
 - Applies to both production build and dev `/__rsc_prerender` evaluation
 - Dev `/__rsc_prerender` memoizes rendered payloads between HMR edits, keyed by
   router-instance identity (`vite/discovery/dev-prerender-cache.ts`, issue

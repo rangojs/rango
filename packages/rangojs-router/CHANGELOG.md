@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Fixed: `buildEnv: "auto"` reads the wrangler config of the Vite root
+
+With `rango({ preset: "cloudflare", buildEnv: "auto" })`, building from a
+directory other than the app's (`vite build apps/web` from a monorepo root)
+looked for the wrangler config in the working directory, found none, and gave
+`Prerender` and `Static` handlers an `env` without the app's bindings
+(`Cannot read properties of undefined (reading 'put')`). The config is now
+searched upward from the Vite root, as `wrangler.json`, `wrangler.jsonc`, then
+`wrangler.toml`, and build-time state persists in `.wrangler/state/v3` under
+the Vite root, where the Cloudflare Vite plugin reads it in dev and preview.
+With no config found, wrangler's own lookup applies as before.
+
 ### Breaking: a deploy keeps the cache of every app whose code it did not change
 
 Every production build used to get a new version, the build time, and every

@@ -48,7 +48,8 @@ export default defineConfig({
 Worker runs the RSC entry and loads SSR inside the same isolate.
 
 `buildEnv: "auto"` gives `Prerender` and `Static` handlers a real `ctx.env` at
-build time through Wrangler's `getPlatformProxy()` (local bindings). Omit it
+build time through Wrangler's `getPlatformProxy()` (local bindings), reading
+the wrangler config from the Vite root whatever the working directory. Omit it
 (default `false`) when build-time rendering must not touch bindings; `ctx.env`
 then throws during build rendering. See `/prerender`.
 
