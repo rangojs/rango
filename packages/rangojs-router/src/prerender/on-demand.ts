@@ -148,7 +148,8 @@ export interface PrerenderConfig<TEnv = any> {
    * Stale-while-revalidate: its presence is the opt-in. Scheduled through
    * `waitUntil` on a stale overlay hit (the stale entry still serves) with
    * the JSON-serializable target and the live env. Runs at most once per
-   * stale key per isolate while one is in flight, so
+   * stale key per isolate while one is in flight (one running longer than
+   * 15 s counts as finished, so a hung call cannot block the key), so
    * `(target, env) => router.prerender(target, { env })` is safe in a single
    * process; across isolates, point it at a queue, which owns dedup.
    */

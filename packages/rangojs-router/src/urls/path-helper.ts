@@ -144,11 +144,6 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
 
     const namespace = `${ctx.namespace}.${store.getNextIndex("route")}.${routeName}`;
 
-    if (ctx.forRoute && routeName !== ctx.forRoute) {
-      store.getShortCode("route");
-      return { type: "route" } as RouteItem;
-    }
-
     // On-demand opt-in lives on the (inner) Prerender def's options for both
     // plain Prerender and Passthrough-wrapped routes. Presence (truthy, not
     // false) marks the route ISR-eligible; the trie od flag + producer retention
@@ -161,10 +156,10 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
     const onDemandOpt = onDemandDef?.options?.onDemand;
     const isOnDemand = onDemandOpt != null && onDemandOpt !== false;
 
-    // onDemand excludes the route from the PPR shell lane (isPprEntry): a
-    // writable refresh cannot atomically replace the captured document shell,
-    // so combining them would pair fresh Flight with a stale prelude. A dev-only
-    // warning let the inert ppr option ship to production unnoticed.
+    // onDemand routes are excluded from the PPR shell lane (a writable refresh
+    // cannot atomically replace the captured shell), so ppr has no effect there.
+    // Thrown ahead of the forRoute early return so lazy evaluation of another
+    // route cannot skip it.
     if (isOnDemand && options?.ppr !== undefined && options.ppr !== false) {
       throw new Error(
         `[rango] Route "${routeName}" sets both ppr and onDemand: onDemand ` +
@@ -172,6 +167,11 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
           `effect here and the route serves without the shell fast path. ` +
           `Drop one of the two options.`,
       );
+    }
+
+    if (ctx.forRoute && routeName !== ctx.forRoute) {
+      store.getShortCode("route");
+      return { type: "route" } as RouteItem;
     }
 
     const wrappedHandler: Handler<any, any, TEnv> =

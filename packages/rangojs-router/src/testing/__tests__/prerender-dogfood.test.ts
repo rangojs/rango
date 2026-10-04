@@ -9,6 +9,7 @@ import { createRouter } from "../../router.js";
 import { Prerender } from "../../prerender.js";
 import { createMemoryPrerenderStore } from "../../prerender/memory-prerender-store.js";
 import { urls } from "../../urls.js";
+import { getContext } from "../../server/context.js";
 import { buildRouteTree } from "../../__tests__/helpers/route-tree.js";
 
 const OnDemandDef = Prerender<{ id: string }>(
@@ -81,6 +82,16 @@ describe("router.prerender() dogfood (public createRouter + public store)", () =
         ]),
       ),
     ).not.toThrow();
+  });
+
+  test("ppr + onDemand throws even when another route is the one being evaluated", () => {
+    const def = urls(({ path }) => [
+      path("/good", () => null as any, { name: "good" }),
+      path("/od/:id", OnDemandDef, { name: "od", ppr: true }),
+    ]);
+    expect(() => getContext().runIsolated("good", () => def.handler())).toThrow(
+      /sets both ppr and onDemand/,
+    );
   });
 
   test("markStale reaches the public store", async () => {

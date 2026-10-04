@@ -60,6 +60,7 @@ import {
   type CacheExecScope,
 } from "./cache-exec-scope.js";
 import { reportCacheError } from "./cache-error.js";
+import { IN_FLIGHT_LEADER_MAX_WAIT_MS } from "./cache-policy.js";
 import {
   executionStart,
   invalidatedSince,
@@ -313,15 +314,6 @@ interface InFlightExecution {
 }
 
 const inFlightExecutions = new Map<string, InFlightExecution>();
-
-/**
- * How long a follower trusts an in-flight leader before evicting it and
- * running fresh. High enough that a slow-but-healthy upstream never triggers
- * duplicate work (a legitimate cached call taking >15s is already pathological);
- * low enough to bound the blast radius of a wedged leader to seconds, not the
- * isolate lifetime. Aligned with SHELL_CAPTURE_MAX_WAIT_MS.
- */
-const IN_FLIGHT_LEADER_MAX_WAIT_MS = 15_000;
 
 /** Distinguishes a leader timeout from a leader rejection in raceLeader. */
 const LEADER_TIMED_OUT = Symbol("leader-timed-out");

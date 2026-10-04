@@ -23,6 +23,7 @@
 
 import type { KVNamespace } from "../cache/cf/cf-cache-types.js";
 import {
+  lowerStoredEntryStaleAt,
   serializePrerenderKey,
   type PrerenderKey,
   type PrerenderStoredEntry,
@@ -79,21 +80,17 @@ export function createKVPrerenderStore(
         return null;
       }
 
-      // Tag invalidation is mark-stale: if any tag was marked at or after this
-      // entry was written, force it stale so a stale hit schedules a refresh;
-      // the entry still serves. Shape is verified by the router (writable-
-      // store.ts isStoredEntryValidFor), so only guard what is read here.
+      // Tag invalidation is mark-stale: a tag marked at or after the write
+      // forces the entry stale (it still serves). Shape is verified by the
+      // router; an already-stale entry skips the marker reads.
       const meta = stored?.meta;
       if (
-        meta &&
-        Array.isArray(meta.tags) &&
-        meta.tags.length > 0 &&
-        typeof meta.storedAt === "number"
+        meta?.tags?.length &&
+        !(meta.staleAt != null && meta.staleAt <= now())
       ) {
         const markers = await Promise.all(meta.tags.map(readTagMarker));
-        const marked = markers.some((m) => m != null && m >= meta.storedAt);
-        if (marked && (meta.staleAt == null || meta.staleAt > meta.storedAt)) {
-          meta.staleAt = meta.storedAt;
+        if (markers.some((m) => m != null && m >= meta.storedAt)) {
+          lowerStoredEntryStaleAt(stored, meta.storedAt);
         }
       }
 

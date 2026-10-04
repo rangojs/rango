@@ -250,10 +250,11 @@ async function decodePayloadHandles(
 
 /**
  * Handlers per router, keyed by the `cacheStore` override or the router. A
- * handler resolves its router's versions when it is created, so an entry is
- * reused only while the router would still resolve the versions it was made
- * with: a setBuildVersions() call (a simulated deploy) that changes them gets
- * a new handler.
+ * handler binds its router's document version when it is created, so an entry
+ * is reused only while the router would still resolve that version: a
+ * setBuildVersions() call (a simulated deploy) that changes it gets a new
+ * handler. The data version is read per request, so a data-only change reuses
+ * the handler, as a long-lived worker would.
  */
 const handlers = new WeakMap<
   object,
@@ -273,11 +274,10 @@ async function getHandler(
   const { resolveRouterVersions } =
     await import("../server/build-version-table.js");
   // What createRSCHandler would resolve for this router now.
-  const { data, document } = resolveRouterVersions(
+  const { document: versions } = resolveRouterVersions(
     internal.id,
     internal.version,
   );
-  const versions = `${data}\0${document}`;
   const cached = byStore.get(cacheStore ?? router);
   if (cached?.versions === versions) return cached.handler;
 
@@ -334,18 +334,21 @@ function buildRequest(url: URL, options: ServeShellRequestOptions): Request {
  * handle it is given: a new handle starts empty.
  */
 export async function resetShellTestState(): Promise<void> {
-  const [capture, serve, buildShells, cf, cacheRuntime] = await Promise.all([
-    import("../rsc/shell-capture.js"),
-    import("../rsc/shell-serve.js"),
-    import("../rsc/shell-build-manifest.js"),
-    import("../cache/cf/cf-cache-store.js"),
-    import("../cache/cache-runtime.js"),
-  ]);
+  const [capture, serve, buildShells, cf, cacheRuntime, cacheLookup] =
+    await Promise.all([
+      import("../rsc/shell-capture.js"),
+      import("../rsc/shell-serve.js"),
+      import("../rsc/shell-build-manifest.js"),
+      import("../cache/cf/cf-cache-store.js"),
+      import("../cache/cache-runtime.js"),
+      import("../router/match-middleware/cache-lookup.js"),
+    ]);
   capture.resetShellCaptureStateForTests();
   serve.resetShellServeStateForTests();
   buildShells.resetBuildShellManifestForTests();
   cf.resetCFShellMemoForTests();
   cacheRuntime.resetCacheRuntimeForTests();
+  cacheLookup.resetOverlayRevalidationsForTests();
 }
 
 /** Settle background tasks, including ones scheduled while settling. */

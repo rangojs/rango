@@ -30,13 +30,6 @@ export interface PrerenderKey {
   routeName: string;
   /** DJB2 8-hex hash of the canonical params (see param-hash.ts). */
   paramHash: string;
-  /**
-   * Intercept variant (stored under a `:i` suffix), matching the manifest
-   * convention. Reserved for the deferred intercept-variant refresh: in v1
-   * nothing sets it — the trigger writes only the main variant and the serve
-   * path skips overlay reads for intercept navigations (cache-lookup.ts).
-   */
-  intercept?: boolean;
 }
 
 /**
@@ -109,11 +102,10 @@ export interface WritablePrerenderStore {
 
 /**
  * Serialize a {@link PrerenderKey} to the design's string form:
- *   `prerender:{routerId}:{version}:{routeName}:{paramHash}[:i]`
+ *   `prerender:{routerId}:{version}:{routeName}:{paramHash}`
  */
 export function serializePrerenderKey(key: PrerenderKey): string {
-  const base = `prerender:${key.routerId}:${key.version}:${key.routeName}:${key.paramHash}`;
-  return key.intercept ? `${base}:i` : base;
+  return `prerender:${key.routerId}:${key.version}:${key.routeName}:${key.paramHash}`;
 }
 
 /**
@@ -126,9 +118,8 @@ export function composeStoredEntry(
   options: StoredEntryOptions,
   now: number,
 ): PrerenderStoredEntry {
-  // Only a finite, non-negative ttl produces a staleAt. A NaN ttl would yield a
-  // NaN staleAt (silently never stale); a negative ttl a past staleAt (stale on
-  // every request). Either is a misconfiguration — treat it as never-stale.
+  // Only a finite, non-negative ttl produces a staleAt: NaN would never go
+  // stale and a negative ttl would be stale on every request.
   const hasTtl =
     options.ttl != null &&
     Number.isFinite(options.ttl) &&
@@ -159,9 +150,8 @@ export function isStoredEntryValidFor(
   key: PrerenderKey,
   params: Record<string, string>,
 ): stored is PrerenderStoredEntry {
-  // A durable store can hold a parseable-but-malformed value (e.g. the literal
-  // `"null"`, or `{"v":1}` with no meta). Read those as a miss rather than
-  // dereferencing into a TypeError on the serve path.
+  // A durable store can hold a parseable-but-malformed value (`"null"`,
+  // `{"v":1}`): a miss, never a TypeError on the serve path.
   if (stored == null || typeof stored !== "object") return false;
   const candidate = stored as Partial<PrerenderStoredEntry>;
   const entry = candidate.entry;
@@ -189,4 +179,35 @@ export function isStoredEntryStale(
   now: number,
 ): boolean {
   return stored.meta.staleAt != null && now >= stored.meta.staleAt;
+}
+
+/**
+ * @internal Lower `meta.staleAt` to `at` when it is unset or later. Shared by
+ * the stores' tag marking so the rule cannot drift between them.
+ */
+export function lowerStoredEntryStaleAt(
+  stored: PrerenderStoredEntry,
+  at: number,
+): void {
+  if (stored.meta.staleAt == null || stored.meta.staleAt > at) {
+    stored.meta.staleAt = at;
+  }
+}
+
+/**
+ * @internal `store.get(key)` verified for serving (isStoredEntryValidFor). A
+ * store error (e.g. a KV outage) reads as a miss: the serve path falls back to
+ * the bundled manifest or live handler, and the trigger's stale check renders.
+ */
+export async function readVerifiedStoredEntry(
+  store: WritablePrerenderStore,
+  key: PrerenderKey,
+  params: Record<string, string>,
+): Promise<PrerenderStoredEntry | null> {
+  try {
+    const read = await store.get(key);
+    return isStoredEntryValidFor(read, key, params) ? read : null;
+  } catch {
+    return null;
+  }
 }

@@ -5,6 +5,8 @@ import {
   composeStoredEntry,
   isStoredEntryValidFor,
   isStoredEntryStale,
+  lowerStoredEntryStaleAt,
+  readVerifiedStoredEntry,
   type PrerenderKey,
 } from "../writable-store.js";
 import type { PrerenderEntry } from "../store.js";
@@ -30,10 +32,51 @@ describe("serializePrerenderKey", () => {
       "prerender:r1:b1:products.detail:abc12345",
     );
   });
-  it("appends :i for the intercept variant", () => {
-    expect(serializePrerenderKey(key({ intercept: true }))).toBe(
-      "prerender:r1:b1:products.detail:abc12345:i",
+  it("serializes the main variant with no suffix", () => {
+    expect(serializePrerenderKey(key())).not.toMatch(/:i$/);
+    expect(serializePrerenderKey(key({ paramHash: "ffffffff" }))).toBe(
+      "prerender:r1:b1:products.detail:ffffffff",
     );
+  });
+});
+
+describe("lowerStoredEntryStaleAt / readVerifiedStoredEntry", () => {
+  const params = { id: "42" };
+  const make = (staleAt?: number) => {
+    const e = composeStoredEntry(key(), entry, { tags: ["t"], params }, 1000);
+    if (staleAt != null) e.meta.staleAt = staleAt;
+    return e;
+  };
+
+  it("lowers an unset or later staleAt and keeps an earlier one", () => {
+    const unset = make();
+    lowerStoredEntryStaleAt(unset, 2000);
+    expect(unset.meta.staleAt).toBe(2000);
+    const later = make(9000);
+    lowerStoredEntryStaleAt(later, 2000);
+    expect(later.meta.staleAt).toBe(2000);
+    const earlier = make(1500);
+    lowerStoredEntryStaleAt(earlier, 2000);
+    expect(earlier.meta.staleAt).toBe(1500);
+  });
+
+  it("returns a verified entry, and null for a miss, mismatch or store error", async () => {
+    const store = createMemoryPrerenderStore();
+    await store.set(key(), make());
+    expect(await readVerifiedStoredEntry(store, key(), params)).not.toBeNull();
+    expect(
+      await readVerifiedStoredEntry(store, key(), { id: "43" }),
+    ).toBeNull();
+    expect(
+      await readVerifiedStoredEntry(store, key({ paramHash: "zz" }), params),
+    ).toBeNull();
+    const throwing = {
+      ...store,
+      get: async () => {
+        throw new Error("outage");
+      },
+    };
+    expect(await readVerifiedStoredEntry(throwing, key(), params)).toBeNull();
   });
 });
 

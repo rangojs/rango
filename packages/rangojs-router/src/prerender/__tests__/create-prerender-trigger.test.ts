@@ -279,6 +279,28 @@ describe("createPrerenderTrigger", () => {
     expect(stored.meta.staleAt).toBeDefined();
   });
 
+  it("normalizes route tags like cache({ tags }): trimmed, no empties, no duplicates", async () => {
+    const { trigger, store } = harness({
+      runProducer: async () =>
+        output({
+          onDemandConfig: {
+            tags: [" a ", "a", "", "  ", "b", 7 as unknown as string, "b"],
+          },
+        }),
+    });
+    const result = await trigger("/products/42", { env: {} });
+    expect(result).toMatchObject({ ok: true, tags: ["a", "b"] });
+    expect(store.entries()[0]![1].meta.tags).toEqual(["a", "b"]);
+
+    const fn = harness({
+      runProducer: async () =>
+        output({ onDemandConfig: { tags: () => ["x", "x", " "] } }),
+    });
+    expect(await fn.trigger("/products/42", { env: {} })).toMatchObject({
+      tags: ["x"],
+    });
+  });
+
   it("accepts a static tags array on the route's onDemand config", async () => {
     const tags = ["catalog", "products"];
     const { trigger, store } = harness({
@@ -504,6 +526,33 @@ describe("createPrerenderTrigger", () => {
     });
   });
 
+  describe("key version", () => {
+    it("resolves per refresh, so a changed table is picked up on the next call", async () => {
+      let version = "d1";
+      const h = harness();
+      h.deps.resolveVersion = () => version;
+      const t = createPrerenderTrigger(h.deps);
+      const first = await t("/products/42", { env: {} });
+      version = "d2";
+      const second = await t("/products/42", { env: {} });
+      if (!first.ok || !second.ok) throw new Error("expected ok");
+      expect(first.key).toContain(":d1:");
+      expect(second.key).toContain(":d2:");
+    });
+
+    it("resolves once per many() batch", async () => {
+      const h = harness();
+      const resolveVersion = vi.fn(() => "d1");
+      h.deps.resolveVersion = resolveVersion;
+      const t = createPrerenderTrigger(h.deps);
+      await t.many(["/products/1", "/products/2", "/products/3"], {
+        env: {},
+        concurrency: 2,
+      });
+      expect(resolveVersion).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe("markStale()", () => {
     it("delegates to the store", async () => {
       const store = createMemoryPrerenderStore();
@@ -546,6 +595,18 @@ describe("createPrerenderTrigger", () => {
         await trigger.markStale(["x"], { env: {} });
         expect(warn).toHaveBeenCalledTimes(1);
         expect(warn.mock.calls[0][0]).toContain("markStale");
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("warns once per trigger when the store cannot mark", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const { trigger } = harness({ config: undefined, isDev: () => true });
+        await trigger.markStale(["x"], { env: {} });
+        await trigger.markStale(["y"], { env: {} });
+        expect(warn).toHaveBeenCalledTimes(1);
       } finally {
         warn.mockRestore();
       }

@@ -7,6 +7,7 @@
  */
 
 import {
+  lowerStoredEntryStaleAt,
   serializePrerenderKey,
   type PrerenderKey,
   type PrerenderStoredEntry,
@@ -59,12 +60,8 @@ export function createMemoryPrerenderStore(
       const tagSet = new Set(tags);
       const at = now();
       for (const stored of map.values()) {
-        if (
-          stored.meta.tags.some((t) => tagSet.has(t)) &&
-          (stored.meta.staleAt == null || stored.meta.staleAt > at)
-        ) {
-          // Mark-stale: keep serving, but a stale hit schedules a refresh.
-          stored.meta.staleAt = at;
+        if (stored.meta.tags.some((t) => tagSet.has(t))) {
+          lowerStoredEntryStaleAt(stored, at);
         }
       }
     },

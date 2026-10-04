@@ -113,7 +113,6 @@ describe("createKVPrerenderStore", () => {
       "null",
       JSON.stringify({ v: 1 }),
       JSON.stringify({ v: 1, meta: null }),
-      JSON.stringify({ v: 1, meta: { tags: "x", storedAt: 1 } }),
     ]) {
       const store = createKVPrerenderStore(fakeKVWith(raw));
       await expect(store.get(key())).resolves.toEqual(JSON.parse(raw));
@@ -132,6 +131,28 @@ describe("createKVPrerenderStore", () => {
     expect(got).not.toBeNull();
     expect(isStoredEntryStale(got!, 2000)).toBe(true);
     expect(kv.map.has(serializePrerenderKey(key()))).toBe(true);
+  });
+
+  it("skips tag-marker reads for an entry already stale", async () => {
+    const kv = fakeKV();
+    const gets: string[] = [];
+    const spied: KVNamespace = {
+      ...kv,
+      get: (async (k: string) => {
+        gets.push(k);
+        return kv.get(k);
+      }) as KVNamespace["get"],
+    };
+    const store = createKVPrerenderStore(spied, { now: () => 5000 });
+    await store.set(key(), stored({ ttl: 1, tags: ["t"] }, key(), 1000));
+    gets.length = 0;
+    await store.get(key());
+    expect(gets).toEqual([serializePrerenderKey(key())]);
+
+    const fresh = createKVPrerenderStore(spied, { now: () => 1500 });
+    gets.length = 0;
+    await fresh.get(key());
+    expect(gets).toHaveLength(2);
   });
 
   it("leaves an entry written after the marker fresh", async () => {

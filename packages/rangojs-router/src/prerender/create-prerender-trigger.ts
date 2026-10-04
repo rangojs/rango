@@ -18,13 +18,13 @@ import type { SerializedSegmentData } from "../cache/types.js";
 import type { ExecutionContext } from "../types/request-scope.js";
 import { hashParams } from "./param-hash.js";
 import { isPrerenderPersonalizationError } from "./producer-guard.js";
+import { normalizeTagList } from "../cache/cache-policy.js";
 import {
   composeStoredEntry,
   isStoredEntryStale,
-  isStoredEntryValidFor,
+  readVerifiedStoredEntry,
   serializePrerenderKey,
   type PrerenderKey,
-  type PrerenderStoredEntry,
 } from "./writable-store.js";
 import type {
   OnDemandRouteConfig,
@@ -64,8 +64,8 @@ export interface PrerenderTriggerDeps<TEnv = any> {
   routerId: string;
   /**
    * The key version: the router's data version (resolvePrerenderVersion),
-   * read per call so it always matches what a request handler created now
-   * would resolve.
+   * resolved per refresh (once per `.many()` batch), as the request handler
+   * resolves it per request.
    */
   resolveVersion: () => string;
   /** True when running under Vite dev (drives the producer context's `dev`). */
@@ -165,8 +165,9 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
   async function refresh(
     target: PrerenderTarget<TRoutes>,
     runtime: PrerenderRuntime<TEnv>,
+    version: string = deps.resolveVersion(),
   ): Promise<PrerenderResult> {
-    const result = await run(target, runtime);
+    const result = await run(target, runtime, version);
     if (!result.ok && runtime.throwOnError) throw new PrerenderError(result);
     return result;
   }
@@ -174,6 +175,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
   async function run(
     target: PrerenderTarget<TRoutes>,
     runtime: PrerenderRuntime<TEnv>,
+    version: string,
   ): Promise<PrerenderResult> {
     const resolved = resolveTarget(target, deps.reverse);
     const display = resolved.display;
@@ -228,7 +230,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
 
     const key: PrerenderKey = {
       routerId: deps.routerId,
-      version: deps.resolveVersion(),
+      version,
       routeName: match.routeName,
       paramHash: hashParams(match.params),
     };
@@ -238,19 +240,13 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     // because it fires precisely when content changed. This is the only path that
     // returns already-fresh, reported with the existing entry's ttl/tags.
     if (runtime.onlyIfStale) {
-      // A failing stale-check read must not throw (breaking the no-throw /
-      // one-result-per-target contract and aborting a many() batch) — treat an
-      // unreadable entry as "couldn't confirm fresh" and fall through to render.
-      let existing: PrerenderStoredEntry | null = null;
-      try {
-        const read = await config.store.get(key);
-        // Same verification as the serve path: an entry the serve path would
-        // treat as a miss (malformed, another version, colliding params) is
-        // not "fresh".
-        existing = isStoredEntryValidFor(read, key, match.params) ? read : null;
-      } catch {
-        existing = null;
-      }
+      // An unreadable or unverifiable entry is "couldn't confirm fresh":
+      // render, never throw (one result per target, many() keeps going).
+      const existing = await readVerifiedStoredEntry(
+        config.store,
+        key,
+        match.params,
+      );
       if (existing && !isStoredEntryStale(existing, Date.now())) {
         const existingTtl =
           existing.meta.staleAt != null
@@ -324,10 +320,15 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
       // escape run() (which would bypass the result contract and abort a many()
       // batch) — keep it inside the store guard so it maps to store-failed.
       const routeTags = produced.onDemandConfig?.tags;
-      tags =
+      const rawTags =
         typeof routeTags === "function"
           ? routeTags({ params: match.params })
-          : [...(routeTags ?? [])];
+          : (routeTags ?? []);
+      // Same normalization as cache({ tags }): trimmed, no empties, no duplicates.
+      tags =
+        normalizeTagList(
+          [...rawTags].filter((t): t is string => typeof t === "string"),
+        ) ?? [];
       // The router composes the envelope; the store only persists it.
       await config.store.set(
         key,
@@ -362,6 +363,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
   }
 
   const trigger = refresh as PrerenderFn<TEnv, TRoutes>;
+  let warnedNoStore = false;
   let warnedNoRevalidate = false;
 
   trigger.many = async (
@@ -376,10 +378,11 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
       typeof raw === "number" && Number.isFinite(raw) && raw >= 1
         ? Math.floor(raw)
         : 1;
+    const version = deps.resolveVersion();
     return runWithConcurrency(targets, concurrency, (target) =>
       // throwOnError propagates per-item so the batch stops on the first failure;
       // without it, every target yields a result.
-      refresh(target, runtime),
+      refresh(target, runtime, version),
     );
   };
 
@@ -390,10 +393,10 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     if (tags.length === 0) return;
     const config = deps.resolveConfig(runtime.env, runtime.ctx);
     if (!config?.store.markStale) {
-      // void return means a misconfigured caller (no store, or a store
-      // without tag support) is indistinguishable from success — a dead CMS
-      // webhook with no signal. Say so where a developer will see it.
-      if (deps.isDev()) {
+      // A void return makes a misconfigured caller (no store, or a store
+      // without tag support) look like success: a dead CMS webhook.
+      if (deps.isDev() && !warnedNoStore) {
+        warnedNoStore = true;
         console.warn(
           "[rango] prerender.markStale() is a no-op: " +
             (config?.store
@@ -404,8 +407,6 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
       return;
     }
     if (!config.onRevalidate && deps.isDev() && !warnedNoRevalidate) {
-      // Marking only: with nothing scheduled on a stale hit, the entry keeps
-      // serving until a router.prerender() call re-renders it.
       warnedNoRevalidate = true;
       console.warn(
         "[rango] prerender.markStale() marked entries stale, but no " +

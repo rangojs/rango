@@ -166,8 +166,13 @@ JSON-serializable so it can go straight into a queue message) and the live env.
 It runs at most once per stale key per isolate while one is in flight
 (`scheduleOverlayRevalidation`, `cache-lookup.ts`), so the obvious single
 process wiring, a direct `router.prerender()` call, renders once per stale key
-rather than once per stale request. The target's `route` is a plain string, so
-a router typed with named routes needs a cast to accept it back (a follow-up).
+rather than once per stale request. The key is free again once its task
+settles or after `IN_FLIGHT_LEADER_MAX_WAIT_MS` (the runtime cache's leader cap),
+so a hung `onRevalidate` cannot pin it, and no scheduling happens under a build
+context where `waitUntil` is a no-op.
+
+The target's `route` is a plain string, so a router typed with named routes
+needs a cast to accept it back (a follow-up).
 
 TTL resolves route `onDemand.ttl` > router `ttl` > never stale, and it
 is soft staleness metadata on the stored entry, never a hard store expiry — see
@@ -553,8 +558,11 @@ Keys carry the owning router's cache version:
 
 ```txt
 prerender:{routerId}:{version}:{routeName}:{paramHash}
-prerender:{routerId}:{version}:{routeName}:{paramHash}:i
 ```
+
+There is no intercept-variant key yet: nothing writes one. The intercept
+refresh follow-up (#1060) adds an optional `PrerenderKey` field and a `:i`
+suffix additively; main-variant keys keep serializing exactly as above.
 
 `version` is the router's **data** version
 (`docs/design/per-app-cache-version.md`), or `createRouter({ version })` when
@@ -733,7 +741,7 @@ createRouter({
 ```
 
 Within one isolate the router dedups for you: a key with an `onRevalidate` in
-flight is not scheduled again until that task settles, so a hot stale page on
+flight is not scheduled again until that task settles (or 15 s pass), so a hot stale page on
 a single Node process renders once, not once per request. Across isolates it
 cannot help. For Cloudflare, queue-native dedup or a Durable Object should own herd control.
 KV is eventually consistent, so a KV lock alone is not enough to prevent a burst

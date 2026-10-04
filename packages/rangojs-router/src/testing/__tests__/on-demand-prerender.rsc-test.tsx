@@ -221,6 +221,26 @@ describe("on-demand prerender: router.prerender() then serve", () => {
     });
   });
 
+  it("a long-lived handler follows a data version change, as the trigger does", async () => {
+    setBuildVersions({ data: "d-1", document: "h-1" });
+    const router = makeRouter({ store });
+    await router.prerender("/article/v", { env: {} });
+    expect((await serveShellRequest(router, "/article/v")).flight).toContain(
+      "v:stamp-1",
+    );
+
+    // Same document version: the handler is reused, the data version moved.
+    setBuildVersions({ data: "d-2", document: "h-1" });
+    await router.prerender("/article/v", { env: {} });
+    expect(store.entries().map(([, e]) => e.meta.version)).toEqual([
+      "d-1",
+      "d-2",
+    ]);
+    expect((await serveShellRequest(router, "/article/v")).flight).toContain(
+      "v:stamp-2",
+    );
+  });
+
   it("a cache key built inside a refresh carries the router's versions", async () => {
     const warn = vi.spyOn(console, "warn");
     setBuildVersions({
