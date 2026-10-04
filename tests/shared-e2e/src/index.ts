@@ -2028,6 +2028,8 @@ export interface PushOwnershipFixture {
   pinnedUrl: string;
   cappedUrl: string;
   deferredUrl: string;
+  /** A route whose deferred loader push settles after ppr.captureTimeout. */
+  slowUrl: string;
   liveUrl: string;
   bumpUrl: string;
   /** A page of the app outside the fixture, to navigate from. */
@@ -2189,6 +2191,34 @@ export async function expectShellHitHydratesFromRecord(
   using _ = guardHydrationErrors(page);
   const probe = pushProbe("hit-handles");
   const url = `${fixture.deferredUrl}?probe=${probe}`;
+  await warmShellToHit(page, url);
+
+  const hit = await page.request.get(url, { headers: PUSH_HTML_HEADERS });
+  expect(hit.headers()["x-rango-shell"]).toBe("HIT");
+  expect(pushNoteRowsInHtml(await hit.text())).toEqual(["settled-note@g1"]);
+
+  await gotoShellHit(page, url);
+  await expect(byTestId(page, "push-note")).toHaveText([
+    "settled-note@g1",
+    "deferred-note@g1",
+  ]);
+}
+
+/**
+ * A deferred push by an `ssr: false` loader that settles after
+ * `ppr.captureTimeout` does not stop the capture: the shell's record leaves
+ * the push out, so the shell is captured (a later document request is a HIT)
+ * with the settled row only, hydrates clean, and the HIT's own loader run
+ * delivers the deferred row after hydration. Before, the capture waited for
+ * the push, ran out of budget and never produced a shell.
+ */
+export async function expectSlowDeferredPushDoesNotBlockCapture(
+  page: Page,
+  fixture: PushOwnershipFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const probe = pushProbe("slow-push");
+  const url = `${fixture.slowUrl}?probe=${probe}`;
   await warmShellToHit(page, url);
 
   const hit = await page.request.get(url, { headers: PUSH_HTML_HEADERS });

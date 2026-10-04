@@ -452,6 +452,7 @@ export const NamedRoutes = {
   shellPushDeferred: "/shell-push/deferred",
   shellPushLive: "/shell-push/live",
   shellPushPinned: "/shell-push/pinned",
+  shellPushSlow: "/shell-push/slow",
   shellSecure: "/shell-secure",
   shellSecureDsl: "/shell-secure-dsl",
   shellSecureRuns: "/shell-secure-runs",

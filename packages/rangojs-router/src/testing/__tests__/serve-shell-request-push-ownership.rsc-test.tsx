@@ -210,6 +210,24 @@ const NestedNoted = createLoader(async (ctx) => {
   return { nested: `nested@g${source.generation}` };
 });
 
+/** Settles after a ppr.captureTimeout of SLOW_PUSH_BUDGET_MS. */
+const SLOW_PUSH_BUDGET_MS = 100;
+const slowAfterBudget = (value: string): Promise<string> =>
+  new Promise((resolve) => setTimeout(() => resolve(value), 400));
+
+/** An `ssr: false` loader whose deferred push settles after the budget. */
+const SlowDeferred = createLoader(async (ctx) => {
+  ctx.use(Notes)(`slow-settled@g${source.generation}`);
+  ctx.use(Notes)(slowAfterBudget(`slow-deferred@g${source.generation}`));
+  return { slow: `slow@g${source.generation}` };
+});
+
+/** A handler push baked into the shell: the capture waits for it. */
+function SlowHandlerPush(ctx: HandlerContext): React.ReactNode {
+  ctx.use(Notes)(slowAfterBudget("slow-handler-push"));
+  return <p>slow handler push</p>;
+}
+
 /** A live-lane loader (no `ssr: false`) that pushes before its first await. */
 const LiveNoted = createLoader(async (ctx) => {
   ctx.use(Notes)(`live-note@g${source.generation}`);
@@ -356,6 +374,16 @@ function makeRouter() {
           ]),
         ],
       ),
+      path(
+        "/slow-deferred",
+        () => <p>slow deferred</p>,
+        { name: "slowDeferred", ppr: { captureTimeout: SLOW_PUSH_BUDGET_MS } },
+        () => [loader(SlowDeferred, { ssr: false })],
+      ),
+      path("/slow-handler-push", SlowHandlerPush, {
+        name: "slowHandlerPush",
+        ppr: { captureTimeout: SLOW_PUSH_BUDGET_MS },
+      }),
       path(
         "/deferred-plain",
         () => <p>deferred plain</p>,
@@ -1252,6 +1280,55 @@ describe("a shell HIT hydrates from its record (#1035)", () => {
         expect(values.hydration).toEqual(values.shell);
       });
     }
+  });
+
+  describe("the capture does not wait for a push its record leaves out", () => {
+    it("/slow-deferred: a deferred loader push slower than ppr.captureTimeout does not refuse the capture", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const { serve } = setup();
+      expect((await serve("/slow-deferred")).shellStatus).toBe("MISS");
+
+      const hit = await serve("/slow-deferred");
+
+      expect(hit.shellStatus).toBe("HIT");
+      const values = await handleValues(hit);
+      expect(values.shell).toEqual(["slow-settled@g1"]);
+      expect(values.hydration).toEqual(["slow-settled@g1"]);
+    });
+
+    it("/slow-deferred: the HIT's own run delivers the deferred push after hydration", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const { serve } = setup();
+      await serve("/slow-deferred");
+      source.generation = 2;
+
+      const hit = await serve("/slow-deferred");
+
+      expect(hit.shellStatus).toBe("HIT");
+      expect(delivered(await handleValues(hit))).toEqual({
+        hydration: ["slow-settled@g1"],
+        afterHydration: ["slow-settled@g1", "slow-deferred@g2"],
+      });
+    });
+
+    it("/slow-deferred: the loader's pin still asks for a run on the HIT", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const { serve } = setup();
+      await serve("/slow-deferred");
+      const hit = await serve("/slow-deferred");
+      expect(hit.shellStatus).toBe("HIT");
+      const { late } = (await hit.readHandles())!;
+      expect(late.length).toBeGreaterThan(0);
+    });
+
+    it("a handler's deferred push slower than ppr.captureTimeout still refuses the capture", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const { serve } = setup();
+
+      expect((await serve("/slow-handler-push")).shellStatus).toBe("MISS");
+
+      expect((await serve("/slow-handler-push")).shellStatus).not.toBe("HIT");
+    });
   });
 
   describe("what does not change", () => {
