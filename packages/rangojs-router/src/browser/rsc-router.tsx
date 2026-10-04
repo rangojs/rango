@@ -256,6 +256,10 @@ export async function initBrowserApp(
     initialLocation: new URL(window.location.href),
   });
 
+  // The document's entry, after the clearOnReload pass and under the version
+  // set above: what readers get once they have hydrated.
+  eventController.commitLocationState(window.history.state);
+
   // Initialize event controller with segment order (even without handles)
   eventController.setHandleData({}, initialPayload.metadata?.matched);
 

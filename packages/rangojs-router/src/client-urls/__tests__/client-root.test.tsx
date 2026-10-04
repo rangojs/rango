@@ -3,7 +3,19 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { useEffect, useState, type ReactNode } from "react";
-import { Outlet, useOutlet } from "../../client.js";
+import {
+  createLocationState,
+  Outlet,
+  useLocationState,
+  useOutlet,
+} from "../../client.js";
+import { buildHistoryState } from "../../browser/history-state.js";
+import { LocationStateContext } from "../../browser/react/context.js";
+import {
+  locationStateSnapshot,
+  resolveLocationStateEntries,
+} from "../../browser/react/location-state-shared.js";
+import { withLocationStateKey } from "../../testing/index.js";
 import { MountContextProvider } from "../../browser/react/mount-context.js";
 import { OutletProvider } from "../../outlet-provider.js";
 import type { LoaderDefinition } from "../../types.js";
@@ -328,6 +340,157 @@ describe("ClientUrlsRoot", () => {
     expect(result.getByTestId("item").textContent).toBe(
       "42|/shop/items/42|specs",
     );
+  });
+
+  // #1029: the provider still holds the entry being left while the
+  // destination is presented optimistically. Inside the branch a reader gets
+  // the entry the navigation will push; outside it, the committed entry's.
+  describe("location state in the optimistic branch", () => {
+    const Note = withLocationStateKey(
+      createLocationState<{ text: string }>(),
+      "OptimisticNote",
+    );
+    const Flash = withLocationStateKey(
+      createLocationState<{ text: string }>({ flash: true }),
+      "OptimisticFlash",
+    );
+    const read = (where: string) =>
+      function Reader(): ReactNode {
+        const note = useLocationState(Note);
+        const flash = useLocationState(Flash);
+        return (
+          <p data-testid={where}>
+            {`${where}: ${note?.text ?? "none"}/${flash?.text ?? "none"}`}
+          </p>
+        );
+      };
+    const Chrome = read("chrome");
+    const LayoutReader = read("layout");
+    const HomeReader = read("home");
+    const ItemReader = read("item");
+    function GroupLayout(): ReactNode {
+      return (
+        <main>
+          <LayoutReader />
+          {useOutlet().content}
+        </main>
+      );
+    }
+    const definition = clientUrls(({ layout, path }) => [
+      layout(GroupLayout, () => [
+        path("/", HomeReader),
+        path("/items/:itemId", ItemReader),
+      ]),
+    ]);
+    const entry = (
+      ...entries: Parameters<typeof resolveLocationStateEntries>[0]
+    ) => buildHistoryState(resolveLocationStateEntries(entries));
+    const source = entry(Note({ text: "source" }));
+    // What NavigationProvider provides: the committed entry's state.
+    const tree = (routeId: string, committed: unknown): ReactNode => (
+      <LocationStateContext.Provider value={locationStateSnapshot(committed)}>
+        <Chrome />
+        <ClientUrlsRoot definition={definition} routeId={routeId} />
+      </LocationStateContext.Provider>
+    );
+    const mount = () => {
+      window.history.replaceState(source, "");
+      return render(tree("client-route-0", source));
+    };
+    const text = (result: ReturnType<typeof render>, where: string) =>
+      result.queryByTestId(where)?.textContent ?? null;
+
+    afterEach(() => window.history.replaceState(null, ""));
+
+    it("the destination and the group layout read the navigation's state on the first optimistic render; chrome keeps the committed entry's", async () => {
+      const result = mount();
+      expect(text(result, "home")).toBe("home: source/none");
+      const abort = new AbortController();
+      let presentation: ReturnType<typeof beginClientUrlNavigation> = null;
+      await act(async () => {
+        presentation = beginClientUrlNavigation(
+          new URL("http://localhost/items/42"),
+          abort.signal,
+          () => entry(Note({ text: "destination" }), Flash({ text: "saved" })),
+        );
+      });
+
+      expect(text(result, "item")).toBe("item: destination/saved");
+      expect(text(result, "layout")).toBe("layout: destination/saved");
+      expect(text(result, "chrome")).toBe("chrome: source/none");
+      expect(text(result, "home")).toBeNull();
+      // Presentation only: the entry being left is untouched, and a flash
+      // reader has not consumed a slot history does not hold yet.
+      expect(window.history.state).toEqual(source);
+
+      // Cancelled or superseded before the commit: the branch and its state
+      // are discarded.
+      await act(async () => presentation?.clear());
+      expect(text(result, "home")).toBe("home: source/none");
+      expect(text(result, "layout")).toBe("layout: source/none");
+      expect(text(result, "item")).toBeNull();
+    });
+
+    it("the canonical commit hands every reader the pushed entry, and a flash slot read in the branch is cleared only then", async () => {
+      const result = mount();
+      const pushed = entry(
+        Note({ text: "destination" }),
+        Flash({ text: "saved" }),
+      );
+      let presentation: ReturnType<typeof beginClientUrlNavigation> = null;
+      await act(async () => {
+        presentation = beginClientUrlNavigation(
+          new URL("http://localhost/items/42"),
+          new AbortController().signal,
+          () => pushed,
+        );
+      });
+      expect(text(result, "item")).toBe("item: destination/saved");
+      expect(text(result, "chrome")).toBe("chrome: source/none");
+      expect(window.history.state).toEqual(source);
+
+      // What the canonical commit does: the entry is pushed, the payload
+      // re-renders the group on the destination's route with the entry's
+      // state, and the presentation clears.
+      await act(async () => {
+        window.history.replaceState(pushed, "");
+        result.rerender(tree("client-route-1", pushed));
+        presentation?.clear();
+      });
+      for (const where of ["item", "layout", "chrome"]) {
+        expect(text(result, where)).toBe(`${where}: destination/saved`);
+      }
+      expect(Note.read()).toEqual({ text: "destination" });
+      expect(window.history.state).not.toHaveProperty(Flash.__rsc_ls_key);
+    });
+
+    it("a navigation without state presents a destination with none, not the leaving entry's", async () => {
+      const result = mount();
+      await act(async () => {
+        beginClientUrlNavigation(
+          new URL("http://localhost/items/42"),
+          new AbortController().signal,
+          () => entry(),
+        );
+      });
+      expect(text(result, "item")).toBe("item: none/none");
+      expect(text(result, "layout")).toBe("layout: none/none");
+      expect(text(result, "chrome")).toBe("chrome: source/none");
+    });
+
+    it("a same-route intent swaps nothing: every reader keeps the committed entry's state", async () => {
+      const result = mount();
+      await act(async () => {
+        beginClientUrlNavigation(
+          new URL("http://localhost/?tab=2"),
+          new AbortController().signal,
+          () => entry(Note({ text: "destination" })),
+        );
+      });
+      expect(text(result, "home")).toBe("home: source/none");
+      expect(text(result, "layout")).toBe("layout: source/none");
+      expect(text(result, "chrome")).toBe("chrome: source/none");
+    });
   });
 
   it("signals pending on a same-route intent without presenting loading", async () => {
