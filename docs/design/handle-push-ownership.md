@@ -638,7 +638,7 @@ production.
 | HIT, an entry without loader pins (`ppr.maxSnapshotBytes`), the run pushes                    | HTML: the capture's push. Hydration: **the run's push** (the run is awaited). Text mismatch                                                        | HTML, hydration: the capture's push (the placeholder). After: the run's push in its place                |
 | The same, the run makes no push                                                               | HTML: the capture's push. Hydration: **none**                                                                                                      | HTML, hydration: the capture's push. After: none                                                         |
 | HIT, a live-lane loader pushes, the reader is in the static part (B)                          | HTML: no element. Hydration: **the push when made before the loader's first await** (element mismatch, #418), else after                           | HTML, hydration: record. After: the push                                                                 |
-| HIT, a live-lane loader pushes, the reader is inside that loader's boundary (a hole) (B, dev) | Push before the first await: in the hole's HTML and in the hydration data, clean. Push after an await: after hydration, **fails in that boundary** | Both after hydration: **fails in that boundary** until `useHandle` hydrates from the document's snapshot |
+| HIT, a live-lane loader pushes, the reader is inside that loader's boundary (a hole) (B, e2e) | Push before the first await: in the hole's HTML and in the hydration data, clean. Push after an await: after hydration, **fails in that boundary** | Both after hydration: **fails in that boundary** until `useHandle` hydrates from the document's snapshot |
 | Client navigation that replays the shell                                                      | one stream, the final state                                                                                                                        | same                                                                                                     |
 | Document of a route without `ppr`                                                             | as a MISS                                                                                                                                          | same                                                                                                     |
 
@@ -690,7 +690,9 @@ client did not change either: it already drains `metadata.handles` before
 
 ### A reader that hydrates after the root
 
-One row is not clean, and you should know it before you rely on the rule.
+One row is not clean, and one existing browser test is red because of it.
+Know this before you rely on the rule.
+
 "After hydration" means after the ROOT hydrates (`hydrationCommitted`,
 `rsc-router.tsx`). A `useHandle` reader inside a boundary that hydrates
 later, a PPR hole or any streamed `<Suspense>`, initializes from the
@@ -705,12 +707,24 @@ changes is one case: a push made before the loader's first await used to be
 in a HIT's hydration data and in the hole's resumed HTML, and hydrated
 clean. Now it is late like the other, and fails the same way.
 
+The router test-app has that case as a fixture. `/shell-cache/live-dep`
+renders `useHandle` rows inside the `loading()` boundary of a live loader
+that pushes before its first await, and
+`e2e/shell-cache.test.ts` "live dep: a live loader a running ssr false
+loader awaits keeps its live push on a HIT" guards its hydration. It passes
+on `origin/main` and fails with the two halves above, in dev and in
+production: the page ends with the right values, and both guards report the
+mismatch.
+
 The fix is in the hook, not in the rule: a render React is hydrating reads
 the handle state the document was rendered with, as `useLocationState`
 does since #992 (`useSyncExternalStore` for its server snapshot). A patch
-that does this made all four cases clean in a browser (push before and
-after an await, MISS and HIT; cloudflare-basic, dev). It is not built: it
-changes `useHandle` for every document, with its own tests to write.
+that does this (47 lines in `use-handle.ts`, `event-controller.ts` and
+`rsc-router.tsx`) turns that test green and makes the MISS case above clean
+too: with it the `shell ppr handle semantic-matrix` files of the test-app
+pass 263 of 263 in dev and 230 of 230 in production. It is not built. It
+changes `useHandle` for every document, not only for shells, and it needs
+its own tests.
 
 ### What recording a deferred push would take
 
