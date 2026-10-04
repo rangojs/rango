@@ -78,10 +78,21 @@ afterEach(async () => {
   await loadDocument(undefined);
 });
 
+/**
+ * Exports with "version" in the name that are about something else.
+ * `setBuildVersions` installs the cache versions of a simulated build for the
+ * server-side testing primitives (testing/build-versions.ts): it takes
+ * versions and returns nothing, and a client still learns the version it
+ * records location state under only from the payload it loads.
+ */
+const OTHER_VERSIONS: ReadonlySet<string> = new Set(["setBuildVersions"]);
+
 describe("the version of location state is not public", () => {
   it.each(Object.keys(ENTRIES))("%s exports nothing named after it", (name) => {
     expect(
-      Object.keys(ENTRIES[name]!).filter((key) => /version/i.test(key)),
+      Object.keys(ENTRIES[name]!).filter(
+        (key) => /version/i.test(key) && !OTHER_VERSIONS.has(key),
+      ),
     ).toEqual([]);
   });
 

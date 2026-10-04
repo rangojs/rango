@@ -11,8 +11,9 @@
  * served through the same serveShellHit as a captured one.
  *
  * Lifecycle:
- * - No expiry until the next deploy — the buildVersion gate retires entries
- *   the moment a new build ships (a new manifest replaces them anyway).
+ * - No expiry until the next deploy: every build ships its own manifest, and
+ *   its entries carry that build's document version for the router, which is
+ *   what the buildVersion gate compares.
  * - `ppr.ttl` drives STALENESS ONLY: past createdAt + ttl the entry still
  *   serves, but a runtime recapture is scheduled — SWR is the UPGRADE path
  *   from build entry to fresher runtime entry, not the bootstrap path. The
@@ -90,9 +91,10 @@ function loadManifest(): Promise<ShellManifestModule | null> {
  * Only the per-request gates (tag markers, staleness) stay outside the memo;
  * the document HIT decodes the prelude once per serve (openShellDocument),
  * partial replay never does. `null` memoizes a failed verdict —
- * deterministically invalid. Spec-only keying is sound because buildVersion is
- * process-constant on the manifest path (folded into the shipped worker; dev
- * never loads a manifest).
+ * deterministically invalid. Keyed by the asking router's document version as
+ * well as the spec: the manifest key is pathname-only (shell-manifest-key.ts),
+ * so under a host router two routers with different versions can ask about one
+ * record.
  */
 const validatedSpecs = new Map<string, ValidatedBuildShellEntry | null>();
 
@@ -110,7 +112,8 @@ async function validatedManifestRecord(
   spec: string,
   buildVersion: string,
 ): Promise<ValidatedBuildShellEntry | undefined> {
-  let verdict = validatedSpecs.get(spec);
+  const memoKey = `${buildVersion}\u0000${spec}`;
+  let verdict = validatedSpecs.get(memoKey);
   if (verdict === undefined) {
     const record = (await mod.loadShellAsset(spec)).default;
     verdict =
@@ -118,7 +121,7 @@ async function validatedManifestRecord(
       hasIntactShellPayload(record.entry)
         ? (record as ValidatedBuildShellEntry)
         : null;
-    validatedSpecs.set(spec, verdict);
+    validatedSpecs.set(memoKey, verdict);
   }
   return verdict ?? undefined;
 }

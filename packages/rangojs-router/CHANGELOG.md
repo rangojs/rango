@@ -2,6 +2,229 @@
 
 ## Unreleased
 
+### Breaking: a deploy keeps the cache of every app whose code it did not change
+
+Every production build used to get a new version, the build time, and every
+persistent cache key and stored PPR shell was tied to it. So every deploy
+started with a cold cache, a rebuild of unchanged source cleared it, and under
+a host router a deploy of one app cleared the cache of all the others.
+
+`vite build` now computes two versions for each `createRouter()` from that
+router's built code, and the stores key with them:
+
+- the **data version**, a hash of the router's server code, keys cached RSC
+  data: `cache()` segment entries, `"use cache"` values, loader data;
+- the **document version**, the data version plus the SSR output, the client
+  asset file names and the router's `Prerender` payloads, keys stored HTML
+  (PPR shells, document-cache responses) and is what an open tab's `_rsc_v` is
+  compared with.
+
+The same code builds to the same versions, on any machine and in any checkout
+directory, so the new deployment finds the entries the previous one wrote.
+
+| Deploy                                   | Cached data         | Stored HTML           | Open tabs               |
+| ---------------------------------------- | ------------------- | --------------------- | ----------------------- |
+| Before: any deploy, any rebuild          | cleared             | cleared               | reload                  |
+| Rebuild or redeploy, no code change      | kept                | kept                  | untouched               |
+| Server code of app A changes             | cleared for A only  | cleared for A only    | A's tabs reload         |
+| Client code of any app changes           | kept for every app  | cleared for every app | every app's tabs reload |
+| Server code shared by A and B changes    | cleared for A and B | cleared for A and B   | A's and B's tabs reload |
+| A dependency changes (React, rango, any) | cleared             | cleared               | reload                  |
+| A stylesheet server code of app A links  | cleared for A only  | cleared for every app | every app's tabs reload |
+| New `Prerender` content, same code       | kept                | cleared for that app  | that app's tabs reload  |
+| New `Static()` content, same code        | cleared for the app | cleared for that app  | that app's tabs reload  |
+
+"A dependency" is one your server code imports: bundled into the build, or on
+the node preset left external and resolved from `node_modules` (the version
+covers what is installed there for it, and for its own dependencies).
+
+Every build prints what it computed, and writes what each version was
+computed from to `node_modules/.rangojs-router-build/cache-versions.json`.
+Diff that file between two builds to see which chunk, payload or key moved a
+version.
+
+```
+[rango] Cache versions for 2 router(s), data / document (13.5ms):
+[rango]   089295a905c2ac9c / 04f098c068051ed1  src/apps/shop/router.tsx
+[rango]   83115bcfbb9b35c1 / fc93d46fcd5ab63e  src/apps/blog/router.tsx
+```
+
+What changes for you:
+
+- **Entries now outlive a deploy.** If you relied on a deploy to clear the
+  cache (new CMS content rendered by a `"use cache"` function or a `cache()`
+  route, a changed upstream response), it no longer does. Invalidate the tags
+  (`updateTag()` / `revalidateTag()`), or change `version`.
+- **To clear a router's cache on demand**, change `createRouter({ version })`:
+  that exact value is used for both versions.
+- **To keep the old behavior**, set `version` to a per-deploy value:
+  `createRouter({ version: process.env.BUILD_ID })`. On Vercel a
+  deployment-scoped handle does the same
+  (`getCache({ namespace: process.env.VERCEL_DEPLOYMENT_ID })`).
+- **`VercelCacheStore` is versioned by default.** It had no default version:
+  its keys were unversioned unless you passed `version`, and the documented
+  wiring put the deployment id in the `getCache()` namespace, which cleared the
+  cache on every deploy. It now keys with the router's versions like
+  `CFCacheStore`. Drop the deployment id from the namespace to keep the cache
+  across deploys. Entries written without a version are not read any more.
+- **Two environments built from the same code have the same versions.** If a
+  preview and production share a store (the same KV namespace), they now share
+  entries. Give each environment its own KV namespace or cache namespace, or
+  its own `version`.
+- **A router whose build output differs on every build gets a new version on
+  every build.** That is a `Prerender` or `Static()` handler rendering a
+  timestamp or a random id, and an inline server action with bound arguments
+  inside one (its arguments are encrypted with a random IV). `cache-versions.json`
+  lists them as `prerender ...` and `static ...`. A random encryption key does
+  the same for every router that encrypts with it: see `encryptionKey` below.
+- **Apps are independent when the host mounts them lazily.** A router's
+  version covers everything the modules that statically import it can run. An
+  app mounted with `.lazy(() => import("./apps/shop/handler.js"))` is on its
+  own; routers that one module imports statically share that module's code,
+  and a change to either moves both versions.
+- **The host entry is not part of a lazily mounted app's version.** A change
+  to the file that creates the host router, or to host middleware, does not
+  clear the mounted apps.
+- **A stylesheet your server code links is part of the cached data.** That is
+  `import "./x.css"` in a server component and `import href from "./x.css?url"`
+  in a server module (a document that renders `<link href={href}>`). Its
+  hashed URL is in what the server renders, so a change to the compiled CSS
+  clears that app's cached data. With a framework that compiles one stylesheet
+  from every class in the app, that is any class change, so "a client change
+  keeps cached data" holds for changes that leave the compiled CSS alone. A
+  stylesheet imported by a client component is not in any cached payload.
+- **A `clientUrls()` module is client code that also tells the server what to
+  run.** Changing which loaders a route declares, its `loading` or its
+  transition changes that app's data version, like a server change. Changing
+  the components it renders does not.
+- **On the node preset, the version covers what is installed.** For each
+  dependency the server build leaves external, the installed `name@version`
+  of the package and of its dependencies is part of the version. A file the
+  server build imports by path and leaves external is covered by its bytes.
+- **What the build cannot read gives a new version on every build, or fails
+  the build.** A package it cannot find in `node_modules`, a path that does
+  not resolve and an import by URL give the routers importing them a new
+  version on every build, and the build names them. A build output file it
+  cannot read, a missing plugin-rsc assets manifest and a missing encryption
+  key file (when your code encrypts action arguments) fail the build. A
+  version never stays the same because an input could not be read.
+- **Where and how you build does not change the versions.** The same source
+  gives the same versions in any checkout directory, whether you run
+  `vite build` in the app or `vite build apps/web` from the repository root,
+  and whatever peers pnpm installed a bundled dependency against. One
+  exception: with `build.minify: false` on the client build, the client asset
+  names depend on the working directory, and the document version with them.
+- **Every router's generated id changed.** The id is now a hash of the
+  router's file path and its position among the `createRouter()` calls in that
+  file. It was a hash of the path and the call's line, taken from the
+  transformed code, where a build drops comments and a dev server keeps them:
+  build-time route discovery and the bundle disagreed on the id of any router
+  with a comment above the call, so the build registered that router's lazy
+  route data under an id the running router did not have and the router
+  rebuilt its route trie at run time. And a blank line or a comment added
+  above the call changed the id, the state cookie name and the router's cache
+  versions. The rango state cookie is named after the router id, so clients
+  start one new state cookie; a router with an explicit `id` is unaffected.
+- **A task scheduled with `ctx.waitUntil()` runs inside the request context.**
+  It re-enters the context it was scheduled under, so a task that writes to a
+  cache store, or calls `getRequestContext()`, no longer relies on the
+  platform carrying the request's async context into deferred work. Node and
+  miniflare do; deployed workerd was seen not to (the `"use cache"`
+  revalidation fix). A cache store builds its key in such a task from the
+  serving router's versions and the request host.
+- **A cache key built outside a request is logged, once per process.** A store
+  operation with no request context keys with the whole-build version; when
+  routers have versions of their own, that entry is not read by them. The
+  warning names it.
+- **`createRouter({ version })` is honored on the node and vercel presets.**
+  The generated entry passed the build version over it.
+- **`import { VERSION } from "@rangojs/router:version"`** is the whole-build
+  document version in production, not a timestamp. The module also exports
+  `ROUTER_VERSIONS`, the per-router table.
+- **The node and vercel server builds split differently.** The RSC entry is
+  built with `preserveEntrySignatures: "strict"`, as the Cloudflare preset's
+  already was, so code shared with lazily loaded chunks is emitted as chunks
+  instead of being exported from `dist/rsc/index.js`.
+
+Nothing changes in dev: one version, bumped on every server module edit. And
+nothing changes for an app that sets `version` itself.
+
+A custom persistent store can key the same way with `getCacheVersions()` from
+`@rangojs/router/cache`. In tests, `setBuildVersions()` from
+`@rangojs/router/testing` installs the versions a build would ship; calling it
+again is a deploy:
+
+```ts
+setBuildVersions({ data: "d1", document: "h1" });
+await serveShellRequest(router, "/product/1", { cacheStore }); // MISS, captured
+setBuildVersions({ data: "d1", document: "h2" }); // a client-only deploy
+const { shellStatus } = await serveShellRequest(router, "/product/1", {
+  cacheStore,
+});
+expect(shellStatus).toBe("MISS"); // stored HTML is keyed by the document version
+```
+
+### Added: `rango({ encryptionKey })`, the key inline server actions encrypt their arguments with
+
+An inline server action that closes over a value sends that value to the
+browser encrypted. The key was generated per build unless the
+`RANGO_ENCRYPTION_KEY` environment variable was set. It is now a plugin
+option, to be passed from the environment and never written as a literal:
+
+```ts
+// vite.config.ts
+export default defineConfig({
+  plugins: [rango({ encryptionKey: process.env.RANGO_ENCRYPTION_KEY })],
+});
+```
+
+Generate one with `openssl rand -base64 32`. The value is checked when
+`rango()` runs: a string that is not base64, or that does not decode to an AES
+key size, fails the config load instead of the first action in production.
+`undefined` (the variable is unset) falls back to `RANGO_ENCRYPTION_KEY`, then
+to a key generated for the build, as before.
+
+Why you want one now: a payload cached under one key carries arguments another
+key cannot decrypt, so the key is part of the cache version of every router
+whose code encrypts with it. Without a stable key those routers get a new
+version, and a cleared cache, on every build. The build tells you when that
+applies:
+
+```
+[rango] No stable encryption key: 1 router(s) encrypt server-action arguments with a key generated for this build, so their cache version changes on every build and each deploy clears their cache. ...
+```
+
+A router with no inline action that closes over a value encrypts nothing and
+keeps its cache either way; file-level `"use server"` actions do not count.
+Rotating the key clears the cache of the routers that encrypt with it.
+
+### Changed: a tag invalidation applies to the entries of every version
+
+`CFCacheStore` stored a tag's invalidation marker under the build version, in
+KV (`v/{version}/__tag__/{tag}`), in the edge cache and in its per-isolate
+memo, and `VercelCacheStore` did the same when given a `version`. That was
+harmless while a version was a build time and never came back. A version is
+now a hash of the code, and a hash can be live twice: deploy A, deploy B, roll
+back to A. An `updateTag()` made while B was live wrote nothing A's entries
+looked at, so after the rollback they were served until their TTL.
+
+Markers are stored without a version now (`__tag__/{tag}` in KV,
+`rg:tm:{tag}` on Vercel), so an invalidation reaches the entries of every
+version. The freshness check is unchanged: it compares the marker's time with
+the time the entry's tags were attached. Markers written before this release
+are not read any more; they expire by `tagInvalidationTtl`.
+
+One case needs an action. If you pin the store's version
+(`new CFCacheStore({ version })` or `new VercelCacheStore({ version })`), your
+entries keep their keys across this upgrade while the markers that
+invalidated them are no longer read, so an entry tagged before your last
+`updateTag()` is served again until its TTL. Change the pinned value once when
+you upgrade. A store without a pinned version is not affected: its entries
+were written under a build time and are not read by the new build.
+
+Otherwise nothing changes in app code. `createCloudflareZonePurge` and
+Vercel's `expireTag` were already version-free.
+
 ### Breaking: location state written by another app version reads as no state ([#1020](https://github.com/rangojs/rango/pull/1020))
 
 A history entry outlives a deploy: a tab left open across a release keeps its
@@ -30,11 +253,14 @@ no API returns it.
 | any build, when a release older than this one wrote the entry    | the value                       | `undefined`                            |
 | a release older than this one, after a rollback                  | the value                       | the value: it does not read the record |
 
-- **This happens on every deploy.** The default app version is generated per
-  build, so each deploy is another version. State a user had in an open tab (a
-  filter carried on a link, a flash message not shown yet) is gone after the
-  deploy, as if the entry never had any. Readers already handle `undefined`.
-  State that has to outlive a deploy belongs in the URL, a cookie or storage.
+- **This happens on every deploy that changes the app.** The default app
+  version is the router's document version (the cache-version entry above): a
+  hash of the app's server code and the client assets. A deploy that changes
+  either is another version, and state a user had in an open tab (a filter
+  carried on a link, a flash message not shown yet) is gone after it, as if
+  the entry never had any. A rebuild or redeploy of unchanged code keeps it.
+  Readers already handle `undefined`. State that has to outlive a deploy that
+  changes the app belongs in the URL, a cookie or storage.
 - An app that pins its own app version instead of the generated one keeps
   location state for as long as that value stays the same.
 - On the first release with this change, every entry written before the

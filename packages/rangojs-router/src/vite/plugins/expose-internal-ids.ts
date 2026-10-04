@@ -45,6 +45,8 @@ import {
   transformHandlerIds,
 } from "./expose-ids/handler-transform.js";
 import { createRangoDebugger, createCounter, NS } from "../debug.js";
+import { compareStrings } from "../utils/compare-strings.js";
+import { VIRTUAL_LOADER_MANIFEST_ID } from "../discovery/state.js";
 
 const debug = createRangoDebugger(NS.transform);
 
@@ -56,7 +58,7 @@ export type { ExposeInternalIdsApi } from "./expose-ids/types.js";
 // Virtual module for loader manifest
 // ---------------------------------------------------------------------------
 
-const VIRTUAL_LOADER_MANIFEST = "virtual:rsc-router/loader-manifest";
+const VIRTUAL_LOADER_MANIFEST = VIRTUAL_LOADER_MANIFEST_ID;
 const RESOLVED_VIRTUAL_LOADER_MANIFEST = "\0" + VIRTUAL_LOADER_MANIFEST;
 
 // ---------------------------------------------------------------------------
@@ -245,10 +247,17 @@ setLoaderImports({});
 `;
       }
 
-      // Build mode: generate lazy import map
+      // Build mode: generate lazy import map. Sorted by id: the registry fills
+      // in directory-scan order (the pre-scan below) and transform order, both
+      // of which vary between machines and runs, and this module's bytes feed
+      // the cache version of every router bundled with it
+      // (discovery/build-versions.ts).
       const lazyImports: string[] = [];
+      const sortedLoaders = [...loaderRegistry].sort(([a], [b]) =>
+        compareStrings(a, b),
+      );
 
-      for (const [hashedId, { filePath, exportName }] of loaderRegistry) {
+      for (const [hashedId, { filePath, exportName }] of sortedLoaders) {
         lazyImports.push(
           `  "${hashedId}": () => import("/${filePath}").then(m => m.${exportName})`,
         );

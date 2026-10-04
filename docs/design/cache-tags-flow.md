@@ -272,6 +272,43 @@ Memory and Cloudflare invalidate _oppositely_, both within their one store:
   records a **marker** (timestamp) in its _own_ KV namespace and reads compare
   against it. There is no separate tag-invalidation store to configure.
 
+## Markers are shared by every version
+
+Entries are keyed under a version (`v/{version}/...`, see
+[caching.md](./caching.md) "Versions"). Markers are not:
+
+| Where a marker lives            | Key                                                     |
+| ------------------------------- | ------------------------------------------------------- |
+| `CFCacheStore` KV               | `__tag__/{tag}`                                         |
+| `CFCacheStore` edge cache (L1)  | `{baseUrl}__tagmarker__/{tag}` in the namespace's cache |
+| `CFCacheStore` per-isolate memo | namespace + tag                                         |
+| `VercelCacheStore`              | `rg:tm:{tag}`                                           |
+
+You might wonder why, since each deploy used to have its own markers and
+nothing went wrong. It went right only because a version was a build time and
+never came back. A version is now a hash of the router's code
+([per-app-cache-version.md](./per-app-cache-version.md)), and a hash can be
+live twice:
+
+1. Deploy A writes an entry tagged `products`.
+2. Deploy B replaces it. A product changes; `updateTag("products")` runs under
+   B.
+3. B is rolled back to A. A's version is live again, with what A wrote still
+   in the store.
+
+With the marker under B's version, step 3 read no marker and served A's entry
+until its TTL. With one marker per tag, A's read finds it. Nothing else had to
+change: the freshness decision in "② READ" compares the marker's time with the
+entry's `taggedAt` and never looked at a version.
+
+The same holds for the two paths that leave the store. The Cloudflare purge
+tokens (`rg:{ns}:e:{tag}`, `rg:{ns}:lk:{tag}`) carry the namespace and the tag,
+so `createCloudflareZonePurge` reaches the entries of every version. And
+`VercelCacheStore` passes `expireTag` the tags as written.
+
+Markers written before this change sit under their old `v/{version}/` prefix
+and are never read again; they expire by `tagInvalidationTtl`.
+
 ## Config knobs (CFCacheStore)
 
 | Option               | Default          | Role                                                                                                             |
@@ -405,7 +442,9 @@ invalidation reaches:
 | Preview on a **separate** zone              | active                     | needs its own `zoneId`/token, or falls back to TTL      |
 
 Practical guidance: give previews their own KV namespace (markers and data stay
-per-environment; the `v/{version}/` key prefix already partitions deploys), and
+per-environment; the `v/{version}/` key prefix separates builds whose code
+differs, but a preview built from the same code as production has the same
+versions, and markers have no version at all), and
 either scope `tagPurge` credentials per environment or leave `tagPurge` unset on
 preview environments — they then run plain marker mode, which needs no
 credentials.

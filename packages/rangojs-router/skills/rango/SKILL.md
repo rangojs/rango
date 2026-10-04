@@ -157,8 +157,9 @@ stated, greppable contract.
   `cacheTag(...tags)`, then `updateTag(...tags)` (awaitable) or `revalidateTag(...tags)`
   (background). Built-in stores index by tag.
 - `useLoader` / `useHandle` / `useFetchLoader` are client-only.
-- Caches are correctness-first: persistent store keys are version-segmented (no
-  cross-deploy drift), the forward/back cache is mutation-aware, and
+- Caches are correctness-first: persistent store keys are version-segmented per
+  `createRouter()` by a hash of its built code (a deploy that does not change a
+  router keeps its cache; one that does reads under new keys), the forward/back cache is mutation-aware, and
   `createVar({ cache: false })` throws on a **direct** read inside a `cache()`
   boundary or a `"use cache"` function (a deliberately non-propagating guard). See `/cache-guide` →
   "Correctness & invalidation".

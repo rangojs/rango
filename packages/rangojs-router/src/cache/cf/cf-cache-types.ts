@@ -320,11 +320,19 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
   tagCacheTtl?: number;
 
   /**
-   * Cache version string override. When this changes, all cached entries are
-   * effectively invalidated (new keys won't match old entries).
+   * Cache version string override. When set, this exact value prefixes every
+   * versioned key the store writes (`v/{version}/...`), for cached data and
+   * stored HTML alike; changing it makes every earlier entry unreachable.
    *
-   * Defaults to the auto-generated VERSION from the `@rangojs/router:version` virtual module.
-   * Only set this if you need a custom versioning strategy.
+   * Leave it unset for the default: the store keys with the versions of the
+   * router serving the request. Segment entries and `"use cache"` items use
+   * the router's data version; document responses and PPR shells use its
+   * document version (see `createRouter({ version })`). Those are computed
+   * from the router's built code, so a deploy that does not change the router
+   * keeps its entries.
+   *
+   * Tag invalidation markers are never versioned: an invalidation applies to
+   * the entries of every version, including one that comes back in a rollback.
    */
   version?: string;
 

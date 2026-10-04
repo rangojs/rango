@@ -55,7 +55,7 @@ SWR is a first-class cache behavior where the store supports it: inside the SWR 
 - `cache()` and loader caches take an explicit `swr` in seconds (or inherit the store's `defaults.swr`): `cache({ ttl: 60, swr: 300 })` means fresh for 60s, stale-served from 60–360s, a miss after 360s.
 - Store support is layer-specific. `CFCacheStore` and `VercelCacheStore` support SWR for segment, document/response, item (`"use cache"` and cached loaders), and PPR shell entries. `MemorySegmentCacheStore` supports it for response, item, and shell entries, but its route-segment entries expire at TTL with no background revalidation — don't read the memory store's dev behavior as proof segment SWR is active.
 
-SWR softens normal TTL expiry, **not** a cross-deploy cold cache — a new build has no stale entry to serve (see version-segmented keys below).
+SWR softens normal TTL expiry, **not** a version change — a deploy that changes a router's code reads under a new version and has no stale entry to serve (see version-segmented keys below).
 
 ## Tags and invalidation
 
@@ -91,9 +91,25 @@ Context variables get a third, targeted guard. `createVar({ cache: false })` (or
 
 ## Version-segmented store keys
 
-`CFCacheStore` prefixes every physical store key with the build version (auto-generated per build, overridable via the store's `version` option). A new deploy reads under a new prefix, so it can never see a previous build's entries — no cross-deploy shape drift, no dead client-chunk references baked into cached RSC.
+`CFCacheStore` and `VercelCacheStore` prefix every physical store key with a version, so a build only reads entries that code like its own wrote: no cross-deploy shape drift, no dead client-chunk references baked into cached RSC. The version is a hash of the code, computed per `createRouter()` by `vite build`, not the build time. Each router has two:
 
-The tradeoff: loader/data caches use the same store, so every deploy is a **cold data cache**, and SWR can't soften it — no stale entry exists under the new key. Decide deliberately: accept the deploy-time origin warm-up (correctness over hit-rate), or split the policy — let the render cache auto-version while a separate data store gets a stable `version` so its entries survive deploys. `VercelCacheStore` does not version automatically; pass a per-deploy namespace or its `version` option. `MemorySegmentCacheStore` is per-process and starts cold on every restart anyway.
+- The **data version** (a hash of the router's server code) keys cached RSC data: segment entries from `cache()`, `"use cache"` values, loader data.
+- The **document version** (the data version plus the SSR output, the client asset file names, `base`, and the router's `Prerender` payloads) keys stored HTML (PPR shells, document-cache responses). It is also sent to the browser, and a mismatch with the tab's `_rsc_v` reloads the tab.
+
+Same code builds to the same versions, so a rebuild or redeploy of unchanged code keeps the cache, and a deploy that changes app A keeps app B's cache.
+
+| Deploy                                | Cached data         | Stored HTML           | Open tabs               |
+| ------------------------------------- | ------------------- | --------------------- | ----------------------- |
+| Rebuild, no code change               | kept                | kept                  | untouched               |
+| Server code of app A changes          | cleared for A only  | cleared for A only    | A's tabs reload         |
+| Client code of any app changes        | kept for every app  | cleared for every app | every app's tabs reload |
+| Server code shared by A and B changes | cleared for A and B | cleared for A and B   | A's and B's tabs reload |
+
+"Server code" is everything the app's server can run: its own modules, the dependencies it imports (bundled, or on the node preset left external and resolved from `node_modules`), and a stylesheet its server code links (`import "./x.css"` in a server component, or `import href from "./x.css?url"` for a document `<link>`). The stylesheet's hashed URL is in what the server renders, so a change to the compiled CSS clears that app's cached data. A `clientUrls()` module is client code that also tells the server what to run: changing which loaders a route declares, its `loading` or its transition counts as a server change; changing the components it renders does not. Under a host router, apps are independent when the host mounts them lazily; routers one module imports statically share that module's code.
+
+Tag invalidation markers are stored without a version, so `updateTag()` and `revalidateTag()` apply to entries of every version, including a version that comes back in a rollback. `MemorySegmentCacheStore` has no version; it is per-process and starts cold on every restart.
+
+To force a clear, change `version` (`createRouter({ version })`, or the store's `version` option; either value is used for both versions) or invalidate tags. To keep the old "every deploy clears the cache" behavior, set `version` to a per-deploy value such as a build id. Two deployments built from the same code have the same versions, so if they share a store (the same KV namespace) they share entries: give each environment its own KV or cache namespace, or its own `version`.
 
 ## Coming from Next.js or Remix (false friends)
 

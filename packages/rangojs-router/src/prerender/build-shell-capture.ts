@@ -21,6 +21,7 @@
  */
 
 import type { ShellCacheEntry } from "../cache/types.js";
+import type { RouterVersions } from "../router-versions.js";
 import type { MatchResult } from "../types.js";
 import { MemorySegmentCacheStore } from "../cache/memory-segment-store.js";
 import {
@@ -105,13 +106,14 @@ export interface BuildShellCaptureOptions {
   /** Build-time env bindings (rango plugin buildEnv), if configured. */
   buildEnv?: unknown;
   /**
-   * The MAIN build's version (the version plugin's value folded into the
-   * shipped worker) — NOT the temp server's own version-plugin value. The
-   * serve-side isValidShellHit gate compares entry.buildVersion against the
-   * running worker's ctx.version; stamping the temp server's would make every
-   * build entry an eternal MISS.
+   * The versions the SHIPPED build serves this router with (the build table,
+   * or the router's consumer-set version) — NOT the temp server's own
+   * version-plugin stamp. The serve-side isValidShellHit gate compares
+   * entry.buildVersion against the running worker's ctx.version, which is the
+   * document version; stamping the temp server's would make every build entry
+   * an eternal MISS.
    */
-  buildVersion: string;
+  versions: RouterVersions;
   /**
    * The SSR half, composed by the plugin from the temp server's SSR
    * environment runner (react-dom/static prerender + Flight client), with the
@@ -192,7 +194,7 @@ async function attemptBuildCapture(
     cacheStore: new MemorySegmentCacheStore(),
     themeConfig: router.themeConfig ?? null,
     stateCookieName: router.resolvedStateCookieName,
-    version: opts.buildVersion,
+    versions: opts.versions,
   });
   // Scope registry lookups (root-scope/search-schema) per router during the
   // bake, mirroring rsc/handler.ts on the request path (#762).
@@ -215,7 +217,7 @@ async function attemptBuildCapture(
 
   const descriptor: ShellCaptureDescriptor = {
     key: opts.key,
-    buildVersion: opts.buildVersion,
+    buildVersion: opts.versions.document,
     ttl: opts.ttl,
     swr: opts.swr,
     tags: opts.tags,
@@ -448,7 +450,7 @@ async function runBuildCaptureFinal(
         // buildFullPayload reads only ctx.router.* and ctx.version.
         {
           router,
-          version: opts.buildVersion,
+          version: opts.versions.document,
         } as unknown as HandlerContext<any>,
         url,
         derivedCtx,

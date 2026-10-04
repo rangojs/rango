@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { createVersionInjectorPlugin } from "../plugins/version-injector.js";
+import { createEntryBootstrapInjectorPlugin } from "../plugins/entry-bootstrap-injector.js";
 
 function initPlugin() {
-  const plugin = createVersionInjectorPlugin(
+  const plugin = createEntryBootstrapInjectorPlugin(
     "src/worker.rsc.tsx",
-  ) as ReturnType<typeof createVersionInjectorPlugin> & {
+  ) as ReturnType<typeof createEntryBootstrapInjectorPlugin> & {
     configResolved: (config: any) => void;
     transform: (code: string, id: string) => any;
   };
@@ -13,7 +13,7 @@ function initPlugin() {
   return plugin;
 }
 
-describe("createVersionInjectorPlugin", () => {
+describe("createEntryBootstrapInjectorPlugin", () => {
   it("prepends the routes manifest import even when the entry already imports it later", () => {
     const plugin = initPlugin();
     const code = `import { router } from "./router.js";
@@ -57,7 +57,10 @@ export default {
     );
   });
 
-  it("keeps injected VERSION import after the manifest gate", () => {
+  // The handler resolves the router's own versions; an injected
+  // `version: VERSION` would pin every router to the whole-build version and
+  // undo per-router isolation.
+  it("does not pass a version to a createRSCHandler call", () => {
     const plugin = initPlugin();
     const code = `import { createRSCHandler } from "@rangojs/router/rsc";
 import { router } from "./router.js";
@@ -70,9 +73,10 @@ export default createRSCHandler({
     const result = plugin.transform(code, "/project/src/worker.rsc.tsx");
 
     expect(result?.code).toMatch(
-      /^import "virtual:rsc-router\/routes-manifest";\nimport "virtual:rsc-router\/loader-manifest";\nimport \{ VERSION \} from "@rangojs\/router:version";/,
+      /^import "virtual:rsc-router\/routes-manifest";\nimport "virtual:rsc-router\/loader-manifest";\nimport \{ createRSCHandler \}/,
     );
-    expect(result.code).toContain("createRSCHandler({\n  version: VERSION,");
+    expect(result.code).not.toContain("@rangojs/router:version");
+    expect(result.code).toContain("createRSCHandler({\n  router,\n});");
   });
 
   // Regression: a custom worker entry must also import the loader manifest, not

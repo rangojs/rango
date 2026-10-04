@@ -47,6 +47,7 @@ import { type MetricsStore } from "./context.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import { getFetchableLoader } from "./fetchable-loader-store.js";
 import type { SegmentCacheStore } from "../cache/types.js";
+import type { RouterVersions } from "../router-versions.js";
 import type { Theme, ResolvedThemeConfig } from "../theme/types.js";
 import type { ExecutionContext, RequestScope } from "../types/request-scope.js";
 import type { TransitionWhenRecord } from "../router/transition-when.js";
@@ -858,6 +859,15 @@ export interface RequestContext<
   _routerId?: string;
 
   /**
+   * @internal Cache versions of the router serving this request. The cache
+   * factory builds a store per request without knowing the router, so a store
+   * reads its key versions from here, lazily, the same way CFCacheStore
+   * resolves its base URL (getCacheVersions, server/build-version-table.ts).
+   * Unset on a context no router created; a store then uses the build version.
+   */
+  _versions?: RouterVersions;
+
+  /**
    * @internal RouteSnapshot from classifyRequest, reused by match/matchPartial
    * to avoid a second resolveRoute call. Cleared on HMR invalidation.
    */
@@ -966,6 +976,7 @@ export type PublicRequestContext<
   | "_tracing"
   | "_basename"
   | "_routerId"
+  | "_versions"
   | "_setStatus"
   | "_rotateStateCookie"
   | "_setKeepCacheDirective"
@@ -1130,8 +1141,13 @@ export interface CreateRequestContextOptions<TEnv> {
   themeConfig?: ResolvedThemeConfig | null;
   /** Resolved rango state cookie name, for the server seat of invalidateClientCache(). */
   stateCookieName?: string;
-  /** Build version, used as the prefix of a server-rotated rango state value. */
-  version?: string;
+  /**
+   * The versions of the router serving this request (resolveRouterVersions).
+   * Stored as `_versions` for the cache stores; `document` is also the prefix
+   * of a server-rotated rango state value, which the browser compares with the
+   * payload's `metadata.version`.
+   */
+  versions?: RouterVersions;
 }
 
 /**
@@ -1159,7 +1175,7 @@ export function createRequestContext<TEnv>(
     build = false,
     themeConfig,
     stateCookieName,
-    version: stateVersion,
+    versions,
   } = options;
   // ctx.request.headers is guarded like headers() (#976); every router read
   // of this request's headers goes through requestHeaders().
@@ -1451,7 +1467,7 @@ export function createRequestContext<TEnv>(
       const prevRaw =
         (requestHeaders(request).get("x-rango-state") || null) ??
         getRawCookieValue(cookieHeader, stateCookieName);
-      const value = mintStateValue(stateVersion ?? "0", prevRaw);
+      const value = mintStateValue(versions?.document ?? "0", prevRaw);
       // rawStubHeaders: guard-exempt internal writer — invalidateClientCache()
       // is documented callable from loaders and during shell capture.
       rawStubHeaders.append(
@@ -1527,6 +1543,7 @@ export function createRequestContext<TEnv>(
 
     _handleStore: handleStore,
     _cacheStore: cacheStore,
+    _versions: versions,
     _searchParamsFilter: searchParamsFilter,
     _explicitTaggedStores: explicitTaggedStores,
     _requestTags: new Set<string>(),
@@ -1537,11 +1554,23 @@ export function createRequestContext<TEnv>(
 
     waitUntil(fn: () => Promise<void>): void {
       if (ctx.build) return;
-      // Wrap in Promise.resolve().then(fn) so a SYNCHRONOUS throw in a
+      // A deferred task does not rely on the platform carrying the request's
+      // async context into it. Deployed workerd lost it once ("use cache"
+      // background revalidation, cache-runtime.ts); Node and miniflare never
+      // do, so no local run shows a loss. A cache store builds its key inside
+      // the task and reads the serving router's versions and the request host
+      // from the context: without it the write lands under the whole-build
+      // pair, which no router with its own version reads. So the task
+      // re-enters the context it was scheduled under: the store active then
+      // (a derived context), else this one.
+      const scheduledUnder = requestContextStorage.getStore() ?? ctx;
+      // Wrap in Promise.resolve().then(...) so a SYNCHRONOUS throw in a
       // non-async callback becomes a rejected promise handed to the host's
       // waitUntil (logged as a background failure), instead of escaping into
       // the request flow. Mirrors fireAndForgetWaitUntil's deferral.
-      const task = Promise.resolve().then(fn);
+      const task = Promise.resolve().then(() =>
+        requestContextStorage.run(scheduledUnder, fn),
+      );
       // Track the task promise so the PPR shell capture can settle the
       // foreground's deferred cache writes before its own match/render (the
       // ordering edge; see _pendingBackgroundTasks). The capture task itself

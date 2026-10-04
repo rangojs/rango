@@ -370,3 +370,16 @@ apps; each app owns its own document.
 
 **Within-app** navigation is unchanged — a normal soft SPA update (the document
 stays mounted). Only crossing an app boundary triggers the reload.
+
+## Deploys and the cache
+
+Each `createRouter()` app has its own cache version, computed by `vite build` from that app's built code, so deploying a change to one app does not clear the cache of the others. Lazily mounting sub-apps (`.lazy(() => import("./apps/admin"))`) is what keeps them independent: an app's version covers everything the modules that statically import its router can run, and a lazy mount is where that stops. Routers that one module imports statically share that module's code, so a change to either moves both versions.
+
+| Deploy                                | Cached data         | Stored HTML           | Open tabs               |
+| ------------------------------------- | ------------------- | --------------------- | ----------------------- |
+| Rebuild, no code change               | kept                | kept                  | untouched               |
+| Server code of app A changes          | cleared for A only  | cleared for A only    | A's tabs reload         |
+| Client code of any app changes        | kept for every app  | cleared for every app | every app's tabs reload |
+| Server code shared by A and B changes | cleared for A and B | cleared for A and B   | A's and B's tabs reload |
+
+The host entry (the file that creates the host router and its middleware) is not part of a lazily mounted sub-app's version. If host middleware changes what an app renders from inside a cache boundary, change that app's `version` or invalidate its tags. See `/cache-guide`.

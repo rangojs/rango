@@ -5,11 +5,9 @@ import { resolveRscEntryFromConfig } from "../utils/shared-utils.js";
 import { RSC_ENTRY_BOOTSTRAP_IMPORTS } from "./virtual-entries.js";
 
 /**
- * Plugin that auto-injects VERSION, routes-manifest, and loader-manifest into
- * custom entry.rsc files. If a custom entry.rsc file uses createRSCHandler but
- * doesn't pass version, this transform adds the import and property
- * automatically. It also ensures the routes-manifest and loader-manifest
- * virtual modules are always imported.
+ * Plugin that auto-injects the routes-manifest and loader-manifest imports
+ * into a custom entry.rsc file (the Cloudflare preset, where the consumer owns
+ * the worker entry).
  *
  * The loader-manifest import is what makes fetchable loaders resolvable on a
  * custom worker entry. The virtual RSC entry (getVirtualEntryRSC) imports the
@@ -23,13 +21,13 @@ import { RSC_ENTRY_BOOTSTRAP_IMPORTS } from "./virtual-entries.js";
  * manifest, hence the production-only failure this fixes.
  * @internal
  */
-export function createVersionInjectorPlugin(
+export function createEntryBootstrapInjectorPlugin(
   rscEntryPath: string | undefined,
 ): Plugin {
   let resolvedEntryPath = "";
 
   return {
-    name: "@rangojs/router:version-injector",
+    name: "@rangojs/router:entry-bootstrap-injector",
     enforce: "pre",
 
     configResolved(config) {
@@ -54,21 +52,8 @@ export function createVersionInjectorPlugin(
       const prepend: string[] = RSC_ENTRY_BOOTSTRAP_IMPORTS.map(
         (id) => `import "${id}";`,
       );
-      let newCode = code;
-      const needsVersion =
-        code.includes("createRSCHandler") &&
-        !code.includes("@rangojs/router:version") &&
-        /createRSCHandler\s*\(\s*\{/.test(code);
 
-      if (needsVersion) {
-        prepend.push(`import { VERSION } from "@rangojs/router:version";`);
-        newCode = newCode.replace(
-          /createRSCHandler\s*\(\s*\{/,
-          "createRSCHandler({\n  version: VERSION,",
-        );
-      }
-
-      const lines = newCode.split("\n");
+      const lines = code.split("\n");
       let insertAt = 0;
       while (insertAt < lines.length) {
         const trimmed = lines[insertAt]!.trim();
@@ -78,7 +63,7 @@ export function createVersionInjectorPlugin(
           break;
         }
       }
-      newCode = [
+      const newCode = [
         ...lines.slice(0, insertAt),
         ...prepend,
         ...lines.slice(insertAt),

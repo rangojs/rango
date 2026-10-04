@@ -1,5 +1,9 @@
 import { parseAst, type Plugin } from "vite";
-import { VIRTUAL_IDS, getVirtualVersionContent } from "./virtual-entries.js";
+import {
+  VIRTUAL_IDS,
+  getVirtualBuildVersionContent,
+  getVirtualVersionContent,
+} from "./virtual-entries.js";
 import { hasUseClientDirective } from "../utils/directive-prologue.js";
 
 interface ClientModuleSignature {
@@ -100,25 +104,22 @@ function getClientModuleSignature(
 }
 
 /**
- * Plugin providing rsc-router:version virtual module.
- * Exports VERSION that changes when RSC modules change (dev) or at build time (production).
+ * Plugin providing the `@rangojs/router:version` virtual module.
  *
- * The version is used for:
- * 1. Cache invalidation - CFCacheStore uses VERSION to invalidate stale cache
- * 2. Version mismatch detection - client sends version, server reloads on mismatch
+ * Dev: exports a VERSION stamp used for both versions of every router. It
+ * updates when the server starts and when an RSC module changes via HMR (the
+ * version module is invalidated). Client-only HMR changes do not update it:
+ * they do not affect server-rendered content or cached RSC payloads.
  *
- * In dev mode, the version updates when:
- * - Server starts (initial version)
- * - RSC modules change via HMR (triggers version module invalidation)
- *
- * Client-only HMR changes don't update the version since they don't affect
- * server-rendered content or cached RSC payloads.
+ * Build: exports a placeholder for the per-router versions table. The module
+ * holds nothing that varies between builds; the table is written into the
+ * built chunk after the server output is hashed (the buildApp post hook in
+ * router-discovery.ts). See docs/design/per-app-cache-version.md.
  * @internal
  */
 export function createVersionPlugin(): Plugin {
-  // Generate version at plugin creation time (build/server start)
-  const buildVersion = Date.now().toString(16);
-  let currentVersion = buildVersion;
+  // Dev stamp, generated at plugin creation (server start).
+  let currentVersion = Date.now().toString(16);
   let isDev = false;
   let server: any = null;
   let resolvedCacheDir: string | undefined;
@@ -141,14 +142,6 @@ export function createVersionPlugin(): Plugin {
   return {
     name: "@rangojs/router:version",
     enforce: "pre",
-
-    // The build-time shell capture phase (producer B, #699) stamps entries
-    // with THIS instance's version — the value folded into the shipped worker
-    // — never the discovery temp server's own version-plugin value (a
-    // different Date.now() stamp that would fail the serve-side gate).
-    api: {
-      getBuildVersion: (): string => currentVersion,
-    },
 
     configResolved(config) {
       isDev = config.command === "serve";
@@ -177,7 +170,9 @@ export function createVersionPlugin(): Plugin {
 
     load(id) {
       if (id === "\0" + VIRTUAL_IDS.version) {
-        return getVirtualVersionContent(currentVersion);
+        return isDev
+          ? getVirtualVersionContent(currentVersion)
+          : getVirtualBuildVersionContent();
       }
       return null;
     },

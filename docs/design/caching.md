@@ -414,6 +414,52 @@ For `"use cache"` functions, cache keys follow the format `use-cache:{functionId
 
 Request data the key does not see must not reach the stored value, so the non-cacheable variable guard applies in both scopes. A `ctx.get()` of a `createVar({ cache: false })` variable (or a value written with `{ cache: false }`) throws inside a `cache()` boundary and inside a `"use cache"` body, whether it reads through `getRequestContext()`, a handler ctx, or a response-route ctx. The fix at the call site is to read the value outside and pass it in as an argument, which puts it in the key. The guard is `assertNonCacheableReadAllowed` (`src/server/context.ts`), called only after `isNonCacheable()` matches, so ordinary reads skip it. It is a wrapper over `guardIdentityRead`, the one guard `cookies()`, `headers()` and the theme reads go through too, so all four refuse in the same places: a PPR capture first, then a `"use cache"` body, then a `cache()` boundary. Loader bodies stay exempt under `cache()` (a route `cache()` never stores a loader's value). Under `"use cache"` nothing is exempt: a loader body entered inside the cached function (`await ctx.use(Loader)`) runs as part of that body, and its value is part of what the function returns and stores. Before, a non-cacheable `ctx.get()` there was exempt while `cookies()` threw, and the entry kept the first request's value under a key that did not include it.
 
+### Versions: which build may read an entry
+
+The keys above say what an entry is. A persistent store also has to say which
+code may read it: an entry outlives the deploy that wrote it, and the next
+build may render the same key differently. So `CFCacheStore` and
+`VercelCacheStore` put a version in front of every key (`v/{version}/...`).
+
+That version used to be the build time, which made every deploy a cold cache.
+It is now a hash of the code that produced the entry, per `createRouter()`, so
+a deploy that does not change a router keeps its entries. Each router has two
+versions, and each family uses the one that describes what it holds:
+
+| Family                                     | CFCacheStore key            | VercelCacheStore key      | Version  |
+| ------------------------------------------ | --------------------------- | ------------------------- | -------- |
+| Segment entries (route `cache()`, loaders) | `v/{data}/{key}`            | `v/{data}/rg:s:{key}`     | data     |
+| `"use cache"` items                        | `v/{data}/fn:{key}`         | `v/{data}/rg:i:{key}`     | data     |
+| Document-cache responses                   | `v/{document}/doc:{key}`    | `v/{document}/rg:r:{key}` | document |
+| PPR shells                                 | `v/{document}/shell2:{key}` | `v/{document}/rg:h:{key}` | document |
+| Tag markers                                | `__tag__/{tag}`             | `rg:tm:{tag}`             | none     |
+
+- The **data version** follows the router's server code. Cached RSC data is
+  the output of that code and nothing else.
+- The **document version** also follows the SSR output and the client asset
+  names. Stored HTML names those assets, and a cached RSC response carries the
+  handler version in its payload metadata, so both families stay on it.
+- **Tag markers have no version.** A content-hash version can come back (a
+  rollback), and an invalidation made under another version has to reach the
+  entries of the one that is live again. See
+  [cache-tags-flow.md](./cache-tags-flow.md) "Markers are shared by every
+  version".
+
+A store reads its versions per operation from the request context
+(`getCacheVersions()` in `src/server/build-version-table.ts`), not in its
+constructor: the cache factory builds the store before the request context
+exists and without knowing which router is serving. A store-level `version`
+option, or `createRouter({ version })`, replaces both with one value.
+`MemorySegmentCacheStore` has no version; the process is its scope.
+
+One consequence worth knowing when you change what a stored entry looks like:
+rango's own source is part of every router's server code, so a rango upgrade
+changes every data version, and a new release never reads an entry an older
+one wrote (unless the consumer pinned `version`).
+
+How the versions are computed, and what does and does not change them:
+[per-app-cache-version.md](./per-app-cache-version.md).
+
 ### Search param filtering (`cache.searchParams`) — shipped
 
 By default every non-reserved query param produces a distinct cache slot. That
@@ -908,11 +954,12 @@ the read back on the value's set (`markIdentityRead`), and an unkeyed reader
 fails as it would have on the MISS. The value string is loader-cache's own
 and the store only holds it, so the mark needs no change to the store
 contract. A keyed dependency that read no identity carries no mark. Entries
-written before the mark existed carry none: on a store that does not version
-its keys per deploy (`VercelCacheStore` without `version`, a pinned
-`version`), an unkeyed loader reading such an entry on a HIT or stale hit fills
-without error until the entry is rewritten (its refresh stores the mark), so
-the upgrade note says to bump `version` or `updateTag()` the affected tags.
+written before the mark existed carry none: on a store whose keys survived
+that upgrade (at the time, `VercelCacheStore` without `version`, or a pinned
+`version`; today only a pinned `version`, see "Versions" above), an unkeyed
+loader reading such an entry on a HIT or stale hit fills without error until
+the entry is rewritten (its refresh stores the mark), so the upgrade note says
+to bump `version` or `updateTag()` the affected tags.
 
 On a foreground MISS with a declared key, the read also marks this loader's
 own value set, as its readers see it: when another loader made the read, the
@@ -1467,11 +1514,12 @@ scope of a document HIT tail used to pin the shell entry's `docKey` through a
 `key()`; namespacing would have missed the record, so it pins it directly
 (`FIXED_KEYS` in `cache-scope.ts`).
 
-The cost is one change of stored key strings. `CFCacheStore` keys every
-family under a per-build version and shells are gated on `buildVersion`, so
-a deploy is already cold; `MemorySegmentCacheStore` is cold after a restart.
-Only `VercelCacheStore` without `version` sees a one-time miss for existing
-keyed entries.
+The cost was one change of stored key strings. When it shipped, `CFCacheStore`
+keyed every family under a per-build version and shells were gated on
+`buildVersion`, so that deploy was cold anyway; `MemorySegmentCacheStore` is
+cold after a restart. Only `VercelCacheStore` without `version` saw a one-time
+miss for existing keyed entries. (Stores now key by per-router code versions,
+and a rango upgrade changes those too: see "Versions" above.)
 
 #### Loader key results are namespaced (issue #1009)
 

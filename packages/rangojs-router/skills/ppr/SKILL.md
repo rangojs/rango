@@ -53,7 +53,8 @@ implements the shell family (`getShell`/`putShell`): `MemorySegmentCacheStore`
 `VercelCacheStore` (Vercel Runtime Cache). A ppr route on a store without the
 family renders normally (no shell) with a once-per-key warning. A custom store
 returns each `ShellCacheEntry` field as `putShell` received it, including
-`buildVersion` and `snapshot` (both required; the snapshot can be empty).
+`buildVersion` (the router's document version) and `snapshot` (both required;
+the snapshot can be empty).
 
 ```typescript
 import { createRouter, urls } from "@rangojs/router";
@@ -250,7 +251,9 @@ under `cache()` and under the shell alike.
 
 Invalidation crosses layers: `updateTag()`/`revalidateTag()` reach segment,
 shell, loader, and item entries in the same store, and shell entries
-additionally self-invalidate on `React.version` change.
+additionally self-invalidate on `React.version` change and when the router's
+document version changes (server code, SSR output, client asset names, `base`
+or Prerender payloads changed), not on every deploy.
 
 ## The serve pipeline: commit after ALL middleware
 
@@ -1218,8 +1221,9 @@ eligible captured segment snapshot, per-request CSP nonce, `streamMode:
 request the route's own `cache()` scope refuses (`cache(false)`, or a
 `condition()` returning false for it), and any store without the shell family.
 A stored shell is invalidated when
-`React.version` changes (postponed state is build-coupled), so deploys
-self-heal via recapture.
+`React.version` changes (postponed state is build-coupled) or when the router's
+document version changes, so a deploy that changes the router self-heals via
+recapture, and a deploy that does not keeps its shells.
 
 The per-request CSP nonce guarantee covers BOTH ways a nonce arrives — the
 `createRouter({ nonce })` provider AND a direct `ctx.set(nonce, value)` token

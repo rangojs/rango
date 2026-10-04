@@ -292,18 +292,22 @@ you: every entry records the app version its location state was written under,
 and a read under any other version returns `undefined`, for typed slots and
 for plain state alike. You do not manage a version and there is none to read;
 the app version is the one the router already uses to reload a client that is
-behind the server, and it changes with every build.
+behind the server. It is computed from the app's built code (its server code
+and the client assets), so it changes with a build that changes the app and
+stays the same across a rebuild or redeploy of unchanged code.
 
-| An entry's location state, read by                             | Result      |
-| -------------------------------------------------------------- | ----------- |
-| the build that wrote it: navigation, back/forward, refresh     | the value   |
-| a later build, after a refresh or a restored tab               | `undefined` |
-| a later build, on back/forward to an entry the older one wrote | `undefined` |
-| any build, when the entry predates this behavior               | `undefined` |
+| An entry's location state, read by                               | Result      |
+| ---------------------------------------------------------------- | ----------- |
+| the version that wrote it: navigation, back/forward, refresh     | the value   |
+| the same code rebuilt or redeployed                              | the value   |
+| a changed build, after a refresh or a restored tab               | `undefined` |
+| a changed build, on back/forward to an entry the older one wrote | `undefined` |
+| any build, when the entry predates this behavior                 | `undefined` |
 
-So location state is for the current session of the current build: a filter
-carried on a link, a flash message, a scroll target. State that has to outlive
-a deploy belongs in the URL, a cookie or storage. In development a
+So location state is for the current session of the current version of the
+app: a filter carried on a link, a flash message, a scroll target. State that
+has to outlive a deploy that changes the app belongs in the URL, a cookie or
+storage. In development a
 server-module edit (HMR) changes the version too; the running page keeps its
 state, and the next document load drops it.
 

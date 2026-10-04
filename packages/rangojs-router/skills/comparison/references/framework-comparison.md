@@ -57,7 +57,7 @@ and multi-region composition without replacing its routing or data model.
 | Middleware              | Global + segment-scoped subtree                                                                            | Single root Proxy (matcher filters paths); no subtree scope                    | Request/server-function middleware                                                 | [Hono middleware + handler interceptors](https://waku.gg/#interceptors) |
 | Observability           | Built-in CF + Vercel OTel phase spans, `Server-Timing`, perf waterfall                                     | Built-in OTel spans; no equivalent router-phase waterfall                      | Client/data devtools                                                               | No equivalent built-in phase model                                      |
 | Deploy targets          | Node, Cloudflare, Vercel — all with presets                                                                | Node/Vercel first; other platforms through adapters                            | Broad Vite/Rsbuild runtime support                                                 | Node plus adapters                                                      |
-| Deployment skew         | Automatic build-version handshake for navigation, prefetch, and actions; safe reload on mismatch           | `deploymentId` mismatch reload; Vercel can pin clients to an immutable deploy  | Application/platform policy                                                        | Build-id mismatch reload (v1.0-beta)                                    |
+| Deployment skew         | Automatic version handshake for navigation, prefetch, and actions; safe reload on mismatch                 | `deploymentId` mismatch reload; Vercel can pin clients to an immutable deploy  | Application/platform policy                                                        | Build-id mismatch reload (v1.0-beta)                                    |
 | Multi-tenant            | `createHostRouter()` built-in                                                                              | Roll your own                                                                  | Roll your own                                                                      | Roll your own                                                           |
 | Testing primitives      | Ships `@rangojs/router/testing` (handlers/loaders/mw/Flight/e2e)                                           | No comparable handler/Flight primitives                                        | Documented patterns; no shipped utils                                              | No comparable handler/Flight primitives                                 |
 | Client runtime          | ~50 KB Rango + ~115 KB React/RSC, per-route chunks                                                         | Configuration-dependent                                                        | Configuration-dependent                                                            | Deliberately light                                                      |
@@ -336,8 +336,9 @@ first-class primitive.
 
 ### Deployment skew is detected before stale code executes
 
-The Vite plugin generates a build version and injects it into the RSC handler and
-initial payload. The browser returns that version on every partial navigation,
+`vite build` computes a document version per `createRouter()` from that router's
+built code (the server code, the SSR output, the client asset file names, `base`,
+and its Prerender payloads) and ships it in the initial payload metadata. The browser returns that version on every partial navigation,
 prefetch, and Server Action. If an old tab reaches a newer server, request
 classification detects the mismatch before resolving the route or executing the
 action and responds with `X-RSC-Reload`. The browser then performs a clean document
@@ -348,13 +349,16 @@ falling through to a misleading 404.
 The protection covers fresh, completed-prefetch, and in-flight-prefetch responses.
 For action requests, the reload returns to the same-origin referrer rather than the
 internal action URL. The cache side follows the same correctness rule:
-`CFCacheStore` automatically versions its physical Cache API and KV keys, so a new
-build cannot replay Flight containing an old component shape or dead client-chunk
-reference. `VercelCacheStore` exposes the same version segmentation, but — unlike
-`CFCacheStore` — does not default `version` to the build version: skew safety is
-opt-in via the `version` option or the recommended deployment-specific Runtime
-Cache namespace. The browser's Rango state also includes
-the build version, rotating HTTP and in-memory prefetch cache identity on boot.
+`CFCacheStore` and `VercelCacheStore` automatically version their physical keys
+(Cache API and KV keys on Cloudflare): cached RSC data (segment entries, `"use
+cache"` values, loader data) by a data version, a hash of the router's server
+code, and stored HTML (PPR shells, document-cache responses) by the document
+version. A build whose router code changed cannot replay Flight containing an old
+component shape or dead client-chunk reference, and a rebuild of unchanged code
+keeps its cache. Tag invalidation markers carry no version, so `updateTag()`
+reaches entries of every version. The `version` option replaces both versions.
+The browser's Rango state also includes the document version, rotating HTTP and
+in-memory prefetch cache identity on boot.
 
 Next.js deserves explicit credit here: its
 [`deploymentId`](https://nextjs.org/docs/app/api-reference/config/next-config-js/deploymentId)
@@ -587,10 +591,10 @@ dropped rather than warmed. `useLinkStatus()` exposes `{ pending }` for the owni
 link.
 
 **Rango State ties prefetch and client-cache invalidation together.** It is a
-session-cookie value shaped as `{buildVersion}:{invalidationTimestamp}`. Navigation
+session-cookie value shaped as `{documentVersion}:{invalidationTimestamp}`. Navigation
 and prefetch requests send it as `X-Rango-State`, and RSC responses vary on that
 header, so the browser HTTP cache and Rango's decoded prefetch map share one cache
-identity. A deployment changes the version; a mutation rotates the timestamp. Old
+identity. A deployment that changes the router's code or client assets changes the version; a mutation rotates the timestamp. Old
 responses become unreachable under the retired identity instead of requiring every
 cache layer to delete the same entries successfully.
 

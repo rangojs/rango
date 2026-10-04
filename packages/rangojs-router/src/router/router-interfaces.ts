@@ -457,7 +457,8 @@ export interface RangoInternal<
   readonly nonce?: NonceProvider<TEnv>;
 
   /**
-   * RSC version string
+   * The consumer-set version (createRouter({ version })), used for both of the
+   * router's versions. Undefined when the router uses its build versions.
    */
   readonly version?: string;
 

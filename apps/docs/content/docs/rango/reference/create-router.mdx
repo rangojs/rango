@@ -56,7 +56,7 @@ interface RangoOptions<TEnv> {
     request: Request,
     env: TEnv,
   ) => string | boolean | Promise<string | boolean>;
-  version?: string; // Client/server version string; defaults to the build VERSION
+  version?: string; // Cache version and client/server version; replaces both computed versions
   originCheck?:
     | boolean
     | ((
@@ -333,7 +333,7 @@ A CSP nonce provider: `(request, env) => string | boolean | Promise<string | boo
 
 ### version
 
-The version string sent to the client, which it sends back on partial requests to detect a mismatch after a deploy. It defaults to the build's auto-generated version; set it only for a custom versioning strategy.
+The version string sent to the client, which it sends back on partial requests to detect a mismatch after a deploy. It is also the cache version: `createRouter({ version })` uses that exact value for both the data version and the document version that `vite build` otherwise computes per router from its built code, on every preset. Set it to force a clear, or to a per-deploy value to keep the "every deploy clears the cache" behavior.
 
 ### originCheck
 

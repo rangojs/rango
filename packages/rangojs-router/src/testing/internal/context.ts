@@ -19,6 +19,7 @@ import { normalizeBasename } from "../../router/basename.js";
 import {
   seedVariables,
   resolveSeededStateCookieName,
+  seededVersions,
   type VarsInit,
   type StateCookieSeed,
 } from "./seed-vars.js";
@@ -164,7 +165,7 @@ export function createTestRequestContext<TEnv>(
     cacheStore: opts.cacheStore,
     cacheProfiles: opts.cacheProfiles,
     stateCookieName,
-    version: opts.stateCookie?.version,
+    versions: seededVersions(opts.stateCookie),
   });
   if (opts.basename !== undefined)
     ctx._basename = normalizeBasename(opts.basename);
