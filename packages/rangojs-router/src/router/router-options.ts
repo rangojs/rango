@@ -358,8 +358,7 @@ export interface RangoOptions<TEnv = any> {
    * const router = createRouter<AppEnv>({
    *   prerender: (env) => ({
    *     store: createKVPrerenderStore(env.PRERENDER_KV),
-   *     defaultTtl: 3600,
-   *     swr: true,
+   *     ttl: 3600,
    *     onRevalidate: (target, e) => e.PRERENDER_QUEUE.send({ target }),
    *   }),
    * });

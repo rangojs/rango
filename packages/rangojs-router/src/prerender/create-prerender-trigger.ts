@@ -1,7 +1,7 @@
 /**
  * `router.prerender()` trigger factory.
  *
- * Builds the requestless refresh callable (plus `.many` / `.invalidateTags`)
+ * Builds the requestless refresh callable (plus `.many` / `.markStale`)
  * from router-supplied deps. Pure and testable: all router internals (reverse,
  * match, the producer) arrive as injected functions, so this module has no RSC
  * imports and can be unit-tested with fakes.
@@ -15,6 +15,7 @@
  */
 
 import type { SerializedSegmentData } from "../cache/types.js";
+import type { ExecutionContext } from "../types/request-scope.js";
 import { hashParams } from "./param-hash.js";
 import { isPrerenderPersonalizationError } from "./producer-guard.js";
 import {
@@ -29,7 +30,6 @@ import type {
   PrerenderManyRuntime,
   PrerenderResult,
   PrerenderRuntime,
-  PrerenderRuntimeBase,
   PrerenderTarget,
 } from "./on-demand.js";
 
@@ -72,7 +72,7 @@ export interface PrerenderTriggerDeps<TEnv = any> {
   /** Resolve the env-scoped prerender config (factory or object); undefined when unconfigured. */
   resolveConfig: (
     env: TEnv,
-    ctx: PrerenderRuntimeBase<TEnv>["ctx"],
+    ctx: ExecutionContext | undefined,
   ) => PrerenderConfig<TEnv> | undefined;
   /** Reverse an object target to a pathname; undefined when the route name is unknown. */
   reverse: (
@@ -225,7 +225,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
 
     const key: PrerenderKey = {
       routerId: deps.routerId,
-      buildId: deps.resolveVersion(),
+      version: deps.resolveVersion(),
       routeName: match.routeName,
       paramHash: hashParams(match.params),
     };
@@ -310,13 +310,17 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
 
     // Resolve soft TTL + tags from the route's onDemand config (read off the
     // loaded route entry by the producer), falling back to the router default.
-    const ttl = produced.onDemandConfig?.ttl ?? config.defaultTtl;
+    const ttl = produced.onDemandConfig?.ttl ?? config.ttl;
     let tags: string[] = [];
     try {
       // The user-supplied tags callback runs here; a throw from it must not
       // escape run() (which would bypass the result contract and abort a many()
       // batch) — keep it inside the store guard so it maps to store-failed.
-      tags = produced.onDemandConfig?.tags?.({ params: match.params }) ?? [];
+      const routeTags = produced.onDemandConfig?.tags;
+      tags =
+        typeof routeTags === "function"
+          ? routeTags({ params: match.params })
+          : [...(routeTags ?? [])];
       await config.store.set(
         key,
         { segments: produced.segments, handles: produced.handles },
@@ -367,42 +371,38 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     );
   };
 
-  trigger.invalidateTags = async (
+  trigger.markStale = async (
     tags: string[],
-    runtime: PrerenderRuntimeBase<TEnv>,
+    runtime: { env: TEnv; ctx?: ExecutionContext },
   ): Promise<void> => {
     if (tags.length === 0) return;
     const config = deps.resolveConfig(runtime.env, runtime.ctx);
-    if (!config?.store.invalidateTags) {
+    if (!config?.store.markStale) {
       // void return means a misconfigured caller (no store, or a store
       // without tag support) is indistinguishable from success — a dead CMS
       // webhook with no signal. Say so where a developer will see it.
       if (deps.isDev()) {
         console.warn(
-          "[rango] prerender.invalidateTags() is a no-op: " +
+          "[rango] prerender.markStale() is a no-op: " +
             (config?.store
-              ? "the configured store does not implement invalidateTags."
+              ? "the configured store does not implement markStale."
               : "no prerender store is configured."),
         );
       }
       return;
     }
-    if (
-      !(config.swr && config.onRevalidate) &&
-      deps.isDev() &&
-      !warnedNoRevalidate
-    ) {
+    if (!config.onRevalidate && deps.isDev() && !warnedNoRevalidate) {
       // Marking only: with nothing scheduled on a stale hit, the entry keeps
       // serving until a router.prerender() call re-renders it.
       warnedNoRevalidate = true;
       console.warn(
-        "[rango] prerender.invalidateTags() marked entries stale, but no " +
+        "[rango] prerender.markStale() marked entries stale, but no " +
           "onRevalidate is configured, so a stale hit schedules nothing. The " +
           "entries keep serving until router.prerender() re-renders them " +
           "(for example a sweep with { onlyIfStale: true }).",
       );
     }
-    await config.store.invalidateTags(tags);
+    await config.store.markStale(tags);
   };
 
   return trigger;

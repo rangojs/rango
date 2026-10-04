@@ -17,7 +17,7 @@ const entry: PrerenderEntry = {
 function key(over: Partial<PrerenderKey> = {}): PrerenderKey {
   return {
     routerId: "r1",
-    buildId: "b1",
+    version: "b1",
     routeName: "products.detail",
     paramHash: "abc12345",
     ...over,
@@ -50,7 +50,7 @@ describe("composeStoredEntry / isStoredEntryStale", () => {
       storedAt: 1000,
       staleAt: 11000,
       tags: ["t"],
-      buildId: "b1",
+      version: "b1",
       params: { id: "42" },
     });
     expect(isStoredEntryStale(stored, 10999)).toBe(false);
@@ -97,7 +97,7 @@ describe("isStoredEntryValidFor — malformed durable values read as a miss", ()
     );
   });
   it("rejects an envelope with a malformed entry without throwing", () => {
-    const meta = { buildId: k.buildId, params: m.params };
+    const meta = { version: k.version, params: m.params };
     expect(
       isStoredEntryValidFor({ v: 1, entry: null, meta } as any, k, m),
     ).toBe(false);
@@ -126,7 +126,7 @@ describe("isStoredEntryValidFor (verify-on-read)", () => {
     1000,
   );
 
-  it("passes when buildId and params match", () => {
+  it("passes when version and params match", () => {
     expect(isStoredEntryValidFor(stored, key(), { params: { id: "42" } })).toBe(
       true,
     );
@@ -138,9 +138,9 @@ describe("isStoredEntryValidFor (verify-on-read)", () => {
     );
   });
 
-  it("fails on a buildId mismatch (post-deploy scoping)", () => {
+  it("fails on a version mismatch (post-deploy scoping)", () => {
     expect(
-      isStoredEntryValidFor(stored, key({ buildId: "b2" }), {
+      isStoredEntryValidFor(stored, key({ version: "b2" }), {
         params: { id: "42" },
       }),
     ).toBe(false);
@@ -158,16 +158,16 @@ describe("createMemoryPrerenderStore", () => {
     expect(collision).toBeNull();
   });
 
-  it("does not serve entries from a previous buildId after a deploy", async () => {
+  it("does not serve entries from a previous version after a deploy", async () => {
     const store = createMemoryPrerenderStore();
-    await store.set(key({ buildId: "old" }), entry, { params: { id: "42" } });
-    // New deploy reads under the current buildId -> miss (build-scoped keys).
+    await store.set(key({ version: "old" }), entry, { params: { id: "42" } });
+    // New deploy reads under the current version -> miss (build-scoped keys).
     expect(
-      await store.get(key({ buildId: "new" }), { params: { id: "42" } }),
+      await store.get(key({ version: "new" }), { params: { id: "42" } }),
     ).toBeNull();
     // The old entry is still addressable under its own build.
     expect(
-      await store.get(key({ buildId: "old" }), { params: { id: "42" } }),
+      await store.get(key({ version: "old" }), { params: { id: "42" } }),
     ).not.toBeNull();
   });
 
@@ -178,7 +178,7 @@ describe("createMemoryPrerenderStore", () => {
     expect(await store.get(key(), { params: { id: "42" } })).not.toBeNull();
   });
 
-  it("invalidateTags marks matching entries stale but keeps serving them", async () => {
+  it("markStale marks matching entries stale but keeps serving them", async () => {
     let now = 1000;
     const store = createMemoryPrerenderStore({ now: () => now });
     await store.set(key(), entry, {
@@ -187,7 +187,7 @@ describe("createMemoryPrerenderStore", () => {
       tags: ["product:42"],
     });
     now = 2000;
-    await store.invalidateTags(["product:42"]);
+    await store.markStale(["product:42"]);
     const got = await store.get(key(), { params: { id: "42" } });
     // Still served (mark-stale, not delete)...
     expect(got).not.toBeNull();
@@ -195,14 +195,14 @@ describe("createMemoryPrerenderStore", () => {
     expect(isStoredEntryStale(got!, 2000)).toBe(true);
   });
 
-  it("invalidateTags leaves non-matching entries fresh", async () => {
+  it("markStale leaves non-matching entries fresh", async () => {
     const store = createMemoryPrerenderStore();
     await store.set(key(), entry, {
       params: { id: "42" },
       ttl: 3600,
       tags: ["other"],
     });
-    await store.invalidateTags(["product:42"]);
+    await store.markStale(["product:42"]);
     const got = await store.get(key(), { params: { id: "42" } });
     expect(isStoredEntryStale(got!, Date.now())).toBe(false);
   });

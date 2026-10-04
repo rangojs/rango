@@ -200,13 +200,12 @@ export const router = createRouter<AppEnv>({
   // suite waits for the capture's outcome instead of a timing gap. A function
   // sink logs nothing.
   debugShellCapture: recordShellCaptureEvent,
-  // swr + onRevalidate: a STALE overlay hit still serves but schedules
-  // onRevalidate (scheduling-only — no built-in re-render). The e2e observes
-  // the scheduling through swrLog via /od-swr-log.
+  // onRevalidate (its presence is the SWR opt-in): a STALE overlay hit still
+  // serves but schedules it (scheduling-only — no built-in re-render). The e2e
+  // observes the scheduling through swrLog via /od-swr-log.
   prerender: {
     store: prerenderStore,
-    defaultTtl: 3600,
-    swr: true,
+    ttl: 3600,
     onRevalidate: (target) => {
       swrLog.push(target);
     },

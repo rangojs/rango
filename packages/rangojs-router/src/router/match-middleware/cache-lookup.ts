@@ -448,8 +448,8 @@ async function* tryPrerenderLookup<TEnv>(
 
   // 1. Writable durable overlay (per-request, env-scoped). Read first — it is
   //    always newer than the bundled manifest below it. Verify-on-read guards
-  //    the 8-hex param-hash collision; a stale hit still serves and (with swr)
-  //    schedules a background refresh. Only on-demand routes are read: the
+  //    the 8-hex param-hash collision; a stale hit still serves and (with an
+  //    onRevalidate configured) schedules a background refresh. Only on-demand routes are read: the
   //    overlay is written solely by router.prerender() (which refuses non-od
   //    routes), so a pr-only route would always miss here — skip its durable read.
   //    Intercept variants are skipped for the same reason: v1 writes only the
@@ -462,7 +462,7 @@ async function* tryPrerenderLookup<TEnv>(
   if (overlay && ctx.matched.od && !ctx.isIntercept) {
     const key: PrerenderKey = {
       routerId: overlay.routerId,
-      buildId: overlay.buildId,
+      version: overlay.version,
       routeName: ctx.matched.routeKey,
       paramHash,
     };
@@ -480,7 +480,6 @@ async function* tryPrerenderLookup<TEnv>(
     }
     if (stored) {
       if (
-        overlay.config.swr &&
         overlay.config.onRevalidate &&
         reqCtx &&
         isStoredEntryStale(stored, Date.now())

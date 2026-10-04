@@ -30,11 +30,9 @@ export type {
   PrerenderFn,
   PrerenderResult,
   PrerenderRuntime,
-  PrerenderRuntimeBase,
   PrerenderManyRuntime,
   PrerenderTarget,
   PrerenderTargetObject,
-  ResolvedPrerender,
 } from "./on-demand.js";
 
 export type { PrerenderEntry } from "./store.js";

@@ -21,7 +21,7 @@ const plainLoader = (page: Page) =>
 const uniqueSlug = (prefix: string) =>
   `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-// Trigger the plain onDemand route; qs carries the onlyIfStale/invalidateTag ops.
+// Trigger the plain onDemand route; qs carries the onlyIfStale/markStale ops.
 const plainTrigger = (f: Fixture, page: Page, slug: string, qs = "") =>
   page.request.get(f.url(`/od-plain-trigger/${slug}${qs}`));
 
@@ -159,8 +159,8 @@ async function exercisePlainLoaderFreshness(f: Fixture, page: Page) {
 }
 
 // Trigger companions: onlyIfStale (cron-sweep opt-in) returns already-fresh on
-// a fresh entry and renders again once invalidateTags marked it stale.
-async function exerciseOnlyIfStaleAndInvalidate(f: Fixture, page: Page) {
+// a fresh entry and renders again once markStale marked it stale.
+async function exerciseOnlyIfStaleAndMarkStale(f: Fixture, page: Page) {
   const slug = uniqueSlug("only-if-stale");
   const tag = `od-plain:${slug}`;
 
@@ -173,14 +173,14 @@ async function exerciseOnlyIfStaleAndInvalidate(f: Fixture, page: Page) {
     status: "already-fresh",
   });
 
-  const invalidated = await plainTrigger(
+  const marked = await plainTrigger(
     f,
     page,
     slug,
-    `?invalidateTag=${encodeURIComponent(tag)}`,
+    `?markStale=${encodeURIComponent(tag)}`,
   );
-  await expect(invalidated.json()).resolves.toMatchObject({
-    invalidated: tag,
+  await expect(marked.json()).resolves.toMatchObject({
+    markedStale: tag,
   });
 
   const reRendered = await plainTrigger(f, page, slug, "?onlyIfStale=1");
@@ -188,7 +188,7 @@ async function exerciseOnlyIfStaleAndInvalidate(f: Fixture, page: Page) {
 }
 
 // SWR scheduling: a STALE overlay hit (ttl 1 on the swr route) still serves
-// 200 but schedules prerender.onRevalidate via waitUntil; the router config
+// 200 but schedules the router's onRevalidate via waitUntil; the router config
 // pushes the JSON target into swrLog, served by /od-swr-log.
 async function exerciseSwrScheduling(f: Fixture, page: Page) {
   const readLog = async (): Promise<
@@ -324,8 +324,8 @@ test.describe("on-demand prerender (dev mode)", () => {
     await exercisePlainLoaderFreshness(f, page);
   });
 
-  test("onlyIfStale and tag invalidation", async ({ page }) => {
-    await exerciseOnlyIfStaleAndInvalidate(f, page);
+  test("onlyIfStale and markStale", async ({ page }) => {
+    await exerciseOnlyIfStaleAndMarkStale(f, page);
   });
 
   test("stale overlay hit schedules onRevalidate (swr)", async ({ page }) => {
@@ -404,8 +404,8 @@ test.describe("on-demand prerender (production)", () => {
     await exercisePlainLoaderFreshness(f, page);
   });
 
-  test("onlyIfStale and tag invalidation", async ({ page }) => {
-    await exerciseOnlyIfStaleAndInvalidate(f, page);
+  test("onlyIfStale and markStale", async ({ page }) => {
+    await exerciseOnlyIfStaleAndMarkStale(f, page);
   });
 
   test("stale overlay hit schedules onRevalidate (swr)", async ({ page }) => {

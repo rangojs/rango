@@ -331,16 +331,16 @@ const GuidesTrigger: Handler<{ slug: string }> = async (ctx) => {
 // Trigger for the PLAIN (non-Passthrough) on-demand route. Ops via query:
 //   default             -> plain refresh (always renders)
 //   ?onlyIfStale=1      -> cron-sweep opt-in; "already-fresh" when entry fresh
-//   ?invalidateTag=<t>  -> KV tag-marker invalidation (no render)
+//   ?markStale=<t>      -> KV tag-marker mark-stale (no render)
 const GuidePlainTrigger: Handler<{ slug: string }> = async (ctx) => {
   const { router } = await import("./router.js");
-  const invalidateTag = ctx.url.searchParams.get("invalidateTag");
-  if (invalidateTag) {
-    await router.prerender.invalidateTags([invalidateTag], {
+  const staleTag = ctx.url.searchParams.get("markStale");
+  if (staleTag) {
+    await router.prerender.markStale([staleTag], {
       env: ctx.env,
       ctx: ctx.executionContext,
     });
-    return Response.json({ invalidated: invalidateTag });
+    return Response.json({ markedStale: staleTag });
   }
   const onlyIfStale = ctx.url.searchParams.get("onlyIfStale") === "1";
   const result = await router.prerender(

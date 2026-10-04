@@ -3,7 +3,7 @@
  *
  * Backs the durable overlay for on-demand prerender on Cloudflare. Self-contained
  * (no CFCacheStore construction constraints): entries are stored under the
- * build-scoped key `prerender:{routerId}:{buildId}:{routeName}:{paramHash}`, and
+ * versioned key `prerender:{routerId}:{version}:{routeName}:{paramHash}`, and
  * tag invalidation uses the same timestamp-marker technique as the runtime cache
  * — a per-tag KV marker holding the ms epoch of the last invalidation; a read
  * treats the entry as stale (never deleted) when any of its tags' markers is at
@@ -52,8 +52,7 @@ export interface KVPrerenderStoreOptions {
  * createRouter<Env>({
  *   prerender: (env) => ({
  *     store: createKVPrerenderStore(env.PRERENDER_KV),
- *     defaultTtl: 3600,
- *     swr: true,
+ *     ttl: 3600,
  *     onRevalidate: (target, e) => e.PRERENDER_QUEUE.send({ target }),
  *   }),
  * });
@@ -125,7 +124,7 @@ export function createKVPrerenderStore(
       await kv.delete(serializePrerenderKey(key));
     },
 
-    async invalidateTags(tags: string[]): Promise<void> {
+    async markStale(tags: string[]): Promise<void> {
       if (tags.length === 0) return;
       const marker = String(now());
       await Promise.all(

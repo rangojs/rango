@@ -115,15 +115,15 @@ export const router = createRouter<AppBindings>({
   // On-demand (ISR-style) prerender: a KV-backed writable overlay. A requestless
   // router.prerender() render is stored here and served on the next request as a
   // cache hit, short-circuiting the Passthrough live handler. Keys are
-  // build+router-scoped; entries carry a soft staleAt (no KV expirationTtl).
+  // version+router-scoped; entries carry a soft staleAt (no KV expirationTtl).
   prerender: (env) => ({
     store: createKVPrerenderStore(env.PRERENDER_KV),
-    defaultTtl: 3600,
-    // SWR scheduling: a STALE overlay hit still serves and schedules
-    // onRevalidate via waitUntil. Test fixture: write a KV marker keyed by the
-    // slug so the e2e can observe the schedule (a real app points this at a
-    // queue). `liveEnv` is the live request env, not the factory `env`.
-    swr: true,
+    ttl: 3600,
+    // SWR scheduling (onRevalidate's presence is the opt-in): a STALE overlay
+    // hit still serves and schedules onRevalidate via waitUntil. Test fixture:
+    // write a KV marker keyed by the slug so the e2e can observe the schedule
+    // (a real app points this at a queue). `liveEnv` is the live request env,
+    // not the factory `env`.
     onRevalidate: (target, liveEnv) => {
       void liveEnv.PRERENDER_KV.put(
         "swr-log:" + (target.params["slug"] ?? ""),

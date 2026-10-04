@@ -31,7 +31,7 @@ interface HarnessOptions {
   match?: PrerenderTriggerDeps["matchRoute"];
   runProducer?: PrerenderTriggerDeps["runProducer"];
   reverse?: PrerenderTriggerDeps["reverse"];
-  buildId?: string;
+  version?: string;
   isDev?: () => boolean;
 }
 
@@ -44,7 +44,7 @@ function harness(opts: HarnessOptions = {}) {
   const ensureManifest = vi.fn(async () => {});
   const deps: PrerenderTriggerDeps = {
     routerId: "r1",
-    resolveVersion: () => opts.buildId ?? "b1",
+    resolveVersion: () => opts.version ?? "b1",
     isDev: opts.isDev ?? (() => false),
     ensureManifest,
     resolveConfig: opts.resolveConfig ?? (() => config),
@@ -83,7 +83,7 @@ describe("createPrerenderTrigger", () => {
     if (!result.ok) throw new Error("expected ok");
     const stored = store.peek({
       routerId: "r1",
-      buildId: "b1",
+      version: "b1",
       routeName: "products.detail",
       paramHash: hashParams({ id: "42" }),
     });
@@ -91,7 +91,7 @@ describe("createPrerenderTrigger", () => {
     expect(result.key).toBe(
       serializePrerenderKey({
         routerId: "r1",
-        buildId: "b1",
+        version: "b1",
         routeName: "products.detail",
         paramHash: hashParams({ id: "42" }),
       }),
@@ -279,9 +279,23 @@ describe("createPrerenderTrigger", () => {
     expect(stored.meta.staleAt).toBeDefined();
   });
 
-  it("falls back to router defaultTtl when the route has no onDemand config", async () => {
+  it("accepts a static tags array on the route's onDemand config", async () => {
+    const tags = ["catalog", "products"];
+    const { trigger, store } = harness({
+      runProducer: async () => output({ onDemandConfig: { tags } }),
+    });
+    const result = await trigger("/products/42", { env: {} });
+    expect(result).toMatchObject({ ok: true, tags: ["catalog", "products"] });
+    const stored = store.entries()[0][1];
+    expect(stored.meta.tags).toEqual(["catalog", "products"]);
+    // A copy: a later mutation of the route's array does not reach the entry.
+    tags.push("late");
+    expect(stored.meta.tags).toEqual(["catalog", "products"]);
+  });
+
+  it("falls back to router ttl when the route has no onDemand config", async () => {
     const store = createMemoryPrerenderStore();
-    const { trigger } = harness({ config: { store, defaultTtl: 300 } });
+    const { trigger } = harness({ config: { store, ttl: 300 } });
     const result = await trigger("/products/42", { env: {} });
     expect(result).toMatchObject({ ok: true, ttl: 300 });
   });
@@ -467,19 +481,19 @@ describe("createPrerenderTrigger", () => {
     });
   });
 
-  describe("invalidateTags()", () => {
+  describe("markStale()", () => {
     it("delegates to the store", async () => {
       const store = createMemoryPrerenderStore();
-      const spy = vi.spyOn(store, "invalidateTags");
+      const spy = vi.spyOn(store, "markStale");
       const { trigger } = harness({ config: { store } });
-      await trigger.invalidateTags(["product:42"], { env: {} });
+      await trigger.markStale(["product:42"], { env: {} });
       expect(spy).toHaveBeenCalledWith(["product:42"]);
     });
 
     it("is a no-op with no tags or no store", async () => {
       const { trigger } = harness({ config: undefined });
       await expect(
-        trigger.invalidateTags(["x"], { env: {} }),
+        trigger.markStale(["x"], { env: {} }),
       ).resolves.toBeUndefined();
     });
 
@@ -487,15 +501,15 @@ describe("createPrerenderTrigger", () => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       try {
         const { trigger } = harness({ config: undefined, isDev: () => true });
-        await trigger.invalidateTags(["x"], { env: {} });
+        await trigger.markStale(["x"], { env: {} });
         expect(warn).toHaveBeenCalledTimes(1);
-        expect(warn.mock.calls[0][0]).toContain("invalidateTags");
+        expect(warn.mock.calls[0][0]).toContain("markStale");
       } finally {
         warn.mockRestore();
       }
     });
 
-    it("warns in dev when the configured store lacks invalidateTags", async () => {
+    it("warns in dev when the configured store lacks markStale", async () => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       try {
         const storeWithoutInvalidate: WritablePrerenderStore = {
@@ -506,9 +520,9 @@ describe("createPrerenderTrigger", () => {
           config: { store: storeWithoutInvalidate },
           isDev: () => true,
         });
-        await trigger.invalidateTags(["x"], { env: {} });
+        await trigger.markStale(["x"], { env: {} });
         expect(warn).toHaveBeenCalledTimes(1);
-        expect(warn.mock.calls[0][0]).toContain("invalidateTags");
+        expect(warn.mock.calls[0][0]).toContain("markStale");
       } finally {
         warn.mockRestore();
       }
@@ -518,8 +532,8 @@ describe("createPrerenderTrigger", () => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       try {
         const { trigger } = harness({ isDev: () => true });
-        await trigger.invalidateTags(["x"], { env: {} });
-        await trigger.invalidateTags(["y"], { env: {} });
+        await trigger.markStale(["x"], { env: {} });
+        await trigger.markStale(["y"], { env: {} });
         expect(warn).toHaveBeenCalledTimes(1);
         expect(warn.mock.calls[0][0]).toContain("no onRevalidate");
       } finally {
@@ -532,12 +546,12 @@ describe("createPrerenderTrigger", () => {
       try {
         const store = createMemoryPrerenderStore();
         const withRevalidate = harness({
-          config: { store, swr: true, onRevalidate: () => {} },
+          config: { store, onRevalidate: () => {} },
           isDev: () => true,
         });
-        await withRevalidate.trigger.invalidateTags(["x"], { env: {} });
+        await withRevalidate.trigger.markStale(["x"], { env: {} });
         const outsideDev = harness({ isDev: () => false });
-        await outsideDev.trigger.invalidateTags(["x"], { env: {} });
+        await outsideDev.trigger.markStale(["x"], { env: {} });
         expect(warn).not.toHaveBeenCalled();
       } finally {
         warn.mockRestore();
@@ -548,7 +562,7 @@ describe("createPrerenderTrigger", () => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       try {
         const { trigger } = harness({ config: undefined, isDev: () => false });
-        await trigger.invalidateTags(["x"], { env: {} });
+        await trigger.markStale(["x"], { env: {} });
         expect(warn).not.toHaveBeenCalled();
       } finally {
         warn.mockRestore();

@@ -20,7 +20,7 @@ test.describe.configure({ mode: "serial" });
 //
 // Each run uses a fresh slug so a persisted miniflare KV overlay from a prior
 // run cannot make step (a) start already-prerendered. Dev/prod overlays are
-// additionally buildId-scoped, so they never collide even with a shared slug.
+// additionally version-scoped, so they never collide even with a shared slug.
 const uniqueSlug = (prefix: string) =>
   `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -146,7 +146,7 @@ async function gotoGuidePlain(
 // Shared plain-route flows whose contract is identical in dev and production.
 function definePlainOnDemandFlow(f: Fixture) {
   // Trigger the plain route's "intro" entry; qs carries the onlyIfStale/
-  // invalidateTag ops.
+  // markStale ops.
   const plainTrigger = (page: Page, qs = "") =>
     page.request.get(f.url(`/guide-plain-trigger/intro${qs}`));
 
@@ -183,7 +183,7 @@ function definePlainOnDemandFlow(f: Fixture) {
     expect(secondLoader).not.toBe(firstLoader);
   });
 
-  test("onlyIfStale and KV tag invalidation", async ({ page }) => {
+  test("onlyIfStale and KV tag markStale", async ({ page }) => {
     // Plain refresh always renders.
     const refreshed = await plainTrigger(page);
     await expectRendered(refreshed);
@@ -195,13 +195,13 @@ function definePlainOnDemandFlow(f: Fixture) {
       status: "already-fresh",
     });
 
-    // KV tag-marker invalidation marks the entry stale without rendering.
-    const invalidated = await plainTrigger(
+    // KV tag-marker markStale marks the entry stale without rendering.
+    const marked = await plainTrigger(
       page,
-      `?invalidateTag=${encodeURIComponent("guide-plain:intro")}`,
+      `?markStale=${encodeURIComponent("guide-plain:intro")}`,
     );
-    await expect(invalidated.json()).resolves.toMatchObject({
-      invalidated: "guide-plain:intro",
+    await expect(marked.json()).resolves.toMatchObject({
+      markedStale: "guide-plain:intro",
     });
 
     // Now stale -> onlyIfStale renders.

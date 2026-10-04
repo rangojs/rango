@@ -83,15 +83,15 @@ describe("router.prerender() dogfood (public createRouter + public store)", () =
     ).not.toThrow();
   });
 
-  test("invalidateTags reaches the public store", async () => {
+  test("markStale reaches the public store", async () => {
     const store = createMemoryPrerenderStore();
     const router = createRouter({ prerender: { store } }).routes(({ path }) => [
       path("/od/:id", OnDemandDef, { name: "od" }),
     ]);
-    // No throw, and delegates to the store's invalidateTags (a no-op here since
+    // No throw, and delegates to the store's markStale (a no-op here since
     // the store is empty) — proves the public trigger wires through to the store.
     await expect(
-      router.prerender.invalidateTags(["product:seed"], { env: {} }),
+      router.prerender.markStale(["product:seed"], { env: {} }),
     ).resolves.toBeUndefined();
   });
 });

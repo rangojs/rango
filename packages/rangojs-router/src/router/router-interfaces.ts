@@ -243,7 +243,7 @@ export interface Rango<
    *   { env, ctx, throwOnError: true },
    * );
    * await router.prerender.many(targets, { env, ctx, concurrency: 4 });
-   * await router.prerender.invalidateTags(["product:42"], { env, ctx });
+   * await router.prerender.markStale(["product:42"], { env, ctx });
    * ```
    */
   prerender: import("../prerender/on-demand.js").PrerenderFn<TEnv, TRoutes>;
@@ -650,7 +650,7 @@ export interface RangoInternal<
    */
   fetch(request: Request, input?: RouterRequestInput<TEnv>): Promise<Response>;
 
-  /** On-demand prerender trigger (router.prerender / .many / .invalidateTags). */
+  /** On-demand prerender trigger (router.prerender / .many / .markStale). */
   prerender: import("../prerender/on-demand.js").PrerenderFn<TEnv, TRoutes>;
 }
 

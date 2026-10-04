@@ -154,7 +154,7 @@ describe("on-demand prerender: router.prerender() then serve", () => {
 
       if (!result.ok) throw new Error(`expected ok, got ${result.status}`);
       expect(result.key).toContain(":pinned:");
-      expect(store.entries()[0]?.[1].meta.buildId).toBe("pinned");
+      expect(store.entries()[0]?.[1].meta.version).toBe("pinned");
       expect((await serveShellRequest(router, "/article/v")).flight).toContain(
         "v:stamp-1",
       );
@@ -171,7 +171,7 @@ describe("on-demand prerender: router.prerender() then serve", () => {
 
       await router.prerender("/article/v", { env: {} });
 
-      expect(store.entries()[0]?.[1].meta.buildId).toBe("d-app");
+      expect(store.entries()[0]?.[1].meta.version).toBe("d-app");
       expect((await serveShellRequest(router, "/article/v")).flight).toContain(
         "v:stamp-1",
       );
@@ -241,8 +241,7 @@ describe("on-demand prerender: router.prerender() then serve", () => {
     };
     const router = makeRouter({
       store: counting,
-      defaultTtl: 0,
-      swr: true,
+      ttl: 0,
       onRevalidate,
     });
     await router.prerender("/hot/a", { env: {} });

@@ -31,8 +31,8 @@ function prerenderResultJson(result: PrerenderResult): Response {
 //
 // The Prerender definition is BOTH the build-time producer (getParams bakes
 // "baked" in production) and the on-demand producer that router.prerender()
-// runs requestlessly. `{ onDemand }` is a static literal so discovery marks the
-// route `od: true` and the eviction pass retains the producer code in prod.
+// runs requestlessly. Discovery marks the route `od: true` from the evaluated
+// option and the eviction pass retains the producer code in prod.
 //
 // ctx.onDemand is true during an on-demand refresh, false during a static build
 // render. od-stamp is captured ONCE per render, so a stored (overlay/baked)
@@ -77,11 +77,11 @@ export const OnDemandDetail = Passthrough(OnDemandDetailDef, async (ctx) => {
 // Lazily imports the router so this module has no import cycle with router.tsx.
 //
 // Uses the path-string target (the design doc's headline form). The typed
-// `{ route, params }` target does not typecheck against this router instance:
-// `router.prerender` is `PrerenderFn<TEnv, TRoutes>` and the fluent
-// `createRouter().routes(...)` leaves the phantom `TRoutes` as `{}`, so
-// `PrerenderTarget<{}>` collapses to `string | URL` (unlike `reverse`, the
-// object target has no generated-route-map global fallback).
+// `{ route, params }` target does not typecheck against this router: its
+// accumulated route map carries a string index signature (`keyof` is
+// `string`), so the mapped object-target union collapses to one member whose
+// params are `never`. `router.reverse()` infers the route name instead and is
+// unaffected; cloudflare-basic's triggers use the object target.
 export const OnDemandTrigger: Handler<{ slug: string }> = async (ctx) => {
   const { router } = await import("../router.js");
   const result = await router.prerender(`/on-demand/${ctx.params.slug}`, {
@@ -117,14 +117,14 @@ export const OnDemandPlainDef = Prerender<{ slug: string }>(
 
 // Trigger for the plain route. Query switches exercise the trigger's
 // companions: ?onlyIfStale=1 (cron-sweep opt-in -> "already-fresh" on a fresh
-// entry) and ?invalidateTag=<tag> (marks matching entries stale).
+// entry) and ?markStale=<tag> (marks matching entries stale).
 export const OnDemandPlainTrigger: Handler<{ slug: string }> = async (ctx) => {
   const { router } = await import("../router.js");
   const env = ctx.env as AppEnv;
-  const invalidateTag = ctx.searchParams.get("invalidateTag");
-  if (invalidateTag) {
-    await router.prerender.invalidateTags([invalidateTag], { env });
-    return Response.json({ invalidated: invalidateTag });
+  const staleTag = ctx.searchParams.get("markStale");
+  if (staleTag) {
+    await router.prerender.markStale([staleTag], { env });
+    return Response.json({ markedStale: staleTag });
   }
   const result = await router.prerender(
     `/on-demand-plain/${ctx.params.slug}`,
@@ -136,7 +136,7 @@ export const OnDemandPlainTrigger: Handler<{ slug: string }> = async (ctx) => {
 };
 
 // SWR fixture: ttl 1s so a triggered overlay entry goes stale fast. A stale
-// overlay hit still serves but (router prerender config: swr + onRevalidate)
+// overlay hit still serves but (router prerender config: onRevalidate)
 // schedules a revalidation, observable via /od-swr-log.
 //
 // Deliberately a NON-literal onDemand spelling: retention is driven by the

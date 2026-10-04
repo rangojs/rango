@@ -14,15 +14,19 @@ import type { PrerenderEntry } from "./store.js";
 import { paramsEqual } from "../router/params-util.js";
 
 /**
- * Structured durable-overlay key. Includes the deployment identity (buildId) so
- * a new deploy never reads Flight payloads that reference previous client
- * references or chunks, and so Cloudflare gradual deployments stay correct (old
- * and new worker versions each read their own build-scoped namespace).
+ * Structured durable-overlay key. Includes the router's cache version so a
+ * deploy that changed the router's server code never reads Flight payloads
+ * that reference its previous build, and so Cloudflare gradual deployments
+ * stay correct (old and new worker versions each read their own namespace).
  */
 export interface PrerenderKey {
   routerId: string;
-  /** Per-deploy identity (the router `version` / VERSION constant). */
-  buildId: string;
+  /**
+   * The owning router's cache version (its data version, or
+   * `createRouter({ version })`). Opaque: never set or read by app code; a
+   * store keys off it as given.
+   */
+  version: string;
   routeName: string;
   /** DJB2 8-hex hash of the canonical params (see param-hash.ts). */
   paramHash: string;
@@ -73,7 +77,8 @@ export interface PrerenderStoredEntry {
     /** Absent = never stale. Soft metadata only; controls SWR scheduling, not serving. */
     staleAt?: number;
     tags: string[];
-    buildId: string;
+    /** The key's `version` at write time; verified on read. */
+    version: string;
     /** Verified against the request's params on read (DJB2 collision guard). */
     params: Record<string, string>;
   };
@@ -81,7 +86,12 @@ export interface PrerenderStoredEntry {
 
 /**
  * The writable durable overlay. Backed in production by a platform adapter
- * (Cloudflare KV, Vercel Blob, …) and in dev/tests by an in-memory store.
+ * (Cloudflare KV, …) and in dev/tests by an in-memory store.
+ *
+ * Key everything off the `key` argument (`serializePrerenderKey(key)` carries
+ * `key.version`). Never call `getCacheVersions()` here: the trigger's `set()`
+ * runs outside the producer's request context, where it returns the
+ * whole-build fallback instead of the owning router's version.
  */
 export interface WritablePrerenderStore {
   get(
@@ -97,15 +107,19 @@ export interface WritablePrerenderStore {
 
   delete?(key: PrerenderKey): Promise<void>;
 
-  invalidateTags?(tags: string[]): Promise<void>;
+  /**
+   * Mark entries carrying any of `tags` stale (they keep serving). Optional:
+   * without it, `router.prerender.markStale()` is a no-op for this store.
+   */
+  markStale?(tags: string[]): Promise<void>;
 }
 
 /**
  * Serialize a {@link PrerenderKey} to the design's string form:
- *   `prerender:{routerId}:{buildId}:{routeName}:{paramHash}[:i]`
+ *   `prerender:{routerId}:{version}:{routeName}:{paramHash}[:i]`
  */
 export function serializePrerenderKey(key: PrerenderKey): string {
-  const base = `prerender:${key.routerId}:${key.buildId}:${key.routeName}:${key.paramHash}`;
+  const base = `prerender:${key.routerId}:${key.version}:${key.routeName}:${key.paramHash}`;
   return key.intercept ? `${base}:i` : base;
 }
 
@@ -133,7 +147,7 @@ export function composeStoredEntry(
       storedAt: now,
       ...(hasTtl ? { staleAt: now + (options.ttl as number) * 1000 } : {}),
       tags: options.tags ?? [],
-      buildId: key.buildId,
+      version: key.version,
       params: options.params,
     },
   };
@@ -165,7 +179,7 @@ export function isStoredEntryValidFor(
   ) {
     return false;
   }
-  if (stored.meta.buildId !== key.buildId) return false;
+  if (stored.meta.version !== key.version) return false;
   return paramsEqual(stored.meta.params ?? {}, meta.params);
 }
 

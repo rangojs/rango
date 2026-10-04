@@ -56,15 +56,11 @@ export type PrerenderTarget<TRoutes = {}> =
   | PrerenderRouteTarget<TRoutes>;
 
 /** Env + platform capabilities the trigger threads to the requestless producer. */
-export interface PrerenderRuntimeBase<TEnv = any> {
+export interface PrerenderRuntime<TEnv = any> {
+  /** The live env: the producer's `ctx.env` (not the build's `buildEnv`). */
   env: TEnv;
   /** Cloudflare `ExecutionContext`; absent on node/Vercel. */
   ctx?: ExecutionContext;
-}
-
-export interface PrerenderRuntime<
-  TEnv = any,
-> extends PrerenderRuntimeBase<TEnv> {
   /** Throw on failure instead of returning an `{ ok: false }` result. */
   throwOnError?: boolean;
   /**
@@ -123,10 +119,14 @@ export type PrerenderResult =
  * is driven by the evaluated route manifest, not a textual scan of the call.
  */
 export interface OnDemandRouteConfig {
-  /** Soft TTL (seconds) for entries refreshed for this route. Overrides router `defaultTtl`. */
+  /** Soft TTL (seconds) for entries refreshed for this route. Overrides the router `ttl`. */
   ttl?: number;
-  /** Tags stamped on the stored entry, addressable via `prerender.invalidateTags()`. */
-  tags?: (target: { params: Record<string, string> }) => string[];
+  /**
+   * Tags stamped on the stored entry, addressable via
+   * `router.prerender.markStale()`. A separate namespace from `cacheTag()` /
+   * `updateTag()` / `revalidateTag()`, which never reach the prerender store.
+   */
+  tags?: string[] | ((target: { params: Record<string, string> }) => string[]);
 }
 
 export type OnDemandOption = boolean | OnDemandRouteConfig;
@@ -138,16 +138,19 @@ export type OnDemandOption = boolean | OnDemandRouteConfig;
  */
 export interface PrerenderConfig<TEnv = any> {
   store: WritablePrerenderStore;
-  /** Default soft TTL (seconds) when a route opt-in doesn't specify one. Absent = never stale. */
-  defaultTtl?: number;
-  /** Schedule `onRevalidate` on a stale overlay hit (SWR scheduling policy). */
-  swr?: boolean;
   /**
-   * Invoked on a stale hit (when `swr`) with the JSON-serializable target +
-   * live env. Fires on EVERY stale request with no built-in dedup — point it
-   * at a queue (which dedups/coalesces) rather than calling
-   * `router.prerender()` directly, or a hot stale page schedules one full
-   * render per request until the first refresh lands.
+   * Default soft TTL (seconds) for a route whose `onDemand` sets none. Absent
+   * = never stale. Soft: a stale entry keeps serving; staleness only decides
+   * whether `onRevalidate` is scheduled. Entries never expire.
+   */
+  ttl?: number;
+  /**
+   * Stale-while-revalidate: its presence is the opt-in. Scheduled through
+   * `waitUntil` on a stale overlay hit (the stale entry still serves) with
+   * the JSON-serializable target and the live env. Runs at most once per
+   * stale key per isolate while one is in flight, so
+   * `(target, env) => router.prerender(target, { env })` is safe in a single
+   * process; across isolates, point it at a queue, which owns dedup.
    */
   onRevalidate?: (
     target: PrerenderTargetObject,
@@ -156,20 +159,20 @@ export interface PrerenderConfig<TEnv = any> {
 }
 
 /**
- * Per-request resolution of the prerender config plus the deployment identity
- * needed to build build-scoped keys. Threaded onto the request context by the
- * RSC handler and read by the serve-path overlay lookup.
+ * @internal Per-request resolution of the prerender config plus the key
+ * version. Threaded onto the request context by the RSC handler and read by
+ * the serve-path overlay lookup.
  */
 export interface ResolvedPrerender<TEnv = any> {
   /** The resolved config; the store is `config.store`. */
   config: PrerenderConfig<TEnv>;
   routerId: string;
-  /** Per-deploy identity (VERSION) used in the overlay key. */
-  buildId: string;
+  /** The router's cache version for overlay keys (resolvePrerenderVersion). */
+  version: string;
 }
 
 /**
- * The `router.prerender` callable, plus its `.many` / `.invalidateTags`
+ * The `router.prerender` callable, plus its `.many` / `.markStale`
  * companions. Typing rides the phantom `TRoutes` accumulator, like `reverse`.
  */
 export interface PrerenderFn<TEnv = any, TRoutes = {}> {
@@ -181,8 +184,13 @@ export interface PrerenderFn<TEnv = any, TRoutes = {}> {
     targets: ReadonlyArray<PrerenderTarget<TRoutes>>,
     runtime: PrerenderManyRuntime<TEnv>,
   ): Promise<PrerenderResult[]>;
-  invalidateTags(
+  /**
+   * Mark every stored entry carrying one of `tags` stale. Marking only: the
+   * entries keep serving, and a stale hit schedules `onRevalidate` when one is
+   * configured. Nothing is deleted or re-rendered here.
+   */
+  markStale(
     tags: string[],
-    runtime: PrerenderRuntimeBase<TEnv>,
+    runtime: { env: TEnv; ctx?: ExecutionContext },
   ): Promise<void>;
 }

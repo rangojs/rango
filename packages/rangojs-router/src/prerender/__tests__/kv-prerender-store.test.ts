@@ -37,7 +37,7 @@ const entry: PrerenderEntry = {
 function key(over: Partial<PrerenderKey> = {}): PrerenderKey {
   return {
     routerId: "r1",
-    buildId: "b1",
+    version: "b1",
     routeName: "products.detail",
     paramHash: "abc12345",
     ...over,
@@ -77,12 +77,12 @@ describe("createKVPrerenderStore", () => {
     expect(await store.get(key(), { params: { id: "99" } })).toBeNull();
   });
 
-  it("scopes reads to the current buildId", async () => {
+  it("scopes reads to the current version", async () => {
     const kv = fakeKV();
     const store = createKVPrerenderStore(kv);
-    await store.set(key({ buildId: "old" }), entry, { params: { id: "42" } });
+    await store.set(key({ version: "old" }), entry, { params: { id: "42" } });
     expect(
-      await store.get(key({ buildId: "new" }), { params: { id: "42" } }),
+      await store.get(key({ version: "new" }), { params: { id: "42" } }),
     ).toBeNull();
   });
 
@@ -107,7 +107,7 @@ describe("createKVPrerenderStore", () => {
         JSON.stringify({
           v: 1,
           entry: null,
-          meta: { buildId: "b1", params: { id: "42" } },
+          meta: { version: "b1", params: { id: "42" } },
         }),
       ),
     );
@@ -124,7 +124,7 @@ describe("createKVPrerenderStore", () => {
       tags: ["product:42"],
     });
     now = 2000;
-    await store.invalidateTags!(["product:42"]);
+    await store.markStale!(["product:42"]);
     const got = await store.get(key(), { params: { id: "42" } });
     // Still present (mark-stale, not delete), and now stale.
     expect(got).not.toBeNull();
@@ -136,7 +136,7 @@ describe("createKVPrerenderStore", () => {
     let now = 1000;
     const kv = fakeKV();
     const store = createKVPrerenderStore(kv, { now: () => now });
-    await store.invalidateTags!(["product:42"]); // marker = 1000
+    await store.markStale!(["product:42"]); // marker = 1000
     now = 2000;
     await store.set(key(), entry, {
       params: { id: "42" },

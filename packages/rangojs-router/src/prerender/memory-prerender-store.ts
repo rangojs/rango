@@ -20,7 +20,7 @@ import {
 
 export interface MemoryPrerenderStore extends WritablePrerenderStore {
   delete(key: PrerenderKey): Promise<void>;
-  invalidateTags(tags: string[]): Promise<void>;
+  markStale(tags: string[]): Promise<void>;
   /** Read an entry by structured key without the verify-on-read check (tests). */
   peek(key: PrerenderKey): PrerenderStoredEntry | null;
   /** All stored [serializedKey, entry] pairs (tests). */
@@ -73,7 +73,7 @@ export function createMemoryPrerenderStore(
       map.delete(serializePrerenderKey(key));
     },
 
-    async invalidateTags(tags: string[]): Promise<void> {
+    async markStale(tags: string[]): Promise<void> {
       if (tags.length === 0) return;
       const tagSet = new Set(tags);
       const at = now();

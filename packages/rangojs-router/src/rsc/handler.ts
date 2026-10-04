@@ -545,7 +545,7 @@ export function createRSCHandler<
         resolvedPrerender = {
           config: prerenderConfig,
           routerId: router.id,
-          buildId: prerenderVersion,
+          version: prerenderVersion,
         };
       }
     }
