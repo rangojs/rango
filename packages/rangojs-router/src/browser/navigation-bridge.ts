@@ -571,9 +571,6 @@ export function createNavigationBridge(
         historyKey,
       );
 
-      // Update location in event controller
-      eventController.setLocation(new URL(url));
-
       // If this is an intercept, restore the intercept context
       if (isIntercept && interceptSourceUrl) {
         store.setInterceptSourceUrl(interceptSourceUrl);
@@ -641,8 +638,12 @@ export function createNavigationBridge(
             transitionGatedOff: gatedOff,
           });
           store.rememberDisplayedEntry();
-          // Set params on event controller before onUpdate so both location
-          // and params are current when the debounced notify() fires.
+          // The restored entry's location and params, set before onUpdate so
+          // the hooks take both in the batch that renders its tree. Not at
+          // the popstate event: the page being left is on screen until here
+          // (#1031). A restore that has to fetch gets its location from
+          // tx.commit() instead (navigation-transaction.ts).
+          eventController.setLocation(new URL(url));
           eventController.setParams(cachedParams);
           // The entry this handler found at the event, which the cached tree
           // was built for: history may have moved during the render above.
@@ -778,6 +779,12 @@ export function createNavigationBridge(
           debugLog("[Browser] Popstate navigation aborted or superseded");
           return;
         }
+
+        // tx.commit() never ran, so the location is still the page being
+        // left. The error boundary below replaces that page, and history is
+        // already on the entry that failed: the hooks report that entry, in
+        // the boundary's batch.
+        eventController.setLocation(new URL(url));
 
         const networkError = toNetworkError(error, {
           url,

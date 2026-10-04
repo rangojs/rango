@@ -128,11 +128,14 @@ its first render. Inside an optimistically rendered `clientUrls()` destination
 that is the state the navigation carries, before the server has answered (see
 `/client-urls`, "Pitfalls").
 
-**Limit (issue #1031):** on back/forward, `usePathname()` and
-`useSearchParams()` still change at the `popstate` event, before the restored
-page commits when it has to be fetched. For that window the page on screen
-reads the destination's URL from those two hooks and its own entry's location
-state from `useLocationState`. Push and replace navigations are not affected.
+The URL hooks follow the same rule for a component that is mounted across the
+navigation: on back/forward too, `usePathname()` and `useSearchParams()`
+change with the page, not at the `popstate` event (see
+[`./urls.md`](./urls.md), "When the URL hooks change"). One difference
+remains (issue #1046): a component that first mounts in the page being left,
+after the response arrived and while React still holds the destination, reads
+its own entry's location state from `useLocationState` and the destination's
+URL and params from `usePathname()`, `useSearchParams()` and `useParams()`.
 
 ### State on router.push() / router.replace()
 

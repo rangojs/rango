@@ -228,7 +228,8 @@ export interface EventController {
   getActionState(actionId: string): TrackedActionState;
   getLocation(): NavigationLocation;
 
-  // Location updates (for popstate where navigation doesn't go through startNavigation)
+  // Location of a commit no transaction completes: a shallow navigation, a
+  // back/forward restored from the history cache, a back/forward that failed.
   setLocation(location: NavigationLocation): void;
 
   // Subscriptions
