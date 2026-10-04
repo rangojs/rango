@@ -949,10 +949,10 @@ now, and the Cloudflare cache-version e2e builds with `RANGO_MANIFEST_TEXT=1`.
 `packages/rangojs-router/e2e/test-app` and `tests/cloudflare-basic` are not in
 these tables on purpose. Both render `Date.now()` in `Static()` and
 `Prerender` handlers, so their main router gets a new version on every build,
-as it should. `tests/cloudflare-basic` also does not build from another
-working directory at all: its build-time prerender of `/build-env` fails
-there (`Cannot read properties of undefined (reading 'put')`), before the
-versions are computed.
+as it should. `tests/cloudflare-basic` was left out of the second-working-directory sample
+because `buildEnv: "auto"` read the wrangler config from the working directory
+and its build-time prerender of `/build-env` failed from another one (#1037,
+fixed: the config is read from the Vite root).
 
 ### Build time
 
