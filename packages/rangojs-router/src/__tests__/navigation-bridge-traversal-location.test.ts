@@ -290,6 +290,7 @@ describe("navigation-bridge: a refetched traversal the server redirects (#1047)"
       state: { reason: "expired" },
       replace: true,
       _skipCache: true,
+      _redirectHops: 1,
     });
     expect(updates).toEqual([]);
     expect(setLocation).not.toHaveBeenCalled();
@@ -320,5 +321,117 @@ describe("navigation-bridge: a refetched traversal the server redirects (#1047)"
       expect.stringContaining("[rango] Redirect blocked"),
     );
     expect(eventController.getLocation().href).toBe(LEAVING);
+  });
+});
+
+/** Both pushes differ from the page on screen, so the second aborts the first. */
+const PUSH_A = "http://localhost/a";
+const PUSH_B = "http://localhost/b";
+
+describe("navigation-bridge: a superseded push whose response is a redirect", () => {
+  it("does not follow the redirect over the newer navigation", async () => {
+    const { bridge, updates } = setup();
+    const navigate = vi.spyOn(bridge, "navigate");
+    const responses = new Map<string, ReturnType<typeof deferred<void>>>();
+    fetchPartialUpdateMock.mockImplementation((url: string) => {
+      // A redirect followed over B would land here; settle it so the
+      // assertion below reports it rather than the test hanging.
+      if (url.endsWith("/login")) return Promise.resolve();
+      const response = deferred<void>();
+      responses.set(url, response);
+      return response.promise;
+    });
+
+    const first = bridge.navigate(PUSH_A);
+    await vi.waitFor(() => expect(responses.has(PUSH_A)).toBe(true));
+    const second = bridge.navigate(PUSH_B);
+    await vi.waitFor(() => expect(responses.has(PUSH_B)).toBe(true));
+
+    responses.get(PUSH_A)!.reject(new ServerRedirect("/login", undefined));
+    await first;
+
+    expect(navigate.mock.calls.map(([url]) => url)).toEqual([PUSH_A, PUSH_B]);
+
+    responses.get(PUSH_B)!.resolve(undefined);
+    await second;
+    expect(updates).toEqual([]);
+  });
+});
+
+describe("navigation-bridge: a server redirect loop", () => {
+  const HOP_LIMIT = 20;
+
+  function loop() {
+    const ctx = setup();
+    const navigate = vi.spyOn(ctx.bridge, "navigate");
+    // Resolves instead of redirecting past 50 calls so a missing bound fails
+    // the assertion rather than hanging the run.
+    fetchPartialUpdateMock.mockImplementation((url: string) => {
+      if (navigate.mock.calls.length > 50) return Promise.resolve();
+      const next = url.endsWith("/ping") ? "/pong" : "/ping";
+      return Promise.reject(new ServerRedirect(next, undefined));
+    });
+    return { ...ctx, navigate };
+  }
+
+  it("a push stops at the hop limit and renders the error boundary", async () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const { bridge, updates, navigate } = loop();
+
+    await bridge.navigate("http://localhost/ping");
+
+    expect(navigate).toHaveBeenCalledTimes(HOP_LIMIT + 1);
+    expect(updates).toHaveLength(1);
+    expect((updates[0].update as any).metadata.isError).toBe(true);
+    const loopLogs = consoleError.mock.calls.filter(([message]) =>
+      String(message).includes("redirect loop"),
+    );
+    expect(loopLogs).toHaveLength(1);
+    expect(String(loopLogs[0][0])).toContain(`${HOP_LIMIT} redirects`);
+    expect(String(loopLogs[0][0])).toMatch(/http:\/\/localhost\/(ping|pong)/);
+  });
+
+  it("a traversal stops at the hop limit the same way", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { bridge, updates, navigate } = loop();
+
+    await bridge.handlePopstate();
+
+    // The traversal's own fetch is not a navigate() call.
+    expect(navigate).toHaveBeenCalledTimes(HOP_LIMIT);
+    expect(updates).toHaveLength(1);
+    expect((updates[0].update as any).metadata.isError).toBe(true);
+  });
+
+  it("a new user navigation starts again at zero hops", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { bridge, updates, navigate } = loop();
+
+    await bridge.navigate("http://localhost/ping");
+    navigate.mockClear();
+    updates.length = 0;
+    await bridge.navigate("http://localhost/ping");
+
+    expect(navigate).toHaveBeenCalledTimes(HOP_LIMIT + 1);
+    expect(updates).toHaveLength(1);
+  });
+
+  it("a single redirect is followed with one hop counted", async () => {
+    const { bridge, updates } = setup();
+    const navigate = vi.spyOn(bridge, "navigate");
+    fetchPartialUpdateMock.mockImplementation((url: string) =>
+      url.endsWith("/login")
+        ? Promise.resolve()
+        : Promise.reject(new ServerRedirect("/login", undefined)),
+    );
+
+    await bridge.navigate("http://localhost/ping");
+
+    expect(navigate).toHaveBeenCalledTimes(2);
+    expect(navigate.mock.calls[1][0]).toBe("http://localhost/login");
+    expect((navigate.mock.calls[1][1] as any)._redirectHops).toBe(1);
+    expect(updates).toEqual([]);
   });
 });

@@ -223,7 +223,7 @@
     "jiti": "^2.7.0",
     "react": "catalog:",
     "react-dom": "catalog:",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.11"
   },
   "peerDependencies": {
     "@cloudflare/vite-plugin": "^1.42.1",

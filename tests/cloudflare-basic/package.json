@@ -42,7 +42,7 @@
     "tinyexec": "^0.3.2",
     "typescript": "^5.7.0",
     "vite": "catalog:",
-    "vitest": "^4.1.9",
+    "vitest": "^4.1.11",
     "wrangler": "^4.110.0"
   }
 }

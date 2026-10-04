@@ -62,6 +62,9 @@ if (typeof Symbol.dispose === "undefined") {
 
 export { createNavigationTransaction };
 
+// Mirrors the redirect-chain limit browsers apply to document navigations.
+const MAX_REDIRECT_HOPS = 20;
+
 /**
  * Extended configuration for navigation bridge with event controller
  */
@@ -148,6 +151,45 @@ export function createNavigationBridge(
     renderSegments,
     getVersion: () => version,
   });
+
+  /**
+   * Re-navigates to a server redirect target, counting hops so a target that
+   * redirects back ends in the error boundary instead of looping.
+   */
+  async function followServerRedirect(
+    self: {
+      navigate: (
+        url: string,
+        options?: NavigateOptionsInternal,
+      ) => Promise<void>;
+    },
+    error: ServerRedirect,
+    url: string,
+    hops: number,
+    options: { replace?: boolean; transition?: boolean },
+  ): Promise<void> {
+    const redirectUrl = validateRedirectOrigin(
+      error.url,
+      window.location.origin,
+    );
+    if (!redirectUrl) {
+      return;
+    }
+    if (hops >= MAX_REDIRECT_HOPS) {
+      const loopError = new Error(
+        `[rango] Server redirect loop: stopped after following ${hops} redirects, at ${url}`,
+      );
+      console.error(loopError.message);
+      emitNavigationError(onUpdate, loopError, url);
+      return;
+    }
+    return self.navigate(redirectUrl, {
+      state: error.state,
+      ...options,
+      _skipCache: true,
+      _redirectHops: hops + 1,
+    });
+  }
 
   return {
     /**
@@ -413,35 +455,31 @@ export function createNavigationBridge(
               },
         );
       } catch (error) {
-        // Server-side redirect with location state: the current transaction's
-        // cleanup resets loading state. Re-navigate to the redirect
-        // target carrying the server-set state into history.pushState.
-        if (error instanceof ServerRedirect) {
-          const redirectUrl = validateRedirectOrigin(
-            error.url,
-            window.location.origin,
-          );
-          if (!redirectUrl) {
-            return;
-          }
-          return this.navigate(redirectUrl, {
-            state: error.state,
-            replace: options?.replace,
-            transition: options?.transition,
-            _skipCache: true,
-          } as NavigateOptionsInternal);
-        }
-
         // Aborted, or superseded by a newer navigation. A superseded nav may
         // reject with a non-AbortError (e.g. a Flight decode that fails after its
         // signal was aborted), so check the signal too -- otherwise we would
-        // render a boundary that clobbers the newer navigation's content.
+        // render a boundary that clobbers the newer navigation's content. Before
+        // the redirect branch: a superseded nav must not follow its redirect
+        // over the navigation that replaced it.
         if (
           (error instanceof DOMException && error.name === "AbortError") ||
           tx.handle.signal.aborted
         ) {
           debugLog("[Browser] Navigation aborted or superseded");
           return;
+        }
+
+        // Server-side redirect with location state: the current transaction's
+        // cleanup resets loading state. Re-navigate to the redirect
+        // target carrying the server-set state into history.pushState.
+        if (error instanceof ServerRedirect) {
+          return followServerRedirect(
+            this,
+            error,
+            url,
+            options?._redirectHops ?? 0,
+            { replace: options?.replace, transition: options?.transition },
+          );
         }
 
         const networkError = toNetworkError(error, {
@@ -786,18 +824,7 @@ export function createNavigationBridge(
         // and Back would hit the redirect again. Before setLocation below, or
         // the hooks would report the redirecting URL first.
         if (error instanceof ServerRedirect) {
-          const redirectUrl = validateRedirectOrigin(
-            error.url,
-            window.location.origin,
-          );
-          if (!redirectUrl) {
-            return;
-          }
-          return this.navigate(redirectUrl, {
-            state: error.state,
-            replace: true,
-            _skipCache: true,
-          } as NavigateOptionsInternal);
+          return followServerRedirect(this, error, url, 0, { replace: true });
         }
 
         // tx.commit() never ran, so the location is still the page being

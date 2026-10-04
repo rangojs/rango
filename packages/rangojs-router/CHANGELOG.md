@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Fixed: a superseded link click no longer follows its server redirect ([#1047](https://github.com/rangojs/rango/issues/1047))
+
+When you clicked a link, then clicked another before the first response
+arrived, and the first response turned out to be a redirect (route middleware
+sending a signed-out visitor to the login page), the router still followed that
+redirect and replaced the page you had moved on to. A superseded navigation now
+ends without following its redirect, the same as a superseded Back/Forward.
+
+### Fixed: server redirects that loop no longer re-navigate forever ([#1047](https://github.com/rangojs/rango/issues/1047))
+
+Two pages whose middleware redirect to each other made the client navigate
+back and forth without end. The client now stops after following 20 redirects
+in one navigation, as browsers do for a document, logs
+`[rango] Server redirect loop: stopped after following 20 redirects, at <url>`,
+and renders the error boundary. A new link click or `router.push()` starts
+counting again from zero. There is no option to change the limit.
+
 ### Fixed: a `Prerender` + `ppr` shell HIT hydrates with the handle values its `ssr: false` loaders pushed ([#1057](https://github.com/rangojs/rango/issues/1057))
 
 On a route that combines `Prerender` with `ppr`, a settled handle value an
