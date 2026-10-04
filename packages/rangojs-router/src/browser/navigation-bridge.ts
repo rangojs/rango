@@ -780,6 +780,26 @@ export function createNavigationBridge(
           return;
         }
 
+        // The browser is already on the entry that redirected. Replacing makes
+        // that entry the redirect target, so Back from the target reaches the
+        // entry before it; a push would leave the redirecting entry in history
+        // and Back would hit the redirect again. Before setLocation below, or
+        // the hooks would report the redirecting URL first.
+        if (error instanceof ServerRedirect) {
+          const redirectUrl = validateRedirectOrigin(
+            error.url,
+            window.location.origin,
+          );
+          if (!redirectUrl) {
+            return;
+          }
+          return this.navigate(redirectUrl, {
+            state: error.state,
+            replace: true,
+            _skipCache: true,
+          } as NavigateOptionsInternal);
+        }
+
         // tx.commit() never ran, so the location is still the page being
         // left. The error boundary below replaces that page, and history is
         // already on the entry that failed: the hooks report that entry, in
