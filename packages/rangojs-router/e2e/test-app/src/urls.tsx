@@ -80,6 +80,7 @@ import { delayedBreadcrumbPatterns } from "./urls/delayed-breadcrumbs.js";
 import { breadcrumbTrailPatterns } from "./urls/breadcrumb-trail.js";
 import { manifestCacheTestPatterns } from "./urls/manifest-cache-test.js";
 import { authBoundaryPatterns } from "./urls/auth-boundary.js";
+import { redirectLoopPatterns } from "./urls/redirect-loop.js";
 import { contentOwnershipPatterns } from "./urls/content-ownership.js";
 import { cacheIsolationPatterns } from "./urls/cache-isolation.js";
 import { cacheTagPatterns } from "./urls/cache-tag.js";
@@ -1273,6 +1274,11 @@ export const urlpatterns = urls(
       // Auth boundary test (route mw vs global mw, actions, response routes)
       include("/auth-boundary", authBoundaryPatterns, {
         name: "authBoundary",
+      }),
+
+      // Two pages that redirect to each other (client hop limit).
+      include("/redirect-loop", redirectLoopPatterns, {
+        name: "redirectLoop",
       }),
 
       // Open-redirect guard fixtures (same-origin / blocked / external).

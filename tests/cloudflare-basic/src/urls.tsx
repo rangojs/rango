@@ -288,6 +288,7 @@ import { prefetchTransitionPatterns } from "./pages/prefetch-transition.js";
 import { txWhenPatterns } from "./pages/tx-when.js";
 import { interceptWhenShapePatterns } from "./pages/intercept-when-shape.js";
 import { authRedirectPatterns } from "./pages/auth-redirect.js";
+import { redirectLoopPatterns } from "./pages/redirect-loop.js";
 import { deferredHandleNavPatterns } from "./pages/deferred-handle-nav.js";
 import { onErrorLog, clearOnErrorLog } from "./error-log.js";
 import mixedClientUrls from "./mixed-client/urls.js";
@@ -2588,6 +2589,11 @@ export const urlpatterns = urls(
         // Cookie-gated route-middleware redirect (#1047).
         include("/auth-redirect", authRedirectPatterns, {
           name: "authRedirect",
+        }),
+
+        // Two pages that redirect to each other (client hop limit).
+        include("/redirect-loop", redirectLoopPatterns, {
+          name: "redirectLoop",
         }),
 
         // Deferred-handle navigation contract + history-cache fixes

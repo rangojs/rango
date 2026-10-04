@@ -2410,3 +2410,46 @@ export async function expectLinkClickToRedirectingPageFollowsRedirect(
   await expect(byTestId(page, fixture.targetTestId)).toBeVisible();
   expect(failures).toEqual([]);
 }
+
+export interface RedirectLoopFixture {
+  /** A page that does not redirect; the navigation starts here. */
+  indexUrl: string;
+  indexTestId: string;
+  /** A page whose middleware redirects to a page that redirects back. */
+  loopUrl: string;
+}
+
+/**
+ * #1047: a link click into two pages that redirect to each other stops at the
+ * client's hop limit and renders the error boundary naming the loop, instead
+ * of re-navigating forever.
+ */
+export async function expectRedirectLoopEndsInErrorBoundary(
+  page: Page,
+  fixture: RedirectLoopFixture,
+): Promise<void> {
+  const loopLogs: string[] = [];
+  page.on("console", (msg: ConsoleMessage) => {
+    // React and the root boundary log the thrown error too; count the router's own line.
+    if (msg.text().startsWith("[rango] Server redirect loop")) {
+      loopLogs.push(msg.text());
+    }
+  });
+  await page.goto(fixture.indexUrl);
+  await waitForShellHydration(page);
+  await expect(byTestId(page, fixture.indexTestId)).toBeVisible();
+  await page.evaluate((href) => {
+    const a = document.createElement("a");
+    a.href = href;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }, fixture.loopUrl);
+
+  // The default boundary shows the message in dev and a generic title in production.
+  await expect(
+    page.getByText(/Server redirect loop|Internal Server Error/).first(),
+  ).toBeVisible({ timeout: 30_000 });
+  expect(loopLogs).toHaveLength(1);
+  expect(loopLogs[0]).toContain("20 redirects");
+}
