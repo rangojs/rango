@@ -550,14 +550,13 @@ is #1002 itself, and change 1 leaves it exactly as it was.
 One thing the browser tests showed while this was built was older than it
 and unrelated to which push wins: a document HIT of a `runs` pin failed
 hydration on its deferred push. That was issue #1035, and "What a document
-hydrates with on a shell HIT" below is its fix. One row of that section is
-still open: a `useHandle` reader inside a boundary that hydrates after the
-root.
+hydrates with on a shell HIT" below is its fix.
 
 ## What a document hydrates with on a shell HIT (#1035)
 
-Status: built, in two halves you can read apart, with one row left open
-("A reader that hydrates after the root", below).
+Status: built, in three pieces you can read apart: the capture, the HIT, and
+`useHandle`. Two other designs were considered and decided against; "Options
+decided against" says why.
 
 Everything above decides WHICH push a page shows. This section is about
 WHEN the client gets it, and it exists because that question had no owner. A
@@ -582,6 +581,15 @@ whatever its own store held when the document stream was first read. Issue
    once the root has hydrated.
 3. **The capture renders the prelude from what its record keeps.** A push
    the record leaves out renders no element at capture.
+4. **A reader hydrates with the document's handle data.** `useHandle` in a
+   render React is hydrating reads the data its HTML was rendered from,
+   whenever its boundary hydrates, and moves on to the live data in its
+   mount effect. This one is not about shells: it holds on every document.
+
+For an app author the four come down to one sentence: **a promise pushed
+from a loader is live and is never in a shell; to have a value in the
+shell's HTML, push it settled (await it) from the `ssr: false` loader, or
+push it from the handler.**
 
 The consequence to keep in mind: on a shell HIT a deferred push is not in
 the HTML and shows right after hydration. On a MISS, and on a route without
@@ -626,21 +634,22 @@ arrives after hydration. "record" is the shell record's handle data. Each
 row is pinned through `readHandles()` in
 `serve-shell-request-push-ownership.rsc-test.tsx` ("a shell HIT hydrates
 from its record"); rows marked B were also run in a browser, dev and
-production.
+production. The same reader on a document MISS, with the push made after an
+await, failed on `origin/main` too and is clean now (rule 4).
 
-| Path                                                                                          | `origin/main` (`ede1367f`)                                                                                                                         | Now                                                                                                      |
-| --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| Document MISS (B)                                                                             | HTML and hydration: every push made before the handler barrier, a deferred one resolved. After: pushes made later (a live loader after an await)   | same                                                                                                     |
-| HIT, the loaders push settled values only (`/eb`)                                             | HTML, hydration: record. After: nothing                                                                                                            | same                                                                                                     |
-| HIT, a deferred push, the loader's `cache()` entry warm at capture (B, #1035)                 | HTML: record **plus an empty element**. Hydration: record, **plus the value if the replay won the race**. After: the value. Fails either way       | HTML, hydration: record. After: record plus the value                                                    |
-| HIT, a deferred push, the body ran at capture (no `cache()`, or its entry missed)             | HTML: record **plus the capture's value, baked**. Hydration: record plus this run's value (`@g2` next to `@g1`), or not                            | HTML, hydration: record. After: record plus this run's value                                             |
-| HIT, a push that holds a promise                                                              | HTML: the capture's value with the promise masked. Hydration: this run's value, or not                                                             | HTML, hydration: record (no element). After: this run's value                                            |
-| HIT, an entry without loader pins (`ppr.maxSnapshotBytes`), the run pushes                    | HTML: the capture's push. Hydration: **the run's push** (the run is awaited). Text mismatch                                                        | HTML, hydration: the capture's push (the placeholder). After: the run's push in its place                |
-| The same, the run makes no push                                                               | HTML: the capture's push. Hydration: **none**                                                                                                      | HTML, hydration: the capture's push. After: none                                                         |
-| HIT, a live-lane loader pushes, the reader is in the static part (B)                          | HTML: no element. Hydration: **the push when made before the loader's first await** (element mismatch, #418), else after                           | HTML, hydration: record. After: the push                                                                 |
-| HIT, a live-lane loader pushes, the reader is inside that loader's boundary (a hole) (B, e2e) | Push before the first await: in the hole's HTML and in the hydration data, clean. Push after an await: after hydration, **fails in that boundary** | Both after hydration: **fails in that boundary** until `useHandle` hydrates from the document's snapshot |
-| Client navigation that replays the shell                                                      | one stream, the final state                                                                                                                        | same                                                                                                     |
-| Document of a route without `ppr`                                                             | as a MISS                                                                                                                                          | same                                                                                                     |
+| Path                                                                                          | `origin/main` (`ede1367f`)                                                                                                                         | Now                                                                                       |
+| --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Document MISS (B)                                                                             | HTML and hydration: every push made before the handler barrier, a deferred one resolved. After: pushes made later (a live loader after an await)   | same                                                                                      |
+| HIT, the loaders push settled values only (`/eb`)                                             | HTML, hydration: record. After: nothing                                                                                                            | same                                                                                      |
+| HIT, a deferred push, the loader's `cache()` entry warm at capture (B, #1035)                 | HTML: record **plus an empty element**. Hydration: record, **plus the value if the replay won the race**. After: the value. Fails either way       | HTML, hydration: record. After: record plus the value                                     |
+| HIT, a deferred push, the body ran at capture (no `cache()`, or its entry missed)             | HTML: record **plus the capture's value, baked**. Hydration: record plus this run's value (`@g2` next to `@g1`), or not                            | HTML, hydration: record. After: record plus this run's value                              |
+| HIT, a push that holds a promise                                                              | HTML: the capture's value with the promise masked. Hydration: this run's value, or not                                                             | HTML, hydration: record (no element). After: this run's value                             |
+| HIT, an entry without loader pins (`ppr.maxSnapshotBytes`), the run pushes                    | HTML: the capture's push. Hydration: **the run's push** (the run is awaited). Text mismatch                                                        | HTML, hydration: the capture's push (the placeholder). After: the run's push in its place |
+| The same, the run makes no push                                                               | HTML: the capture's push. Hydration: **none**                                                                                                      | HTML, hydration: the capture's push. After: none                                          |
+| HIT, a live-lane loader pushes, the reader is in the static part (B)                          | HTML: no element. Hydration: **the push when made before the loader's first await** (element mismatch, #418), else after                           | HTML, hydration: record. After: the push                                                  |
+| HIT, a live-lane loader pushes, the reader is inside that loader's boundary (a hole) (B, e2e) | Push before the first await: in the hole's HTML and in the hydration data, clean. Push after an await: after hydration, **fails in that boundary** | Both after hydration, clean: the reader hydrates with the document's data (rule 4)        |
+| Client navigation that replays the shell                                                      | one stream, the final state                                                                                                                        | same                                                                                      |
+| Document of a route without `ppr`                                                             | as a MISS                                                                                                                                          | same                                                                                      |
 
 A HIT of a `Prerender` route with `ppr` freezes at the same point (its tail
 replays the prerender store's handles, `yieldFromStore`, then resolves the
@@ -648,7 +657,7 @@ render barrier). Read from the code, not probed.
 
 ### What is built
 
-Two halves, in two commits, so that either can change without the other.
+Three pieces, in three commits, so that any can change without the others.
 
 **The capture renders from what its record keeps** (rule 3):
 
@@ -663,11 +672,10 @@ Two halves, in two commits, so that either can change without the other.
   `Promise.resolve(value).then(mask)` (`rsc/shell-capture.ts:2057`). The
   slot is out of the prelude either way now. It still matters for whatever
   reads the capture's store next: the wait in `settleCaptureRecord` sees a
-  thenable again, and a design that records the value needs it.
+  thenable again, not `undefined`.
 
 Which pushes a record keeps is still the funnel's decision and only its:
-the view follows the tag. A deferred push the funnel records one day shows
-in the prelude with no change here.
+the view follows the tag.
 
 **The HIT hydrates from the record** (rules 1 and 2):
 
@@ -688,84 +696,95 @@ client did not change either: it already drains `metadata.handles` before
 `hydrateRoot` and applies `metadata.handlesLate` after the root commits
 (`browser/rsc-router.tsx`).
 
-### A reader that hydrates after the root
+**A reader hydrates with the document's handle data** (rule 4):
 
-One row is not clean, and one existing browser test is red because of it.
-Know this before you rely on the rule.
+Rules 1 to 3 say what arrives "after hydration". That means after the ROOT
+hydrates (`hydrationCommitted`, `browser/rsc-router.tsx`). A `useHandle`
+reader inside a boundary that hydrates later, a PPR hole or any streamed
+`<Suspense>`, used to initialize from the controller's live state. When the
+late channel had applied an update by then, the reader rendered elements
+its server HTML does not have.
 
-"After hydration" means after the ROOT hydrates (`hydrationCommitted`,
-`rsc-router.tsx`). A `useHandle` reader inside a boundary that hydrates
-later, a PPR hole or any streamed `<Suspense>`, initializes from the
-controller's live state (`browser/react/use-handle.ts:56`). When the late
-channel has applied an update by then, the reader renders elements its
-server HTML does not have.
-
-This is older than #1035 and not specific to shells: on `origin/main` a
+That was older than #1035 and not specific to shells: on `origin/main` a
 live-lane loader that pushes after an await, read inside its own
-`loading()` boundary, fails hydration on a document MISS. What the HIT rule
-changes is one case: a push made before the loader's first await used to be
-in a HIT's hydration data and in the hole's resumed HTML, and hydrated
-clean. Now it is late like the other, and fails the same way.
+`loading()` boundary, failed hydration on a document MISS. The HIT rule made
+it wider. A push made before the loader's first await used to be in a HIT's
+hydration data and in the hole's resumed HTML; with rule 2 it is late like
+the other. The router test-app had exactly that fixture
+(`/shell-cache/live-dep`), and `e2e/shell-cache.test.ts` "live dep: a live
+loader a running ssr false loader awaits keeps its live push on a HIT" went
+red on the first two pieces alone. It is green again with this one,
+unchanged.
 
-The router test-app has that case as a fixture. `/shell-cache/live-dep`
-renders `useHandle` rows inside the `loading()` boundary of a live loader
-that pushes before its first await, and
-`e2e/shell-cache.test.ts` "live dep: a live loader a running ssr false
-loader awaits keeps its live push on a HIT" guards its hydration. It passes
-on `origin/main` and fails with the two halves above, in dev and in
-production: the page ends with the right values, and both guards report the
-mismatch.
+- `EventController.freezeHydrationHandleState()`
+  (`browser/event-controller.ts`) keeps the handle state the document was
+  rendered with; `initBrowserApp` calls it before `hydrateRoot`.
+  `getHydrationHandleState()` returns it once the live state has moved on,
+  and `undefined` while the live state is still that state. A partial
+  update copies the containers before it merges, so the frozen state is
+  never written to.
+- `useHandle` (`browser/react/use-handle.ts`) reads it in a hydrating
+  render. It tells one from a client render the way `useLocationState` does
+  since #992: `useSyncExternalStore`, for its server snapshot. The mount
+  effect, which was already there, moves the reader on to the live state.
+- The snapshot is a boolean, "has the live state moved on", not the data.
+  It is false in every hydrating render and flips to true once per document
+  at most. So a reader that hydrated with nothing late is not rendered
+  again (the `hook-render-stability` pins did not move: 8 dev and 8
+  production in the router app, 4 and 4 in cloudflare-basic), and a
+  navigation's handle updates never look like a store mutation to a
+  transition that is rendering.
 
-The fix is in the hook, not in the rule: a render React is hydrating reads
-the handle state the document was rendered with, as `useLocationState`
-does since #992 (`useSyncExternalStore` for its server snapshot). A patch
-that does this (47 lines in `use-handle.ts`, `event-controller.ts` and
-`rsc-router.tsx`) turns that test green and makes the MISS case above clean
-too: with it the `shell ppr handle semantic-matrix` files of the test-app
-pass 263 of 263 in dev and 230 of 230 in production. It is not built. It
-changes `useHandle` for every document, not only for shells, and it needs
-its own tests.
+### Options decided against
 
-### What recording a deferred push would take
+Two other designs for #1035 were on the table. An independent consultation
+that read this branch recommended the one above, complete, and both of
+these were decided against. Do not build either without new information.
 
-The other way to close #1035 is to bake: the capture waits for a deferred
-push, records the settled value like any other, and the HIT restores it, so
-the value is in the HTML as on a normal document. The HIT half above is what
-that design needs too. It changes the capture only:
+**A. Bake it: the capture awaits a deferred push and records the value.**
+The capture would wait for the promise (bounded by `ppr.captureTimeout`),
+render the prelude with the settled value and record it like a settled
+push, so the value would be in a HIT's HTML as on a normal document.
+Decided against, for three reasons:
 
-- **Telling a promise that settles from one that never will.** There is no
-  way but waiting. In the loader lane the funnel sees a thenable and nothing
-  else. A body-made promise and a decoded one settle. One that waits on
-  something a capture never renders (a `defer()` whose resolver sits inside
-  a hole) settles by its own timeout, 10s by default, or never with
-  `timeoutMs: 0`.
-- **Where the bounded wait goes.** It exists: `settleCaptureRecord` awaits
-  every top-level thenable in the capture's store before the record is
-  written, under the capture's one deadline (`ppr.captureTimeout`). A loader
-  push that does not settle within it fails the whole capture, before this
-  work and now (probed: "produced no usable shell ... did not settle within
-  ppr.captureTimeout"). So the capture still waits for a value it no longer
-  renders; the wait is left in place because this design needs it. To fall
-  back to "not recorded, delivered late" instead of refusing, loader-lane
-  thenables need their own settle list, as handler pushes have
-  (`handlerPushSettles`), and a bound that does not fail the capture.
-- **The tag is decided at push time.** `loaderPush` and `owner` are set when
-  the slot is stored, before the value is known. Recording needs the store
-  to retag a slot once it settled (settled and thenable-free: untag and give
-  it its owner), or the funnel to push at settle time, which moves it in
-  push order.
-- **The record's format does not change.** It already holds top-level
-  promises: a handler's deferred push is encoded settled and restored as a
-  thenable, which `resolvedHandleStream` resolves on the HIT.
-- **`runs` can drop.** `_shellCaptureUnrecordedLoaderPush` is set at push
-  time and read once at the drain, after the wait. Set at settle time
-  instead, a capture whose deferred pushes all got recorded writes
-  `runs: 0`, and a promise-free pinned loader does nothing on a HIT.
-- **The HIT's store has to learn one thing.** A pinned loader that does run
-  drops its settled pushes and keeps its thenable ones (`holdsThenable`),
-  on the reasoning that a thenable is what the record could not keep. With
-  recorded deferred pushes that is no longer true, and the restored slot
-  would be shown twice.
+- It makes "a promise from a loader is live" depend on timing. A promise
+  that settles within `ppr.captureTimeout` would be baked, one that does not
+  would stay live. The author cannot see which from the code.
+- It contradicts the liveness rule that is already there. Loader DATA with
+  a promise in it is a hole, and so is a promise nested in a loader's push
+  (`mask-nested.ts`). Baking a top-level pushed promise would treat one
+  shape differently from the other two.
+- It freezes a value its author shaped as per-request into a shell every
+  visitor shares. That is the cross-session leak the mask exists to prevent
+  (the scar in `maskNestedContainerThenables`).
+
+For the record, it was also not small: the tag (`loaderPush`, `owner`) is
+decided at push time, before the value is known, so the store would have to
+retag a slot once it settled; and the HIT's store keeps a pinned loader's
+thenable pushes on the reasoning that a record could not hold them
+(`holdsThenable`), which would then show a recorded value twice.
+
+**C. A real hole: a pending promise in the slot at capture.** The consumer
+would read the slot with `use()` under `<Suspense>`, the capture would
+postpone that boundary, and the HIT's resume would fill it with
+server-rendered HTML. Rejected: it changes what `useHandle` returns. A
+handle value is resolved before any consumer sees it (resolve-by-default,
+`handles/deferred-resolution.ts`), so every reader, `<Html.Meta />`
+included, would have to learn to read a promise, and a reader without a
+boundary would suspend the shell.
+
+### A follow-up that is not done
+
+The capture still waits for a deferred loader push it no longer renders.
+`settleCaptureRecord` (`rsc/shell-capture.ts`) awaits every top-level
+thenable in the capture's store before the record is written, under the
+capture's one deadline. A loader push that does not settle within
+`ppr.captureTimeout` therefore fails the whole capture ("produced no usable
+shell ... did not settle within ppr.captureTimeout", probed), for a value
+the shell does not contain. Before this work the wait had a reason: the
+prelude rendered the value. Dropping it for loader-lane pushes is a
+separate change, with its own question (a deferred HANDLER push is baked
+and must keep waiting).
 
 ### Evidence
 
@@ -796,6 +815,39 @@ received `["settled-note@g1", ""]`. `expectReplayDeliversDeferredPush` now
 installs the hydration guard, and with it fails on `origin/main` with
 "Hydration failed because the server rendered HTML didn't match the client"
 (dev) and React error #418 (production).
+
+For rule 4, red with `origin/main`'s `use-handle.ts`:
+
+| Test                                                                                                                             | Failed with                                                                                                        |
+| -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `render-route-hydrate.test.tsx`, "#1035: a useHandle reader in a Suspense boundary that hydrates after a late handle update ..." | `recoverableErrors`: `expected [ Array(1) ] to deeply equal []` ("Hydration failed ..."), both StrictMode settings |
+| `use-handle-hydration.test.tsx`, "a reader that hydrates after a late update hydrates with the document's values ..."            | the same assertion, "... the server rendered HTML didn't match the client"                                         |
+| the same file, "applies the selector to the document's values on that render"                                                    | the same assertion, "... the server rendered text didn't match the client"                                         |
+| `event-controller.test.ts`, "hydration handle state" (4 tests)                                                                   | `TypeError: ctrl.freezeHydrationHandleState is not a function`                                                     |
+
+The first is the userland test: it goes through `renderRoute` with
+`hydrate: true` and the `lateHandles` option this work added (handle values
+applied once the root has hydrated, where production releases the late
+channel). Without that option no test could put an update between the
+root's hydration and a boundary's.
+
+In a browser, `expectLateBoundaryHandleReaderHydratesClean` loads
+`/ppr-push/live` (cloudflare-basic) and `/shell-push/live` (router test-app)
+as a document MISS and as a shell HIT: a live loader that pushes after an
+await, read inside its `loading()` boundary. On `origin/main` it fails in
+both apps with two errors per run (the MISS and the HIT): "Hydration failed
+because the server rendered HTML didn't match the client" in dev, React
+error #418 (`args[]=HTML`) in production.
+
+`expectPinlessHitKeepsRunPushWithRunData` (a shell without loader pins)
+records the handle rows over time. That page does report a hydration error,
+and it is the loader DATA, not the handle rows: dev names the element,
+`<p data-testid="push-value">` with `+ pinned@g2` / `- pinned@g1` (the
+documented drift of an entry without pins). The rows read
+`["pinned-note@g1"]` in the HTML and when the root hydrated, and
+`["pinned-note@g2"]` after. On `origin/main` the body fails with
+`- "pinned-note@g1"` / `+ "pinned-note@g2"`: there the rows had already
+changed when the root hydrated.
 
 Below the path level: `server/__tests__/handle-store.test.ts`
 (`freezeDocumentSnapshot`: the document lane, the late channel from the

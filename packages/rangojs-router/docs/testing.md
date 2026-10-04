@@ -609,7 +609,12 @@ the same plugin-injected-id reason. Handle data is accumulated GLOBALLY (not
 scoped per segment like loaders), so a LAYOUT component reading a handle (a
 `DetailLayout`/`ActionToolbar`) sees the seeded values just as the leaf does. A
 component reading only `useParams` / `useReverse` / `useNavigation` needs no
-seeding.
+seeding. `lateHandles` takes the same pairs for handle values that reach the
+page after hydration (a loader push made after an `await`, any loader push on
+a PPR shell HIT): each replaces that handle's seed once the root has hydrated
+or mounted. With `hydrate: true` the server HTML is rendered from `handles`
+and a reader inside a `<Suspense>` hydrates after the update was applied, so
+`recoverableErrors` tells you whether it hydrated with the document's values.
 
 A location-state definition the component reads WITHOUT a seed needs a key:
 outside production an unkeyed definition throws on first use (the Vite plugin

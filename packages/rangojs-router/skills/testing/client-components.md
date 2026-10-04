@@ -17,6 +17,7 @@
 | `params`          | `Record<string, string>`                                               | Explicit params, merged over (and overriding) params extracted from the `request` URL.                                                                                                                                                        |
 | `locationState`   | `ReadonlyArray<readonly [LocationStateDefinition<any, any>, unknown]>` | Seed `useLocationState(def)` by REFERENCE: `[def, value]` pairs; keys an unkeyed `def` (like `withLocationStateKey(def)`) and writes `value` to `history.state` under `def.__rsc_ls_key`. See [Location state](#location-state).              |
 | `handles`         | `ReadonlyArray<readonly [Handle<any, any>, unknown[]]>`                | Seed `useHandle(handle)` by REFERENCE: `[handle, pushedValues[]]`. Accumulated GLOBALLY (not segment-scoped).                                                                                                                                 |
+| `lateHandles`     | `ReadonlyArray<readonly [Handle<any, any>, unknown[]]>`                | Handle values that arrive AFTER hydration, as a late loader push does: `[handle, valuesAfterTheUpdate[]]` replaces that handle's `handles` seed once the root has hydrated (or mounted). See [Hydration](#hydration).                         |
 | `handle`          | `HandleDataSeed`                                                       | Advanced: raw wire format `{ [handleId]: { [segmentId]: pushedValues[] } }`. Prefer `handles`. Merged with it.                                                                                                                                |
 | `routeMap`        | `Record<string, string>`                                               | Name -> pattern map (informational; client `useReverse` takes its map as an argument, so this is not consumed).                                                                                                                               |
 | `basename`        | `string`                                                               | `createRouter({ basename })` value. Wired into `NavigationProvider` so `useRouter().basename`, `<Link>` prefixing, `useMount`/`useHref` resolve against the mount. Normalized like `createRouter`. Defaults to root.                          |
@@ -306,7 +307,34 @@ it("hydrates as the server rendered it, then shows the stored count", async () =
 | Render counts and module state                                                        | Every component renders once in the server pass before its hydration render. Both passes share one module realm, so module state written while rendering is still there at hydration.                                                        |
 | `history`, `localStorage`, `navigator` read outside a server snapshot                 | FIDELITY LIMIT: still defined in the server pass (only `window` and `document` are removed), so the read renders the same in both passes here and can still mismatch in real SSR.                                                            |
 | `data-hydrated` on `<html>`                                                           | Set after hydration, as the production root sets it from its effect, and removed on unmount. A `<Suspense>` boundary therefore hydrates with it already set.                                                                                 |
+| `useHandle` with `lateHandles`                                                        | The `handles` values in the server pass and in every hydration render, a `<Suspense>` boundary's included; the `lateHandles` values on the render after.                                                                                     |
 | `useLocationState` of a seeded definition                                             | `undefined` in the server pass and the hydration render, the seeded value on the render after. A `clearOnReload` definition stays `undefined`: its seeded slot is removed from `history.state` before hydration, as on a real document load. |
+
+A handle value can reach the page after hydration: a loader push made after an `await`, or any loader push on a PPR shell HIT (`/ppr`, "Handles on a shell HIT"). `lateHandles` models it. The server HTML is rendered from `handles`; the update is applied once the root has hydrated, so a reader inside a `<Suspense>` hydrates after it arrived, as a streamed boundary does in production:
+
+```tsx
+function NotesPage() {
+  return (
+    <Suspense fallback={null}>
+      <NoteList /> {/* <li> per useHandle(Notes) value */}
+    </Suspense>
+  );
+}
+
+it("hydrates with the document's notes, then shows the late one", async () => {
+  const { serverHtml, recoverableErrors, getAllByRole } = await renderRoute(
+    [{ path: "/notes", Component: NotesPage }],
+    {
+      hydrate: true,
+      handles: [[Notes, ["from-handler"]]],
+      lateHandles: [[Notes, ["from-handler", "from-loader"]]],
+    },
+  );
+  expect(serverHtml).not.toContain("from-loader");
+  expect(recoverableErrors).toEqual([]); // useHandle hydrated with the document's data
+  expect(getAllByRole("listitem")).toHaveLength(2);
+});
+```
 
 - Needs `@testing-library/react` 16.2.0 or newer. 16.0 and 16.1 never pass `onRecoverableError` to `hydrateRoot`, so a mismatch would be invisible; `renderRoute` throws there instead.
 - `recoverableErrors` is live: React appends to it for as long as the root is mounted.

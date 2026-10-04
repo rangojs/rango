@@ -942,11 +942,27 @@ in the background, and that push reaches the page (from the loader's own
 `cache()` entry when it hits) with the run's value, on a document HIT and on
 a client navigation alike. On a document HIT it arrives after hydration.
 
-**Handles on a shell HIT.** A document served from a shell hydrates with
-exactly the handle data the shell's HTML was rendered from, which is what the
-shell recorded: the handlers' pushes and the settled pushes of the loaders
-that ran at capture. Everything a loader does on the HIT's own request
-reaches the client after hydration, through `useHandle`'s normal update:
+**Handles on a shell HIT.** A promise pushed from a loader is live and is
+never in a shell. To have a value in the shell's HTML, push it settled
+(await it) from the `ssr: false` loader, or push it from the handler.
+
+Three things follow, in this order of scope:
+
+1. **What is in a shell's HTML** changes only for promise pushes of
+   `ssr: false` loaders and of the loaders they await: `push(promise)`, or a
+   pushed value that holds a promise. Those run at capture, and the shell
+   renders no element for such a push. A loader without `ssr: false` never
+   ran at capture, so nothing of it was ever in the shell.
+2. **On a shell HIT every loader push made during the request arrives after
+   hydration**, a live-lane loader's included. The document hydrates with
+   exactly the handle data the shell's HTML was rendered from (the handlers'
+   pushes and the settled pushes of the loaders that ran at capture), and
+   the request's own pushes follow as a normal `useHandle` update.
+3. **`useHandle` on every document, `ppr` or not:** a reader that React is
+   hydrating reads the handle data its HTML was rendered from, wherever its
+   boundary hydrates, and takes the newer data right after. So a reader
+   inside the `loading()` or `<Suspense>` of a loader that pushes after an
+   `await` hydrates clean.
 
 | On the HIT's request                                                        | In the HIT's HTML      | The client                                        |
 | --------------------------------------------------------------------------- | ---------------------- | ------------------------------------------------- |
@@ -955,19 +971,19 @@ reaches the client after hydration, through `useHandle`'s normal update:
 | a live-lane loader's push                                                   | no                     | gets it right after hydration                     |
 | the run of an `ssr: false` loader the shell has no pin for                  | the capture's push     | hydrates with the capture's, then shows the run's |
 
-So a value a loader pushes as a promise is in the HTML of a document MISS
-(the render awaits it) and of a route without `ppr`, and not in the HTML of a
-shell HIT. If a crawler or the first paint needs it, push it settled from an
-`ssr: false` loader (it bakes with the shell and is tag-invalidated), or push
-it from the handler. A promise-shaped value is treated as live: it is never
-baked into a shell every visitor shares.
+A value a loader pushes as a promise is therefore in the HTML of a document
+MISS (the render awaits it) and of a route without `ppr`, and not in the
+HTML of a shell HIT. When a crawler or the first paint needs it, change one
+line:
 
-One limit: "after hydration" is after the page's root hydrates. A
-`useHandle` reader inside a boundary that hydrates later (the `loading()` or
-`<Suspense>` of a live loader) can already see such a push when it hydrates,
-which React reports as a hydration mismatch for that boundary and repairs.
-Read the handle outside the boundary (a layout, `<Html.Meta />`), where it
-hydrates with the root.
+```ts
+ctx.use(Notes)(db.stockNote(id)); // a promise: live, after hydration on a HIT
+ctx.use(Notes)(await db.stockNote(id)); // settled: baked into the shell
+```
+
+The settled push bakes with the shell and is invalidated with it (its TTL,
+its tags). A promise is not baked, whenever it settles: it is the shape that
+says "per request", the same as a promise in the loader's data.
 
 A pinned loader's pushes are exactly the ones its capture made. If its body
 pushes a settled value only on some runs (behind a condition), a replay that

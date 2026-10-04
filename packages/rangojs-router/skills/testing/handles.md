@@ -28,6 +28,8 @@ A handle's `collect`/accumulator (the `createHandle(collect)` argument that maps
 | --------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `handles` | `ReadonlyArray<readonly [Handle, unknown[]]>` | Seeds the CLIENT read path for `useHandle(handle)` — the RAW **pushed values array** (`unknown[]`), the values a route's handlers would have pushed. Attached to the leaf route segment under the handle's `$$id`, so `useHandle` runs the handle's REAL collect on them. |
 
+`lateHandles` takes the same pairs for values that arrive after hydration (a late loader push): each replaces that handle's `handles` seed once the root has hydrated or mounted. With `hydrate: true` it pins that a reader hydrates with the document's values; see [`./client-components.md`](./client-components.md), "Hydration".
+
 **Shape contrast:** `renderRoute` feeds the barrier INPUT (the pushes, `unknown[]`); `runLoader` feeds its OUTPUT (the single accumulated value, `unknown`).
 
 **Across navigation:** seeded `handles` are applied once at the initial render and PERSIST across `router.navigate()` within the same test (like `loaderData`) — unlike a real navigation, which re-runs handlers. A layout/page reading `useHandle` still resolves the seeded values after `navigate()`.

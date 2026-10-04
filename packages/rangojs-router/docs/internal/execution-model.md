@@ -266,12 +266,25 @@ global middleware
     beat the handler barrier, and the client applies it after the root
     hydrates. A document MISS, a route without `ppr` and a navigation replay
     are unchanged: there the snapshot is the store at the handler barrier.
-    Not covered: a `useHandle` reader in a boundary that hydrates after the
-    root reads the live state, late updates included
-    (`docs/design/handle-push-ownership.md`). Pinned by "a shell HIT hydrates
-    from its record" in `serve-shell-request-push-ownership.rsc-test.tsx`,
+    Pinned by "a shell HIT hydrates from its record" in
+    `serve-shell-request-push-ownership.rsc-test.tsx`,
     `handle-store.test.ts`, and `expectShellHitHydratesFromRecord` in both
     apps (#1035).
+  - **A `useHandle` reader hydrates with the document's handle data, on
+    every document.** "After hydration" above is after the ROOT hydrates.
+    A reader in a boundary that hydrates later (a live loader's `loading()`,
+    a streamed `<Suspense>`) reads, in its hydrating render, the handle state
+    `initBrowserApp` froze before `hydrateRoot`
+    (`EventController.freezeHydrationHandleState` /
+    `getHydrationHandleState`), and its mount effect moves it on to the live
+    state. `useHandle` detects the hydrating render with
+    `useSyncExternalStore`'s server snapshot; the snapshot is "has the live
+    state moved on", so a reader that hydrated with nothing late renders
+    once. Before, the reader took the live state, late updates included, and
+    mismatched its HTML: a loader push after an `await` on any document.
+    Pinned by `use-handle-hydration.test.tsx`,
+    `render-route-hydrate.test.tsx` (`lateHandles`), and
+    `expectLateBoundaryHandleReaderHydratesClean` in both apps (#1035).
   - **`ctx.dynamic()` is the request-level opt-out on this axis.** Runtime
     middleware calls it BEFORE the commit point, so it forces the request onto
     axis 1 — the shell lookup/HIT/MISS-capture is skipped even when a valid
