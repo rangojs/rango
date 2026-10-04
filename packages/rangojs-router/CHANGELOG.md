@@ -27,6 +27,20 @@ Back would hit the redirect again.
 //           Back from /login goes to /home
 ```
 
+### Changed: `@vitejs/plugin-rsc` is a dependency of `@rangojs/router`, no longer also a peer ([#1050](https://github.com/rangojs/rango/issues/1050))
+
+`@rangojs/router` declared `@vitejs/plugin-rsc` (`^0.5.35`) twice: as a
+dependency and as a required peer. It is now only a dependency, with the same
+range. The README already told you not to install it, and `rango()` already
+resolved it through the router; the peer entry said the opposite.
+
+You notice this at install time. pnpm and npm no longer ask for it as a peer
+or report it as a missing one. npm still places it in the root `node_modules`,
+because its flat layout hoists the router's dependencies; pnpm keeps it under
+the router. An app that lists `@vitejs/plugin-rsc` in its own `package.json`
+keeps working (one copy is installed) and can drop the entry. Nothing changes
+at run time.
+
 ### Fixed: on Back/Forward, `usePathname()` and `useSearchParams()` change with the page, not before it ([#1031](https://github.com/rangojs/rango/issues/1031))
 
 On Back or Forward to an entry that has to be fetched (it left the client's
