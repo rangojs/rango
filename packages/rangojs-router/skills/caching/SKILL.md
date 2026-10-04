@@ -564,9 +564,13 @@ const router = createRouter<AppBindings>({
 });
 ```
 
-`CFCacheStore` prefixes every key with the build version, so a deploy never
-reads the previous build's entries (override with `version`). See `/cache-guide`
-→ "Cross-deploy safety" and `/cloudflare` for bindings.
+`CFCacheStore` prefixes every key with a version computed per `createRouter()`
+from that router's built code: segment entries and `fn:` items with the data
+version, `doc:` responses and `shell2:` shells with the document version. A
+deploy that changes a router's code reads under a new version; a deploy that does
+not keeps the entries. Tag invalidation markers carry no version, so `updateTag()`
+reaches entries of every version. `version` replaces both versions with one
+value. See `/cache-guide` → "Cross-deploy safety" and `/cloudflare` for bindings.
 
 ### With KV L2 Persistence
 
@@ -755,10 +759,11 @@ the store adds SWR, tag invalidation, and the family split on top of it.
 import { getCache, waitUntil } from "@vercel/functions";
 import { VercelCacheStore } from "@rangojs/router/cache";
 
-// A per-deploy namespace: Vercel does not reconcile entries across deploys.
+// No deployment id in the namespace: the store versions its keys itself, so a
+// deploy that does not change a router keeps that router's entries.
 // One handle per process: the store keeps its PPR shell and tag-marker
 // memos per handle.
-const runtimeCache = getCache({ namespace: process.env.VERCEL_DEPLOYMENT_ID });
+const runtimeCache = getCache();
 
 const router = createRouter({
   document: Document,
@@ -793,6 +798,12 @@ Writes over 2 MB (the platform limit, `maxItemBytes`) are skipped, and tags
 beyond the per-item cap are dropped with a warning. The official client swallows
 `expireTag` failures, so treat `updateTag()` on Vercel as best-effort. See
 `/vercel` for the preset and the remaining options (`version`, `name`, `debug`).
+
+`VercelCacheStore` versions its keys by default: families `s` and `i` take the
+router's data version, `r` and `h` its document version, and tag markers
+(`rg:tm:{tag}`) take none. `version` replaces both. To clear the cache on every
+deploy, set `version` to a per-deploy value or keep a deployment-scoped
+`getCache({ namespace: process.env.VERCEL_DEPLOYMENT_ID })`.
 
 ## Cache purity & tainted objects
 

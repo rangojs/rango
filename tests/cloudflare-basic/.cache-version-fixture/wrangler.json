@@ -1,0 +1,16 @@
+{
+  "name": "cache-version-fixture",
+  "workers_dev": true,
+  "compatibility_date": "2025-10-01",
+  "compatibility_flags": ["nodejs_compat", "nodejs_als"],
+  "main": "./src/worker.rsc.tsx",
+  "assets": {
+    "directory": "./dist/client"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "KV",
+      "id": "cacheversionfixture0000000000000"
+    }
+  ]
+}

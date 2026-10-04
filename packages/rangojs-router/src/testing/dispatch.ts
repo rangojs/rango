@@ -106,6 +106,7 @@ import {
   runWithRequestContext,
   setRequestContextParams,
 } from "../server/request-context.js";
+import { resolveRouterVersions } from "../server/build-version-table.js";
 import { executeMiddleware, matchMiddleware } from "../router/middleware.js";
 import type {
   MiddlewareEntry,
@@ -166,6 +167,8 @@ import { applyStreamIdleTimeout } from "../rsc/stream-idle.js";
 interface DispatchableRouter<TEnv> {
   id?: string;
   routerId?: string;
+  /** createRouter({ version }), the consumer-set version. */
+  version?: string;
   routeMap: Record<string, unknown>;
   middleware: MiddlewareEntry<TEnv>[];
   onError?: OnErrorCallback<TEnv>;
@@ -411,6 +414,9 @@ export async function dispatch<TEnv = any>(
     cacheStore,
     searchParamsFilter,
     cacheProfiles: router.cacheProfiles,
+    // The store keys with the router's versions, resolved as the production
+    // handler resolves them (rsc/handler.ts).
+    versions: resolveRouterVersions(routerId, router.version),
   });
   // Wire background error reporting so cache degradation (reportCacheError ->
   // _reportBackgroundError) reaches the router's onError, mirroring the production

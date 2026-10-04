@@ -7,7 +7,9 @@
  * cache keys responses by (URL, X-Rango-State value).
  *
  * Value format: `{buildVersion}:{invalidationTimestamp}`
- * - Build version changes on deploy, busting all cached prefetches at boot.
+ * - Build version: the router's document version. It changes when a deploy
+ *   changes the router's server code or the client assets, busting all cached
+ *   prefetches at boot; a deploy that changes neither keeps them.
  * - Timestamp rotates on invalidation (server action, invalidateClientCache).
  *
  * Storage is a session cookie named by the server-resolved name passed to

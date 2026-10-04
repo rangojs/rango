@@ -223,7 +223,7 @@ The build captures the shell after all environment bundles exist, replaying the 
 
 A build-baked shell is served for requests without a query string; a URL with search params has its own shell identity and is captured at runtime. A route partitioned by `cache({ key })` or a store `keyGenerator` never serves it either: each partition captures its own at runtime (a once-per-route warning says so), unless the `keyGenerator` returns the default key unchanged. It keeps serving until:
 
-- **a redeploy** retires it (the new build bakes a new one), or
+- **a redeploy** replaces it: the new build ships its own baked shells, and a shell stored at runtime for the route is replaced when the router's document version changes, which a change of the prerendered payload causes, or
 - **`updateTag()`** on a tag the shell carries drops it, so the next request misses and a runtime capture takes over. Unlike the Flight payload, a baked shell is reachable by tags.
 
 `ppr.ttl` and `swr` are staleness-only for a baked shell: past `ttl` it still serves and a runtime recapture is scheduled. That recapture replays the same build-time segments (the handler is evicted), so it only refreshes `cache()`-backed data in the shell. If nothing in the shell is `cache()`-backed, reach for `updateTag()` or a redeploy instead of a shorter `ttl`.

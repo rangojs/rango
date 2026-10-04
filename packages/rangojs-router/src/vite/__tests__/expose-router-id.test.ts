@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { exposeRouterId } from "../plugins/expose-internal-ids.js";
+import {
+  routerId,
+  transformRouter,
+} from "../plugins/expose-ids/router-transform.js";
 
 function createPlugin() {
   const plugin = exposeRouterId();
@@ -172,7 +176,7 @@ export const router = createRouter({});
 
   // ---- ID stability ----
 
-  it("produces deterministic $$id for same file and line", () => {
+  it("produces deterministic $$id for the same file and call", () => {
     const plugin = initPlugin();
     const code = `import { createRouter } from "@rangojs/router";
 export const router = createRouter({});
@@ -259,7 +263,7 @@ export const siteRouter = createRouter({ id: "site" });
     // Both should get $$id injected
     const idMatches = [...result.code.matchAll(/\$\$id:\s*"([0-9a-f]{8})"/g)];
     expect(idMatches).toHaveLength(2);
-    // IDs should be distinct (different line numbers produce different hashes)
+    // IDs should be distinct (each call has its own position in the file)
     expect(idMatches[0][1]).not.toBe(idMatches[1][1]);
   });
 
@@ -382,5 +386,128 @@ export const router = createRouter({});
     const result = plugin.transform(code, "/project/src/router.tsx");
     expect(result).toBeDefined();
     expect(result.map).toBeDefined();
+  });
+});
+
+describe("router id and source file across dev and build", () => {
+  const idOf = (code: string) => code.match(/\$\$id:\s*"([^"]+)"/)?.[1];
+  const ids = (code: string) =>
+    [...code.matchAll(/\$\$id:\s*"([^"]+)"/g)].map((match) => match[1]);
+
+  // What the transform hook receives. The TypeScript transform has already
+  // run: a dev server keeps the comments, a build prints the module without
+  // them, so the call sits on a different line in each.
+  const DEV_CODE = `/// <reference types="@cloudflare/workers-types" />
+import { createRouter } from "@rangojs/router";
+// The app router.
+export const router = createRouter({
+  // routes
+  routes: [],
+});
+`;
+  const BUILD_CODE = `import { createRouter } from "@rangojs/router";
+export const router = createRouter({
+\troutes: [],
+});
+`;
+  const names = ["createRouter"];
+  const transform = (code: string, file = "src/router.tsx") =>
+    transformRouter(code, file, names)!.code;
+
+  it("is a hash of the root-relative file and the call's position in it", () => {
+    expect(routerId("src/router.tsx", 0)).toMatch(/^[0-9a-f]{8}$/);
+    expect(idOf(transform(BUILD_CODE))).toBe(routerId("src/router.tsx", 0));
+    expect(routerId("src/router.tsx", 1)).not.toBe(
+      routerId("src/router.tsx", 0),
+    );
+    expect(routerId("src/other.tsx", 0)).not.toBe(
+      routerId("src/router.tsx", 0),
+    );
+  });
+
+  // Regression: the id came from the call's LINE in the transformed code, so
+  // build-time discovery (a dev server) and the bundle disagreed on a router's
+  // id whenever a comment sat above the call. The build then registered the
+  // router's lazy route manifest and its cache versions under an id no running
+  // router had.
+  it("derives the same id from the dev-shaped and the build-shaped code", () => {
+    expect(idOf(transform(DEV_CODE))).toBeDefined();
+    expect(idOf(transform(BUILD_CODE))).toBe(idOf(transform(DEV_CODE)));
+  });
+
+  // The id names the state cookie, the route manifest chunk and the router's
+  // cache versions.
+  it("does not change when a comment or a blank line is added above the call", () => {
+    const edited = BUILD_CODE.replace(
+      "export const router",
+      "\n// A note.\n\nexport const router",
+    );
+    expect(idOf(transform(edited))).toBe(idOf(transform(BUILD_CODE)));
+  });
+
+  it("keeps two routers in one file apart, by their order", () => {
+    const code = `import { createRouter } from "@rangojs/router";
+export const a = createRouter({});
+export const b = createRouter({});
+`;
+    expect(ids(transform(code))).toEqual([
+      routerId("src/router.tsx", 0),
+      routerId("src/router.tsx", 1),
+    ]);
+  });
+
+  it("counts calls in code only: not a comment, a string or a type position", () => {
+    const code = `import { createRouter } from "@rangojs/router";
+// createRouter({ in: "a comment" })
+type R = ReturnType<typeof createRouter>;
+const note = "createRouter()";
+export const a = createRouter({});
+`;
+    expect(ids(transform(code))).toEqual([routerId("src/router.tsx", 0)]);
+  });
+
+  it("counts a call it cannot inject into, so its siblings keep their ids", () => {
+    const code = `import { createRouter } from "@rangojs/router";
+export const a = createRouter(config);
+export const b = createRouter({});
+`;
+    expect(ids(transform(code))).toEqual([routerId("src/router.tsx", 1)]);
+  });
+
+  describe("the plugin", () => {
+    const transformWith = (command: "serve" | "build", code: string) => {
+      const plugin = exposeRouterId() as ReturnType<typeof exposeRouterId> & {
+        configResolved: (config: any) => void;
+        transform: (code: string, id: string) => any;
+      };
+      plugin.configResolved({ root: "/project", command });
+      return plugin.transform.call(
+        { warn: () => {} },
+        code,
+        "/project/src/router.tsx",
+      ).code as string;
+    };
+
+    it("gives the dev server and the build the same id", () => {
+      expect(idOf(transformWith("build", BUILD_CODE))).toBe(
+        idOf(transformWith("serve", DEV_CODE)),
+      );
+    });
+
+    // Discovery and the CLI read $$sourceFile on a dev server and need the
+    // absolute path. A build ships the root-relative one: the checkout
+    // directory in a router's chunk gave the same source a different cache
+    // version on every build machine.
+    it("injects the absolute source file on a dev server", () => {
+      expect(transformWith("serve", DEV_CODE)).toContain(
+        `$$sourceFile: "/project/src/router.tsx"`,
+      );
+    });
+
+    it("injects the root-relative source file in a build", () => {
+      const code = transformWith("build", BUILD_CODE);
+      expect(code).toContain(`$$sourceFile: "src/router.tsx"`);
+      expect(code).not.toContain("/project");
+    });
   });
 });

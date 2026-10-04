@@ -321,6 +321,23 @@ describe("classifyRequest", () => {
     );
   });
 
+  // Each router has its own version, so a tab of another app always carries a
+  // version this router does not have. That is an app switch, not a stale
+  // client: comparing versions across routers says nothing.
+  it("treats a cross-app navigation as an app switch, whatever version the other app's tab carries", async () => {
+    const { request, url } = makeRequest(
+      "http://localhost/page?_rsc_partial=1&_rsc_rid=other-router&_rsc_v=other-app-version",
+    );
+    const deps = makeDeps({ routerId: "test-router", routerVersion: "1.0.0" });
+
+    const plan = await classifyRequest(request, url, deps);
+
+    expect(plan.mode).toBe("app-switch");
+    expect(plan.mode === "app-switch" && plan.reloadUrl).toBe(
+      "http://localhost/page",
+    );
+  });
+
   it("cross-app SPA navigation to a MISSING target route still reloads (not a 404)", async () => {
     // The target route doesn't exist in this app. The app-switch check must run
     // BEFORE route resolution — otherwise resolveRoute throws RouteNotFoundError

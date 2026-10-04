@@ -56,3 +56,7 @@ export {
 } from "./document-cache.js";
 
 export type { CacheErrorCategory } from "./cache-error.js";
+
+// For a custom persistent store: the versions the built-in stores key with.
+export { getCacheVersions } from "../server/build-version-table.js";
+export type { RouterVersions } from "../router-versions.js";

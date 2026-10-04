@@ -328,9 +328,14 @@ that OUTLIVES its build -- a persistent cross-process store such as
 `CFCacheStore` serving entries written by the previous deploy -- holds bound
 args encrypted with the writing build's key, so invoking its embedded action
 after a deploy fails `decryptActionBoundArgs` until the entry expires or
-revalidates. Set `RANGO_ENCRYPTION_KEY` (base64-encoded 32 bytes, read at build
-time) to keep the key stable across deploys whenever cached values can span
-them.
+revalidates. Set the plugin option
+`rango({ encryptionKey: process.env.RANGO_ENCRYPTION_KEY })` (base64-encoded 32
+bytes, validated when `rango()` is called; `undefined` falls back to the
+`RANGO_ENCRYPTION_KEY` environment variable, then to a key generated per build)
+to keep the key stable across deploys whenever cached values can span them. The
+key is part of the cache version of every router whose server code encrypts
+inline-action bound arguments, so without a stable key those routers get a new
+version, and a cleared cache, on every build.
 
 ## Interaction with Existing Caching
 

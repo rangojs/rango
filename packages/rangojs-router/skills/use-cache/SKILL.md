@@ -485,11 +485,22 @@ the current time and expect freshness -- those are frozen at cache-write. The
 `cookies()`/`headers()` read guard applies to the cached function body, NOT to an
 inline action's body.
 
-Deploy note: captured values are encrypted with a per-build key by default. If
-cache entries can outlive a deploy (a persistent store such as the Cloudflare
-cache store), set `RANGO_ENCRYPTION_KEY` (base64-encoded 32 bytes) in the build
-environment so actions embedded in entries written by a previous deploy still
-decrypt; without it they fail until the entry expires or revalidates.
+Deploy note: captured values are encrypted with a key that is generated per
+build by default. Set a stable one in the plugin options:
+
+```ts
+rango({ encryptionKey: process.env.RANGO_ENCRYPTION_KEY });
+```
+
+The value is base64-encoded 32 bytes (`openssl rand -base64 32`), never a
+literal, and is validated when `rango()` is called. `undefined` falls back to the
+`RANGO_ENCRYPTION_KEY` environment variable, then to a key generated per build.
+The key is part of the cache version of every router whose server code encrypts
+inline server-action bound arguments, so without a stable key those routers get a
+new version (and a cleared cache) on every build, and the build prints one note
+when that applies. With a stable key, actions embedded in entries written by a
+previous deploy still decrypt. A router that renders no inline action with bound
+arguments keeps its cache without a stable key. See `/cache-guide`.
 
 ## Vite Transform
 

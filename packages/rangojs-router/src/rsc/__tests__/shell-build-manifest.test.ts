@@ -115,6 +115,26 @@ describe("lookupBuildShell (build-shell read-through gates)", () => {
     ).toBeNull();
   });
 
+  // Document versions are per router, and the manifest key is the pathname
+  // alone, so two routers of one host build can ask about the same record.
+  // The verdict memo was keyed by the record only: whichever router asked
+  // first decided for both.
+  it("judges a record per asking router's version, in either order", async () => {
+    installManifest({ "/pp/a": { entry: entry(), ttl: 300 } });
+    // Another router (another document version) asks first: not its shell.
+    expect(
+      await lookupBuildShell(url("/pp/a"), "other-router-doc", store),
+    ).toBeNull();
+    // The owner still gets it.
+    expect(
+      await lookupBuildShell(url("/pp/a"), BUILD_VERSION, store),
+    ).not.toBeNull();
+    // And the owner's verdict does not hand it to the other router.
+    expect(
+      await lookupBuildShell(url("/pp/a"), "other-router-doc", store),
+    ).toBeNull();
+  });
+
   // The read-through's gates are structural; the document serve decodes the
   // prelude once (openShellDocument) and treats a failed decode as a MISS.
   it("leaves an undecodable prelude to the document serve's one decode", async () => {

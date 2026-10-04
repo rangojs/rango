@@ -1,5 +1,3 @@
-/// <reference path="../../vite/plugins/version.d.ts" />
-
 // Extend CacheStorage with Cloudflare's default cache property
 declare global {
   interface CacheStorage {
@@ -50,7 +48,10 @@ import {
   type RequestContext,
 } from "../../server/request-context.js";
 import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
-import { VERSION } from "@rangojs/router:version";
+import {
+  versionKeyPrefix,
+  type KeyVersion,
+} from "../../server/build-version-table.js";
 import {
   isPerClientSignalHeader,
   stripPerClientSignals,
@@ -314,10 +315,9 @@ interface KVItemEnvelope {
 
 /**
  * Key namespace of the shell family. `shell2:` holds the prelude-first frame
- * (cf-shell-frame.ts); `shell:` held the JSON envelope. Every deploy retires
- * the old entries anyway (buildVersion gate); the new namespace also keeps
- * new code from reporting an old body as corrupt and a rollback from parsing
- * a frame. Old keys age out by their TTL.
+ * (cf-shell-frame.ts); `shell:` held the JSON envelope. The separate
+ * namespace keeps new code from reporting an old body as corrupt and a
+ * rollback from parsing a frame. Old keys age out by their TTL.
  */
 const SHELL_KEY_PREFIX = "shell2:";
 
@@ -494,7 +494,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private readonly namespace?: string;
   private readonly explicitBaseUrl?: string;
   private readonly waitUntil?: (fn: () => Promise<void>) => void;
-  private readonly version?: string;
+  /** The `version` option: used for every versioned family when set. */
+  private readonly explicitVersion?: string;
   private readonly edgeLookupTimeoutMs: number;
   private readonly edgeReadTimeoutMs: number;
   private readonly kvReadTimeoutMs: number;
@@ -540,7 +541,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     // the internal host. Only the explicit override can be captured eagerly.
     this.explicitBaseUrl = options.baseUrl;
     this.defaults = options.defaults;
-    this.version = options.version ?? VERSION;
+    this.explicitVersion = options.version;
     // Coalesce only finite numbers to the override; a non-finite value (NaN from
     // `Number(env.UNSET)`, or Infinity) would otherwise sail past `?? DEFAULT`
     // (which only replaces null/undefined) into setTimeout, where NaN/Infinity
@@ -1134,7 +1135,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     if (this.isReservedSegmentKey(key, "cache-read")) return null;
     try {
       const cache = await this.getCache();
-      const request = this.keyToRequest(key);
+      const request = this.keyToRequest(key, "data");
       const matchStart = Date.now();
       const {
         response,
@@ -1381,7 +1382,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     if (this.skipUncacheableTagSet(data.tags)) return;
     try {
       const cache = await this.getCache();
-      const request = this.keyToRequest(key);
+      const request = this.keyToRequest(key, "data");
 
       // Extended TTL covers SWR window
       const swrWindow = resolveSwrWindow(swr, this.defaults);
@@ -1457,11 +1458,11 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     if (this.isReservedSegmentKey(key, "cache-delete")) return false;
     try {
       const cache = await this.getCache();
-      const result = await cache.delete(this.keyToRequest(key));
+      const result = await cache.delete(this.keyToRequest(key, "data"));
 
       // L2: delete from KV
       if (this.kv && this.waitUntil) {
-        const kvKey = await this.toKVKey(key);
+        const kvKey = await this.toKVKey(key, "data");
         this.waitUntil(() =>
           reportingAsync(
             () => this.kv!.delete(kvKey),
@@ -1492,7 +1493,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   ): Promise<{ response: Response; shouldRevalidate: boolean } | null> {
     try {
       const cache = await this.getCache();
-      const request = this.keyToRequest(`doc:${key}`);
+      const request = this.keyToRequest(`doc:${key}`, "document");
       // The document path is outside the debug surface (op is only get/getItem),
       // so the match-timeout flag is not surfaced as an event here -- though
       // matchWithTimeout still warns on a slow match. A miss or timeout falls
@@ -1633,7 +1634,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     if (this.skipUncacheableTagSet(tags)) return;
     try {
       const cache = await this.getCache();
-      const request = this.keyToRequest(`doc:${key}`);
+      const request = this.keyToRequest(`doc:${key}`, "document");
 
       // Extended TTL covers SWR window
       const swrWindow = resolveSwrWindow(swr, this.defaults);
@@ -1747,7 +1748,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   async getItem(key: string): Promise<CacheItemResult | null> {
     try {
       const cache = await this.getCache();
-      const request = this.keyToRequest(`fn:${key}`);
+      const request = this.keyToRequest(`fn:${key}`, "data");
       const matchStart = Date.now();
       const {
         response,
@@ -1932,7 +1933,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     if (this.skipUncacheableTagSet(options?.tags)) return;
     try {
       const cache = await this.getCache();
-      const request = this.keyToRequest(`fn:${key}`);
+      const request = this.keyToRequest(`fn:${key}`, "data");
 
       const ttl = resolveTtl(options?.ttl, this.defaults, DEFAULT_FUNCTION_TTL);
       const swrWindow = resolveSwrWindow(options?.swr, this.defaults);
@@ -1984,7 +1985,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // JSON.stringify(KVItemEnvelope); field names differ from L1 so we assemble
       // from the pre-escaped value/handles pieces rather than re-stringifying.
       if (this.kv && this.waitUntil && totalTtl >= 60) {
-        const kvKey = await this.toKVKey(`fn:${key}`);
+        const kvKey = await this.toKVKey(`fn:${key}`, "data");
         const expiresAt = staleAt + swrWindow * 1000;
         let envelopeJson = `{"v":${valueJson}`;
         if (handlesJson !== undefined) envelopeJson += `,"h":${handlesJson}`;
@@ -2154,7 +2155,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     }
     try {
       const cache = await this.getCache();
-      const request = this.keyToRequest(`${SHELL_KEY_PREFIX}${key}`);
+      const request = this.shellRequest(key);
       const matchStartedAt = stats ? performance.now() : 0;
       const {
         response,
@@ -2297,14 +2298,17 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     }
   }
 
-  /** The isolate marker memo's key for a tag: markers are per namespace and version. */
+  /**
+   * The isolate marker memo's key for a tag: markers are per namespace, and
+   * shared by every version (tagMarkerKey).
+   */
   private markerMemoKey(tag: string): string {
-    return `${this.namespace ?? ""}\u0000${this.version ?? ""}\u0000${tag}`;
+    return `${this.namespace ?? ""}\u0000${tag}`;
   }
 
-  /** The memo key: one per namespace, build version, base URL, and shell key. */
+  /** The memo key: one per namespace, document version, base URL, and shell key. */
   private shellMemoKey(key: string): string {
-    return `${this.namespace ?? ""}\u0000${this.keyToRequest(`${SHELL_KEY_PREFIX}${key}`).url}`;
+    return `${this.namespace ?? ""}\u0000${this.shellRequest(key).url}`;
   }
 
   /**
@@ -2571,15 +2575,12 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     const evict = async (): Promise<void> => {
       const cache = await this.getCache();
       await reportingAsync(
-        () => cache.delete(this.keyToRequest(`${SHELL_KEY_PREFIX}${key}`)),
+        () => cache.delete(this.shellRequest(key)),
         "cache-delete",
         "[CFCacheStore] getShell: evict corrupt L1",
       );
       if (this.kv) {
-        await this.evictKvKey(
-          await this.toKVKey(`${SHELL_KEY_PREFIX}${key}`),
-          "getShell",
-        );
+        await this.evictKvKey(await this.shellKVKey(key), "getShell");
       }
     };
     if (this.waitUntil) this.waitUntil(evict);
@@ -2641,9 +2642,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         Array.isArray(tags) && tags.length > 0 ? entry.createdAt : undefined;
 
       const writeKv = !!this.kv && retentionTtl > 0;
-      const kvKey = writeKv
-        ? await this.toKVKey(`${SHELL_KEY_PREFIX}${key}`)
-        : null;
+      const kvKey = writeKv ? await this.shellKVKey(key) : null;
 
       const write = (async (): Promise<"stored" | "invalidated" | void> => {
         if (
@@ -2684,7 +2683,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
             try {
               const cache = await this.getCache();
               await cache.put(
-                this.keyToRequest(`${SHELL_KEY_PREFIX}${key}`),
+                this.shellRequest(key),
                 this.shellFrameResponse(frame, head),
               );
               this.debugShell(key, "l1-stored", { expiresAt: head.e });
@@ -2781,7 +2780,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // One kvReadTimeoutMs budget covers opening the value and reading its
       // head and prelude; the remainder after the open bounds the frame read.
       const deadline = Date.now() + this.kvReadTimeoutMs;
-      const kvKey = await this.toKVKey(`${SHELL_KEY_PREFIX}${key}`);
+      const kvKey = await this.shellKVKey(key);
       // A transient read REJECTION propagates to the catch below (reported
       // cache-read, the entry left intact); only a malformed frame on a body
       // that WAS read is corruption that evicts.
@@ -2884,7 +2883,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           if (Date.now() > head.e) return;
           const cache = await this.getCache();
           await cache.put(
-            this.keyToRequest(`${SHELL_KEY_PREFIX}${key}`),
+            this.shellRequest(key),
             this.shellFrameResponse(
               encodeShellFrame(head, prelude, snapshotBytes),
               head,
@@ -2905,18 +2904,30 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   // Key Helpers
   // ============================================================================
 
+  private shellRequest(key: string): Request {
+    return this.keyToRequest(`${SHELL_KEY_PREFIX}${key}`, "document");
+  }
+
+  private shellKVKey(key: string): Promise<string> {
+    return this.toKVKey(`${SHELL_KEY_PREFIX}${key}`, "document");
+  }
+
   /**
    * Convert string key to Request object for CF Cache API.
-   * Includes version in URL if specified (for cache invalidation on code changes).
+   *
+   * `family` picks the version in the URL path, so a version change misses:
+   * `"data"` for segment entries and `fn:` items (cached RSC data, valid while
+   * the router's server code is unchanged), `"document"` for `doc:` responses
+   * and `shell2:` shells (their bytes carry asset URLs and the handler
+   * version), `null` for tag markers, which apply to every version.
    * @internal
    */
-  private keyToRequest(key: string): Request {
+  private keyToRequest(key: string, family: KeyVersion): Request {
     const encodedKey = encodeURIComponent(key);
-    // Include version in URL path to invalidate cache when version changes
-    const versionPath = this.version ? `v/${this.version}/` : "";
-    return new Request(`${this.resolveBaseUrl()}${versionPath}${encodedKey}`, {
-      method: "GET",
-    });
+    return new Request(
+      `${this.resolveBaseUrl()}${versionKeyPrefix(this.explicitVersion, family)}${encodedKey}`,
+      { method: "GET" },
+    );
   }
 
   /**
@@ -2937,9 +2948,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * and delete paths agree on the stored key.
    * @internal
    */
-  private async toKVKey(key: string): Promise<string> {
-    const versionPath = this.version ? `v/${this.version}/` : "";
-    const composed = `${versionPath}${key}`;
+  private async toKVKey(key: string, family: KeyVersion): Promise<string> {
+    const composed = `${versionKeyPrefix(this.explicitVersion, family)}${key}`;
     if (kvKeyByteLength(composed) <= KV_MAX_KEY_BYTES) return composed;
     const prefix = truncateToBytes(composed, KV_KEY_PRESERVED_PREFIX_BYTES);
     return `${prefix}~${await kvKeyDigest(composed)}`;
@@ -2973,7 +2983,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * @internal
    */
   private toDocKVKey(key: string): Promise<string> {
-    return this.toKVKey(`h/${this.docKVHost()}/doc:${key}`);
+    return this.toKVKey(`h/${this.docKVHost()}/doc:${key}`, "document");
   }
 
   /**
@@ -3087,9 +3097,15 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   // Tag Invalidation (single-store: markers live in this.kv)
   // ============================================================================
 
-  /** KV key for a tag's invalidation marker. */
+  /**
+   * KV key for a tag's invalidation marker. Unversioned: a content-hash
+   * version can come back (deploy A, deploy B, roll back to A), and a marker
+   * written while B was live has to be visible to A's entries. The staleness
+   * check compares the marker time with the entry's taggedAt and nothing else
+   * (isGloballyInvalidated), so one marker per tag serves every version.
+   */
   private tagMarkerKey(tag: string): Promise<string> {
-    return this.toKVKey(`${TAG_MARKER_PREFIX}${tag}`);
+    return this.toKVKey(`${TAG_MARKER_PREFIX}${tag}`, null);
   }
 
   /**
@@ -3320,9 +3336,13 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     return false;
   }
 
-  /** Synthetic Cache API request for a tag's L1-cached invalidation marker. */
+  /**
+   * Synthetic Cache API request for a tag's L1-cached invalidation marker.
+   * Unversioned for the same reason as tagMarkerKey; the cache namespace
+   * (getCache) still scopes it.
+   */
   private tagMarkerRequest(tag: string): Request {
-    return this.keyToRequest(`${TAG_MARKER_CACHE_PREFIX}${tag}`);
+    return this.keyToRequest(`${TAG_MARKER_CACHE_PREFIX}${tag}`, null);
   }
 
   /**
@@ -3974,7 +3994,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     if (!this.kv) return null;
 
     try {
-      const kvKey = await this.toKVKey(key);
+      const kvKey = await this.toKVKey(key, "data");
       const { value: envelope, timedOut } =
         await this.kvGetOrEvict<KVSegmentEnvelope>(
           kvKey,
@@ -4076,7 +4096,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     this.waitUntil(() =>
       reportingAsync(
         async () =>
-          this.kv!.put(await this.toKVKey(key), envelopeJson, {
+          this.kv!.put(await this.toKVKey(key, "data"), envelopeJson, {
             expirationTtl: totalTtl,
           }),
         "cache-write",
@@ -4101,7 +4121,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
             Math.floor((envelope.e - now) / 1000),
           );
           const cache = await this.getCache();
-          const request = this.keyToRequest(key);
+          const request = this.keyToRequest(key, "data");
 
           const response = new Response(JSON.stringify(envelope.d), {
             headers: {
@@ -4137,7 +4157,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     if (!this.kv) return null;
 
     try {
-      const kvKey = await this.toKVKey(`fn:${key}`);
+      const kvKey = await this.toKVKey(`fn:${key}`, "data");
       const { value: envelope, timedOut } =
         await this.kvGetOrEvict<KVItemEnvelope>(
           kvKey,
@@ -4221,7 +4241,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
             Math.floor((envelope.e - now) / 1000),
           );
           const cache = await this.getCache();
-          const request = this.keyToRequest(`fn:${key}`);
+          const request = this.keyToRequest(`fn:${key}`, "data");
 
           const body = JSON.stringify({
             value: envelope.v,
@@ -4355,7 +4375,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
             Math.floor((envelope.e - now) / 1000),
           );
           const cache = await this.getCache();
-          const request = this.keyToRequest(`doc:${key}`);
+          const request = this.keyToRequest(`doc:${key}`, "document");
 
           const headers = new Headers(envelope.hd);
           const originalCacheControl = headers.get("Cache-Control");

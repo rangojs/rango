@@ -15,7 +15,7 @@ import type { HeadScriptsOption } from "../plugin-types.js";
 
 // Cloudflare preset: @cloudflare/vite-plugin sets optimizeDeps.entries (string
 // or array) on the rsc environment. Single source for both the discovery plugin
-// and the version injector so they target the same entry.
+// and the entry bootstrap injector so they target the same entry.
 export function resolveRscEntryFromConfig(
   config: ResolvedConfig,
 ): string | undefined {

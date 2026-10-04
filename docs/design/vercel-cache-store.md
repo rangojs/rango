@@ -127,14 +127,41 @@ write would clobber the first.
 So the store namespaces every key by family before it touches the cache:
 
 ```
-[v/{version}/]rg:{s|i|r}:{routerKey}
+[v/{version}/]rg:{s|i|r|h}:{routerKey}
+rg:tm:{tag}
 ```
 
-`s` = segment, `i` = item, `r` = response. `rg:` namespaces all Rango entries
-(so the project's Runtime Cache can hold non-Rango data too). The router's own
-semantic prefixes (`doc:`, `partial:`, `intercept:`, `use-cache:`) ride along as
-the `{routerKey}` suffix. This started as the obvious failure mode of a
-single-keyspace backend; the prefix is what prevents it.
+`s` = segment, `i` = item, `r` = response, `h` = PPR shell, `tm` = tag marker.
+`rg:` namespaces all Rango entries (so the project's Runtime Cache can hold
+non-Rango data too). The router's own semantic prefixes (`doc:`, `partial:`,
+`intercept:`, `use-cache:`) ride along as the `{routerKey}` suffix. This
+started as the obvious failure mode of a single-keyspace backend; the prefix
+is what prevents it.
+
+### Versions: the store reconciles deploys, the platform does not
+
+Vercel does not reconcile entries between deployments, so something in the
+key has to say which code may read an entry. That is the `v/{version}/`
+prefix, and by default it is the cache version of the router serving the
+request, the same rule `CFCacheStore` follows
+([per-app-cache-version.md](./per-app-cache-version.md)):
+
+- `s` and `i` take the router's **data version** (a hash of its server code),
+- `r` and `h` take its **document version** (that plus the SSR output and the
+  client asset names),
+- `tm` takes none, so a tag invalidation applies to every version, including
+  one that comes back in a rollback.
+
+The store reads them per operation from the request context; the factory
+builds it without knowing the router. A `version` option replaces both.
+
+You might remember this store as unversioned by default, with the advice to
+put the deployment id in the `getCache({ namespace })` handle. That cleared
+the cache on every deploy, and without it an old build's entries were served
+to changed code. Neither is needed now: a deploy that changes a router's code
+stops reading that router's entries, and one that does not keeps them. A
+deployment-scoped namespace still works if clearing on every deploy is what
+you want.
 
 ### Stale-while-revalidate, when the backend has none
 
@@ -229,13 +256,13 @@ reporting a false success. That is the read-your-own-writes honesty rule from
 These are the limits that will silently cost you correctness or capacity if you
 forget them. The store handles each; this is what it is doing and why.
 
-| Limit                       | Value                                                             | What the store does                                                                                                                                                                                                                         |
-| --------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Max item size               | **2 MB** (writes above silently no-op)                            | Measures the serialized envelope; skips + reports a `cache-write` error above `VERCEL_MAX_ITEM_BYTES`. Large Flight payloads simply go uncached rather than vanishing without a trace.                                                      |
-| Tags per item               | **128**                                                           | Clamps to `VERCEL_MAX_TAGS_PER_ITEM` on write, with a warning. Does **not** clamp `invalidateTags` — an invalidation must reach every requested tag.                                                                                        |
-| Tag length                  | **256 bytes**, no commas                                          | Drops over-length or comma-bearing tags (commas are the header delimiter) on both write and invalidate, with a warning.                                                                                                                     |
-| Cross-deploy reconciliation | **none** — TTL/tag updates are not reconciled between deployments | Fold a build id into the key. Use the `version` option (`v/{version}/...` prefix) or, better, the `getCache({ namespace })` argument. Without it, an entry written by a prior deploy with a now-changed shape can be served after a deploy. |
-| Storage consistency         | **regional**                                                      | A write in region A is not visible to a read in region B until B warms. Plan for per-region cold starts; every `get` is best-effort regardless.                                                                                             |
+| Limit                       | Value                                                             | What the store does                                                                                                                                                                                                                                                         |
+| --------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Max item size               | **2 MB** (writes above silently no-op)                            | Measures the serialized envelope; skips + reports a `cache-write` error above `VERCEL_MAX_ITEM_BYTES`. Large Flight payloads simply go uncached rather than vanishing without a trace.                                                                                      |
+| Tags per item               | **128**                                                           | Clamps to `VERCEL_MAX_TAGS_PER_ITEM` on write, with a warning. Does **not** clamp `invalidateTags` — an invalidation must reach every requested tag.                                                                                                                        |
+| Tag length                  | **256 bytes**, no commas                                          | Drops over-length or comma-bearing tags (commas are the header delimiter) on both write and invalidate, with a warning.                                                                                                                                                     |
+| Cross-deploy reconciliation | **none** — TTL/tag updates are not reconciled between deployments | Prefixes every key with the serving router's cache version (`v/{version}/...`, see "Versions" above): a deploy that changes the router's code no longer reads its old entries, one that does not keeps them. `version` or a per-deploy `getCache({ namespace })` overrides. |
+| Storage consistency         | **regional**                                                      | A write in region A is not visible to a read in region B until B warms. Plan for per-region cold starts; every `get` is best-effort regardless.                                                                                                                             |
 
 The 2 MB cap is the one most likely to surprise you. On Cloudflare an oversized
 entry just fails the KV write; on Vercel the `set` resolves successfully and the
@@ -246,18 +273,19 @@ but only if you wired `onError` or read the console.
 ### Wiring it into a router
 
 The cache option is a factory so the store can be constructed per request with
-the platform's `waitUntil` and a deploy-scoped namespace:
+the platform's `waitUntil`:
 
 ```ts
 import { createRouter } from "@rangojs/router";
 import { VercelCacheStore } from "@rangojs/router/cache";
 import { getCache, waitUntil } from "@vercel/functions";
 
-// Bake the deployment id into the namespace so a deploy cannot serve
-// stale-shaped entries (Vercel does not reconcile across deploys). One handle
-// per process: getCache() resolves the platform cache on every call, and the
-// store keeps its PPR shell and tag-marker memos per handle.
-const runtimeCache = getCache({ namespace: process.env.VERCEL_DEPLOYMENT_ID });
+// One handle per process: getCache() resolves the platform cache on every
+// call, and the store keeps its PPR shell and tag-marker memos per handle.
+// No deployment id in the namespace: the store's keys carry the router's
+// cache versions, so a deploy keeps what its code did not change. Add
+// `{ namespace: process.env.VERCEL_DEPLOYMENT_ID }` to clear on every deploy.
+const runtimeCache = getCache();
 
 export const router = createRouter({
   document: Document,

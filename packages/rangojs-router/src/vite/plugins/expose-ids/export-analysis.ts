@@ -55,7 +55,7 @@ export function isExportOnlyFile(
 // (which may be nested, e.g. createLoader<A<B>>(...)) and the call paren are
 // resolved per match via findCallParenAfterGenerics, so a nested `>` no longer
 // defeats the scan the way `<[^>]*>` did (it stopped at the first `>`).
-function createCallPattern(fnNames: string[]): RegExp {
+export function createCallPattern(fnNames: string[]): RegExp {
   return new RegExp(`\\b(?:${fnNames.map(escapeRegExp).join("|")})\\b`, "g");
 }
 

@@ -8,10 +8,11 @@ import {
   findCallParenAfterGenerics,
   skipStringOrComment,
 } from "../expose-id-utils.js";
-import { escapeRegExp } from "../../../regex-escape.js";
 import {
   getImportedFnNames,
   buildUnsupportedShapeWarning,
+  createCallPattern,
+  offsetToLineColumn,
 } from "./export-analysis.js";
 import { codeMatchIndices } from "../../../build/route-types/source-scan.js";
 import { createRangoDebugger, createCounter, NS } from "../../debug.js";
@@ -42,6 +43,26 @@ function skipLeadingTrivia(code: string, start: number, end: number): number {
   return i;
 }
 
+/**
+ * A router's `$$id`: a hash of its root-relative file and of its position
+ * among the file's createRouter() calls.
+ *
+ * Not of the call's line. `code` is TS-transformed, and a dev server keeps
+ * comments there that a build drops, so a line of `code` gave build-time
+ * discovery and the bundle different ids for any router with a comment above
+ * it (e2e/test-app, tests/cloudflare-basic): the build registered the lazy
+ * route manifest under an id no running router had. And a line of the file as
+ * written changes with every blank line or comment added above the call,
+ * which renamed the state cookie, the route manifest chunk and the router's
+ * cache versions for an edit that changed nothing.
+ */
+export function routerId(filePath: string, callIndex: number): string {
+  return createHash("sha256")
+    .update(`${filePath}#${callIndex}`)
+    .digest("hex")
+    .slice(0, 8);
+}
+
 export function transformRouter(
   code: string,
   filePath: string,
@@ -53,14 +74,12 @@ export function transformRouter(
   // e.g. createRouter<Config<Env>>(...)) and the opening paren are located
   // separately via findCallParenAfterGenerics so a nested `>` does not defeat
   // the scan (a `<[^>]*>` regex stopped at the first `>`).
-  const pat = new RegExp(
-    `\\b(?:${routerFnNames.map(escapeRegExp).join("|")})\\b`,
-    "g",
-  );
+  const pat = createCallPattern(routerFnNames);
   let match: RegExpExecArray | null;
   const s = new MagicString(code);
   let changed = false;
   const unsupportedSites: Array<{ line: number; column: number }> = [];
+  let callIndex = -1;
 
   // Compute the import path for the generated route names file.
   // filePath is relative to project root (e.g., "src/router.tsx")
@@ -86,6 +105,7 @@ export function transformRouter(
     // type position) yields -1 and is skipped.
     const parenPos = findCallParenAfterGenerics(code, calleeEnd);
     if (parenPos === -1) continue;
+    callIndex++;
 
     const closeParen = findMatchingParen(code, parenPos + 1);
     const callArgs = code.slice(parenPos + 1, closeParen);
@@ -98,12 +118,7 @@ export function transformRouter(
     if (callArgs.includes(`$$routeNames: ${routeNamesVar}`)) continue;
 
     const sourceFilePath = absolutePath ?? filePath;
-    const lineNumber = code.slice(0, callStart).split("\n").length;
-    const hash = createHash("sha256")
-      .update(`${filePath}:${lineNumber}`)
-      .digest("hex")
-      .slice(0, 8);
-    const injected = ` $$id: "${hash}", $$sourceFile: "${sourceFilePath}", $$routeNames: ${routeNamesVar},`;
+    const injected = ` $$id: "${routerId(filePath, callIndex)}", $$sourceFile: "${sourceFilePath}", $$routeNames: ${routeNamesVar},`;
 
     // Skip a leading comment/whitespace run so `createRouter(/* c *\/ {...})`
     // and a newline-then-comment prefix still resolve to the object literal.
@@ -124,9 +139,7 @@ export function transformRouter(
       // stable $$id can be injected here. Record it so the plugin can warn —
       // and crucially do NOT mark changed, so a dead named-routes.gen import is
       // not prepended for a call we never touched.
-      const lastNl = code.lastIndexOf("\n", callStart - 1);
-      const column = callStart - (lastNl + 1) + 1;
-      unsupportedSites.push({ line: lineNumber, column });
+      unsupportedSites.push(offsetToLineColumn(code, callStart));
     }
   }
 
@@ -156,11 +169,19 @@ export function transformRouter(
  */
 export function exposeRouterId(): Plugin {
   let projectRoot = "";
+  // $$sourceFile is read by route discovery and the CLI, which run on a dev
+  // server (the build's discovery temp server included) and need the absolute
+  // path. Nothing reads it when serving, so a production build ships the
+  // root-relative path: an absolute one would put the build machine's checkout
+  // directory in every router's chunk and give the same source a different
+  // cache version per directory (discovery/build-versions.ts hashes the chunk).
+  let rootRelativeSourceFile = false;
   const counter = createCounter(debug, "expose-router-id");
   return {
     name: "@rangojs/router:expose-router-id",
     configResolved(config) {
       projectRoot = config.root;
+      rootRelativeSourceFile = config.command === "build";
     },
     buildEnd() {
       counter?.flush();
@@ -188,7 +209,7 @@ export function exposeRouterId(): Plugin {
           code,
           filePath,
           routerFnNames,
-          normalizePath(id),
+          rootRelativeSourceFile ? undefined : normalizePath(id),
           warn,
         );
       } finally {
