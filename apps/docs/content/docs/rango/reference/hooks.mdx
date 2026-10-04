@@ -52,6 +52,8 @@ function NavIndicator() {
 const isLoading = useNavigation((nav) => nav.state === "loading"); // selector
 ```
 
+A link click, `router.push()` and a Back/Forward that has to fetch its entry report a pending navigation the same way. `state === "loading"` and `pendingUrl` (the URL being fetched) cover the network wait. `isStreaming` is true from the start of the request until the response's stream ends, so it also covers the part where the response has arrived and React still holds the page being left behind a loader that is streaming; use it for a progress indicator that should last until the new page is complete. `location` is the page on screen while the request is out, and moves when the response arrives. A Back/Forward served from the client's history cache restores its page in one commit and reports no pending state.
+
 ### useRouter()
 
 Stable router actions. The returned object never changes identity, so components using it do not re-render on navigation. Call its methods from event handlers or effects.
@@ -201,7 +203,7 @@ const id = useParams((p) => p.productId); // selector
 
 ### usePathname()
 
-The current pathname, without search params or hash. Updates on navigation commit.
+The pathname of the page on screen, without search params or hash. It changes when a navigation's destination commits (see [When the URL hooks change](#when-the-url-hooks-change)).
 
 ```tsx
 "use client";
@@ -235,6 +237,23 @@ setSearchParams(
 The first element is a `ReadonlyURLSearchParams` (`URLSearchParams` without mutation methods) from the committed location. During document SSR it carries the request's search string, so SSR and hydration agree.
 
 The setter **replaces** the whole search string and navigates to the current pathname with the new params, so route loaders re-evaluate per their `revalidate()` rules. It accepts a string, a `URLSearchParams`, a record (numbers and booleans are stringified, arrays append one entry per element, `null` and `undefined` are skipped), or a function of the current params. The hash is dropped. Options: `replace` (default `false`), `scroll` (default `true`), and `revalidate` (default `true`; `false` skips the server fetch).
+
+### When the URL hooks change
+
+`usePathname()`, `useSearchParams()` and `useParams()` describe the page on screen. They change in the commit that shows a navigation's destination, not when the navigation starts, for Back/Forward as for a link click or `router.push()`.
+
+| Navigation                                        | The hooks change                                                           |
+| ------------------------------------------------- | -------------------------------------------------------------------------- |
+| `<Link>`, `router.push()` / `router.replace()`    | when the destination commits                                               |
+| Back/Forward, entry in the client's history cache | with the restored page, in one commit                                      |
+| Back/Forward, entry fetched again                 | when the fetched page commits; until then the page being left is on screen |
+| a Back/Forward whose fetch fails                  | with the error boundary: they report the entry the browser is on           |
+| `router.push(url, { revalidate: false })`         | at once: nothing is fetched and the page stays                             |
+| inside an optimistic `clientUrls()` destination   | at the click, for that branch only                                         |
+
+On Back/Forward the browser changes the address bar and `history.state` before it tells the router. When the entry has to be fetched, the page being left stays on screen for the wait and the hooks keep reporting its URL, so **for that wait the hooks disagree with the address bar**: `window.location` is already the destination's. An active-link highlight, a breadcrumb or a filter panel derived from the hooks therefore stays in step with the content next to it. For anything you render, read the hooks, not `window.location`; for pending UI, read [`useNavigation()`](#usenavigation). `setSearchParams((prev) => ...)` called during the wait builds on the search of the page on screen.
+
+One gap ([#1046](https://github.com/rangojs/rango/issues/1046)): a component that first mounts in the page being left after the navigation's response has arrived, while React still holds the destination behind a loader or a `transition()`, reads the destination's URL and params from these hooks. Components that were already mounted are not affected. It applies to a push and to Back/Forward alike.
 
 ### useHref()
 
@@ -336,7 +355,7 @@ const state = useLocationState(ProductState); // { name; price } | undefined
 
 A reader gets an entry's state in the same commit as that entry's page. While a navigation is pending (its loader still streaming, a `transition()` holding the page), the content on screen keeps the state of the entry being left, including for a reader that mounts during the wait; back/forward restores an entry's state together with its page. Inside an optimistically presented `clientUrls()` destination the hook returns the state the navigation carries, before the server has answered. A navigation that carries no state re-renders no reader; a value keeps its identity when a navigation passes the reader's own value forward or a server action changes another slot.
 
-One limit remains on back/forward (issue #1031): `usePathname()` and `useSearchParams()` change at the `popstate` event, before a restored page that has to be fetched commits, so for that window the page on screen reads the destination's URL from them and its own entry's state from `useLocationState`.
+The URL hooks follow the same rule for a component that is mounted across the navigation, on back/forward too (see [When the URL hooks change](#when-the-url-hooks-change)). One difference remains ([#1046](https://github.com/rangojs/rango/issues/1046)): a component that first mounts in the page being left, after the response arrived and while React still holds the destination, reads its own entry's state from `useLocationState` and the destination's URL and params from `usePathname()`, `useSearchParams()` and `useParams()`.
 
 `useLocationState<T>()` with no definition reads plain, untyped state. The same `state` option exists on `router.push()` and `router.replace()`, typed `HistoryState`: typed entries in an array (`[ProductState(value)]`) or plain structured-clone-safe data (`PlainHistoryState`). An entry passed without the array (`state: ProductState(value)`), a definition passed without calling it (`state: [ProductState]`), or an array mixing entries with plain values is a compile error, and in development a runtime error for untyped callers.
 
