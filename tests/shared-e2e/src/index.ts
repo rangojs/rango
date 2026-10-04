@@ -128,10 +128,10 @@ export function writeFileBumpMtime(filePath: string, content: string): void {
 }
 
 /**
- * Write a file atomically and wait until the resulting HMR change has been
- * applied. Robust against CI filesystems that coalesce or drop watcher events:
- * each attempt replaces the file via temp-write + rename and forces a strictly
- * monotonic mtime so the watcher sees a fresh change, retrying until one of the
+ * Write a file and wait until the resulting HMR change has been applied.
+ * Robust against CI filesystems that coalesce or drop watcher events: each
+ * attempt overwrites the file in place ({@link writeFileBumpMtime}) and forces
+ * a strictly monotonic mtime so the watcher sees a fresh change, retrying until one of the
  * configured signals fires or the total timeout elapses.
  *
  * Await strategies (at least one of `serverOutputPattern` / `waitForApplied`

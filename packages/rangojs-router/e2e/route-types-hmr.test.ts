@@ -159,10 +159,9 @@ test.describe.serial("route-types-hmr", () => {
     });
   }
 
-  // Writes every baseline before waiting on any of them. With discovery stuck
-  // in its failed state (recovery mode) the first wait cannot succeed until the
-  // file that broke it is restored, so a write-wait-write-wait loop strands
-  // the later files modified and the next run's beforeAll refuses to start.
+  // Write every baseline before waiting: with discovery in its failed state
+  // no wait succeeds until the file that broke it is back, and a per-file
+  // write-then-wait left the later files modified (issue #1040).
   test.afterEach(async () => {
     if (dirtyGuardMessage) return;
     const baselines = [
@@ -190,11 +189,10 @@ test.describe.serial("route-types-hmr", () => {
     await waitForRuntimeSettled();
   });
 
-  // A gen-file write (the recreate/tamper tests) makes the dev server reload
-  // the rsc graph after the test's own assertion has passed; the next test's
-  // first runtime query then gets an HTML error page. The per-test browser
-  // page this hook used to open masked it by delaying the next test. Require
-  // consecutive good answers instead of a fixed sleep.
+  // A gen-file write (the recreate/tamper tests) reloads the dev server's rsc
+  // graph after the test's own assertion passed, and the next test's first
+  // runtime query then gets an HTML error page. Consecutive good answers, not
+  // a fixed sleep.
   async function waitForRuntimeSettled(): Promise<void> {
     const deadline = Date.now() + WATCHER_TIMEOUT;
     let consecutive = 0;
@@ -859,10 +857,9 @@ test.describe.serial("route-types-hmr", () => {
 
     // 1. Break blog.handlers.tsx first. It has no urls()/createRouter, so
     //    outside recovery mode the watcher ignores it and no rediscovery
-    //    starts yet. Then add the route: the one rediscovery this edit
-    //    triggers can only see the broken helper, so it must fail. Writing
-    //    the route first would let a debounce tick land between the two
-    //    writes and run a rediscovery that succeeds.
+    //    starts yet. Then add the route: the rediscovery that edit triggers
+    //    can only see the broken helper, so reaching the failed state does
+    //    not depend on both writes landing in one debounce window.
     const modifiedBlogUrls = originalBlogContent.replace(
       'path("/:postId", BlogPostHandler, { name: "post" }),',
       `path("/:postId", BlogPostHandler, { name: "post" }),
@@ -884,13 +881,12 @@ test.describe.serial("route-types-hmr", () => {
       expect(fresh).toContain(FAILURE_MARKER);
     }).toPass({ timeout: WATCHER_TIMEOUT });
 
-    // The runtime manifest must not have picked up the route. The generated
-    // file cannot carry this check: the static route parser writes it from
-    // blog.tsx before the runtime rediscovery fails, and whether it returns to
-    // last-good afterwards depends on a second change event for the file, so
-    // it holds the new route in some runs and not in others. While the helper
-    // is broken the dev server cannot even evaluate the router, so the query
-    // errors; either way it must not resolve the new route.
+    // The runtime must not resolve the route yet (an erroring query counts:
+    // the router cannot be evaluated while the helper is broken). The
+    // generated file cannot carry this check: the watcher writes it from a
+    // static parse of blog.tsx before the runtime rediscovery fails, and only
+    // a second change event takes it back to last-good, so it holds the new
+    // route in some runs and not in others.
     const duringFailure = await queryReverse(["blog.recovered"]).catch(
       () => null,
     );
@@ -904,7 +900,8 @@ test.describe.serial("route-types-hmr", () => {
     //    rediscovery anyway because lastDiscoveryError is set.
     writeFileBumpMtime(handlersPath, originalHandlersContent);
 
-    // 4. Recovery rediscovery succeeds, gen file gets the new route.
+    // 4. Recovery rediscovery succeeds. The generated file may hold the
+    //    route already (see above); the runtime manifest below is the proof.
     await expect(async () => {
       const gen = await fs.readFile(genFilePath, "utf-8");
       expect(gen).toContain('"blog.recovered"');
