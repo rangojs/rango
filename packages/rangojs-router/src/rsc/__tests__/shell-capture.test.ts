@@ -1358,6 +1358,103 @@ describe("captureAndStoreShell: snapshot pruning", () => {
   });
 });
 
+// A Prerender + ppr capture (settleCaptureRecord `prerender`) writes no doc
+// record: the prerender store supplies the handler layer. The loader-owned
+// pushes its prelude rendered go into a `handles` record instead (#1057).
+describe("captureAndStoreShell: a prerender-served capture's handles record", () => {
+  async function capturePrerenderServed(
+    descriptor: Partial<Parameters<typeof captureAndStoreShell>[3]> = {},
+    pushes: (store: ReturnType<typeof createHandleStore>) => void = (store) => {
+      store.push("notes", "M0R0", "handler-note");
+      store.push("notes", "M0R0", "settled-only", false, "Bake");
+      store.push("crumbs", "M0R0", "handler-crumb");
+    },
+  ): Promise<ShellCacheEntry> {
+    const putShell = makePutShell();
+    const handleStore = createHandleStore();
+    pushes(handleStore);
+    const reqCtx: any = {
+      _cacheStore: new RecordingShellStore(new MemorySegmentCacheStore()),
+      _handleStore: handleStore,
+      _reportBackgroundError: vi.fn(),
+      _requestTags: new Set<string>(),
+      _shellImplicitCache: {},
+      _shellCaptureLoaderRecords: new Map([
+        ["M0R0D0.Bake", Promise.resolve({ value: "settled" })],
+      ]),
+    };
+    const outcome = await captureAndStoreShell(
+      {
+        renderHTML: vi.fn(),
+        captureShellHTML: vi.fn(async () => ({
+          prelude: enc("<html><body>shell</body></html>"),
+          postponed: null,
+        })),
+      } as unknown as SSRModule,
+      emptyStream(),
+      reqCtx,
+      {
+        key: "/pre:shell",
+        buildVersion: "test-build",
+        ttl: 300,
+        store: { putShell } as any,
+        ...descriptor,
+      },
+      Date.now(),
+    );
+    expect(outcome).toBe("stored");
+    return putShell.mock.calls[0]![1];
+  }
+
+  const handlesRecord = (entry: ShellCacheEntry) => {
+    const record = entry.snapshot.find((r) => r.family === "handles");
+    const value = record?.value as
+      | { handles: string; handleOwners?: unknown }
+      | undefined;
+    return value && { ...value, handles: JSON.parse(value.handles || "{}") };
+  };
+
+  it("keeps the arrays a loader pushed into, whole, with their owners, next to the pins", async () => {
+    const entry = await capturePrerenderServed();
+
+    expect(entry.docKey).toBeUndefined();
+    expect(entry.snapshot.map((r) => `${r.family} ${r.key}`)).toEqual([
+      "loader M0R0D0.Bake",
+      "handles handles",
+    ]);
+    expect(handlesRecord(entry)).toEqual({
+      handles: { M0R0: { notes: ["handler-note", "settled-only"] } },
+      handleOwners: { M0R0: { notes: [null, "Bake"] } },
+    });
+  });
+
+  it("keeps the record when maxSnapshotBytes drops the pins: it stands in for the doc record", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const entry = await capturePrerenderServed({
+        key: "/pre-capped:shell",
+        maxSnapshotBytes: 1,
+      });
+
+      expect(entry.snapshot.map((r) => r.family)).toEqual(["handles"]);
+      expect(handlesRecord(entry)?.handleOwners).toEqual({
+        M0R0: { notes: [null, "Bake"] },
+      });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("writes the record when no push is owned, so a HIT still applies the pins' authority", async () => {
+    const entry = await capturePrerenderServed(
+      { key: "/pre-none:shell" },
+      (store) => store.push("notes", "M0R0", "handler-note"),
+    );
+
+    expect(handlesRecord(entry)).toEqual({ handles: {} });
+  });
+});
+
 // runShellCapture is the background capture core: it derives a fresh context,
 // re-matches via router.match, builds the payload, and stores the shell. These
 // tests stub the router/SSR seams and drive it directly (scheduleShellCapture's

@@ -933,6 +933,11 @@ pin: a snapshot captured by a navigation alone carries none, and a shell over
 `ppr.maxSnapshotBytes` drops them. There the loader runs fresh, and its
 pushes are that run's, like its data.
 
+A `Prerender` + `ppr` page follows the same table. Its handler layer comes
+from the prerendered payload, which never holds a loader push (loaders do not
+run at build), so the shell entry records the loader pushes its HTML rendered
+on its own, and a HIT restores them as above (#1057).
+
 A dependency the route does not register, which an `ssr: false` loader
 awaited at capture outside any live loader, is on neither lane: its settled
 pushes stay as the prelude rendered them, even where a live loader also

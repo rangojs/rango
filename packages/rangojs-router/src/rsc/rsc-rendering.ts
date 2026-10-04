@@ -18,6 +18,7 @@ import {
   buildShellLoaderSeed,
   countSnapshotFamilies,
   hasDocRecord,
+  shellPrerenderHandles,
 } from "../cache/shell-snapshot.js";
 import { appendMetric } from "../router/metrics.js";
 import type { MetricsStore } from "../server/context.js";
@@ -1896,7 +1897,7 @@ function serveShellHit(
     // fresh; a promise-free bake-lane loader is served from its pin
     // (_shellLoaderSeed, loader-cache.ts). A Prerender route's tail takes
     // the handler layer from the prerender store before this scope is
-    // consulted.
+    // consulted, and the loader pushes from `prerenderHandles`.
     seededCtx._shellImplicitCache = {
       ttl: descriptor.ttl,
       swr: descriptor.swr,
@@ -1904,6 +1905,7 @@ function serveShellHit(
       keyPrefix: "doc",
       docTail: true,
       fixedDocKey: entry.docKey,
+      prerenderHandles: shellPrerenderHandles(records),
     };
     // Fragment splice (issue #700): store hits in THIS tail emit their stored
     // segment fragments verbatim (expanded by segment-fragments.ts). The flag

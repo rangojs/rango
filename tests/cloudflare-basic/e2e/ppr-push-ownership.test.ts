@@ -1,17 +1,22 @@
 import { test } from "@playwright/test";
 import { useFixture } from "./fixture";
 import {
+  expectBuildShellHitKeepsSettledLoaderPush,
   expectLateBoundaryHandleReaderHydratesClean,
   expectPinlessHitKeepsRunPushWithRunData,
+  expectPrerenderShellHitDeliversPromisePush,
   expectReplayDeliversDeferredPush,
   expectReplayKeepsCapturedPushWithPinnedData,
   expectShellHitHydratesFromRecord,
+  expectShellHitKeepsSettledLoaderPush,
   expectSlowDeferredPushDoesNotBlockCapture,
+  type PrerenderPushFixture,
   type PushOwnershipFixture,
 } from "@shared/e2e";
 
 // A loader's data and the handle values it pushed come from one run on every
-// replay of a PPR shell (issues #1001, #1003), on workerd with CFCacheStore.
+// replay of a PPR shell (issues #1001, #1003), and a Prerender + ppr shell
+// hydrates with them too (#1057), on workerd with CFCacheStore.
 // The fixture is src/loaders/ppr-push-ownership.ts and the /ppr-push routes;
 // the bodies are shared with
 // packages/rangojs-router/e2e/shell-push-ownership.test.ts.
@@ -69,6 +74,50 @@ function describePprPushOwnership(mode: "dev" | "build") {
       page,
     }) => {
       await expectLateBoundaryHandleReaderHydratesClean(page, fixture());
+    });
+
+    const prerenderFixture = (): PrerenderPushFixture => ({
+      preSettledUrl: f.url("/ppr-push/pre-settled"),
+      pprSettledUrl: f.url("/ppr-push/ppr-settled"),
+      preDeferredUrl: f.url("/ppr-push/pre-deferred"),
+      bumpUrl: f.url("/__test/ppr-push-bump"),
+    });
+
+    test("a Prerender + ppr shell HIT hydrates with the settled push of a promise-free ssr false loader (#1057)", async ({
+      page,
+    }) => {
+      const fixture = prerenderFixture();
+      await expectShellHitKeepsSettledLoaderPush(
+        page,
+        fixture,
+        fixture.preSettledUrl,
+      );
+    });
+
+    test("a Prerender + ppr build-time shell HIT hydrates with the settled push of a promise-free ssr false loader (#1057)", async ({
+      page,
+    }) => {
+      await expectBuildShellHitKeepsSettledLoaderPush(page, prerenderFixture());
+    });
+
+    test("a Prerender + ppr shell HIT delivers a promise push after hydration, next to the settled push it hydrates with (#1057)", async ({
+      page,
+    }) => {
+      await expectPrerenderShellHitDeliversPromisePush(
+        page,
+        prerenderFixture(),
+      );
+    });
+
+    test("a ppr shell HIT without Prerender hydrates with the same settled push (control)", async ({
+      page,
+    }) => {
+      const fixture = prerenderFixture();
+      await expectShellHitKeepsSettledLoaderPush(
+        page,
+        fixture,
+        fixture.pprSettledUrl,
+      );
     });
   });
 }

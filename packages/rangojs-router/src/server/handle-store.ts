@@ -340,6 +340,9 @@ export interface HandleStore {
     segmentId: string,
   ): Record<string, (string | null)[]> | undefined;
 
+  /** The segment ids for which getRecordOwners returns an entry. */
+  getOwnedSegmentIds(): string[];
+
   /**
    * Replay cached handle data back into the store (for cache hits).
    * Used to restore handle data when serving cached segments.
@@ -1085,6 +1088,16 @@ export function createHandleStore(): HandleStore {
         if (owned) (result ??= {})[handleName] = owners;
       }
       return result;
+    },
+
+    getOwnedSegmentIds(): string[] {
+      const ids = new Set<string>();
+      for (const handleName in data) {
+        for (const id in data[handleName]) {
+          if (!ids.has(id) && this.getRecordOwners(id)) ids.add(id);
+        }
+      }
+      return [...ids];
     },
 
     replaySegmentData(

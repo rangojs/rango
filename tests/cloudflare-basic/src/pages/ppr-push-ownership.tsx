@@ -1,8 +1,10 @@
+import { Prerender } from "@rangojs/router";
 import { PprPushView } from "../components/PprPushView.js";
 import {
   PprPushDeferredLoader,
   PprPushLiveLoader,
   PprPushPinnedLoader,
+  PprPushSettledLoader,
   PprPushSlowLoader,
 } from "../loaders/ppr-push-ownership.js";
 
@@ -40,6 +42,29 @@ export function PprPushSlowPage() {
   return (
     <main data-testid="ppr-push-slow-page">
       <PprPushView loader={PprPushSlowLoader} />
+    </main>
+  );
+}
+
+// #1057: Prerender + ppr. The prerender store supplies these views on every
+// request; the shell entry keeps the loader pushes its HTML rendered.
+export const PprPushPreSettledPage = Prerender(async () => (
+  <main data-testid="ppr-push-pre-settled-page">
+    <PprPushView loader={PprPushSettledLoader} />
+  </main>
+));
+
+export const PprPushPreDeferredPage = Prerender(async () => (
+  <main data-testid="ppr-push-pre-deferred-page">
+    <PprPushView loader={PprPushDeferredLoader} />
+  </main>
+));
+
+// The control: the same loader and view, ppr without Prerender.
+export function PprPushPprSettledPage() {
+  return (
+    <main data-testid="ppr-push-ppr-settled-page">
+      <PprPushView loader={PprPushSettledLoader} />
     </main>
   );
 }

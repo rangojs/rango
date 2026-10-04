@@ -991,6 +991,14 @@ export function createRouterDiscoveryPlugin(
             (globalThis as any).__rscRouterDiscoveryActive ?? false,
           );
           s.devServerOrigin = getDevServerOrigin();
+          // The temp Node realm below shares this globalThis and runs the dev
+          // /__rsc_shell capture, which must replay the prerender store as
+          // the worker's HIT does: a capture that renders the Prerender
+          // handler live stores a doc record the HIT never reads, and the
+          // HIT loses the loader pushes its prelude rendered (#1057). That
+          // realm never evaluates the virtual module that sets this on the
+          // Node preset.
+          globalThis.__PRERENDER_DEV_URL = s.devServerOrigin;
 
           // Create a temp Node.js server to run runtime discovery and generate
           // named route types (static parser can't resolve factory calls).

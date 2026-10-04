@@ -140,9 +140,26 @@ let _restoreHandles:
 let _decodeHandles:
   | typeof import("../../cache/handle-snapshot.js").decodeHandles
   | undefined;
+let _restoreRecordHandles:
+  | typeof import("../../cache/handle-snapshot.js").restoreRecordHandles
+  | undefined;
 let _hashParams:
   | typeof import("../../prerender/param-hash.js").hashParams
   | undefined;
+
+/**
+ * @internal Replace the prerender store this module serves from, and return
+ * the one it replaced. For serveShellRequest (testing/serve-shell-request.ts),
+ * which installs the production store over the artifacts it bakes for a call
+ * and puts the previous one back after it.
+ */
+export function setPrerenderStoreForTests(
+  store: PrerenderStore | null | undefined,
+): PrerenderStore | null | undefined {
+  const previous = prerenderStoreInstance;
+  prerenderStoreInstance = store;
+  return previous;
+}
 
 async function ensurePrerenderDeps() {
   if (!_deserializeSegments) {
@@ -156,6 +173,7 @@ async function ensurePrerenderDeps() {
     _fragmentSegments = codec.fragmentSegments;
     _restoreHandles = snapshot.restoreHandles;
     _decodeHandles = snapshot.decodeHandles;
+    _restoreRecordHandles = snapshot.restoreRecordHandles;
     _hashParams = paramHash.hashParams;
     if (prerenderStoreInstance === undefined) {
       prerenderStoreInstance = store.createPrerenderStore();
@@ -266,6 +284,7 @@ async function* yieldFromStore<TEnv>(
     !_fragmentSegments ||
     !_restoreHandles ||
     !_decodeHandles ||
+    !_restoreRecordHandles ||
     !_hashParams
   ) {
     throw new Error("yieldFromStore called before ensurePrerenderDeps");
@@ -288,6 +307,16 @@ async function* yieldFromStore<TEnv>(
     if (handlesRecord) {
       _restoreHandles(handlesRecord, handleStore);
     }
+  }
+
+  // Before the render barrier freezes the document snapshot.
+  const shellHandles = reqCtx?._shellImplicitCache?.prerenderHandles;
+  if (handleStore && shellHandles) {
+    await _restoreRecordHandles!(
+      handleStore,
+      shellHandles,
+      loaderPins(ctx.entries, reqCtx),
+    );
   }
 
   state.cacheHit = true;
