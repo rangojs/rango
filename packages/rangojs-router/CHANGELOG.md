@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Fixed: Back/Forward to an entry the server now redirects follows the redirect ([#1047](https://github.com/rangojs/rango/issues/1047))
+
+On Back or Forward to an entry that has to be fetched (it left the client's
+20-entry history cache, or the cache was cleared), a server that now answered
+with a redirect, for example route middleware that sends a signed-out visitor
+to the login page, was not followed. The router logged `Unprocessable popstate
+response: ServerRedirect`, showed the root error boundary, and left the
+address bar on the protected URL. A link click or `router.push()` to the same
+page followed the redirect.
+
+The redirect is now followed, with the same same-origin check and location
+state a push uses. The redirect replaces the entry that was traversed to: that
+history entry becomes the redirect target, and Back from the target goes to
+the entry before it. A push would keep the redirecting entry in history, and
+Back would hit the redirect again.
+
+```tsx
+// History: [/home, /account, /a, /b, ...]; /account has left the history
+// cache and its middleware now redirects to /login.
+// Back to /account:
+//   before: root error boundary, address bar on /account
+//   now:    /login is shown, history is [/home, /login, /a, /b, ...]
+//           Back from /login goes to /home
+```
+
 ### Fixed: on Back/Forward, `usePathname()` and `useSearchParams()` change with the page, not before it ([#1031](https://github.com/rangojs/rango/issues/1031))
 
 On Back or Forward to an entry that has to be fetched (it left the client's
@@ -71,8 +96,6 @@ Still open:
   `useSegments()`, and `useNavigation().location` is ahead of the screen for
   that part of the wait. A push has the same gap
   ([#1046](https://github.com/rangojs/rango/issues/1046)).
-- A Back/Forward the server answers with a redirect is not followed
-  ([#1047](https://github.com/rangojs/rango/issues/1047)).
 
 ### Fixed: `buildEnv: "auto"` reads the wrangler config of the Vite root
 
