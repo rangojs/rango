@@ -141,6 +141,15 @@ import {
   pprFlightErrorPasses,
 } from "./loaders/ppr-shell.js";
 import { PprJsxPage } from "./pages/ppr-jsx.js";
+import {
+  PprPushDeferredPage,
+  PprPushPinnedPage,
+} from "./pages/ppr-push-ownership.js";
+import {
+  PprPushDeferredLoader,
+  PprPushPinnedLoader,
+  bumpPprPushGeneration,
+} from "./loaders/ppr-push-ownership.js";
 import { PprLoadMorePage } from "./pages/ppr-load-more.js";
 import { PprLoadMorePageLoader } from "./loaders/ppr-load-more.js";
 import { PprJsxLoader } from "./loaders/ppr-jsx.js";
@@ -476,6 +485,14 @@ export const urlpatterns = urls(
     path.json("/__test/ppr-nav-pin-runs", () => ({ ...pprNavPinRuns }), {
       name: "testPprNavPinRuns",
     }),
+    // Test utils: moves the /ppr-push fixture's generation for one ?probe= on.
+    path.json(
+      "/__test/ppr-push-bump",
+      (ctx): { generation: number } => ({
+        generation: bumpPprPushGeneration(ctx.searchParams.get("probe") ?? ""),
+      }),
+      { name: "testPprPushBump" },
+    ),
     // Test utils: clear the onError log.
     path.json(
       "/__test/clear-error-log",
@@ -1120,6 +1137,38 @@ export const urlpatterns = urls(
           PprWarningsPage,
           { name: "pprRestock", ppr: { ttl: 300, swr: 120 } },
           () => [loader(PprRestockLoader, { ssr: false })],
+        ),
+        // Push ownership (issues #1001, #1003; e2e/ppr-push-ownership.test.ts).
+        // #1003: the loader runs on every replay; its pin serves the data, so
+        // the shell record's copy of its push stands, on a navigation too.
+        path(
+          "/ppr-push/pinned",
+          PprPushPinnedPage,
+          { name: "pprPushPinned", ppr: { ttl: 300, swr: 120 } },
+          () => [loader(PprPushPinnedLoader, { ssr: false })],
+        ),
+        // The same loader on an entry whose pins maxSnapshotBytes drops: the
+        // loader runs fresh on a HIT, so its run's push replaces the record's.
+        path(
+          "/ppr-push/capped",
+          PprPushPinnedPage,
+          {
+            name: "pprPushCapped",
+            ppr: { ttl: 300, swr: 120, maxSnapshotBytes: 1 },
+          },
+          () => [loader(PprPushPinnedLoader, { ssr: false })],
+        ),
+        // #1001: the deferred push reaches a replay from the loader's own
+        // cache() entry.
+        path(
+          "/ppr-push/deferred",
+          PprPushDeferredPage,
+          { name: "pprPushDeferred", ppr: { ttl: 300, swr: 120 } },
+          () => [
+            loader(PprPushDeferredLoader, { ssr: false }, () => [
+              cache({ ttl: 300 }),
+            ]),
+          ],
         ),
         // Storefront shape: ppr routes under an ancestor cache() scope (the
         // real store-app shape — an app-wide cache() wrapping the tree).

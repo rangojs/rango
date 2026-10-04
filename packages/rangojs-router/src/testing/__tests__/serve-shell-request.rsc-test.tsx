@@ -50,11 +50,15 @@ import {
 } from "../../cache/index.js";
 import { SHELL_MIN_RECAPTURE_INTERVAL_MS } from "../../cache/cache-policy.js";
 import {
+  DeferredOwnedLoader,
+  deferredOwnedRuns,
   getProduct,
   getStamp,
-  readCachedDep,
+  OnceNotedBakeLoader,
+  OuterDepLoader,
   readRecaptureLive,
   RecaptureLiveLoader,
+  shellHarness,
   source,
 } from "./fixtures/shell-request-data.js";
 
@@ -225,22 +229,6 @@ const OwnedLoader = createLoader(async (ctx) => {
   };
 });
 
-/** Body runs of DeferredOwnedLoader, across tests. */
-const deferredOwnedRuns = { body: 0 };
-
-/**
- * A promise-free bake-lane loader with its own cache() that pushes a settled
- * note and a deferred one. The shell's record keeps only the settled push,
- * so the loader's record asks for a run on a HIT (`runs`).
- */
-const DeferredOwnedLoader = createLoader(async (ctx) => {
-  deferredOwnedRuns.body += 1;
-  const run = deferredOwnedRuns.body;
-  ctx.use(OwnedNotes)(`settled-note-${run}`);
-  ctx.use(OwnedNotes)(Promise.resolve(`deferred-note-${run}`));
-  return { deferredOwned: `deferred-owned-run-${run}` };
-});
-
 /** A bake-lane loader reading the "use cache" key a live loader reads. */
 const BakedStampLoader = createLoader(async () => ({
   baked: await getStamp(),
@@ -260,16 +248,6 @@ const HoleyStampLoader = createLoader(async (ctx) => {
 const NestedStampLoader = createLoader(async () => ({
   settled: "nested-settled",
   later: getStamp(),
-}));
-
-/**
- * A promise-carrying bake-lane loader (it runs on a HIT and on a navigation
- * replay) whose body reads a "use cache" function that awaits a loader: the
- * entry replays that loader's push inside this body.
- */
-const OuterDepLoader = createLoader(async (ctx) => ({
-  outer: await readCachedDep(ctx),
-  later: Promise.resolve("outer-later"),
 }));
 
 /** A handle only LiveDepLoader pushes to. */
@@ -367,17 +345,6 @@ const BakePushesAfterLiveLoader = createLoader(async (ctx) => {
   const { liveDep } = await ctx.use(LiveDepLoader);
   ctx.use(LiveDepNotes)(`after-note@g${source.generation}`);
   return { after: `after-${liveDep}` };
-});
-
-/** A promise-carrying bake-lane loader that pushes at capture only. */
-const OnceNotedBakeLoader = createLoader(async (ctx) => {
-  if (source.generation === 1) {
-    ctx.use(HoleyNotes)(`once-note@g${source.generation}`);
-  }
-  return {
-    once: `once@g${source.generation}`,
-    later: Promise.resolve("once-later"),
-  };
 });
 
 /** Live on /cached-hole, with its own cache(). */
@@ -934,13 +901,7 @@ function setup(
     cacheStore?: SegmentCacheStore;
   } = {},
 ) {
-  const router = options.router ?? makeRouter();
-  const cacheStore = options.cacheStore ?? new MemorySegmentCacheStore();
-  const serve = (
-    url: string,
-    extra: Omit<ServeShellRequestOptions, "cacheStore"> = {},
-  ) => serveShellRequest(router, url, { cacheStore, ...extra });
-  return { router, cacheStore, serve };
+  return shellHarness(options.router ?? makeRouter(), options.cacheStore);
 }
 
 describe("serveShellRequest: document MISS, capture, HIT", () => {
@@ -1303,6 +1264,10 @@ describe("serveShellRequest: bake-lane loaders on a HIT", () => {
     expect(bakeRuns.dep).toBe(baked.dep);
     expect(bakeRuns.holey).toBe(baked.holey + 1);
     expect(nav.flight).toContain(`plain-run-${baked.plain}`);
+    // The captured pushes too, the awaited loader's included.
+    for (const note of [`plain-note-${baked.plain}`, `dep-note-${baked.dep}`]) {
+      expect(nav.flight).toContain(note);
+    }
   });
 
   it("an ssr: false loader on an entry with loading() is pinned on a client navigation, as on a document HIT", async () => {

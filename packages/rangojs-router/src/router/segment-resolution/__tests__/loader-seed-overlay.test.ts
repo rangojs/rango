@@ -29,10 +29,13 @@ vi.mock("../../../server/request-context.js", () => ({
 import { resolveLoaderData } from "../loader-cache";
 import { LOADER_HOLE_KEY } from "../loader-snapshot";
 
-const SEGMENT_KEY = "R0D0.app/x#Loader";
+// The seed is keyed by loader id (buildShellLoaderSeed); the segment key is
+// the caller's opt-in to the pin (fresh.ts resolveLoaders).
+const LOADER_ID = "L";
+const SEGMENT_KEY = `R0D0.${LOADER_ID}`;
 
 function createLoaderEntry(loader: any): LoaderEntry {
-  return { loader, revalidate: [] } as unknown as LoaderEntry;
+  return { loader, revalidate: [], bake: true } as unknown as LoaderEntry;
 }
 
 function createMockCtx() {
@@ -71,7 +74,7 @@ describe("shell-HIT seed overlay lanes", () => {
     (loader as any).$$id = "L";
     mockRequestCtx._shellLoaderSeed = new Map([
       [
-        SEGMENT_KEY,
+        LOADER_ID,
         { container: { price: "pinned" }, holes: false, runs: false },
       ],
     ]);
@@ -98,10 +101,7 @@ describe("shell-HIT seed overlay lanes", () => {
     });
     (loader as any).$$id = "L";
     mockRequestCtx._shellLoaderSeed = new Map([
-      [
-        SEGMENT_KEY,
-        { container: { price: "pinned" }, holes: false, runs: true },
-      ],
+      [LOADER_ID, { container: { price: "pinned" }, holes: false, runs: true }],
     ]);
     const waitUntil = vi.fn();
     mockRequestCtx.executionContext = { waitUntil };
@@ -126,10 +126,7 @@ describe("shell-HIT seed overlay lanes", () => {
     });
     (loader as any).$$id = "L";
     mockRequestCtx._shellLoaderSeed = new Map([
-      [
-        SEGMENT_KEY,
-        { container: { price: "pinned" }, holes: false, runs: true },
-      ],
+      [LOADER_ID, { container: { price: "pinned" }, holes: false, runs: true }],
     ]);
 
     const result = resolveLoaderData(
@@ -161,7 +158,7 @@ describe("shell-HIT seed overlay lanes", () => {
     }));
     (loader as any).$$id = "L";
     mockRequestCtx._shellLoaderSeed = new Map([
-      [SEGMENT_KEY, { container: { stable: "pinned" }, holes: false }],
+      [LOADER_ID, { container: { stable: "pinned" }, holes: false }],
     ]);
 
     const result = await resolveLoaderData(
@@ -184,7 +181,7 @@ describe("shell-HIT seed overlay lanes", () => {
     (loader as any).$$id = "L";
     mockRequestCtx._shellLoaderSeed = new Map([
       [
-        SEGMENT_KEY,
+        LOADER_ID,
         {
           container: { stable: "pinned", live: { [LOADER_HOLE_KEY]: 1 } },
           holes: true,
@@ -214,7 +211,7 @@ describe("shell-HIT seed overlay lanes", () => {
     (loader as any).$$id = "L";
     mockRequestCtx._shellLoaderSeed = new Map([
       [
-        SEGMENT_KEY,
+        LOADER_ID,
         {
           container: { price: "pinned", live: { [LOADER_HOLE_KEY]: 1 } },
           holes: true,
@@ -235,11 +232,11 @@ describe("shell-HIT seed overlay lanes", () => {
     expect(await result).toEqual({ price: "pinned", live: "live-value" });
   });
 
-  it("no seed entry for the key: plain fresh execution", async () => {
+  it("no pin for the loader: plain fresh execution", async () => {
     const loader = vi.fn(async () => ({ price: "fresh" }));
     (loader as any).$$id = "L";
     mockRequestCtx._shellLoaderSeed = new Map([
-      ["OTHER_KEY", { container: { price: "pinned" }, holes: false }],
+      ["Other", { container: { price: "pinned" }, holes: false }],
     ]);
 
     const result = await resolveLoaderData(

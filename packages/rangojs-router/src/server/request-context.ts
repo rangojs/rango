@@ -378,7 +378,7 @@ export interface RequestContext<
 
   /**
    * @internal Loader-family snapshot seed for a shell HIT's tail render:
-   * segment-key -> the capture's elided container (already Flight-deserialized
+   * loader id -> the capture's elided container (already Flight-deserialized
    * by serveShellHit) plus its capture-computed hole bit. resolveLoaderData
    * overlays it onto the fresh run's container (recorded paths pinned,
    * hole-marker paths keep the fresh nested promises) so the payload's baked
@@ -386,7 +386,9 @@ export interface RequestContext<
    * and does not run the loader. Two owners: serveShellHit sets it on the
    * HIT tail's derived context, and matchPartialWithPprReplay sets it on the
    * request context of a PPR partial replay once its doc record hits, and
-   * restores the previous value after the match.
+   * restores the previous value after the match. Read through servedPins
+   * (loader-cache.ts) only: it also decides which of the record's
+   * loader-owned handle pushes stand (loaderPins).
    */
   _shellLoaderSeed?: Map<
     string,
@@ -447,9 +449,7 @@ export interface RequestContext<
      * scope replaces any route-derived cache() scope for the tail's match
      * (resolveShellImplicitCacheScope), and a lookup that does not hit throws
      * ShellRecordUnavailableError instead of resolving segments
-     * (withCacheLookup): a HIT never runs a handler. The record's
-     * loader-owned handle pushes restore as authoritative
-     * (HandleStore.pushRestored): the prelude rendered them.
+     * (withCacheLookup): a HIT never runs a handler.
      */
     docTail?: true;
     /**

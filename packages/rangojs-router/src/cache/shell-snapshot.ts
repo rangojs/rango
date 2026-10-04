@@ -18,7 +18,9 @@
  * the capture's copy of a value: it is dynamic or has its own cache. A
  * bake-lane loader body that runs on a HIT reads the store too; its pinned
  * container paths stay the pin's (overlayLoaderContainer), and its settled
- * pushes stay the record's (HandleStore.pushRestored).
+ * pushes stay the record's (HandleStore.pushRestored). The two go together:
+ * a loader whose pin the entry lost runs fresh, and the record's copies of
+ * its pushes give way to that run's (restoreHandles).
  */
 
 import type {
@@ -367,16 +369,39 @@ export interface ShellLoaderSeedEntry {
    * hole-free record: a hole-carrying one always runs.
    */
   runs: boolean;
+  /**
+   * The capture that wrote the pin recorded every settled push of the
+   * loader's run in the doc record (CachedEntryData.handleOwners): the pin
+   * carries the `runs` bit, which captures write since they record those
+   * pushes (v0.18). A replay then drops any other settled push of the loader
+   * (HandleStore RecordAuthority "pin"). False for an older pin, whose record
+   * may hold none and leaves them to the run.
+   */
+  complete: boolean;
 }
+
+/**
+ * A pin's loader. A pin is stored under its loader segment id,
+ * `${shortCode}D${index}.${loaderId}` (fresh.ts resolveLoaders), and a
+ * shortCode holds no "D" and no "." (server/context.ts getShortCode: M, L, P,
+ * R, C, I and digits), so the first `D<index>.` ends it. A loader id can hold
+ * both.
+ */
+const PIN_KEY_PREFIX = /^[^D.]*D\d+\./;
 
 /**
  * Materialize the loader-family seed from a shell snapshot for a HIT's tail
  * render: Flight-deserialize each recorded (promise-elided) bake-lane
- * container into a segment-key -> container Map, which serveShellHit assigns
- * to the tail context's `_shellLoaderSeed` for the resolveLoaderData overlay.
+ * container into a loader-id -> pin Map, which serveShellHit assigns to the
+ * tail context's `_shellLoaderSeed` (loader-cache.ts servedPins).
  * Lives here so every snapshot family is decoded in this module (the segment
  * family via {@link SeededShellStore}); the loader family is not a store
  * read, so it seeds the context instead of a store.
+ *
+ * Keyed by loader, not by the segment a pin was stored under: a loader runs
+ * once per capture, so every segment that registers it pinned the same
+ * container, and the loader's value and its handle pushes are both looked up
+ * by loader. A key that does not parse pins nothing.
  *
  * Deserializations run in parallel; a record that fails to decode is skipped
  * (that loader drifts — the pre-snapshot behavior — instead of failing the
@@ -396,10 +421,14 @@ export async function buildShellLoaderSeed(
   const entries = await Promise.all(
     loaderRecords.map(
       async (rec): Promise<[string, ShellLoaderSeedEntry] | null> => {
+        const prefix = PIN_KEY_PREFIX.exec(rec.key);
+        if (!prefix) return null;
         try {
-          const stored = rec.value as ShellSnapshotLoaderValue;
+          // Typed as always carrying the bits; an older record lacks them.
+          const stored = rec.value as Partial<ShellSnapshotLoaderValue> &
+            Pick<ShellSnapshotLoaderValue, "value">;
           return [
-            rec.key,
+            rec.key.slice(prefix[0].length),
             {
               container: await deserializeResult(stored.value),
               // A record stored before the bits existed (v0.17) lacks the
@@ -407,6 +436,7 @@ export async function buildShellLoaderSeed(
               // so the loader body supplies them.
               holes: stored.holes !== 0,
               runs: stored.runs !== 0,
+              complete: stored.runs !== undefined,
             },
           ];
         } catch {

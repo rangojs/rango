@@ -317,10 +317,19 @@ container-with-promise-paths-elided)` into the same
   background, rejection swallowed, so the push reaches the page; a record
   written with `runs: 0` does not run, and one without the bit (written
   before it, and lacking the pushes a capture now records) reads as
-  `runs: 1`. A route `cache()` record's owned values that a capture restores
-  keep their owner the same way (the funnel's handler lane reads the
-  `pushReplayed` owner), so a document HIT restores them as that loader's
-  (`HandleStore.pushRestored`) and a run of the loader there adds no copy. The seed is also armed for a PPR partial replay, decoded
+  `runs: 1`. The bit's presence is itself a fact a replay uses: a pin that
+  carries it was written by a capture that recorded every settled push of
+  the loader's run, so the replay drops any other settled push of that
+  loader, with or without a copy in the record
+  (`ShellLoaderSeedEntry.complete`). A route `cache()` record's owned values
+  that a capture restores keep their owner the same way (the funnel's
+  handler lane reads the owner `pushPlaceholder` names), so a replay that
+  serves the loader from its pin
+  restores them as that loader's (`HandleStore.pushRestored`) and a run of
+  the loader there adds no copy. The pin decides that, not the request: a
+  loader the replay has no pin for runs fresh, and the record's copies of its
+  pushes are placeholders its run replaces (`loaderPins`,
+  `docs/design/handle-push-ownership.md`). The seed is also armed for a PPR partial replay, decoded
   when its doc record hits (`matchPartialWithPprReplay`'s `onHit`, which the
   lookup awaits before the loaders resolve), so a client navigation matches
   the document HIT: hole-free loaders are served from the pin and do not run,

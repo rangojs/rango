@@ -648,6 +648,14 @@ rejects) skips the whole entry, as above. Entries written
 before handles were recorded replay none until they are rewritten (expiry or
 SWR revalidation).
 
+On a `ppr` route the shell keeps a copy of an `ssr: false` loader's settled
+pushes too. The two never disagree on the page: where a replay of the shell
+serves the loader's data from the shell, the shell's copy is the one shown
+and the entry only adds the deferred push the shell could not keep; where it
+does not (the loader runs or reads its entry), the entry's pushes take the
+shell copy's place, none if the entry recorded none. See `/ppr` → "On a shell
+HIT".
+
 ### Cache Key
 
 The default cache key is `loader:{loaderId}:{host}{pathname}:{sortedParams}`

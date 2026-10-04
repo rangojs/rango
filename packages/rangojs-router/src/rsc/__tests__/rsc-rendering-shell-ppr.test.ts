@@ -3638,8 +3638,8 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
     };
     const seed = new Map<string, ShellLoaderSeedEntry>([
       [
-        "R0D0.app/x#Plain",
-        { container: { plain: 1 }, holes: false, runs: false },
+        "app/x#Plain",
+        { container: { plain: 1 }, holes: false, runs: false, complete: true },
       ],
     ]);
 

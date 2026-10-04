@@ -735,15 +735,14 @@ export class CacheScope {
    * @param pathname - URL pathname for cache key generation
    * @param params - Route params for cache key generation
    * @param isIntercept - Whether this is an intercept navigation (uses different cache key)
-   * @param ownedPushes - How restoreHandles delivers the record's
-   *   loader-owned values (withCacheLookup: the handler context's
-   *   _claimLoaderPushes, and on a document HIT tail the owners it restores)
+   * @param ownedPushes - What the record is to each loader's handle pushes
+   *   (withCacheLookup: loader-cache.ts loaderPins), called on a hit
    */
   async lookupRoute(
     pathname: string,
     params: Record<string, string>,
     isIntercept?: boolean,
-    ownedPushes?: OwnedPushDelivery,
+    ownedPushes?: () => OwnedPushDelivery,
   ): Promise<{
     segments: ResolvedSegment[];
     shouldRevalidate: boolean;
@@ -779,7 +778,7 @@ export class CacheScope {
     pathname: string,
     params: Record<string, string>,
     isIntercept?: boolean,
-    ownedPushes?: OwnedPushDelivery,
+    ownedPushes?: () => OwnedPushDelivery,
   ): Promise<CacheRouteLookupOutcome> {
     if (!this.enabled) return { status: "bypass" };
     if (!this.conditionAllows("read")) return { status: "bypass" };
@@ -870,11 +869,23 @@ export class CacheScope {
         cached.tags,
       );
 
+      // Before the handle replay: the implicit doc scope's marker arms the
+      // loader pins of a navigation replay here (matchPartialWithPprReplay),
+      // and `ownedPushes` reads them to decide which loader-owned values
+      // stand. The segments decoded, so the record serves from here on.
+      await this.onHit?.();
+
+      const handleStore = _getRequestContext()?._handleStore;
+      // With or without a handles blob: a pinned loader whose capture pushed
+      // nothing has no copy in the record, and its run on this request must
+      // still add no settled push (HandleStore.setRecordAuthority).
+      const owned = handleStore ? ownedPushes?.() : undefined;
+      if (owned) handleStore?.setRecordAuthority(owned);
+
       // Replay handle data. An empty string means the route pushed no handles —
       // skip the decode entirely (the common case). Otherwise decode the
       // Flight-encoded blob; a decode failure skips handle restore but keeps the
       // valid cached segments.
-      const handleStore = _getRequestContext()?._handleStore;
       if (handleStore && cached.handles) {
         const handlesRecord = await decodeHandles(cached.handles);
         if (handlesRecord) {
@@ -888,7 +899,7 @@ export class CacheScope {
             handlesRecord,
             handleStore,
             cached.handleOwners,
-            ownedPushes,
+            owned,
           );
         }
       }
@@ -905,7 +916,6 @@ export class CacheScope {
       if (ambientContext)
         this.noteRecordWindow(ambientContext, cached.expiresAt, false);
 
-      await this.onHit?.();
       return { status: "hit", result: { segments, shouldRevalidate } };
     } catch (error) {
       // Covers a store.get() failure AND a throwing consumer key()/keyGenerator

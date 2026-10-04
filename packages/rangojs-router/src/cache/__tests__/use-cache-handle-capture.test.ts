@@ -710,7 +710,7 @@ describe("appendHandles record formats", () => {
     const store = createHandleStore();
     const claim = vi.fn(() => false);
     appendHandles({ M0R1: { [H]: ["a", "b"] } }, store, "caller", claim);
-    appendHandles({ M0R1: { [H]: ["c"] } }, store);
+    appendHandles({ M0R1: { [H]: ["c"] } }, store, undefined, undefined);
     expect(claim).not.toHaveBeenCalled();
     expect(store.getDataForSegment("caller")[H]).toEqual(["a", "b"]);
     expect(store.getDataForSegment("M0R1")[H]).toEqual(["c"]);
