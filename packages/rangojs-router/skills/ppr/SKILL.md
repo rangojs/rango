@@ -991,13 +991,14 @@ runs it shows the capture's answer, a push or none, never a later run's next
 to the pinned data. A deferred push is the exception by design: it is
 delivered on every replay.
 
-One arrangement still mixes sources, tracked in
-`docs/design/handle-push-ownership.md`. A loader that reads a `cache()`-bound
-loader with `ctx.use()` before that binding starts (a loader declared ahead
-of it, a parent layout) runs it live while the binding serves its entry
-(#1002): declare the cached loader first, or read it from the handler. An
-entry such a request writes holds no pushes, and a later HIT of it then
-shows none for that loader.
+One arrangement mixes sources by design. A loader that reads a
+`cache()`-bound loader with `ctx.use()` before that binding starts (a loader
+declared ahead of it, a parent layout) runs it live while the binding serves
+its entry, so the cached loader's data and its handle push can come from
+different runs on that request. To keep them together, declare the cached
+loader first, or read it from the handler: a handler's `ctx.use()` is where a
+loader read is baked. An entry such a request writes holds no pushes, and a
+later HIT of it then shows none for that loader.
 
 Four hard edges (each e2e/unit-pinned):
 
