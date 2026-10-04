@@ -8,8 +8,8 @@
 
 import type { Plugin, ViteDevServer } from "vite";
 import { createServer as createViteServer } from "vite";
-import { resolve } from "node:path";
-import { readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire, register } from "node:module";
 import { pathToFileURL } from "node:url";
 import {
@@ -328,11 +328,44 @@ import type {
   BuildEnvResult,
 } from "./plugin-types.js";
 
+const WRANGLER_CONFIG_NAMES: readonly string[] = [
+  "wrangler.json",
+  "wrangler.jsonc",
+  "wrangler.toml",
+];
+
+/**
+ * getPlatformProxy() looks for the wrangler config from process.cwd() and
+ * resolves its default persist path against cwd, so building from another
+ * directory dropped the app's bindings (#1037). Search upward from the Vite
+ * root with wrangler's own file names and order. Persisted state goes under
+ * the Vite root, where @cloudflare/vite-plugin reads it in dev and preview
+ * (its getPersistenceRoot), also when the config sits above the root. No
+ * config found: no options, wrangler's own lookup.
+ */
+function wranglerProxyOptions(
+  root: string,
+): Record<string, unknown> | undefined {
+  const viteRoot = resolve(root);
+  for (let dir = viteRoot; ; dir = dirname(dir)) {
+    for (const name of WRANGLER_CONFIG_NAMES) {
+      const configPath = join(dir, name);
+      if (existsSync(configPath)) {
+        return {
+          configPath,
+          persist: { path: join(viteRoot, ".wrangler", "state", "v3") },
+        };
+      }
+    }
+    if (dirname(dir) === dir) return undefined;
+  }
+}
+
 /**
  * Resolve the buildEnv option into a concrete { env, dispose? } result.
  * Handles all four input shapes: false, "auto", factory, plain object.
  */
-async function resolveBuildEnv(
+export async function resolveBuildEnv(
   option: BuildEnvOption | undefined,
   factoryCtx: BuildEnvFactoryContext,
 ): Promise<BuildEnvResult | null> {
@@ -356,7 +389,9 @@ async function resolveBuildEnv(
       )) as {
         getPlatformProxy: (opts?: any) => Promise<any>;
       };
-      const proxy = await getPlatformProxy();
+      const proxy = await getPlatformProxy(
+        wranglerProxyOptions(factoryCtx.root),
+      );
       return {
         env: proxy.env as Record<string, unknown>,
         dispose: proxy.dispose,
