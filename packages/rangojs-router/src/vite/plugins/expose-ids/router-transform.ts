@@ -2,7 +2,6 @@ import type { Plugin } from "vite";
 import MagicString from "magic-string";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
 import {
   normalizePath,
   findMatchingParen,
@@ -13,7 +12,6 @@ import {
   getImportedFnNames,
   buildUnsupportedShapeWarning,
   createCallPattern,
-  createCallStartIndices,
   offsetToLineColumn,
 } from "./export-analysis.js";
 import { codeMatchIndices } from "../../../build/route-types/source-scan.js";
@@ -45,30 +43,32 @@ function skipLeadingTrivia(code: string, start: number, end: number): number {
   return i;
 }
 
-/** The 1-based line of every createRouter() call in `source`, in order. */
-export function routerCallLines(
-  source: string,
-  routerFnNames: string[],
-): number[] {
-  return createCallStartIndices(source, routerFnNames).map(
-    (index) => offsetToLineColumn(source, index).line,
-  );
+/**
+ * A router's `$$id`: a hash of its root-relative file and of its position
+ * among the file's createRouter() calls.
+ *
+ * Not of the call's line. `code` is TS-transformed, and a dev server keeps
+ * comments there that a build drops, so a line of `code` gave build-time
+ * discovery and the bundle different ids for any router with a comment above
+ * it (e2e/test-app, tests/cloudflare-basic): the build registered the lazy
+ * route manifest under an id no running router had. And a line of the file as
+ * written changes with every blank line or comment added above the call,
+ * which renamed the state cookie, the route manifest chunk and the router's
+ * cache versions for an edit that changed nothing.
+ */
+export function routerId(filePath: string, callIndex: number): string {
+  return createHash("sha256")
+    .update(`${filePath}#${callIndex}`)
+    .digest("hex")
+    .slice(0, 8);
 }
 
-/**
- * @param sourceLines Line of each createRouter() call in the file as written
- *   ({@link routerCallLines}). `code` is TS-transformed and a dev server keeps
- *   comments a build drops, so a line taken from `code` gives build-time
- *   discovery and the bundle different `$$id`s (e2e/test-app,
- *   tests/cloudflare-basic). A call past the list uses its line in `code`.
- */
 export function transformRouter(
   code: string,
   filePath: string,
   routerFnNames: string[],
   absolutePath?: string,
   warn?: (message: string) => void,
-  sourceLines?: readonly number[],
 ): { code: string; map: ReturnType<MagicString["generateMap"]> } | null {
   // Match only the callee identifier; the generic list (which may be nested,
   // e.g. createRouter<Config<Env>>(...)) and the opening paren are located
@@ -118,13 +118,7 @@ export function transformRouter(
     if (callArgs.includes(`$$routeNames: ${routeNamesVar}`)) continue;
 
     const sourceFilePath = absolutePath ?? filePath;
-    const lineNumber =
-      sourceLines?.[callIndex] ?? offsetToLineColumn(code, callStart).line;
-    const hash = createHash("sha256")
-      .update(`${filePath}:${lineNumber}`)
-      .digest("hex")
-      .slice(0, 8);
-    const injected = ` $$id: "${hash}", $$sourceFile: "${sourceFilePath}", $$routeNames: ${routeNamesVar},`;
+    const injected = ` $$id: "${routerId(filePath, callIndex)}", $$sourceFile: "${sourceFilePath}", $$routeNames: ${routeNamesVar},`;
 
     // Skip a leading comment/whitespace run so `createRouter(/* c *\/ {...})`
     // and a newline-then-comment prefix still resolve to the object literal.
@@ -145,9 +139,7 @@ export function transformRouter(
       // stable $$id can be injected here. Record it so the plugin can warn —
       // and crucially do NOT mark changed, so a dead named-routes.gen import is
       // not prepended for a call we never touched.
-      const lastNl = code.lastIndexOf("\n", callStart - 1);
-      const column = callStart - (lastNl + 1) + 1;
-      unsupportedSites.push({ line: lineNumber, column });
+      unsupportedSites.push(offsetToLineColumn(code, callStart));
     }
   }
 
@@ -213,22 +205,12 @@ export function exposeRouterId(): Plugin {
           typeof this.warn === "function"
             ? (message: string) => this.warn(message)
             : undefined;
-        let sourceLines: number[] | undefined;
-        try {
-          sourceLines = routerCallLines(
-            readFileSync(id.split("?", 1)[0]!, "utf-8"),
-            routerFnNames,
-          );
-        } catch {
-          // Not a file on disk (a virtual module): lines come from `code`.
-        }
         return transformRouter(
           code,
           filePath,
           routerFnNames,
           rootRelativeSourceFile ? undefined : normalizePath(id),
           warn,
-          sourceLines,
         );
       } finally {
         counter?.record(id, performance.now() - start);

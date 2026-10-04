@@ -65,10 +65,7 @@ export function createCallPattern(fnNames: string[]): RegExp {
  * generic list). Non-call references (type positions, the import specifier
  * itself) yield -1 from findCallParenAfterGenerics and are dropped.
  */
-export function createCallStartIndices(
-  code: string,
-  fnNames: string[],
-): number[] {
+function createCallStartIndices(code: string, fnNames: string[]): number[] {
   return codeMatchIndices(code, createCallPattern(fnNames)).filter(
     (index) =>
       findCallParenAfterGenerics(
