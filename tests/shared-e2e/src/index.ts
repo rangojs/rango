@@ -2312,3 +2312,101 @@ export async function expectLateBoundaryHandleReaderHydratesClean(
   await gotoShellHit(page, url);
   await expectLivePage();
 }
+
+// ---------------------------------------------------------------------------
+// #1047: a traversal the server answers with a redirect
+// ---------------------------------------------------------------------------
+
+/**
+ * A page whose route middleware redirects unless a cookie is set, and the
+ * public pages around it: `beforeUrl` is the entry before the protected one,
+ * `fillerUrl(n)` the pushes that evict the protected entry (the location-state
+ * panel fixture, whose step names the page on screen), `targetUrl` where the
+ * middleware redirects to.
+ */
+export interface PopstateRedirectFixture {
+  protectedUrl: string;
+  targetUrl: string;
+  beforeUrl: string;
+  fillerUrl: (n: number) => string;
+  cookie: { name: string; value: string };
+  protectedTestId: string;
+  targetTestId: string;
+}
+
+/** Console errors that mean the router rendered a redirect as a failure. */
+function collectRedirectFailures(page: Page): string[] {
+  const failures: string[] = [];
+  const matches = (text: string) =>
+    text.includes("Unprocessable popstate response") ||
+    text.includes("[RootErrorBoundary]");
+  page.on("console", (msg: ConsoleMessage) => {
+    if (matches(msg.text())) failures.push(msg.text());
+  });
+  page.on("pageerror", (err: Error) => {
+    if (matches(err.message)) failures.push(err.message);
+  });
+  return failures;
+}
+
+/**
+ * #1047: back to a history entry that has to be fetched, where the server
+ * now answers with a redirect. The redirect is followed and REPLACES the
+ * entry: Back from the target lands on the entry before the protected page
+ * (a push would leave the redirecting entry in history and Back would hit it
+ * again). Used to render the root error boundary and leave the address bar on
+ * the protected URL.
+ */
+export async function expectRefetchedBackFollowsRedirectByReplacing(
+  page: Page,
+  fixture: PopstateRedirectFixture,
+): Promise<void> {
+  await page
+    .context()
+    .addCookies([{ ...fixture.cookie, url: fixture.protectedUrl }]);
+  await page.goto(fixture.beforeUrl);
+  await waitForShellHydration(page);
+  await routerNavigate(page, fixture.protectedUrl);
+  await expect(byTestId(page, fixture.protectedTestId)).toBeVisible();
+
+  await pushEvictingEntries(page, fixture.fillerUrl);
+  // The last push has committed, so the history cache is settled.
+  await expect(byTestId(page, "grid-step")).toHaveText(
+    `filler-${EVICTING_ENTRIES}`,
+  );
+  await expect(byTestId(page, "ls-shared-nav")).toHaveText(/^idle\|/);
+  await page.context().clearCookies({ name: fixture.cookie.name });
+
+  const failures = collectRedirectFailures(page);
+  await goBackToEvictedEntry(page);
+
+  await expect(page).toHaveURL(fixture.targetUrl);
+  await expect(byTestId(page, fixture.targetTestId)).toBeVisible();
+  await expect(byTestId(page, fixture.protectedTestId)).toHaveCount(0);
+
+  await page.evaluate(() => window.history.back());
+  await expect(page).toHaveURL(fixture.beforeUrl);
+  await expect(byTestId(page, fixture.targetTestId)).toBeVisible();
+  expect(failures).toEqual([]);
+}
+
+/** The control of the body above: a link click to the same page follows the redirect. */
+export async function expectLinkClickToRedirectingPageFollowsRedirect(
+  page: Page,
+  fixture: PopstateRedirectFixture,
+): Promise<void> {
+  const failures = collectRedirectFailures(page);
+  await page.goto(fixture.beforeUrl);
+  await waitForShellHydration(page);
+  await page.evaluate((href) => {
+    const a = document.createElement("a");
+    a.href = href;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }, fixture.protectedUrl);
+
+  await expect(page).toHaveURL(fixture.targetUrl);
+  await expect(byTestId(page, fixture.targetTestId)).toBeVisible();
+  expect(failures).toEqual([]);
+}

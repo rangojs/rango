@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+### Fixed: Back/Forward to an entry the server now redirects follows the redirect ([#1047](https://github.com/rangojs/rango/issues/1047))
+
+On Back or Forward to an entry that has to be fetched (it left the client's
+20-entry history cache, or the cache was cleared), a server that now answered
+with a redirect, for example route middleware that sends a signed-out visitor
+to the login page, was not followed. The router logged `Unprocessable popstate
+response: ServerRedirect`, showed the root error boundary, and left the
+address bar on the protected URL. A link click or `router.push()` to the same
+page followed the redirect.
+
+The redirect is now followed, with the same same-origin check and location
+state a push uses. The redirect replaces the entry that was traversed to: that
+history entry becomes the redirect target, and Back from the target goes to
+the entry before it. A push would keep the redirecting entry in history, and
+Back would hit the redirect again.
+
+```tsx
+// History: [/home, /account, /a, /b, ...]; /account has left the history
+// cache and its middleware now redirects to /login.
+// Back to /account:
+//   before: root error boundary, address bar on /account
+//   now:    /login is shown, history is [/home, /login, /a, /b, ...]
+//           Back from /login goes to /home
+```
+
+### Changed: `@vitejs/plugin-rsc` is a dependency of `@rangojs/router`, no longer also a peer ([#1050](https://github.com/rangojs/rango/issues/1050))
+
+`@rangojs/router` declared `@vitejs/plugin-rsc` (`^0.5.35`) twice: as a
+dependency and as a required peer. It is now only a dependency, with the same
+range. The README already told you not to install it, and `rango()` already
+resolved it through the router; the peer entry said the opposite.
+
+You notice this at install time. pnpm and npm no longer ask for it as a peer
+or report it as a missing one. npm still places it in the root `node_modules`,
+because its flat layout hoists the router's dependencies; pnpm keeps it under
+the router. An app that lists `@vitejs/plugin-rsc` in its own `package.json`
+keeps working (one copy is installed) and can drop the entry. Nothing changes
+at run time.
+
 ### Fixed: on Back/Forward, `usePathname()` and `useSearchParams()` change with the page, not before it ([#1031](https://github.com/rangojs/rango/issues/1031))
 
 On Back or Forward to an entry that has to be fetched (it left the client's
@@ -71,8 +110,22 @@ Still open:
   `useSegments()`, and `useNavigation().location` is ahead of the screen for
   that part of the wait. A push has the same gap
   ([#1046](https://github.com/rangojs/rango/issues/1046)).
-- A Back/Forward the server answers with a redirect is not followed
-  ([#1047](https://github.com/rangojs/rango/issues/1047)).
+
+### Fixed: `pnpm dev` no longer warns about `@vitejs/plugin-rsc/vendor/react-server-dom/static.edge` ([#1050](https://github.com/rangojs/rango/issues/1050))
+
+An app that installs only `@rangojs/router`, `react`, `react-dom` and `vite`
+(as the README says) printed this on every `pnpm dev` under pnpm's strict
+`node_modules`:
+
+```
+Failed to resolve dependency: @vitejs/plugin-rsc/vendor/react-server-dom/static.edge, present in rsc 'optimizeDeps.include'
+```
+
+The app still served; the module was left out of the dependency pre-bundle.
+`rango()` now resolves that entry through `@rangojs/router`, as it already
+did for the other `@vitejs/plugin-rsc/vendor/*` entries, so the warning is
+gone without adding `@vitejs/plugin-rsc` to your `package.json`. An app that
+does list `@vitejs/plugin-rsc` needs no change.
 
 ### Fixed: `buildEnv: "auto"` reads the wrangler config of the Vite root
 

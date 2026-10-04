@@ -76,7 +76,7 @@ if (command === "generate") {
 Modes:
   (default)   Static parser with error on unresolvable includes
   --runtime   Vite-based runtime discovery (100% coverage)
-              Requires vite and @vitejs/plugin-rsc
+              Requires vite
   --static    Static parser, accept partial output with warnings
 
 Options:

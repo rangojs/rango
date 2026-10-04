@@ -426,6 +426,8 @@ export const requireAuthMiddleware: Middleware = async (ctx, next) => {
 
 Read the flash on the target page with `useLocationState(FlashMessage)`. The `{ flash: true }` option makes it auto-clear after first render. See `/hooks`.
 
+A redirect is followed on a link click, `router.push()`, and Back/Forward to an entry the client has to fetch. On Back/Forward the redirect replaces the history entry it was triggered from: Back from the target lands on the entry before the redirecting one, not on the redirecting one again.
+
 ## Authentication Middleware
 
 ```typescript

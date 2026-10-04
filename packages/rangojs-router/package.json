@@ -231,7 +231,6 @@
     "@playwright/test": "^1.49.1",
     "@testing-library/react": ">=16",
     "@vercel/functions": "^3.0.0",
-    "@vitejs/plugin-rsc": "^0.5.35",
     "react": ">=19.2.8 <20",
     "react-dom": ">=19.2.8 <20",
     "vite": "^8.0.16",

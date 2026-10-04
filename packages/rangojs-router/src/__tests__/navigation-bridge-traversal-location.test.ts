@@ -29,6 +29,7 @@ vi.mock("../browser/scroll-restoration.js", () => ({
   getHistoryStateKey: vi.fn(() => "entry-key"),
 }));
 
+import { ServerRedirect } from "../errors";
 import { createEventController } from "../browser/event-controller";
 import { createNavigationBridge } from "../browser/navigation-bridge";
 import {
@@ -262,6 +263,62 @@ describe("navigation-bridge: the location on back/forward (#1031)", () => {
     await traversal;
 
     expect(updates).toEqual([]);
+    expect(eventController.getLocation().href).toBe(LEAVING);
+  });
+});
+
+describe("navigation-bridge: a refetched traversal the server redirects (#1047)", () => {
+  it("follows the redirect as a replace, without an error boundary or the redirecting URL as location", async () => {
+    const { eventController, bridge, updates } = setup();
+    const navigate = vi
+      .spyOn(bridge, "navigate")
+      .mockResolvedValue(undefined as never);
+    const setLocation = vi.spyOn(eventController, "setLocation");
+    const response = deferred();
+    fetchPartialUpdateMock.mockImplementation(() => response.promise);
+
+    const traversal = bridge.handlePopstate();
+    await vi.waitFor(() => expect(fetchPartialUpdateMock).toHaveBeenCalled());
+
+    response.reject(
+      new ServerRedirect("/login?rejected=1", { reason: "expired" }),
+    );
+    await traversal;
+
+    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(navigate).toHaveBeenCalledWith("http://localhost/login?rejected=1", {
+      state: { reason: "expired" },
+      replace: true,
+      _skipCache: true,
+    });
+    expect(updates).toEqual([]);
+    expect(setLocation).not.toHaveBeenCalled();
+  });
+
+  it("blocks a redirect to another origin the way the push path does", async () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const { eventController, bridge, updates } = setup();
+    const navigate = vi
+      .spyOn(bridge, "navigate")
+      .mockResolvedValue(undefined as never);
+    const response = deferred();
+    fetchPartialUpdateMock.mockImplementation(() => response.promise);
+
+    const traversal = bridge.handlePopstate();
+    await vi.waitFor(() => expect(fetchPartialUpdateMock).toHaveBeenCalled());
+
+    response.reject(
+      new ServerRedirect("https://evil.example/login", undefined),
+    );
+    await traversal;
+
+    expect(navigate).not.toHaveBeenCalled();
+    expect(updates).toEqual([]);
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringContaining("[rango] Redirect blocked"),
+    );
     expect(eventController.getLocation().href).toBe(LEAVING);
   });
 });
