@@ -115,6 +115,7 @@ export const NamedRoutes = {
   pprPushDeferred: "/ppr-push/deferred",
   pprPushLive: "/ppr-push/live",
   pprPushPinned: "/ppr-push/pinned",
+  pprPushSlow: "/ppr-push/slow",
   pprRestock: "/ppr-restock",
   pprScoped: "/ppr-scoped",
   pprScopedCondition: "/ppr-scoped-condition",
