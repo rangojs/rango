@@ -1,6 +1,7 @@
 import { PprPushView } from "../components/PprPushView.js";
 import {
   PprPushDeferredLoader,
+  PprPushLiveLoader,
   PprPushPinnedLoader,
 } from "../loaders/ppr-push-ownership.js";
 
@@ -20,6 +21,16 @@ export function PprPushDeferredPage() {
   return (
     <main data-testid="ppr-push-deferred-page">
       <PprPushView loader={PprPushDeferredLoader} />
+    </main>
+  );
+}
+
+// The view reads the live loader, so it renders inside the route's loading()
+// boundary: a useHandle reader that hydrates after the root (#1035).
+export function PprPushLivePage() {
+  return (
+    <main data-testid="ppr-push-live-page">
+      <PprPushView loader={PprPushLiveLoader} />
     </main>
   );
 }

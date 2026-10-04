@@ -293,6 +293,9 @@ export async function initBrowserApp(
       lastHandleData,
       initialPayload.metadata?.matched,
     );
+    // What every reader hydrates with, whenever its boundary hydrates: the
+    // late channel below changes the live state once the root has hydrated.
+    eventController.freezeHydrationHandleState();
 
     // Update the initial cache entry with the processed handleData
     // The cache entry was created by createNavigationStore but without handleData

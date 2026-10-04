@@ -6,6 +6,7 @@ import {
   useEffect,
   useRef,
   useOptimistic,
+  useSyncExternalStore,
   startTransition,
 } from "react";
 import type { Handle } from "../../handle.js";
@@ -13,6 +14,9 @@ import { collectHandleData } from "../../handle.js";
 import type { HandleData } from "../types.js";
 import { NavigationStoreContext } from "./context.js";
 import { shallowEqual } from "./shallow-equal.js";
+
+const subscribeToNothing = (): (() => void) => () => {};
+const hydratingSnapshot = (): boolean => false;
 
 /**
  * Hook to access collected handle data.
@@ -43,6 +47,20 @@ export function useHandle<T, A, S>(
 ): Rango.FlightSerialize<A> | S {
   const ctx = useContext(NavigationStoreContext);
 
+  // useSyncExternalStore only for its server snapshot, as useLocationState
+  // (#992): no other hook tells a hydrating render from a client one. A
+  // hydrating render reads the handle state the document's HTML was rendered
+  // with (EventController.getHydrationHandleState), whenever its boundary
+  // hydrates; the mount effect below moves it on to the live state. The
+  // snapshot is whether the live state has moved on, so it changes once per
+  // document at most, and a reader that hydrated before anything arrived
+  // late is not rendered again (issue #1035).
+  const movedOn = useSyncExternalStore(
+    subscribeToNothing,
+    () => ctx?.eventController.getHydrationHandleState() !== undefined,
+    hydratingSnapshot,
+  );
+
   const [value, setValue] = useState<Rango.FlightSerialize<A> | S>(() => {
     if (!ctx) {
       const collected = collectHandleData(
@@ -53,7 +71,9 @@ export function useHandle<T, A, S>(
       return selector ? selector(collected) : collected;
     }
 
-    const state = ctx.eventController.getHandleState();
+    const state =
+      (movedOn ? undefined : ctx.eventController.getHydrationHandleState()) ??
+      ctx.eventController.getHandleState();
     const collected = collectHandleData(
       handle,
       state.data,
