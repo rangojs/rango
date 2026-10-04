@@ -184,6 +184,76 @@ keeps serving a purged shell until `memo.shellMs` passes. Set
 user's next request; cross-colo KV propagation (and `tagCacheTtl`) still
 applies. Details: `/caching` → "The fresh-reads cookie".
 
+## On-demand prerender on Workers
+
+A `Prerender(..., { onDemand })` route (`/prerender` → "On-demand refresh")
+needs a durable store for its refreshed entries. On Workers that is KV:
+
+```typescript
+import { createKVPrerenderStore } from "@rangojs/router/prerender/cloudflare";
+
+export const router = createRouter<AppBindings>({
+  document: Document,
+  urls: urlpatterns,
+  prerender: (env) => ({
+    store: createKVPrerenderStore(env.PRERENDER_KV),
+    ttl: 3600, // soft: a stale entry still serves
+    // Present = stale-while-revalidate: a stale hit schedules this via waitUntil.
+    onRevalidate: (target, liveEnv) => liveEnv.PRERENDER_QUEUE.send({ target }),
+  }),
+});
+```
+
+Add the `PRERENDER_KV` namespace (and the queue, if you use one) to
+`wrangler.jsonc` and to `AppBindings`. Refreshes run from the Worker's other
+handlers, with the live `env`:
+
+```typescript
+export default {
+  fetch: (request: Request, env: AppBindings, ctx: ExecutionContext) =>
+    router.fetch(request, { env, ctx }),
+
+  // Cron sweep: re-render only what went stale.
+  async scheduled(
+    _event: ScheduledEvent,
+    env: AppBindings,
+    ctx: ExecutionContext,
+  ) {
+    const ids = await env.CMS.listProductIds();
+    ctx.waitUntil(
+      router.prerender.many(
+        ids.map((id) => ({ route: "products.detail", params: { id } })),
+        { env, ctx, concurrency: 4, onlyIfStale: true },
+      ),
+    );
+  },
+
+  // Queue consumer: the queue owns dedup across isolates.
+  async queue(
+    batch: MessageBatch<{ target: PrerenderTargetObject }>,
+    env: AppBindings,
+    ctx: ExecutionContext,
+  ) {
+    // The onRevalidate target is a plain { route, params } (route: string),
+    // which a router typed with named routes does not accept as is.
+    const targets = batch.messages.map((m) => m.body.target) as Parameters<
+      typeof router.prerender.many
+    >[0];
+    ctx.waitUntil(router.prerender.many(targets, { env, ctx, concurrency: 8 }));
+  },
+};
+```
+
+`PrerenderTargetObject` comes from `@rangojs/router/prerender`.
+
+The KV store writes no `expirationTtl` (entries never expire; `ttl` is soft)
+and keys entries by router id and the router's data version, so a deploy that
+changes server code starts from the build entries again.
+`router.prerender.markStale(tags, { env, ctx })` writes per-tag markers under
+`__rango_pr_tag__/`, a namespace separate from `updateTag()`'s; a read checks
+one marker per tag on the entry, uncached, so keep tag counts small. Neither
+`updateTag()` nor `revalidateTag()` reaches this store.
+
 ## Tracing on Workers
 
 `createCloudflareTracing()` from `@rangojs/router/cloudflare` emits the

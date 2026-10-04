@@ -41,9 +41,9 @@ route was pre-rendered.
   [Build-time PPR shells](#build-time-ppr-shells-producer-b).
 - **ISR-style revalidation** - `Prerender(..., { onDemand })` plus
   `router.prerender()` refreshes a writable durable overlay without a deploy;
-  `Passthrough` remains the live fallback until an entry exists. Adding
-  `onDemand` to a `ppr` route makes `ppr` inert (the route leaves the shell
-  lane; dev warns). A plain (non-Passthrough) `onDemand` route keeps the
+  `Passthrough` remains the live fallback until an entry exists. A route that
+  sets both `onDemand` and `ppr` throws at definition (a refresh cannot replace
+  the captured shell atomically). A plain (non-Passthrough) `onDemand` route keeps the
   pr-miss contract in production: an overlay+manifest miss is a 404
   (`DataNotFoundError`), never an in-request producer render. A refresh cannot
   reach connected clients until their prefetch/HTTP caches expire — see the
@@ -617,6 +617,15 @@ time for loader resolution and any live handler execution.
 Actions do not re-render pre-rendered segments. The frozen handler output
 stays. Loaders can be revalidated by actions. With `Passthrough()` routes and
 `revalidate()`, the live handler can re-render.
+
+A plain `Prerender(..., { onDemand })` route is the exception that proves the
+rule: its action re-render reads the on-demand overlay before the bundled
+manifest (cache-lookup.ts), because the overlay entry may be the only one (a
+param no build baked) or newer than the build one. An overlay hit on an action
+re-sends the route's own segments (`type === "route"` or `belongsToRoute`,
+the live action default), so an action that calls `router.prerender()` for the
+page shows the entry it just stored. Before this, the re-render skipped the
+overlay and 404'd an overlay-only param in production.
 
 A client component can directly import and invoke a module-level action from a
 `Passthrough(Prerender(...), liveHandler) + ppr` page. If actions should leave

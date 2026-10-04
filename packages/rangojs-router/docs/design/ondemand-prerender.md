@@ -5,12 +5,14 @@ prerender refresh from a running app; the API and safety rules below ship in
 `@rangojs/router`.
 
 **Shipped in v1:** the `prerender` router option, `router.prerender()` /
-`.many()` / `.invalidateTags()`, the `Prerender(..., { onDemand })` opt-in and
+`.many()` / `.markStale()`, the `Prerender(..., { onDemand })` opt-in and
 `od` trie flag, per-request store resolution, the writable durable overlay read
-path with SWR scheduling, the requestless producer + personalization guard, the
-versioned envelope with build-scoped keys and verify-on-read, producer-code
-retention in the bundle, and the in-memory (`@rangojs/router/prerender`) and
-Cloudflare KV (`@rangojs/router/prerender/cloudflare`) stores.
+path (GETs and plain-route action re-renders) with deduplicated
+stale-while-revalidate scheduling, the requestless producer + personalization
+guard, the versioned envelope keyed by the router's data version and verified
+by the router on every read, producer-code retention in the bundle, and the
+in-memory (`@rangojs/router/prerender`) and Cloudflare KV
+(`@rangojs/router/prerender/cloudflare`) stores.
 
 **Deferred (as the phasing below anticipates):** intercept-variant refresh (the
 producer renders the main variant first) — INTERIM CONSISTENCY CALL-OUT: after a
@@ -19,8 +21,10 @@ producer renders the main variant first) — INTERIM CONSISTENCY CALL-OUT: after
 intercept artifact until the next deploy, because the trigger writes only the
 main-variant key and the serve path's `:i` lookup finds no overlay entry. The
 modal and the full page can therefore show different data in the window between a
-refresh and a redeploy; `prerender.invalidateTags()` does not reach the intercept
-variant. Track under the intercept-refresh follow-up. Also deferred: build-time
+refresh and a redeploy; `prerender.markStale()` does not reach the intercept
+variant. An on-demand route used as an intercept target 404s in production on a
+param that only a refresh produced: the intercept navigation skips the overlay,
+misses the bundled `:i` artifact, and the gated producer refuses to render. Track under the intercept-refresh follow-up. Also deferred: build-time
 durable seeding (Phase 8),
 a Vercel Blob adapter (the interface is platform-agnostic; the concrete v1
 adapters are in-memory + CF KV), and a tombstone/delete invalidation mode
@@ -34,10 +38,10 @@ replace the durable segment payload, but it cannot atomically replace a cached
 document shell; serving both would pair a fresh tail with a stale prelude.
 The exclusion is enforced by `isPprEntry` (`server/context.ts`) — the single
 predicate every shell entry point (capture, serve, replay, build collection)
-funnels through — so adding `onDemand` to a `ppr: true` route makes `ppr`
-inert: the route loses the shell fast path (cold-document LCP regresses from
-shell-serve to full SSR). Dev logs a warning for the combination
-(`path-helper.ts`); pick one of the two options per route.
+funnels through. Because an inert `ppr` silently cost the route its shell fast
+path (cold-document LCP regresses from shell-serve to full SSR), and a dev-only
+warning let that ship unnoticed, a route that sets both options throws at
+definition (`path-helper.ts`); pick one of the two per route.
 
 **Client-side staleness window.** A refresh cannot reach already-connected
 clients: it is requestless, so there is no response to rotate the state cookie
@@ -58,11 +62,15 @@ that by every od link entering the viewport. Keep tag counts per route small;
 an L1 marker memo (as the runtime cache's CFCacheStore has) is the follow-up
 if this shows up in KV analytics.
 
-**Tag namespaces are disjoint.** `prerender.invalidateTags()` marks only
+**Tag namespaces are disjoint.** `prerender.markStale()` marks only
 prerender-store entries (`__rango_pr_tag__/` markers). It does not reach
 runtime-cache tags (`updateTag`/`revalidateTag`), PPR shell entries, or
 `createCloudflareZonePurge` zone tags — a consumer stamping the same logical
-tag across layers must invalidate each layer explicitly.
+tag across layers must invalidate each layer explicitly. The reverse holds
+too, and is a v1 decision: `updateTag()` / `revalidateTag()` never reach the
+prerender store. They need a request context, and refreshes run from queues
+and crons; `router.prerender()` is the way to refresh, `markStale()` the way
+to mark.
 
 Start from the existing prerender mental model: prerendering is cached RSC
 segment payloads, not static HTML. Build-time prerender writes immutable payloads
@@ -128,12 +136,16 @@ export const router = createRouter({
   routes,
   prerender: (env, ctx) => ({
     store: createKVPrerenderStore(env.PRERENDER_KV),
-    defaultTtl: 3600,
-    swr: true,
+    ttl: 3600,
     onRevalidate: (target, env) => env.PRERENDER_QUEUE.send({ target }),
   }),
 });
 ```
+
+`PrerenderConfig` is `{ store, ttl?, onRevalidate? }`. An earlier draft had a
+separate `swr: boolean`; it was removed because `onRevalidate` without `swr`
+was dead configuration. The presence of `onRevalidate` is the
+stale-while-revalidate opt-in.
 
 The option is the same union shape as `cache`:
 
@@ -149,10 +161,15 @@ plain-object form is part of the union — as it already is for `cache` — late
 build-time durable seeding options can live in the same config without renaming
 anything.
 
-`onRevalidate` receives the typed target (`{ route, params }`, kept
+`onRevalidate` receives the target (`{ route, params }`, kept
 JSON-serializable so it can go straight into a queue message) and the live env.
+It runs at most once per stale key per isolate while one is in flight
+(`scheduleOverlayRevalidation`, `cache-lookup.ts`), so the obvious single
+process wiring, a direct `router.prerender()` call, renders once per stale key
+rather than once per stale request. The target's `route` is a plain string, so
+a router typed with named routes needs a cast to accept it back (a follow-up).
 
-TTL resolves route `onDemand.ttl` > router `defaultTtl` > never stale, and it
+TTL resolves route `onDemand.ttl` > router `ttl` > never stale, and it
 is soft staleness metadata on the stored entry, never a hard store expiry — see
 Store Model for why that distinction is load-bearing.
 
@@ -166,7 +183,8 @@ inherit that.
 ### Route opt-in
 
 `Prerender()` gets an `onDemand` option. `true` uses router defaults; an object
-overrides them per route.
+overrides them per route. `tags` is a `string[]` or a `(target) => string[]`,
+like `cache()`'s `tags`.
 
 ```tsx
 export const ProductPage = Prerender(
@@ -271,12 +289,18 @@ adds explicit search-param keying. The current prerender key is route plus param
 plus variant, so silently persisting `/products/42?preview=1` under the same key
 as `/products/42` would be unsafe.
 
-Invalidation is deliberately namespaced under prerender so it does not look like
-the existing runtime cache tag API:
+Marking is deliberately namespaced under prerender so it does not look like
+the existing runtime cache tag API, and named for what it does: it marks
+entries stale and keeps serving them, where `updateTag()` / `revalidateTag()`
+purge (an earlier draft called it `invalidateTags`):
 
 ```ts
-await router.prerender.invalidateTags(["product:42"], { env, ctx });
+await router.prerender.markStale(["product:42"], { env, ctx });
 ```
+
+Dev warns once when `markStale()` runs against a store with no `onRevalidate`
+configured: nothing would ever re-render a marked entry unless a sweep calls
+`router.prerender(target, { onlyIfStale: true })`.
 
 The existing `updateTag()` / `revalidateTag()` APIs remain runtime-cache APIs.
 They should not silently mutate durable prerender entries. There is a second
@@ -455,29 +479,29 @@ added once the main producer and store overlay are stable.
 ## Store Model
 
 The existing production store is a read-only manifest. On-demand prerender needs
-a writable durable overlay:
+a writable durable overlay, and you might expect the store to own the safety
+rules that come with it. It does not: a store is plain get/set, and the router
+owns the envelope.
 
 ```ts
 interface WritablePrerenderStore {
-  get(
-    key: PrerenderKey,
-    meta: PrerenderLookupMeta,
-  ): Promise<PrerenderStoredEntry | null>;
-
-  set(
-    key: PrerenderKey,
-    entry: PrerenderEntry,
-    options: PrerenderSetOptions,
-  ): Promise<void>;
-
+  get(key: PrerenderKey): Promise<PrerenderStoredEntry | null>;
+  set(key: PrerenderKey, stored: PrerenderStoredEntry): Promise<void>;
   delete?(key: PrerenderKey): Promise<void>;
-  invalidateTags?(tags: string[]): Promise<void>;
+  markStale?(tags: string[]): Promise<void>;
 }
 ```
 
-The `get()` / `set()` asymmetry is deliberate: `set()` takes the raw
-`PrerenderEntry` plus options, and the store composes them into a versioned
-envelope that `get()` returns:
+The trigger composes the versioned envelope (`composeStoredEntry`,
+`writable-store.ts`) and hands it to `set()`; the store persists it as given.
+Every read is verified by the router, not the store: the serve path
+(`cache-lookup.ts`) and the trigger's `onlyIfStale` read both run
+`isStoredEntryValidFor` on whatever `get()` returned. The first version of this
+contract had the store compose and verify (`get(key, meta)`,
+`set(key, entry, options)`), with the helpers unexported, so a third-party store
+had to reimplement the collision guard by hand, or skip it without anyone
+noticing. A store may still lower `meta.staleAt` on read from its own tag
+markers, which is how the KV store implements `markStale()`.
 
 ```ts
 interface PrerenderStoredEntry {
@@ -487,7 +511,7 @@ interface PrerenderStoredEntry {
     storedAt: number;
     staleAt?: number; // absent = never stale
     tags: string[];
-    buildId: string;
+    version: string; // the key's version at write time
     params: Record<string, string>; // verified against the request on read
   };
 }
@@ -496,9 +520,9 @@ interface PrerenderStoredEntry {
 Two rules follow from the envelope:
 
 - TTL is `staleAt`, soft metadata — never a hard store expiry like KV
-  `expirationTtl`. Hard expiry deletes the very entry SWR needs to serve stale,
-  and worse, an expired overlay falls back to the bundled manifest, which is
-  older content than what just expired.
+  `expirationTtl`. Hard expiry deletes the very entry a stale serve needs, and
+  worse, an expired overlay falls back to the bundled manifest, which is older
+  content than what just expired. Entries never expire.
 - `meta.params` exists because the key hash is 8-hex DJB2 with a documented
   32-bit collision caveat (`src/prerender/param-hash.ts`). At build time a
   collision is detectable inside one process; with runtime writes keyed off
@@ -506,12 +530,7 @@ Two rules follow from the envelope:
   another's URL. Verify-on-read is the cheap fix; a stronger hash for durable
   keys is the alternative.
 
-The new interface is also the chance to fix a known leaky seam: today's
-`PrerenderStore.get()` advertises a `meta` contract that only the dev store
-honors. `PrerenderLookupMeta` should be an explicit contract every
-implementation honors, or it should not exist.
-
-The read path should be:
+The read path is:
 
 ```txt
 durable overlay -> bundled build manifest -> miss/live fallback
@@ -523,39 +542,49 @@ whether a refresh gets scheduled (see SWR And Queues).
 
 The durable overlay must not memoize misses for the lifetime of an isolate.
 Queues, workflows, and webhooks can refresh a key after a previous request
-missed it. Note the trap: today's production store memoizes every result —
+missed it. Note the trap: the production manifest store memoizes every result —
 including nulls — in a per-isolate `Map` forever (`src/prerender/store.ts`),
 which is correct for the immutable manifest and wrong for the overlay. Bounded
 negative caching (a few seconds) is fine, and worth having so on-demand routes
-that were never refreshed do not pay a store read per request forever.
+that were never refreshed do not pay a store read per request forever; it is a
+follow-up, not in v1.
 
-Keys must include the deployment identity:
+Keys carry the owning router's cache version:
 
 ```txt
-prerender:{routerId}:{buildId}:{routeName}:{paramHash}
-prerender:{routerId}:{buildId}:{routeName}:{paramHash}:i
+prerender:{routerId}:{version}:{routeName}:{paramHash}
+prerender:{routerId}:{version}:{routeName}:{paramHash}:i
 ```
 
-The build id prevents a new deployment from reading old Flight payloads that
-refer to previous client references or chunks. The store may keep old build ids
-for rollback, but reads for the current app must be scoped to the current
-build. Nothing injects a build id today; it needs a build-time constant, and a
-content hash of the client manifest is the natural choice.
+`version` is the router's **data** version
+(`docs/design/per-app-cache-version.md`), or `createRouter({ version })` when
+the app sets one. The overlay stores `SerializedSegmentData[]`, exactly what the
+segment cache stores under the data version, so it follows the same rule: a
+deploy that changes the router's server code starts over, a client-only deploy
+keeps every refreshed page. The first cut keyed on the document version, which
+made a CSS tweak wipe every refreshed page — the outcome per-app versions exist
+to prevent. Both sides resolve it through one call, `resolvePrerenderVersion`
+(`server/build-version-table.ts`): the trigger per call, `rsc/handler.ts` when
+the handler is created. A `createRSCHandler({ version })` does not move it,
+because the trigger never sees that option.
+
+A store keys off `key.version` and must never call `getCacheVersions()`: the
+trigger's `set()` runs outside the producer's request context, where that
+returns the whole-build fallback instead of the owning router's version.
 
 Two consequences worth stating out loud:
 
-- Every deploy starts with an empty overlay. All on-demand freshness resets to
-  the bundled manifest until entries are refreshed again; build-time durable
+- A server-code deploy starts with an empty overlay. On-demand freshness resets
+  to the bundled manifest until entries are refreshed again; build-time durable
   seeding (below) is the mitigation.
-- Cloudflare gradual deployments become correct for free: old and new worker
-  versions serving concurrently each read their own build-scoped namespace.
+- Cloudflare gradual deployments stay correct: old and new worker versions
+  serving concurrently each read their own version's namespace.
 
-The first adapter should reuse the `CFCacheStore` machinery rather than start a
-fresh KV store: it already has durable get/set/delete, a working
-`invalidateTags` via KV tag markers, version- and host-namespaced keys, and an
-L1 Cache API + L2 KV layout (`src/cache/cf/cf-cache-store.ts`). Tag indexing on
-eventually consistent KV is genuinely fiddly; the tag-marker approach is the
-already-solved version of it.
+The v1 KV adapter (`createKVPrerenderStore`) is self-contained rather than an
+extraction of `CFCacheStore`'s tag machinery: the same timestamp-marker
+algorithm, in a separate marker namespace (`__rango_pr_tag__/`), with lower
+regression risk for the runtime cache. Reusing `CFCacheStore`'s L1 marker memo
+is a follow-up if per-request marker reads show up in KV analytics.
 
 ## Build-time Durable Seeding
 
@@ -592,12 +621,12 @@ route has prerender or on-demand flag?
 resolve env-scoped prerender store
   |
   v
-lookup durable overlay by build-scoped key
+lookup durable overlay by versioned key; verify the answer
   |
   +-- fresh hit --> yieldFromStore(entry), then resolve loaders fresh
   |
-  +-- stale hit --> serve it the same way;
-  |                 swr: schedule onRevalidate via waitUntil
+  +-- stale hit --> serve it the same way; with onRevalidate configured,
+  |                 schedule it via waitUntil (once per key per isolate)
   |
   v
 lookup bundled manifest
@@ -619,6 +648,27 @@ exactly like today's `pr + miss` — `pt` alone decides whether a live handler
 runs. Without this rule, a miss turns into render-during-request, with the
 thundering-herd problems this design deliberately pushes out to queues and
 Durable Objects.
+
+Server actions take the same path on a plain on-demand route, and you might ask
+why they read a store at all, since an action re-render normally runs fresh. A
+plain `Prerender` route has no live handler to run (it was evicted, or for an
+on-demand route it is gated), so an action re-render that skipped the overlay
+404'd an overlay-only param in production and served the older build payload
+for a baked one. The overlay is read on actions too; Passthrough routes still
+re-render live. An overlay hit on an action re-sends the route's own segments
+(`yieldFromStore`'s `replaceable` flag, mirroring the live
+`action:route-segment` default) instead of keeping the client's copy, so an
+action that awaits `router.prerender()` for the page shows the new entry in
+its own re-render. The immutable bundled manifest keeps the client's copy as
+before.
+
+| Request finds                     | `Prerender(..., { onDemand })`                             | `Passthrough(def, live)`                   |
+| --------------------------------- | ---------------------------------------------------------- | ------------------------------------------ |
+| fresh overlay entry               | the overlay entry, loaders fresh (dev and production)      | same                                       |
+| stale overlay entry               | the overlay entry; `onRevalidate` scheduled if configured  | same                                       |
+| no overlay entry, param baked     | production: the build entry; dev: the dev prerender render | same                                       |
+| no overlay entry, param not baked | production: 404; dev: rendered through the dev endpoint    | the live handler (dev and production)      |
+| server action re-render           | overlay, then build entry, then 404, as above              | the live handler (the overlay is not read) |
 
 ### Refreshing
 
@@ -670,20 +720,22 @@ the in-memory overlay, mirroring production's overlay -> manifest order.
 ## SWR And Queues
 
 SWR is a scheduling policy, not a serving policy. A stale overlay entry serves
-either way (it is newer than anything below it); `swr: true` controls whether
-the serve path schedules `onRevalidate` on a stale hit:
+either way (it is newer than anything below it); configuring `onRevalidate` is
+what makes the serve path schedule it on a stale hit:
 
 ```ts
 createRouter({
   prerender: (env, ctx) => ({
     store: createKVPrerenderStore(env.PRERENDER_KV),
-    swr: true,
     onRevalidate: (target, env) => env.PRERENDER_QUEUE.send({ target }),
   }),
 });
 ```
 
-For Cloudflare, queue-native dedup or a Durable Object should own herd control.
+Within one isolate the router dedups for you: a key with an `onRevalidate` in
+flight is not scheduled again until that task settles, so a hot stale page on
+a single Node process renders once, not once per request. Across isolates it
+cannot help. For Cloudflare, queue-native dedup or a Durable Object should own herd control.
 KV is eventually consistent, so a KV lock alone is not enough to prevent a burst
 of refresh jobs.
 
@@ -762,7 +814,10 @@ export async function updateProduct(id: string, formData: FormData) {
 ```
 
 The action's current request is not the prerender input. The prerender producer
-gets env and execution capability, not user cookies or headers.
+gets env and execution capability, not user cookies or headers. Scheduling the
+refresh with `waitUntil` returns the action sooner; awaiting
+`router.prerender()` instead makes the action's own re-render of that page show
+the new entry (an overlay hit on an action re-sends the route's segments).
 
 ## Why Not Reuse The Live Request?
 
@@ -813,7 +868,7 @@ but it should have its own API and invalidation namespace.
 4. Add the durable overlay read path before bundled manifest lookup.
 5. Add `router.prerender(target, runtime)` with result objects and requestless
    producer semantics.
-6. Add `router.prerender.many()` and `router.prerender.invalidateTags()`.
+6. Add `router.prerender.many()` and `router.prerender.markStale()`.
 7. Add SWR scheduling and platform adapters for Cloudflare and Vercel.
 8. Add optional build-time durable seeding via `buildEnv`.
 
@@ -824,13 +879,18 @@ behavior. Coverage should include:
 
 - Unit tests for target resolution, route opt-in, result statuses, versioned key
   generation, and store failures.
-- A multi-build key-scoping test: entries written under a previous buildId are
-  not served after a deploy.
-- A param-collision test pinning the verify-on-read behavior.
+- A multi-version key-scoping test: entries written under a previous version
+  are not served after a server-code deploy, and are after a client-only one.
+- A param-collision test pinning the router-side verify-on-read behavior.
 - Userland tests through public testing primitives so consumers can test code
-  that calls `router.prerender()` — likely an in-memory
-  `WritablePrerenderStore` fake exported from `@rangojs/router/testing`, plus
-  whatever `dispatch` needs to serve from it.
+  that calls `router.prerender()`: `createMemoryPrerenderStore` from
+  `@rangojs/router/testing`, and `serveShellRequest` from
+  `@rangojs/router/testing/flight` to serve the refreshed entry through the
+  production request handler (`testing/__tests__/on-demand-prerender.rsc-test.tsx`).
+  `dispatch` cannot serve it: it renders response routes only and throws on a
+  component route, and the overlay is read in the RSC match pipeline.
+- E2E for server actions on plain on-demand routes: an action on an
+  overlay-only page, and `router.prerender()` inside the action.
 - E2E tests in both dev and production for the e2e test app and the Cloudflare
   basic app.
 - Production tests proving a durable entry serves through the prerender store
