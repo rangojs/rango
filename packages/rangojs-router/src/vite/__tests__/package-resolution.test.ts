@@ -14,5 +14,8 @@ describe("getVendorAliases", () => {
     expect(aliases).toHaveProperty(
       "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge",
     );
+    expect(aliases).toHaveProperty(
+      "@vitejs/plugin-rsc/vendor/react-server-dom/static.edge",
+    );
   });
 });

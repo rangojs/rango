@@ -74,6 +74,22 @@ Still open:
 - A Back/Forward the server answers with a redirect is not followed
   ([#1047](https://github.com/rangojs/rango/issues/1047)).
 
+### Fixed: `pnpm dev` no longer warns about `@vitejs/plugin-rsc/vendor/react-server-dom/static.edge` ([#1050](https://github.com/rangojs/rango/issues/1050))
+
+An app that installs only `@rangojs/router`, `react`, `react-dom` and `vite`
+(as the README says) printed this on every `pnpm dev` under pnpm's strict
+`node_modules`:
+
+```
+Failed to resolve dependency: @vitejs/plugin-rsc/vendor/react-server-dom/static.edge, present in rsc 'optimizeDeps.include'
+```
+
+The app still served; the module was left out of the dependency pre-bundle.
+`rango()` now resolves that entry through `@rangojs/router`, as it already
+did for the other `@vitejs/plugin-rsc/vendor/*` entries, so the warning is
+gone without adding `@vitejs/plugin-rsc` to your `package.json`. An app that
+does list `@vitejs/plugin-rsc` needs no change.
+
 ### Fixed: `buildEnv: "auto"` reads the wrangler config of the Vite root
 
 With `rango({ preset: "cloudflare", buildEnv: "auto" })`, building from a
