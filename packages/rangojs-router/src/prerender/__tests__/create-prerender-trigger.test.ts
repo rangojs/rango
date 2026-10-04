@@ -336,15 +336,38 @@ describe("createPrerenderTrigger", () => {
     });
 
     it("renders when the existing entry is stale", async () => {
-      let now = 1000;
-      const store = createMemoryPrerenderStore({ now: () => now });
+      // The trigger composes the envelope, so its clock decides staleAt.
+      const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
+      try {
+        const store = createMemoryPrerenderStore();
+        const runProducer = vi.fn(async () =>
+          output({ onDemandConfig: { ttl: 1 } }),
+        );
+        const { trigger } = harness({ config: { store }, runProducer });
+        await trigger("/products/42", { env: {} }); // staleAt = 1000 + 1000ms
+        runProducer.mockClear();
+        clock.mockReturnValue(5000); // past staleAt
+        const result = await trigger("/products/42", {
+          env: {},
+          onlyIfStale: true,
+        });
+        expect(result).toMatchObject({ ok: true, status: "rendered" });
+        expect(runProducer).toHaveBeenCalledTimes(1);
+      } finally {
+        clock.mockRestore();
+      }
+    });
+
+    it("renders when the existing entry fails verification", async () => {
+      const store = createMemoryPrerenderStore();
       const runProducer = vi.fn(async () =>
-        output({ onDemandConfig: { ttl: 1 } }),
+        output({ onDemandConfig: { ttl: 3600 } }),
       );
       const { trigger } = harness({ config: { store }, runProducer });
-      await trigger("/products/42", { env: {} }); // staleAt = 1000 + 1000ms
+      await trigger("/products/42", { env: {} });
+      // A colliding entry under the same key (other params) is not "fresh".
+      store.entries()[0]![1].meta.params = { id: "99" };
       runProducer.mockClear();
-      now = 5000; // past staleAt
       const result = await trigger("/products/42", {
         env: {},
         onlyIfStale: true,

@@ -6,14 +6,9 @@
  * after an earlier miss), no React/RSC deps.
  */
 
-import type { PrerenderEntry } from "./store.js";
 import {
-  composeStoredEntry,
-  isStoredEntryValidFor,
   serializePrerenderKey,
   type PrerenderKey,
-  type PrerenderLookupMeta,
-  type PrerenderSetOptions,
   type PrerenderStoredEntry,
   type WritablePrerenderStore,
 } from "./writable-store.js";
@@ -21,7 +16,7 @@ import {
 export interface MemoryPrerenderStore extends WritablePrerenderStore {
   delete(key: PrerenderKey): Promise<void>;
   markStale(tags: string[]): Promise<void>;
-  /** Read an entry by structured key without the verify-on-read check (tests). */
+  /** Synchronous read by structured key (tests). */
   peek(key: PrerenderKey): PrerenderStoredEntry | null;
   /** All stored [serializedKey, entry] pairs (tests). */
   entries(): [string, PrerenderStoredEntry][];
@@ -31,7 +26,7 @@ export interface MemoryPrerenderStore extends WritablePrerenderStore {
 }
 
 export interface MemoryPrerenderStoreOptions {
-  /** Injectable clock for deterministic tests. Defaults to Date.now. */
+  /** Injectable clock for `markStale` in deterministic tests. Defaults to Date.now. */
   now?: () => number;
 }
 
@@ -47,26 +42,12 @@ export function createMemoryPrerenderStore(
   const map = new Map<string, PrerenderStoredEntry>();
 
   return {
-    async get(
-      key: PrerenderKey,
-      meta: PrerenderLookupMeta,
-    ): Promise<PrerenderStoredEntry | null> {
-      const stored = map.get(serializePrerenderKey(key));
-      if (!stored) return null;
-      // Verify-on-read: version + canonical params must match (collision guard).
-      if (!isStoredEntryValidFor(stored, key, meta)) return null;
-      return stored;
+    async get(key: PrerenderKey): Promise<PrerenderStoredEntry | null> {
+      return map.get(serializePrerenderKey(key)) ?? null;
     },
 
-    async set(
-      key: PrerenderKey,
-      entry: PrerenderEntry,
-      setOptions: PrerenderSetOptions,
-    ): Promise<void> {
-      map.set(
-        serializePrerenderKey(key),
-        composeStoredEntry(key, entry, setOptions, now()),
-      );
+    async set(key: PrerenderKey, stored: PrerenderStoredEntry): Promise<void> {
+      map.set(serializePrerenderKey(key), stored);
     },
 
     async delete(key: PrerenderKey): Promise<void> {
@@ -78,7 +59,10 @@ export function createMemoryPrerenderStore(
       const tagSet = new Set(tags);
       const at = now();
       for (const stored of map.values()) {
-        if (stored.meta.tags.some((t) => tagSet.has(t))) {
+        if (
+          stored.meta.tags.some((t) => tagSet.has(t)) &&
+          (stored.meta.staleAt == null || stored.meta.staleAt > at)
+        ) {
           // Mark-stale: keep serving, but a stale hit schedules a refresh.
           stored.meta.staleAt = at;
         }

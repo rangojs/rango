@@ -17,8 +17,6 @@ export {
 export {
   serializePrerenderKey,
   type PrerenderKey,
-  type PrerenderLookupMeta,
-  type PrerenderSetOptions,
   type PrerenderStoredEntry,
   type WritablePrerenderStore,
 } from "./writable-store.js";

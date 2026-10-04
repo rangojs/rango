@@ -102,6 +102,7 @@ import { loaderPins } from "../segment-resolution/loader-cache.js";
 import type { PrerenderStore, PrerenderEntry } from "../../prerender/store.js";
 import {
   isStoredEntryStale,
+  isStoredEntryValidFor,
   serializePrerenderKey,
   type PrerenderKey,
   type PrerenderStoredEntry,
@@ -472,9 +473,10 @@ async function* tryPrerenderLookup<TEnv>(
     // onlyIfStale read guard.
     let stored: PrerenderStoredEntry | null = null;
     try {
-      stored = await overlay.config.store.get(key, {
-        params: ctx.matched.params,
-      });
+      const read = await overlay.config.store.get(key);
+      // The router verifies every store's answer (shape, version, params
+      // collision guard), so a third-party store cannot skip it.
+      if (isStoredEntryValidFor(read, key, ctx.matched.params)) stored = read;
     } catch {
       stored = null;
     }

@@ -1,7 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { createKVPrerenderStore } from "../cloudflare.js";
-import { serializePrerenderKey, type PrerenderKey } from "../writable-store.js";
-import { isStoredEntryStale } from "../writable-store.js";
+import {
+  composeStoredEntry,
+  isStoredEntryStale,
+  serializePrerenderKey,
+  type PrerenderKey,
+} from "../writable-store.js";
 import type { PrerenderEntry } from "../store.js";
 import type { KVNamespace } from "../../cache/cf/cf-cache-types.js";
 
@@ -44,14 +48,32 @@ function key(over: Partial<PrerenderKey> = {}): PrerenderKey {
   };
 }
 
+// The router-composed envelope the store persists as given.
+function stored(
+  over: { ttl?: number; tags?: string[] } = {},
+  k: PrerenderKey = key(),
+  now = 1000,
+) {
+  return composeStoredEntry(
+    k,
+    entry,
+    {
+      ...(over.ttl != null ? { ttl: over.ttl } : {}),
+      tags: over.tags ?? [],
+      params: { id: "42" },
+    },
+    now,
+  );
+}
+
 describe("createKVPrerenderStore", () => {
   it("round-trips set -> get and stores under the design key", async () => {
     const kv = fakeKV();
     const store = createKVPrerenderStore(kv);
-    await store.set(key(), entry, { params: { id: "42" }, ttl: 60 });
+    await store.set(key(), stored({ ttl: 60 }));
     expect(kv.map.has("prerender:r1:b1:products.detail:abc12345")).toBe(true);
-    const got = await store.get(key(), { params: { id: "42" } });
-    expect(got?.entry.handles).toBe("h");
+    const got = await store.get(key());
+    expect(got).toEqual(stored({ ttl: 60 }));
   });
 
   it("writes NO KV expirationTtl (soft staleAt only)", async () => {
@@ -65,93 +87,72 @@ describe("createKVPrerenderStore", () => {
       },
     };
     const store = createKVPrerenderStore(spied);
-    await store.set(key(), entry, { params: { id: "42" }, ttl: 60 });
+    await store.set(key(), stored({ ttl: 60 }));
     expect(putCalls.every((c) => c.opts === undefined)).toBe(true);
   });
 
-  it("verifies params on read (collision guard)", async () => {
+  it("keys by the full key: another version is a different entry", async () => {
     const kv = fakeKV();
     const store = createKVPrerenderStore(kv);
-    await store.set(key(), entry, { params: { id: "42" } });
-    expect(await store.get(key(), { params: { id: "42" } })).not.toBeNull();
-    expect(await store.get(key(), { params: { id: "99" } })).toBeNull();
-  });
-
-  it("scopes reads to the current version", async () => {
-    const kv = fakeKV();
-    const store = createKVPrerenderStore(kv);
-    await store.set(key({ version: "old" }), entry, { params: { id: "42" } });
-    expect(
-      await store.get(key({ version: "new" }), { params: { id: "42" } }),
-    ).toBeNull();
+    await store.set(
+      key({ version: "old" }),
+      stored({}, key({ version: "old" })),
+    );
+    expect(await store.get(key({ version: "new" }))).toBeNull();
   });
 
   it("returns null for a corrupt stored value", async () => {
     const kv = fakeKV();
     kv.map.set(serializePrerenderKey(key()), "{not json");
     const store = createKVPrerenderStore(kv);
-    expect(await store.get(key(), { params: { id: "42" } })).toBeNull();
+    expect(await store.get(key())).toBeNull();
   });
 
-  it("returns null (not a crash) for parseable-but-malformed values", async () => {
-    const store = createKVPrerenderStore(fakeKVWith("null"));
-    expect(await store.get(key(), { params: { id: "42" } })).toBeNull();
-    const store2 = createKVPrerenderStore(fakeKVWith(JSON.stringify({ v: 1 })));
-    expect(await store2.get(key(), { params: { id: "42" } })).toBeNull();
-    const store3 = createKVPrerenderStore(
-      fakeKVWith(JSON.stringify({ v: 1, meta: null })),
-    );
-    expect(await store3.get(key(), { params: { id: "42" } })).toBeNull();
-    const store4 = createKVPrerenderStore(
-      fakeKVWith(
-        JSON.stringify({
-          v: 1,
-          entry: null,
-          meta: { version: "b1", params: { id: "42" } },
-        }),
-      ),
-    );
-    expect(await store4.get(key(), { params: { id: "42" } })).toBeNull();
+  it("returns parseable-but-malformed values without throwing (the router rejects them)", async () => {
+    for (const raw of [
+      "null",
+      JSON.stringify({ v: 1 }),
+      JSON.stringify({ v: 1, meta: null }),
+      JSON.stringify({ v: 1, meta: { tags: "x", storedAt: 1 } }),
+    ]) {
+      const store = createKVPrerenderStore(fakeKVWith(raw));
+      await expect(store.get(key())).resolves.toEqual(JSON.parse(raw));
+    }
   });
 
   it("marks an entry stale (not deleted) when a tag marker is newer", async () => {
     let now = 1000;
     const kv = fakeKV();
     const store = createKVPrerenderStore(kv, { now: () => now });
-    await store.set(key(), entry, {
-      params: { id: "42" },
-      ttl: 3600,
-      tags: ["product:42"],
-    });
+    await store.set(key(), stored({ ttl: 3600, tags: ["product:42"] }));
     now = 2000;
     await store.markStale!(["product:42"]);
-    const got = await store.get(key(), { params: { id: "42" } });
+    const got = await store.get(key());
     // Still present (mark-stale, not delete), and now stale.
     expect(got).not.toBeNull();
     expect(isStoredEntryStale(got!, 2000)).toBe(true);
     expect(kv.map.has(serializePrerenderKey(key()))).toBe(true);
   });
 
-  it("leaves an entry written after the invalidation fresh", async () => {
+  it("leaves an entry written after the marker fresh", async () => {
     let now = 1000;
     const kv = fakeKV();
     const store = createKVPrerenderStore(kv, { now: () => now });
     await store.markStale!(["product:42"]); // marker = 1000
     now = 2000;
-    await store.set(key(), entry, {
-      params: { id: "42" },
-      ttl: 3600,
-      tags: ["product:42"],
-    }); // storedAt = 2000 > marker
-    const got = await store.get(key(), { params: { id: "42" } });
+    await store.set(
+      key(),
+      stored({ ttl: 3600, tags: ["product:42"] }, key(), 2000),
+    ); // storedAt = 2000 > marker
+    const got = await store.get(key());
     expect(isStoredEntryStale(got!, 2000)).toBe(false);
   });
 
   it("delete removes the entry", async () => {
     const kv = fakeKV();
     const store = createKVPrerenderStore(kv);
-    await store.set(key(), entry, { params: { id: "42" } });
+    await store.set(key(), stored());
     await store.delete!(key());
-    expect(await store.get(key(), { params: { id: "42" } })).toBeNull();
+    expect(await store.get(key())).toBeNull();
   });
 });

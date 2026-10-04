@@ -22,14 +22,9 @@
  */
 
 import type { KVNamespace } from "../cache/cf/cf-cache-types.js";
-import type { PrerenderEntry } from "./store.js";
 import {
-  composeStoredEntry,
-  isStoredEntryValidFor,
   serializePrerenderKey,
   type PrerenderKey,
-  type PrerenderLookupMeta,
-  type PrerenderSetOptions,
   type PrerenderStoredEntry,
   type WritablePrerenderStore,
 } from "./writable-store.js";
@@ -38,7 +33,7 @@ import {
 const PRERENDER_TAG_MARKER_PREFIX = "__rango_pr_tag__/";
 
 export interface KVPrerenderStoreOptions {
-  /** Injectable clock for deterministic tests. Defaults to Date.now. */
+  /** Injectable clock for `markStale` markers in deterministic tests. Defaults to Date.now. */
   now?: () => number;
 }
 
@@ -72,10 +67,7 @@ export function createKVPrerenderStore(
   }
 
   return {
-    async get(
-      key: PrerenderKey,
-      meta: PrerenderLookupMeta,
-    ): Promise<PrerenderStoredEntry | null> {
+    async get(key: PrerenderKey): Promise<PrerenderStoredEntry | null> {
       const raw = await kv.get(serializePrerenderKey(key));
       if (!raw) return null;
 
@@ -87,37 +79,30 @@ export function createKVPrerenderStore(
         return null;
       }
 
-      // Verify-on-read: version + canonical params (8-hex DJB2 collision guard).
-      if (!isStoredEntryValidFor(stored, key, meta)) return null;
-
-      // Tag invalidation is mark-stale: if any tag was invalidated at or after
-      // this entry was written, force it stale so SWR schedules a refresh — the
-      // entry still serves this request.
-      if (stored.meta.tags?.length) {
-        const markers = await Promise.all(stored.meta.tags.map(readTagMarker));
-        const invalidated = markers.some(
-          (m) => m != null && m >= stored.meta.storedAt,
-        );
-        if (
-          invalidated &&
-          (stored.meta.staleAt == null ||
-            stored.meta.staleAt > stored.meta.storedAt)
-        ) {
-          stored.meta.staleAt = stored.meta.storedAt;
+      // Tag invalidation is mark-stale: if any tag was marked at or after this
+      // entry was written, force it stale so a stale hit schedules a refresh;
+      // the entry still serves. Shape is verified by the router (writable-
+      // store.ts isStoredEntryValidFor), so only guard what is read here.
+      const meta = stored?.meta;
+      if (
+        meta &&
+        Array.isArray(meta.tags) &&
+        meta.tags.length > 0 &&
+        typeof meta.storedAt === "number"
+      ) {
+        const markers = await Promise.all(meta.tags.map(readTagMarker));
+        const marked = markers.some((m) => m != null && m >= meta.storedAt);
+        if (marked && (meta.staleAt == null || meta.staleAt > meta.storedAt)) {
+          meta.staleAt = meta.storedAt;
         }
       }
 
       return stored;
     },
 
-    async set(
-      key: PrerenderKey,
-      entry: PrerenderEntry,
-      setOptions: PrerenderSetOptions,
-    ): Promise<void> {
-      const envelope = composeStoredEntry(key, entry, setOptions, now());
+    async set(key: PrerenderKey, stored: PrerenderStoredEntry): Promise<void> {
       // No expirationTtl: staleAt is soft metadata (see file header).
-      await kv.put(serializePrerenderKey(key), JSON.stringify(envelope));
+      await kv.put(serializePrerenderKey(key), JSON.stringify(stored));
     },
 
     async delete(key: PrerenderKey): Promise<void> {

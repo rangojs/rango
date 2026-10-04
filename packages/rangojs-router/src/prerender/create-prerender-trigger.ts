@@ -19,9 +19,12 @@ import type { ExecutionContext } from "../types/request-scope.js";
 import { hashParams } from "./param-hash.js";
 import { isPrerenderPersonalizationError } from "./producer-guard.js";
 import {
+  composeStoredEntry,
   isStoredEntryStale,
+  isStoredEntryValidFor,
   serializePrerenderKey,
   type PrerenderKey,
+  type PrerenderStoredEntry,
 } from "./writable-store.js";
 import type {
   OnDemandRouteConfig,
@@ -238,9 +241,13 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
       // A failing stale-check read must not throw (breaking the no-throw /
       // one-result-per-target contract and aborting a many() batch) — treat an
       // unreadable entry as "couldn't confirm fresh" and fall through to render.
-      let existing = null;
+      let existing: PrerenderStoredEntry | null = null;
       try {
-        existing = await config.store.get(key, { params: match.params });
+        const read = await config.store.get(key);
+        // Same verification as the serve path: an entry the serve path would
+        // treat as a miss (malformed, another version, colliding params) is
+        // not "fresh".
+        existing = isStoredEntryValidFor(read, key, match.params) ? read : null;
       } catch {
         existing = null;
       }
@@ -321,10 +328,15 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
         typeof routeTags === "function"
           ? routeTags({ params: match.params })
           : [...(routeTags ?? [])];
+      // The router composes the envelope; the store only persists it.
       await config.store.set(
         key,
-        { segments: produced.segments, handles: produced.handles },
-        { ...(ttl != null ? { ttl } : {}), tags, params: match.params },
+        composeStoredEntry(
+          key,
+          { segments: produced.segments, handles: produced.handles },
+          { ...(ttl != null ? { ttl } : {}), tags, params: match.params },
+          Date.now(),
+        ),
       );
     } catch (err) {
       // Replace-on-success: a failed write leaves the prior durable entry (and

@@ -61,7 +61,7 @@ describe("composeStoredEntry / isStoredEntryStale", () => {
     const stored = composeStoredEntry(
       key(),
       entry,
-      { params: { id: "42" } },
+      { tags: [], params: { id: "42" } },
       1000,
     );
     expect(stored.meta.staleAt).toBeUndefined();
@@ -73,7 +73,7 @@ describe("composeStoredEntry / isStoredEntryStale", () => {
       const stored = composeStoredEntry(
         key(),
         entry,
-        { ttl, params: { id: "42" } },
+        { ttl, tags: [], params: { id: "42" } },
         1000,
       );
       expect(stored.meta.staleAt).toBeUndefined();
@@ -84,7 +84,7 @@ describe("composeStoredEntry / isStoredEntryStale", () => {
 
 describe("isStoredEntryValidFor — malformed durable values read as a miss", () => {
   const k = key();
-  const m = { params: { id: "42" } };
+  const m = { id: "42" };
   it("rejects null / non-object without throwing", () => {
     expect(isStoredEntryValidFor(null as any, k, m)).toBe(false);
     expect(isStoredEntryValidFor("null" as any, k, m)).toBe(false);
@@ -97,7 +97,7 @@ describe("isStoredEntryValidFor — malformed durable values read as a miss", ()
     );
   });
   it("rejects an envelope with a malformed entry without throwing", () => {
-    const meta = { version: k.version, params: m.params };
+    const meta = { version: k.version, params: m, tags: [], storedAt: 1 };
     expect(
       isStoredEntryValidFor({ v: 1, entry: null, meta } as any, k, m),
     ).toBe(false);
@@ -127,91 +127,118 @@ describe("isStoredEntryValidFor (verify-on-read)", () => {
   );
 
   it("passes when version and params match", () => {
-    expect(isStoredEntryValidFor(stored, key(), { params: { id: "42" } })).toBe(
-      true,
-    );
+    expect(isStoredEntryValidFor(stored, key(), { id: "42" })).toBe(true);
   });
 
   it("fails on a param mismatch (DJB2 collision guard)", () => {
-    expect(isStoredEntryValidFor(stored, key(), { params: { id: "99" } })).toBe(
-      false,
-    );
+    expect(isStoredEntryValidFor(stored, key(), { id: "99" })).toBe(false);
   });
 
   it("fails on a version mismatch (post-deploy scoping)", () => {
     expect(
-      isStoredEntryValidFor(stored, key({ version: "b2" }), {
-        params: { id: "42" },
-      }),
+      isStoredEntryValidFor(stored, key({ version: "b2" }), { id: "42" }),
+    ).toBe(false);
+  });
+
+  it("fails on an envelope missing tags or storedAt", () => {
+    expect(
+      isStoredEntryValidFor(
+        { ...stored, meta: { ...stored.meta, tags: undefined } },
+        key(),
+        { id: "42" },
+      ),
+    ).toBe(false);
+    expect(
+      isStoredEntryValidFor(
+        { ...stored, meta: { ...stored.meta, storedAt: "1000" } },
+        key(),
+        { id: "42" },
+      ),
     ).toBe(false);
   });
 });
 
+// Plain get/set: the store persists the router-composed envelope as given;
+// verification belongs to the router (isStoredEntryValidFor above).
+function stored(
+  over: { ttl?: number; tags?: string[]; params?: Record<string, string> } = {},
+  k: PrerenderKey = key(),
+  now = 1000,
+) {
+  return composeStoredEntry(
+    k,
+    entry,
+    {
+      ...(over.ttl != null ? { ttl: over.ttl } : {}),
+      tags: over.tags ?? [],
+      params: over.params ?? { id: "42" },
+    },
+    now,
+  );
+}
+
 describe("createMemoryPrerenderStore", () => {
-  it("round-trips set -> get with verify-on-read", async () => {
+  it("round-trips set -> get and returns the envelope as stored", async () => {
     const store = createMemoryPrerenderStore();
-    await store.set(key(), entry, { params: { id: "42" }, ttl: 60 });
-    const got = await store.get(key(), { params: { id: "42" } });
-    expect(got?.entry.segments.length).toBe(1);
-    // Param collision: same hash key, different canonical params -> miss.
-    const collision = await store.get(key(), { params: { id: "99" } });
-    expect(collision).toBeNull();
+    const envelope = stored({ ttl: 60 });
+    await store.set(key(), envelope);
+    expect(await store.get(key())).toBe(envelope);
   });
 
-  it("does not serve entries from a previous version after a deploy", async () => {
+  it("keys by the full key: another version is a different entry", async () => {
     const store = createMemoryPrerenderStore();
-    await store.set(key({ version: "old" }), entry, { params: { id: "42" } });
-    // New deploy reads under the current version -> miss (build-scoped keys).
-    expect(
-      await store.get(key({ version: "new" }), { params: { id: "42" } }),
-    ).toBeNull();
-    // The old entry is still addressable under its own build.
-    expect(
-      await store.get(key({ version: "old" }), { params: { id: "42" } }),
-    ).not.toBeNull();
+    await store.set(
+      key({ version: "old" }),
+      stored({}, key({ version: "old" })),
+    );
+    expect(await store.get(key({ version: "new" }))).toBeNull();
+    expect(await store.get(key({ version: "old" }))).not.toBeNull();
   });
 
   it("does NOT memoize misses (a later set is visible)", async () => {
     const store = createMemoryPrerenderStore();
-    expect(await store.get(key(), { params: { id: "42" } })).toBeNull();
-    await store.set(key(), entry, { params: { id: "42" } });
-    expect(await store.get(key(), { params: { id: "42" } })).not.toBeNull();
+    expect(await store.get(key())).toBeNull();
+    await store.set(key(), stored());
+    expect(await store.get(key())).not.toBeNull();
   });
 
   it("markStale marks matching entries stale but keeps serving them", async () => {
     let now = 1000;
     const store = createMemoryPrerenderStore({ now: () => now });
-    await store.set(key(), entry, {
-      params: { id: "42" },
-      ttl: 3600,
-      tags: ["product:42"],
-    });
+    await store.set(key(), stored({ ttl: 3600, tags: ["product:42"] }));
     now = 2000;
     await store.markStale(["product:42"]);
-    const got = await store.get(key(), { params: { id: "42" } });
+    const got = await store.get(key());
     // Still served (mark-stale, not delete)...
     expect(got).not.toBeNull();
     // ...but now stale, so the serve path would schedule a refresh.
     expect(isStoredEntryStale(got!, 2000)).toBe(true);
   });
 
+  it("markStale never moves an earlier staleAt later", async () => {
+    let now = 5000;
+    const store = createMemoryPrerenderStore({ now: () => now });
+    await store.set(key(), stored({ ttl: 1, tags: ["t"] }, key(), 1000));
+    await store.markStale(["t"]);
+    expect((await store.get(key()))?.meta.staleAt).toBe(2000);
+  });
+
   it("markStale leaves non-matching entries fresh", async () => {
     const store = createMemoryPrerenderStore();
-    await store.set(key(), entry, {
-      params: { id: "42" },
-      ttl: 3600,
-      tags: ["other"],
-    });
+    await store.set(
+      key(),
+      stored({ ttl: 3600, tags: ["other"] }, key(), Date.now()),
+    );
     await store.markStale(["product:42"]);
-    const got = await store.get(key(), { params: { id: "42" } });
+    const got = await store.get(key());
     expect(isStoredEntryStale(got!, Date.now())).toBe(false);
   });
 
   it("delete removes the entry", async () => {
     const store = createMemoryPrerenderStore();
-    await store.set(key(), entry, { params: { id: "42" } });
+    await store.set(key(), stored());
     await store.delete(key());
-    expect(await store.get(key(), { params: { id: "42" } })).toBeNull();
+    expect(await store.get(key())).toBeNull();
     expect(store.size).toBe(0);
   });
 });

@@ -4,8 +4,8 @@
  * Flight serializer), and `serveShellRequest` serves the route through the
  * production request handler, which resolves the router's `prerender` config
  * and reads the overlay before the bundled manifest. `dispatch` cannot serve
- * it: it renders response routes only, and the overlay is read in the RSC
- * match pipeline.
+ * it: it renders response routes only (it throws on a component route), and
+ * the overlay is read in the RSC match pipeline.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -32,6 +32,8 @@ import { getCacheVersions } from "../../cache/index.js";
 import type {
   MemoryPrerenderStore,
   PrerenderConfig,
+  PrerenderStoredEntry,
+  WritablePrerenderStore,
 } from "../../prerender/index.js";
 
 /** Producer renders and loader runs, to tell a stored payload from a render. */
@@ -145,6 +147,27 @@ describe("on-demand prerender: router.prerender() then serve", () => {
     expect(store.size).toBe(0);
   });
 
+  it("the router verifies a store's answer: another param set's entry is not served", async () => {
+    // A naive store that answers every key with the last envelope written.
+    let last: PrerenderStoredEntry | null = null;
+    const naive: WritablePrerenderStore = {
+      async get() {
+        return last;
+      },
+      async set(_key, stored) {
+        last = stored;
+      },
+    };
+    const router = makeRouter({ store: naive });
+    await router.prerender("/article/a", { env: {} });
+    expect((await serveShellRequest(router, "/article/a")).flight).toContain(
+      "a:stamp-1",
+    );
+
+    const other = await serveShellRequest(router, "/article/b");
+    expect(other.body).not.toContain("a:stamp-1");
+  });
+
   describe("the trigger and the request handler use one key version", () => {
     it("with createRouter({ version })", async () => {
       setBuildVersions({ data: "d1", document: "h1" });
@@ -230,8 +253,8 @@ describe("on-demand prerender: router.prerender() then serve", () => {
     let reads = 0;
     const counting: MemoryPrerenderStore = {
       ...store,
-      async get(key, meta) {
-        const stored = await store.get(key, meta);
+      async get(key) {
+        const stored = await store.get(key);
         reads += 1;
         // Both requests have read (and so checked the in-flight set) before
         // the first scheduled task settles.
