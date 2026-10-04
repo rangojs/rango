@@ -2,6 +2,78 @@
 
 ## Unreleased
 
+### Fixed: on Back/Forward, `usePathname()` and `useSearchParams()` change with the page, not before it ([#1031](https://github.com/rangojs/rango/issues/1031))
+
+On Back or Forward to an entry that has to be fetched (it left the client's
+history cache, or the cache was cleared), the page being left stays on screen
+until the entry's page arrives. `usePathname()` and `useSearchParams()` did
+not wait: they changed at the `popstate` event, so for the whole wait the page
+on screen read the destination's URL. An active-link highlight, a breadcrumb
+or a filter panel derived from the URL showed the destination next to the old
+page's content. A link click and `router.push()` / `router.replace()` never
+did this, and `useParams` and `useLocationState` already waited.
+
+The router now moves its location where the entry commits: with the response
+for an entry that is fetched, the place a push moves it, and in the restore
+for an entry served from the history cache.
+
+```tsx
+const pathname = usePathname();
+const [searchParams] = useSearchParams();
+const nav = useNavigation();
+
+// Back to /products?page=2 from /products?page=23; the entry is fetched.
+// While the request is out, page 23 is on screen:
+//   before: searchParams.get("page") === "2"
+//   now:    searchParams.get("page") === "23"
+//           nav.state === "loading", nav.pendingUrl ends in "/products?page=2"
+```
+
+| Back/Forward                                                           | The URL hooks changed            | Now                                                              |
+| ---------------------------------------------------------------------- | -------------------------------- | ---------------------------------------------------------------- |
+| entry in the history cache                                             | at `popstate`, the page after it | with the restored page, in one commit (no visible difference)    |
+| entry fetched, while the request is out                                | at `popstate`                    | when the entry's page commits                                    |
+| entry fetched, response arrived, React still holds the page being left | at `popstate`                    | when the entry's page commits, for components already mounted    |
+| the fetch fails                                                        | at `popstate`                    | with the error boundary; they report the entry the browser is on |
+
+`useSegments().path` and `useNavigation().location` read the same location
+and move with it.
+
+What an existing app can notice:
+
+- **During a Back/Forward that fetches, the hooks disagree with the address
+  bar.** The browser changes `window.location` and `history.state` before it
+  tells the router; the hooks now keep the URL of the page on screen until
+  the entry's page commits. Code that reads `window.location` next to the
+  hooks sees two URLs for that wait. For anything rendered, read the hooks.
+- **UI derived from the URL flips with the page**, not at the button press:
+  active links, breadcrumbs, tabs, a filter panel. For feedback during the
+  wait read `useNavigation()`: `state === "loading"` and `pendingUrl` while
+  the request is out, `isStreaming` for the whole wait.
+- **`useNavigation().location` no longer equals `pendingUrl` while a
+  Back/Forward request is out.** `location` is the page on screen and
+  `pendingUrl` the entry being fetched, as during a push.
+- **`setSearchParams((prev) => ...)` during a pending Back/Forward builds on
+  the search of the page on screen**; before, on the destination's.
+- **Link prefetching re-arms when the location commits**, not at the
+  `popstate` event.
+
+Not changed: a push or replace, `router.push(url, { revalidate: false })`,
+server actions, `useParams`, `useLocationState`, and scroll restoration and
+`transition({ when })`, which read the browser's entry and the router's
+store, not this location.
+
+Still open:
+
+- A component that first mounts in the page being left after the response
+  arrived, while React still holds the destination, reads the destination's
+  URL and params from `usePathname()`, `useSearchParams()`, `useParams()` and
+  `useSegments()`, and `useNavigation().location` is ahead of the screen for
+  that part of the wait. A push has the same gap
+  ([#1046](https://github.com/rangojs/rango/issues/1046)).
+- A Back/Forward the server answers with a redirect is not followed
+  ([#1047](https://github.com/rangojs/rango/issues/1047)).
+
 ### Fixed: `buildEnv: "auto"` reads the wrangler config of the Vite root
 
 With `rango({ preset: "cloudflare", buildEnv: "auto" })`, building from a
@@ -466,12 +538,9 @@ What an existing app can notice:
 - **The `__rsc_locationstate` window event is gone.** It was internal and
   undocumented; code that listened for it or dispatched it gets nothing.
 
-Not changed, and still a limit: on back/forward, `usePathname()` and
-`useSearchParams()` change at the `popstate` event, before a restored page
-that has to be fetched commits
-([#1031](https://github.com/rangojs/rango/issues/1031)). For that window the
-page on screen reads the destination's URL from those hooks and its own
-entry's location state.
+`usePathname()` and `useSearchParams()` on back/forward are the entry above
+([#1031](https://github.com/rangojs/rango/issues/1031)): they no longer
+change at the `popstate` event either.
 
 On hydration nothing changes: a reader with no stored state renders once, and
 one with state renders `undefined` and then the value.

@@ -128,10 +128,10 @@ export function writeFileBumpMtime(filePath: string, content: string): void {
 }
 
 /**
- * Write a file atomically and wait until the resulting HMR change has been
- * applied. Robust against CI filesystems that coalesce or drop watcher events:
- * each attempt replaces the file via temp-write + rename and forces a strictly
- * monotonic mtime so the watcher sees a fresh change, retrying until one of the
+ * Write a file and wait until the resulting HMR change has been applied.
+ * Robust against CI filesystems that coalesce or drop watcher events: each
+ * attempt overwrites the file in place ({@link writeFileBumpMtime}) and forces
+ * a strictly monotonic mtime so the watcher sees a fresh change, retrying until one of the
  * configured signals fires or the total timeout elapses.
  *
  * Await strategies (at least one of `serverOutputPattern` / `waitForApplied`
@@ -596,11 +596,26 @@ export async function returnToEvictedEntry(
   page: Page,
   fillerUrl: (n: number) => string,
 ): Promise<void> {
-  const fillers = 21;
-  for (let n = 1; n <= fillers; n++) {
+  await pushEvictingEntries(page, fillerUrl);
+  await goBackToEvictedEntry(page);
+}
+
+/** One more than the history cache holds (HISTORY_CACHE_SIZE, 20). */
+const EVICTING_ENTRIES = 21;
+
+/** The pushes of returnToEvictedEntry: `fillerUrl(EVICTING_ENTRIES)` is left on screen. */
+async function pushEvictingEntries(
+  page: Page,
+  fillerUrl: (n: number) => string,
+): Promise<void> {
+  for (let n = 1; n <= EVICTING_ENTRIES; n++) {
     await routerNavigate(page, fillerUrl(n));
   }
-  await page.evaluate((delta) => window.history.go(-delta), fillers);
+}
+
+/** The traversal of returnToEvictedEntry. Resolves once it is started. */
+async function goBackToEvictedEntry(page: Page): Promise<void> {
+  await page.evaluate((delta) => window.history.go(-delta), EVICTING_ENTRIES);
 }
 
 /**
@@ -1122,6 +1137,450 @@ export async function expectEvictedSameRouteTraversalRestoresItsPage(
     loadMoreCommit(2, loadMoreThrough(2)),
   ]);
   expect(await tornLoadMoreSamples(page)).toEqual([]);
+}
+
+/** `<pathname>?<search>`: how the load-more fixture's URL readers render a URL. */
+const shownUrl = (url: string): string => {
+  const { pathname, searchParams } = new URL(url);
+  return `${pathname}?${searchParams}`;
+};
+
+/**
+ * The URL readers of the load-more fixture at one instant (#1031). `shows` is
+ * the page under the shared layout: `list:<page>`, `panel:<step>` or `none`.
+ * `pageUrl`, `layoutUrl` and `lateUrl` are usePathname() and
+ * useSearchParams() as that page reads them, the layout above it, and the
+ * reader the page mounts on demand (null until then). `navigation` is the
+ * layout's useNavigation():
+ * `<state>|<streaming or settled>|<location>|<pendingUrl or none>`.
+ */
+interface UrlScreen {
+  shows: string;
+  pageUrl: string | null;
+  layoutUrl: string | null;
+  lateUrl: string | null;
+  navigation: string | null;
+}
+
+type UrlWindow = {
+  __urlScreen: () => UrlScreen;
+  __urlSamples: UrlScreen[];
+};
+
+/** watchLoadMore for the URL readers: one sample per DOM mutation from now on. */
+async function watchUrlReaders(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const scope = window as unknown as UrlWindow;
+    const text = (id: string): string | null =>
+      document.querySelector(`[data-testid="${id}"]`)?.textContent ?? null;
+    scope.__urlScreen = () => {
+      const listPage = text("lm-page");
+      const step = text("grid-step");
+      return {
+        shows:
+          listPage !== null
+            ? `list:${listPage}`
+            : step !== null
+              ? `panel:${step}`
+              : "none",
+        pageUrl: text(listPage !== null ? "lm-url" : "grid-url"),
+        layoutUrl: text("ls-shared-url"),
+        lateUrl: text(listPage !== null ? "lm-late-url" : "grid-late-url"),
+        navigation: text("ls-shared-nav"),
+      };
+    };
+    scope.__urlSamples = [scope.__urlScreen()];
+    new MutationObserver(() => {
+      scope.__urlSamples.push(scope.__urlScreen());
+    }).observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+  });
+}
+
+/** Drops the samples recorded so far: sampling starts again from this DOM state. */
+async function restartUrlSamples(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const scope = window as unknown as UrlWindow;
+    scope.__urlSamples = [scope.__urlScreen()];
+  });
+}
+
+/** One read of every reader, so they belong to the same DOM state. */
+async function urlScreen(page: Page): Promise<UrlScreen> {
+  return page.evaluate(() => (window as unknown as UrlWindow).__urlScreen());
+}
+
+/**
+ * The recorded samples in which a URL reader does not name the page it is
+ * shown in. The page's reader has that page's path and names the page on
+ * screen (`?page` for the list, `?step` for the panel); the layout's reader
+ * and the late reader agree with it.
+ */
+async function tornUrlSamples(
+  page: Page,
+  listUrl: string,
+  panelUrl?: string,
+): Promise<UrlScreen[]> {
+  const samples = await page.evaluate(
+    () => (window as unknown as UrlWindow).__urlSamples,
+  );
+  const paths: Record<string, string | undefined> = {
+    list: new URL(listUrl).pathname,
+    panel: panelUrl && new URL(panelUrl).pathname,
+  };
+  return samples.filter((sample) => {
+    const [kind, shown] = sample.shows.split(":");
+    if (kind === "none") return false;
+    const [pathname, search] = (sample.pageUrl ?? "").split("?");
+    const params = new URLSearchParams(search);
+    const named =
+      kind === "list"
+        ? (params.get("page") ?? "1")
+        : (params.get("step") ?? "start");
+    return (
+      pathname !== paths[kind!] ||
+      named !== shown ||
+      sample.layoutUrl !== sample.pageUrl ||
+      (sample.lateUrl !== null && sample.lateUrl !== sample.pageUrl)
+    );
+  });
+}
+
+/**
+ * Holds the router's fetch of `url` (a client navigation's partial request,
+ * not a document load) until `release()`. `held` resolves once the request is
+ * out: the navigation is then pending and nothing of its response has
+ * arrived.
+ */
+async function holdNavigationRequest(
+  page: Page,
+  url: string,
+): Promise<{ held: Promise<void>; release: () => void }> {
+  const target = new URL(url);
+  let markHeld!: () => void;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (markHeld = resolve));
+  const released = new Promise<void>((resolve) => (release = resolve));
+  await page.route(
+    (request) =>
+      request.searchParams.has("_rsc_partial") &&
+      request.pathname === target.pathname &&
+      [...target.searchParams].every(
+        ([name, value]) => request.searchParams.get(name) === value,
+      ),
+    async (route) => {
+      markHeld();
+      await released;
+      await route.continue();
+    },
+  );
+  return { held, release };
+}
+
+/**
+ * Opens the load-more list's page 2 through `lm-more-cold` (an entry nothing
+ * prefetches, see expectEvictedSameRouteTraversalRestoresItsPage), pushes it
+ * out of the history cache with `filler` entries and leaves the last of them
+ * on screen and settled. `hold` makes the entry's loader wait each time the
+ * entry is fetched.
+ *
+ * The URL readers are sampled from that settled state on, not through the
+ * fillers: those are pushed back to back, each started as soon as the one
+ * before it is in the address bar, and a page that mounts while the next
+ * push has already committed its transaction reads that push's URL (#1046).
+ */
+async function leaveEvictedListEntry(
+  page: Page,
+  url: string,
+  options: {
+    hold: boolean;
+    filler: (n: number) => string;
+    /** UrlScreen.shows of the last filler. */
+    leavingShows: string;
+  },
+): Promise<{ entry: string; leaving: string }> {
+  const hold = options.hold ? `&hold=${LOAD_MORE_HOLD_MS}` : "";
+  const entry = `${url}?page=2&cold=1${hold}`;
+  const leaving = options.filler(EVICTING_ENTRIES);
+
+  await page.goto(`${url}?page=1${hold}`);
+  await waitForShellHydration(page);
+  await watchUrlReaders(page);
+  await byTestId(page, "lm-more-cold").click();
+  await expect(page).toHaveURL(entry);
+  await expect(byTestId(page, "lm-page")).toHaveText("2");
+
+  await pushEvictingEntries(page, options.filler);
+  await expect
+    .poll(() => urlScreen(page))
+    .toEqual({
+      shows: options.leavingShows,
+      pageUrl: shownUrl(leaving),
+      layoutUrl: shownUrl(leaving),
+      lateUrl: null,
+      navigation: `idle|settled|${shownUrl(leaving)}|none`,
+    });
+  await restartUrlSamples(page);
+  return { entry, leaving };
+}
+
+/**
+ * #1031: back/forward to an entry that has to be fetched, while its request
+ * is out. The browser has already moved (address bar, history.state) and the
+ * page being left is still on screen: usePathname() and useSearchParams()
+ * have to keep reporting THAT page's URL until the entry's page commits, for
+ * the readers already mounted and for one that mounts during the wait. They
+ * used to change at the popstate event.
+ *
+ * `from` is the page being left: another page of the list (the same route, a
+ * search-only change), or the panel fixture next to it at `otherUrl` (another
+ * route under the same layout, so the layout's reader stays mounted across
+ * the return). useNavigation() is what reports the pending traversal:
+ * `state` "loading" and `pendingUrl` the entry, `location` the page on screen.
+ */
+export async function expectRequestHeldBackKeepsUrlOfPageOnScreen(
+  page: Page,
+  url: string,
+  otherUrl: string,
+  from: "same-route" | "cross-route",
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const sameRoute = from === "same-route";
+  const leavingShows = sameRoute
+    ? `list:${2 + EVICTING_ENTRIES}`
+    : `panel:filler-${EVICTING_ENTRIES}`;
+  const { entry, leaving } = await leaveEvictedListEntry(page, url, {
+    hold: false,
+    filler: sameRoute
+      ? (n) => `${url}?page=${2 + n}`
+      : (n) => `${otherUrl}?step=filler-${n}`,
+    leavingShows,
+  });
+
+  const request = await holdNavigationRequest(page, entry);
+  await goBackToEvictedEntry(page);
+  await request.held;
+
+  // The address bar is the entry's at once; the page and its readers are not.
+  await expect(page).toHaveURL(entry);
+  await expect(byTestId(page, "ls-shared-nav")).toHaveText(/^loading\|/);
+  const held: UrlScreen = {
+    shows: leavingShows,
+    pageUrl: shownUrl(leaving),
+    layoutUrl: shownUrl(leaving),
+    lateUrl: null,
+    navigation: `loading|streaming|${shownUrl(leaving)}|${shownUrl(entry)}`,
+  };
+  expect(await urlScreen(page)).toEqual(held);
+
+  await byTestId(page, sameRoute ? "lm-open-late" : "grid-open-late").click();
+  expect(await urlScreen(page)).toEqual({
+    ...held,
+    lateUrl: shownUrl(leaving),
+  });
+
+  request.release();
+  await expect
+    .poll(() => urlScreen(page))
+    .toEqual({
+      shows: "list:2",
+      pageUrl: shownUrl(entry),
+      layoutUrl: shownUrl(entry),
+      // The list keeps its late reader across a search-only change; the
+      // panel's went with the panel.
+      lateUrl: sameRoute ? shownUrl(entry) : null,
+      navigation: `idle|settled|${shownUrl(entry)}|none`,
+    });
+  expect(await tornUrlSamples(page, url, otherUrl)).toEqual([]);
+}
+
+/**
+ * A return to the evicted entry of the same route, past its response: the
+ * transaction has committed and React holds the entry's page behind a loader
+ * that is still streaming, so the page being left (the list's last filler
+ * page) is on screen. useNavigation() reports this part of the wait as
+ * `isStreaming`; its `state` is back to "idle".
+ */
+async function returnToEvictedEntryWithLoaderHeld(
+  page: Page,
+  url: string,
+): Promise<{ entry: string; leaving: string; leavingShows: string }> {
+  const leavingShows = `list:${2 + EVICTING_ENTRIES}`;
+  const { entry, leaving } = await leaveEvictedListEntry(page, url, {
+    hold: true,
+    filler: (n) => `${url}?page=${2 + n}`,
+    leavingShows,
+  });
+  await goBackToEvictedEntry(page);
+  await expect(page).toHaveURL(entry);
+  await expect(byTestId(page, "ls-shared-nav")).toHaveText(
+    /^idle\|streaming\|/,
+  );
+  return { entry, leaving, leavingShows };
+}
+
+/**
+ * #1031 for the rest of the wait: the entry's response has arrived and React
+ * holds its page (see returnToEvictedEntryWithLoaderHeld). The readers
+ * already mounted keep the URL of the page on screen until the entry's page
+ * commits. A reader that mounts now is #1046:
+ * expectReaderMountedInHeldPageReadsItsUrl.
+ */
+export async function expectLoaderHeldBackKeepsUrlForMountedReaders(
+  page: Page,
+  url: string,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const { entry, leaving, leavingShows } =
+    await returnToEvictedEntryWithLoaderHeld(page, url);
+
+  expect(await urlScreen(page)).toMatchObject({
+    shows: leavingShows,
+    pageUrl: shownUrl(leaving),
+    layoutUrl: shownUrl(leaving),
+  });
+
+  await expect
+    .poll(() => urlScreen(page))
+    .toMatchObject({
+      shows: "list:2",
+      pageUrl: shownUrl(entry),
+      layoutUrl: shownUrl(entry),
+    });
+  expect(await tornUrlSamples(page, url)).toEqual([]);
+}
+
+/**
+ * Known gap, #1046: a reader that first mounts in the page being left after
+ * the navigation's response arrived, while React still holds the destination,
+ * reads the destination's URL. The location moves with the transaction;
+ * mounted readers take it in the batch React holds, a new one reads it at
+ * mount.
+ *
+ * `knownGap` marks the rest of the test as expected to fail; the caller
+ * passes `(reason) => test.fail(true, reason)`. Everything before it has to
+ * pass, and the test turns red the day the last assertion does.
+ */
+export async function expectReaderMountedInHeldPageReadsItsUrl(
+  page: Page,
+  url: string,
+  knownGap: (reason: string) => void,
+): Promise<void> {
+  const { leaving, leavingShows } = await returnToEvictedEntryWithLoaderHeld(
+    page,
+    url,
+  );
+
+  await byTestId(page, "lm-open-late").click();
+  const screen = await urlScreen(page);
+  // Still the page being left, and the reader is mounted in it.
+  expect(screen).toMatchObject({
+    shows: leavingShows,
+    pageUrl: shownUrl(leaving),
+    layoutUrl: shownUrl(leaving),
+  });
+  expect(screen.lateUrl).not.toBeNull();
+
+  knownGap(
+    "#1046: a reader mounted while React holds a navigation reads the destination's URL",
+  );
+  expect(screen.lateUrl).toBe(shownUrl(leaving));
+}
+
+/**
+ * Control for #1031: a push whose request is out. A push commits its location
+ * with its transaction, which has not happened yet, so every reader, mounted
+ * or mounting now, reports the page on screen, and so does the address bar.
+ */
+export async function expectRequestHeldPushKeepsUrlOfPageOnScreen(
+  page: Page,
+  url: string,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const leaving = `${url}?page=1`;
+  const entry = `${url}?page=2&cold=1`;
+
+  await page.goto(leaving);
+  await waitForShellHydration(page);
+  await watchUrlReaders(page);
+  await expect(byTestId(page, "ls-shared-nav")).toHaveText(
+    `idle|settled|${shownUrl(leaving)}|none`,
+  );
+
+  const request = await holdNavigationRequest(page, entry);
+  await byTestId(page, "lm-push-cold").click();
+  await request.held;
+
+  await expect(byTestId(page, "ls-shared-nav")).toHaveText(/^loading\|/);
+  const held: UrlScreen = {
+    shows: "list:1",
+    pageUrl: shownUrl(leaving),
+    layoutUrl: shownUrl(leaving),
+    lateUrl: null,
+    navigation: `loading|streaming|${shownUrl(leaving)}|${shownUrl(entry)}`,
+  };
+  expect(await urlScreen(page)).toEqual(held);
+  expect(page.url()).toBe(leaving);
+
+  await byTestId(page, "lm-open-late").click();
+  expect(await urlScreen(page)).toEqual({
+    ...held,
+    lateUrl: shownUrl(leaving),
+  });
+
+  request.release();
+  await expect
+    .poll(() => urlScreen(page))
+    .toEqual({
+      shows: "list:2",
+      pageUrl: shownUrl(entry),
+      layoutUrl: shownUrl(entry),
+      lateUrl: shownUrl(entry),
+      navigation: `idle|settled|${shownUrl(entry)}|none`,
+    });
+  await expect(page).toHaveURL(entry);
+  expect(await tornUrlSamples(page, url)).toEqual([]);
+}
+
+/**
+ * Control for #1031: back/forward to entries the history cache holds. There
+ * is no wait: the URL the readers report and the page change in one DOM
+ * state.
+ */
+export async function expectCachedTraversalChangesUrlWithItsPage(
+  page: Page,
+  url: string,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const first = `${url}?page=1`;
+  const second = `${url}?page=2&cold=1`;
+  const entryOnScreen = (shows: string, entry: string): Partial<UrlScreen> => ({
+    shows,
+    pageUrl: shownUrl(entry),
+    layoutUrl: shownUrl(entry),
+    navigation: `idle|settled|${shownUrl(entry)}|none`,
+  });
+
+  await page.goto(first);
+  await waitForShellHydration(page);
+  await watchUrlReaders(page);
+  await byTestId(page, "lm-more-cold").click();
+  await expect
+    .poll(() => urlScreen(page))
+    .toMatchObject(entryOnScreen("list:2", second));
+
+  await page.goBack();
+  await expect
+    .poll(() => urlScreen(page))
+    .toMatchObject(entryOnScreen("list:1", first));
+  await page.goForward();
+  await expect
+    .poll(() => urlScreen(page))
+    .toMatchObject(entryOnScreen("list:2", second));
+  expect(await tornUrlSamples(page, url)).toEqual([]);
 }
 
 /** The slow clientUrls group's middleware (both apps): every canonical request waits this long. */

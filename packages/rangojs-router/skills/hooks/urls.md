@@ -47,7 +47,7 @@ function CurrentPage() {
 }
 ```
 
-Returns the pathname string without search params or hash. Updates on navigation commit.
+Returns the pathname string without search params or hash. It is the pathname of the page on screen: it changes when a navigation's destination commits, Back/Forward included (see [When the URL hooks change](#when-the-url-hooks-change)).
 
 ### useSearchParams()
 
@@ -108,6 +108,45 @@ setSearchParams({ view: "grid" }, { revalidate: false });
 Options: `replace` (default false — push), `scroll` (default true),
 `revalidate` (default true; `false` skips the server fetch — legal because
 the setter never changes the pathname).
+
+### When the URL hooks change
+
+`usePathname()`, `useSearchParams()` and `useParams()` describe the page on
+screen. They change in the commit that shows a navigation's destination, not
+when the navigation starts. That holds for Back/Forward as it does for a link
+click or `router.push()`.
+
+| Navigation                                        | The hooks change                                                           |
+| ------------------------------------------------- | -------------------------------------------------------------------------- |
+| `<Link>`, `router.push()` / `router.replace()`    | when the destination commits                                               |
+| Back/Forward, entry in the client's history cache | with the restored page, in one commit                                      |
+| Back/Forward, entry fetched again                 | when the fetched page commits; until then the page being left is on screen |
+| a Back/Forward whose fetch fails                  | with the error boundary: they report the entry the browser is on           |
+| `router.push(url, { revalidate: false })`         | at once: nothing is fetched and the page stays                             |
+| inside an optimistic `clientUrls()` destination   | at the click, for that branch only (see `/client-urls`)                    |
+
+**The hooks can disagree with the address bar.** On Back/Forward the browser
+changes the URL and `history.state` before it tells the router. When the
+entry has to be fetched (it left the client's history cache, or the cache was
+cleared), the page being left stays on screen for the wait and the hooks keep
+reporting its URL, while `window.location` is already the destination's. That
+is deliberate: an active-link highlight, a breadcrumb or a filter panel
+derived from the hooks stays in step with the content next to it. For
+anything you render, read the hooks, not `window.location`.
+
+For pending UI during that wait read `useNavigation()` (see
+[`./navigation.md`](./navigation.md)): `state === "loading"` and `pendingUrl`
+(the entry being fetched) while the request is out, `isStreaming` for the
+whole wait. A Back/Forward served from the history cache has no wait.
+
+`setSearchParams((prev) => ...)` builds on the same location: called during a
+pending Back/Forward, `prev` is the search of the page on screen.
+
+One gap (issue #1046): a component that first mounts in the page being left
+after the navigation's response has arrived, while React still holds the
+destination behind a loader or a `transition()`, reads the destination's URL
+and params from these hooks. Components that were already mounted are not
+affected. It applies to a push and to Back/Forward alike.
 
 ### useHref()
 

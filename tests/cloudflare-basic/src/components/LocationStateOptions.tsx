@@ -5,6 +5,9 @@ import {
   Link,
   useLoader,
   useLocationState,
+  useNavigation,
+  usePathname,
+  useRouter,
   useSearchParams,
 } from "@rangojs/router/client";
 import {
@@ -14,6 +17,23 @@ import {
   ServerPageStamp,
 } from "../location-states.js";
 import { LoadMoreLoader } from "../loaders/location-state.js";
+
+/**
+ * #1031: the URL as usePathname and useSearchParams report it,
+ * `<pathname>?<search>`. The readers of this file show it next to the page
+ * they are in, so a URL that moved without its page is on screen.
+ */
+function useShownUrl(): string {
+  const pathname = usePathname();
+  const [search] = useSearchParams();
+  return `${pathname}?${search}`;
+}
+
+/** The same form for a URL useNavigation() reports, absolute or relative. */
+function shownUrlOf(url: string | URL): string {
+  const { pathname, searchParams } = new URL(url, "http://relative");
+  return `${pathname}?${searchParams}`;
+}
 
 /**
  * #994 / #1029 "load more". LoadMoreLoader loads the page the URL names; the
@@ -36,6 +56,12 @@ import { LoadMoreLoader } from "../loaders/location-state.js";
  * never prefetched. An app that prefetches keeps a prefetched response for
  * its TTL and serves a return to that URL from it; the entry this link
  * creates can only come back from the history cache or the server (#1030).
+ *
+ * `lm-push-cold` is that navigation through `router.push`.
+ *
+ * `lm-url` is the URL the list reads from usePathname and useSearchParams,
+ * `lm-late-url` the one the late reader reads (#1031): each has to name the
+ * page it is shown in.
  */
 export function LoadMoreList({ basePath }: { basePath: string }) {
   const carried = useLocationState(CarriedItems) ?? [];
@@ -44,8 +70,11 @@ export function LoadMoreList({ basePath }: { basePath: string }) {
   const { data } = useLoader(LoadMoreLoader);
   const [search] = useSearchParams();
   const hold = search.get("hold");
+  const url = useShownUrl();
+  const router = useRouter();
   const [late, setLate] = useState(false);
   const shown = [...carried, ...data.items];
+  const coldNext = `${basePath}?page=${data.page + 1}&cold=1${hold ? `&hold=${hold}` : ""}`;
   const commit = `${data.page}:${shown.join(",")}`;
   useEffect(() => {
     const log = ((
@@ -59,7 +88,8 @@ export function LoadMoreList({ basePath }: { basePath: string }) {
         page <span data-testid="lm-page">{data.page}</span>, carried{" "}
         <span data-testid="lm-carried-count">{carried.length}</span>, sort{" "}
         <span data-testid="lm-sort">{sort?.order ?? "none"}</span>, server stamp{" "}
-        <span data-testid="lm-server-page">{serverStamp?.page ?? "none"}</span>
+        <span data-testid="lm-server-page">{serverStamp?.page ?? "none"}</span>,
+        url <span data-testid="lm-url">{url}</span>
       </p>
       <button
         type="button"
@@ -83,37 +113,78 @@ export function LoadMoreList({ basePath }: { basePath: string }) {
         Load more
       </Link>{" "}
       <Link
-        to={`${basePath}?page=${data.page + 1}&cold=1${hold ? `&hold=${hold}` : ""}`}
+        to={coldNext}
         state={[CarriedItems(shown), ListSort({ order: "asc" })]}
         scroll={false}
         prefetch="none"
         data-testid="lm-more-cold"
       >
         Load more, never prefetched
-      </Link>
+      </Link>{" "}
+      <button
+        type="button"
+        data-testid="lm-push-cold"
+        onClick={() =>
+          router.push(coldNext, {
+            state: [CarriedItems(shown), ListSort({ order: "asc" })],
+            scroll: false,
+          })
+        }
+      >
+        Load more, router.push
+      </button>
     </section>
   );
 }
 
-/** `<page of the list it mounted in>:<carried items it reads>`. */
+/**
+ * `<page of the list it mounted in>:<carried items it reads>`, and the URL it
+ * reads (#1031).
+ */
 function LateCarried({ page }: { page: number }) {
   const carried = useLocationState(CarriedItems) ?? [];
-  return <p data-testid="lm-late">{`${page}:${carried.length}`}</p>;
+  const url = useShownUrl();
+  return (
+    <p>
+      <span data-testid="lm-late">{`${page}:${carried.length}`}</span>, url{" "}
+      <span data-testid="lm-late-url">{url}</span>
+    </p>
+  );
 }
 
 /**
  * #1029: a CarriedItems reader in the layout both fixtures of this file share,
  * so it stays mounted across a navigation between them. It shows how many
  * items the entry carries: more than none only together with the list.
+ *
+ * #1031: the same for the URL (`ls-shared-url`), and what useNavigation()
+ * reports while a navigation is pending (`ls-shared-nav`):
+ * `<state>|<streaming or settled>|<location>|<pendingUrl or none>`.
  */
 export function SharedCarriedCount() {
   const carried = useLocationState(CarriedItems) ?? [];
+  const url = useShownUrl();
+  const nav = useNavigation();
   return (
     <p>
       shared layout, carried{" "}
-      <span data-testid="ls-shared-carried">{carried.length}</span>
+      <span data-testid="ls-shared-carried">{carried.length}</span>, url{" "}
+      <span data-testid="ls-shared-url">{url}</span>, navigation{" "}
+      <span data-testid="ls-shared-nav">
+        {[
+          nav.state,
+          nav.isStreaming ? "streaming" : "settled",
+          shownUrlOf(nav.location),
+          nav.pendingUrl ? shownUrlOf(nav.pendingUrl) : "none",
+        ].join("|")}
+      </span>
     </p>
   );
+}
+
+/** #1031: a URL reader the panel mounts on demand (`grid-open-late`). */
+function LateUrl() {
+  return <p data-testid="grid-late-url">{useShownUrl()}</p>;
 }
 
 /**
@@ -125,6 +196,10 @@ export function SharedCarriedCount() {
  * Nothing in location state survives a version change, so no slot can signal
  * that the client snapshots are applied: `grid-mounted` turns "yes" in an
  * effect, which runs after them.
+ *
+ * #1031: `grid-url` is the URL the panel reads, and `grid-open-late` mounts a
+ * second URL reader in it (`grid-late-url`), as `lm-open-late` does in the
+ * list.
  */
 export function AppVersionPanel({
   basePath,
@@ -135,14 +210,25 @@ export function AppVersionPanel({
 }) {
   const grid = useLocationState(GridState);
   const plain = useLocationState<{ from?: string }>();
+  const url = useShownUrl();
   const [mounted, setMounted] = useState(false);
+  const [late, setLate] = useState(false);
   useEffect(() => setMounted(true), []);
   return (
     <section>
       <p>
         step <span data-testid="grid-step">{step}</span>, mounted{" "}
-        <span data-testid="grid-mounted">{mounted ? "yes" : "no"}</span>
+        <span data-testid="grid-mounted">{mounted ? "yes" : "no"}</span>, url{" "}
+        <span data-testid="grid-url">{url}</span>
       </p>
+      <button
+        type="button"
+        data-testid="grid-open-late"
+        onClick={() => setLate(true)}
+      >
+        Mount a late reader
+      </button>
+      {late && <LateUrl />}
       <p>
         typed{" "}
         <span data-testid="grid-value">
