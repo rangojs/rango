@@ -46,7 +46,10 @@ import { withDefer } from "../defer.js";
 import { type MetricsStore } from "./context.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import { getFetchableLoader } from "./fetchable-loader-store.js";
-import type { SegmentCacheStore } from "../cache/types.js";
+import type {
+  SegmentCacheStore,
+  ShellSnapshotHandlesValue,
+} from "../cache/types.js";
 import type { RouterVersions } from "../router-versions.js";
 import type { Theme, ResolvedThemeConfig } from "../theme/types.js";
 import type { ExecutionContext, RequestScope } from "../types/request-scope.js";
@@ -459,13 +462,8 @@ export interface RequestContext<
      * host) and miss the record.
      */
     fixedDocKey?: string;
-    /**
-     * @internal A document HIT tail of a prerender-served entry: the
-     * loader-owned handle pushes its prelude rendered (the snapshot's
-     * `handles` record), which yieldFromStore restores as a doc record's
-     * after the prerender store's handles (issue #1057).
-     */
-    prerenderHandles?: import("../cache/types.js").ShellSnapshotHandlesValue;
+    /** @internal The snapshot's `handles` record (ShellSnapshotHandlesValue). */
+    prerenderHandles?: ShellSnapshotHandlesValue;
     /**
      * @internal Set ONLY by matchPartialWithPprReplay on the navigation-replay
      * serve path. Its presence arms the explicit-scope composition in

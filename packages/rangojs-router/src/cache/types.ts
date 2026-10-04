@@ -452,9 +452,9 @@ export interface ShellCacheEntry {
    * them on a HIT keeps the freshly rendered hydration payload equal to the
    * frozen prelude after the underlying cache entries have drifted; every
    * other read on a HIT, a hole's included, reads the store. A
-   * prerender-served capture has no doc record and stores its loader-owned
-   * handle pushes in a `handles` record instead. Empty for a tombstone. A
-   * custom store returns it as putShell received it. See
+   * prerender-served capture holds a `handles` record instead of a doc record
+   * (ShellSnapshotHandlesValue). Empty for a tombstone. A custom store
+   * returns it as putShell received it. See
    * docs/design/ppr-shell-resume.md ("the capture data snapshot").
    */
   snapshot: ShellSnapshotRecord[];
@@ -616,9 +616,8 @@ export interface ShellReadStats {
 /**
  * The families a shell snapshot pins: the doc segment record (recorded by
  * RecordingShellStore), the settled CONTAINER of each bake-lane loader
- * (lane rule: see resolveLoaderData, loader-cache.ts), and, for an entry the
- * prerender store served (no doc record), the loader-owned handle pushes its
- * prelude rendered. No cache read is pinned: a HIT's holes, and a bake-lane
+ * (lane rule: see resolveLoaderData, loader-cache.ts), and a prerender-served
+ * entry's `handles` record. No cache read is pinned: a HIT's holes, and a bake-lane
  * loader body that runs on the HIT, read the store.
  */
 export type ShellSnapshotFamily = "segment" | "loader" | "handles";
@@ -629,8 +628,8 @@ export type ShellSnapshotFamily = "segment" | "loader" | "handles";
  * format (CachedEntryData `handles` + `handleOwners`). A Prerender + ppr
  * route's handler layer comes from the prerender store, whose build-time
  * entry has no loader push, so the entry keeps these for the HIT to restore
- * as a doc record's (issue #1057). An entry written before it (v0.21) has
- * none and serves as it did.
+ * as a doc record's (issue #1057, yieldFromStore in cache-lookup.ts). An
+ * entry written before it (v0.21) has none and serves as it did.
  */
 export type ShellSnapshotHandlesValue = Pick<
   CachedEntryData,

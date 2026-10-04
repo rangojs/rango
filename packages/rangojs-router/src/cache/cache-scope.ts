@@ -38,10 +38,9 @@ import {
 import {
   captureHandles,
   captureHandleOwners,
-  restoreHandles,
+  restoreRecordHandles,
   type OwnedPushDelivery,
   encodeHandles,
-  decodeHandles,
 } from "./handle-snapshot.js";
 import { cacheKeyBase, composeCacheKeys } from "./cache-key-utils.js";
 import {
@@ -876,32 +875,17 @@ export class CacheScope {
       await this.onHit?.();
 
       const handleStore = _getRequestContext()?._handleStore;
-      // With or without a handles blob: a pinned loader whose capture pushed
-      // nothing has no copy in the record, and its run on this request must
-      // still add no settled push (HandleStore.setRecordAuthority).
-      const owned = handleStore ? ownedPushes?.() : undefined;
-      if (owned) handleStore?.setRecordAuthority(owned);
-
-      // Replay handle data. An empty string means the route pushed no handles —
-      // skip the decode entirely (the common case). Otherwise decode the
-      // Flight-encoded blob; a decode failure skips handle restore but keeps the
-      // valid cached segments.
-      if (handleStore && cached.handles) {
-        const handlesRecord = await decodeHandles(cached.handles);
-        if (handlesRecord) {
-          if (this.boundary !== undefined) {
-            const kept = new Set(segments.map((s) => s.id));
-            for (const id of Object.keys(handlesRecord)) {
-              if (!kept.has(id)) delete handlesRecord[id];
-            }
-          }
-          restoreHandles(
-            handlesRecord,
-            handleStore,
-            cached.handleOwners,
-            owned,
-          );
-        }
+      // An empty handles string means the route pushed none (the common
+      // case); a decode failure skips the restore but keeps the segments.
+      if (handleStore) {
+        await restoreRecordHandles(
+          handleStore,
+          cached,
+          ownedPushes?.(),
+          this.boundary !== undefined
+            ? new Set(segments.map((s) => s.id))
+            : undefined,
+        );
       }
 
       if (INTERNAL_RANGO_DEBUG) {

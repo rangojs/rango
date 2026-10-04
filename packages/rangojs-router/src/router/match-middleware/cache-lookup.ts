@@ -128,6 +128,9 @@ let _restoreHandles:
 let _decodeHandles:
   | typeof import("../../cache/handle-snapshot.js").decodeHandles
   | undefined;
+let _restoreRecordHandles:
+  | typeof import("../../cache/handle-snapshot.js").restoreRecordHandles
+  | undefined;
 let _hashParams:
   | typeof import("../../prerender/param-hash.js").hashParams
   | undefined;
@@ -158,6 +161,7 @@ async function ensurePrerenderDeps() {
     _fragmentSegments = codec.fragmentSegments;
     _restoreHandles = snapshot.restoreHandles;
     _decodeHandles = snapshot.decodeHandles;
+    _restoreRecordHandles = snapshot.restoreRecordHandles;
     _hashParams = paramHash.hashParams;
     if (prerenderStoreInstance === undefined) {
       prerenderStoreInstance = store.createPrerenderStore();
@@ -260,6 +264,7 @@ async function* yieldFromStore<TEnv>(
     !_fragmentSegments ||
     !_restoreHandles ||
     !_decodeHandles ||
+    !_restoreRecordHandles ||
     !_hashParams
   ) {
     throw new Error("yieldFromStore called before ensurePrerenderDeps");
@@ -284,20 +289,14 @@ async function* yieldFromStore<TEnv>(
     }
   }
 
-  // A shell HIT tail: the loader-owned pushes the shell's prelude rendered,
-  // restored as CacheScope.lookupRouteDetailed restores a doc record's
-  // (authority from the pins, then the copies), before the render barrier
-  // freezes the document snapshot (issue #1057). An entry without the record
-  // (v0.21) restores nothing more, as before.
+  // Before the render barrier freezes the document snapshot.
   const shellHandles = reqCtx?._shellImplicitCache?.prerenderHandles;
   if (handleStore && shellHandles) {
-    const owned = loaderPins(ctx.entries, reqCtx);
-    handleStore.setRecordAuthority(owned);
-    const record =
-      shellHandles.handles && (await _decodeHandles(shellHandles.handles));
-    if (record) {
-      _restoreHandles(record, handleStore, shellHandles.handleOwners, owned);
-    }
+    await _restoreRecordHandles!(
+      handleStore,
+      shellHandles,
+      loaderPins(ctx.entries, reqCtx),
+    );
   }
 
   state.cacheHit = true;

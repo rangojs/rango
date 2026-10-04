@@ -2428,21 +2428,13 @@ async function captureAndStoreShell(
       }
     }
 
-    // A prerender-served capture (settleCaptureRecord `prerender`) has no doc
-    // record, and the prerender store's build-time entry holds no loader
-    // push: the loader-owned pushes the prelude rendered are kept in a
-    // `handles` record, in the doc record's format, which the HIT restores
-    // after the prerender store's handles (cache-lookup.ts yieldFromStore,
-    // issue #1057). Its encode errors refuse the capture with the render's.
+    // Built before the render-error check below so its encode errors refuse
+    // the capture (ShellSnapshotHandlesValue).
     const docKey = reqCtx._shellImplicitCache?.docKey;
     let prerenderHandles: ShellSnapshotHandlesValue | undefined;
     if (!capture.navigationOnly && !hasDocRecord(snapshot, docKey)) {
-      const handleStore = reqCtx._handleStore;
-      const segmentIds = new Set<string>();
-      for (const bySegment of Object.values(await handleStore.getData())) {
-        for (const id in bySegment) segmentIds.add(id);
-      }
-      const { handles, owners } = captureOwnedHandles(segmentIds, handleStore);
+      // The store is sealed (settleCaptureRecord) and settled (quiesce).
+      const { handles, owners } = captureOwnedHandles(reqCtx._handleStore);
       prerenderHandles = {
         handles: await encodeHandles(handles, (error) => {
           reqCtx._renderErrors?.push(error);
@@ -2501,8 +2493,8 @@ async function captureAndStoreShell(
         stats.snapshotSkipped = true;
       }
     }
-    // Exempt from the cap like the doc record it stands in for: without the
-    // pins the HIT restores these as placeholders the loaders' runs replace.
+    // Exempt from maxSnapshotBytes: the HIT needs it for its HTML and
+    // hydration data to match.
     if (prerenderHandles) {
       snapshot.push({
         family: "handles",

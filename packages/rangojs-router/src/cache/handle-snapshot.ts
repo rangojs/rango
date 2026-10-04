@@ -142,13 +142,13 @@ export function captureHandleOwners(
  * prerender store restores the handler pushes on a HIT, and the loader
  * pushes have no other record (shell-capture.ts captureAndStoreShell).
  */
-export function captureOwnedHandles(
-  segmentIds: Iterable<string>,
-  handleStore: HandleStore,
-): { handles: HandleRecord; owners?: HandleOwners } {
+export function captureOwnedHandles(handleStore: HandleStore): {
+  handles: HandleRecord;
+  owners?: HandleOwners;
+} {
   const handles: HandleRecord = {};
   let owners: HandleOwners | undefined;
-  for (const id of segmentIds) {
+  for (const id of handleStore.getOwnedSegmentIds()) {
     const segOwners = handleStore.getRecordOwners(id);
     if (!segOwners) continue;
     const kept = handleStore.getDataForSegment(id, true);
@@ -213,6 +213,31 @@ export function restoreHandles(
       }
     }
   }
+}
+
+/**
+ * Serve a doc record's handles: set its authority over the loaders' pushes
+ * (with or without a handles blob: a pinned loader whose capture pushed
+ * nothing has no copy, and its run must still add no settled push), then
+ * decode and restoreHandles. `keepIds` limits the restore to the segments a
+ * boundary-scoped scope serves. A decode failure skips the restore.
+ */
+export async function restoreRecordHandles(
+  handleStore: HandleStore,
+  record: { handles?: string; handleOwners?: HandleOwners },
+  owned: OwnedPushDelivery | undefined,
+  keepIds?: ReadonlySet<string>,
+): Promise<void> {
+  if (owned) handleStore.setRecordAuthority(owned);
+  if (!record.handles) return;
+  const decoded = await decodeHandles(record.handles);
+  if (!decoded) return;
+  if (keepIds) {
+    for (const id of Object.keys(decoded)) {
+      if (!keepIds.has(id)) delete decoded[id];
+    }
+  }
+  restoreHandles(decoded, handleStore, record.handleOwners, owned);
 }
 
 /**

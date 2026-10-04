@@ -441,7 +441,7 @@ describe("captureOwnedHandles: the arrays that hold a loader-owned value", () =>
     // A tagged push (deferred, masked) is out of a record, owned or not.
     store.push("crumbs", "seg1", "tagged", true);
 
-    expect(captureOwnedHandles(["seg1", "seg2"], store)).toEqual({
+    expect(captureOwnedHandles(store)).toEqual({
       handles: { seg1: { crumbs: ["handler", "bake-captured"] } },
       owners: { seg1: { crumbs: [null, "Bake"] } },
     });
@@ -451,7 +451,7 @@ describe("captureOwnedHandles: the arrays that hold a loader-owned value", () =>
     const store = createHandleStore();
     store.push("crumbs", "seg1", "handler");
 
-    expect(captureOwnedHandles(["seg1"], store)).toEqual({
+    expect(captureOwnedHandles(store)).toEqual({
       handles: {},
       owners: undefined,
     });
@@ -461,7 +461,7 @@ describe("captureOwnedHandles: the arrays that hold a loader-owned value", () =>
     const capture = createHandleStore();
     capture.push("crumbs", "seg1", "handler");
     capture.push("crumbs", "seg1", "bake-captured", false, "Bake");
-    const { handles, owners } = captureOwnedHandles(["seg1"], capture);
+    const { handles, owners } = captureOwnedHandles(capture);
     const hit = createHandleStore();
     hit.replaySegmentData("seg1", { crumbs: ["handler"] });
 

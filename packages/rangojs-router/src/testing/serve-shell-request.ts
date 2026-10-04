@@ -255,14 +255,15 @@ async function decodePayloadHandles(
 }
 
 /**
- * Each router's Prerender artifacts by pathname, as `vite build` bakes them
- * (router.matchForPrerender), baked on a URL's first request the way the dev
- * server's /__rsc_prerender endpoint bakes them (`devMode`: a Passthrough
- * route keeps getParams()). null: nothing baked (ctx.passthrough()).
+ * Each router's Prerender artifacts by manifest key, as `vite build` bakes
+ * them (router.matchForPrerender), baked on a URL's first request the way the
+ * dev server's /__rsc_prerender endpoint bakes them (`devMode`: a Passthrough
+ * route keeps getParams()). `baked` holds the pathnames already tried, one
+ * that baked nothing (ctx.passthrough()) included.
  */
 let prerenderArtifacts = new WeakMap<
   object,
-  Map<string, [key: string, payload: string] | null>
+  { payloads: Map<string, string>; baked: Set<string> }
 >();
 
 /**
@@ -282,8 +283,14 @@ async function servePrerenderArtifacts(
   const matched = await internal.findMatch(pathname);
   if (!matched?.pr) return undefined;
   let artifacts = prerenderArtifacts.get(router);
-  if (!artifacts) prerenderArtifacts.set(router, (artifacts = new Map()));
-  if (!artifacts.has(pathname)) {
+  if (!artifacts) {
+    prerenderArtifacts.set(
+      router,
+      (artifacts = { payloads: new Map(), baked: new Set() }),
+    );
+  }
+  const { payloads, baked } = artifacts;
+  if (!baked.has(pathname)) {
     const result = await internal.matchForPrerender(
       pathname,
       {},
@@ -293,22 +300,14 @@ async function servePrerenderArtifacts(
       true,
     );
     const { hashParams } = await import("../prerender/param-hash.js");
-    artifacts.set(
-      pathname,
-      result && !result.passthrough
-        ? [
-            `${result.routeName}/${hashParams(result.params)}`,
-            JSON.stringify({
-              segments: result.segments,
-              handles: result.handles,
-            }),
-          ]
-        : null,
-    );
+    baked.add(pathname);
+    if (result && !result.passthrough) {
+      payloads.set(
+        `${result.routeName}/${hashParams(result.params)}`,
+        JSON.stringify({ segments: result.segments, handles: result.handles }),
+      );
+    }
   }
-  const payloads = new Map(
-    [...artifacts.values()].filter((artifact) => artifact !== null),
-  );
   const [{ createPrerenderStore }, { setPrerenderStoreForTests }] =
     await Promise.all([
       import("../prerender/store.js"),
