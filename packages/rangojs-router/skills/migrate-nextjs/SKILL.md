@@ -450,14 +450,15 @@ export const ProductPage = Prerender<{ id: string }>(
 
 // router: createRouter({ prerender: { store, ttl, onRevalidate? } })
 // webhook (route handler, cron or queue):
-await router.prerender(`/products/${id}`, { env, ctx }); // revalidatePath
-await router.prerender.markStale([`product:${id}`], { env, ctx }); // revalidateTag
+const prerender = router.prerender({ env, ctx });
+await prerender(`/products/${id}`); // revalidatePath
+await prerender.markStale([`product:${id}`]); // revalidateTag
 ```
 
 | Next.js                               | Rango                                                                                               |
 | ------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `revalidatePath(path)` on an ISR page | `await router.prerender(path, { env, ctx })`: renders now, serves the new payload next request      |
-| `revalidateTag(tag)` on ISR pages     | `router.prerender.markStale([tag], { env, ctx })`: marks only; a stale hit schedules `onRevalidate` |
+| `revalidatePath(path)` on an ISR page | `await router.prerender({ env, ctx })(path)`: renders now, serves the new payload next request      |
+| `revalidateTag(tag)` on ISR pages     | `router.prerender({ env, ctx }).markStale([tag])`: marks only; a stale hit schedules `onRevalidate` |
 | `revalidate = N` (time-based ISR)     | `onDemand: { ttl: N }` + `onRevalidate`; `ttl` is soft, entries never expire                        |
 | `dynamicParams = false`               | plain on-demand `Prerender`: an unknown param 404s until something refreshes it                     |
 | `dynamicParams = true`                | wrap it in `Passthrough()`: unknown params render live until refreshed                              |
@@ -470,7 +471,8 @@ Three differences to plan for:
 - A refresh is requestless: `cookies()` / `headers()` in the page make it
   return `skipped-personalized`, and `ctx.env` is the live env you pass.
 - `markStale()` does not re-render: without `onRevalidate` or a cron calling
-  `router.prerender(target, { onlyIfStale: true })`, a marked page keeps
+  `prerender(target, { onlyIfStale: true })` (the runner from
+  `router.prerender({ env, ctx })`), a marked page keeps
   serving its old payload.
 
 See `/prerender` → "On-demand refresh (ISR)" for the store options, the serve
@@ -606,7 +608,7 @@ Built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`, `VercelCacheStore`)
 index by tag. Next's
 `revalidatePath` has no path-based equivalent for runtime-cached data — tag the
 relevant entries instead. For a prerendered ISR page it is
-`router.prerender(path, { env, ctx })` (see "On-demand ISR" above).
+`router.prerender({ env, ctx })(path)` (see "On-demand ISR" above).
 
 **2. Partial-render selection (which segments re-run after an action).** This is
 NOT cache invalidation — it is `revalidate()`, controlling which segments
@@ -648,7 +650,7 @@ When migrating:
 
 - `revalidateTag(tag)` → `await updateTag(tag)` (in a server action) or
   `revalidateTag(tag)` (in a route handler / webhook). Effectively 1:1.
-- `revalidatePath(path)` on an ISR page → `router.prerender(path, { env, ctx })`
+- `revalidatePath(path)` on an ISR page → `router.prerender({ env, ctx })(path)`
   (on-demand prerender, §3); on runtime-cached data, no path-based
   equivalent; tag the entries on that
   route (`cache({ tags })` / `cacheTag(...)`) and invalidate by tag.

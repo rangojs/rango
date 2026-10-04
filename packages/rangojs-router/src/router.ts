@@ -770,7 +770,7 @@ export function createRouter<TEnv = any>(
     params?: Record<string, string>,
   ) => string;
 
-  // On-demand prerender trigger (router.prerender / .many / .markStale).
+  // On-demand prerender binder (router.prerender({ env, ctx }) -> runner with .many / .markStale).
   // Requestless: runProducer runs matchForPrerender with onDemand=true (arming
   // the personalization guard); the store/config resolve per call from {env,ctx}.
   // The key version is the router's data version, resolved by the same call the
@@ -1123,8 +1123,8 @@ export function createRouter<TEnv = any>(
     // the instance is the trigger method (router.prerender()).
     _prerenderConfig: effectivePrerenderConfigOption,
 
-    // On-demand prerender trigger: router.prerender(target, { env, ctx }),
-    // plus .many() and .markStale().
+    // On-demand prerender trigger: router.prerender({ env, ctx })(target),
+    // plus .many() and .markStale() on the runner.
     prerender: prerenderTrigger,
 
     // Expose notFound component for RSC handler

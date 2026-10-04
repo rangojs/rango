@@ -27,8 +27,10 @@ export type {
   PrerenderConfig,
   PrerenderFn,
   PrerenderResult,
+  PrerenderManyOptions,
+  PrerenderRunner,
+  PrerenderRunOptions,
   PrerenderRuntime,
-  PrerenderManyRuntime,
   PrerenderTarget,
   PrerenderTargetObject,
 } from "./on-demand.js";

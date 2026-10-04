@@ -1,7 +1,7 @@
 /**
  * `router.prerender()` trigger factory.
  *
- * Builds the requestless refresh callable (plus `.many` / `.markStale`)
+ * Builds the `router.prerender` binder: `(runtime) => runner`, the runner being the requestless refresh callable (plus `.many` / `.markStale`)
  * from router-supplied deps. Pure and testable: all router internals (reverse,
  * match, the producer) arrive as injected functions, so this module has no RSC
  * imports and can be unit-tested with fakes.
@@ -30,8 +30,10 @@ import type {
   OnDemandRouteConfig,
   PrerenderConfig,
   PrerenderFn,
-  PrerenderManyRuntime,
+  PrerenderManyOptions,
   PrerenderResult,
+  PrerenderRunner,
+  PrerenderRunOptions,
   PrerenderRuntime,
   PrerenderTarget,
 } from "./on-demand.js";
@@ -165,16 +167,18 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
   async function refresh(
     target: PrerenderTarget<TRoutes>,
     runtime: PrerenderRuntime<TEnv>,
+    options: PrerenderRunOptions = {},
     version: string = deps.resolveVersion(),
   ): Promise<PrerenderResult> {
-    const result = await run(target, runtime, version);
-    if (!result.ok && runtime.throwOnError) throw new PrerenderError(result);
+    const result = await run(target, runtime, options, version);
+    if (!result.ok && options.throwOnError) throw new PrerenderError(result);
     return result;
   }
 
   async function run(
     target: PrerenderTarget<TRoutes>,
     runtime: PrerenderRuntime<TEnv>,
+    options: PrerenderRunOptions,
     version: string,
   ): Promise<PrerenderResult> {
     const resolved = resolveTarget(target, deps.reverse);
@@ -239,7 +243,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     // onlyIfStale: the cron-sweep opt-in. A CMS webhook (default) always renders,
     // because it fires precisely when content changed. This is the only path that
     // returns already-fresh, reported with the existing entry's ttl/tags.
-    if (runtime.onlyIfStale) {
+    if (options.onlyIfStale) {
       // An unreadable or unverifiable entry is "couldn't confirm fresh":
       // render, never throw (one result per target, many() keeps going).
       const existing = await readVerifiedStoredEntry(
@@ -362,18 +366,18 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     };
   }
 
-  const trigger = refresh as PrerenderFn<TEnv, TRoutes>;
   let warnedNoStore = false;
   let warnedNoRevalidate = false;
 
-  trigger.many = async (
+  async function many(
+    runtime: PrerenderRuntime<TEnv>,
     targets: ReadonlyArray<PrerenderTarget<TRoutes>>,
-    runtime: PrerenderManyRuntime<TEnv>,
-  ): Promise<PrerenderResult[]> => {
+    options: PrerenderManyOptions = {},
+  ): Promise<PrerenderResult[]> {
     // Default to 1 for any invalid concurrency (undefined, NaN, < 1). Without
     // this, Math.floor(NaN) -> NaN spawns zero workers and many() resolves to an
     // array of holes that reports nothing.
-    const raw = runtime.concurrency;
+    const raw = options.concurrency;
     const concurrency =
       typeof raw === "number" && Number.isFinite(raw) && raw >= 1
         ? Math.floor(raw)
@@ -382,14 +386,14 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     return runWithConcurrency(targets, concurrency, (target) =>
       // throwOnError propagates per-item so the batch stops on the first failure;
       // without it, every target yields a result.
-      refresh(target, runtime, version),
+      refresh(target, runtime, options, version),
     );
-  };
+  }
 
-  trigger.markStale = async (
+  async function markStale(
+    runtime: PrerenderRuntime<TEnv>,
     tags: string[],
-    runtime: { env: TEnv; ctx?: ExecutionContext },
-  ): Promise<void> => {
+  ): Promise<void> {
     if (tags.length === 0) return;
     const config = deps.resolveConfig(runtime.env, runtime.ctx);
     if (!config?.store.markStale) {
@@ -416,9 +420,17 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
       );
     }
     await config.store.markStale(tags);
-  };
+  }
 
-  return trigger;
+  // Binding does no work: the config factory, version and manifest resolve per
+  // call. The warn-once flags live on the trigger, shared by every bound runner.
+  return (runtime: PrerenderRuntime<TEnv>): PrerenderRunner<TRoutes> => {
+    const runner = ((target, options) =>
+      refresh(target, runtime, options)) as PrerenderRunner<TRoutes>;
+    runner.many = (targets, options) => many(runtime, targets, options);
+    runner.markStale = (tags) => markStale(runtime, tags);
+    return runner;
+  };
 }
 
 /**

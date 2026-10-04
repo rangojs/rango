@@ -18,9 +18,8 @@ export async function guidePlainAction(
   const slug = String(formData.get("slug"));
   if (formData.get("refresh") !== "1") return { status: `noop:${slug}` };
   const { router } = await import("../router.js");
-  const result = await router.prerender(
-    { route: "guidePlain", params: { slug } },
-    { env: getRequestContext().env as AppBindings },
-  );
+  const result = await router.prerender({
+    env: getRequestContext().env as AppBindings,
+  })({ route: "guidePlain", params: { slug } });
   return { status: `${result.status}:${slug}` };
 }

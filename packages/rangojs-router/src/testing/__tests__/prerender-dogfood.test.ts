@@ -28,7 +28,7 @@ describe("router.prerender() dogfood (public createRouter + public store)", () =
     const router = createRouter({ prerender: { store } }).routes(({ path }) => [
       path("/plain/:id", PlainDef, { name: "plainPr" }),
     ]);
-    const result = await router.prerender("/plain/seed", { env: {} });
+    const result = await router.prerender({ env: {} })("/plain/seed");
     expect(result).toMatchObject({
       ok: false,
       status: "skipped-not-on-demand",
@@ -41,7 +41,7 @@ describe("router.prerender() dogfood (public createRouter + public store)", () =
     const router = createRouter({}).routes(({ path }) => [
       path("/od/:id", OnDemandDef, { name: "od" }),
     ]);
-    const result = await router.prerender("/od/seed", { env: {} });
+    const result = await router.prerender({ env: {} })("/od/seed");
     expect(result).toMatchObject({ ok: false, status: "no-store" });
   });
 
@@ -50,7 +50,7 @@ describe("router.prerender() dogfood (public createRouter + public store)", () =
     const router = createRouter({ prerender: { store } }).routes(({ path }) => [
       path("/od/:id", OnDemandDef, { name: "od" }),
     ]);
-    const result = await router.prerender("/nope/x", { env: {} });
+    const result = await router.prerender({ env: {} })("/nope/x");
     expect(result).toMatchObject({ ok: false, status: "no-match" });
   });
 
@@ -59,7 +59,7 @@ describe("router.prerender() dogfood (public createRouter + public store)", () =
     const router = createRouter({ prerender: { store } }).routes(({ path }) => [
       path("/od/:id", OnDemandDef, { name: "od" }),
     ]);
-    const result = await router.prerender("/od/seed?preview=1", { env: {} });
+    const result = await router.prerender({ env: {} })("/od/seed?preview=1");
     expect(result).toMatchObject({
       ok: false,
       status: "skipped-unsupported-target",
@@ -102,7 +102,7 @@ describe("router.prerender() dogfood (public createRouter + public store)", () =
     // No throw, and delegates to the store's markStale (a no-op here since
     // the store is empty) — proves the public trigger wires through to the store.
     await expect(
-      router.prerender.markStale(["product:seed"], { env: {} }),
+      router.prerender({ env: {} }).markStale(["product:seed"]),
     ).resolves.toBeUndefined();
   });
 });

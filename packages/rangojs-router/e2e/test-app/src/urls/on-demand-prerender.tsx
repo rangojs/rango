@@ -84,9 +84,9 @@ export const OnDemandDetail = Passthrough(OnDemandDetailDef, async (ctx) => {
 // unaffected; cloudflare-basic's triggers use the object target.
 export const OnDemandTrigger: Handler<{ slug: string }> = async (ctx) => {
   const { router } = await import("../router.js");
-  const result = await router.prerender(`/on-demand/${ctx.params.slug}`, {
-    env: ctx.env as AppEnv,
-  });
+  const result = await router.prerender({ env: ctx.env as AppEnv })(
+    `/on-demand/${ctx.params.slug}`,
+  );
   return prerenderResultJson(result);
 };
 
@@ -120,17 +120,17 @@ export const OnDemandPlainDef = Prerender<{ slug: string }>(
 // entry) and ?markStale=<tag> (marks matching entries stale).
 export const OnDemandPlainTrigger: Handler<{ slug: string }> = async (ctx) => {
   const { router } = await import("../router.js");
-  const env = ctx.env as AppEnv;
+  const prerender = router.prerender({ env: ctx.env as AppEnv });
   const staleTag = ctx.searchParams.get("markStale");
   if (staleTag) {
-    await router.prerender.markStale([staleTag], { env });
+    await prerender.markStale([staleTag]);
     return Response.json({ markedStale: staleTag });
   }
-  const result = await router.prerender(
+  const result = await prerender(
     `/on-demand-plain/${ctx.params.slug}`,
     ctx.searchParams.get("onlyIfStale") === "1"
-      ? { env, onlyIfStale: true }
-      : { env },
+      ? { onlyIfStale: true }
+      : undefined,
   );
   return prerenderResultJson(result);
 };
@@ -157,9 +157,9 @@ const OnDemandSwrDef = Prerender<{ slug: string }>(
 
 const OnDemandSwrTrigger: Handler<{ slug: string }> = async (ctx) => {
   const { router } = await import("../router.js");
-  const result = await router.prerender(`/on-demand-swr/${ctx.params.slug}`, {
-    env: ctx.env as AppEnv,
-  });
+  const result = await router.prerender({ env: ctx.env as AppEnv })(
+    `/on-demand-swr/${ctx.params.slug}`,
+  );
   return prerenderResultJson(result);
 };
 
@@ -187,9 +187,8 @@ const PersonalizedOnDemand = Passthrough(
 
 const PersonalizedOnDemandTrigger: Handler<{ slug: string }> = async (ctx) => {
   const { router } = await import("../router.js");
-  const result = await router.prerender(
+  const result = await router.prerender({ env: ctx.env as AppEnv })(
     `/on-demand-personalized/${ctx.params.slug}`,
-    { env: ctx.env as AppEnv },
   );
   return prerenderResultJson(result);
 };

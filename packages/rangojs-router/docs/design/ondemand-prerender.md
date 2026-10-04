@@ -82,7 +82,7 @@ queues, workflows, webhooks, and server actions.
 The DX goal is deliberately small:
 
 ```ts
-await router.prerender("/products/42", { env, ctx });
+await router.prerender({ env, ctx })("/products/42");
 ```
 
 That should be the whole trigger-side story. The hard parts are route
@@ -101,14 +101,14 @@ export default {
   fetch: router.fetch,
 
   async scheduled(_event, env, ctx) {
-    ctx.waitUntil(router.prerender("/products/42", { env, ctx }));
+    ctx.waitUntil(router.prerender({ env, ctx })("/products/42"));
   },
 
   async queue(batch, env, ctx) {
     ctx.waitUntil(
-      router.prerender.many(
+      router.prerender({ env, ctx }).many(
         batch.messages.map((message) => message.body.target),
-        { env, ctx, concurrency: 4 },
+        { concurrency: 4 },
       ),
     );
   },
@@ -165,15 +165,15 @@ anything.
 JSON-serializable so it can go straight into a queue message) and the live env.
 It runs at most once per stale key per isolate while one is in flight
 (`scheduleOverlayRevalidation`, `cache-lookup.ts`), so the obvious single
-process wiring, a direct `router.prerender()` call, renders once per stale key
+process wiring, a direct `router.prerender({ env })(target)` call, renders once per stale key
 rather than once per stale request. The key is free again once its task
 settles or after `IN_FLIGHT_LEADER_MAX_WAIT_MS` (the runtime cache's leader cap),
 so a hung `onRevalidate` cannot pin it, and no scheduling happens under a build
 context where `waitUntil` is a no-op.
 
 The target is typed `PrerenderTargetObject`: `{ route: string; params }` plus a
-type-only brand. `router.prerender()` and `.many()` accept it in addition to the
-typed named-route object, so `(target, env) => router.prerender(target, { env })`
+type-only brand. the runner and its `.many()` accept it in addition to the
+typed named-route object, so `(target, env) => router.prerender({ env })(target)`
 typechecks on a router with named routes, also after a queue round trip
 (`JSON.parse(raw) as PrerenderTargetObject`), while a hand-written
 `{ route: "typo" }` is still a type error. Pinned in
@@ -252,11 +252,16 @@ consequence of making a route a fallback.
 
 ### Trigger API
 
-The main primitive accepts a URL-like target and runtime bindings:
+`router.prerender({ env, ctx })` binds the runtime once and returns a runner,
+synchronously and with no work at bind time. `ctx` is optional (Cloudflare
+only). The config factory, the key version and the manifest still resolve per
+call, and the dev warnings below fire once per router, not once per bind. The
+runner accepts a URL-like target and per-call options:
 
 ```ts
-await router.prerender("/products/42", { env, ctx });
-await router.prerender(new URL("https://shop.test/products/42"), { env, ctx });
+const prerender = router.prerender({ env, ctx });
+await prerender("/products/42");
+await prerender(new URL("https://shop.test/products/42"));
 ```
 
 The typed form avoids string construction and should be the preferred API in app
@@ -267,21 +272,22 @@ nothing accepts `{ route, params }` today; the existing named-route API is
 for free, since string targets are accepted:
 
 ```ts
-await router.prerender(
-  { route: "products.detail", params: { id: "42" } },
-  { env, ctx },
-);
+await prerender({ route: "products.detail", params: { id: "42" } });
 ```
 
 Batching is first-class because queue and workflow consumers should not have to
 write their own concurrency limiter:
 
 ```ts
-await router.prerender.many(
+await prerender.many(
   productIds.map((id) => ({ route: "products.detail", params: { id } })),
-  { env, ctx, concurrency: 4 },
+  { concurrency: 4 },
 );
 ```
+
+`concurrency` defaults to 1 (any invalid value is 1). One invocation runs under
+the platform's time and CPU limits, so a large list belongs in a queue, one
+message per batch.
 
 There is deliberately no `map` option — callers pre-map to targets, and the
 batching primitive owns only concurrency and result collection.
@@ -305,19 +311,19 @@ entries stale and keeps serving them, where `updateTag()` / `revalidateTag()`
 purge (an earlier draft called it `invalidateTags`):
 
 ```ts
-await router.prerender.markStale(["product:42"], { env, ctx });
+await prerender.markStale(["product:42"]);
 ```
 
 Dev warns once when `markStale()` runs against a store with no `onRevalidate`
 configured: nothing would ever re-render a marked entry unless a sweep calls
-`router.prerender(target, { onlyIfStale: true })`.
+`prerender(target, { onlyIfStale: true })`.
 
 The existing `updateTag()` / `revalidateTag()` APIs remain runtime-cache APIs.
 They should not silently mutate durable prerender entries. There is a second
 reason for the separate API beyond namespacing: `updateTag()` /
 `revalidateTag()` require an ALS request context and silently no-op from queue
 and cron callers (`src/cache/tag-invalidation.ts`). Prerender invalidation must
-work from exactly those triggers, which is why it takes explicit `{ env, ctx }`.
+work from exactly those triggers, which is why the runner binds an explicit `{ env, ctx }`.
 
 V1 invalidation is mark-stale, not delete. The entry keeps serving and a
 refresh is scheduled. Deleting would re-expose the bundled manifest entry below
@@ -362,11 +368,7 @@ type PrerenderResult =
 `throwOnError: true` is useful for admin endpoints and CI-like workflows:
 
 ```ts
-await router.prerender("/products/42", {
-  env,
-  ctx,
-  throwOnError: true,
-});
+await prerender("/products/42", { throwOnError: true });
 ```
 
 `many()` returns one result per target and should not stop the whole batch unless
@@ -686,7 +688,7 @@ before.
 ### Refreshing
 
 ```txt
-router.prerender(target, runtime)
+router.prerender(runtime)(target, options)
   |
   v
 resolve target to route + params
@@ -767,12 +769,12 @@ export default {
   async scheduled(_event, env, ctx) {
     const products = await env.CMS.listRecentlyChangedProducts();
     ctx.waitUntil(
-      router.prerender.many(
+      router.prerender({ env, ctx }).many(
         products.map((product) => ({
           route: "products.detail",
           params: { id: product.id },
         })),
-        { env, ctx, concurrency: 4 },
+        { concurrency: 4 },
       ),
     );
   },
@@ -787,7 +789,9 @@ export default {
 
   async queue(batch, env, ctx) {
     const targets = batch.messages.map((message) => message.body.target);
-    ctx.waitUntil(router.prerender.many(targets, { env, ctx, concurrency: 8 }));
+    ctx.waitUntil(
+      router.prerender({ env, ctx }).many(targets, { concurrency: 8 }),
+    );
   },
 };
 ```
@@ -799,9 +803,9 @@ export async function POST(request: Request, env: Env, ctx: ExecutionContext) {
   await verifyWebhook(request, env.WEBHOOK_SECRET);
 
   const { productId } = await request.json();
-  const result = await router.prerender(
+  const result = await router.prerender({ env, ctx })(
     { route: "products.detail", params: { id: productId } },
-    { env, ctx, throwOnError: true },
+    { throwOnError: true },
   );
 
   return Response.json(result);
@@ -818,10 +822,10 @@ export async function updateProduct(id: string, formData: FormData) {
   await ctx.env.CMS.updateProduct(id, formData);
 
   ctx.waitUntil(
-    router.prerender(
-      { route: "products.detail", params: { id } },
-      { env: ctx.env, ctx: ctx.executionContext },
-    ),
+    router.prerender({ env: ctx.env, ctx: ctx.executionContext })({
+      route: "products.detail",
+      params: { id },
+    }),
   );
 }
 ```
@@ -829,7 +833,7 @@ export async function updateProduct(id: string, formData: FormData) {
 The action's current request is not the prerender input. The prerender producer
 gets env and execution capability, not user cookies or headers. Scheduling the
 refresh with `waitUntil` returns the action sooner; awaiting
-`router.prerender()` instead makes the action's own re-render of that page show
+`router.prerender()` runner instead makes the action's own re-render of that page show
 the new entry (an overlay hit on an action re-sends the route's segments).
 
 ## Why Not Reuse The Live Request?
@@ -879,9 +883,9 @@ but it should have its own API and invalidation namespace.
 3. Replace the prerender store singleton with per-request/per-call store
    resolution.
 4. Add the durable overlay read path before bundled manifest lookup.
-5. Add `router.prerender(target, runtime)` with result objects and requestless
-   producer semantics.
-6. Add `router.prerender.many()` and `router.prerender.markStale()`.
+5. Add `router.prerender(runtime)` returning a runner called per target, with
+   result objects and requestless producer semantics.
+6. Add the runner's `.many()` and `.markStale()`.
 7. Add SWR scheduling and platform adapters for Cloudflare and Vercel.
 8. Add optional build-time durable seeding via `buildEnv`.
 

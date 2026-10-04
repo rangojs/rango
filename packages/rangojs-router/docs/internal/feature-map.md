@@ -685,10 +685,13 @@ The visitor's theme reads (the handler and middleware `ctx.theme`, `getRequestCo
 
 ### On-demand Prerender (ISR)
 
-- `router.prerender(target, { env, ctx })` performs a requestless refresh from
-  fetch, cron, queues, workflows, webhooks, or server actions. `.many()` adds
-  bounded concurrency and `.markStale(tags, { env, ctx })` marks durable entries
-  stale (marking only: they keep serving).
+- `router.prerender({ env, ctx })` binds the runtime and returns a runner;
+  `runner(target, { onlyIfStale?, throwOnError? })` performs a requestless
+  refresh from fetch, cron, queues, workflows, webhooks, or server actions.
+  `runner.many(targets, { concurrency?, ... })` adds bounded concurrency and
+  `runner.markStale(tags)` marks durable entries stale (marking only: they keep
+  serving). Types: `PrerenderRuntime`, `PrerenderRunOptions`,
+  `PrerenderManyOptions`, `PrerenderRunner`, `PrerenderFn`.
 - `Prerender(..., { onDemand })` is the explicit route opt-in
   (`onDemand: true | { ttl?, tags?: string[] | (target) => string[] }`). Any
   truthy spelling works: producer retention and the runtime `od` trie flag are

@@ -324,10 +324,10 @@ function prerenderResultJson(result: PrerenderResult): Response {
 // be a circular type. Returns the PrerenderResult as JSON for the e2e.
 const GuidesTrigger: Handler<{ slug: string }> = async (ctx) => {
   const { router } = await import("./router.js");
-  const result = await router.prerender(
-    { route: "guides.detail", params: { slug: ctx.params.slug } },
-    { env: ctx.env, ctx: ctx.executionContext },
-  );
+  const result = await router.prerender({
+    env: ctx.env,
+    ctx: ctx.executionContext,
+  })({ route: "guides.detail", params: { slug: ctx.params.slug } });
   return prerenderResultJson(result);
 };
 
@@ -337,22 +337,19 @@ const GuidesTrigger: Handler<{ slug: string }> = async (ctx) => {
 //   ?markStale=<t>      -> KV tag-marker mark-stale (no render)
 const GuidePlainTrigger: Handler<{ slug: string }> = async (ctx) => {
   const { router } = await import("./router.js");
+  const prerender = router.prerender({
+    env: ctx.env,
+    ctx: ctx.executionContext,
+  });
   const staleTag = ctx.url.searchParams.get("markStale");
   if (staleTag) {
-    await router.prerender.markStale([staleTag], {
-      env: ctx.env,
-      ctx: ctx.executionContext,
-    });
+    await prerender.markStale([staleTag]);
     return Response.json({ markedStale: staleTag });
   }
   const onlyIfStale = ctx.url.searchParams.get("onlyIfStale") === "1";
-  const result = await router.prerender(
+  const result = await prerender(
     { route: "guidePlain", params: { slug: ctx.params.slug } },
-    {
-      env: ctx.env,
-      ctx: ctx.executionContext,
-      ...(onlyIfStale ? { onlyIfStale: true } : {}),
-    },
+    onlyIfStale ? { onlyIfStale: true } : undefined,
   );
   return prerenderResultJson(result);
 };
@@ -371,22 +368,22 @@ const GuideSwrTrigger: Handler<{ slug: string }> = async (ctx) => {
     return Response.json({ cleared: true });
   }
   const { router } = await import("./router.js");
-  const result = await router.prerender(
-    { route: "guideSwr", params: { slug: ctx.params.slug } },
-    { env: ctx.env, ctx: ctx.executionContext },
-  );
+  const result = await router.prerender({
+    env: ctx.env,
+    ctx: ctx.executionContext,
+  })({ route: "guideSwr", params: { slug: ctx.params.slug } });
   return prerenderResultJson(result);
 };
 
 const PersonalizedGuideTrigger: Handler<{ slug: string }> = async (ctx) => {
   const { router } = await import("./router.js");
-  const result = await router.prerender(
-    {
-      route: "guides.personalized",
-      params: { slug: ctx.params.slug },
-    },
-    { env: ctx.env, ctx: ctx.executionContext },
-  );
+  const result = await router.prerender({
+    env: ctx.env,
+    ctx: ctx.executionContext,
+  })({
+    route: "guides.personalized",
+    params: { slug: ctx.params.slug },
+  });
   return prerenderResultJson(result);
 };
 

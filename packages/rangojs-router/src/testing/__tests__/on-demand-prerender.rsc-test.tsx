@@ -112,7 +112,7 @@ describe("on-demand prerender: router.prerender() then serve", () => {
   it("serves the stored payload while loaders resolve fresh", async () => {
     const router = makeRouter({ store });
 
-    const result = await router.prerender("/article/intro", { env: {} });
+    const result = await router.prerender({ env: {} })("/article/intro");
     expect(result).toMatchObject({
       ok: true,
       status: "rendered",
@@ -137,7 +137,7 @@ describe("on-demand prerender: router.prerender() then serve", () => {
   it("returns skipped-personalized and stores nothing when the producer reads cookies()", async () => {
     const router = makeRouter({ store });
 
-    const result = await router.prerender("/personalized/a", { env: {} });
+    const result = await router.prerender({ env: {} })("/personalized/a");
 
     expect(result).toMatchObject({
       ok: false,
@@ -159,7 +159,7 @@ describe("on-demand prerender: router.prerender() then serve", () => {
       },
     };
     const router = makeRouter({ store: naive });
-    await router.prerender("/article/a", { env: {} });
+    await router.prerender({ env: {} })("/article/a");
     expect((await serveShellRequest(router, "/article/a")).flight).toContain(
       "a:stamp-1",
     );
@@ -173,7 +173,7 @@ describe("on-demand prerender: router.prerender() then serve", () => {
       setBuildVersions({ data: "d1", document: "h1" });
       const router = makeRouter({ store }, { version: "pinned" });
 
-      const result = await router.prerender("/article/v", { env: {} });
+      const result = await router.prerender({ env: {} })("/article/v");
 
       if (!result.ok) throw new Error(`expected ok, got ${result.status}`);
       expect(result.key).toContain(":pinned:");
@@ -192,7 +192,7 @@ describe("on-demand prerender: router.prerender() then serve", () => {
       });
       const router = makeRouter({ store }, { id: "od-app" });
 
-      await router.prerender("/article/v", { env: {} });
+      await router.prerender({ env: {} })("/article/v");
 
       expect(store.entries()[0]?.[1].meta.version).toBe("d-app");
       expect((await serveShellRequest(router, "/article/v")).flight).toContain(
@@ -224,14 +224,14 @@ describe("on-demand prerender: router.prerender() then serve", () => {
   it("a long-lived handler follows a data version change, as the trigger does", async () => {
     setBuildVersions({ data: "d-1", document: "h-1" });
     const router = makeRouter({ store });
-    await router.prerender("/article/v", { env: {} });
+    await router.prerender({ env: {} })("/article/v");
     expect((await serveShellRequest(router, "/article/v")).flight).toContain(
       "v:stamp-1",
     );
 
     // Same document version: the handler is reused, the data version moved.
     setBuildVersions({ data: "d-2", document: "h-1" });
-    await router.prerender("/article/v", { env: {} });
+    await router.prerender({ env: {} })("/article/v");
     expect(store.entries().map(([, e]) => e.meta.version)).toEqual([
       "d-1",
       "d-2",
@@ -250,7 +250,7 @@ describe("on-demand prerender: router.prerender() then serve", () => {
     });
     const router = makeRouter({ store }, { id: "od-app" });
 
-    const result = await router.prerender("/versions/a", { env: {} });
+    const result = await router.prerender({ env: {} })("/versions/a");
 
     expect(result).toMatchObject({ ok: true, status: "rendered" });
     expect((await serveShellRequest(router, "/versions/a")).flight).toContain(
@@ -287,7 +287,7 @@ describe("on-demand prerender: router.prerender() then serve", () => {
       ttl: 0,
       onRevalidate,
     });
-    await router.prerender("/hot/a", { env: {} });
+    await router.prerender({ env: {} })("/hot/a");
 
     const env = { binding: "live" };
     await Promise.all([

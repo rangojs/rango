@@ -711,7 +711,7 @@ for that router.
 
 To refresh a prerendered page without a redeploy, opt the route into
 **on-demand prerender** and call `router.prerender()` (next section); its tags
-are a separate namespace, invalidated with `router.prerender.markStale()`. To
+are a separate namespace, invalidated with the runner's `markStale()`. To
 make a route invalidatable by `updateTag()`, serve it from the runtime cache
 instead (`cache()`, or a `Passthrough()` live handler). A build-baked **ppr
 shell** is different: a tag it carries does drop it (see "Freshness of a build
@@ -772,14 +772,26 @@ zero-config in-memory store is used when the option is absent.
 ### Trigger a refresh
 
 ```typescript
-await router.prerender("/products/42", { env, ctx });
-await router.prerender(
+const prerender = router.prerender({ env, ctx });
+await prerender("/products/42");
+await prerender(
   { route: "products.detail", params: { id: "42" } },
-  { env, ctx, throwOnError: true },
+  { throwOnError: true },
 );
-await router.prerender.many(targets, { env, ctx, concurrency: 4 });
-await router.prerender.markStale(["product:42"], { env, ctx });
+await prerender.many(targets, { concurrency: 4, onlyIfStale: true });
+await prerender.markStale(["product:42"]);
 ```
+
+`router.prerender({ env, ctx })` binds the live env (and the Cloudflare `ctx`,
+absent on Node) once and returns the runner synchronously; binding does no
+work. Per-call options (`onlyIfStale`, `throwOnError`, and `concurrency` on
+`.many()`) go on each call.
+
+`.many()` runs targets through a bounded pool and returns one result per target
+in input order. `concurrency` defaults to 1 (any invalid value is 1). A large
+list belongs in a queue, one message per batch: one invocation runs under the
+platform's time and CPU limits, so a single `.many()` over thousands of targets
+will not finish.
 
 A refresh always renders and replaces; `{ onlyIfStale: true }` (cron sweeps)
 skips a fresh entry and returns `already-fresh`. The result is inspectable
@@ -812,21 +824,22 @@ in dev.
 - **`onRevalidate` runs once per stale key per isolate** while one is in
   flight, so calling `router.prerender()` from it renders once per stale key
   on a single Node process. Across isolates, dedup belongs to the queue. Its
-  `target` is a `PrerenderTargetObject`, which `router.prerender()` and
-  `.many()` accept as is, so
-  `onRevalidate: (target, env) => router.prerender(target, { env })`
-  typechecks without a cast.
+  `target` is a `PrerenderTargetObject`, which the runner and its `.many()`
+  accept as is, so
+  `onRevalidate: (target, env) => router.prerender({ env })(target)`
+  typechecks without a cast. `onRevalidate` receives `(target, env)`, with no
+  `ctx`.
 - **Prerender tags are their own namespace.** `cacheTag()`, `updateTag()` and
-  `revalidateTag()` never reach the prerender store; `router.prerender.markStale()`
+  `revalidateTag()` never reach the prerender store; the runner's `markStale()`
   never reaches the runtime cache. (`updateTag()` needs a request context;
   refreshes run from queues and crons.)
 - **`markStale()` only marks.** The entry keeps serving; nothing re-renders
   unless `onRevalidate` is configured or a sweep calls
-  `router.prerender(target, { onlyIfStale: true })`. Dev warns when you mark
+  `prerender(target, { onlyIfStale: true })`. Dev warns when you mark
   with no `onRevalidate`.
 - **The producer is requestless.** `cookies()`, `headers()` and the client-cache
   directives make a refresh return `skipped-personalized`. `ctx.env` is the
-  live env passed to the trigger, not `buildEnv`, and `ctx.onDemand` is `true`.
+  live env bound by `router.prerender({ env })`, not `buildEnv`, and `ctx.onDemand` is `true`.
 - **A trigger may render params `getParams()` never returned.** Validate ids
   from webhooks before refreshing them.
 - **`notFound()` or a throw in a refresh keeps the old entry** (`render-failed`).

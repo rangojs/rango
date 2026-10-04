@@ -220,10 +220,11 @@ export default {
     ctx: ExecutionContext,
   ) {
     const ids = await env.CMS.listProductIds();
+    const prerender = router.prerender({ env, ctx });
     ctx.waitUntil(
-      router.prerender.many(
+      prerender.many(
         ids.map((id) => ({ route: "products.detail", params: { id } })),
-        { env, ctx, concurrency: 4, onlyIfStale: true },
+        { concurrency: 4, onlyIfStale: true },
       ),
     );
   },
@@ -235,21 +236,23 @@ export default {
     ctx: ExecutionContext,
   ) {
     const targets = batch.messages.map((m) => m.body.target);
-    ctx.waitUntil(router.prerender.many(targets, { env, ctx, concurrency: 8 }));
+    ctx.waitUntil(
+      router.prerender({ env, ctx }).many(targets, { concurrency: 8 }),
+    );
   },
 };
 ```
 
 `PrerenderTargetObject` comes from `@rangojs/router/prerender`. It is what
-`onRevalidate` receives, and `router.prerender()` / `.many()` accept it as is on
-a router typed with named routes. A queue hands it back as JSON, so type the
+`onRevalidate` receives, and the `router.prerender({ env, ctx })` runner (and its
+`.many()`) accepts it as is on a router typed with named routes. A queue hands it back as JSON, so type the
 message body with it (as above) or assert it: `JSON.parse(raw) as
 PrerenderTargetObject`.
 
 The KV store writes no `expirationTtl` (entries never expire; `ttl` is soft)
 and keys entries by router id and the router's data version, so a deploy that
 changes server code starts from the build entries again.
-`router.prerender.markStale(tags, { env, ctx })` writes per-tag markers under
+`router.prerender({ env, ctx }).markStale(tags)` writes per-tag markers under
 `__rango_pr_tag__/`, a namespace separate from `updateTag()`'s; a read checks
 one marker per tag on the entry, uncached, so keep tag counts small. Neither
 `updateTag()` nor `revalidateTag()` reaches this store.

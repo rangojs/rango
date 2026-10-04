@@ -1,6 +1,6 @@
 /**
  * Public type surface for on-demand (ISR-style) prerender: the router
- * `prerender` config option, the `router.prerender()` trigger, its typed
+ * `prerender` config option, the `router.prerender({ env, ctx })` runner, its typed
  * target, and the inspectable result union.
  *
  * Types only — safe to import from router options, the public interfaces, the
@@ -16,7 +16,7 @@ declare const prerenderTargetBrand: unique symbol;
 /**
  * The target `onRevalidate` receives: a plain `{ route, params }` that goes
  * straight into a queue message. The type-only brand (never present at
- * runtime) lets `router.prerender()` / `.many()` accept it with no cast on a
+ * runtime) lets the runner (`router.prerender({ env })(target)` / `.many()`) accepts it with no cast on a
  * router typed with named routes, while a hand-written `{ route: "typo" }`
  * stays a type error there. After a JSON round trip, assert it back:
  * `JSON.parse(raw) as PrerenderTargetObject`.
@@ -62,12 +62,16 @@ export type PrerenderTarget<TRoutes = {}> =
   | PrerenderRouteTarget<TRoutes>
   | PrerenderTargetObject;
 
-/** Env + platform capabilities the trigger threads to the requestless producer. */
+/** Env + platform capabilities bound once by `router.prerender({ env, ctx })`. */
 export interface PrerenderRuntime<TEnv = any> {
   /** The live env: the producer's `ctx.env` (not the build's `buildEnv`). */
   env: TEnv;
   /** Cloudflare `ExecutionContext`; absent on node/Vercel. */
   ctx?: ExecutionContext;
+}
+
+/** Per-call options of the bound runner. */
+export interface PrerenderRunOptions {
   /** Throw on failure instead of returning an `{ ok: false }` result. */
   throwOnError?: boolean;
   /**
@@ -77,10 +81,9 @@ export interface PrerenderRuntime<TEnv = any> {
   onlyIfStale?: boolean;
 }
 
-export interface PrerenderManyRuntime<
-  TEnv = any,
-> extends PrerenderRuntime<TEnv> {
-  /** Max concurrent renders in a batch (default 1). */
+/** Per-call options of the bound runner's `.many()`. */
+export interface PrerenderManyOptions extends PrerenderRunOptions {
+  /** Max concurrent renders in a batch (default 1; any invalid value is 1). */
   concurrency?: number;
 }
 
@@ -157,7 +160,7 @@ export interface PrerenderConfig<TEnv = any> {
    * the JSON-serializable target and the live env. Runs at most once per
    * stale key per isolate while one is in flight (one running longer than
    * 15 s counts as finished, so a hung call cannot block the key), so
-   * `(target, env) => router.prerender(target, { env })` is safe in a single
+   * `(target, env) => router.prerender({ env })(target)` is safe in a single
    * process; across isolates, point it at a queue, which owns dedup.
    */
   onRevalidate?: (
@@ -180,25 +183,32 @@ export interface ResolvedPrerender<TEnv = any> {
 }
 
 /**
- * The `router.prerender` callable, plus its `.many` / `.markStale`
- * companions. Typing rides the phantom `TRoutes` accumulator, like `reverse`.
+ * The runner `router.prerender({ env, ctx })` returns: callable per target,
+ * plus `.many` / `.markStale`. Typing rides the phantom `TRoutes` accumulator,
+ * like `reverse`.
  */
-export interface PrerenderFn<TEnv = any, TRoutes = {}> {
+export interface PrerenderRunner<TRoutes = {}> {
   (
     target: PrerenderTarget<TRoutes>,
-    runtime: PrerenderRuntime<TEnv>,
+    options?: PrerenderRunOptions,
   ): Promise<PrerenderResult>;
   many(
     targets: ReadonlyArray<PrerenderTarget<TRoutes>>,
-    runtime: PrerenderManyRuntime<TEnv>,
+    options?: PrerenderManyOptions,
   ): Promise<PrerenderResult[]>;
   /**
    * Mark every stored entry carrying one of `tags` stale. Marking only: the
    * entries keep serving, and a stale hit schedules `onRevalidate` when one is
    * configured. Nothing is deleted or re-rendered here.
    */
-  markStale(
-    tags: string[],
-    runtime: { env: TEnv; ctx?: ExecutionContext },
-  ): Promise<void>;
+  markStale(tags: string[]): Promise<void>;
 }
+
+/**
+ * The `router.prerender` function: binds the runtime (`env`, `ctx`) and returns
+ * the {@link PrerenderRunner}. Binding does no work; the config factory is
+ * resolved per call.
+ */
+export type PrerenderFn<TEnv = any, TRoutes = {}> = (
+  runtime: PrerenderRuntime<TEnv>,
+) => PrerenderRunner<TRoutes>;

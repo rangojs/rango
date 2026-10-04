@@ -18,8 +18,8 @@ export async function onDemandPlainAction(
   const slug = String(formData.get("slug"));
   if (formData.get("refresh") !== "1") return { status: `noop:${slug}` };
   const { router } = await import("../router.js");
-  const result = await router.prerender(`/on-demand-plain/${slug}`, {
+  const result = await router.prerender({
     env: getRequestContext().env as AppEnv,
-  });
+  })(`/on-demand-plain/${slug}`);
   return { status: `${result.status}:${slug}` };
 }
