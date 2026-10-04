@@ -33,6 +33,7 @@ import type {
   SegmentHandleData,
 } from "../cache/types.js";
 import type { RouteMatchResult } from "./pattern-matching.js";
+import type { RouterVersions } from "../router-versions.js";
 import type { OnDemandRouteConfig } from "../prerender/on-demand.js";
 import { isPrerenderPersonalizationError } from "../prerender/producer-guard.js";
 
@@ -40,6 +41,13 @@ export interface PrerenderMatchDeps<TEnv = any> {
   /** Owning router id; scopes bake-time root-scope/search-schema lookups the
    *  same way reqCtx._routerId does at runtime (issue #762). */
   routerId?: string;
+  /**
+   * The owning router's cache versions. Set on the requestless on-demand
+   * producer's context as `_versions`, so cache stores built inside the render
+   * key under the router's pair like a live request does instead of the
+   * whole-build fallback (server/build-version-table.ts getCacheVersions).
+   */
+  versions?: RouterVersions;
   findMatch: (
     pathname: string,
   ) => RouteMatchResult<TEnv> | null | Promise<RouteMatchResult<TEnv> | null>;
@@ -247,6 +255,7 @@ export async function matchForPrerender<TEnv = any>(
         // PrerenderPersonalizationError, which the producer maps to
         // skipped-personalized. Build/dev prerender leave this unset.
         ...(onDemand ? { _onDemandProducer: true as const } : {}),
+        ...(onDemand && deps.versions ? { _versions: deps.versions } : {}),
         request: new Request("http://prerender" + pathname),
         url: new URL("http://prerender" + pathname),
         originalUrl: new URL("http://prerender" + pathname),

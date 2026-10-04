@@ -802,7 +802,10 @@ export function createRouter<TEnv = any>(
       _matchForPrerender<TEnv>(
         pathname,
         {},
-        prerenderDeps,
+        {
+          ...prerenderDeps,
+          versions: resolveRouterVersions(routerId, version),
+        },
         undefined,
         isPassthrough,
         env,
