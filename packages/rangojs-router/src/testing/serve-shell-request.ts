@@ -31,7 +31,9 @@
  * `router.matchForPrerender` bakes for the URL (on its first request, kept
  * until resetShellTestState), through the production prerender store. Its
  * first `ppr` request is a MISS with a runtime capture, as a URL without a
- * build-time shell is in production; build-time shells are e2e-only.
+ * build-time shell is in production; build-time shells are e2e-only. An
+ * on-demand route (`Prerender(..., { onDemand })`) bakes nothing here: it
+ * serves from its prerender store, as a refresh-only page does in production.
  *
  * Must run under the `react-server` condition (the rsc Vitest project), with
  * `rangoTestAliases()` resolving `@vitejs/plugin-rsc/rsc/server` to the stub
@@ -281,7 +283,9 @@ async function servePrerenderArtifacts(
 ): Promise<(() => void) | undefined> {
   const internal = toInternal(router);
   const matched = await internal.findMatch(pathname);
-  if (!matched?.pr) return undefined;
+  // A build bakes an on-demand route only for the params getParams() lists;
+  // a refresh-only page serves from its prerender store alone.
+  if (!matched?.pr || matched.od) return undefined;
   let artifacts = prerenderArtifacts.get(router);
   if (!artifacts) {
     prerenderArtifacts.set(

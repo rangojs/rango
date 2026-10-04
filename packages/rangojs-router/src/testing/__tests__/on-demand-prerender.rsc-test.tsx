@@ -298,6 +298,7 @@ describe("on-demand prerender: router.prerender() then serve", () => {
     expect(onRevalidate).toHaveBeenCalledWith(
       { route: "hot", params: { slug: "a" } },
       env,
+      expect.objectContaining({ waitUntil: expect.any(Function) }),
     );
 
     // Settled: the next stale hit schedules again.
