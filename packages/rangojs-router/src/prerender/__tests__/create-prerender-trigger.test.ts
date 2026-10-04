@@ -44,7 +44,7 @@ function harness(opts: HarnessOptions = {}) {
   const ensureManifest = vi.fn(async () => {});
   const deps: PrerenderTriggerDeps = {
     routerId: "r1",
-    buildId: opts.buildId ?? "b1",
+    resolveVersion: () => opts.buildId ?? "b1",
     isDev: opts.isDev ?? (() => false),
     ensureManifest,
     resolveConfig: opts.resolveConfig ?? (() => config),
@@ -509,6 +509,36 @@ describe("createPrerenderTrigger", () => {
         await trigger.invalidateTags(["x"], { env: {} });
         expect(warn).toHaveBeenCalledTimes(1);
         expect(warn.mock.calls[0][0]).toContain("invalidateTags");
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("warns once in dev when a store marks entries but no onRevalidate is configured", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const { trigger } = harness({ isDev: () => true });
+        await trigger.invalidateTags(["x"], { env: {} });
+        await trigger.invalidateTags(["y"], { env: {} });
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn.mock.calls[0][0]).toContain("no onRevalidate");
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("does not warn when onRevalidate is configured, or outside dev", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const store = createMemoryPrerenderStore();
+        const withRevalidate = harness({
+          config: { store, swr: true, onRevalidate: () => {} },
+          isDev: () => true,
+        });
+        await withRevalidate.trigger.invalidateTags(["x"], { env: {} });
+        const outsideDev = harness({ isDev: () => false });
+        await outsideDev.trigger.invalidateTags(["x"], { env: {} });
+        expect(warn).not.toHaveBeenCalled();
       } finally {
         warn.mockRestore();
       }

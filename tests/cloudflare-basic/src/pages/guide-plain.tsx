@@ -1,5 +1,6 @@
 import { Prerender } from "@rangojs/router";
 import { GuidePlainLoaderValue } from "../components/GuidePlainLoaderValue.js";
+import { GuidePlainActionPanel } from "../components/GuidePlainActionPanel.js";
 
 // PLAIN (non-Passthrough) on-demand prerender route. Contract under test
 // (gateOnDemandProducer): a live PRODUCTION request for a param with no overlay
@@ -18,8 +19,10 @@ export const GuidePlainDef = Prerender<{ slug: string }>(
       <div data-testid="gp-detail">
         <p data-testid="gp-source">prerender</p>
         <p data-testid="gp-slug">{ctx.params.slug}</p>
+        <p data-testid="gp-ondemand">{String(ctx.onDemand)}</p>
         <p data-testid="gp-stamp">{stamp}</p>
         <GuidePlainLoaderValue />
+        <GuidePlainActionPanel slug={ctx.params.slug} />
       </div>
     );
   },

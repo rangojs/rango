@@ -8,6 +8,7 @@ import {
 import { FreshStampLoader, PrerenderTestLoader } from "../loaders.js";
 import { PrerenderClientTest } from "../components/PrerenderClientTest.js";
 import { OnDemandFreshStamp } from "../components/OnDemandFreshStamp.js";
+import { OnDemandActionPanel } from "../components/OnDemandActionPanel.js";
 import { swrLog } from "../swr-log.js";
 // Type-only (erased — no runtime cycle with router.tsx). This app declares an
 // empty AppBindings, so DefaultEnv collapses to `unknown` and ctx.env needs an
@@ -102,8 +103,10 @@ export const OnDemandPlainDef = Prerender<{ slug: string }>(
       <div data-testid="od-plain-detail">
         <p data-testid="od-plain-source">prerender</p>
         <p data-testid="od-plain-slug">{ctx.params.slug}</p>
+        <p data-testid="od-plain-ondemand">{String(ctx.onDemand)}</p>
         <p data-testid="od-plain-stamp">{stamp}</p>
         <OnDemandFreshStamp loader={FreshStampLoader} />
+        <OnDemandActionPanel slug={ctx.params.slug} />
       </div>
     );
   },

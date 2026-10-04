@@ -1,14 +1,15 @@
 // Userland dogfood for router.prerender() through a REAL createRouter() + the
 // public createMemoryPrerenderStore(). Exercises the routing / eligibility /
 // config / target-resolution paths that short-circuit BEFORE the producer
-// render — those work without the RSC serializer. The render path itself
-// (status "rendered" / "skipped-personalized") needs the Flight serializer,
-// which the bare Vitest RSC project can't resolve (virtual: modules), so it is
-// covered by the consumer-app e2e (test-app + cloudflare-basic) instead.
+// render, so no Flight serializer is needed. The render path and the serve of
+// a refreshed entry ("rendered", "skipped-personalized", key versions) run
+// under the react-server condition in on-demand-prerender.rsc-test.tsx.
 import { describe, expect, test } from "vitest";
 import { createRouter } from "../../router.js";
 import { Prerender } from "../../prerender.js";
 import { createMemoryPrerenderStore } from "../../prerender/memory-prerender-store.js";
+import { urls } from "../../urls.js";
+import { buildRouteTree } from "../../__tests__/helpers/route-tree.js";
 
 const OnDemandDef = Prerender<{ id: string }>(
   async () => [{ id: "seed" }],
@@ -62,6 +63,24 @@ describe("router.prerender() dogfood (public createRouter + public store)", () =
       ok: false,
       status: "skipped-unsupported-target",
     });
+  });
+
+  test("ppr and onDemand on one route throw at route definition", () => {
+    expect(() =>
+      buildRouteTree(
+        urls(({ path }) => [
+          path("/od/:id", OnDemandDef, { name: "od", ppr: true }),
+        ]),
+      ),
+    ).toThrow(/sets both ppr and onDemand/);
+    // ppr: false is not a ppr opt-in.
+    expect(() =>
+      buildRouteTree(
+        urls(({ path }) => [
+          path("/od/:id", OnDemandDef, { name: "od", ppr: false }),
+        ]),
+      ),
+    ).not.toThrow();
   });
 
   test("invalidateTags reaches the public store", async () => {

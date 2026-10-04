@@ -209,6 +209,58 @@ function definePlainOnDemandFlow(f: Fixture) {
     await expectRendered(stale);
   });
 
+  // Server action on an overlay-only page: the slug has no baked entry and the
+  // route has no live handler, so the action re-render can only come from the
+  // overlay. The loader advancing proves the re-render committed; the stamp
+  // and onDemand flag prove it was the overlay.
+  test("server action on an overlay-only page re-renders from the overlay", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    const slug = uniqueSlug("action-overlay");
+    await expectRendered(
+      await page.request.get(f.url(`/guide-plain-trigger/${slug}`)),
+    );
+
+    await gotoGuidePlain(page, f, slug);
+    await expect(testId(page, "gp-ondemand")).toHaveText("true");
+    const stampBefore = await testId(page, "gp-stamp").textContent();
+    const loaderBefore = await testId(page, "gp-loader").textContent();
+
+    await testId(page, "gp-action-noop").click();
+    await expect(testId(page, "gp-action-noop-status")).toHaveText(
+      `noop:${slug}`,
+    );
+    await expect(testId(page, "gp-loader")).not.toHaveText(loaderBefore ?? "");
+    await expect(testId(page, "gp-source")).toHaveText("prerender");
+    await expect(testId(page, "gp-ondemand")).toHaveText("true");
+    await expect(testId(page, "gp-stamp")).toHaveText(stampBefore ?? "");
+  });
+
+  // router.prerender() inside the action: the action re-render must carry the
+  // entry the action just stored (a new on-demand render, so a new stamp), not
+  // the client's copy, the build payload, or a 404.
+  test("router.prerender() inside a server action: the re-render shows the refreshed entry", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    const slug = uniqueSlug("action-refresh");
+    await expectRendered(
+      await page.request.get(f.url(`/guide-plain-trigger/${slug}`)),
+    );
+
+    await gotoGuidePlain(page, f, slug);
+    const stampBefore = await testId(page, "gp-stamp").textContent();
+
+    await testId(page, "gp-action-refresh").click();
+    await expect(testId(page, "gp-action-refresh-status")).toHaveText(
+      `rendered:${slug}`,
+    );
+    await expect(testId(page, "gp-stamp")).not.toHaveText(stampBefore ?? "");
+    await expect(testId(page, "gp-ondemand")).toHaveText("true");
+    await expect(testId(page, "gp-slug")).toHaveText(slug);
+  });
+
   test("stale overlay hit schedules onRevalidate (swr)", async ({ page }) => {
     // Isolate from prior runs on a reused server (KV persists).
     await page.request.get(f.url(`/guide-swr-trigger/${SWR_SLUG}?swrclear=1`));

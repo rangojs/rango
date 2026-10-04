@@ -46,7 +46,10 @@ import {
   type ResponseRouteMatch,
 } from "./response-route-handler.js";
 import { nonce as nonceToken, resolveProviderNonce } from "./nonce.js";
-import { resolveRouterVersions } from "../server/build-version-table.js";
+import {
+  resolvePrerenderVersion,
+  resolveRouterVersions,
+} from "../server/build-version-table.js";
 import type { ErrorPhase } from "../types.js";
 import type { RouterRequestInput } from "../router/router-interfaces.js";
 import {
@@ -180,6 +183,9 @@ export function createRSCHandler<
   // shell stamping and gating, the rango state value. The data version is only
   // a cache-key prefix, read by the stores from the request context.
   const version = versions.document;
+  // The on-demand overlay keys on the router's data version, resolved the way
+  // router.prerender() resolves it (it never sees this handler's options).
+  const prerenderVersion = resolvePrerenderVersion(router.id, router.version);
 
   // Handler-owned registry of explicit per-scope stores from cache({ store }).
   // Lives in the closure so it is scoped per handler (multi-router deployments
@@ -524,8 +530,8 @@ export function createRSCHandler<
 
     // Resolve the writable prerender store (durable overlay) for the serve path.
     // Same factory-or-object shape as cache, resolved per request from env/ctx
-    // (never memoized). buildId = version, so entries are deploy-scoped. The
-    // trigger method (router.prerender) resolves the same config independently.
+    // (never memoized). The trigger method (router.prerender) resolves the same
+    // config independently and keys with the same prerenderVersion.
     let resolvedPrerender:
       | import("../prerender/on-demand.js").ResolvedPrerender<any>
       | undefined;
@@ -539,7 +545,7 @@ export function createRSCHandler<
         resolvedPrerender = {
           config: prerenderConfig,
           routerId: router.id,
-          buildId: version,
+          buildId: prerenderVersion,
         };
       }
     }

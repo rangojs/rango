@@ -163,15 +163,10 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
 
     // onDemand excludes the route from the PPR shell lane (isPprEntry): a
     // writable refresh cannot atomically replace the captured document shell,
-    // so combining them would pair fresh Flight with a stale prelude. The ppr
-    // option is silently inert in that combination — surface it in dev.
-    if (
-      isOnDemand &&
-      isDevEnvironment() &&
-      options?.ppr !== undefined &&
-      options.ppr !== false
-    ) {
-      console.warn(
+    // so combining them would pair fresh Flight with a stale prelude. A dev-only
+    // warning let the inert ppr option ship to production unnoticed.
+    if (isOnDemand && options?.ppr !== undefined && options.ppr !== false) {
+      throw new Error(
         `[rango] Route "${routeName}" sets both ppr and onDemand: onDemand ` +
           `routes are excluded from the PPR shell lane, so ppr has no ` +
           `effect here and the route serves without the shell fast path. ` +

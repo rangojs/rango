@@ -222,6 +222,64 @@ async function exerciseSwrScheduling(f: Fixture, page: Page) {
     .toBe(true);
 }
 
+// Server action on an overlay-only page of the PLAIN onDemand route: the slug
+// has no baked entry and the route has no live handler, so the action
+// re-render can only come from the overlay. The loader advancing proves the
+// re-render committed; the stamp and onDemand flag prove it was the overlay.
+async function exerciseActionOnOverlayPage(f: Fixture, page: Page) {
+  const slug = uniqueSlug("action-overlay");
+  await expectRendered(await plainTrigger(f, page, slug));
+
+  await page.goto(f.url(`/on-demand-plain/${slug}`));
+  await waitForHydration(page);
+  await expect(page.locator('[data-testid="od-plain-ondemand"]')).toHaveText(
+    "true",
+  );
+  const stampBefore = await plainStamp(page);
+  const loaderBefore = await plainLoader(page);
+
+  await page.locator('[data-testid="od-action-noop"]').click();
+  await expect(
+    page.locator('[data-testid="od-action-noop-status"]'),
+  ).toHaveText(`noop:${slug}`);
+  await expect(page.locator('[data-testid="od-plain-loader"]')).not.toHaveText(
+    loaderBefore ?? "",
+  );
+  await expect(page.locator('[data-testid="od-plain-source"]')).toHaveText(
+    "prerender",
+  );
+  await expect(page.locator('[data-testid="od-plain-ondemand"]')).toHaveText(
+    "true",
+  );
+  await expect(page.locator('[data-testid="od-plain-stamp"]')).toHaveText(
+    stampBefore ?? "",
+  );
+}
+
+// router.prerender() inside the action: the action re-render must carry the
+// entry the action just stored (a new on-demand render, so a new stamp), not
+// the client's copy, the build payload, or a 404.
+async function exerciseRefreshInsideAction(f: Fixture, page: Page) {
+  const slug = uniqueSlug("action-refresh");
+  await expectRendered(await plainTrigger(f, page, slug));
+
+  await page.goto(f.url(`/on-demand-plain/${slug}`));
+  await waitForHydration(page);
+  const stampBefore = await plainStamp(page);
+
+  await page.locator('[data-testid="od-action-refresh"]').click();
+  await expect(
+    page.locator('[data-testid="od-action-refresh-status"]'),
+  ).toHaveText(`rendered:${slug}`);
+  await expect(page.locator('[data-testid="od-plain-stamp"]')).not.toHaveText(
+    stampBefore ?? "",
+  );
+  await expect(page.locator('[data-testid="od-plain-ondemand"]')).toHaveText(
+    "true",
+  );
+  await expect(page.locator('[data-testid="od-plain-slug"]')).toHaveText(slug);
+}
+
 test.describe("on-demand prerender (dev mode)", () => {
   const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
 
@@ -272,6 +330,20 @@ test.describe("on-demand prerender (dev mode)", () => {
 
   test("stale overlay hit schedules onRevalidate (swr)", async ({ page }) => {
     await exerciseSwrScheduling(f, page);
+  });
+
+  test("server action on an overlay-only page re-renders from the overlay", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await exerciseActionOnOverlayPage(f, page);
+  });
+
+  test("router.prerender() inside a server action: the re-render shows the refreshed entry", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await exerciseRefreshInsideAction(f, page);
   });
 });
 
@@ -338,5 +410,19 @@ test.describe("on-demand prerender (production)", () => {
 
   test("stale overlay hit schedules onRevalidate (swr)", async ({ page }) => {
     await exerciseSwrScheduling(f, page);
+  });
+
+  test("server action on an overlay-only page re-renders from the overlay", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await exerciseActionOnOverlayPage(f, page);
+  });
+
+  test("router.prerender() inside a server action: the re-render shows the refreshed entry", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await exerciseRefreshInsideAction(f, page);
   });
 });

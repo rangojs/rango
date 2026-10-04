@@ -14,7 +14,11 @@ import {
   isValidDevDiscoveryEpoch,
 } from "./dev-discovery-protocol.js";
 import { createReverse, type ReverseFunction } from "./reverse.js";
-import { resolveRouterVersions } from "./server/build-version-table.js";
+import {
+  resolvePrerenderVersion,
+  resolveRouterVersions,
+} from "./server/build-version-table.js";
+import { isDevEnvironment } from "./errors.js";
 import { createPrerenderTrigger } from "./prerender/create-prerender-trigger.js";
 import { createMemoryPrerenderStore } from "./prerender/memory-prerender-store.js";
 import {
@@ -769,12 +773,12 @@ export function createRouter<TEnv = any>(
   // On-demand prerender trigger (router.prerender / .many / .invalidateTags).
   // Requestless: runProducer runs matchForPrerender with onDemand=true (arming
   // the personalization guard); the store/config resolve per call from {env,ctx}.
-  // buildId is this router's document version (the handler's `versions.document`,
-  // same resolution) so write and serve keys agree and rotate together.
+  // The key version is the router's data version, resolved by the same call the
+  // handler's overlay read makes (resolvePrerenderVersion), so the keys agree.
   const prerenderTrigger = createPrerenderTrigger<TEnv, {}>({
     routerId,
-    buildId: resolveRouterVersions(routerId, version).document,
-    isDev: () => typeof globalThis.__PRERENDER_DEV_URL === "string",
+    resolveVersion: () => resolvePrerenderVersion(routerId, version),
+    isDev: isDevEnvironment,
     ensureManifest: () => ensureRouterManifest(routerId),
     resolveConfig: (env, ctx) => {
       const opt = effectivePrerenderConfigOption;

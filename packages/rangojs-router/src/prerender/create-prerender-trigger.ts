@@ -59,8 +59,12 @@ export interface ProducerOutput {
 
 export interface PrerenderTriggerDeps<TEnv = any> {
   routerId: string;
-  /** Per-deploy identity (VERSION). */
-  buildId: string;
+  /**
+   * The key version: the router's data version (resolvePrerenderVersion),
+   * read per call so it always matches what a request handler created now
+   * would resolve.
+   */
+  resolveVersion: () => string;
   /** True when running under Vite dev (drives the producer context's `dev`). */
   isDev: () => boolean;
   /** Load the per-router manifest/trie before matching, as router.fetch does. */
@@ -221,7 +225,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
 
     const key: PrerenderKey = {
       routerId: deps.routerId,
-      buildId: deps.buildId,
+      buildId: deps.resolveVersion(),
       routeName: match.routeName,
       paramHash: hashParams(match.params),
     };
@@ -342,6 +346,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
   }
 
   const trigger = refresh as PrerenderFn<TEnv, TRoutes>;
+  let warnedNoRevalidate = false;
 
   trigger.many = async (
     targets: ReadonlyArray<PrerenderTarget<TRoutes>>,
@@ -381,6 +386,21 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
         );
       }
       return;
+    }
+    if (
+      !(config.swr && config.onRevalidate) &&
+      deps.isDev() &&
+      !warnedNoRevalidate
+    ) {
+      // Marking only: with nothing scheduled on a stale hit, the entry keeps
+      // serving until a router.prerender() call re-renders it.
+      warnedNoRevalidate = true;
+      console.warn(
+        "[rango] prerender.invalidateTags() marked entries stale, but no " +
+          "onRevalidate is configured, so a stale hit schedules nothing. The " +
+          "entries keep serving until router.prerender() re-renders them " +
+          "(for example a sweep with { onlyIfStale: true }).",
+      );
     }
     await config.store.invalidateTags(tags);
   };

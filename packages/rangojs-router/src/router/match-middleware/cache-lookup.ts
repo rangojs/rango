@@ -102,6 +102,7 @@ import { loaderPins } from "../segment-resolution/loader-cache.js";
 import type { PrerenderStore, PrerenderEntry } from "../../prerender/store.js";
 import {
   isStoredEntryStale,
+  serializePrerenderKey,
   type PrerenderKey,
   type PrerenderStoredEntry,
 } from "../../prerender/writable-store.js";
@@ -247,6 +248,14 @@ async function* yieldFromStore<TEnv>(
   reqCtx: RequestContext<TEnv> | undefined,
   resolveLoadersOnly: RouterContext<TEnv>["resolveLoadersOnly"],
   resolveLoadersOnlyWithRevalidation: RouterContext<TEnv>["resolveLoadersOnlyWithRevalidation"],
+  /**
+   * The entry may be newer than the client's copy: an on-demand overlay entry
+   * that a refresh (possibly inside this very action) replaced. On an action
+   * the route's own segments are then re-sent, as a live action re-render
+   * re-sends them (revalidation.ts "action:route-segment"); the immutable
+   * bundled manifest keeps the client's copy.
+   */
+  replaceable?: boolean,
 ): AsyncGenerator<ResolvedSegment> {
   if (
     !_deserializeSegments ||
@@ -299,11 +308,16 @@ async function* yieldFromStore<TEnv>(
   // different content, so we must NOT nullify.
   const paramsChanged =
     !ctx.isFullMatch && !paramsEqual(ctx.matched.params, ctx.prevParams);
+  const resendRouteSegments = replaceable === true && ctx.isAction;
   for (const segment of segments) {
     if (
       !ctx.isFullMatch &&
       !paramsChanged &&
-      ctx.clientSegmentSet.has(segment.id)
+      ctx.clientSegmentSet.has(segment.id) &&
+      !(
+        resendRouteSegments &&
+        (segment.type === "route" || segment.belongsToRoute === true)
+      )
     ) {
       keepClientSegment(segment);
     }
@@ -371,6 +385,45 @@ export async function prerenderEntryExists(
 }
 
 /**
+ * Serialized overlay keys whose `onRevalidate` is in flight in this isolate.
+ * The obvious Node wiring, `onRevalidate: (t, env) => router.prerender(t, {
+ * env })`, would otherwise render once per stale request until the first
+ * refresh lands. Cleared when the scheduled task settles, so the next stale
+ * hit after a failed or slow-to-land refresh schedules again. Per isolate
+ * only: cross-isolate dedup stays with the queue.
+ */
+const overlayRevalidationsInFlight = new Set<string>();
+
+function scheduleOverlayRevalidation<TEnv>(
+  serializedKey: string,
+  onRevalidate: NonNullable<ResolvedPrerender["config"]["onRevalidate"]>,
+  target: { route: string; params: Record<string, string> },
+  reqCtx: RequestContext<TEnv>,
+): void {
+  if (overlayRevalidationsInFlight.has(serializedKey)) return;
+  overlayRevalidationsInFlight.add(serializedKey);
+  const env = reqCtx.env;
+  const reportError = reqCtx._reportBackgroundError;
+  // The stale entry still serves this request; this only schedules.
+  reqCtx.waitUntil(() =>
+    Promise.resolve()
+      .then(() => onRevalidate(target, env))
+      .then(
+        () => {},
+        (err) => {
+          // A failed onRevalidate (e.g. a broken queue binding) must not fail
+          // the response, but must be visible: route it to onError like the
+          // runtime cache's stale-revalidation failures.
+          reportError?.(err, "stale-revalidation");
+        },
+      )
+      .finally(() => {
+        overlayRevalidationsInFlight.delete(serializedKey);
+      }),
+  );
+}
+
+/**
  * Look up a prerendered (build-time cached) entry for the current route and, on
  * a hit, yield its segments. Returns true when an entry was served (the caller
  * should stop the pipeline) and false on a miss. Intercept navigations consult
@@ -402,7 +455,11 @@ async function* tryPrerenderLookup<TEnv>(
   //    Intercept variants are skipped for the same reason: v1 writes only the
   //    main-variant key, so an `:i` read is a guaranteed miss — a billed
   //    durable read per intercept navigation for nothing.
-  if (overlay && ctx.matched.od && !ctx.isAction && !ctx.isIntercept) {
+  //    Actions read it too: a plain on-demand route has no live handler, so an
+  //    action re-render that skipped the overlay 404'd an overlay-only param
+  //    (gateOnDemandProducer) and served the older build payload for a baked
+  //    one. Passthrough routes never reach here on an action (withCacheLookup).
+  if (overlay && ctx.matched.od && !ctx.isIntercept) {
     const key: PrerenderKey = {
       routerId: overlay.routerId,
       buildId: overlay.buildId,
@@ -428,25 +485,11 @@ async function* tryPrerenderLookup<TEnv>(
         reqCtx &&
         isStoredEntryStale(stored, Date.now())
       ) {
-        // SWR is scheduling-only: the stale entry still serves this request.
-        const onRevalidate = overlay.config.onRevalidate;
-        const env = reqCtx.env;
-        const target = {
-          route: ctx.matched.routeKey,
-          params: ctx.matched.params,
-        };
-        const reportError = reqCtx._reportBackgroundError;
-        reqCtx.waitUntil(() =>
-          Promise.resolve(onRevalidate(target, env)).then(
-            () => {},
-            (err) => {
-              // A failed onRevalidate (e.g. a broken queue binding) must not
-              // fail the response, but must be visible — surface it through the
-              // router's onError, not swallow it, mirroring the runtime cache's
-              // stale-revalidation reporting.
-              reportError?.(err, "stale-revalidation");
-            },
-          ),
+        scheduleOverlayRevalidation(
+          serializePrerenderKey(key),
+          overlay.config.onRevalidate,
+          { route: ctx.matched.routeKey, params: ctx.matched.params },
+          reqCtx,
         );
       }
       yield* yieldFromStore(
@@ -457,6 +500,7 @@ async function* tryPrerenderLookup<TEnv>(
         reqCtx,
         resolveLoadersOnly,
         resolveLoadersOnlyWithRevalidation,
+        true,
       );
       return true;
     }
@@ -563,9 +607,7 @@ export function withCacheLookup<TEnv>(
     // writable-overlay lookup, so od joins pr in the gate. The retained producer
     // is NEVER run by this pipeline: a miss falls through like pr + miss.
     const overlayEligible =
-      ctx.matched.od === true &&
-      !ctx.isAction &&
-      !requestHeaders(ctx.request).get("X-RSC-HMR");
+      ctx.matched.od === true && !requestHeaders(ctx.request).get("X-RSC-HMR");
     if (
       prerenderStoreShortCircuits(ctx.matched.pr, ctx.request) ||
       overlayEligible
@@ -575,8 +617,10 @@ export function withCacheLookup<TEnv>(
       // handler to run on an action re-render -- without the fallback the
       // re-render falls through to the evicted handler and throws "No prerender
       // data found". Serve the prerendered entry instead (the action ran already;
-      // its result is applied client-side via useActionState). Passthrough routes
-      // keep a liveHandler, so they still re-render fresh on actions.
+      // its result is applied client-side via useActionState). A plain on-demand
+      // route is the same case, served from the overlay first (an overlay entry
+      // is newer than the build one, and may be the only one). Passthrough
+      // routes keep a liveHandler, so they still re-render fresh on actions.
       const isPassthroughPrerenderRoute = ctx.entries.some(
         (entry) => entry.type === "route" && entry.isPassthrough === true,
       );

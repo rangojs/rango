@@ -39,6 +39,21 @@ export function resolveRouterVersions(
   );
 }
 
+/**
+ * The version an on-demand prerender overlay key carries: the router's data
+ * version, because the overlay stores segment data, as the segment cache does
+ * (a client-only deploy keeps both). The write side (`router.prerender`,
+ * router.ts) and the read side (rsc/handler.ts) both call this with
+ * `createRouter({ version })`, the only override the trigger can see, so they
+ * cannot disagree; a `createRSCHandler({ version })` does not move it.
+ */
+export function resolvePrerenderVersion(
+  routerId: string | undefined,
+  routerVersion: string | undefined,
+): string {
+  return resolveRouterVersions(routerId, routerVersion).data;
+}
+
 /** The table gives some router a pair of its own. */
 function hasRouterVersions(): boolean {
   if (!table) return false;
