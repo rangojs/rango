@@ -452,22 +452,25 @@ URL. The cache factory builds a store per request without knowing the router.
 
 That makes the request context load-bearing for every cache write, and most
 writes are deferred: `cacheRoute` calls `store.set` inside
-`ctx.waitUntil()`, and so does the document cache on a MISS. Deployed workerd
-runs a deferred `waitUntil` task outside the request's async context. Node
-and miniflare keep it, which is why the use-cache revalidation bug of the same
-shape could never be reproduced locally. A store that builds its key there
-reads no router and falls back to the whole-build pair, and an entry under the
-whole-build pair is one no router with its own version ever reads: caching
+`ctx.waitUntil()`, and so does the document cache on a MISS. You might ask
+whether the platform always carries the request's async context into that
+deferred task. Node and miniflare do. Deployed workerd lost it once, in
+`"use cache"` background revalidation, which is why that bug could never be
+reproduced locally. It is not the general case: `cacheRoute` already needs the
+request context on `main` (it throws without one), and route caching works on
+deployed workers, so these writes keep their context today. This is a
+hardening, not a fix for a failure anyone has seen on this path.
+
+What it guards against: a store that builds its key with no context reads no
+router and falls back to the whole-build pair, and an entry under the
+whole-build pair is one no router with its own version ever reads. Caching
 would silently never hit. So `ctx.waitUntil()` re-enters the context a task
 was scheduled under, once, where every task is scheduled
 (`src/server/request-context.ts`). The test produces the loss by scheduling
 from an async scope outside any request
 (`src/cache/__tests__/background-write-versions.rsc-test.tsx`); without the
 re-entry the document write lands under the whole-build version and the
-segment write does not happen at all, because `cacheRoute` needs the request
-context before it reaches the store. That second half is true on `main` as
-well, and so is the host in `CFCacheStore`'s key, so the exposure was not new
-with the version; the version would have made it permanent.
+segment write does not happen at all.
 
 What cannot be tested locally is whether some other path loses the context.
 For that there is a log line: `getCacheVersions()` warns, once per process,

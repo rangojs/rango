@@ -3,9 +3,10 @@
  * the router that served the request (docs/design/per-app-cache-version.md).
  *
  * The store builds its key inside the deferred task, from the request context.
- * Deployed workerd runs that task outside the request's async context; Node
- * and miniflare keep it, so the loss is produced here by scheduling each task
- * from an async scope created outside any request. Covers the two writes a
+ * Node and miniflare always carry the request's async context into that task
+ * (deployed workerd lost it once, in "use cache" revalidation), so a loss is
+ * produced here by scheduling each task from an async scope created outside
+ * any request. Covers the two writes a
  * request defers: a route's segment record (withCacheStore -> cacheRoute) and
  * a document-cache MISS (createDocumentCacheMiddleware).
  */

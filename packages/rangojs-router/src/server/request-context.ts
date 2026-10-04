@@ -1554,13 +1554,15 @@ export function createRequestContext<TEnv>(
 
     waitUntil(fn: () => Promise<void>): void {
       if (ctx.build) return;
-      // Deployed workerd runs a deferred waitUntil task outside the request's
-      // async context (Node and miniflare keep it, so no local run shows it).
-      // A cache store builds its key inside the task and reads the serving
-      // router's versions and the request host from the context: without it
-      // the write lands under the whole-build pair, which no router with its
-      // own version reads. So the task re-enters the context it was scheduled
-      // under: the store active then (a derived context), else this one.
+      // A deferred task does not rely on the platform carrying the request's
+      // async context into it. Deployed workerd lost it once ("use cache"
+      // background revalidation, cache-runtime.ts); Node and miniflare never
+      // do, so no local run shows a loss. A cache store builds its key inside
+      // the task and reads the serving router's versions and the request host
+      // from the context: without it the write lands under the whole-build
+      // pair, which no router with its own version reads. So the task
+      // re-enters the context it was scheduled under: the store active then
+      // (a derived context), else this one.
       const scheduledUnder = requestContextStorage.getStore() ?? ctx;
       // Wrap in Promise.resolve().then(...) so a SYNCHRONOUS throw in a
       // non-async callback becomes a rejected promise handed to the host's
