@@ -107,7 +107,10 @@ import {
   type PrerenderKey,
 } from "../../prerender/writable-store.js";
 import { IN_FLIGHT_LEADER_MAX_WAIT_MS } from "../../cache/cache-policy.js";
-import type { ResolvedPrerender } from "../../prerender/on-demand.js";
+import type {
+  PrerenderTargetObject,
+  ResolvedPrerender,
+} from "../../prerender/on-demand.js";
 import {
   _getRequestContext,
   type RequestContext,
@@ -402,7 +405,7 @@ export function resetOverlayRevalidationsForTests(): void {
 export function scheduleOverlayRevalidation<TEnv>(
   serializedKey: string,
   onRevalidate: NonNullable<ResolvedPrerender["config"]["onRevalidate"]>,
-  target: { route: string; params: Record<string, string> },
+  target: PrerenderTargetObject,
   reqCtx: RequestContext<TEnv>,
   now: number = Date.now(),
 ): void {
@@ -486,7 +489,10 @@ async function* tryPrerenderLookup<TEnv>(
         scheduleOverlayRevalidation(
           serializePrerenderKey(key),
           overlay.config.onRevalidate,
-          { route: ctx.matched.routeKey, params: ctx.matched.params },
+          {
+            route: ctx.matched.routeKey,
+            params: ctx.matched.params,
+          } as PrerenderTargetObject,
           reqCtx,
         );
       }

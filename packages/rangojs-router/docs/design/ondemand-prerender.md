@@ -171,8 +171,13 @@ settles or after `IN_FLIGHT_LEADER_MAX_WAIT_MS` (the runtime cache's leader cap)
 so a hung `onRevalidate` cannot pin it, and no scheduling happens under a build
 context where `waitUntil` is a no-op.
 
-The target's `route` is a plain string, so a router typed with named routes
-needs a cast to accept it back (a follow-up).
+The target is typed `PrerenderTargetObject`: `{ route: string; params }` plus a
+type-only brand. `router.prerender()` and `.many()` accept it in addition to the
+typed named-route object, so `(target, env) => router.prerender(target, { env })`
+typechecks on a router with named routes, also after a queue round trip
+(`JSON.parse(raw) as PrerenderTargetObject`), while a hand-written
+`{ route: "typo" }` is still a type error. Pinned in
+`tests/cloudflare-basic/src/prerender-target-types.ts`.
 
 TTL resolves route `onDemand.ttl` > router `ttl` > never stale, and it
 is soft staleness metadata on the stored entry, never a hard store expiry — see

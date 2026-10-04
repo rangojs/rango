@@ -11,14 +11,20 @@ import type { ExecutionContext } from "../types/request-scope.js";
 import type { IsEmptyObject, ParamsFor } from "../reverse.js";
 import type { WritablePrerenderStore } from "./writable-store.js";
 
+declare const prerenderTargetBrand: unique symbol;
+
 /**
- * JSON-serializable target passed to `onRevalidate` and accepted by
- * `router.prerender({ route, params })`. Kept plain so it can go straight into
- * a queue message.
+ * The target `onRevalidate` receives: a plain `{ route, params }` that goes
+ * straight into a queue message. The type-only brand (never present at
+ * runtime) lets `router.prerender()` / `.many()` accept it with no cast on a
+ * router typed with named routes, while a hand-written `{ route: "typo" }`
+ * stays a type error there. After a JSON round trip, assert it back:
+ * `JSON.parse(raw) as PrerenderTargetObject`.
  */
 export interface PrerenderTargetObject {
   route: string;
   params: Record<string, string>;
+  readonly [prerenderTargetBrand]: true;
 }
 
 /**
@@ -47,13 +53,14 @@ type PrerenderRouteTarget<TRoutes> = {
 }[keyof PrerenderRouteMap<TRoutes> & string];
 
 /**
- * A prerender target: a typed named-route object, or a path-like string/URL.
- * `router.reverse()` output composes for free since strings are accepted.
+ * A prerender target: a typed named-route object, a path-like string/URL
+ * (`router.reverse()` output composes for free), or the `onRevalidate` target.
  */
 export type PrerenderTarget<TRoutes = {}> =
   | string
   | URL
-  | PrerenderRouteTarget<TRoutes>;
+  | PrerenderRouteTarget<TRoutes>
+  | PrerenderTargetObject;
 
 /** Env + platform capabilities the trigger threads to the requestless producer. */
 export interface PrerenderRuntime<TEnv = any> {

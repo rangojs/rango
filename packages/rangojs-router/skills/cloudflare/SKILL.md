@@ -234,17 +234,17 @@ export default {
     env: AppBindings,
     ctx: ExecutionContext,
   ) {
-    // The onRevalidate target is a plain { route, params } (route: string),
-    // which a router typed with named routes does not accept as is.
-    const targets = batch.messages.map((m) => m.body.target) as Parameters<
-      typeof router.prerender.many
-    >[0];
+    const targets = batch.messages.map((m) => m.body.target);
     ctx.waitUntil(router.prerender.many(targets, { env, ctx, concurrency: 8 }));
   },
 };
 ```
 
-`PrerenderTargetObject` comes from `@rangojs/router/prerender`.
+`PrerenderTargetObject` comes from `@rangojs/router/prerender`. It is what
+`onRevalidate` receives, and `router.prerender()` / `.many()` accept it as is on
+a router typed with named routes. A queue hands it back as JSON, so type the
+message body with it (as above) or assert it: `JSON.parse(raw) as
+PrerenderTargetObject`.
 
 The KV store writes no `expirationTtl` (entries never expire; `ttl` is soft)
 and keys entries by router id and the router's data version, so a deploy that

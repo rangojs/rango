@@ -812,8 +812,10 @@ in dev.
 - **`onRevalidate` runs once per stale key per isolate** while one is in
   flight, so calling `router.prerender()` from it renders once per stale key
   on a single Node process. Across isolates, dedup belongs to the queue. Its
-  `target` is a plain `{ route: string; params }`: a router typed with named
-  routes needs a cast to accept it back.
+  `target` is a `PrerenderTargetObject`, which `router.prerender()` and
+  `.many()` accept as is, so
+  `onRevalidate: (target, env) => router.prerender(target, { env })`
+  typechecks without a cast.
 - **Prerender tags are their own namespace.** `cacheTag()`, `updateTag()` and
   `revalidateTag()` never reach the prerender store; `router.prerender.markStale()`
   never reaches the runtime cache. (`updateTag()` needs a request context;
