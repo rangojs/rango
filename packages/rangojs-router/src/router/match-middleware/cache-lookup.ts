@@ -420,11 +420,12 @@ export function scheduleOverlayRevalidation<TEnv>(
   }
   overlayRevalidationsInFlight.set(serializedKey, now);
   const env = reqCtx.env;
+  const executionContext = reqCtx.executionContext;
   const reportError = reqCtx._reportBackgroundError;
   // The stale entry still serves this request; this only schedules.
   reqCtx.waitUntil(() =>
     Promise.resolve()
-      .then(() => onRevalidate(target, env))
+      .then(() => onRevalidate(target, env, executionContext))
       .then(
         () => {},
         (err) => {

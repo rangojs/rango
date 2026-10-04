@@ -826,7 +826,7 @@ in dev.
   on a single Node process. Across isolates, dedup belongs to the queue. Its
   `target` is a `PrerenderTargetObject`, which the runner and its `.many()`
   accept as is, so
-  `onRevalidate: (target, env) => router.prerender({ env })(target)`
+  `onRevalidate: (target, env, ctx) => router.prerender({ env, ctx })(target)`
   typechecks without a cast. `onRevalidate` receives `(target, env)`, with no
   `ctx`.
 - **Prerender tags are their own namespace.** `cacheTag()`, `updateTag()` and

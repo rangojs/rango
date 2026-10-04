@@ -1,7 +1,10 @@
 // Type-only pin (runs under `pnpm run typecheck`): the target `onRevalidate`
 // receives feeds the `router.prerender({ env })` runner on a router with named routes, with no
 // cast, while a hand-written wrong route name or params stays a type error.
-import type { PrerenderTargetObject } from "@rangojs/router/prerender";
+import type {
+  PrerenderConfig,
+  PrerenderTargetObject,
+} from "@rangojs/router/prerender";
 import type { router } from "./router.js";
 import type { AppBindings } from "./env.js";
 
@@ -24,3 +27,12 @@ export async function pinPrerenderTargetTypes(): Promise<void> {
   // @ts-expect-error an unbranded { route, params } is not an onRevalidate target
   await prerender({ route: "x" as string, params: {} });
 }
+
+// The documented one-liner: onRevalidate's env and ctx bind the runner.
+export const pinOnRevalidate: Pick<
+  PrerenderConfig<AppBindings>,
+  "onRevalidate"
+> = {
+  onRevalidate: (target, liveEnv, ctx) =>
+    bind({ env: liveEnv, ctx })(target).then(() => {}),
+};

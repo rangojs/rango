@@ -165,7 +165,7 @@ anything.
 JSON-serializable so it can go straight into a queue message) and the live env.
 It runs at most once per stale key per isolate while one is in flight
 (`scheduleOverlayRevalidation`, `cache-lookup.ts`), so the obvious single
-process wiring, a direct `router.prerender({ env })(target)` call, renders once per stale key
+process wiring, a direct `router.prerender({ env, ctx })(target)` call, renders once per stale key
 rather than once per stale request. The key is free again once its task
 settles or after `IN_FLIGHT_LEADER_MAX_WAIT_MS` (the runtime cache's leader cap),
 so a hung `onRevalidate` cannot pin it, and no scheduling happens under a build
@@ -173,7 +173,7 @@ context where `waitUntil` is a no-op.
 
 The target is typed `PrerenderTargetObject`: `{ route: string; params }` plus a
 type-only brand. the runner and its `.many()` accept it in addition to the
-typed named-route object, so `(target, env) => router.prerender({ env })(target)`
+typed named-route object, so `(target, env, ctx) => router.prerender({ env, ctx })(target)`
 typechecks on a router with named routes, also after a queue round trip
 (`JSON.parse(raw) as PrerenderTargetObject`), while a hand-written
 `{ route: "typo" }` is still a type error. Pinned in

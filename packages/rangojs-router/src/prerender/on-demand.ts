@@ -160,12 +160,14 @@ export interface PrerenderConfig<TEnv = any> {
    * the JSON-serializable target and the live env. Runs at most once per
    * stale key per isolate while one is in flight (one running longer than
    * 15 s counts as finished, so a hung call cannot block the key), so
-   * `(target, env) => router.prerender({ env })(target)` is safe in a single
+   * `(target, env, ctx) => router.prerender({ env, ctx })(target)` is safe in a single
    * process; across isolates, point it at a queue, which owns dedup.
    */
   onRevalidate?: (
     target: PrerenderTargetObject,
     env: TEnv,
+    /** The stale request's execution context; absent where none exists. */
+    ctx?: ExecutionContext,
   ) => void | Promise<void>;
 }
 
