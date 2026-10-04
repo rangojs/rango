@@ -2,12 +2,11 @@
  * Which versions a router, and a request, resolve to at run time: the
  * consumer's `version`, the build's table, or the dev stamp, in that order.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   installRouterVersionsTable,
   getCacheVersions,
   resolveRouterVersions,
-  routerVersionsGeneration,
   versionKeyPrefix,
 } from "../build-version-table.js";
 import {
@@ -101,17 +100,13 @@ describe("resolveRouterVersions", () => {
     installRouterVersionsTable(TABLE);
     expect(resolveRouterVersions("router-a", "")).toEqual(uniformVersions(""));
   });
-
-  it("bumps the generation on every install, so handler caches can notice", () => {
-    const before = routerVersionsGeneration();
-    installRouterVersionsTable(TABLE);
-    installRouterVersionsTable(undefined);
-    expect(routerVersionsGeneration()).toBe(before + 2);
-  });
 });
 
 describe("getCacheVersions", () => {
-  afterEach(() => installRouterVersionsTable(undefined));
+  afterEach(() => {
+    installRouterVersionsTable(undefined);
+    vi.restoreAllMocks();
+  });
 
   it("returns the versions of the router serving the request", () => {
     const ctx = makeCtx({ data: "d1", document: "h1" });
@@ -152,6 +147,33 @@ describe("getCacheVersions", () => {
     expect(getCacheVersions().data).toBe("data-all");
     installRouterVersionsTable({ "*": ["d2", "h2"] });
     expect(getCacheVersions()).toEqual({ data: "d2", document: "h2" });
+  });
+
+  // A write keyed with the whole-build pair is one no router with its own
+  // version reads back. The log line is how a production deploy shows it.
+  it("warns once per process when it falls back while routers have their own versions", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    installRouterVersionsTable(TABLE);
+    getCacheVersions();
+    getCacheVersions();
+    runWithRequestContext(makeCtx(), () => getCacheVersions());
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]![0]).toMatch(
+      /built outside a request.*whole-build cache version.*not read by a router with its own version/,
+    );
+  });
+
+  it("does not warn inside a request, or when every router has the same versions", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    installRouterVersionsTable(TABLE);
+    runWithRequestContext(makeCtx({ data: "d1", document: "h1" }), () =>
+      getCacheVersions(),
+    );
+    installRouterVersionsTable({ "*": ["d", "h"], "router-a": ["d", "h"] });
+    getCacheVersions();
+    installRouterVersionsTable(undefined);
+    getCacheVersions();
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("is public from @rangojs/router/cache, for a custom store", async () => {

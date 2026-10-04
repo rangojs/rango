@@ -1554,11 +1554,21 @@ export function createRequestContext<TEnv>(
 
     waitUntil(fn: () => Promise<void>): void {
       if (ctx.build) return;
-      // Wrap in Promise.resolve().then(fn) so a SYNCHRONOUS throw in a
+      // Deployed workerd runs a deferred waitUntil task outside the request's
+      // async context (Node and miniflare keep it, so no local run shows it).
+      // A cache store builds its key inside the task and reads the serving
+      // router's versions and the request host from the context: without it
+      // the write lands under the whole-build pair, which no router with its
+      // own version reads. So the task re-enters the context it was scheduled
+      // under: the store active then (a derived context), else this one.
+      const scheduledUnder = requestContextStorage.getStore() ?? ctx;
+      // Wrap in Promise.resolve().then(...) so a SYNCHRONOUS throw in a
       // non-async callback becomes a rejected promise handed to the host's
       // waitUntil (logged as a background failure), instead of escaping into
       // the request flow. Mirrors fireAndForgetWaitUntil's deferral.
-      const task = Promise.resolve().then(fn);
+      const task = Promise.resolve().then(() =>
+        requestContextStorage.run(scheduledUnder, fn),
+      );
       // Track the task promise so the PPR shell capture can settle the
       // foreground's deferred cache writes before its own match/render (the
       // ordering edge; see _pendingBackgroundTasks). The capture task itself

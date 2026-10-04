@@ -205,12 +205,14 @@ const SSR_STUB: SSRModule = {
 
 /**
  * Handlers per router, keyed by the `cacheStore` override or the router. A
- * handler resolves its router's versions when it is created, so an entry made
- * before a setBuildVersions() call (a simulated deploy) is not reused.
+ * handler resolves its router's versions when it is created, so an entry is
+ * reused only while the router would still resolve the versions it was made
+ * with: a setBuildVersions() call (a simulated deploy) that changes them gets
+ * a new handler.
  */
 const handlers = new WeakMap<
   object,
-  WeakMap<object, { handler: ShellHandler; generation: number }>
+  WeakMap<object, { handler: ShellHandler; versions: string }>
 >();
 
 async function getHandler(
@@ -219,16 +221,21 @@ async function getHandler(
 ): Promise<ShellHandler> {
   let byStore = handlers.get(router);
   if (!byStore) handlers.set(router, (byStore = new WeakMap()));
+  const internal = toInternal(router);
   // Imported here, like the handler below: the module binds the build-only
   // `@rangojs/router:version` virtual, which a flight-only test config (one
   // that never serves a request) does not alias.
-  const { routerVersionsGeneration } =
+  const { resolveRouterVersions } =
     await import("../server/build-version-table.js");
-  const generation = routerVersionsGeneration();
+  // What createRSCHandler would resolve for this router now.
+  const { data, document } = resolveRouterVersions(
+    internal.id,
+    internal.version,
+  );
+  const versions = `${data}\0${document}`;
   const cached = byStore.get(cacheStore ?? router);
-  if (cached?.generation === generation) return cached.handler;
+  if (cached?.versions === versions) return cached.handler;
 
-  const internal = toInternal(router);
   const routerCache = internal.cache;
   // Resolved per request, as the handler resolves the router's own config.
   const cache = (env: unknown, ctx?: ExecutionContext): HandlerCacheConfig => {
@@ -246,7 +253,7 @@ async function getHandler(
     loadSSRModule: async () => SSR_STUB,
     cache: routerCache || cacheStore ? cache : undefined,
   });
-  byStore.set(cacheStore ?? router, { handler, generation });
+  byStore.set(cacheStore ?? router, { handler, versions });
   return handler;
 }
 

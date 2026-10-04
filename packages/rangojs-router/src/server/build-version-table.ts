@@ -39,14 +39,26 @@ export function resolveRouterVersions(
   );
 }
 
-/** The whole-build pair, for {@link getCacheVersions} outside a request. */
-let wholeBuild: RouterVersions | undefined;
+/** The table gives some router a pair of its own. */
+function hasRouterVersions(): boolean {
+  if (!table) return false;
+  const pairs = new Set(
+    Object.values(table).map(([data, document]) => `${data}\0${document}`),
+  );
+  return pairs.size > 1;
+}
+
+let warnedOutsideRequest = false;
 
 /**
  * The versions of the router serving the current request, for a cache store
  * building a key. A store operation with no request context (a detached task
  * that lost the ALS) gets the whole-build versions: it misses the request's
- * entries instead of reading another version's.
+ * entries instead of reading another version's. When routers have versions of
+ * their own that is a write no router reads back, so it is logged, once per
+ * process: `ctx.waitUntil()` re-enters the request context for every task it
+ * runs (server/request-context.ts), and this line in a production log means
+ * some other path lost it.
  *
  * Public from `@rangojs/router/cache`, for a custom persistent store to key
  * the way the built-in ones do. Prefix cached RSC data (segment entries, items) with
@@ -57,10 +69,19 @@ let wholeBuild: RouterVersions | undefined;
  * context exists.
  */
 export function getCacheVersions(): RouterVersions {
-  return (
-    _getRequestContext()?._versions ??
-    (wholeBuild ??= resolveRouterVersions(undefined))
-  );
+  const versions = _getRequestContext()?._versions;
+  if (versions) return versions;
+  if (!warnedOutsideRequest && hasRouterVersions()) {
+    warnedOutsideRequest = true;
+    console.warn(
+      "[rango] A cache key was built outside a request, so it carries the whole-build cache " +
+        "version instead of a router's. This build has per-router versions: an entry written " +
+        "under that key is not read by a router with its own version, and an entry that router " +
+        "wrote is not found from here. A store operation ran in a task that lost the request's " +
+        "async context. Logged once per process.",
+    );
+  }
+  return resolveRouterVersions(undefined);
 }
 
 /** Which of the serving router's versions a store key carries; `null`: none. */
@@ -81,23 +102,14 @@ export function versionKeyPrefix(
   return version ? `v/${version}/` : "";
 }
 
-let generation = 0;
-
 /**
  * @internal Install a table, or restore the build's with `undefined`. A
  * request handler resolves its router's versions once, when it is created, so
- * a test that swaps the table (a "deploy") needs new handlers:
- * {@link routerVersionsGeneration} tells a handler cache its entries are old.
+ * a test that swaps the table (a "deploy") needs new handlers.
  */
 export function installRouterVersionsTable(
   next: RouterVersionsTable | undefined,
 ): void {
   table = next ?? ROUTER_VERSIONS;
-  wholeBuild = undefined;
-  generation++;
-}
-
-/** @internal Bumped by every installRouterVersionsTable call. */
-export function routerVersionsGeneration(): number {
-  return generation;
+  warnedOutsideRequest = false;
 }
