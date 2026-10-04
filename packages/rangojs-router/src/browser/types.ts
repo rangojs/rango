@@ -459,6 +459,8 @@ export interface NavigateOptionsInternal extends Omit<
   state?: unknown;
   /** Skip segment cache (used by redirect-with-state to force re-render) */
   _skipCache?: boolean;
+  /** Server redirects already followed by this navigation chain (0 for a user navigation) */
+  _redirectHops?: number;
 }
 
 /**
