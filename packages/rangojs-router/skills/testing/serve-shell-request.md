@@ -27,16 +27,17 @@ So `prelude` is the shell as captured (Flight text, not HTML): a value the shell
 
 ### Returns — `ServeShellRequestResult`
 
-| Field          | Type                                     | Meaning                                                                                                                                                                             |
-| -------------- | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `shellStatus`  | `"HIT" \| "MISS" \| null`                | `x-rango-shell`; null when the serve path did not consider the request (not a `ppr` route, a nonce'd request, a partial request).                                                   |
-| `replayStatus` | `PprReplayStatus \| null`                | `x-rango-ppr-replay` on a partial request: `{ outcome: "HIT", freshness }` or `{ outcome: "BYPASS", reason }`.                                                                      |
-| `prelude`      | `string \| undefined`                    | The prelude a HIT served (the capture's Flight text). `undefined` unless `shellStatus` is `"HIT"`.                                                                                  |
-| `flight`       | `string \| undefined`                    | The Flight payload this request rendered: a HIT's tail, a document render, or a partial response. `undefined` when no Flight rendered (a redirect, a middleware response).          |
-| `key`          | `string`                                 | The shell key the serve path resolved for a document it read (MISS or HIT), request partition included. Otherwise (no `ppr`, a partial request) the URL's key without a partition.  |
-| `readEntry`    | `() => Promise<ShellCacheEntry \| null>` | Reads the document entry under `key` from the request's store (a passive `getShell`). A read: on a store with a shell memo it warms the memo, so call it after the reads you count. |
-| `response`     | `Response`                               | Status and headers. Its body is already read.                                                                                                                                       |
-| `body`         | `string`                                 | The body text.                                                                                                                                                                      |
+| Field          | Type                                              | Meaning                                                                                                                                                                             |
+| -------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shellStatus`  | `"HIT" \| "MISS" \| null`                         | `x-rango-shell`; null when the serve path did not consider the request (not a `ppr` route, a nonce'd request, a partial request).                                                   |
+| `replayStatus` | `PprReplayStatus \| null`                         | `x-rango-ppr-replay` on a partial request: `{ outcome: "HIT", freshness }` or `{ outcome: "BYPASS", reason }`.                                                                      |
+| `prelude`      | `string \| undefined`                             | The prelude a HIT served (the capture's Flight text). `undefined` unless `shellStatus` is `"HIT"`.                                                                                  |
+| `flight`       | `string \| undefined`                             | The Flight payload this request rendered: a HIT's tail, a document render, or a partial response. `undefined` when no Flight rendered (a redirect, a middleware response).          |
+| `key`          | `string`                                          | The shell key the serve path resolved for a document it read (MISS or HIT), request partition included. Otherwise (no `ppr`, a partial request) the URL's key without a partition.  |
+| `readEntry`    | `() => Promise<ShellCacheEntry \| null>`          | Reads the document entry under `key` from the request's store (a passive `getShell`). A read: on a store with a shell memo it warms the memo, so call it after the reads you count. |
+| `readHandles`  | `() => Promise<ShellRequestHandles \| undefined>` | Decodes the response's handle data as the browser reads it: `{ hydration, late, prelude? }` (see "Handles and loader data"). `undefined` when no Flight rendered.                   |
+| `response`     | `Response`                                        | Status and headers. Its body is already read.                                                                                                                                       |
+| `body`         | `string`                                          | The body text.                                                                                                                                                                      |
 
 ### `resetShellTestState(): Promise<void>`
 
@@ -169,12 +170,33 @@ A partial request has no HTML step, so its `key` is the URL's key without a part
 
 ## Handles and loader data
 
-The result carries no structured `handles` map (unlike `renderHandler`): a handle value and loader data ride the payload, so you assert them as text in `prelude` and `flight`. A value the handler pushed is in the prelude and in every HIT's tail; a live loader's data is only in the tail. No public helper decodes a payload string into values: `normalizeFlight` and the `flightMatchers` (`toMatchFlight`) work on the text too.
+`readHandles()` decodes the handle data the response carries, the way the browser reads it, with deferred values resolved. Each field is the raw handle data (`{ [handleId]: { [segmentId]: values[] } }`):
+
+| Field       | What it is                                                                                                                                          |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hydration` | What the document hydrates with (`metadata.handles`, read to its end before hydration starts). For a `partial` request, the last state it streamed. |
+| `late`      | The states that arrived on the late channel (`metadata.handlesLate`), in order. Each replaces the client's handle data after hydration. Often `[]`. |
+| `prelude`   | On a HIT, the handle data the stored shell was rendered from.                                                                                       |
+
+On a HIT the client hydrates with exactly what the shell was rendered from, so `hydration` equals `prelude`, and whatever this request's loaders push, replace or drop is in `late` (see `/ppr`, "Handles on a shell HIT"):
 
 ```ts
-// The handler pushed ctx.use(Meta)({ title: "Widget - Shop" })
-expect(hit.prelude).toContain('"title":"Widget - Shop"');
-expect(hit.flight).toContain('"title":"Widget - Shop"');
+// The handler pushed ctx.use(Notes)("from-handler"); a live loader pushes
+// ctx.use(Notes)("in stock").
+const values = (data) =>
+  Object.values(data ?? {}).flatMap((s) => Object.values(s).flat());
+
+const hit = await serveShellRequest(router, "/product/1", { cacheStore });
+const handles = await hit.readHandles();
+expect(values(handles.prelude)).toEqual(["from-handler"]); // the shell's HTML
+expect(values(handles.hydration)).toEqual(["from-handler"]); // hydrates clean
+expect(values(handles.late.at(-1))).toEqual(["from-handler", "in stock"]); // after hydration
+```
+
+Loader data has no decoder: it rides the payload, so assert it as text in `prelude` and `flight`. `normalizeFlight` and the `flightMatchers` (`toMatchFlight`) work on the text too. A live loader's data is only in the tail.
+
+```ts
+expect(hit.flight).toContain('"stock":"in stock"');
 ```
 
 ## Caveats

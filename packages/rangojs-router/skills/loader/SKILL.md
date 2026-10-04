@@ -1001,7 +1001,10 @@ on document loads (`metadata.handlesLate`) or progressively on navigations.
 A push before your slow fetch usually beats the barrier; a push derived from
 the fetched data usually does not. When it MUST be in the document, use
 `ssr: false` below. A loader with its own `cache()` keeps its pushes on a hit —
-they are replayed from the entry (see "Opting a Loader into Caching").
+they are replayed from the entry (see "Opting a Loader into Caching"). On a
+`ppr` route the race does not apply to a document served from its shell:
+there every push a loader makes on that request applies post-hydration (see
+`/ppr`, "Handles on a shell HIT").
 
 Under `cache()`, loader pushes are not stored with the cached segments: the
 loader re-runs on every hit and its live push is the only copy. (`ppr` keeps

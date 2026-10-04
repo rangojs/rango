@@ -253,6 +253,25 @@ global middleware
     segment order, waiter/deadlock state, and the post-settle handle snapshot in
     the same context as tail matching. Otherwise `ctx.rendered()` can inherit a
     premature non-streaming snapshot and miss handles pushed behind `loading()`.
+  - **A shell HIT hydrates with its record's handle data.** The prelude was
+    rendered at capture from the handle pushes the record keeps (a capture's
+    payload carries no other: `resolvedHandleStream` `recordedOnly`), so the
+    document's pre-hydration snapshot (`metadata.handles`) is the record as
+    restored, standing copies and placeholders alike. `serveShellHit` freezes
+    the handle store's document lane when the tail's render barrier resolves
+    (`HandleStore.freezeDocumentSnapshot`): the record is replayed and no
+    loader has run. Everything the request's loaders then push, replace or
+    drop (a live-lane push, a placeholder's replacement, a deferred push, a
+    `cache()` entry's replay) rides `metadata.handlesLate`, whether or not it
+    beat the handler barrier, and the client applies it after the root
+    hydrates. A document MISS, a route without `ppr` and a navigation replay
+    are unchanged: there the snapshot is the store at the handler barrier.
+    Not covered: a `useHandle` reader in a boundary that hydrates after the
+    root reads the live state, late updates included
+    (`docs/design/handle-push-ownership.md`). Pinned by "a shell HIT hydrates
+    from its record" in `serve-shell-request-push-ownership.rsc-test.tsx`,
+    `handle-store.test.ts`, and `expectShellHitHydratesFromRecord` in both
+    apps (#1035).
   - **`ctx.dynamic()` is the request-level opt-out on this axis.** Runtime
     middleware calls it BEFORE the commit point, so it forces the request onto
     axis 1 — the shell lookup/HIT/MISS-capture is skipped even when a valid

@@ -1391,9 +1391,12 @@ Options: `cacheStore` (replaces the store your `cache` config returns; its
 decision is `replayStatus`. `key` is the shell key the serve path resolved
 for a document, request partition included (a route whose `cache({ key })`
 or store `keyGenerator` partitions its record partitions its shell too). Result: `{ response, body, shellStatus,
-replayStatus, prelude, flight, key, readEntry }`. `readEntry()` reads the stored
+replayStatus, prelude, flight, key, readEntry, readHandles }`. `readEntry()` reads the stored
 document entry through a passive `getShell`, which warms a shell memo like any
-read, so call it after the reads you count. A HIT's tail carries replayed
+read, so call it after the reads you count. `readHandles()` decodes the
+response's handle data as the browser reads it: `hydration` (what the document
+hydrates with), `late` (the states that arrive after hydration) and, on a HIT,
+`prelude` (what the stored shell was rendered from). A HIT's tail carries replayed
 segments as Flight fragments inside JSON strings, with escaped quotes, so match
 plain text. To evict by tag, call `updateTag()` through
 `runInRequestContext(fn, { cacheStore })` or your app's own endpoint via
@@ -1661,7 +1664,8 @@ renderHandler(handler, opts?: { request?, params?, env?, vars?, loaders?, routeM
 // inActionRevalidation: render as if inside a server action's revalidation render, so a stale "use cache"
 // entry whose profile sets foregroundOnAction:true re-executes in the FOREGROUND (fresh) instead of SWR.
 serveShellRequest(router, url: string | URL, opts?: { cacheStore?, env?, headers?, partial?: true | { from?, segments? } }):
-  Promise<{ response, body, shellStatus, replayStatus, prelude, flight, key, readEntry(): Promise<ShellCacheEntry | null> }>;
+  Promise<{ response, body, shellStatus, replayStatus, prelude, flight, key, readEntry(): Promise<ShellCacheEntry | null>,
+    readHandles(): Promise<{ hydration: HandleData, late: HandleData[], prelude?: HandleData } | undefined> }>;
 // One GET through the router's production handler, background capture settled. HTML step stubbed:
 // prelude = the capture's Flight text, flight = this request's Flight (a HIT's tail).
 resetShellTestState(): Promise<void>; // beforeEach: capture backoff/guards + CFCacheStore isolate memos

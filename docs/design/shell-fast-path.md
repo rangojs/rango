@@ -238,8 +238,9 @@ produces is baked" below):
    HIT of an entry without pins showed fresh data next to the capture's push
    (`docs/design/handle-push-ownership.md`). Until issue #929 owned values
    were restored as plain values and showed twice unless the handle deduped
-   by key. A push that lands after the document's handle snapshot reaches
-   the client after hydration (the late channel). A record written before
+   by key. A document HIT hydrates with the record's handle data, and every
+   push a loader makes on that request reaches the client after hydration
+   (the late channel, #1035). A record written before
    `handleOwners` existed restores as a plain replay.
 
 ## Everything a handler produces is baked

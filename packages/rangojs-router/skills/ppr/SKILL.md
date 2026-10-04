@@ -919,8 +919,9 @@ pushes are the values the prelude rendered, also for the pushes a `"use
 cache"` hit inside its body replays. A loader the route also registers on
 the live lane is a hole: its live run replaces its restored pushes, and those
 of the loaders it awaits, so they show its live value, even when a bake-lane
-loader running on the replay awaits it; a hole slower than the handler
-barrier shows the shell's copy in the first snapshot until its run ends. An
+loader running on the replay awaits it. On a document HIT the page hydrates
+with the shell's copy and the hole's value takes its place after hydration
+("Handles on a shell HIT" below). An
 `ssr: false` loader is served from the shell only while the entry holds its
 pin: a snapshot captured by a navigation alone carries none, and a shell over
 `ppr.maxSnapshotBytes` drops them. There the loader runs fresh, and its
@@ -936,8 +937,34 @@ capture cannot record (a deferred push, or one holding a promise) marks every
 loader record of the page to run: those bodies then still run on each replay,
 in the background, and that push reaches the page (from the loader's own
 `cache()` entry when it hits) with the run's value, on a document HIT and on
-a client navigation alike; a push that lands after the document's handle
-snapshot reaches the client after hydration.
+a client navigation alike. On a document HIT it arrives after hydration.
+
+**Handles on a shell HIT.** A document served from a shell hydrates with
+exactly the handle data the shell's HTML was rendered from, which is what the
+shell recorded: the handlers' pushes and the settled pushes of the loaders
+that ran at capture. Everything a loader does on the HIT's own request
+reaches the client after hydration, through `useHandle`'s normal update:
+
+| On the HIT's request                                                        | In the HIT's HTML      | The client                                        |
+| --------------------------------------------------------------------------- | ---------------------- | ------------------------------------------------- |
+| a handler's push, a pinned `ssr: false` loader's settled push               | yes (the shell has it) | hydrates with it                                  |
+| a deferred push (`push(promise)`), or a push holding a promise, by a loader | no                     | gets it right after hydration                     |
+| a live-lane loader's push                                                   | no                     | gets it right after hydration                     |
+| the run of an `ssr: false` loader the shell has no pin for                  | the capture's push     | hydrates with the capture's, then shows the run's |
+
+So a value a loader pushes as a promise is in the HTML of a document MISS
+(the render awaits it) and of a route without `ppr`, and not in the HTML of a
+shell HIT. If a crawler or the first paint needs it, push it settled from an
+`ssr: false` loader (it bakes with the shell and is tag-invalidated), or push
+it from the handler. A promise-shaped value is treated as live: it is never
+baked into a shell every visitor shares.
+
+One limit: "after hydration" is after the page's root hydrates. A
+`useHandle` reader inside a boundary that hydrates later (the `loading()` or
+`<Suspense>` of a live loader) can already see such a push when it hydrates,
+which React reports as a hydration mismatch for that boundary and repairs.
+Read the handle outside the boundary (a layout, `<Html.Meta />`), where it
+hydrates with the root.
 
 A pinned loader's pushes are exactly the ones its capture made. If its body
 pushes a settled value only on some runs (behind a condition), a replay that

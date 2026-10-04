@@ -460,6 +460,102 @@ still runs it live while the binding serves its cache entry, so the page can
 show the entry's data next to the live run's push (#1002). Declare the cached
 loader first, or read it from the handler, until that lands.
 
+### Fixed: a document served from a PPR shell hydrates with the handle data the shell was rendered from ([#1035](https://github.com/rangojs/rango/issues/1035))
+
+On a `ppr` route, a handle value an `ssr: false` loader pushed as a promise
+broke hydration on every shell HIT: React error #418 in production,
+"Hydration failed because the server rendered HTML didn't match the client"
+in dev. The MISS that rendered the page first was clean.
+
+```tsx
+const Notes = createHandle<string>();
+
+const Product = createLoader(async (ctx) => {
+  const product = await db.product(ctx.params.id);
+  ctx.use(Notes)(product.name);
+  ctx.use(Notes)(db.stockNote(product.id)); // a promise: a deferred push
+  return { product };
+});
+
+path("/product/:id", ProductPage, { name: "product", ppr: true }, () => [
+  loader(Product, { ssr: false }, () => [cache({ ttl: 300 })]),
+]);
+
+// A client component in the page, outside any <Suspense>:
+function NoteList() {
+  return (
+    <ul>
+      {useHandle(Notes)
+        .flat()
+        .map((note, i) => (
+          <li key={i}>{note}</li>
+        ))}
+    </ul>
+  );
+}
+```
+
+The shell's HTML had a second, empty `<li>`, and the HIT's data had the
+note's text in it, or one row fewer, depending on timing. Two things were
+wrong. The capture rendered an element for a push its record does not keep.
+And a HIT hydrated with whatever its loaders had pushed by the time the
+document's handle data was read, not with what the shell was rendered from.
+
+A shell HIT now hydrates with exactly the handle data the shell's HTML was
+rendered from: the handlers' pushes and the settled pushes of the loaders
+that ran at capture. Everything a loader does on the HIT's own request
+reaches the client after hydration, as a normal `useHandle` update.
+
+| Shell HIT of a `ppr` route                                                                                          | Before                                                                         | Now                                                            |
+| ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------- |
+| A deferred push by an `ssr: false` loader with its own `cache()`                                                    | an empty element in the HTML, hydration error                                  | not in the HTML; shown right after hydration                   |
+| A deferred push by an `ssr: false` loader without `cache()`                                                         | the capture's value baked into the HTML, the current one in the data: mismatch | not in the HTML; the current value shown right after hydration |
+| A push that holds a promise (`{ title, extra: promise }`) by an `ssr: false` loader                                 | an element with the capture's fields in the HTML, the current ones in the data | not in the HTML; shown right after hydration                   |
+| A push by a loader without `ssr: false`, made before its first `await`, read outside its `loading()` / `<Suspense>` | in the data, not in the HTML: hydration error                                  | shown right after hydration                                    |
+| The same push, made after an `await`                                                                                | shown after hydration                                                          | unchanged                                                      |
+| A shell stored without loader pins (over `ppr.maxSnapshotBytes`)                                                    | the capture's push in the HTML, the run's in the data: mismatch                | hydrates with the capture's push, then shows the run's         |
+| Handler pushes, settled pushes of a pinned `ssr: false` loader                                                      | in the HTML and in the data                                                    | unchanged                                                      |
+| Document MISS, a route without `ppr`, a client navigation                                                           | every push before the handler barrier is in the HTML, a deferred one resolved  | unchanged                                                      |
+
+Nothing to change in app code, and nothing stored changes shape. A shell is
+valid for the app version that captured it, so with the default, per-build
+version no shell captured before the upgrade is served after it. An app that
+pins its own version keeps its shells: one captured before the upgrade still
+has the extra element in its HTML and fails hydration until it is recaptured
+(its TTL/SWR, or a tag).
+
+What an existing app can notice:
+
+- **A promise-shaped push is not in a shell HIT's HTML.** A value a loader
+  pushes as a promise, or one that holds a promise, was in the HTML of a HIT
+  when the loader's body ran at capture (the capture's value, for every
+  visitor). It is now in the HTML of a document MISS and of a route without
+  `ppr` only, and appears right after hydration on a HIT. A crawler that
+  reads a HIT's HTML does not see it. To have it in the shell, push it
+  settled from an `ssr: false` loader (`ctx.use(Notes)(await note)`), or push
+  it from the handler: both bake with the shell and follow its tags.
+- **A live-lane loader's push made before its first `await`** was in a
+  HIT's hydration data, and in the HTML of the loader's own boundary. It now
+  arrives after hydration like a push made after an `await`. One case gets
+  worse: a `useHandle` reader INSIDE that loader's `loading()` or
+  `<Suspense>` boundary hydrated clean with such a push and now reports a
+  hydration mismatch for that boundary, which React repairs. That reader
+  already did so for a push made after an `await`, on a document MISS too.
+  Read the handle outside the boundary (a layout, `<Html.Meta />`).
+- **A shell stored without loader pins** shows the capture's handle values
+  until hydration, then the run's. Its loader DATA still differs from the
+  HTML on hydration, as before (the documented drift of an entry over
+  `ppr.maxSnapshotBytes`).
+- A capture still waits for a deferred loader push to settle, within
+  `ppr.captureTimeout`, as before. It no longer renders it.
+
+`serveShellRequest` (`@rangojs/router/testing/flight`) gains
+`result.readHandles()`: the response's handle data as the browser reads it,
+`{ hydration, late, prelude? }`. A HIT's Flight payload now carries the
+handle state twice (what it hydrates with, and the state after), so a test
+that matched a pushed value in `result.flight` and expected it once reads
+`readHandles()` instead.
+
 ## 0.20.0 (2026-10-03)
 
 ### Breaking: the default `clientChunks` strategy splits `app/routes/<id>` per route instead of one `app-routes` group ([#1023](https://github.com/rangojs/rango/pull/1023))
