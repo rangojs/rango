@@ -277,7 +277,9 @@ export interface HandleStore {
    * Fix the document lane at the store's current state. From then on
    * `stream("settled")` yields this state and nothing newer, and
    * `streamLate()` delivers every change made after it, whether or not it
-   * beat the handler barrier. The first call wins.
+   * beat the handler barrier. The first call wins. It must run before the
+   * document stream is first read: a stream that started on the live state
+   * stays on it (reported through `onError` in development).
    *
    * A PPR shell HIT calls it once its record is replayed and before a loader
    * runs (rsc-rendering.ts serveShellHit). The prelude was rendered from the
@@ -298,7 +300,8 @@ export interface HandleStore {
    * Each yield contains the full accumulated state (not just the delta).
    * Safe for concurrent consumers (per-consumer version cursor).
    * The "settled" lane of a frozen store (freezeDocumentSnapshot) yields the
-   * frozen state once and ends.
+   * frozen state once, at once, and ends. That yield is the store's own
+   * frozen object: a consumer must not write to it.
    */
   stream(
     until?: "settled" | "fullySettled",
@@ -675,6 +678,9 @@ export function createHandleStore(): HandleStore {
   // freezeDocumentSnapshot: the state the document lane serves, and the
   // version the late channel starts after.
   let documentSnapshot: { version: number; data: HandleData } | undefined;
+  // A stream("settled") consumer started on the live state: a freeze after
+  // that does not reach it.
+  let documentStreamRead = false;
 
   // Wake every waiting consumer (new push or a settlement barrier fired).
   function signalEmission() {
@@ -936,7 +942,20 @@ export function createHandleStore(): HandleStore {
     },
 
     freezeDocumentSnapshot(): void {
-      documentSnapshot ??= { version, data: cloneHandleData(data) };
+      if (documentSnapshot) return;
+      if (process.env.NODE_ENV !== "production" && documentStreamRead) {
+        const error = new Error(
+          "HandleStore.freezeDocumentSnapshot() ran after the document's " +
+            'handle stream (stream("settled")) was first read. That stream ' +
+            "keeps reading the live store, so the document hydrates with " +
+            "whatever a loader pushed by then instead of the frozen state " +
+            "(issue #1035). Freeze before the payload that carries the " +
+            "stream starts rendering.",
+        );
+        if (this.onError) this.onError(error);
+        else console.error(error);
+      }
+      documentSnapshot = { version, data: cloneHandleData(data) };
     },
 
     async *stream(
@@ -948,6 +967,22 @@ export function createHandleStore(): HandleStore {
       // consumer existed (seal() then stream()); sealInternal early-returns
       // then, so the completed flag must be armed here.
       notifyDrain();
+
+      if (until === "settled") {
+        // A frozen document lane cannot change, so it is served at once:
+        // SSR and the pre-hydration drain block on this stream, and the
+        // batching hop below would cost every shell HIT a timer tick. It is
+        // yielded as the frozen object itself, already a copy: the lane's
+        // one consumer (resolvedHandleStream) builds a new object from a
+        // yield and never writes to it.
+        if (documentSnapshot) {
+          if (Object.keys(documentSnapshot.data).length > 0) {
+            yield documentSnapshot.data;
+          }
+          return;
+        }
+        documentStreamRead = true;
+      }
 
       // Per-consumer termination flag driven by the chosen barrier. The
       // global `completed` (late-push guard) always keys on FULL drain via
@@ -962,13 +997,6 @@ export function createHandleStore(): HandleStore {
 
       // Batch rapid synchronous pushes with initial delay
       await new Promise((resolve) => setTimeout(resolve, 0));
-
-      if (until === "settled" && documentSnapshot) {
-        if (Object.keys(documentSnapshot.data).length > 0) {
-          yield cloneHandleData(documentSnapshot.data);
-        }
-        return;
-      }
 
       let seen = 0;
       while (true) {

@@ -35,7 +35,7 @@ So `prelude` is the shell as captured (Flight text, not HTML): a value the shell
 | `flight`       | `string \| undefined`                             | The Flight payload this request rendered: a HIT's tail, a document render, or a partial response. `undefined` when no Flight rendered (a redirect, a middleware response).          |
 | `key`          | `string`                                          | The shell key the serve path resolved for a document it read (MISS or HIT), request partition included. Otherwise (no `ppr`, a partial request) the URL's key without a partition.  |
 | `readEntry`    | `() => Promise<ShellCacheEntry \| null>`          | Reads the document entry under `key` from the request's store (a passive `getShell`). A read: on a store with a shell memo it warms the memo, so call it after the reads you count. |
-| `readHandles`  | `() => Promise<ShellRequestHandles \| undefined>` | Decodes the response's handle data as the browser reads it: `{ hydration, late, prelude? }` (see "Handles and loader data"). `undefined` when no Flight rendered.                   |
+| `readHandles`  | `() => Promise<ShellRequestHandles \| undefined>` | Decodes the response's handle data as the browser reads it: `{ hydration, late }` (see "Handles and loader data"). `undefined` when no Flight rendered.                             |
 | `response`     | `Response`                                        | Status and headers. Its body is already read.                                                                                                                                       |
 | `body`         | `string`                                          | The body text.                                                                                                                                                                      |
 
@@ -205,9 +205,8 @@ A partial request has no HTML step, so its `key` is the URL's key without a part
 | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `hydration` | What the document hydrates with (`metadata.handles`, read to its end before hydration starts). For a `partial` request, the last state it streamed. |
 | `late`      | The states that arrived on the late channel (`metadata.handlesLate`), in order. Each replaces the client's handle data after hydration. Often `[]`. |
-| `prelude`   | On a HIT, the handle data the stored shell was rendered from.                                                                                       |
 
-On a HIT the client hydrates with exactly what the shell was rendered from, so `hydration` equals `prelude`, and whatever this request's loaders push, replace or drop is in `late` (see `/ppr`, "Handles on a shell HIT"):
+On a HIT the client hydrates with exactly what the shell was rendered from, so `hydration` is also what the shell's HTML holds, and whatever this request's loaders push, replace or drop is in `late` (see `/ppr`, "Handles on a shell HIT"):
 
 ```ts
 // The handler pushed ctx.use(Notes)("from-handler"); a live loader pushes
@@ -217,8 +216,7 @@ const values = (data) =>
 
 const hit = await serveShellRequest(router, "/product/1", { cacheStore });
 const handles = await hit.readHandles();
-expect(values(handles.prelude)).toEqual(["from-handler"]); // the shell's HTML
-expect(values(handles.hydration)).toEqual(["from-handler"]); // hydrates clean
+expect(values(handles.hydration)).toEqual(["from-handler"]); // the shell's HTML, hydrates clean
 expect(values(handles.late.at(-1))).toEqual(["from-handler", "in stock"]); // after hydration
 ```
 

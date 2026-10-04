@@ -15,6 +15,7 @@ import {
   filterRouteSegmentIds,
 } from "./react/filter-segment-order.js";
 import { notifyListeners } from "./notify-listeners.js";
+import { cloneHandleData } from "./navigation-store.js";
 import {
   locationStateSnapshot,
   type LocationStateSnapshot,
@@ -1034,15 +1035,11 @@ export function createEventController(
     const newRouteSegmentIds = filterRouteSegmentIds(rawMatched);
 
     if (isPartial && newSegmentOrder.length > 0) {
-      // The merge below writes in place. The hydration snapshot shares this
-      // object until its first change: copy the containers once.
-      if (hydrationHandleState?.data === handleData) {
-        handleData = {};
-        for (const name of Object.keys(hydrationHandleState.data)) {
-          handleData[name] = { ...hydrationHandleState.data[name] };
-        }
-      }
-      // Partial update: merge new data with existing
+      // Partial update: merge new data with existing, into a copy of the
+      // containers. The object a reader was handed is never written to: the
+      // hydration snapshot (freezeHydrationHandleState) and a history entry
+      // restored from the store's cache can be that object.
+      handleData = cloneHandleData(handleData);
       for (const handleName of Object.keys(data)) {
         if (!handleData[handleName]) {
           handleData[handleName] = {};

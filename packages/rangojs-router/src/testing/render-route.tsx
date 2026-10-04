@@ -752,7 +752,7 @@ export async function renderRoute(
   const initialSegmentIds = initialSegments.map((s) => s.id);
   eventController.setHandleData(resolvedSeed, initialSegmentIds);
   // As initBrowserApp before hydrateRoot: what a hydrating reader reads.
-  if (options.hydrate) eventController.freezeHydrationHandleState();
+  eventController.freezeHydrationHandleState();
   // A late update carries the full state: the seed with these handles' values
   // replaced, resolved as the browser resolves a late yield before applying.
   let applyLateHandles: (() => void) | undefined;

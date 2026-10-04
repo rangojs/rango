@@ -679,11 +679,16 @@ the view follows the tag.
 
 **The HIT hydrates from the record** (rules 1 and 2):
 
-- `HandleStore.freezeDocumentSnapshot()` (`server/handle-store.ts:938`)
-  fixes the document lane: `stream("settled")` yields the frozen state and
-  nothing newer, and `streamLate()` starts from it, so a change made before
-  the handler barrier is late too. The default stream, which a navigation
-  reads, is untouched.
+- `HandleStore.freezeDocumentSnapshot()` (`server/handle-store.ts`) fixes
+  the document lane: `stream("settled")` yields the frozen state and nothing
+  newer, and `streamLate()` starts from it, so a change made before the
+  handler barrier is late too. The default stream, which a navigation reads,
+  is untouched. The frozen state is served at once, without the timer tick
+  the live lane uses to batch pushes (SSR and the pre-hydration drain block
+  on this stream), and as the frozen object itself: its one consumer,
+  `resolvedHandleStream`, builds a new object from a yield. A freeze that
+  comes after the document stream was first read cannot reach that stream;
+  in development the store reports it through `onError`.
 - `serveShellHit` (`rsc/rsc-rendering.ts:1756`) freezes when the tail's
   render barrier resolves. That is the one point both hit paths share
   (`withCacheLookup` for a runtime record, `yieldFromStore` for the
@@ -721,19 +726,29 @@ unchanged.
   rendered with; `initBrowserApp` calls it before `hydrateRoot`.
   `getHydrationHandleState()` returns it once the live state has moved on,
   and `undefined` while the live state is still that state. A partial
-  update copies the containers before it merges, so the frozen state is
-  never written to.
+  update merges into a copy of the containers, always, so no object the
+  controller handed out is ever written to: not the frozen state, and not a
+  history entry's data, which a back/forward restore installs by reference.
 - `useHandle` (`browser/react/use-handle.ts`) reads it in a hydrating
   render. It tells one from a client render the way `useLocationState` does
   since #992: `useSyncExternalStore`, for its server snapshot. The mount
   effect, which was already there, moves the reader on to the live state.
-- The snapshot is a boolean, "has the live state moved on", not the data.
-  It is false in every hydrating render and flips to true once per document
-  at most. So a reader that hydrated with nothing late is not rendered
-  again (the `hook-render-stability` pins did not move: 8 dev and 8
-  production in the router app, 4 and 4 in cloudflare-basic), and a
-  navigation's handle updates never look like a store mutation to a
-  transition that is rendering.
+- The server snapshot is the frozen state itself (`undefined` while the
+  live state is still it), and the client snapshot is a constant
+  `undefined`. The reader's initial state is
+  `hydrationState ?? getHandleState()`. React re-renders a reader after it
+  hydrated only when the two snapshots differ, which is exactly when
+  something arrived late: a reader that hydrated with nothing late is not
+  rendered again (the `hook-render-stability` pins did not move: 8 dev and
+  8 production in the router app, 4 and 4 in cloudflare-basic).
+- Because the client snapshot never changes and its function has one
+  identity, the store is constant as far as React can tell. No handle
+  update, a navigation's included, is a store mutation to it: there is no
+  per-render store effect, and no transition render is redone
+  synchronously because of this hook. An earlier version used "has the
+  live state moved on" as the client snapshot, which flipped once per
+  document and cost one such redo; do not go back to a snapshot that reads
+  the controller on the client.
 
 ### Options decided against
 

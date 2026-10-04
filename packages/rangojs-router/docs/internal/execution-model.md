@@ -277,10 +277,11 @@ global middleware
     `initBrowserApp` froze before `hydrateRoot`
     (`EventController.freezeHydrationHandleState` /
     `getHydrationHandleState`), and its mount effect moves it on to the live
-    state. `useHandle` detects the hydrating render with
-    `useSyncExternalStore`'s server snapshot; the snapshot is "has the live
-    state moved on", so a reader that hydrated with nothing late renders
-    once. Before, the reader took the live state, late updates included, and
+    state. `useHandle` gets it as `useSyncExternalStore`'s server snapshot;
+    it is `undefined` while the live state is still the frozen one, and the
+    client snapshot is a constant `undefined`, so a reader that hydrated
+    with nothing late renders once and no handle update is a store change to
+    React. Before, the reader took the live state, late updates included, and
     mismatched its HTML: a loader push after an `await` on any document.
     Pinned by `use-handle-hydration.test.tsx`,
     `render-route-hydrate.test.tsx` (`lateHandles`), and

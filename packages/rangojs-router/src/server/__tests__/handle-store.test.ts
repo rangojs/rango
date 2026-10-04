@@ -488,6 +488,56 @@ describe("HandleStore.freezeDocumentSnapshot (a shell HIT hydrates from its reco
     ]);
   });
 
+  // SSR and the pre-hydration drain block on this stream: a frozen state
+  // cannot change, so it does not wait for the batching timer.
+  it('stream("settled") serves the frozen state without a timer tick', async () => {
+    vi.useFakeTimers();
+    try {
+      const store = createHandleStore();
+      store.push("notes", "seg1", "record");
+      store.freezeDocumentSnapshot();
+
+      const stream = store.stream("settled");
+
+      // No timer is advanced: a pending setTimeout would hang these.
+      expect(await stream.next()).toEqual({
+        done: false,
+        value: { notes: { seg1: ["record"] } },
+      });
+      expect((await stream.next()).done).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports a freeze that comes after the document stream was first read (development)", async () => {
+    const store = createHandleStore();
+    const onError = vi.fn();
+    store.onError = onError;
+    store.push("notes", "seg1", "record");
+    const stream = store.stream("settled");
+    const first = stream.next();
+
+    store.freezeDocumentSnapshot();
+    await first;
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0]![0].message).toMatch(
+      /ran after the document's handle stream .* was first read/,
+    );
+  });
+
+  it("reports nothing when the freeze comes first, or twice", async () => {
+    const store = createHandleStore();
+    const onError = vi.fn();
+    store.onError = onError;
+    store.freezeDocumentSnapshot();
+    await drain(store.stream("settled"));
+    store.freezeDocumentSnapshot();
+
+    expect(onError).not.toHaveBeenCalled();
+  });
+
   it("leaves the default stream (a navigation's) on the live state", async () => {
     const store = createHandleStore();
     store.push("notes", "seg1", "record");

@@ -40,6 +40,7 @@ import {
   type HandlerContext,
 } from "../../index.rsc.js";
 import { navigationShellKey } from "../../rsc/shell-capture-constants.js";
+import { deserializeResult } from "../../cache/segment-codec.js";
 import {
   DeferredOwnedLoader,
   deferredOwnedRuns,
@@ -467,6 +468,24 @@ async function final(
 }
 
 /**
+ * The handle data a HIT's shell was rendered from: the capture's payload
+ * (`prelude`, Flight text under serveShellRequest) decoded as the SSR render
+ * read it. Its `handles` channel only: the capture froze the stream, so the
+ * late channel may never close.
+ */
+async function shellHandles(
+  result: ServeShellRequestResult,
+): Promise<ShellRequestHandles["hydration"] | undefined> {
+  if (result.prelude === undefined) return undefined;
+  const { metadata } = await deserializeResult<{
+    metadata?: { handles?: AsyncIterable<ShellRequestHandles["hydration"]> };
+  }>(result.prelude);
+  let handles: ShellRequestHandles["hydration"] = {};
+  for await (const data of metadata?.handles ?? []) handles = data;
+  return handles;
+}
+
+/**
  * A document's handle values, in push order, as the browser gets them: what
  * its shell was rendered from (a HIT), what the client hydrates with, and
  * the state the late channel leaves it in after hydration (undefined when
@@ -486,7 +505,7 @@ async function handleValues(result: ServeShellRequestResult): Promise<{
         (value) => (value as { label?: unknown } | undefined)?.label ?? value,
       );
   return {
-    shell: values(handles.prelude),
+    shell: values(await shellHandles(result)),
     hydration: values(handles.hydration)!,
     afterHydration: values(handles.late.at(-1)),
   };

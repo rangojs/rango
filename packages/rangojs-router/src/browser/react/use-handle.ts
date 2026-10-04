@@ -14,9 +14,9 @@ import { collectHandleData } from "../../handle.js";
 import type { HandleData } from "../types.js";
 import { NavigationStoreContext } from "./context.js";
 import { shallowEqual } from "./shallow-equal.js";
+import { subscribeToNothing } from "./subscribe-to-nothing.js";
 
-const subscribeToNothing = (): (() => void) => () => {};
-const hydratingSnapshot = (): boolean => false;
+const noHydrationState = (): undefined => undefined;
 
 /**
  * Hook to access collected handle data.
@@ -49,16 +49,17 @@ export function useHandle<T, A, S>(
 
   // useSyncExternalStore only for its server snapshot, as useLocationState
   // (#992): no other hook tells a hydrating render from a client one. A
-  // hydrating render reads the handle state the document's HTML was rendered
+  // hydrating render gets the handle state the document's HTML was rendered
   // with (EventController.getHydrationHandleState), whenever its boundary
-  // hydrates; the mount effect below moves it on to the live state. The
-  // snapshot is whether the live state has moved on, so it changes once per
-  // document at most, and a reader that hydrated before anything arrived
-  // late is not rendered again (issue #1035).
-  const movedOn = useSyncExternalStore(
+  // hydrates; the mount effect below moves it on to the live state. That
+  // state is undefined while the live state is still it, and the client
+  // snapshot is always undefined: a reader that hydrated before anything
+  // arrived late is not rendered again, and to React the store never
+  // changes (issue #1035).
+  const hydrationState = useSyncExternalStore(
     subscribeToNothing,
-    () => ctx?.eventController.getHydrationHandleState() !== undefined,
-    hydratingSnapshot,
+    noHydrationState,
+    () => ctx?.eventController.getHydrationHandleState(),
   );
 
   const [value, setValue] = useState<Rango.FlightSerialize<A> | S>(() => {
@@ -71,9 +72,7 @@ export function useHandle<T, A, S>(
       return selector ? selector(collected) : collected;
     }
 
-    const state =
-      (movedOn ? undefined : ctx.eventController.getHydrationHandleState()) ??
-      ctx.eventController.getHandleState();
+    const state = hydrationState ?? ctx.eventController.getHandleState();
     const collected = collectHandleData(
       handle,
       state.data,

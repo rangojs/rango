@@ -1316,6 +1316,24 @@ describe("createEventController", () => {
       });
     });
 
+    // A back/forward restore installs the history cache's own object as the
+    // live state (NavigationProvider, cachedHandleData): a later partial
+    // update must not write into it.
+    it("a partial update never writes into the object the state was set from", () => {
+      const ctrl = createController();
+      const restored = { Notes: { L0: ["layout"], R0: ["entry"] } };
+      ctrl.setHandleData(restored, ["L0", "R0"]);
+
+      ctrl.setHandleData({ Notes: { R0: ["navigated"] } }, ["L0", "R0"], true, [
+        "R0",
+      ]);
+
+      expect(restored).toEqual({ Notes: { L0: ["layout"], R0: ["entry"] } });
+      expect(ctrl.getHandleState().data).toEqual({
+        Notes: { L0: ["layout"], R0: ["navigated"] },
+      });
+    });
+
     it("a partial update that changes nothing still moves the live state on", () => {
       const ctrl = createController();
       ctrl.setHandleData({ Notes: { R0: ["document"] } }, ["R0"]);

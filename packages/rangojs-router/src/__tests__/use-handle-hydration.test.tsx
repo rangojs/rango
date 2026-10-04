@@ -120,7 +120,8 @@ describe("useHandle: a hydrating render reads the document's handle state", () =
     );
 
     expect(recoverable).toEqual([]);
-    expect(renders[0]).toEqual(["document"]);
+    // The hydrating render, then one render on the live state.
+    expect(renders).toEqual([["document"], ["document", "late"]]);
     expect(container.innerHTML).toBe("<ul><li>document</li><li>late</li></ul>");
   });
 
@@ -167,7 +168,7 @@ describe("useHandle: a hydrating render reads the document's handle state", () =
       root.render(tree(<Rows />));
     });
 
-    expect(renders[0]).toEqual(["document", "late"]);
+    expect(renders).toEqual([["document", "late"]]);
     expect(container.innerHTML).toBe("<ul><li>document</li><li>late</li></ul>");
   });
 });

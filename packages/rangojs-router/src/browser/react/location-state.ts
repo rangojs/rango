@@ -1,6 +1,7 @@
 "use client";
 
 import { useContext, useEffect, useSyncExternalStore } from "react";
+import { subscribeToNothing } from "./subscribe-to-nothing.js";
 import { LocationStateContext } from "./context.js";
 import { OptimisticLocationContext } from "../../client-urls/optimistic-location.js";
 import {
@@ -26,8 +27,6 @@ export {
 function getServerSnapshot(): undefined {
   return undefined;
 }
-
-const subscribeToNothing = (): (() => void) => () => {};
 
 /**
  * Hook to read the location state of the history entry on screen

@@ -945,7 +945,7 @@ What an existing app can notice, in the same order:
 
 For tests: `serveShellRequest` (`@rangojs/router/testing/flight`) gains
 `result.readHandles()`, the response's handle data as the browser reads it,
-`{ hydration, late, prelude? }`. A HIT's Flight payload now carries the
+`{ hydration, late }`. A HIT's Flight payload now carries the
 handle state twice (what it hydrates with, and the state after), so a test
 that matched a pushed value in `result.flight` and expected it once reads
 `readHandles()` instead. `renderRoute` (`@rangojs/router/testing/dom`) gains

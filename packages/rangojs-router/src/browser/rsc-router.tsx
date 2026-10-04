@@ -293,9 +293,6 @@ export async function initBrowserApp(
       lastHandleData,
       initialPayload.metadata?.matched,
     );
-    // What every reader hydrates with, whenever its boundary hydrates: the
-    // late channel below changes the live state once the root has hydrated.
-    eventController.freezeHydrationHandleState();
 
     // Update the initial cache entry with the processed handleData
     // The cache entry was created by createNavigationStore but without handleData
@@ -310,9 +307,9 @@ export async function initBrowserApp(
     if (lateGenerator) {
       void (async () => {
         try {
-          // Never apply before React commits hydration — a pre-commit
-          // application mutates the state useHandle initializers read during
-          // the hydration render (mismatch). Yields buffer in the generator
+          // Applied once the root has hydrated (see hydrationCommitted): the
+          // readers that hydrated with it are subscribed by then and take
+          // the update as an ordinary one. Yields buffer in the generator
           // meanwhile; nothing is lost.
           await hydrationCommitted;
           for await (const rawLateData of lateGenerator) {
@@ -340,6 +337,10 @@ export async function initBrowserApp(
   } else {
     bootLog("handles: none in payload");
   }
+  // What every reader hydrates with, whenever its boundary hydrates
+  // (useHandle): the late channel above changes the live state once the root
+  // has hydrated, and a navigation can before a streamed boundary has.
+  eventController.freezeHydrationHandleState();
 
   // Create composable utilities
   const client = createNavigationClient(deps);
@@ -637,13 +638,18 @@ export async function initBrowserApp(
 // re-runs the root effect; the second flush is not a second hydration).
 let hydrationCommitLogged = false;
 
-// Hydration-commit barrier for the late handle channel. useHandle's useState
-// initializer reads the eventController's LIVE state during the hydration
-// render, so applying a late handle update BEFORE hydration commits changes
-// that state out from under React — the classic "external changing data"
-// hydration mismatch (seen when a loader's push lost the handler-barrier race
-// by milliseconds and its late yield landed mid-hydration). The root effect
-// below resolves this; the late consumer awaits it before applying anything.
+// Hydration-commit barrier for the late handle channel: the late consumer
+// applies nothing before the root's effects have run. A hydrating render
+// reads the handle state frozen before hydrateRoot (useHandle,
+// EventController.getHydrationHandleState), so an earlier application would
+// no longer mismatch (it did while the initializer read the LIVE state: seen
+// when a loader's push lost the handler-barrier race by milliseconds and its
+// late yield landed mid-hydration). What the barrier still buys: a reader
+// that hydrates after the live state moved on is rendered a second time
+// right after, since React re-renders a reader whose hydration state is not
+// the client one. Readers that hydrate with the root would all pay that;
+// after the commit they are subscribed and take the update as an ordinary
+// one. The root effect below resolves this.
 let resolveHydrationCommitted!: () => void;
 const hydrationCommitted: Promise<void> = new Promise((resolve) => {
   resolveHydrationCommitted = resolve;

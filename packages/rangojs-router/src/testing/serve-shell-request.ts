@@ -93,8 +93,6 @@ export interface ShellRequestHandles {
    * late, and for a `partial` request.
    */
   late: HandleData[];
-  /** On a HIT, the handle data the stored shell was rendered from. */
-  prelude?: HandleData;
 }
 
 /** Result of {@link serveShellRequest}. */
@@ -134,9 +132,8 @@ export interface ServeShellRequestResult {
    */
   readEntry(): Promise<ShellCacheEntry | null>;
   /**
-   * Decode the handle data of `flight` (and of `prelude` on a HIT) as the
-   * browser reads it, deferred values resolved. Undefined when no Flight was
-   * rendered.
+   * Decode the handle data of `flight` as the browser reads it, deferred
+   * values resolved. Undefined when no Flight was rendered.
    */
   readHandles(): Promise<ShellRequestHandles | undefined>;
 }
@@ -233,30 +230,22 @@ type HandleChannel = AsyncIterable<HandleData> | undefined;
 
 /**
  * Read a payload's two handle channels as browser/rsc-router.tsx does:
- * `handles` to its end, then every `handlesLate` state. `late: false` reads
- * the first only (a prelude ends where the capture froze it, so its late
- * channel may never close).
+ * `handles` to its end, then every `handlesLate` state.
  */
 async function decodePayloadHandles(
   flight: string,
-  late: boolean,
-): Promise<{ hydration: HandleData; late: HandleData[] }> {
+): Promise<ShellRequestHandles> {
   const { deserializeResult } = await import("../cache/segment-codec.js");
   const { metadata } = await deserializeResult<{
     metadata?: { handles?: HandleChannel; handlesLate?: HandleChannel };
   }>(flight);
   let hydration: HandleData = {};
   for await (const data of metadata?.handles ?? []) hydration = data;
-  const states: HandleData[] = [];
-  if (late) {
-    for await (const data of metadata?.handlesLate ?? []) {
-      states.push(await resolveDeferredHandleValues(data));
-    }
+  const late: HandleData[] = [];
+  for await (const data of metadata?.handlesLate ?? []) {
+    late.push(await resolveDeferredHandleValues(data));
   }
-  return {
-    hydration: await resolveDeferredHandleValues(hydration),
-    late: states,
-  };
+  return { hydration: await resolveDeferredHandleValues(hydration), late };
 }
 
 /**
@@ -455,13 +444,7 @@ export async function serveShellRequest<TEnv = any>(
       return read?.entry ?? null;
     },
     async readHandles() {
-      if (!flight) return undefined;
-      return {
-        ...(await decodePayloadHandles(flight, true)),
-        ...(prelude && {
-          prelude: (await decodePayloadHandles(prelude, false)).hydration,
-        }),
-      };
+      return flight ? decodePayloadHandles(flight) : undefined;
     },
   };
 }
