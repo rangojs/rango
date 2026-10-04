@@ -43,12 +43,12 @@ Directories are scanned recursively for `.ts`, `.tsx`, `.js`, and `.jsx` files. 
 
 ## Modes
 
-| Flag              | Behavior                                                                                                                                                             |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| (none)            | Static parser. If an `include()` cannot be resolved statically (a factory function or a dynamic expression), it lists them, exits with an error, and writes nothing. |
-| `--static`        | Static parser. Writes partial output and prints the unresolvable includes as warnings.                                                                               |
-| `--runtime`       | Vite-based runtime discovery, covering every route. Requires `vite` and `@vitejs/plugin-rsc`, and at least one `createRouter()` file among the arguments.            |
-| `--config <path>` | The Vite config for `--runtime` (auto-detected when omitted). Ignored with a warning in the other modes.                                                             |
+| Flag              | Behavior                                                                                                                                                                  |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| (none)            | Static parser. If an `include()` cannot be resolved statically (a factory function or a dynamic expression), it lists them, exits with an error, and writes nothing.      |
+| `--static`        | Static parser. Writes partial output and prints the unresolvable includes as warnings.                                                                                    |
+| `--runtime`       | Vite-based runtime discovery, covering every route. Requires `vite` (the router brings `@vitejs/plugin-rsc`), and at least one `createRouter()` file among the arguments. |
+| `--config <path>` | The Vite config for `--runtime` (auto-detected when omitted). Ignored with a warning in the other modes.                                                                  |
 
 ```bash
 npx rango generate src/router.tsx --runtime

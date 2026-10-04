@@ -423,11 +423,11 @@ npx rango generate src/urls.tsx src/api/
 
 Three modes:
 
-| Flag        | Behavior                                                                                                                  |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------- |
-| (none)      | Static parser. Exits with an error, writing nothing, if an `include()` can't be resolved statically (factory or dynamic). |
-| `--static`  | Static parser, but writes partial output and prints the unresolvable includes as warnings.                                |
-| `--runtime` | Vite-based runtime discovery (full coverage; needs `vite` and `@vitejs/plugin-rsc`). `--config <path>` picks the config.  |
+| Flag        | Behavior                                                                                                                                    |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| (none)      | Static parser. Exits with an error, writing nothing, if an `include()` can't be resolved statically (factory or dynamic).                   |
+| `--static`  | Static parser, but writes partial output and prints the unresolvable includes as warnings.                                                  |
+| `--runtime` | Vite-based runtime discovery (full coverage; needs `vite`; `@vitejs/plugin-rsc` comes with the router). `--config <path>` picks the config. |
 
 ### Auto-detection
 
