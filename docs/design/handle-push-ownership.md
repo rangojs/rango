@@ -663,23 +663,41 @@ from its record"); rows marked B were also run in a browser, dev and
 production. The same reader on a document MISS, with the push made after an
 await, failed on `origin/main` too and is clean now (rule 4).
 
-| Path                                                                                          | `origin/main` (`ede1367f`)                                                                                                                         | Now                                                                                       |
-| --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Document MISS (B)                                                                             | HTML and hydration: every push made before the handler barrier, a deferred one resolved. After: pushes made later (a live loader after an await)   | same                                                                                      |
-| HIT, the loaders push settled values only (`/eb`)                                             | HTML, hydration: record. After: nothing                                                                                                            | same                                                                                      |
-| HIT, a deferred push, the loader's `cache()` entry warm at capture (B, #1035)                 | HTML: record **plus an empty element**. Hydration: record, **plus the value if the replay won the race**. After: the value. Fails either way       | HTML, hydration: record. After: record plus the value                                     |
-| HIT, a deferred push, the body ran at capture (no `cache()`, or its entry missed)             | HTML: record **plus the capture's value, baked**. Hydration: record plus this run's value (`@g2` next to `@g1`), or not                            | HTML, hydration: record. After: record plus this run's value                              |
-| HIT, a push that holds a promise                                                              | HTML: the capture's value with the promise masked. Hydration: this run's value, or not                                                             | HTML, hydration: record (no element). After: this run's value                             |
-| HIT, an entry without loader pins (`ppr.maxSnapshotBytes`), the run pushes                    | HTML: the capture's push. Hydration: **the run's push** (the run is awaited). Text mismatch                                                        | HTML, hydration: the capture's push (the placeholder). After: the run's push in its place |
-| The same, the run makes no push                                                               | HTML: the capture's push. Hydration: **none**                                                                                                      | HTML, hydration: the capture's push. After: none                                          |
-| HIT, a live-lane loader pushes, the reader is in the static part (B)                          | HTML: no element. Hydration: **the push when made before the loader's first await** (element mismatch, #418), else after                           | HTML, hydration: record. After: the push                                                  |
-| HIT, a live-lane loader pushes, the reader is inside that loader's boundary (a hole) (B, e2e) | Push before the first await: in the hole's HTML and in the hydration data, clean. Push after an await: after hydration, **fails in that boundary** | Both after hydration, clean: the reader hydrates with the document's data (rule 4)        |
-| Client navigation that replays the shell                                                      | one stream, the final state                                                                                                                        | same                                                                                      |
-| Document of a route without `ppr`                                                             | as a MISS                                                                                                                                          | same                                                                                      |
+| Path                                                                                             | `origin/main` (`ede1367f`)                                                                                                                         | Now                                                                                       |
+| ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Document MISS (B)                                                                                | HTML and hydration: every push made before the handler barrier, a deferred one resolved. After: pushes made later (a live loader after an await)   | same                                                                                      |
+| HIT, the loaders push settled values only (`/eb`)                                                | HTML, hydration: record. After: nothing                                                                                                            | same                                                                                      |
+| HIT, a deferred push, the loader's `cache()` entry warm at capture (B, #1035)                    | HTML: record **plus an empty element**. Hydration: record, **plus the value if the replay won the race**. After: the value. Fails either way       | HTML, hydration: record. After: record plus the value                                     |
+| HIT, a deferred push, the body ran at capture (no `cache()`, or its entry missed)                | HTML: record **plus the capture's value, baked**. Hydration: record plus this run's value (`@g2` next to `@g1`), or not                            | HTML, hydration: record. After: record plus this run's value                              |
+| HIT, a push that holds a promise                                                                 | HTML: the capture's value with the promise masked. Hydration: this run's value, or not                                                             | HTML, hydration: record (no element). After: this run's value                             |
+| HIT, an entry without loader pins (`ppr.maxSnapshotBytes`), the run pushes                       | HTML: the capture's push. Hydration: **the run's push** (the run is awaited). Text mismatch                                                        | HTML, hydration: the capture's push (the placeholder). After: the run's push in its place |
+| The same, the run makes no push                                                                  | HTML: the capture's push. Hydration: **none**                                                                                                      | HTML, hydration: the capture's push. After: none                                          |
+| HIT, a live-lane loader pushes, the reader is in the static part (B)                             | HTML: no element. Hydration: **the push when made before the loader's first await** (element mismatch, #418), else after                           | HTML, hydration: record. After: the push                                                  |
+| HIT, a live-lane loader pushes, the reader is inside that loader's boundary (a hole) (B, e2e)    | Push before the first await: in the hole's HTML and in the hydration data, clean. Push after an await: after hydration, **fails in that boundary** | Both after hydration, clean: the reader hydrates with the document's data (rule 4)        |
+| Client navigation that replays the shell                                                         | one stream, the final state                                                                                                                        | same                                                                                      |
+| Document of a route without `ppr`                                                                | as a MISS                                                                                                                                          | same                                                                                      |
+| HIT of a `Prerender` + `ppr` route, a promise-free `ssr: false` loader's settled push (B, #1057) | HTML: the push. Hydration: **the prerender store's handles only**, so React removes the element (#418). After: nothing                             | HTML, hydration: the shell's `handles` record. After: nothing                             |
+| The same route, the loader also pushes a promise (B, #1057)                                      | HTML: the settled push. Hydration: **without it**. After: the HIT run's settled and promise pushes                                                 | HTML, hydration: the record. After: the record plus the promise                           |
 
-A HIT of a `Prerender` route with `ppr` freezes at the same point (its tail
-replays the prerender store's handles, `yieldFromStore`, then resolves the
-render barrier). Read from the code, not probed.
+A HIT of a `Prerender` route with `ppr` freezes at the same point: its tail
+replays the prerender store's handles in `yieldFromStore`, then resolves the
+render barrier. That store's entry is written at build time, when no loader
+runs, and the capture of a `Prerender` route writes no doc record (the
+prerender store supplies its handler layer), so before #1057 the loader-owned
+pushes the prelude rendered were stored nowhere, and a pinned loader does not
+run on the HIT to push them again. Now the capture stores them in a `handles`
+snapshot record, in the doc record's format (`ShellSnapshotHandlesValue`,
+`rsc/shell-capture.ts` `captureAndStoreShell`), and `yieldFromStore` restores
+it after the prerender store's handles with the same rule as a doc record:
+`setRecordAuthority(loaderPins(...))`, then `restoreHandles` with the owners.
+So the last two rows follow the record rows above them exactly; only where
+the data is stored differs. An entry stored before the record (v0.21) has
+none and serves as the `origin/main` column says. Pinned through
+`serveShellRequest` in `serve-shell-request-prerender.rsc-test.tsx`, which
+`serveShellRequest` can drive since it serves a `Prerender` route from the
+artifact `router.matchForPrerender` bakes, and in a browser by the `#1057`
+tests of both push-ownership suites (a shell captured at runtime and the one
+`vite build` bakes, dev and production).
 
 ### What is built
 

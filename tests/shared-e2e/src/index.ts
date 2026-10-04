@@ -2051,7 +2051,7 @@ async function warmShellToHit(page: Page, url: string): Promise<void> {
 
 async function bumpPushGeneration(
   page: Page,
-  fixture: PushOwnershipFixture,
+  fixture: Pick<PushOwnershipFixture, "bumpUrl">,
   probe: string,
 ): Promise<number> {
   const res = await page.request.get(`${fixture.bumpUrl}?probe=${probe}`);
@@ -2311,6 +2311,138 @@ export async function expectLateBoundaryHandleReaderHydratesClean(
   await warmShellToHit(page, url);
   await gotoShellHit(page, url);
   await expectLivePage();
+}
+
+/**
+ * The `Prerender` + `ppr` push fixture (#1057), next to the
+ * push-ownership routes. Each route's view is the push-ownership view.
+ *
+ * - `preSettledUrl`: `Prerender` + `ppr` with a promise-free `ssr: false`
+ *   loader, value `settled@g<n>`, one settled push `settled-only@g<n>`.
+ * - `pprSettledUrl`: the same loader and view on a `ppr` route without
+ *   `Prerender` (the control).
+ * - `preDeferredUrl`: `Prerender` + `ppr` with a promise-free `ssr: false`
+ *   loader without `cache()`, value `deferred@g<n>`, a settled push
+ *   `settled-note@g<n>` and a promise push `deferred-note@g<n>`.
+ * - `bumpUrl`: as in {@link PushOwnershipFixture}.
+ */
+export interface PrerenderPushFixture {
+  preSettledUrl: string;
+  pprSettledUrl: string;
+  preDeferredUrl: string;
+  bumpUrl: string;
+}
+
+/**
+ * Load `url` as a shell HIT and check that it hydrates clean with `rows`:
+ * the HIT's HTML has them, the rows on screen never change from the first
+ * parse on (through hydration), and the loader value is `value`.
+ */
+async function expectHitKeepsRows(
+  page: Page,
+  url: string,
+  rows: string[],
+  value: string,
+): Promise<void> {
+  const hit = await page.request.get(url, { headers: PUSH_HTML_HEADERS });
+  expect(hit.headers()["x-rango-shell"]).toBe("HIT");
+  expect(pushNoteRowsInHtml(await hit.text())).toEqual(rows);
+
+  const samples = await recordPushNoteRows(page);
+  await gotoShellHit(page, url);
+  await expect(byTestId(page, "push-value")).toHaveText(value);
+  await expect(byTestId(page, "push-note")).toHaveText(rows);
+  // From the sample the parser first produced the rows in, on.
+  const seen = await samples();
+  const parsed = seen.slice(seen.findIndex((sample) => sample.rows.length > 0));
+  expect(parsed.some((sample) => sample.hydrated)).toBe(true);
+  for (const sample of parsed) expect(sample.rows).toEqual(rows);
+}
+
+/**
+ * #1057: a shell HIT of `url`'s route keeps the settled push of its
+ * promise-free `ssr: false` loader. Its HTML has the row, the page hydrates
+ * with it (no hydration error) and keeps it. The loader is served from its
+ * pin, so the value and the row stay at the capture's generation after a
+ * bump. The document MISS that captured the shell is clean too.
+ *
+ * Before, on a `Prerender` route, the HIT hydrated without the row, which
+ * React then removed: "Hydration failed" in dev, React error #418 in
+ * production, and the row never came back. Called with `pprSettledUrl` it is
+ * the control: a `ppr` route without `Prerender` kept the row before too.
+ */
+export async function expectShellHitKeepsSettledLoaderPush(
+  page: Page,
+  fixture: PrerenderPushFixture,
+  url: string,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const probe = pushProbe("settled");
+  const probed = `${url}?probe=${probe}`;
+
+  const miss = await page.goto(probed);
+  expect(miss?.headers()["x-rango-shell"]).toBe("MISS");
+  await waitForShellHydration(page);
+  await expect(byTestId(page, "push-note")).toHaveText(["settled-only@g1"]);
+
+  await warmShellToHit(page, probed);
+  expect(await bumpPushGeneration(page, fixture, probe)).toBe(2);
+  await expectHitKeepsRows(page, probed, ["settled-only@g1"], "settled@g1");
+}
+
+/**
+ * #1057 for the shell `vite build` bakes for a `Prerender` + `ppr` route
+ * (served for a URL without a query string; in dev the same capture runs on
+ * demand): its HIT keeps the loader's settled push, as a shell captured at
+ * runtime does.
+ */
+export async function expectBuildShellHitKeepsSettledLoaderPush(
+  page: Page,
+  fixture: PrerenderPushFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  await warmShellToHit(page, fixture.preSettledUrl);
+  await expectHitKeepsRows(
+    page,
+    fixture.preSettledUrl,
+    ["settled-only@g1"],
+    "settled@g1",
+  );
+}
+
+/**
+ * #1057 next to #1054 on a `Prerender` + `ppr` route: a promise pushed from
+ * the `ssr: false` loader is not in the shell and arrives after hydration;
+ * the settled push the shell rendered is in its HTML and in the hydration
+ * data. The loader runs on the HIT (its pin asks for a run), so the promise
+ * carries the HIT's generation while the settled push stays the capture's.
+ *
+ * Before, the HIT hydrated without the settled row: a hydration error.
+ */
+export async function expectPrerenderShellHitDeliversPromisePush(
+  page: Page,
+  fixture: PrerenderPushFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const probe = pushProbe("pre-deferred");
+  const url = `${fixture.preDeferredUrl}?probe=${probe}`;
+  await warmShellToHit(page, url);
+  expect(await bumpPushGeneration(page, fixture, probe)).toBe(2);
+
+  const hit = await page.request.get(url, { headers: PUSH_HTML_HEADERS });
+  expect(hit.headers()["x-rango-shell"]).toBe("HIT");
+  expect(pushNoteRowsInHtml(await hit.text())).toEqual(["settled-note@g1"]);
+
+  const samples = await recordPushNoteRows(page);
+  await gotoShellHit(page, url);
+  await expect(byTestId(page, "push-value")).toHaveText("deferred@g1");
+  await expect(byTestId(page, "push-note")).toHaveText([
+    "settled-note@g1",
+    "deferred-note@g2",
+  ]);
+  expect((await samples()).find((sample) => sample.hydrated)?.rows).toEqual([
+    "settled-note@g1",
+  ]);
 }
 
 // ---------------------------------------------------------------------------

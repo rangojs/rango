@@ -75,6 +75,7 @@ import type {
   CachedEntryData,
   ShellCacheEntry,
   SegmentCacheStore,
+  ShellSnapshotHandlesValue,
   ShellSnapshotRecord,
 } from "../cache/types.js";
 import {
@@ -83,6 +84,7 @@ import {
 } from "../router/segment-resolution/loader-snapshot.js";
 import {
   RecordingShellStore,
+  SHELL_HANDLES_RECORD_KEY,
   SnapshotOnlySegmentStore,
   countSnapshotFamilies,
   estimateShellEntryBytes,
@@ -90,6 +92,10 @@ import {
   hasDocRecord,
   pruneShellSnapshot,
 } from "../cache/shell-snapshot.js";
+import {
+  captureOwnedHandles,
+  encodeHandles,
+} from "../cache/handle-snapshot.js";
 import type { HandlerContext } from "./handler-context.js";
 import type { SSRModule } from "./types.js";
 import { buildFullPayload, payloadInitialTheme } from "./full-payload.js";
@@ -2413,6 +2419,29 @@ async function captureAndStoreShell(
       }
     }
 
+    // A prerender-served capture (settleCaptureRecord `prerender`) has no doc
+    // record, and the prerender store's build-time entry holds no loader
+    // push: the loader-owned pushes the prelude rendered are kept in a
+    // `handles` record, in the doc record's format, which the HIT restores
+    // after the prerender store's handles (cache-lookup.ts yieldFromStore,
+    // issue #1057). Its encode errors refuse the capture with the render's.
+    const docKey = reqCtx._shellImplicitCache?.docKey;
+    let prerenderHandles: ShellSnapshotHandlesValue | undefined;
+    if (!capture.navigationOnly && !hasDocRecord(snapshot, docKey)) {
+      const handleStore = reqCtx._handleStore;
+      const segmentIds = new Set<string>();
+      for (const bySegment of Object.values(await handleStore.getData())) {
+        for (const id in bySegment) segmentIds.add(id);
+      }
+      const { handles, owners } = captureOwnedHandles(segmentIds, handleStore);
+      prerenderHandles = {
+        handles: await encodeHandles(handles, (error) => {
+          reqCtx._renderErrors?.push(error);
+        }),
+        handleOwners: owners,
+      };
+    }
+
     // A shell component that threw inside a Suspense boundary does not reject
     // the capture: Flight and Fizz report it through onError and the prelude
     // carries the errored boundary, which every HIT would serve (issue #915).
@@ -2426,7 +2455,6 @@ async function captureAndStoreShell(
     // Store only what a HIT reads (issue #941): the doc record and, for a
     // document entry, the bake-lane loader pins. Before the size guards, so
     // they measure what is stored.
-    const docKey = reqCtx._shellImplicitCache?.docKey;
     let prunedRecords: string | undefined;
     const { kept, pruned } = pruneShellSnapshot(
       snapshot,
@@ -2463,6 +2491,15 @@ async function captureAndStoreShell(
         snapshot = docRecord ? [docRecord] : [];
         stats.snapshotSkipped = true;
       }
+    }
+    // Exempt from the cap like the doc record it stands in for: without the
+    // pins the HIT restores these as placeholders the loaders' runs replace.
+    if (prerenderHandles) {
+      snapshot.push({
+        family: "handles",
+        key: SHELL_HANDLES_RECORD_KEY,
+        value: prerenderHandles,
+      });
     }
 
     // settleCaptureRecord refused every capture without a doc record except a

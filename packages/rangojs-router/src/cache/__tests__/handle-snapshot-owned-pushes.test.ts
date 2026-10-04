@@ -7,6 +7,7 @@
 import { describe, it, expect } from "vitest";
 import {
   appendHandles,
+  captureOwnedHandles,
   restoreHandles,
   type OwnedPushDelivery,
 } from "../handle-snapshot.js";
@@ -424,5 +425,52 @@ describe("appendHandles: a cached unit's HIT over a record's placeholders", () =
 
     expect(claimed).toEqual([]);
     expect(store.getDataForSegment("seg1").crumbs).toEqual(["own", "legacy"]);
+  });
+});
+
+// A prerender-served shell capture's record (issue #1057): the prerender
+// store restores the handler pushes on a HIT, so the record keeps only the
+// arrays a loader pushed into, each whole.
+describe("captureOwnedHandles: the arrays that hold a loader-owned value", () => {
+  it("keeps each such array whole, its unowned values in place, and nothing else", () => {
+    const store = createHandleStore();
+    store.push("crumbs", "seg1", "handler");
+    store.push("crumbs", "seg1", "bake-captured", false, "Bake");
+    store.push("meta", "seg1", "handler-meta");
+    store.push("crumbs", "seg2", "layout");
+    // A tagged push (deferred, masked) is out of a record, owned or not.
+    store.push("crumbs", "seg1", "tagged", true);
+
+    expect(captureOwnedHandles(["seg1", "seg2"], store)).toEqual({
+      handles: { seg1: { crumbs: ["handler", "bake-captured"] } },
+      owners: { seg1: { crumbs: [null, "Bake"] } },
+    });
+  });
+
+  it("holds nothing when no value is owned", () => {
+    const store = createHandleStore();
+    store.push("crumbs", "seg1", "handler");
+
+    expect(captureOwnedHandles(["seg1"], store)).toEqual({
+      handles: {},
+      owners: undefined,
+    });
+  });
+
+  it("rebuilds the capture's array over a store that already holds the handler pushes", () => {
+    const capture = createHandleStore();
+    capture.push("crumbs", "seg1", "handler");
+    capture.push("crumbs", "seg1", "bake-captured", false, "Bake");
+    const { handles, owners } = captureOwnedHandles(["seg1"], capture);
+    const hit = createHandleStore();
+    hit.replaySegmentData("seg1", { crumbs: ["handler"] });
+
+    restore(hit, handles, owners, PINNED);
+    livePush(hit, "Bake", "bake-live");
+
+    expect(hit.getDataForSegment("seg1").crumbs).toEqual([
+      "handler",
+      "bake-captured",
+    ]);
   });
 });

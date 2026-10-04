@@ -284,6 +284,22 @@ async function* yieldFromStore<TEnv>(
     }
   }
 
+  // A shell HIT tail: the loader-owned pushes the shell's prelude rendered,
+  // restored as CacheScope.lookupRouteDetailed restores a doc record's
+  // (authority from the pins, then the copies), before the render barrier
+  // freezes the document snapshot (issue #1057). An entry without the record
+  // (v0.21) restores nothing more, as before.
+  const shellHandles = reqCtx?._shellImplicitCache?.prerenderHandles;
+  if (handleStore && shellHandles) {
+    const owned = loaderPins(ctx.entries, reqCtx);
+    handleStore.setRecordAuthority(owned);
+    const record =
+      shellHandles.handles && (await _decodeHandles(shellHandles.handles));
+    if (record) {
+      _restoreHandles(record, handleStore, shellHandles.handleOwners, owned);
+    }
+  }
+
   state.cacheHit = true;
   state.cacheSource = "prerender";
   state.cachedSegments = segments;

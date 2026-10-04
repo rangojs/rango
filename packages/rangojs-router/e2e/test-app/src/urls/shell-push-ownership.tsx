@@ -1,8 +1,9 @@
-import { urls } from "@rangojs/router";
+import { Prerender, urls } from "@rangojs/router";
 import {
   ShellPushDeferredLoader,
   ShellPushLiveLoader,
   ShellPushPinnedLoader,
+  ShellPushSettledLoader,
   bumpShellPushGeneration,
 } from "./shell-push-ownership.defs.js";
 import { ShellPushView } from "../components/ShellPushView.js";
@@ -34,6 +35,29 @@ function ShellPushLivePage() {
   return (
     <main data-testid="shell-push-live-page">
       <ShellPushView loader={ShellPushLiveLoader} />
+    </main>
+  );
+}
+
+// #1057: Prerender + ppr. The prerender store supplies these views on every
+// request; the shell entry keeps the loader pushes its HTML rendered.
+export const ShellPushPreSettledPage = Prerender(async () => (
+  <main data-testid="shell-push-pre-settled-page">
+    <ShellPushView loader={ShellPushSettledLoader} />
+  </main>
+));
+
+export const ShellPushPreDeferredPage = Prerender(async () => (
+  <main data-testid="shell-push-pre-deferred-page">
+    <ShellPushView loader={ShellPushDeferredLoader} />
+  </main>
+));
+
+// The control: the same loader and view, ppr without Prerender.
+function ShellPushPprSettledPage() {
+  return (
+    <main data-testid="shell-push-ppr-settled-page">
+      <ShellPushView loader={ShellPushSettledLoader} />
     </main>
   );
 }
@@ -81,6 +105,28 @@ export const shellPushOwnershipPatterns = urls(
         loader(ShellPushLiveLoader),
         loading(<p data-testid="push-loading">Loading note...</p>),
       ],
+    ),
+    // #1057: Prerender + ppr. The prerender store supplies the handler layer,
+    // so the shell entry keeps the loader's settled push itself.
+    path(
+      "/shell-push/pre-settled",
+      ShellPushPreSettledPage,
+      { name: "shellPushPreSettled", ppr: { ttl: 300, swr: 120 } },
+      () => [loader(ShellPushSettledLoader, { ssr: false })],
+    ),
+    // The control: the same loader and view without Prerender.
+    path(
+      "/shell-push/ppr-settled",
+      ShellPushPprSettledPage,
+      { name: "shellPushPprSettled", ppr: { ttl: 300, swr: 120 } },
+      () => [loader(ShellPushSettledLoader, { ssr: false })],
+    ),
+    // #1057 next to #1054: a promise push on a Prerender + ppr route.
+    path(
+      "/shell-push/pre-deferred",
+      ShellPushPreDeferredPage,
+      { name: "shellPushPreDeferred", ppr: { ttl: 300, swr: 120 } },
+      () => [loader(ShellPushDeferredLoader, { ssr: false })],
     ),
     // Test-only: moves the fixture's generation for one ?probe= on.
     path.json(

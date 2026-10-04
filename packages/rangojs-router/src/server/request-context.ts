@@ -460,6 +460,13 @@ export interface RequestContext<
      */
     fixedDocKey?: string;
     /**
+     * @internal A document HIT tail of a prerender-served entry: the
+     * loader-owned handle pushes its prelude rendered (the snapshot's
+     * `handles` record), which yieldFromStore restores as a doc record's
+     * after the prerender store's handles (issue #1057).
+     */
+    prerenderHandles?: import("../cache/types.js").ShellSnapshotHandlesValue;
+    /**
      * @internal Set ONLY by matchPartialWithPprReplay on the navigation-replay
      * serve path. Its presence arms the explicit-scope composition in
      * withCacheLookup: a route-derived cache() scope stays authoritative, and

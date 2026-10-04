@@ -451,9 +451,10 @@ export interface ShellCacheEntry {
    * bake-lane loader pins (pruned to what a HIT reads, issue #941). Replaying
    * them on a HIT keeps the freshly rendered hydration payload equal to the
    * frozen prelude after the underlying cache entries have drifted; every
-   * other read on a HIT, a hole's included, reads the store. Empty when the capture
-   * recorded nothing (a prerender-served capture without bake-lane loaders,
-   * a tombstone). A custom store returns it as putShell received it. See
+   * other read on a HIT, a hole's included, reads the store. A
+   * prerender-served capture has no doc record and stores its loader-owned
+   * handle pushes in a `handles` record instead. Empty for a tombstone. A
+   * custom store returns it as putShell received it. See
    * docs/design/ppr-shell-resume.md ("the capture data snapshot").
    */
   snapshot: ShellSnapshotRecord[];
@@ -614,12 +615,27 @@ export interface ShellReadStats {
 
 /**
  * The families a shell snapshot pins: the doc segment record (recorded by
- * RecordingShellStore) and the settled CONTAINER of each bake-lane loader
- * (lane rule: see resolveLoaderData, loader-cache.ts). No cache read is
- * pinned: a HIT's holes, and a bake-lane loader body that runs on the HIT,
- * read the store.
+ * RecordingShellStore), the settled CONTAINER of each bake-lane loader
+ * (lane rule: see resolveLoaderData, loader-cache.ts), and, for an entry the
+ * prerender store served (no doc record), the loader-owned handle pushes its
+ * prelude rendered. No cache read is pinned: a HIT's holes, and a bake-lane
+ * loader body that runs on the HIT, read the store.
  */
-export type ShellSnapshotFamily = "segment" | "loader";
+export type ShellSnapshotFamily = "segment" | "loader" | "handles";
+
+/**
+ * The stored form of the `handles` family: the handle arrays of a
+ * prerender-served capture that hold a loader-owned push, in the doc record's
+ * format (CachedEntryData `handles` + `handleOwners`). A Prerender + ppr
+ * route's handler layer comes from the prerender store, whose build-time
+ * entry has no loader push, so the entry keeps these for the HIT to restore
+ * as a doc record's (issue #1057). An entry written before it (v0.21) has
+ * none and serves as it did.
+ */
+export type ShellSnapshotHandlesValue = Pick<
+  CachedEntryData,
+  "handles" | "handleOwners"
+>;
 
 /**
  * The stored form of a loader-family snapshot value: the bake-lane loader's
@@ -654,17 +670,18 @@ export interface ShellSnapshotLoaderValue {
 }
 
 /**
- * One snapshot record: the doc segment record or a bake-lane loader pin.
- * `value` carries it in its stored/serialized shape so it round-trips
- * through a JSON-serializing store (KV, CF, Vercel) with the rest of the
- * ShellCacheEntry:
+ * One snapshot record: the doc segment record, a bake-lane loader pin, or a
+ * prerender-served entry's handle record. `value` carries it in its
+ * stored/serialized shape so it round-trips through a JSON-serializing store
+ * (KV, CF, Vercel) with the rest of the ShellCacheEntry:
  * - `segment` -> {@link CachedEntryData} (already JSON-able)
  * - `loader`  -> {@link ShellSnapshotLoaderValue}
+ * - `handles` -> {@link ShellSnapshotHandlesValue}
  */
 export interface ShellSnapshotRecord {
   family: ShellSnapshotFamily;
   key: string;
-  value: CachedEntryData | ShellSnapshotLoaderValue;
+  value: CachedEntryData | ShellSnapshotLoaderValue | ShellSnapshotHandlesValue;
 }
 
 /**

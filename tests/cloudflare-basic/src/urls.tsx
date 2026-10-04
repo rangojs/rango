@@ -145,11 +145,15 @@ import {
   PprPushDeferredPage,
   PprPushLivePage,
   PprPushPinnedPage,
+  PprPushPprSettledPage,
+  PprPushPreDeferredPage,
+  PprPushPreSettledPage,
 } from "./pages/ppr-push-ownership.js";
 import {
   PprPushDeferredLoader,
   PprPushLiveLoader,
   PprPushPinnedLoader,
+  PprPushSettledLoader,
   bumpPprPushGeneration,
 } from "./loaders/ppr-push-ownership.js";
 import { PprLoadMorePage } from "./pages/ppr-load-more.js";
@@ -1184,6 +1188,28 @@ export const urlpatterns = urls(
             loader(PprPushLiveLoader),
             loading(<p data-testid="push-loading">Loading note...</p>),
           ],
+        ),
+        // #1057: Prerender + ppr. The prerender store supplies the handler
+        // layer, so the shell entry keeps the loader's settled push itself.
+        path(
+          "/ppr-push/pre-settled",
+          PprPushPreSettledPage,
+          { name: "pprPushPreSettled", ppr: { ttl: 300, swr: 120 } },
+          () => [loader(PprPushSettledLoader, { ssr: false })],
+        ),
+        // The control: the same loader and view without Prerender.
+        path(
+          "/ppr-push/ppr-settled",
+          PprPushPprSettledPage,
+          { name: "pprPushPprSettled", ppr: { ttl: 300, swr: 120 } },
+          () => [loader(PprPushSettledLoader, { ssr: false })],
+        ),
+        // #1057 next to #1054: a promise push on a Prerender + ppr route.
+        path(
+          "/ppr-push/pre-deferred",
+          PprPushPreDeferredPage,
+          { name: "pprPushPreDeferred", ppr: { ttl: 300, swr: 120 } },
+          () => [loader(PprPushDeferredLoader, { ssr: false })],
         ),
         // Storefront shape: ppr routes under an ancestor cache() scope (the
         // real store-app shape — an app-wide cache() wrapping the tree).

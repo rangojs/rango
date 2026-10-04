@@ -32,6 +32,7 @@ import type {
   ShellCacheEntry,
   ShellSnapshotRecord,
   ShellSnapshotLoaderValue,
+  ShellSnapshotHandlesValue,
   CacheReadError,
 } from "./types.js";
 import { settleGrowing } from "./background-task.js";
@@ -450,6 +451,22 @@ export async function buildShellLoaderSeed(
     if (entry) seed.set(entry[0], entry[1]);
   }
   return seed.size > 0 ? seed : undefined;
+}
+
+/** The key of a snapshot's one `handles` record (ShellSnapshotHandlesValue). */
+export const SHELL_HANDLES_RECORD_KEY = "handles";
+
+/**
+ * The `handles` record of a prerender-served entry, which a HIT tail restores
+ * after the prerender store's handles (cache-lookup.ts yieldFromStore), or
+ * undefined: an entry with a doc record, or one written before the record
+ * existed (v0.21), which serves as it did.
+ */
+export function shellPrerenderHandles(
+  snapshot: readonly ShellSnapshotRecord[],
+): ShellSnapshotHandlesValue | undefined {
+  const record = snapshot.find((r) => r?.family === "handles");
+  return record?.value as ShellSnapshotHandlesValue | undefined;
 }
 
 /**

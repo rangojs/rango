@@ -135,6 +135,31 @@ export function captureHandleOwners(
 }
 
 /**
+ * captureHandles and captureHandleOwners cut down to the handle arrays that
+ * hold an owned value, each whole (its unowned values too, in place), so
+ * restoreHandles rebuilds exactly those arrays over a store that already
+ * holds the rest. A prerender-served shell capture stores this: the
+ * prerender store restores the handler pushes on a HIT, and the loader
+ * pushes have no other record (shell-capture.ts captureAndStoreShell).
+ */
+export function captureOwnedHandles(
+  segmentIds: Iterable<string>,
+  handleStore: HandleStore,
+): { handles: HandleRecord; owners?: HandleOwners } {
+  const handles: HandleRecord = {};
+  let owners: HandleOwners | undefined;
+  for (const id of segmentIds) {
+    const segOwners = handleStore.getRecordOwners(id);
+    if (!segOwners) continue;
+    const kept = handleStore.getDataForSegment(id, true);
+    handles[id] = {};
+    for (const name in segOwners) handles[id][name] = kept[name] ?? [];
+    (owners ??= {})[id] = segOwners;
+  }
+  return { handles, owners };
+}
+
+/**
  * What the record being restored is to each loader's handle pushes on this
  * request (HandleStore RecordAuthority). Built by loaderPins (loader-cache.ts)
  * over the pins resolveLoaderData serves a loader's value from, so a value

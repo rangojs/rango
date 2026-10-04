@@ -1,5 +1,48 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a `Prerender` + `ppr` shell HIT hydrates with the handle values its `ssr: false` loaders pushed ([#1057](https://github.com/rangojs/rango/issues/1057))
+
+On a route that combines `Prerender` with `ppr`, a settled handle value an
+`ssr: false` loader pushed was in the shell's HTML but not in the data the
+page hydrated with. Every shell HIT failed hydration (React error #418 in
+production, "Hydration failed" in dev), and the element was removed and
+never came back. The document MISS, and the same route without `Prerender`,
+were clean. The loader's data was correct; only its handle values were lost.
+
+```tsx
+const Notes = createHandle<string>();
+
+const Product = createLoader(async (ctx) => {
+  ctx.use(Notes)("In stock"); // settled
+  return { stock: await db.stock() };
+});
+
+path(
+  "/product",
+  Prerender(async () => <ProductPage />),
+  { ppr: true },
+  () => [loader(Product, { ssr: false })],
+);
+// <ProductPage> renders useHandle(Notes)
+```
+
+The shell entry now keeps those values itself (the prerender store supplies
+the page's handler output and has none of them), and a HIT hydrates with
+them, as a `ppr` route without `Prerender` does. Both shells are covered: the
+one `vite build` bakes, and one captured at runtime (a URL with a query
+string, or the recapture after `ppr.ttl`). A promise pushed from the loader
+stays live, as on any shell: not in the HTML, delivered after hydration.
+
+Nothing to change in an app. A shell stored by 0.21.0 or earlier still
+serves as it did, hydration error included, until it is replaced: the
+upgrade changes the router's document version, so the deploy that ships it
+retires those shells unless the app pins its own `version`. In development
+on the Cloudflare preset, the build-time shell is now captured from the
+prerendered output, as in production, instead of from a render of the
+`Prerender` handler.
+
 ## 0.21.0 (2026-10-04)
 
 ### Fixed: Back/Forward to an entry the server now redirects follows the redirect ([#1047](https://github.com/rangojs/rango/issues/1047))
