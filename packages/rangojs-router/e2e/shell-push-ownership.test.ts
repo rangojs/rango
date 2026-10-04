@@ -9,6 +9,7 @@ import {
   expectReplayKeepsCapturedPushWithPinnedData,
   expectShellHitHydratesFromRecord,
   expectShellHitKeepsSettledLoaderPush,
+  expectSlowDeferredPushDoesNotBlockCapture,
   type PrerenderPushFixture,
   type PushOwnershipFixture,
 } from "@shared/e2e";
@@ -30,6 +31,7 @@ function runPushOwnershipSpec(f: Fixture) {
     pinnedUrl: f.url("/shell-push/pinned"),
     cappedUrl: f.url("/shell-push/capped"),
     deferredUrl: f.url("/shell-push/deferred"),
+    slowUrl: f.url("/shell-push/slow"),
     liveUrl: f.url("/shell-push/live"),
     bumpUrl: f.url("/shell-push/__bump"),
     homeUrl: f.url("/"),
@@ -57,6 +59,12 @@ function runPushOwnershipSpec(f: Fixture) {
     page,
   }) => {
     await expectShellHitHydratesFromRecord(page, fixture());
+  });
+
+  test("a deferred push slower than ppr.captureTimeout does not block the shell capture (#1035)", async ({
+    page,
+  }) => {
+    await expectSlowDeferredPushDoesNotBlockCapture(page, fixture());
   });
 
   test("a useHandle reader inside a live loader's loading boundary hydrates clean on a document MISS and on a shell HIT (#1035)", async ({

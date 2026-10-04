@@ -19,6 +19,31 @@ in one navigation, as browsers do for a document, logs
 and renders the error boundary. A new link click or `router.push()` starts
 counting again from zero. There is no option to change the limit.
 
+### Fixed: a slow deferred push from an `ssr: false` loader no longer stops the shell capture ([#1035](https://github.com/rangojs/rango/issues/1035))
+
+Since 0.21.0 a shell keeps only the pushes of a loader that are settled
+values; a promise a loader pushes is live, has no place in the shell and
+arrives after hydration. The capture still waited for that promise before it
+stored the shell. If it settled after `ppr.captureTimeout`, or never (it
+waits on a live loader the capture masks), the capture was refused and the
+route had no shell for a value the shell does not hold.
+
+The capture now waits only for what the shell keeps: handler pushes (baked,
+still bounded by `ppr.captureTimeout`) and the settled pushes of loaders. The
+loader still runs on a HIT and delivers its promise after hydration, as before.
+
+```tsx
+path("/product/:id", ProductPage, { name: "product", ppr: true }, () => [
+  loader(ProductLoader, { ssr: false }), // pushes a promise that takes 20s
+]);
+// before: no shell is ever stored (capture refused, once-per-key warning)
+// now:    the shell is stored; the HIT's HTML has the settled push, the
+//         promise's value shows after hydration
+```
+
+A promise a handler pushes is baked into the shell, so the capture waits for
+it and is still refused when it misses the deadline.
+
 ### Fixed: a `Prerender` + `ppr` shell HIT hydrates with the handle values its `ssr: false` loaders pushed ([#1057](https://github.com/rangojs/rango/issues/1057))
 
 On a route that combines `Prerender` with `ppr`, a settled handle value an

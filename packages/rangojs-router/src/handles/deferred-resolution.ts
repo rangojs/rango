@@ -124,8 +124,13 @@ export async function* resolvedHandleStream(
   yield await resolveDeferredHandleValues(snapshot);
 }
 
-/** `snapshot` without the pushes a record leaves out (resolvedHandleStream). */
-function recordedHandleData(
+/**
+ * `snapshot` without the pushes a record leaves out. A shell capture renders
+ * (resolvedHandleStream) and waits (settleCaptureRecord) on this cut only: a
+ * promise the record drops has no slot in the prelude, and waiting for it
+ * could refuse a capture for a value the shell does not hold.
+ */
+export function recordedHandleData(
   handleStore: HandleStore,
   snapshot: HandleData,
 ): HandleData {

@@ -5,6 +5,7 @@ import {
   PprPushLiveLoader,
   PprPushPinnedLoader,
   PprPushSettledLoader,
+  PprPushSlowLoader,
 } from "../loaders/ppr-push-ownership.js";
 
 // Push-ownership fixture pages (e2e/ppr-push-ownership.test.ts): a loader's
@@ -33,6 +34,14 @@ export function PprPushLivePage() {
   return (
     <main data-testid="ppr-push-live-page">
       <PprPushView loader={PprPushLiveLoader} />
+    </main>
+  );
+}
+
+export function PprPushSlowPage() {
+  return (
+    <main data-testid="ppr-push-slow-page">
+      <PprPushView loader={PprPushSlowLoader} />
     </main>
   );
 }

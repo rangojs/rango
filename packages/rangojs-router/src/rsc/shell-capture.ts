@@ -99,7 +99,10 @@ import {
 import type { HandlerContext } from "./handler-context.js";
 import type { SSRModule } from "./types.js";
 import { buildFullPayload, payloadInitialTheme } from "./full-payload.js";
-import { resolveDeferredHandleValues } from "../handles/deferred-resolution.js";
+import {
+  recordedHandleData,
+  resolveDeferredHandleValues,
+} from "../handles/deferred-resolution.js";
 import { renderRscFlightStage } from "./render-pipeline.js";
 import { stripInternalParams } from "../router/handler-context.js";
 
@@ -1649,7 +1652,13 @@ export async function settleCaptureRecord(
   const loaderRecords = derivedCtx._shellCaptureLoaderRecords;
   const settled = await raceDeadline(
     Promise.all([
-      freshHandleStore.getData().then(resolveDeferredHandleValues),
+      freshHandleStore
+        .getData()
+        .then((data) =>
+          resolveDeferredHandleValues(
+            recordedHandleData(freshHandleStore, data),
+          ),
+        ),
       derivation.handlerPushesSettled(),
       loaderRecords && loaderRecords.size > 0
         ? Promise.allSettled([...loaderRecords.values()])

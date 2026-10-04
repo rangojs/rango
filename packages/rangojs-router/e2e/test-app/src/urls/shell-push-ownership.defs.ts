@@ -76,3 +76,28 @@ export const ShellPushLiveLoader = createLoader(
     return { value: `live@g${generation}` };
   },
 );
+
+/** Longer than SHELL_PUSH_SLOW_CAPTURE_TIMEOUT_MS: the capture must not wait. */
+const SLOW_PUSH_DELAY_MS = 1500;
+export const SHELL_PUSH_SLOW_CAPTURE_TIMEOUT_MS = 300;
+
+/**
+ * Promise-free `ssr: false` loader with a settled push and a deferred one
+ * that settles after the route's ppr.captureTimeout. The shell's record
+ * leaves the deferred push out, so the capture must not wait for it.
+ */
+export const ShellPushSlowLoader = createLoader(
+  async (ctx): Promise<ShellPushData> => {
+    const generation = generationOf(ctx.searchParams.get("probe") ?? "");
+    ctx.use(ShellPushNotes)(`settled-note@g${generation}`);
+    ctx.use(ShellPushNotes)(
+      new Promise<string>((resolve) =>
+        setTimeout(
+          () => resolve(`deferred-note@g${generation}`),
+          SLOW_PUSH_DELAY_MS,
+        ),
+      ),
+    );
+    return { value: `slow@g${generation}` };
+  },
+);

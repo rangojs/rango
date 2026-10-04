@@ -148,12 +148,15 @@ import {
   PprPushPprSettledPage,
   PprPushPreDeferredPage,
   PprPushPreSettledPage,
+  PprPushSlowPage,
 } from "./pages/ppr-push-ownership.js";
 import {
   PprPushDeferredLoader,
   PprPushLiveLoader,
+  PPR_PUSH_SLOW_CAPTURE_TIMEOUT_MS,
   PprPushPinnedLoader,
   PprPushSettledLoader,
+  PprPushSlowLoader,
   bumpPprPushGeneration,
 } from "./loaders/ppr-push-ownership.js";
 import { PprLoadMorePage } from "./pages/ppr-load-more.js";
@@ -1177,6 +1180,21 @@ export const urlpatterns = urls(
               cache({ ttl: 300 }),
             ]),
           ],
+        ),
+        // The deferred push settles after ppr.captureTimeout: the record
+        // leaves it out, so the capture does not wait for it.
+        path(
+          "/ppr-push/slow",
+          PprPushSlowPage,
+          {
+            name: "pprPushSlow",
+            ppr: {
+              ttl: 300,
+              swr: 120,
+              captureTimeout: PPR_PUSH_SLOW_CAPTURE_TIMEOUT_MS,
+            },
+          },
+          () => [loader(PprPushSlowLoader, { ssr: false })],
         ),
         // #1035: a live loader that pushes after an await, read (data and
         // handle) inside its loading() boundary, which hydrates after the
