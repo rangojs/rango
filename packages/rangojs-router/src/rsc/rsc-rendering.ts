@@ -1745,6 +1745,17 @@ function serveShellHit(
     // close over that same context or a streaming tail inherits the base
     // context's premature non-streaming handle snapshot.
     wireRenderBarrier(tailCtx, handleStore);
+    // The tail's render barrier resolves once its record is replayed and
+    // before a loader runs (cache-lookup.ts withCacheLookup, yieldFromStore).
+    // The store then holds what the prelude was rendered from, so that is
+    // the snapshot the document hydrates with; what this request's loaders
+    // do to it afterwards reaches the client after hydration
+    // (HandleStore.freezeDocumentSnapshot, issue #1035).
+    const resolveRenderBarrier = tailCtx._resolveRenderBarrier;
+    tailCtx._resolveRenderBarrier = (segments) => {
+      handleStore.freezeDocumentSnapshot();
+      resolveRenderBarrier(segments);
+    };
     return tailCtx;
   };
 

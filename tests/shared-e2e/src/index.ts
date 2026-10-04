@@ -1667,15 +1667,15 @@ export async function expectReplayKeepsCapturedPushWithPinnedData(
  * loader's cache entry, next to the settled push the shell recorded, each
  * once. Before, the navigation dropped the deferred push.
  *
- * No hydration-error guard: on the document HIT the deferred push reaches
- * the client after hydration (the late channel), while the prelude already
- * rendered its row, so React repairs the list. That is the same before and
- * after this fix, and not what this body pins.
+ * The document HIT it starts from hydrates clean (#1035,
+ * expectShellHitHydratesFromRecord): the shell has no row for the deferred
+ * push, which arrives after hydration.
  */
 export async function expectReplayDeliversDeferredPush(
   page: Page,
   fixture: PushOwnershipFixture,
 ): Promise<void> {
+  using _ = guardHydrationErrors(page);
   const probe = pushProbe("deferred");
   const url = `${fixture.deferredUrl}?probe=${probe}`;
   await warmShellToHit(page, url);
@@ -1694,6 +1694,45 @@ export async function expectReplayDeliversDeferredPush(
     `deferred@g${captured}`,
   );
   await expect(notes).toHaveText(expected);
+}
+
+/** The text of each `push-note` row in a document's HTML, before any script runs. */
+function pushNoteRowsInHtml(html: string): string[] {
+  return [
+    ...html.matchAll(/<li data-testid="push-note"[^>]*>([^<]*)<\/li>/g),
+  ].map((match) => match[1]!);
+}
+
+/**
+ * #1035: a document served from a shell hydrates with the handle data the
+ * shell's HTML was rendered from. The shell's record keeps the settled push
+ * of `deferredUrl`'s loader and leaves its deferred one out, so the HIT's
+ * HTML has one row, the page hydrates without a hydration error, and the
+ * deferred row shows after hydration (the late channel).
+ *
+ * Before, the shell had a second, empty row (the capture rendered a slot for
+ * the push it did not record), and the HIT's hydration data carried the
+ * deferred value or not depending on a race: React error #418 in
+ * production, "Hydration failed" in dev, on every HIT.
+ */
+export async function expectShellHitHydratesFromRecord(
+  page: Page,
+  fixture: PushOwnershipFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const probe = pushProbe("hit-handles");
+  const url = `${fixture.deferredUrl}?probe=${probe}`;
+  await warmShellToHit(page, url);
+
+  const hit = await page.request.get(url, { headers: PUSH_HTML_HEADERS });
+  expect(hit.headers()["x-rango-shell"]).toBe("HIT");
+  expect(pushNoteRowsInHtml(await hit.text())).toEqual(["settled-note@g1"]);
+
+  await gotoShellHit(page, url);
+  await expect(byTestId(page, "push-note")).toHaveText([
+    "settled-note@g1",
+    "deferred-note@g1",
+  ]);
 }
 
 /**

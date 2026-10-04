@@ -46,6 +46,7 @@ import {
   OnceNotedBakeLoader,
   OuterDepLoader,
   shellHarness,
+  shownHandles,
   source,
 } from "./fixtures/shell-request-data.js";
 
@@ -453,12 +454,16 @@ function distinct(flight: string | undefined, pattern: RegExp): string[] {
 }
 
 /**
- * The values of `pattern` in the last Flight row that carries one. A handle
- * update is the full state, so the last row is what the client ends with.
+ * The values of `pattern` in the handle state a response leaves the client
+ * with: the last state that arrived after hydration, else the state the
+ * document hydrated with (a navigation: the last state it streamed). A
+ * document HIT carries both (#1035), so its Flight text holds a push twice.
  */
-function final(flight: string | undefined, pattern: RegExp): string[] {
-  const rows = (flight ?? "").split("\n").filter((row) => row.match(pattern));
-  return rows.at(-1)?.match(pattern) ?? [];
+async function final(
+  result: ServeShellRequestResult,
+  pattern: RegExp,
+): Promise<string[]> {
+  return (await shownHandles(result)).match(pattern) ?? [];
 }
 
 /**
@@ -528,7 +533,7 @@ describe("one run per loader: a shell record's pushes follow the loader's pin", 
 
     expect(hit.shellStatus).toBe("HIT");
     expect(distinct(hit.flight, /"eb":"eb@g\d"/g)).toEqual(['"eb":"eb@g1"']);
-    expect(final(hit.flight, /eb-after@g\d/g)).toEqual(["eb-after@g1"]);
+    expect(await final(hit, /eb-after@g\d/g)).toEqual(["eb-after@g1"]);
   });
 
   // #1003
@@ -541,7 +546,7 @@ describe("one run per loader: a shell record's pushes follow the loader's pin", 
 
     expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
     expect(distinct(nav.flight, /"eb":"eb@g\d"/g)).toEqual(['"eb":"eb@g1"']);
-    expect(final(nav.flight, /eb-after@g\d/g)).toEqual(["eb-after@g1"]);
+    expect(await final(nav, /eb-after@g\d/g)).toEqual(["eb-after@g1"]);
   });
 
   // #1003, the prefetch that fills the client's prefetch cache.
@@ -562,7 +567,7 @@ describe("one run per loader: a shell record's pushes follow the loader's pin", 
     expect(distinct(prefetch.flight, /"eb":"eb@g\d"/g)).toEqual([
       '"eb":"eb@g1"',
     ]);
-    expect(final(prefetch.flight, /eb-after@g\d/g)).toEqual(["eb-after@g1"]);
+    expect(await final(prefetch, /eb-after@g\d/g)).toEqual(["eb-after@g1"]);
   });
 
   // The first attempt at #1003 (PR #1018) restored the capture's push on
@@ -585,7 +590,7 @@ describe("one run per loader: a shell record's pushes follow the loader's pin", 
 
     expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
     expect(distinct(nav.flight, /"eb":"eb@g\d"/g)).toEqual(['"eb":"eb@g2"']);
-    expect(final(nav.flight, /eb-after@g\d/g)).toEqual(["eb-after@g2"]);
+    expect(await final(nav, /eb-after@g\d/g)).toEqual(["eb-after@g2"]);
   });
 
   it("an entry whose pins maxSnapshotBytes dropped: a document HIT and a navigation replay keep the fresh run's data and push", async () => {
@@ -605,10 +610,10 @@ describe("one run per loader: a shell record's pushes follow the loader's pin", 
 
     expect(hit.shellStatus).toBe("HIT");
     expect(distinct(hit.flight, /"eb":"eb@g\d"/g)).toEqual(['"eb":"eb@g2"']);
-    expect(final(hit.flight, /eb-after@g\d/g)).toEqual(["eb-after@g2"]);
+    expect(await final(hit, /eb-after@g\d/g)).toEqual(["eb-after@g2"]);
     expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
     expect(distinct(nav.flight, /"eb":"eb@g\d"/g)).toEqual(['"eb":"eb@g3"']);
-    expect(final(nav.flight, /eb-after@g\d/g)).toEqual(["eb-after@g3"]);
+    expect(await final(nav, /eb-after@g\d/g)).toEqual(["eb-after@g3"]);
   });
 
   it("without pins a dependency's push follows the fresh run of the loader that awaits it", async () => {
@@ -625,11 +630,11 @@ describe("one run per loader: a shell record's pushes follow the loader's pin", 
     expect({
       hit: {
         data: distinct(hit.flight, /baked-dep@g\d/g),
-        push: final(hit.flight, /dep-note@g\d/g),
+        push: await final(hit, /dep-note@g\d/g),
       },
       nav: {
         data: distinct(nav.flight, /baked-dep@g\d/g),
-        push: final(nav.flight, /dep-note@g\d/g),
+        push: await final(nav, /dep-note@g\d/g),
       },
     }).toEqual({
       hit: { data: ["baked-dep@g2"], push: ["dep-note@g2"] },
@@ -648,7 +653,7 @@ describe("one run per loader: a shell record's pushes follow the loader's pin", 
 
     expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
     expect(distinct(nav.flight, /"eb":"eb@g\d"/g)).toEqual(['"eb":"eb@g1"']);
-    expect(final(nav.flight, /eb-after@g\d/g)).toEqual(["eb-after@g1"]);
+    expect(await final(nav, /eb-after@g\d/g)).toEqual(["eb-after@g1"]);
   });
 
   it("a navigation whose explicit route cache() hits runs the loader: its data and push are the run's", async () => {
@@ -669,7 +674,7 @@ describe("one run per loader: a shell record's pushes follow the loader's pin", 
       reason: "explicit-cache-hit",
     });
     expect(distinct(nav.flight, /"eb":"eb@g\d"/g)).toEqual(['"eb":"eb@g3"']);
-    expect(final(nav.flight, /eb-after@g\d/g)).toEqual(["eb-after@g3"]);
+    expect(await final(nav, /eb-after@g\d/g)).toEqual(["eb-after@g3"]);
   });
 
   // The app-wide shape: the pin is stored under the layout's shortCode, and
@@ -684,9 +689,11 @@ describe("one run per loader: a shell record's pushes follow the loader's pin", 
 
     expect(hit.shellStatus).toBe("HIT");
     expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
-    for (const flight of [hit.flight, nav.flight]) {
-      expect(distinct(flight, /"eb":"eb@g\d"/g)).toEqual(['"eb":"eb@g1"']);
-      expect(final(flight, /eb-after@g\d/g)).toEqual(["eb-after@g1"]);
+    for (const result of [hit, nav]) {
+      expect(distinct(result.flight, /"eb":"eb@g\d"/g)).toEqual([
+        '"eb":"eb@g1"',
+      ]);
+      expect(await final(result, /eb-after@g\d/g)).toEqual(["eb-after@g1"]);
     }
   });
 
@@ -705,11 +712,11 @@ describe("one run per loader: a shell record's pushes follow the loader's pin", 
     expect({
       hit: {
         data: distinct(hit.flight, /"late":"late@g\d"/g),
-        push: final(hit.flight, /late-note@g\d/g),
+        push: await final(hit, /late-note@g\d/g),
       },
       nav: {
         data: distinct(nav.flight, /"late":"late@g\d"/g),
-        push: final(nav.flight, /late-note@g\d/g),
+        push: await final(nav, /late-note@g\d/g),
       },
     }).toEqual({
       hit: { data: ['"late":"late@g1"'], push: [] },
@@ -736,7 +743,7 @@ describe("one run per loader: a shell record's pushes follow the loader's pin", 
     expect(distinct(hit.flight, /"late":"late@g\d"/g)).toEqual([
       '"late":"late@g1"',
     ]);
-    expect(final(hit.flight, /late-note@g\d/g)).toEqual(["late-note@g2"]);
+    expect(await final(hit, /late-note@g\d/g)).toEqual(["late-note@g2"]);
   });
 
   // The navigation resolves no value for the loader: the client keeps the one
@@ -760,7 +767,7 @@ describe("one run per loader: a shell record's pushes follow the loader's pin", 
 
     expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
     expect(distinct(nav.flight, /"held":"held@g\d"/g)).toEqual([]);
-    expect(final(nav.flight, /held-note@g\d/g)).toEqual(["held-note@g1"]);
+    expect(await final(nav, /held-note@g\d/g)).toEqual(["held-note@g1"]);
   });
 });
 
@@ -770,7 +777,7 @@ describe("one run per loader: without a pin the record's copy is a placeholder",
     const { serve } = setup();
     const miss = await serve("/once-capped");
     expect(miss.shellStatus).toBe("MISS");
-    expect(final(miss.flight, /once-note@g\d/g)).toEqual(["once-note@g1"]);
+    expect(await final(miss, /once-note@g\d/g)).toEqual(["once-note@g1"]);
     source.generation = 2;
 
     const hit = await serve("/once-capped");
@@ -781,11 +788,11 @@ describe("one run per loader: without a pin the record's copy is a placeholder",
     expect({
       hit: {
         data: distinct(hit.flight, /"once":"once@g\d"/g),
-        push: final(hit.flight, /once-note@g\d/g),
+        push: await final(hit, /once-note@g\d/g),
       },
       nav: {
         data: distinct(nav.flight, /"once":"once@g\d"/g),
-        push: final(nav.flight, /once-note@g\d/g),
+        push: await final(nav, /once-note@g\d/g),
       },
     }).toEqual({
       hit: { data: ['"once":"once@g2"'], push: [] },
@@ -814,10 +821,10 @@ describe("one run per loader: without a pin the record's copy is a placeholder",
     expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
     // The entry hit: no run.
     expect(runs.ownedDep).toBe(filled);
-    for (const flight of [hit.flight, nav.flight]) {
+    for (const result of [hit, nav]) {
       expect({
-        data: distinct(flight, /"ownedDep":"owned-dep@g\d"/g),
-        push: final(flight, /(?:owned-dep|dep)-note@g\d/g),
+        data: distinct(result.flight, /"ownedDep":"owned-dep@g\d"/g),
+        push: await final(result, /(?:owned-dep|dep)-note@g\d/g),
       }).toEqual({
         data: ['"ownedDep":"owned-dep@g2"'],
         push: ["dep-note@g2", "owned-dep-note@g2"],
@@ -832,8 +839,8 @@ describe("one run per loader: without a pin the record's copy is a placeholder",
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const { serve, withLoaderMiss } = setup();
     expect((await serve("/order-capped")).shellStatus).toBe("MISS");
-    const order = (flight: string | undefined) =>
-      final(flight, /(?:order-[ab]|dep-note)@g\d/g);
+    const order = (result: ServeShellRequestResult) =>
+      final(result, /(?:order-[ab]|dep-note)@g\d/g);
     const pushOrder = (g: number) => [
       `order-a@g${g}`,
       `dep-note@g${g}`,
@@ -856,11 +863,11 @@ describe("one run per loader: without a pin the record's copy is a placeholder",
     for (const result of [run, entryHit]) {
       expect(result.shellStatus).toBe("HIT");
     }
-    for (const flight of [run.flight, runNav.flight]) {
-      expect(order(flight)).toEqual(pushOrder(2));
+    for (const result of [run, runNav]) {
+      expect(await order(result)).toEqual(pushOrder(2));
     }
-    for (const flight of [entryHit.flight, entryNav.flight]) {
-      expect(order(flight)).toEqual(pushOrder(2));
+    for (const result of [entryHit, entryNav]) {
+      expect(await order(result)).toEqual(pushOrder(2));
     }
   });
 
@@ -898,10 +905,10 @@ describe("one run per loader: without a pin the record's copy is a placeholder",
     expect(hit.shellStatus).toBe("HIT");
     expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
     expect(runs.owned).toBe(filled);
-    for (const flight of [hit.flight, nav.flight]) {
+    for (const result of [hit, nav]) {
       expect({
-        data: distinct(flight, /"owned":"owned@g\d"/g),
-        push: final(flight, /owned-note@g\d/g),
+        data: distinct(result.flight, /"owned":"owned@g\d"/g),
+        push: await final(result, /owned-note@g\d/g),
       }).toEqual({ data: ['"owned":"owned@g2"'], push: [] });
     }
   });
@@ -930,12 +937,12 @@ describe("one run per loader: without a pin the record's copy is a placeholder",
 
       expect(hit.shellStatus).toBe("HIT");
       expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
-      for (const flight of [hit.flight, nav.flight]) {
+      for (const result of [hit, nav]) {
         // The loader ran and its "use cache" read hit the g1 entry: its
         // data and the push that entry recorded are g1, once.
         expect({
-          data: distinct(flight, /"outer":"dep@g\d"/g),
-          push: final(flight, /dep-note@g\d/g),
+          data: distinct(result.flight, /"outer":"dep@g\d"/g),
+          push: await final(result, /dep-note@g\d/g),
         }).toEqual({ data: ['"outer":"dep@g1"'], push: ["dep-note@g1"] });
       }
     });
@@ -972,7 +979,7 @@ describe("PENDING (unfiled): a dependency the record does not attribute to the l
       expect(hit.shellStatus).toBe("HIT");
       expect({
         data: distinct(hit.flight, /holey-dep@g\d/g),
-        push: final(hit.flight, /dep-note@g\d/g),
+        push: await final(hit, /dep-note@g\d/g),
       }).toEqual({ data: ["holey-dep@g1"], push: ["dep-note@g1"] });
     },
   );
@@ -996,7 +1003,7 @@ describe("PENDING (unfiled): a dependency the record does not attribute to the l
       expect(hit.shellStatus).toBe("HIT");
       expect({
         data: distinct(hit.flight, /"ownedOnce":"owned-dep-once@g\d"/g),
-        push: final(hit.flight, /(?:owned-once|dep-once)-note@g\d/g),
+        push: await final(hit, /(?:owned-once|dep-once)-note@g\d/g),
       }).toEqual({
         data: ['"ownedOnce":"owned-dep-once@g2"'],
         push: ["owned-once-note@g2"],
@@ -1029,10 +1036,10 @@ describe("one run per loader: a deferred push reaches every replay of its pin (#
       // Every copy in the payload is the capture's run, the deferred one
       // included (its value arrives on a row of its own), and the settled
       // one shows once in the final handle state.
-      const notes = (flight: string | undefined) => ({
-        settled: distinct(flight, /settled-note-\d+/g),
-        deferred: distinct(flight, /deferred-note-\d+/g),
-        settledInFinalState: final(flight, /settled-note-\d+/g).length,
+      const notes = async (result: ServeShellRequestResult) => ({
+        settled: distinct(result.flight, /settled-note-\d+/g),
+        deferred: distinct(result.flight, /deferred-note-\d+/g),
+        settledInFinalState: (await final(result, /settled-note-\d+/g)).length,
       });
       const captureOnly = {
         settled: [`settled-note-${captured}`],
@@ -1040,13 +1047,13 @@ describe("one run per loader: a deferred push reaches every replay of its pin (#
         settledInFinalState: 1,
       };
       expect(hit.shellStatus).toBe("HIT");
-      expect(notes(hit.flight)).toEqual(captureOnly);
+      expect(await notes(hit)).toEqual(captureOnly);
       expect(nav.replayStatus).toEqual({
         outcome: "HIT",
         freshness: "fresh",
       });
       expect(deferredOwnedRuns.body).toBe(captured);
-      expect(notes(nav.flight)).toEqual(captureOnly);
+      expect(await notes(nav)).toEqual(captureOnly);
     });
   }
 });
@@ -1087,7 +1094,7 @@ describe("one run per loader: a route cache() record's copy of a loader push nev
     expect(distinct(miss.flight, /"owned":"owned@g\d"/g)).toEqual([
       '"owned":"owned@g2"',
     ]);
-    expect(final(miss.flight, /owned-note@g\d/g)).toEqual(["owned-note@g2"]);
+    expect(await final(miss, /owned-note@g\d/g)).toEqual(["owned-note@g2"]);
   });
 });
 
@@ -1137,6 +1144,94 @@ describe("a shell HIT hydrates from its record (#1035)", () => {
 
       expect(values.shell).toEqual([]);
     });
+  });
+
+  describe("the HIT hydrates with the record's data and delivers the rest after hydration", () => {
+    for (const variant of ["misses", "is warm"] as const) {
+      it(`a deferred push arrives after hydration (the loader's cache() entry ${variant} at capture)`, async () => {
+        const { serve, withLoaderMiss } = setup();
+        if (variant === "misses") {
+          await withLoaderMiss(() => serve("/deferred-owned"));
+        } else {
+          await serve("/deferred-owned");
+        }
+        const captured = deferredOwnedRuns.body;
+
+        const hit = await serve("/deferred-owned");
+
+        expect(hit.shellStatus).toBe("HIT");
+        expect(delivered(await handleValues(hit))).toEqual({
+          hydration: [`settled-note-${captured}`],
+          afterHydration: [
+            `settled-note-${captured}`,
+            `deferred-note-${captured}`,
+          ],
+        });
+        // The loader's cache() entry delivered it: no body ran on the HIT.
+        expect(deferredOwnedRuns.body).toBe(captured);
+      });
+    }
+
+    it("a deferred push by a loader without cache() arrives after hydration, from the HIT's run", async () => {
+      const { values } = await hitAfterCapture("/deferred-plain");
+
+      expect(delivered(values)).toEqual({
+        hydration: ["plain-settled@g1"],
+        afterHydration: ["plain-settled@g1", "plain-deferred@g2"],
+      });
+    });
+
+    it("a push that holds a promise arrives after hydration", async () => {
+      const { values } = await hitAfterCapture("/nested-noted");
+
+      expect(delivered(values)).toEqual({
+        hydration: [],
+        afterHydration: ["nested@g2"],
+      });
+    });
+
+    it("an entry without loader pins hydrates with the capture's push, and the run's push takes its place after hydration", async () => {
+      const { values } = await hitAfterCapture("/eb-capped");
+
+      expect(delivered(values)).toEqual({
+        hydration: ["eb-after@g1"],
+        afterHydration: ["eb-after@g2"],
+      });
+    });
+
+    it("an entry without loader pins whose run makes no push hydrates with the capture's push and drops it after hydration", async () => {
+      const { values } = await hitAfterCapture("/once-capped");
+
+      expect(delivered(values)).toEqual({
+        hydration: ["once-note@g1"],
+        afterHydration: [],
+      });
+    });
+
+    it("a live-lane loader's push arrives after hydration, whether it was made before or after an await", async () => {
+      const { values } = await hitAfterCapture("/live-noted");
+
+      expect(delivered(values)).toEqual({
+        hydration: ["handler-note"],
+        afterHydration: ["handler-note", "live-note@g2", "slow-live-note@g2"],
+      });
+    });
+
+    for (const path of [
+      "/deferred-owned",
+      "/deferred-plain",
+      "/nested-noted",
+      "/eb",
+      "/eb-capped",
+      "/once-capped",
+      "/live-noted",
+    ]) {
+      it(`${path}: the client hydrates with exactly what the shell was rendered from`, async () => {
+        const { values } = await hitAfterCapture(path);
+
+        expect(values.hydration).toEqual(values.shell);
+      });
+    }
   });
 
   describe("what does not change", () => {
@@ -1240,18 +1335,21 @@ describe("PENDING #1002 (change 2, the binding table): a reader gets the cache()
   }
 
   /** The cached loader as the request shows it, and its body runs so far. */
-  function seen(flight: string | undefined, reader: RegExp) {
+  async function seen(result: ServeShellRequestResult, reader: RegExp) {
     return {
       bodyRuns: runs.sch,
-      data: distinct(flight, /"sch":"sch@g\d"/g),
-      push: final(flight, /sch-note@g\d/g),
-      reader: distinct(flight, reader),
+      data: distinct(result.flight, /"sch":"sch@g\d"/g),
+      push: await final(result, /sch-note@g\d/g),
+      reader: distinct(result.flight, reader),
     };
   }
 
   /** The g1 entry hit: the body did not run again, every reader saw g1. */
-  function expectEntryOnly(flight: string | undefined, reader: RegExp): void {
-    expect(seen(flight, reader)).toEqual({
+  async function expectEntryOnly(
+    result: ServeShellRequestResult,
+    reader: RegExp,
+  ): Promise<void> {
+    expect(await seen(result, reader)).toEqual({
       bodyRuns: 1,
       data: ['"sch":"sch@g1"'],
       push: ["sch-note@g1"],
@@ -1278,20 +1376,20 @@ describe("PENDING #1002 (change 2, the binding table): a reader gets the cache()
     "a sibling loader declared before the binding (a route without ppr)",
     async () => {
       const { second } = await twice("/sch-plain");
-      expectEntryOnly(second.flight, /reader-sch@g\d/g);
+      await expectEntryOnly(second, /reader-sch@g\d/g);
     },
   );
 
   it("a handler on the binding's own route (control: the binding starts first)", async () => {
     const { second } = await twice("/sch-handler");
-    expectEntryOnly(second.flight, /page-sch@g\d/g);
+    await expectEntryOnly(second, /page-sch@g\d/g);
   });
 
   red(
     "a parent layout's loader reading a child route's cached loader",
     async () => {
       const { second } = await twice("/sch-layout-loader");
-      expectEntryOnly(second.flight, /reader-sch@g\d/g);
+      await expectEntryOnly(second, /reader-sch@g\d/g);
     },
   );
 
@@ -1299,7 +1397,7 @@ describe("PENDING #1002 (change 2, the binding table): a reader gets the cache()
     "a parent layout's handler reading a child route's cached loader",
     async () => {
       const { second } = await twice("/sch-layout-handler");
-      expectEntryOnly(second.flight, /layout-sch@g\d/g);
+      await expectEntryOnly(second, /layout-sch@g\d/g);
     },
   );
 
@@ -1309,7 +1407,7 @@ describe("PENDING #1002 (change 2, the binding table): a reader gets the cache()
       const { second } = await twice("/sch-item", {
         partial: { from: "/sch-list" },
       });
-      expectEntryOnly(second.flight, /reader-sch@g\d/g);
+      await expectEntryOnly(second, /reader-sch@g\d/g);
     },
   );
 
@@ -1342,11 +1440,11 @@ describe("PENDING #1002 (change 2, the binding table): a reader gets the cache()
           bodyRuns: runs.sch - filled,
           hit: {
             data: distinct(hit.flight, /"sch":"sch@g\d"/g),
-            push: final(hit.flight, /sch-note@g\d/g),
+            push: await final(hit, /sch-note@g\d/g),
           },
           nav: {
             data: distinct(nav.flight, /"sch":"sch@g\d"/g),
-            push: final(nav.flight, /sch-note@g\d/g),
+            push: await final(nav, /sch-note@g\d/g),
           },
         }).toEqual({
           bodyRuns: 0,

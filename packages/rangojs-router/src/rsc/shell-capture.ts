@@ -1989,7 +1989,8 @@ export function deriveShellCaptureContext(
   //    render (resolvedHandleStream `recordedOnly`, issue #1035): the
   //    prelude is rendered from what the record keeps, which is what a HIT
   //    hydrates with. The loader records then carry `runs: 1` so a HIT runs
-  //    those bodies for them.
+  //    those bodies for them, and what they push reaches the client after
+  //    hydration (HandleStore.freezeDocumentSnapshot).
   const handlerPushSettles: Promise<void>[] = [];
   // A replay (a loader-cache HIT, loader-cache.ts replayLoaderHandles, or a
   // route cache() record's owned values, restoreHandles) re-pushes a loader's

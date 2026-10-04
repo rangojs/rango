@@ -4,6 +4,7 @@ import {
   expectPinlessHitKeepsRunPushWithRunData,
   expectReplayDeliversDeferredPush,
   expectReplayKeepsCapturedPushWithPinnedData,
+  expectShellHitHydratesFromRecord,
   type PushOwnershipFixture,
 } from "@shared/e2e";
 
@@ -43,6 +44,12 @@ function runPushOwnershipSpec(f: Fixture) {
     page,
   }) => {
     await expectPinlessHitKeepsRunPushWithRunData(page, fixture());
+  });
+
+  test("a document HIT hydrates clean from the shell's record and shows a deferred push after hydration (#1035)", async ({
+    page,
+  }) => {
+    await expectShellHitHydratesFromRecord(page, fixture());
   });
 }
 
