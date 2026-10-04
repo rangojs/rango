@@ -700,3 +700,139 @@ describe("loader-level cache: a dependency also read live", () => {
     expect(hit.handles[Crumbs.$$id]).toEqual(crumbs("Widget v1"));
   });
 });
+
+/**
+ * A record restored before the loaders resolve (a ppr route's shell doc
+ * record, or a route cache() record a capture wrote) holds copies of the
+ * loader's pushes. Where the request serves the loader from that record's
+ * pin they stand; everywhere else they are placeholders, and the loader's
+ * own cache() entry is its source.
+ */
+describe("loader-level cache: a HIT over a record's copies of the loader's pushes", () => {
+  const crumbs = (...labels: string[]) => labels.map((label) => ({ label }));
+
+  function productGraph() {
+    const category = defineLoader("CategoryLoader#L", async (ctx) => {
+      ctx.use(Crumbs)({ label: `Category v${category.calls}` });
+      return { slug: "c" };
+    });
+    const product = defineLoader("ProductLoader#L", async (ctx) => {
+      ctx.use(Crumbs)({ label: `Shop v${product.calls}` });
+      await ctx.use(category);
+      ctx.use(Crumbs)({ label: `Widget v${product.calls}` });
+      return { name: "Widget" };
+    });
+    return { category, product };
+  }
+
+  /** The record's copies, as restoreHandles leaves them for an unpinned owner. */
+  function placeholders(reqCtx: any, copies: [label: string, owner: string][]) {
+    for (const [label, owner] of copies) {
+      reqCtx._handleStore.pushPlaceholder(Crumbs.$$id, "R0", { label }, owner);
+    }
+  }
+
+  /** A record whose loader pushed around its dependency's push. */
+  function interleaved(g: ReturnType<typeof productGraph>) {
+    return (reqCtx: any): void => {
+      reqCtx._handleStore.push(Crumbs.$$id, "R0", { label: "Handler" });
+      placeholders(reqCtx, [
+        ["Shop record", g.product.$$id],
+        ["Category record", g.category.$$id],
+        ["Widget record", g.product.$$id],
+      ]);
+      reqCtx._handleStore.push(Crumbs.$$id, "R0", { label: "Footer" });
+    };
+  }
+
+  // The order contract: the push order of the run that produced the value,
+  // whether the entry replays it (HIT) or the loader runs (MISS).
+  it("the entry's pushes take the placeholders' place, for the cached loader and the dependency it recorded, in push order", async () => {
+    const store = new MemorySegmentCacheStore();
+    const g = productGraph();
+    const entry = entryWith([cachedEntry(g.product, store)]);
+    await runRequest(entry);
+
+    const hit = await runRequest(entry, { beforeLoaders: interleaved(g) });
+
+    expect(g.product.calls).toBe(1);
+    expect(g.category.calls).toBe(1);
+    expect(hit.handles[Crumbs.$$id]).toEqual(
+      crumbs("Handler", "Shop v1", "Category v1", "Widget v1", "Footer"),
+    );
+  });
+
+  it("a MISS replaces the placeholders with the run's pushes, the dependency's included, in the same order", async () => {
+    const store = new MemorySegmentCacheStore();
+    const g = productGraph();
+    const entry = entryWith([cachedEntry(g.product, store)]);
+
+    const miss = await runRequest(entry, { beforeLoaders: interleaved(g) });
+
+    expect(g.product.calls).toBe(1);
+    expect(miss.handles[Crumbs.$$id]).toEqual(
+      crumbs("Handler", "Shop v1", "Category v1", "Widget v1", "Footer"),
+    );
+  });
+
+  it("an entry that recorded no push removes the cached loader's placeholders", async () => {
+    const store = new MemorySegmentCacheStore();
+    const quiet = defineLoader("QuietLoader#L", async () => ({ quiet: true }));
+    const entry = entryWith([cachedEntry(quiet, store)]);
+    await runRequest(entry);
+
+    const hit = await runRequest(entry, {
+      beforeLoaders: (reqCtx) => {
+        reqCtx._handleStore.push(Crumbs.$$id, "R0", { label: "Handler" });
+        placeholders(reqCtx, [["Quiet record", quiet.$$id]]);
+      },
+    });
+
+    expect(quiet.calls).toBe(1);
+    expect(hit.handles[Crumbs.$$id]).toEqual(crumbs("Handler"));
+  });
+
+  it("a run that makes no push drops the cached loader's placeholders", async () => {
+    const store = new MemorySegmentCacheStore();
+    const quiet = defineLoader("QuietLoader#L", async () => ({ quiet: true }));
+    const entry = entryWith([cachedEntry(quiet, store)]);
+
+    const miss = await runRequest(entry, {
+      beforeLoaders: (reqCtx) => {
+        reqCtx._handleStore.push(Crumbs.$$id, "R0", { label: "Handler" });
+        placeholders(reqCtx, [["Quiet record", quiet.$$id]]);
+      },
+    });
+
+    expect(quiet.calls).toBe(1);
+    expect(miss.handles[Crumbs.$$id]).toEqual(crumbs("Handler"));
+  });
+
+  // The pinned side of #1001: the record's copy is restored without a claim,
+  // so the entry's replay still runs, and the store drops its settled push
+  // for the restored copy. (The deferred push the replay adds needs real
+  // Flight to round-trip: serve-shell-request-push-ownership.rsc-test.tsx.)
+  it("a pinned loader's record copy stands against its entry's settled push", async () => {
+    const store = new MemorySegmentCacheStore();
+    const noted = defineLoader("NotedLoader#L", async (ctx) => {
+      ctx.use(Crumbs)({ label: `Settled v${noted.calls}` });
+      return { noted: true };
+    });
+    const entry = entryWith([cachedEntry(noted, store)]);
+    await runRequest(entry);
+
+    const hit = await runRequest(entry, {
+      beforeLoaders: (reqCtx) => {
+        reqCtx._handleStore.pushRestored(
+          Crumbs.$$id,
+          "R0",
+          { label: "Settled record" },
+          noted.$$id,
+        );
+      },
+    });
+
+    expect(noted.calls).toBe(1);
+    expect(hit.handles[Crumbs.$$id]).toEqual(crumbs("Settled record"));
+  });
+});
