@@ -159,8 +159,11 @@ global middleware
   in the shell record too. A PPR partial replay whose doc record hits serves
   the same loader pins as the document HIT, by each loader's own `ssr: false`
   flag (`LoaderEntry.bake`), whatever `loading()` sits on its entry. Not
-  covered: a reader that starts a cached loader before its binding (#1002),
-  and a pinned loader whose capture pushed nothing
+  covered: a reader that starts a cached loader before its binding (by
+  design: the reader runs it live while the binding serves its entry, so the
+  loader's data and its push can come from different runs on that request;
+  declare the cached loader first or read it from the handler), and a pinned
+  loader whose capture pushed nothing
   (`docs/design/handle-push-ownership.md`). Source: `restoreHandles` in
   `handle-snapshot.ts` (`CachedEntryData.handleOwners`, written from the
   capture's push wrapper in `shell-capture.ts`), `withCacheLookup` in

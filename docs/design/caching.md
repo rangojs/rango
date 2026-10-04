@@ -1205,9 +1205,14 @@ This requires separating:
   page shows the pushes of the run that produced the entry's data, each
   once. A loader that already ran in this request is not claimed and
   replaces its placeholders itself. An entry stored without handles (a MISS
-  a reader started first, #1002, or a handle encode that timed out) is taken
+  a reader started first, which is by design, or a handle encode that timed
+  out) is taken
   as it is: the cached loader's placeholder goes and no push shows for it.
-  An entry that always holds its pushes belongs to the #1002 change.
+  An entry that always holds its pushes is not planned: a loader that reads
+  a cached loader before its binding runs it live by design, so that
+  request's entry is written without pushes and its data and push can come
+  from different runs. Declare the cached loader first or read it from the
+  handler to keep them together.
 
   The stale revalidation runs on its own loader executor
   (`ctx._runLoaderIsolated`, a fresh memo map). Sharing the request's

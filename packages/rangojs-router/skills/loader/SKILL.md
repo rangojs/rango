@@ -612,6 +612,10 @@ included. A handler's `ctx.use(Loader)` read never caches by itself (see
 body, gets the binding's value: one value per loader per request, a HIT
 included. A reader that runs before the binding starts (a layout's loader
 reading a route's cached loader) gets the value of its own run, as before.
+This is by design: that loader runs live while the binding serves its entry,
+so its data and its handle push can come from different runs on that request.
+To keep them together, declare the cached loader first or read it from the
+handler.
 
 The loader's data is cached independently from the route's segment cache,
 using the same `SegmentCacheStore` (app-level or per-loader override).

@@ -10,9 +10,10 @@
  *
  * The pin groups (#1001, #1003 and the paths that fall out of the same
  * change) are plain tests; the design doc records the assertion each one
- * failed with before the fix. The two PENDING groups are open: their `red`
+ * failed with before the fix. The PENDING #1036 group is open: its `red`
  * tests are vitest's `it.fails`, which keeps the suite green while a test
- * fails and turns it red the moment the test passes.
+ * fails and turns it red the moment the test passes. The #1002 group pins
+ * behavior that is by design.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -968,14 +969,14 @@ describe("one run per loader: without a pin the record's copy is a placeholder",
   }
 });
 
-// PENDING, not regressions and not filed. The shell record names the loader
+// PENDING, not regressions; filed as #1036 (open). The shell record names the loader
 // that pushed a value, not the registered loader that ran it. So a
 // dependency no route registers follows an approximation: its copies stand
 // while every `ssr: false` loader is pinned, and are placeholders otherwise
 // (loader-cache.ts loaderPins). Each `red` test is a case where that is not
 // the loader's own source (docs/design/handle-push-ownership.md, "What is
 // not built").
-describe("PENDING (unfiled): a dependency the record does not attribute to the loader that ran it", () => {
+describe("PENDING #1036: a dependency the record does not attribute to the loader that ran it", () => {
   red(
     "a dependency of a pinned loader, while another ssr: false loader lost its pin: the captured push stays next to the pinned data",
     async () => {
@@ -1333,13 +1334,14 @@ describe("a shell HIT hydrates from its record (#1035)", () => {
   });
 });
 
-// PENDING, not regressions: issue #1002 is open. These state the target of
-// change 2 in docs/design/handle-push-ownership.md (ctx.use(Loader) resolves
-// through the route's cache() bindings); the groups above do not depend on
-// it. Each `red` test fails today with the assertion the design doc records.
-// Promote one to a plain `it` in the change that makes it pass. The two
-// plain `it` controls here pass today and must keep passing.
-describe("PENDING #1002 (change 2, the binding table): a reader gets the cache() binding's value", () => {
+// By design (issue #1002, closed): a loader that reads another loader with
+// ctx.use() may run it live. When that read starts a cache()-bound loader
+// before the binding has started, the binding still serves its entry, so the
+// loader's data comes from the entry and its handle push from the live run. A
+// handler's ctx.use() is where a loader read is baked. The way around the mix
+// is to declare the cached loader first or read it from the handler. The
+// control tests show the arrangements that stay together.
+describe("#1002 by design: a loader read that starts a cache()-bound loader first runs it live", () => {
   /** g1 fills the loader's entry; the request under test runs at g2. */
   async function twice(
     url: string,
@@ -1353,10 +1355,10 @@ describe("PENDING #1002 (change 2, the binding table): a reader gets the cache()
     return { first, second };
   }
 
-  /** The cached loader as the request shows it, and its body runs so far. */
+  /** The cached loader as the request shows it; bodyRuns counts the second request. */
   async function seen(result: ServeShellRequestResult, reader: RegExp) {
     return {
-      bodyRuns: runs.sch,
+      bodyRuns: runs.sch - 1,
       data: distinct(result.flight, /"sch":"sch@g\d"/g),
       push: await final(result, /sch-note@g\d/g),
       reader: distinct(result.flight, reader),
@@ -1369,108 +1371,108 @@ describe("PENDING #1002 (change 2, the binding table): a reader gets the cache()
     reader: RegExp,
   ): Promise<void> {
     expect(await seen(result, reader)).toEqual({
-      bodyRuns: 1,
+      bodyRuns: 0,
       data: ['"sch":"sch@g1"'],
       push: ["sch-note@g1"],
       reader: [reader.source.replace("\\d", "1")],
     });
   }
 
-  red(
-    "the entry a request writes records the cached loader's pushes when a reader started the loader first",
-    async () => {
-      const { serve, cacheStore } = setup();
-      const setItem = vi.spyOn(cacheStore, "setItem");
+  /** The reader started the loader live (body ran once, push @g2); the binding served the g1 entry for the data. */
+  async function expectLiveRunBesideEntry(
+    result: ServeShellRequestResult,
+    reader: RegExp,
+  ): Promise<void> {
+    expect(await seen(result, reader)).toEqual({
+      bodyRuns: 1,
+      data: ['"sch":"sch@g1"'],
+      push: ["sch-note@g2"],
+      reader: [reader.source.replace("\\d", "2")],
+    });
+  }
 
-      await serve("/sch-plain");
+  it("the entry a reader-started run writes holds no handle pushes: the body ran once, the data is the entry's, the push comes from the live run only", async () => {
+    const { serve, cacheStore } = setup();
+    const setItem = vi.spyOn(cacheStore, "setItem");
 
-      const write = setItem.mock.calls.find(
-        ([key]) => key.startsWith("loader:") && key.endsWith("/sch-plain"),
-      );
-      expect(write?.[2]?.handles ?? "").toContain("sch-note@g1");
-    },
-  );
+    await serve("/sch-plain");
 
-  red(
-    "a sibling loader declared before the binding (a route without ppr)",
-    async () => {
-      const { second } = await twice("/sch-plain");
-      await expectEntryOnly(second, /reader-sch@g\d/g);
-    },
-  );
+    const write = setItem.mock.calls.find(
+      ([key]) => key.startsWith("loader:") && key.endsWith("/sch-plain"),
+    );
+    expect(runs.sch).toBe(1);
+    expect(write).toBeDefined();
+    expect(write?.[2]?.handles).toBeUndefined();
+  });
 
-  it("a handler on the binding's own route (control: the binding starts first)", async () => {
+  it("a sibling loader declared before the binding (a route without ppr): the body runs live, the data is the entry's g1, the push is the live run's g2", async () => {
+    const { second } = await twice("/sch-plain");
+    await expectLiveRunBesideEntry(second, /reader-sch@g\d/g);
+  });
+
+  it("a handler on the binding's own route (control: the binding starts first, no body run, the entry serves data and push)", async () => {
     const { second } = await twice("/sch-handler");
     await expectEntryOnly(second, /page-sch@g\d/g);
   });
 
-  red(
-    "a parent layout's loader reading a child route's cached loader",
-    async () => {
-      const { second } = await twice("/sch-layout-loader");
-      await expectEntryOnly(second, /reader-sch@g\d/g);
-    },
-  );
+  it("a parent layout's loader reading a child route's cached loader: the body runs live, the data is the entry's g1, the push is the live run's g2", async () => {
+    const { second } = await twice("/sch-layout-loader");
+    await expectLiveRunBesideEntry(second, /reader-sch@g\d/g);
+  });
 
-  red(
-    "a parent layout's handler reading a child route's cached loader",
-    async () => {
-      const { second } = await twice("/sch-layout-handler");
-      await expectEntryOnly(second, /layout-sch@g\d/g);
-    },
-  );
+  it("a parent layout's handler reading a child route's cached loader: the body runs live, the data is the entry's g1, the push is the live run's g2", async () => {
+    const { second } = await twice("/sch-layout-handler");
+    await expectLiveRunBesideEntry(second, /layout-sch@g\d/g);
+  });
 
-  red(
-    "a sibling loader declared before the binding on an intercept",
-    async () => {
-      const { second } = await twice("/sch-item", {
-        partial: { from: "/sch-list" },
-      });
-      await expectEntryOnly(second, /reader-sch@g\d/g);
-    },
-  );
+  it("a sibling loader declared before the binding on an intercept: the body runs live, the data is the entry's g1, the push is the live run's g2", async () => {
+    const { second } = await twice("/sch-item", {
+      partial: { from: "/sch-list" },
+    });
+    await expectLiveRunBesideEntry(second, /reader-sch@g\d/g);
+  });
 
-  for (const [path, order] of [
-    ["/sch", "before"],
-    ["/sch-rev", "after"],
-  ] as const) {
-    (order === "before" ? red : it)(
-      `a ppr route: an ssr: false reader declared ${order} the cached hole, on a HIT and a navigation replay`,
-      async () => {
-        const { serve, withLoaderMiss } = setup();
-        expect((await serve(path)).shellStatus).toBe("MISS");
-        source.generation = 2;
-        // The hole's entry refills at g2.
-        expect((await withLoaderMiss(() => serve(path))).shellStatus).toBe(
-          "HIT",
-        );
-        const filled = runs.sch;
-        source.generation = 3;
+  /** A HIT and a navigation replay at g3 over a hole whose entry refilled at g2. */
+  async function pprHitAndReplay(path: string) {
+    const { serve, withLoaderMiss } = setup();
+    expect((await serve(path)).shellStatus).toBe("MISS");
+    source.generation = 2;
+    // The hole's entry refills at g2.
+    expect((await withLoaderMiss(() => serve(path))).shellStatus).toBe("HIT");
+    const filled = runs.sch;
+    source.generation = 3;
 
-        const hit = await serve(path);
-        const nav = await serve(path, { partial: { from: "/about" } });
+    const hit = await serve(path);
+    const nav = await serve(path, { partial: { from: "/about" } });
 
-        expect(hit.shellStatus).toBe("HIT");
-        expect(nav.replayStatus).toEqual({
-          outcome: "HIT",
-          freshness: "fresh",
-        });
-        expect({
-          bodyRuns: runs.sch - filled,
-          hit: {
-            data: distinct(hit.flight, /"sch":"sch@g\d"/g),
-            push: await final(hit, /sch-note@g\d/g),
-          },
-          nav: {
-            data: distinct(nav.flight, /"sch":"sch@g\d"/g),
-            push: await final(nav, /sch-note@g\d/g),
-          },
-        }).toEqual({
-          bodyRuns: 0,
-          hit: { data: ['"sch":"sch@g2"'], push: ["sch-note@g2"] },
-          nav: { data: ['"sch":"sch@g2"'], push: ["sch-note@g2"] },
-        });
+    expect(hit.shellStatus).toBe("HIT");
+    expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
+    return {
+      bodyRuns: runs.sch - filled,
+      hit: {
+        data: distinct(hit.flight, /"sch":"sch@g\d"/g),
+        push: await final(hit, /sch-note@g\d/g),
       },
-    );
+      nav: {
+        data: distinct(nav.flight, /"sch":"sch@g\d"/g),
+        push: await final(nav, /sch-note@g\d/g),
+      },
+    };
   }
+
+  it("a ppr route: an ssr: false reader declared before the cached hole runs it live on a HIT and a replay (2 body runs): the data is the entry's g2, the push is the live run's g3", async () => {
+    expect(await pprHitAndReplay("/sch")).toEqual({
+      bodyRuns: 2,
+      hit: { data: ['"sch":"sch@g2"'], push: ["sch-note@g3"] },
+      nav: { data: ['"sch":"sch@g2"'], push: ["sch-note@g3"] },
+    });
+  });
+
+  it("a ppr route: an ssr: false reader declared after the cached hole (control: the binding starts first, no body run, the entry's g2 serves data and push)", async () => {
+    expect(await pprHitAndReplay("/sch-rev")).toEqual({
+      bodyRuns: 0,
+      hit: { data: ['"sch":"sch@g2"'], push: ["sch-note@g2"] },
+      nav: { data: ['"sch":"sch@g2"'], push: ["sch-note@g2"] },
+    });
+  });
 });

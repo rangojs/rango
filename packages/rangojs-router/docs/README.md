@@ -93,8 +93,8 @@ Read these before changing the corresponding subsystem.
 - [Handle push ownership](../../../docs/design/handle-push-ownership.md) -
   a loader's data and the handle values it pushed come from one run on every
   path: the pin rule for PPR shell replays (built, #1001 and #1003), the
-  binding table for `ctx.use()` readers (designed, #1002), and what neither
-  covers
+  the binding table for `ctx.use()` readers (designed, decided against: #1002
+  is by design), and what neither covers
 - [Vercel cache store](../../../docs/design/vercel-cache-store.md) -
   `VercelCacheStore` and the `vercel` preset design
 - [Rango state cookie storage & single invalidation API](../../../docs/design/rango-state-cookie.md) -

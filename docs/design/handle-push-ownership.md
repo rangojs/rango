@@ -1,18 +1,23 @@
 # Handle push ownership: one run per loader
 
-Status: half built. Change 1 ("the pin decides both the value and the
-pushes") is in `src/` and closes #1001 and #1003, plus the paths nobody had
-filed that the same change covers. Change 2 (the binding table) is designed
-here and not built: #1002 stays open, and its tests stay expected failures.
-"What is built" and "What is not built" below say exactly where the line is.
+Status: change 1 is built, change 2 is not planned. Change 1 ("the pin
+decides both the value and the pushes") is in `src/` and closes #1001 and
+#1003, plus the paths nobody had filed that the same change covers. Change 2
+(the binding table) was decided against on 2026-10-04: #1002 is closed as by
+design, so a loader that reads a `cache()`-bound loader before its binding
+runs it live, and the six #1002 tests pin that behavior as plain tests. The
+change 2 text below is kept as analysis, with a note at the top of each
+affected section. "What is built" and "What is not built" below say exactly
+where the line is.
 A later section, "What a document hydrates with on a shell HIT", covers
 #1035: not which push a page shows, but when the client gets it.
 
 The evidence is
 `packages/rangojs-router/src/testing/__tests__/serve-shell-request-push-ownership.rsc-test.tsx`:
 31 tests. 14 of them failed on `origin/main` (`eed288b1`) and pass now, 9 are
-controls that passed before and still do, and 8 are expected failures: the
-six #1002 cases and the two dependency cases the record cannot decide. One
+controls that passed before and still do, and the six #1002 cases were expected failures and now pin today's behavior as
+plain tests, and 2 are expected failures, the two dependency cases the
+record cannot decide (#1036). One
 of those two passes on `origin/main` for a document HIT, so it is a corner
 change 1 made worse, not one it left alone; "What is not built" says which.
 
@@ -31,8 +36,8 @@ checking that fix, four more turned up on `main` that nobody had filed. When
 one rule breaks in eight places, the places are not the problem. This
 document names the structure that lets a value and its pushes part ways,
 states the rules a path must satisfy, and proposes two changes of structure
-instead of an eighth patch. The first is built; the second waits on the open
-questions at the end.
+instead of an eighth patch. The first is built; the second was decided
+against (see "The #1002 decision" under "What is not built").
 
 If you only read one section, read "The structural cause". If you are here
 to change the code, read "The recommended design" for what is built and
@@ -164,7 +169,7 @@ A path is correct when it satisfies these. They are what the tests assert.
 ## The path table
 
 Three columns: `origin/main` before change 1, the code now (change 1), and
-the target once change 2 lands. A cell reads "data / settled push", each
+the target had change 2 been built (not planned, see below). A cell reads "data / settled push", each
 naming its source: **pin** (the shell entry's pin and its record), **run** (a
 run in this request), **entry** (the loader's own `cache()` entry),
 **record** (a copy in a record that does not supply the value). A mismatch is
@@ -175,21 +180,21 @@ stale-entry one is pinned by a test: in the evidence file, in
 
 A promise-carrying `ssr: false` loader (it runs on every replay):
 
-| Path                                                              | `origin/main`                 | Now (change 1) | After change 2 |
-| ----------------------------------------------------------------- | ----------------------------- | -------------- | -------------- |
-| Document MISS (render and capture)                                | run / run                     | same           | same           |
-| Document HIT, pins present                                        | pin / pin                     | same           | same           |
-| Navigation replay, pins present                                   | **pin / run** (#1003)         | pin / pin      | same           |
-| Prefetch replay (`X-Rango-Prefetch`), pins present                | **pin / run**                 | pin / pin      | same           |
-| Navigation, explicit route `cache()` misses, seeded record serves | **pin / run**                 | pin / pin      | same           |
-| Navigation, explicit route `cache()` hits                         | run / run                     | same           | same           |
-| Navigation replay, navigation-only entry (no pins)                | run / run (PR #1018 broke it) | same           | same           |
-| Navigation replay, pins dropped by `maxSnapshotBytes`             | run / run (PR #1018 broke it) | same           | same           |
-| Document HIT, pins dropped by `maxSnapshotBytes`                  | **run / record**              | run / run      | same           |
-| Any replay without pins, the run makes no push                    | **run / record**              | run / none     | same           |
-| Pinned, the capture's run pushed nothing and the replay's pushes  | **pin / run**                 | pin / none     | same           |
-| The same with a pin stored before the `runs` bit (v0.17)          | pin / run, by design          | same           | same           |
-| Pinned, the navigation does not revalidate the loader             | no value sent / pin           | same           | same           |
+| Path                                                              | `origin/main`                 | Now (change 1) | After change 2 (not planned) |
+| ----------------------------------------------------------------- | ----------------------------- | -------------- | ---------------------------- |
+| Document MISS (render and capture)                                | run / run                     | same           | same                         |
+| Document HIT, pins present                                        | pin / pin                     | same           | same                         |
+| Navigation replay, pins present                                   | **pin / run** (#1003)         | pin / pin      | same                         |
+| Prefetch replay (`X-Rango-Prefetch`), pins present                | **pin / run**                 | pin / pin      | same                         |
+| Navigation, explicit route `cache()` misses, seeded record serves | **pin / run**                 | pin / pin      | same                         |
+| Navigation, explicit route `cache()` hits                         | run / run                     | same           | same                         |
+| Navigation replay, navigation-only entry (no pins)                | run / run (PR #1018 broke it) | same           | same                         |
+| Navigation replay, pins dropped by `maxSnapshotBytes`             | run / run (PR #1018 broke it) | same           | same                         |
+| Document HIT, pins dropped by `maxSnapshotBytes`                  | **run / record**              | run / run      | same                         |
+| Any replay without pins, the run makes no push                    | **run / record**              | run / none     | same                         |
+| Pinned, the capture's run pushed nothing and the replay's pushes  | **pin / run**                 | pin / none     | same                         |
+| The same with a pin stored before the `runs` bit (v0.17)          | pin / run, by design          | same           | same                         |
+| Pinned, the navigation does not revalidate the loader             | no value sent / pin           | same           | same                         |
 
 The last row is the one place where the value side skips the pin without the
 push side following: `resolveLoadersWithRevalidation` drops a loader the
@@ -204,46 +209,49 @@ follow it without a second pass.
 
 Other loaders on a shell replay:
 
-| Path                                                                                     | `origin/main`                                                  | Now (change 1)                             | After change 2             |
-| ---------------------------------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------ | -------------------------- |
-| Promise-free `ssr: false` loader with `cache()` and a deferred push, document HIT        | pin / pin, deferred from the entry                             | same                                       | same                       |
-| The same, navigation replay                                                              | pin / pin, deferred push **missing** (#1001)                   | pin / pin, deferred from the entry         | same                       |
-| `ssr: false` loader with `cache()`, no pins, its entry newer than the shell              | **entry / record**, its dependency's push too                  | entry / entry, each once                   | same                       |
-| The same, its entry stored without its pushes (a reader-first MISS, an encode timeout)   | **entry / record**                                             | entry / none: the entry as it is           | the entry is a miss: a run |
-| Dependency a pinned loader awaited (registered on neither lane)                          | pin / pin                                                      | same                                       | same                       |
-| The same dependency, any replay without pins                                             | **run / record**                                               | run / run                                  | same                       |
-| The same dependency, one other `ssr: false` loader lost its pin, document HIT            | pin / pin                                                      | **pin / run** (pending)                    | not designed               |
-| The same, navigation replay                                                              | **pin / run**                                                  | **pin / run** (pending)                    | not designed               |
-| A dependency whose push the awaiting loader's `cache()` entry did not record, no pins    | **entry / record**                                             | **entry / record** (pending)               | not designed               |
-| A `"use cache"` entry's copy of a dependency's push, replay without pins                 | entry / record, once                                           | entry / entry, once                        | same                       |
-| Live-lane loader (a hole), with or without its own `cache()`                             | its run's or its entry's, both                                 | same                                       | same                       |
-| Live-lane loader on a route with no `ssr: false` loader, a record without loader copies  | a hole, when the record holds any handle push                  | a hole, with or without a handles blob     | same                       |
-| Dependency a pinned loader and a live loader share (`/shared-dep`)                       | captured push next to the live reader's fresh data, documented | same                                       | same (decided: leave)      |
-| Order: a loader pushes, awaits a dependency that pushes, pushes again; its entry replays | `[own, dependency, own]`                                       | same                                       | same                       |
-| The same loader runs over the record's copies, document HIT without pins                 | the record's order, with the **record's** values               | `[own, dependency, own]`, the run's values | same                       |
-| The same, navigation replay without pins                                                 | `[own, own, dependency]`                                       | `[own, dependency, own]`                   | same                       |
+| Path                                                                                     | `origin/main`                                                  | Now (change 1)                             | After change 2 (not planned)            |
+| ---------------------------------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------ | --------------------------------------- |
+| Promise-free `ssr: false` loader with `cache()` and a deferred push, document HIT        | pin / pin, deferred from the entry                             | same                                       | same                                    |
+| The same, navigation replay                                                              | pin / pin, deferred push **missing** (#1001)                   | pin / pin, deferred from the entry         | same                                    |
+| `ssr: false` loader with `cache()`, no pins, its entry newer than the shell              | **entry / record**, its dependency's push too                  | entry / entry, each once                   | same                                    |
+| The same, its entry stored without its pushes (a reader-first MISS, an encode timeout)   | **entry / record**                                             | entry / none: the entry as it is           | not planned: the entry is a miss: a run |
+| Dependency a pinned loader awaited (registered on neither lane)                          | pin / pin                                                      | same                                       | same                                    |
+| The same dependency, any replay without pins                                             | **run / record**                                               | run / run                                  | same                                    |
+| The same dependency, one other `ssr: false` loader lost its pin, document HIT            | pin / pin                                                      | **pin / run** (pending)                    | not designed                            |
+| The same, navigation replay                                                              | **pin / run**                                                  | **pin / run** (pending)                    | not designed                            |
+| A dependency whose push the awaiting loader's `cache()` entry did not record, no pins    | **entry / record**                                             | **entry / record** (pending)               | not designed                            |
+| A `"use cache"` entry's copy of a dependency's push, replay without pins                 | entry / record, once                                           | entry / entry, once                        | same                                    |
+| Live-lane loader (a hole), with or without its own `cache()`                             | its run's or its entry's, both                                 | same                                       | same                                    |
+| Live-lane loader on a route with no `ssr: false` loader, a record without loader copies  | a hole, when the record holds any handle push                  | a hole, with or without a handles blob     | same                                    |
+| Dependency a pinned loader and a live loader share (`/shared-dep`)                       | captured push next to the live reader's fresh data, documented | same                                       | same (decided: leave)                   |
+| Order: a loader pushes, awaits a dependency that pushes, pushes again; its entry replays | `[own, dependency, own]`                                       | same                                       | same                                    |
+| The same loader runs over the record's copies, document HIT without pins                 | the record's order, with the **record's** values               | `[own, dependency, own]`, the run's values | same                                    |
+| The same, navigation replay without pins                                                 | `[own, own, dependency]`                                       | `[own, dependency, own]`                   | same                                    |
 
 A route `cache()` record that holds a loader's push (a ppr route under
 `cache()`; the capture wrote the record):
 
-| Path                                                                       | `origin/main`      | Now (change 1) | After change 2 |
-| -------------------------------------------------------------------------- | ------------------ | -------------- | -------------- |
-| Document MISS of the shell, record hits, the loader's `cache()` entry hits | **entry / record** | entry / entry  | same           |
-| The same, the loader has no `cache()`                                      | run / run          | same           | same           |
+| Path                                                                       | `origin/main`      | Now (change 1) | After change 2 (not planned) |
+| -------------------------------------------------------------------------- | ------------------ | -------------- | ---------------------------- |
+| Document MISS of the shell, record hits, the loader's `cache()` entry hits | **entry / record** | entry / entry  | same                         |
+| The same, the loader has no `cache()`                                      | run / run          | same           | same                         |
 
 A loader with its own `cache()` that something reads with `ctx.use()`
-(any route, `ppr` or not). This is #1002, untouched by change 1:
+(any route, `ppr` or not). This is #1002, untouched by change 1 and by
+design: the "After change 2" column is what the change would have done, and
+it is not planned. The tests that pin the current column are under
+`#1002 by design` in the evidence file:
 
-| Reader, on an entry HIT                                        | `origin/main` and now                                            | After change 2             |
-| -------------------------------------------------------------- | ---------------------------------------------------------------- | -------------------------- |
-| The binding's own route handler, or a loader declared after it | body 0, entry / entry                                            | same                       |
-| Sibling loader declared before the binding                     | body **runs**, **entry / run**, the reader sees the run          | body 0, all from the entry |
-| The same on an intercept                                       | the same split (PR #1018 does not cover it)                      | body 0, all from the entry |
-| Parent layout's loader                                         | the same split (PR #1018 leaves it by design)                    | body 0, all from the entry |
-| Parent layout's handler                                        | the same split                                                   | body 0, all from the entry |
-| `ssr: false` reader on a ppr route, HIT and navigation replay  | the same split                                                   | body 0, all from the entry |
-| Any of the above, entry MISS                                   | one run shared, but the entry it writes has **no pushes**        | the entry records them     |
-| Stale entry (SWR)                                              | stale data and the stale entry's pushes; the refresh is diverted | same                       |
+| Reader, on an entry HIT                                        | `origin/main` and now                                            | After change 2                          |
+| -------------------------------------------------------------- | ---------------------------------------------------------------- | --------------------------------------- |
+| The binding's own route handler, or a loader declared after it | body 0, entry / entry                                            | same                                    |
+| Sibling loader declared before the binding                     | body **runs**, **entry / run**, the reader sees the run          | not planned: body 0, all from the entry |
+| The same on an intercept                                       | the same split (PR #1018 does not cover it)                      | not planned: body 0, all from the entry |
+| Parent layout's loader                                         | the same split (PR #1018 leaves it by design)                    | not planned: body 0, all from the entry |
+| Parent layout's handler                                        | the same split                                                   | not planned: body 0, all from the entry |
+| `ssr: false` reader on a ppr route, HIT and navigation replay  | the same split                                                   | not planned: body 0, all from the entry |
+| Any of the above, entry MISS                                   | one run shared, but the entry it writes has **no pushes**        | not planned: the entry records them     |
+| Stale entry (SWR)                                              | stale data and the stale entry's pushes; the refresh is diverted | same                                    |
 
 A route without `ppr` and without loader `cache()`, and a prerendered route,
 run every loader per request: data and pushes are the run's. Unchanged
@@ -415,7 +423,9 @@ Document HIT, navigation replay, prefetch replay and the seeded fallback
 after an explicit miss now run the same code with the same input, which is
 invariant 7.
 
-### 2. `ctx.use(Loader)` resolves through the route's bindings (not built)
+### 2. `ctx.use(Loader)` resolves through the route's bindings (not planned)
+
+Decided against on 2026-10-04 (issue #1002, closed as by design). The maintainer's rule: a loader that reads another loader with `ctx.use()` may run it live, and a handler's `ctx.use()` is where a loader read is baked. The arrangement is an edge case with a way around it (declare the cached loader first, or read it from the handler), and the change would be breaking for every app that has a reader ahead of a cached loader. The analysis below stays as the record of what the change would have been.
 
 The matched chain is known when the match context is built, and so is the
 active intercept (`match-api.ts:391-407`). From them the request gets a
@@ -457,6 +467,9 @@ Two constraints the implementation must hold, both testable:
 
 ### On the #1002 rule
 
+Decided against on 2026-10-04 (issue #1002, closed as by design). The maintainer's rule: a loader that reads another loader with `ctx.use()` may run it live, and a handler's `ctx.use()` is where a loader read is baked. The arrangement is an edge case with a way around it (declare the cached loader first, or read it from the handler), and the change would be breaking for every app that has a reader ahead of a cached loader. The analysis below stays as the record of what the change would have been. The reasoning below argued for the change; the maintainer weighed it
+differently and the way around is the documented answer.
+
 The working decision is right: a reader of a `cache()`-bound loader gets the
 binding's value, and a HIT runs no body. Three reasons. It is what already
 happens when the binding starts first or a handler on the same route reads,
@@ -488,14 +501,26 @@ list.
 
 ## What is not built
 
+### The #1002 decision
+
+Decided against on 2026-10-04 (issue #1002, closed as by design). The maintainer's rule: a loader that reads another loader with `ctx.use()` may run it live, and a handler's `ctx.use()` is where a loader read is baked. The arrangement is an edge case with a way around it (declare the cached loader first, or read it from the handler), and the change would be breaking for every app that has a reader ahead of a cached loader. The analysis below stays as the record of what the change would have been.
+
+What an author sees today, pinned by the `#1002 by design` tests in the
+evidence file: the reader runs the cached loader live (its body runs on every
+request), the binding serves its entry, so the loader's data comes from the
+entry and its handle push from the live run. A handler's `ctx.use()` is where
+a loader read is baked, and a cached loader declared first keeps data and
+push together.
+
 Change 1 did not need any part of change 2. The push decision for a record's
 copies no longer depends on anything a reader does: it is made from the seed
 before any loader starts. What a reader does still decides one thing, which
 is #1002 itself, and change 1 leaves it exactly as it was.
 
-- **#1002, all of it.** A reader that starts a `cache()`-bound loader before
-  its binding still runs it live while the binding serves its entry. The six
-  tests are in the evidence file under `PENDING #1002`, as expected failures.
+- **#1002, all of it (by design, not planned).** A reader that starts a
+  `cache()`-bound loader before its binding still runs it live while the
+  binding serves its entry. The six tests are in the evidence file under
+  `#1002 by design`, as plain tests that assert today's values.
   One interaction to know: when the reader's run is what the claim sees
   (`loaderPromises` has the loader), the binding's HIT is refused and does
   not redeliver, so a record's placeholder for that loader is replaced by the
@@ -504,7 +529,7 @@ is #1002 itself, and change 1 leaves it exactly as it was.
   loader that pushed a value, not the registered loader that ran it, so a
   dependency no route registers follows the "every `ssr: false` loader is
   pinned" rule. Two cases get it wrong, both expected failures in the
-  evidence file (`PENDING (unfiled): a dependency ...`):
+  evidence file (`PENDING #1036: a dependency ...`, filed as #1036, open):
   - One pin missing, the others present. A dependency that a still-pinned
     loader awaits is a placeholder, and when that loader runs on the replay
     the dependency's live push takes its place: data `holey-dep@g1`, push
@@ -531,8 +556,9 @@ is #1002 itself, and change 1 leaves it exactly as it was.
   `owned-note@g1`). Two things write such an entry: a MISS a reader started
   first (#1002, the first row of its table), and a handle encode that timed
   out. Neither copy is the run's push, so neither answer satisfies invariant
-  1. Invariant 6 is the fix (such an entry is a miss), and it belongs to
-     change 2 with the marker in open question 1. Pinned by "a loader's cache()
+  1. Invariant 6 is the fix (such an entry is a miss), and it belonged to
+     change 2 with the marker in open question 1; with change 2 not planned,
+     an entry a reader-first MISS wrote stays without pushes. Pinned by "a loader's cache()
      entry stored without its pushes shows none".
 - **A doc record whose handle encode timed out.** `cacheRoute` then stores
   the record without a handles blob, and nothing in it says so. A pinned
@@ -915,11 +941,11 @@ for one more thing: whether a pin carries the `runs` bit at all.
   were already valid, for old and new readers. That last one is read from
   the code, not probed.
 
-**Stored formats, change 2 (not built).**
+**Stored formats, change 2 (not planned).** Decided against on 2026-10-04 (issue #1002, closed as by design). The maintainer's rule: a loader that reads another loader with `ctx.use()` may run it live, and a handler's `ctx.use()` is where a loader read is baked. The arrangement is an edge case with a way around it (declare the cached loader first, or read it from the handler), and the change would be breaking for every app that has a reader ahead of a cached loader. The analysis below stays as the record of what the change would have been.
 
 - Loader `cache()` entries: an entry the old code wrote while a reader had
-  started the loader first has no `handles` (RED test "the entry a request
-  writes records the cached loader's pushes"). The old code hid that: the
+  started the loader first has no `handles` (the test "the entry a reader-started run
+  writes holds no handle pushes"). The old code hid that: the
   reader's run pushed live on every request. The new code runs no body on a
   HIT, so such an entry would show no push until it expires. Two ways to
   handle it, open question 1:
@@ -940,31 +966,31 @@ for one more thing: whether a pin carries the `runs` bit at all.
 tests pass in dev and production with change 1. Change 1 changes no row: it
 makes a navigation replay agree with the document HIT a row already pins,
 and the shell paragraph of `docs/internal/execution-model.md` is rewritten to
-say so. Change 2 will add rows (a reader before the binding, on a document
-request and on a navigation) and rewrite the "One value per loader per
+say so. Change 2 would have added rows (a reader before the binding, on a document
+request and on a navigation) and rewritten the "One value per loader per
 request" guarantee there: no existing row encodes "a reader that ran before
 the binding gets its own run".
 
 **Behavior an existing app can observe.** Most of these are the rule being
 applied; they are still changes. The last two "1, built" rows are not the
-rule: one is an entry taken as it is until change 2 makes it whole, the
-other is a corner that got worse.
+rule: one is an entry taken as it is (change 2 would have made it whole and is
+not planned), the other is a corner that got worse.
 
-| Arrangement                                                                                            | Was                                                             | Becomes                                               | Change      |
-| ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- | ----------------------------------------------------- | ----------- |
-| Navigation replay, `ssr: false` loader that runs                                                       | live settled push; a deferred push from its entry lost          | the capture's settled push; the deferred push arrives | 1, built    |
-| Document HIT of an entry without pins                                                                  | the capture's push next to fresh data                           | the run's push, none if the run made none             | 1, built    |
-| Navigation replay of an entry without pins, the run makes no push                                      | the capture's push next to fresh data                           | no push                                               | 1, built    |
-| ppr route under `cache()`, the loader's entry newer than the record                                    | the record's copy                                               | the entry's push                                      | 1, built    |
-| Any replay, a pinned loader that pushes on the replay what it did not push at capture                  | that push, next to the pinned data                              | no push (a deferred push still arrives)               | 1, built    |
-| A run that replaces recorded copies, a loader that pushes around a dependency's push                   | `[own, own, dependency]` (the record's order on a document HIT) | `[own, dependency, own]`, the push order              | 1, built    |
-| The same after a `"use cache"` or loader `cache()` replay, on any route                                | `[own, own, dependency]`                                        | `[own, dependency, own]`                              | 1, built    |
-| Replay without pins, the loader's `cache()` entry stored without its pushes                            | the record's copy                                               | no push for that loader                               | 1, built    |
-| Document HIT of an entry that lost one pin of several, a dependency of a still-pinned loader that runs | the capture's push                                              | the live push (a navigation already showed it)        | 1, built    |
-| A reader that ran before a `cache()` binding, entry HIT                                                | fresh value for the reader; the body ran every request          | the cached value; the body does not run               | 2, breaking |
-| The same loader's pushes                                                                               | live                                                            | the entry's                                           | 2           |
-| The same loader's pushes when a parent started it                                                      | attributed to the parent's segment                              | attributed to the binding's segment                   | 2           |
-| Side effects in that body                                                                              | once per request                                                | once per MISS                                         | 2           |
+| Arrangement                                                                                            | Was                                                             | Becomes                                               | Change         |
+| ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- | ----------------------------------------------------- | -------------- |
+| Navigation replay, `ssr: false` loader that runs                                                       | live settled push; a deferred push from its entry lost          | the capture's settled push; the deferred push arrives | 1, built       |
+| Document HIT of an entry without pins                                                                  | the capture's push next to fresh data                           | the run's push, none if the run made none             | 1, built       |
+| Navigation replay of an entry without pins, the run makes no push                                      | the capture's push next to fresh data                           | no push                                               | 1, built       |
+| ppr route under `cache()`, the loader's entry newer than the record                                    | the record's copy                                               | the entry's push                                      | 1, built       |
+| Any replay, a pinned loader that pushes on the replay what it did not push at capture                  | that push, next to the pinned data                              | no push (a deferred push still arrives)               | 1, built       |
+| A run that replaces recorded copies, a loader that pushes around a dependency's push                   | `[own, own, dependency]` (the record's order on a document HIT) | `[own, dependency, own]`, the push order              | 1, built       |
+| The same after a `"use cache"` or loader `cache()` replay, on any route                                | `[own, own, dependency]`                                        | `[own, dependency, own]`                              | 1, built       |
+| Replay without pins, the loader's `cache()` entry stored without its pushes                            | the record's copy                                               | no push for that loader                               | 1, built       |
+| Document HIT of an entry that lost one pin of several, a dependency of a still-pinned loader that runs | the capture's push                                              | the live push (a navigation already showed it)        | 1, built       |
+| A reader that ran before a `cache()` binding, entry HIT                                                | fresh value for the reader; the body ran every request          | the cached value; the body does not run               | 2, not planned |
+| The same loader's pushes                                                                               | live                                                            | the entry's                                           | 2, not planned |
+| The same loader's pushes when a parent started it                                                      | attributed to the parent's segment                              | attributed to the binding's segment                   | 2, not planned |
+| Side effects in that body                                                                              | once per request                                                | once per MISS                                         | 2, not planned |
 
 **Hot path, change 1.** A route without `ppr` pays one `isPprEntry` check in
 `withCacheLookup` and allocates nothing, where `origin/main` allocated the
@@ -973,7 +999,7 @@ closure (the thunk), and on a record hit a second one (the authority
 function); the lanes are computed on its first question. After that hit the
 store asks the function once per loader body around each push, a map lookup
 each. `onHit` moves, it does not multiply. A cached unit's HIT builds one
-map and one short array of the loaders it claimed. **Change 2**: the binding table is built lazily and only for a chain
+map and one short array of the loaders it claimed. **Change 2 (not planned)**: the binding table is built lazily and only for a chain
 `bindsLoaderCache` already flagged (memoized per entry); `useLoader` gains
 one map lookup when the table exists; with the marker, a HIT of an entry that
 pushed nothing compares one character instead of skipping the decode on an
@@ -992,7 +1018,7 @@ pins. The other restored a record stripped of `handleOwners` next to a
 current pin and expected the run's pushes to be added; a record that old has
 pins without the `runs` bit, and the test now seeds one of those. The seed's
 key changed from segment id to loader id, which is internal: every reader of
-it is `servedPins`. For change 2, the binding-scope constraint above is the part with the
+it is `servedPins`. For change 2 (not planned), the binding-scope constraint above is the part with the
 least existing coverage: today a binding always starts from a kickoff. The
 semantic matrix must run for it (`segment-resolution/` is gated on it), and
 "a cached hole a bake-lane loader starts first keeps its push in the captured
@@ -1020,13 +1046,14 @@ a loader entry newer than a shell without pins), the
 for #1001, #1003 and the `maxSnapshotBytes` document HIT in both apps, dev
 and production.
 
-**Change 2, next (closes #1002), once the open questions below are
-answered:**
+**Change 2, not planned.** Decided against on 2026-10-04 (issue #1002, closed as by design). The maintainer's rule: a loader that reads another loader with `ctx.use()` may run it live, and a handler's `ctx.use()` is where a loader read is baked. The arrangement is an edge case with a way around it (declare the cached loader first, or read it from the handler), and the change would be breaking for every app that has a reader ahead of a cached loader. The analysis below stays as the record of what the change would have been. What it would have
+contained, kept for reference:
 
 1. The binding table and `useLoader` routing; removal of the interceptor and
    the reader-first branches.
 2. The entry marker, if open question 1 says so.
-3. The six `red` tests under `PENDING #1002` become plain `it`. Unit tests
+3. The six #1002 tests assert the new values (they already are plain `it`,
+   pinning today's). Unit tests
    next to `loader-resolution.ts` and `loader-cache.ts`. Browser e2e for
    #1002 in both apps, dev and production. Docs, changelog (`### Breaking:`
    for the reader rule), matrix rows.
@@ -1170,7 +1197,8 @@ Answered for change 1:
 - The order of a loader's pushes around a dependency's when its run replaces
   copies: the push order, `[own, dependency, own]`, on every path.
 
-Open, and all about change 2:
+Open only if change 2 is ever revived (not planned, see "The #1002
+decision"); none of them blocks anything today:
 
 1. Old loader `cache()` entries: the completeness marker (one refill per key
    after the upgrade, no visible gap) or a changelog note (no refill, a

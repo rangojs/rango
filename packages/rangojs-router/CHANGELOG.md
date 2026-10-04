@@ -804,7 +804,7 @@ What an app that never saw these bugs can notice:
 - A loader `cache()` entry that was stored without its pushes shows none on
   a replay of a shell without pins, where the shell's copy used to stay. Such
   an entry is written when another loader started the cached loader first
-  (#1002, below) or when its handle encode timed out. It refills with its
+  (see "Not fixed here", below) or when its handle encode timed out. It refills with its
   pushes on its next miss.
 - A corner that got worse: a shell entry that lost one loader pin but not all
   of them (a pin that failed to encode or decode) shows, on a document HIT,
@@ -814,11 +814,12 @@ What an app that never saw these bugs can notice:
   live one. Registering the awaited loader on the route with
   `loader(Dep, { ssr: false })` gives it a pin of its own.
 
-Not fixed here: a loader that reads a `cache()`-bound loader with `ctx.use()`
-before that binding starts (a loader declared ahead of it, a parent layout)
-still runs it live while the binding serves its cache entry, so the page can
-show the entry's data next to the live run's push (#1002). Declare the cached
-loader first, or read it from the handler, until that lands.
+Not fixed here, by design (#1002): a loader that reads a `cache()`-bound
+loader with `ctx.use()` before that binding starts (a loader declared ahead
+of it, a parent layout) runs it live while the binding serves its cache
+entry, so the page can show the entry's data next to the live run's push.
+Declare the cached loader first, or read it from the handler, to keep them
+together.
 
 ### Fixed: a document served from a PPR shell hydrates with the handle data the shell was rendered from ([#1035](https://github.com/rangojs/rango/issues/1035))
 
