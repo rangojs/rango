@@ -1,5 +1,6 @@
 /// <reference types="@cloudflare/workers-types" />
 import { router } from "./router.js";
+import { prefetchScopeRouter } from "./prefetch-scope-router.js";
 import type { AppBindings } from "./env.js";
 import { createRecordingTracer } from "./trace-debug.js";
 // Registers a fetchable loader the trace-spans e2e hits via _rsc_loader to
@@ -7,6 +8,10 @@ import { createRecordingTracer } from "./trace-debug.js";
 // Used (not just imported) below so it is registered in both dev and the
 // production bundle (the build cannot tree-shake an observable use).
 import { TraceProbeLoader } from "./loaders/trace-probe.js";
+
+// Test-only stash for __trace_debug=<token> tracers, read back (post-
+// background-work) via __trace_read=<token>. Module-scoped: per isolate.
+const traceStash = new Map<string, ReturnType<typeof createRecordingTracer>>();
 
 // Regression fixture for the `cloudflare:workers` discovery failure.
 // The DO class lives in a subdirectory (mirroring real CF projects'
@@ -26,6 +31,13 @@ export default {
       return new Response(null, { status: 404 });
     }
 
+    if (
+      url.pathname === "/__prefetch-scope" ||
+      url.pathname.startsWith("/__prefetch-scope/")
+    ) {
+      return prefetchScopeRouter.fetch(request, { env, ctx });
+    }
+
     // Test-only: return the fetchable trace-probe loader's resolved $$id so the
     // trace-spans e2e can build a mode-correct _rsc_loader request (loader ids
     // are raw in dev, hashed in production). Reading $$id here also forces the
@@ -35,13 +47,36 @@ export default {
         headers: { "content-type": "text/plain" },
       });
     }
+    // Test-only: read back a token-stashed tracer's CURRENT tree. The
+    // X-Rango-Trace header below is a snapshot at handoff, so it can never
+    // contain spans entered by post-handoff waitUntil work (shell captures,
+    // SWR revalidations); this endpoint serializes the same tracer LATER so
+    // e2e can assert the rango.background span. Same-isolate only — fine for
+    // the single-isolate dev/preview servers the suite runs against.
+    const readToken = url.searchParams.get("__trace_read");
+    if (readToken !== null) {
+      const stashed = traceStash.get(readToken);
+      return new Response(stashed ? stashed.serialize() : null, {
+        status: stashed ? 200 : 404,
+        headers: { "content-type": "text/plain" },
+      });
+    }
     // Test-only: when ?__trace_debug=1 is present, inject a recording tracer as
     // ctx.tracing (the same hook a tracing-enabled Cloudflare runtime provides),
     // run the request, and expose the captured "rango.*" span tree on the
     // X-Rango-Trace header so e2e can assert span emission + nesting in dev and
     // production. Normal requests have no ctx.tracing and are unaffected.
-    if (url.searchParams.has("__trace_debug")) {
+    // A non-"1" value doubles as a stash token for later __trace_read polls.
+    const debugToken = url.searchParams.get("__trace_debug");
+    if (debugToken !== null) {
       const tracer = createRecordingTracer();
+      if (debugToken && debugToken !== "1") {
+        traceStash.set(debugToken, tracer);
+        // Bound the stash: evict the oldest entry beyond a small window.
+        if (traceStash.size > 8) {
+          traceStash.delete(traceStash.keys().next().value!);
+        }
+      }
       const tracingCtx: ExecutionContext = Object.assign(
         Object.create(Object.getPrototypeOf(ctx)),
         {

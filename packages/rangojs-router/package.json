@@ -1,6 +1,6 @@
 {
   "name": "@rangojs/router",
-  "version": "0.1.0",
+  "version": "0.21.0",
   "description": "Django-inspired RSC router with composable URL patterns",
   "keywords": [
     "react",
@@ -9,15 +9,15 @@
     "rsc",
     "vite"
   ],
-  "homepage": "https://github.com/ivogt/vite-rsc#readme",
+  "homepage": "https://github.com/rangojs/rango#readme",
   "bugs": {
-    "url": "https://github.com/ivogt/vite-rsc/issues"
+    "url": "https://github.com/rangojs/rango/issues"
   },
   "license": "MIT",
   "author": "Ivo Todorov",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ivogt/vite-rsc.git",
+    "url": "git+https://github.com/rangojs/rango.git",
     "directory": "packages/rangojs-router"
   },
   "bin": {
@@ -32,7 +32,8 @@
     "dist",
     "skills",
     "AGENTS.md",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "type": "module",
   "exports": {
@@ -86,6 +87,11 @@
       "types": "./dist/types/deps/rsc.d.ts",
       "react-server": "./src/deps/rsc.ts",
       "default": "./src/deps/rsc.ts"
+    },
+    "./internal/deps/rsc-client": {
+      "types": "./dist/types/deps/rsc-client.d.ts",
+      "react-server": "./src/deps/rsc-client.ts",
+      "default": "./src/deps/rsc-client.ts"
     },
     "./internal/deps/html-stream-client": {
       "types": "./dist/types/deps/html-stream-client.d.ts",
@@ -192,6 +198,7 @@
     "prepublishOnly": "pnpm build",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.strict-check.json --noEmit && tsc -p tsconfig.augment-check.json --noEmit",
     "test": "playwright test",
+    "test:preload": "playwright test --config=playwright.preload.config.ts",
     "test:ui": "playwright test --ui",
     "test:hmr-local": "playwright test --project=dev-warmup --project=hmr-basename --project=hmr-prerender --no-deps --workers=1 && RANGO_E2E_ROUTE_HMR_ONLY=1 playwright test --project=hmr-routes --no-deps --workers=1",
     "test:hmr-routes-local": "RANGO_E2E_ROUTE_HMR_ONLY=1 playwright test --project=hmr-routes --no-deps --workers=1",
@@ -201,19 +208,20 @@
   },
   "dependencies": {
     "@types/debug": "^4.1.12",
-    "@vitejs/plugin-rsc": "^0.5.27",
+    "@vitejs/plugin-rsc": "^0.5.35",
     "debug": "^4.4.1",
     "magic-string": "^0.30.17",
     "picomatch": "^4.0.4",
     "rsc-html-stream": "^0.0.7",
     "srvx": "^0.11.15",
-    "tinyexec": "^0.3.2"
+    "tinyexec": "^0.3.2",
+    "typescript": "^5.3.0 || ^6.0.0"
   },
   "devDependencies": {
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/context-async-hooks": "^2.9.0",
     "@opentelemetry/sdk-trace-base": "^2.9.0",
-    "@playwright/test": "^1.49.1",
+    "@playwright/test": "^1.62.0",
     "@shared/e2e": "workspace:*",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.2",
@@ -225,7 +233,6 @@
     "jiti": "^2.7.0",
     "react": "catalog:",
     "react-dom": "catalog:",
-    "typescript": "^5.3.0",
     "vitest": "^4.1.9"
   },
   "peerDependencies": {
@@ -234,9 +241,8 @@
     "@playwright/test": "^1.49.1",
     "@testing-library/react": ">=16",
     "@vercel/functions": "^3.0.0",
-    "@vitejs/plugin-rsc": "^0.5.27",
-    "react": ">=19.2.6 <20",
-    "react-dom": ">=19.2.6 <20",
+    "react": ">=19.2.8 <20",
+    "react-dom": ">=19.2.8 <20",
     "vite": "^8.0.16",
     "vitest": ">=3"
   },

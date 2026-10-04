@@ -23,12 +23,16 @@ describe("getVirtualEntrySSR headScripts wiring", () => {
       "installClientReferencePreinit(setOnClientReference)",
     );
     expect(entry).toContain('headScripts: "preinit"');
+    expect(entry).toContain("getClientEntryUrl");
+    expect(entry).not.toContain("loadBootstrapScriptContent");
   });
 
   it('"preload" omits the hook and pins the handlers to the hint strategy', () => {
     const entry = getVirtualEntrySSR("preload");
     expect(entry).not.toContain("installClientReferencePreinit");
     expect(entry).not.toContain("setOnClientReference");
+    expect(entry).not.toContain("getClientEntryUrl");
+    expect(entry).toContain("loadBootstrapScriptContent");
     expect(entry).toContain('headScripts: "preload"');
   });
 
@@ -38,6 +42,47 @@ describe("getVirtualEntrySSR headScripts wiring", () => {
       const marker = `headScripts: ${JSON.stringify(mode)}`;
       expect(entry.split(marker).length - 1).toBe(3);
     }
+  });
+
+  it("rejects an unknown value instead of running it as preinit", () => {
+    for (const value of ["prenit", null, { mode: "preinit" }]) {
+      expect(() => getVirtualEntrySSR(value as never)).toThrow(
+        /must be "preinit" or "preload", received/,
+      );
+    }
+  });
+
+  it("omitting progressiveChunkSize emits no key at all", () => {
+    expect(getVirtualEntrySSR()).not.toContain("progressiveChunkSize");
+  });
+
+  it("threads progressiveChunkSize into all three SSR handler factories", () => {
+    const entry = getVirtualEntrySSR("preinit", 12345);
+    expect(entry.split("progressiveChunkSize: 12345,").length - 1).toBe(3);
+  });
+
+  it("MAX_SAFE_INTEGER serializes exactly and the entry still parses", async () => {
+    const entry = getVirtualEntrySSR(undefined, Number.MAX_SAFE_INTEGER);
+    expect(entry).toContain(
+      `progressiveChunkSize: ${Number.MAX_SAFE_INTEGER},`,
+    );
+    await expect(parseAstAsync(entry)).resolves.toBeTruthy();
+  });
+
+  it("emits Number.POSITIVE_INFINITY rather than JSON null", async () => {
+    const entry = getVirtualEntrySSR("preinit", Infinity);
+    expect(entry).toContain("progressiveChunkSize: Number.POSITIVE_INFINITY,");
+    expect(entry).not.toContain("progressiveChunkSize: null");
+    await expect(parseAstAsync(entry)).resolves.toBeTruthy();
+  });
+
+  it("rejects NaN and -Infinity", () => {
+    expect(() => getVirtualEntrySSR("preinit", NaN)).toThrow(
+      /finite number or Infinity/,
+    );
+    expect(() => getVirtualEntrySSR("preinit", -Infinity)).toThrow(
+      /finite number or Infinity/,
+    );
   });
 
   it("both generated variants parse as valid modules", async () => {

@@ -1,7 +1,7 @@
 /**
  * RSC-environment version of client exports
  *
- * This file is used when importing "rsc-router/client" from RSC (server components).
+ * This file is used when importing "@rangojs/router/client" from RSC (server components).
  * It re-exports the server's createLoader so that loader definitions work in both
  * environments with the same import.
  *
@@ -9,12 +9,17 @@
  * in RSC context, while the regular client.tsx is used in client components.
  */
 
+// From html.ts directly, never via ./client.js: every export of that
+// "use client" module is an opaque client reference here.
+import * as Html from "./html.js";
+
 // Re-export everything from client.tsx (Outlet, useLoader, etc.)
 // These are safe to use in RSC context
 export {
   Outlet,
   ParallelOutlet,
   useOutlet,
+  type OutletState,
   useLoader,
   ErrorBoundary,
   type ErrorBoundaryProps,
@@ -31,6 +36,12 @@ export {
 
 export { createLoader } from "./route-definition.js";
 
+export { clientUrls } from "./client-urls/client-urls.js";
+export type {
+  ClientUrlPatterns,
+  ClientUrlRouteRecord,
+} from "./client-urls/client-urls.js";
+
 // "use client" hooks the default ./client entry exports. They are client
 // references in the RSC graph, identical in kind to useHref/useReverse/
 // useHandle already forwarded below; forward them so the RSC client entry's
@@ -39,6 +50,11 @@ export { createLoader } from "./route-definition.js";
 export { useRouter } from "./browser/react/use-router.js";
 export { usePathname } from "./browser/react/use-pathname.js";
 export { useSearchParams } from "./browser/react/use-search-params.js";
+export type {
+  SearchParamsInit,
+  SetSearchParams,
+  SetSearchParamsOptions,
+} from "./browser/react/use-search-params.js";
 export { useParams } from "./browser/react/use-params.js";
 // CSP nonce for userland head-script components (analytics/GTM/inline init);
 // forwarded so the RSC client entry's hook surface matches the default entry.
@@ -52,18 +68,16 @@ export {
   useLinkStatus,
   type LinkStatus,
 } from "./browser/react/use-link-status.js";
-export { useScrollRestoration } from "./browser/react/ScrollRestoration.js";
+export {
+  useScrollRestoration,
+  type ScrollRestorationProps,
+} from "./browser/react/ScrollRestoration.js";
 
 export {
   Link,
   type LinkProps,
   type PrefetchStrategy,
 } from "./browser/react/Link.js";
-
-export {
-  ScrollRestoration,
-  type ScrollRestorationProps,
-} from "./browser/react/ScrollRestoration.js";
 
 export {
   NavigationProvider,
@@ -79,14 +93,13 @@ export { MountContext } from "./browser/react/mount-context.js";
 export { createHandle, isHandle, type Handle } from "./handle.js";
 
 export { Meta } from "./handles/meta.js";
-export { MetaTags } from "./handles/MetaTags.js";
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
 export {
   Script,
   type ScriptConfig,
   type ScriptAttributes,
 } from "./handles/script.js";
-export { Scripts } from "./handles/Scripts.js";
+export { Html };
 export { Breadcrumbs, type BreadcrumbItem } from "./handles/breadcrumbs.js";
 
 export {

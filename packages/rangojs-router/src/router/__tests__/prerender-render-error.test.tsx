@@ -28,15 +28,19 @@ const { renderSpy } = vi.hoisted(() => ({
   ),
 }));
 
-vi.mock("@vitejs/plugin-rsc/rsc", () => ({
-  createFromReadableStream: vi.fn(),
-  renderToReadableStream: renderSpy,
-  loadServerAction: vi.fn(),
-  decodeReply: vi.fn(),
-  decodeAction: vi.fn(),
-  decodeFormState: vi.fn(),
-  createTemporaryReferenceSet: vi.fn(() => ({})),
-}));
+function pluginRscMock() {
+  return {
+    createFromReadableStream: vi.fn(),
+    renderToReadableStream: renderSpy,
+    loadServerAction: vi.fn(),
+    decodeReply: vi.fn(),
+    decodeAction: vi.fn(),
+    decodeFormState: vi.fn(),
+    createTemporaryReferenceSet: vi.fn(() => ({})),
+  };
+}
+vi.mock("@vitejs/plugin-rsc/rsc/server", pluginRscMock);
+vi.mock("@vitejs/plugin-rsc/rsc/client", pluginRscMock);
 
 import { Prerender } from "../../prerender.js";
 import { Skip } from "../../errors.js";

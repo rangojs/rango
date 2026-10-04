@@ -8,7 +8,7 @@
 // surface: useLoader / useFetchLoader / useRefreshLoaders, useRouter /
 // useNavigation / usePathname / useSegments / useParams / useSearchParams,
 // useAction + useActionState (server actions), useLocationState, useHandle +
-// Breadcrumbs, Link / useHref / useMount / useLinkStatus, and ScrollRestoration.
+// Breadcrumbs, and Link / useHref / useMount / useLinkStatus.
 
 import { useActionState, useState, useTransition } from "react";
 import {
@@ -329,7 +329,7 @@ export function GlobalReverse() {
 // ---------------------------------------------------------------------------
 
 export function SearchControls() {
-  const params = useSearchParams();
+  const [params] = useSearchParams();
   const router = useRouter();
   const current = params.get("q") ?? "";
   return (

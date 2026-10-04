@@ -22,11 +22,16 @@ global `GeneratedRouteMap` (the gen file). No explicit route map import needed:
 import type { Handler } from "@rangojs/router";
 
 export const SearchPage: Handler<"search"> = (ctx) => {
-  // ctx.search is typed: { q: string; page?: number; sort?: string }
-  const { q, page, sort } = ctx.search;
+  // ctx.search is typed: { q: string | undefined; page?: number; sort?: string }
+  const { q = "", page = 1, sort } = ctx.search;
   return <SearchResults q={q} page={page} sort={sort} />;
 };
 ```
+
+Required keys (no `?`) still resolve to `T | undefined` inside the handler:
+the schema tells callers (`ctx.reverse`, `useReverse`) what to send, but the
+server cannot trust the client to send it, so the handler must handle a
+missing value.
 
 This avoids circular references because `Handler` defaults to `GeneratedRouteMap`
 (from `router.named-routes.gen.ts`) instead of `RegisteredRoutes` (which depends on `router.tsx`).
@@ -48,8 +53,12 @@ Note the difference: `Handler<"search">` (no dot) resolves against the global
 `routes` for param/search inference and only uses it for local `ctx.reverse(".x")`.
 
 Supported types: `"string"`, `"number"`, `"boolean"`, with `?` suffix for optional.
-Values are automatically coerced from query string (e.g., `"2"` becomes `2` for numbers).
-Routes without a `search` schema keep the standard `URLSearchParams` behavior.
+Values are automatically coerced from the query string: numbers accept finite
+decimal values (`"2"` becomes `2`; `"0x10"`, `"Infinity"` or an empty value are
+treated as missing), and a present boolean is `true` for `"true"`/`"1"` and
+`false` otherwise. Absent keys are omitted, required or not. Routes without a
+`search` schema get `ctx.search` as an empty object; read the raw query from
+`ctx.searchParams` (a `URLSearchParams`).
 
 ### RouteSearchParams and RouteParams utility types
 
@@ -104,12 +113,15 @@ export const NamedRoutes = {
 } as const;
 ```
 
-You never open a `.gen.ts` by hand. Treat the generated types as call-site
-honesty checks, not modules to read:
+You never edit a `.gen.ts` by hand. Treat the generated types as call-site
+checks, not modules to read:
 
-- **Do not import `router.named-routes.gen.ts` directly**, and don't reach for
-  `Rango.GeneratedRouteMap`. It is the whole-app manifest, auto-wired
-  globally — `Handler<"name">` and `ctx.reverse("name")` already see it.
+- **You rarely need to import `router.named-routes.gen.ts`**, and you don't
+  need to reference `Rango.GeneratedRouteMap`. It is the whole-app manifest,
+  auto-wired globally — `Handler<"name">` and `ctx.reverse("name")` already
+  see it. Importing its `NamedRoutes` value is an escape hatch (global names
+  in `useReverse`, an absolute-path map for `/api-client`); on the client it
+  ships every route name and pattern in the app.
 - **Per-module `*.gen.ts` imports are fine** — they are the opt-in local-route
   pattern for `useReverse(routes)` and explicit local handler typing
   (`Handler<".name", routes>`). See `/links`.
@@ -119,35 +131,48 @@ smell — fix the call site (or regenerate), never edit the generated file.
 
 ## Loader Type Safety
 
-Loaders have typed return values:
+A loader's return type is inferred from its function and flows to every
+consumer. `createLoader` is not bound to one route, so `ctx.params` is
+`Record<string, string | undefined>`:
 
 ```typescript
 // loaders/product.ts
+import { createLoader } from "@rangojs/router";
+
 export const ProductLoader = createLoader(async (ctx) => {
   return {
-    id: ctx.params.slug,
+    id: ctx.params.slug ?? "",
     name: "Widget",
     price: 99,
   };
 });
+```
 
-// In server component - type is inferred
-import { useLoader } from "@rangojs/router/client";
+Server handler (escape hatch — reads the data in the handler itself):
 
-async function ProductPage() {
-  const product = await useLoader(ProductLoader);
+```typescript
+path("/product/:slug", async (ctx) => {
+  const product = await ctx.use(ProductLoader);
   // product: { id: string; name: string; price: number }
   return <h1>{product.name}</h1>;
-}
+}, { name: "product" }, () => [loader(ProductLoader)]);
+```
 
-// In client component - same type
+Client component (the default consumption site):
+
+```typescript
 "use client";
 import { useLoader } from "@rangojs/router/client";
+import { ProductLoader } from "../loaders/product";
 
 function ProductPrice() {
   const { data } = useLoader(ProductLoader);
   // data: { id: string; name: string; price: number }
-  const product = data;
-  return <span>${product.price}</span>;
+  return <span>${data.price}</span>;
 }
 ```
+
+`useLoader()` is a client hook — never call it in a server component.
+Client-side data is typed through `Rango.FlightSerialize<T>` (the RSC Flight
+boundary), so values Flight preserves (such as `Date`) keep their type. See
+`/loader` for when to use `ctx.use()` versus `useLoader()`.

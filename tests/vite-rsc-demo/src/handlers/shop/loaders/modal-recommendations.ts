@@ -16,8 +16,6 @@ export type Recommendation = {
  * so after adding to cart, the recommendations will stream in.
  */
 export const ModalRecommendationsLoader = createLoader(async (ctx) => {
-  "use server";
-
   const { slug } = ctx.params;
   console.log(
     `[ModalRecommendationsLoader] Loading recommendations for ${slug}...`,

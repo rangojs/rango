@@ -7,9 +7,13 @@ export type {
   ShellCacheEntry,
   SerializedSegmentData,
   SegmentHandleData,
+  CacheReadError,
 } from "./types.js";
+export { CACHE_READ_ERROR } from "./types.js";
 
 export { MemorySegmentCacheStore } from "./memory-segment-store.js";
+
+export type { StoreMemoOptions } from "./shell-memo.js";
 
 export {
   CFCacheStore,
@@ -39,6 +43,11 @@ export {
   VERCEL_MAX_TAG_BYTES,
 } from "./vercel/index.js";
 
+export {
+  TRACKING_SEARCH_PARAMS,
+  type CacheSearchParams,
+} from "./search-params-filter.js";
+
 export { CacheScope, createCacheScope } from "./cache-scope.js";
 
 export {
@@ -47,3 +56,7 @@ export {
 } from "./document-cache.js";
 
 export type { CacheErrorCategory } from "./cache-error.js";
+
+// For a custom persistent store: the versions the built-in stores key with.
+export { getCacheVersions } from "../server/build-version-table.js";
+export type { RouterVersions } from "../router-versions.js";

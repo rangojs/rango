@@ -12,6 +12,8 @@ import {
 import {
   ActionInfoA,
   ActionInfoB,
+  CuFlash,
+  CuNote,
   FlashMessage,
   NonSerializableState,
 } from "./location-states.js";
@@ -20,6 +22,7 @@ import {
   getCartQuantitySync,
   resetCurrentCart,
 } from "./cart-store.js";
+import { bumpClientUrlsActionCount } from "./urls/client-urls-action.store.js";
 
 // Simulated delay helper
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -101,6 +104,33 @@ export async function resetCart(): Promise<void> {
 // Dummy action for prerender client component tests
 export async function prerenderTestAction(): Promise<{ ok: true }> {
   return { ok: true };
+}
+
+/**
+ * useActionState counter for the transition({ when }) probe: the browser calls
+ * it with (prevState, formData), so the predicate sees `action.formData` and
+ * the returned count as `action.result`. Touches a cookie so the route
+ * revalidates.
+ */
+export async function txCountAction(
+  count: number,
+  formData: FormData,
+): Promise<number> {
+  await delay(50);
+  cookies().set("tx-count", String(formData.get("probe") ?? ""), {
+    path: "/",
+    maxAge: 60,
+  });
+  return count + 1;
+}
+
+/**
+ * Always fails: the route's errorBoundary() renders, so the browser commits
+ * the action's error lane (transition({ when }) sees `action.error`).
+ */
+export async function txFailingAction(): Promise<never> {
+  await delay(50);
+  throw new Error("tx-action-failed");
 }
 
 /**
@@ -275,6 +305,26 @@ export async function setSlotWithMarker(
   const ctx = getRequestContext();
   ctx.setLocationState(ActionInfoA({ value }));
   ctx.setLocationState(ActionInfoB({ value: marker }));
+}
+
+/**
+ * Group (clientUrls) action writing location state IN PLACE — no redirect.
+ * The action lane merges into the current history entry on settle; this is a
+ * group's only imperative server write path for location state (groups have
+ * no handlers, so ctx.setLocationState is otherwise unreachable from them).
+ */
+export async function setCuNote(value: string): Promise<void> {
+  getRequestContext().setLocationState(CuNote({ value }));
+}
+
+/**
+ * Group action redirecting WITH flash state to a group route (same route,
+ * different search) — the "save, bounce back with a flash" shape.
+ */
+export async function cuSaveAndRedirect(): Promise<void> {
+  throw redirect("/client-urls-e2e/state?saved=1", {
+    state: CuFlash({ text: "cu-action-flash" }),
+  });
 }
 
 /**
@@ -678,4 +728,14 @@ export async function invalidateTagAction(
   const tag = String(formData.get("tag") ?? "");
   await updateTag(tag);
   return { tag };
+}
+
+/**
+ * Bumps the clientUrls action-revalidation counter. The follow-up render's
+ * revalidation is the pinned contract: the clientUrls group's projected
+ * loaders re-run (route-owned segments default true on actions) while the
+ * parent-chain RSC layout reading the same counter keeps the locked skip.
+ */
+export async function bumpClientUrlsCounter(): Promise<number> {
+  return bumpClientUrlsActionCount();
 }

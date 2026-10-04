@@ -176,6 +176,11 @@ export interface MatchContext<TEnv = any> {
   interceptSelectorContext: InterceptSelectorContext;
   isSameRouteNavigation: boolean;
   interceptResult: InterceptResult | null;
+  /**
+   * An intercept targets this route, matched or not (a same-route navigation
+   * skips it), so the response depends on the source. Partial matches only.
+   */
+  interceptTargeted?: boolean;
 
   // Cache
   cacheScope: CacheScope | null;

@@ -1,6 +1,30 @@
 import { createLoader, createHandle } from "@rangojs/router";
 import type { HandlerContext } from "@rangojs/router";
 
+// Large-shell fixture (issue #941): a cached catalog whose rendering spans
+// several prelude chunks (SHELL_PRELUDE_CHUNK_BYTES, 32 KB). Deterministic, so
+// every capture of the route produces the same bytes.
+export interface ShellLargeItem {
+  id: string;
+  name: string;
+  description: string;
+}
+
+export async function getShellLargeCatalog(
+  slug: string,
+): Promise<ShellLargeItem[]> {
+  "use cache";
+  const items: ShellLargeItem[] = [];
+  for (let i = 0; i < 240; i++) {
+    items.push({
+      id: `item-${i}`,
+      name: `${slug} item ${i}`,
+      description: `Item ${i} of the large shell fixture. `.repeat(12),
+    });
+  }
+  return items;
+}
+
 // Capture-data-snapshot DRIFT fixture (docs/design/ppr-shell-resume.md). A cached
 // value baked into the PPR shell (above loading(), so it is prelude material) via
 // the "drift" profile — ttl 1s, swr 0, so the underlying entry is fully GONE one
@@ -18,6 +42,91 @@ export async function getDriftStamp(ctx: HandlerContext): Promise<string> {
   driftExecutions += 1;
   return `drift-${driftExecutions}`;
 }
+
+// Shared-key fixture (issue #941): the shell, an ssr: false loader and a live
+// hole read the SAME "drift" item (ttl 1s). The capture bakes the shell's read
+// and pins the ssr: false loader's value. The hole's loader runs on every HIT
+// and reads the store, so once the item expires the hole shows a newer stamp
+// than the frozen shell. It did not while the bake-lane loader's read of the
+// key was pinned for every reader on a HIT. The probe keys the item per URL.
+let sharedStampExecutions = 0;
+
+export async function getSharedStamp(probe: string): Promise<string> {
+  "use cache: drift";
+  void probe;
+  sharedStampExecutions += 1;
+  return `shared-${sharedStampExecutions}`;
+}
+
+export interface ShellSharedStampData {
+  stamp: string;
+}
+
+export const ShellSharedStampLoader = createLoader(
+  async (ctx): Promise<ShellSharedStampData> => ({
+    stamp: await getSharedStamp(ctx.searchParams.get("probe") ?? ""),
+  }),
+);
+
+/** The same read, bound with ssr: false: shell material, pinned on a HIT. */
+export const ShellSharedBakedStampLoader = createLoader(
+  async (ctx): Promise<ShellSharedStampData> => ({
+    stamp: await getSharedStamp(ctx.searchParams.get("probe") ?? ""),
+  }),
+);
+
+// Live-dep fixture: a live loader that a running ssr: false loader awaits. The
+// ssr: false loader returns a nested promise, so it runs on every HIT; the
+// route declares it before the live loader, so the live loader's body runs
+// inside its body. The live loader awaits a dependency the route registers on
+// neither lane. All stamp the per-probe generation the suite bumps
+// (/shell-cache/__live-dep-bump). The live loader's push, and its
+// dependency's, must carry the HIT's generation, like its data; the
+// ssr: false loader's settled push is the prelude's.
+const liveDepGenerations = new Map<string, number>();
+
+export function liveDepGeneration(probe: string): number {
+  return liveDepGenerations.get(probe) ?? 1;
+}
+
+export function bumpLiveDepGeneration(probe: string): number {
+  const next = liveDepGeneration(probe) + 1;
+  liveDepGenerations.set(probe, next);
+  return next;
+}
+
+export const ShellLiveDepNotes = createHandle<string>();
+
+export interface ShellLiveDepData {
+  liveDep: string;
+  inner: string;
+}
+
+/** Awaited only by ShellLiveDepLoader: the route registers it on neither lane. */
+export const ShellInnerDepLoader = createLoader(async (ctx) => {
+  const generation = liveDepGeneration(ctx.searchParams.get("probe") ?? "");
+  ctx.use(ShellLiveDepNotes)(`inner-note@g${generation}`);
+  return { inner: `inner@g${generation}` };
+});
+
+export const ShellLiveDepLoader = createLoader(
+  async (ctx): Promise<ShellLiveDepData> => {
+    const generation = liveDepGeneration(ctx.searchParams.get("probe") ?? "");
+    ctx.use(ShellLiveDepNotes)(`live-dep-note@g${generation}`);
+    const { inner } = await ctx.use(ShellInnerDepLoader);
+    return { liveDep: `live-dep@g${generation}`, inner };
+  },
+);
+
+export const ShellHoleyDepLoader = createLoader(async (ctx) => {
+  const generation = liveDepGeneration(ctx.searchParams.get("probe") ?? "");
+  ctx.use(ShellLiveDepNotes)(`holey-note@g${generation}`);
+  const { liveDep } = await ctx.use(ShellLiveDepLoader);
+  return {
+    holey: `holey-${liveDep}`,
+    later: Promise.resolve("holey-later"),
+  };
+});
 
 // Snapshot SIZE-CAP fixture (issue #651): a default-profile cached value baked
 // into the shell above loading(). The route caps ppr.maxSnapshotBytes far below
@@ -37,6 +146,127 @@ export async function getCapStamp(ctx: HandlerContext): Promise<string> {
   capStampExecutions += 1;
   return `cap-stamp-${capStampExecutions}`;
 }
+
+// ssr:false BAKE-lane fixtures. The flagged loader executes at
+// capture: its settled top-level return is SHELL material (frozen, snapshot-
+// pinned for HIT parity), while the NESTED promise in the same return stays a
+// live hole (nested-thenable mask — shape is the liveness declaration). The
+// monotonic seqs make frozen-vs-live observable: the baked seq must NOT
+// advance across HITs while the nested/sibling seqs must.
+let bakedNavSeq = 0;
+let bakedNestedSeq = 0;
+
+export interface ShellBakedNavData {
+  title: string;
+  slow: Promise<string>;
+}
+
+export const ShellBakedNavLoader = createLoader(
+  async (): Promise<ShellBakedNavData> => {
+    bakedNavSeq += 1;
+    const nested = (async () => {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      bakedNestedSeq += 1;
+      return `nested-live-${bakedNestedSeq}`;
+    })();
+    return { title: `baked-nav-${bakedNavSeq}`, slow: nested };
+  },
+);
+
+let bakedSiblingSeq = 0;
+
+/** Plain (unflagged) sibling: live at capture, fresh per request. */
+export const ShellBakedSiblingLoader = createLoader(async () => {
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  bakedSiblingSeq += 1;
+  return `sibling-live-${bakedSiblingSeq}`;
+});
+
+let bakedOnlySeq = 0;
+
+/**
+ * The loading()-optional pin: a route whose ONLY loader is flagged needs no
+ * loading() at all — nothing masks at capture, the shell captures complete.
+ */
+export const ShellBakedOnlyLoader = createLoader(async () => {
+  bakedOnlySeq += 1;
+  return `baked-only-${bakedOnlySeq}`;
+});
+
+/** How many times ShellBakedOnlyLoader's body ran (a HIT runs it 0 times). */
+export function shellBakedOnlyRuns(): number {
+  return bakedOnlySeq;
+}
+
+// Issue #888 fixture: a string handle pushed by an unflagged loader that an
+// ssr:false loader awaits. Both run at capture and neither runs on a HIT (the
+// promise-free ssr:false loader is served from the shell), so the doc record
+// keeps the push and the HIT restores it once. Default (identity) collect: a
+// duplicate push shows up as a second value.
+export const ShellWarnings = createHandle<string>();
+
+export const ShellStockLoader = createLoader(async (ctx) => {
+  ctx.use(ShellWarnings)("Low stock");
+  return { lowStock: true };
+});
+
+export const ShellStorefrontLoader = createLoader(async (ctx) => {
+  const stock = await ctx.use(ShellStockLoader);
+  return { lowStock: stock.lowStock };
+});
+
+// Issue #929 fixture: the ssr:false loader pushes the string handle itself.
+// The doc record keeps the push (the prelude rendered it) and the HIT, which
+// does not run the promise-free loader, restores it once.
+export const ShellRestockLoader = createLoader(async (ctx) => {
+  ctx.use(ShellWarnings)("Restock soon");
+  return { restock: true };
+});
+
+// Issue #927 fixture: a bake-lane value Flight encodes cleanly on its first
+// pass and with an error row on its second. The capture renders one loader
+// run's value (pass 1), then the snapshot re-encodes it (pass 2); the
+// foreground render encodes its own run once. A Map is a leaf to the capture's
+// mask and elide walks, so both passes iterate this instance. Fails once per
+// ?probe=, so a later capture stores.
+const flightErrorProbes = new Set<string>();
+
+/**
+ * Most passes any one ShellFlightErrorLoader value took, per ?probe=. The
+ * capture's value takes 2; any other count means the pass-2 failure no longer
+ * lands on the snapshot encode.
+ */
+export const shellFlightErrorPasses: Map<string, number> = new Map();
+
+class ShellRelatedEntries extends Map<string, unknown> {
+  private passes = 0;
+
+  constructor(private readonly probe: string) {
+    super([["related", "related ok"]]);
+  }
+
+  override *[Symbol.iterator](): MapIterator<[string, unknown]> {
+    this.passes += 1;
+    shellFlightErrorPasses.set(
+      this.probe,
+      Math.max(shellFlightErrorPasses.get(this.probe) ?? 0, this.passes),
+    );
+    if (this.passes === 2 && !flightErrorProbes.has(this.probe)) {
+      flightErrorProbes.add(this.probe);
+      const failed = Promise.reject(
+        new Error(`related upstream down (probe=${this.probe})`),
+      );
+      failed.catch(() => {});
+      yield ["related", failed];
+      return;
+    }
+    yield* super.entries();
+  }
+}
+
+export const ShellFlightErrorLoader = createLoader(async (ctx) => ({
+  entries: new ShellRelatedEntries(ctx.url.searchParams.get("probe") ?? ""),
+}));
 
 // Live hole under the frozen PPR shell (docs/design/ppr-shell-resume.md). ~400ms
 // so the shell prelude clearly beats the hole; seq advances on every request to
@@ -95,17 +325,13 @@ export const ShellStreamLoader = createLoader(
   },
 );
 
-// Handles contract fixture ("nesting = liveness"). The shell layout pushes TWO
-// entries into this handle:
-//   1. a TOP-LEVEL promise (the pushed value IS a promise, resolving after a real
-//      ~150ms latency) — resolvedHandleStream awaits it before the payload's
-//      handles row emits, and the capture gate is HELD open for the same await,
-//      so the resolved value is BAKED into the shell prelude;
-//   2. a CONTAINER carrying a NESTED promise ({ kind, pending }) — the shallow
-//      isThenable resolution passes the container through verbatim, so the nested
-//      promise streams to the consumer, who must Suspense it — a HOLE.
-// Values are DETERMINISTIC (no seq): baked shell material must not drift between
-// the captured prelude and the fresh hydration payload.
+// Handle-push fixture. The shell layout (a handler) pushes a TOP-LEVEL promise
+// (~150ms) and two CONTAINERS carrying NESTED promises ({ kind, pending }): a
+// slow one (~250ms) and one already resolved. Handler pushes are handler
+// output: the capture waits for all three before the doc record encodes the
+// handles, so every value is BAKED into the prelude and replayed on a HIT.
+// (A DSL loader's push keeps its nested promises live.) Values are
+// DETERMINISTIC (no seq).
 export interface ShellHandleItem {
   kind: "baked" | "nested" | "nested-fast";
   value?: string;
@@ -115,6 +341,27 @@ export interface ShellHandleItem {
 export const ShellHandles = createHandle<ShellHandleItem, ShellHandleItem[]>(
   (values) => values.flat(),
 );
+
+export interface ShellStaleReplayHandleValue {
+  yo?: string;
+  asd?: string;
+}
+
+export const ShellStaleReplayHandle =
+  createHandle<ShellStaleReplayHandleValue>();
+
+let shellStaleReplayExecutions = 0;
+
+export function makeShellStaleReplayData(id: string): Promise<string> {
+  shellStaleReplayExecutions += 1;
+  const execution = shellStaleReplayExecutions;
+  return new Promise((resolve) =>
+    setTimeout(
+      () => resolve(`shell-stale-${id}-execution-${execution}`),
+      1_500,
+    ),
+  );
+}
 
 const SHELL_HANDLE_BAKED_DELAY_MS = 150;
 const SHELL_HANDLE_NESTED_DELAY_MS = 250;
@@ -129,12 +376,7 @@ export function makeBakedHandlePush(): Promise<ShellHandleItem> {
   );
 }
 
-/**
- * Container push whose nested promise is ALREADY RESOLVED — the extreme of the
- * settle race. Shape is the liveness declaration: this must hole at capture
- * exactly like the slow nested push above, never bake its value into the
- * shared shell.
- */
+/** Container push whose nested promise is already resolved: baked. */
 export function makeNestedFastHandlePush(): ShellHandleItem {
   return {
     kind: "nested-fast",
@@ -142,7 +384,7 @@ export function makeNestedFastHandlePush(): ShellHandleItem {
   };
 }
 
-/** Container push with a nested promise: the nested value stays a hole. */
+/** Container push with a slow nested promise: the capture waits, baked. */
 export function makeNestedHandlePush(): ShellHandleItem {
   return {
     kind: "nested",
@@ -155,11 +397,10 @@ export function makeNestedHandlePush(): ShellHandleItem {
   };
 }
 
-// Physics fixture: a handler-created promise passed as a PROP to a client
-// component that use()s it under its own <Suspense>. Genuinely pending real I/O
-// (~250ms) cannot win the capture's task-quantized quiet window, so the boundary
-// postpones — a HOLE by physics, not by registration. Deterministic value (no
-// drift; the resumed HTML and hydration payload come from the same tail render).
+// Handler-promise fixture: a handler-created promise (~250ms) passed as a PROP
+// to a client component that use()s it under its own <Suspense>. Handler
+// output: the capture waits for it and bakes the value into the prelude; a
+// HIT replays it (the "PHYSICS" token is historical: this used to be a hole).
 const SHELL_PHYSICS_DELAY_MS = 250;
 
 export function makePhysicsPromise(): Promise<string> {
@@ -222,8 +463,8 @@ export const ShellBadgeLoader = createLoader(async (): Promise<string> => {
   return `badge-${shellBadgeSeq}`;
 });
 
-// Identity-guard negative (loader-container-bake): a BAKE-lane loader (no
-// loading() on its entry) that reads cookies(). During capture the identity
+// Identity-guard negative (loader-container-bake): a BAKE-lane loader
+// (registered with ssr: false) that reads cookies(). During capture the identity
 // guard throws inside the loader, wrapLoaderPromise swallows it into error UI,
 // and the guard's context flag makes the capture REFUSE — deterministically,
 // once-per-key warned, MISS forever. On axis 1 (and every serve) the same read
@@ -233,43 +474,36 @@ export const ShellIdentityLoader = createLoader(async (): Promise<string> => {
   return cookies().get("session")?.value ?? "anon-visitor";
 });
 
-// Consumption-lane-rule fixtures (issue #672 / #674). Handler consumption
-// (`await ctx.use(...)`) EXECUTES during PPR capture with its cookies() read
-// EXEMPT from the identity guard (mirroring cache() purity semantics) — no
-// refusal, the route captures. WHERE the value lands then depends on what
-// shields it:
+// Handler consumption fixtures (issue #672 / #674). A loader a handler
+// awaits (`await ctx.use(...)`) EXECUTES during PPR capture and its value is
+// handler output: baked into the shell and replayed on every HIT. seq
+// advances per execution, so a frozen seq pins the replay.
 //
 // - ShellSrvBadgeLoader is ALSO registered as a live-lane segment
-//   (loader()+loading() on the @srvBadge parallel). The segment lane is
-//   unchanged by the rule: its masked loaderData pins the slot's
-//   LoaderBoundary, so the slot stays a LIVE hole (fallback frozen, value
-//   fresh per serve) and the handler-computed copy is discarded with the
-//   postponed subtree. seq advances per execution to pin liveness.
-//   ~150ms delay mirrors ShellBadgeLoader.
+//   (loader()+loading() on the @srvBadge parallel): the slot handler renders
+//   its own awaited copy (frozen, replayed) next to a useLoader read of the
+//   same loader (the live lane: the slot's LoaderBoundary postpones at
+//   capture and the loader runs per HIT). ~150ms delay mirrors
+//   ShellBadgeLoader.
 // - ShellSrvChipLoader is UNREGISTERED (no loader() anywhere): consumed by
-//   the LAYOUT handler and rendered straight into shell material, so the
-//   capture-time value — seq AND cookie identity — BAKES into the shared
-//   prelude, identical across HITs and visitors. The frozen identity is the
-//   rule's documented footgun; client-side useLoader is the live lane.
+//   the LAYOUT handler and rendered straight into shell material.
+// Neither reads cookies(): an identity read in a handler-awaited loader
+// refuses the capture (ShellIdentityLoader on /shell-cache/identity-use).
 const SHELL_SRV_BADGE_DELAY_MS = 150;
 
 let shellSrvBadgeSeq = 0;
 
 export const ShellSrvBadgeLoader = createLoader(async (): Promise<string> => {
-  const { cookies } = await import("@rangojs/router");
-  const visitor = cookies().get("srv_visitor")?.value ?? "anon";
   await new Promise((resolve) => setTimeout(resolve, SHELL_SRV_BADGE_DELAY_MS));
   shellSrvBadgeSeq += 1;
-  return `srv-badge-${shellSrvBadgeSeq}-${visitor}`;
+  return `srv-badge-${shellSrvBadgeSeq}`;
 });
 
 let shellSrvChipSeq = 0;
 
 export const ShellSrvChipLoader = createLoader(async (): Promise<string> => {
-  const { cookies } = await import("@rangojs/router");
-  const visitor = cookies().get("srv_visitor")?.value ?? "anon";
   shellSrvChipSeq += 1;
-  return `srv-chip-${shellSrvChipSeq}-${visitor}`;
+  return `srv-chip-${shellSrvChipSeq}`;
 });
 
 // Shell fast-path EXECUTION MATRIX fixture (docs/design/shell-fast-path.md).
@@ -428,4 +662,27 @@ export const ShellBakeHoleLoader = createLoader(
     shellBakeHoleSeq += 1;
     return { price: 42, seq: shellBakeHoleSeq, loadedAt: Date.now() };
   },
+);
+
+// Client-managed paging (issue #986): /shell-cache/load-more renders the page
+// its URL names, and its "Load more" button appends the next page fetched
+// through this loader, then soft-navigates to ?page=N.
+export function shellLoadMoreItems(page: number): string[] {
+  return [1, 2, 3].map((item) => `item-${page}-${item}`);
+}
+
+export const ShellLoadMoreLoader = createLoader(
+  async (ctx): Promise<{ items: string[] }> => ({
+    items: shellLoadMoreItems(Number(ctx.params.page ?? "1")),
+  }),
+  true,
+);
+
+// The page the URL names, read on every request (ssr: false bakes it into a
+// document shell only). Its data reaches the list in the same commit as the
+// navigation's segments, so the list shows page N once ?page=N has rendered.
+export const ShellLoadMorePageLoader = createLoader(
+  async (ctx): Promise<{ page: number }> => ({
+    page: Number(ctx.searchParams.get("page") ?? "1"),
+  }),
 );

@@ -8,10 +8,10 @@ argument-hint: [layout|route|parallel|intercept]
 
 `transition()` opts a route (or group of routes) into transition-driven navigation. It does two things, and you choose how far to go:
 
-1. **`startTransition` (the foundation).** The navigation commit is driven through React's `startTransition`. That holds the previous content across a same-route navigation (stale-while-revalidate — no loading-skeleton flash) and is the **precondition** for any view-transition animation. Works on **all** React versions.
-2. **`<ViewTransition>` (the animation, layered on top).** On experimental React, rango also wraps the segment content in React's `<ViewTransition>` so the swap cross-fades/morphs. This is the only part that needs experimental React; pass `viewTransition: false` to keep #1 without it (and place your own `<ViewTransition>` where you want it).
+1. **`startTransition` (the foundation).** The navigation commit is driven through React's `startTransition`. That holds the previous content across a same-route navigation (stale-while-revalidate — no loading-skeleton flash) and is the **precondition** for any view-transition animation. Works on **all** React versions. While the hold lasts, `useLoader` readers of the loaders being re-run report `isLoading: true` — keyed by loader family (`$$id`), not by segment; see the hooks skill, `data.md`.
+2. **`<ViewTransition>` (the animation, layered on top).** On React 19.3+ (or an experimental build), rango also wraps the segment content in React's `<ViewTransition>` so the swap cross-fades/morphs. This is the only part that needs 19.3+; pass `viewTransition: false` to keep #1 without it (and place your own `<ViewTransition>` where you want it).
 
-> The `<ViewTransition>` layer requires React experimental (the build that exports `<ViewTransition>` / `addTransitionType`). On stable React that layer is a no-op — but the `startTransition` driving (content hold) still applies.
+> The `<ViewTransition>` layer requires a React that exports `<ViewTransition>` / `addTransitionType`: stable 19.3+ or an experimental build. Rango feature-detects it; on React 19.2 that layer is a no-op — but the `startTransition` driving (content hold) still applies.
 
 ## Purpose: `startTransition` vs `<ViewTransition>`
 
@@ -24,11 +24,11 @@ These are two **independent** mechanisms. `startTransition` controls _fallbacks_
 
 The bottom-left cell is the key constraint: a view transition cannot exist without a `startTransition`. So once you reach for `transition()`, the only real choice is _startTransition_ vs _startTransition + ViewTransition_:
 
-| What you want                          | Config                                              | Effect                                                                                                 |
-| -------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| nothing (default nav)                  | no `transition()`                                   | remount + skeleton on param change                                                                     |
-| `startTransition` only                 | `transition({ viewTransition: false })`             | hold content; place your own `<ViewTransition>` where you want it                                      |
-| `startTransition` + `<ViewTransition>` | `transition({})` / `transition({ enter, exit, … })` | hold + router cross-fade (experimental React; on stable it degrades to the `startTransition`-only row) |
+| What you want                          | Config                                              | Effect                                                                                                        |
+| -------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| nothing (default nav)                  | no `transition()`                                   | remount + skeleton on param change                                                                            |
+| `startTransition` only                 | `transition({ viewTransition: false })`             | hold content; place your own `<ViewTransition>` where you want it                                             |
+| `startTransition` + `<ViewTransition>` | `transition({})` / `transition({ enter, exit, … })` | hold + router cross-fade (React 19.3+ or experimental; on 19.2 it degrades to the `startTransition`-only row) |
 
 `createRouter({ viewTransition: "auto" \| false })` sets the app-wide default for the third row; a per-segment `viewTransition` wins. See [Opting out of the router boundary](#opting-out-of-the-router-boundary-place-your-own-viewtransition) for the full opt-out story.
 
@@ -52,7 +52,7 @@ A simple cross-fade between pages that share a layout:
 import { urls } from "@rangojs/router";
 import { Outlet } from "@rangojs/router/client";
 
-function ShopShell({ children }: { children: React.ReactNode }) {
+function ShopShell() {
   return (
     <div className="shop">
       <NavBar />
@@ -74,23 +74,34 @@ export const urlpatterns = urls(({ layout, path, transition }) => [
 ]);
 ```
 
+The config values are React `<ViewTransition>` classes: React applies them as
+`view-transition-class`, so the CSS targets the view-transition
+pseudo-elements by class:
+
 ```css
-::view-transition-old(root) {
-  animation: fade-out 200ms ease both;
+::view-transition-old(.page-fade) {
+  animation: 200ms ease both fade-out;
 }
-::view-transition-new(root) {
-  animation: fade-in 200ms ease both;
+::view-transition-new(.page-fade) {
+  animation: 200ms ease both fade-in;
 }
-.page-fade {
-  /* class hooks per phase */
+@keyframes fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
 }
 ```
 
-Navigating between `/`, `/about`, and `/contact` morphs the `<Outlet />` content with the `page-fade` class. The shell (NavBar, Footer) does not morph because the wrap sits inside the shell, not around it.
+Navigating between `/`, `/about`, and `/contact` cross-fades the `<Outlet />` content with the `page-fade` class. The shell (NavBar, Footer) does not animate because the wrap sits inside the shell, not around it.
 
 ## Direction-aware transitions
 
-`ViewTransitionClass` accepts an object form keyed by transition type. Rango tags forward navigations as `"navigation"` and back/forward popstate as `"navigation-back"`:
+`ViewTransitionClass` accepts an object form keyed by transition type. Rango tags forward navigations as `"navigation"` and back/forward navigations restored from the client cache as `"navigation-back"` (a back/forward that has to refetch from the server is tagged `"navigation"`):
 
 ```tsx
 layout(<ShopShell />, () => [
@@ -106,12 +117,19 @@ layout(<ShopShell />, () => [
 ```
 
 ```css
-.slide-left {
-  animation-name: slide-from-right;
+::view-transition-old(.slide-left) {
+  animation: 250ms ease both slide-out-to-left;
 }
-.slide-right {
-  animation-name: slide-from-left;
+::view-transition-new(.slide-left) {
+  animation: 250ms ease both slide-in-from-right;
 }
+::view-transition-old(.slide-right) {
+  animation: 250ms ease both slide-out-to-right;
+}
+::view-transition-new(.slide-right) {
+  animation: 250ms ease both slide-in-from-left;
+}
+/* @keyframes slide-out-to-left, slide-in-from-right, ... defined as usual */
 ```
 
 > Note: `"action"` is only tagged on partial-update action/refetch paths today; ordinary `server-action-bridge` commits (`useAction` / `useActionState` revalidations) are not currently tagged. Don't rely on an `action`-keyed class to fire on every form action.
@@ -147,8 +165,8 @@ function GalleryShell() {
       <main>
         <Outlet /> {/* page transition lands here */}
       </main>
-      <ParallelOutlet name="@modal" />{" "}
-      {/* modal mounts here — sibling of the VT */}
+      {/* modal mounts here, as a sibling of the VT */}
+      <ParallelOutlet name="@modal" />
     </>
   );
 }
@@ -209,9 +227,8 @@ interface TransitionConfig {
   default?: string | Record<string, string>; // fallback for any phase
   name?: string; // explicit view-transition-name
   viewTransition?: "auto" | false; // boundary opt-out (see below)
-  // Conditional gate, evaluated server-side AFTER the route handler. Return
-  // false to drop this transition for the request, so the navigation streams its
-  // loading() fallback instead of holding. See the gate section below.
+  // Browser predicate, once per navigation: false commits it urgently with no
+  // view transition. See "Conditional transitions".
   when?: (ctx: TransitionWhenContext) => boolean;
 }
 ```
@@ -223,42 +240,162 @@ interface TransitionConfig {
 
 ## Conditional transitions (`when`)
 
-`transition({ when })` gates the hold per request. The predicate runs **server-side, AFTER the route handler** and outside any cache scope; return `false` to drop this segment's transition for the request (the navigation streams its `loading()` fallback instead of holding).
+`transition({ when })` decides, per navigation, whether the navigation holds.
+It is a **browser** predicate: it runs once per navigation, at the first
+commit that presents the destination, and never on the server, on the
+document load, or on progressive-enhancement paths. Return `false` and the
+navigation commits urgently: the `loading()` skeleton streams and no view
+transition runs.
 
-Its context mirrors the `revalidate()` predicate args — the same navigation/action metadata — plus `get`/`env` for post-handler reads:
+Write it inline in `urls()`. The Vite plugin hoists the literal into a
+`"use client"` module, and the route carries it to the browser as a client
+reference. The hoist applies to the router's `transition`: the `urls()`
+helper (renamed or not) or `transition` imported from `@rangojs/router`,
+with the function written directly as the `when` value (an arrow, a
+`function`, or a `when() {}` method; `as` / `satisfies` wrappers are
+fine). A config built elsewhere, such as `transition(cfg)`, is not hoisted:
+export that predicate from a `"use client"` module instead.
 
 ```ts
-import type { TransitionWhenContext } from "@rangojs/router";
+// Hold unless the navigation leaves the "b" tab (the navigation SOURCE):
+transition({ when: ({ from }) => from.params.tab !== "b" });
 
-// Hold only when the handler marked this request (handler sets, gate reads):
-transition({ when: (ctx) => ctx.get(KeepScroll) === true });
-
-// Hold only when arriving from a specific page (the navigation SOURCE):
+// Hold only for forward navigations inside /list:
 transition({
-  when: ({ currentUrl }) => currentUrl?.pathname.startsWith("/list") === true,
+  when: ({ kind, to }) => kind !== "pop" && to.url.pathname.startsWith("/list"),
 });
-transition({ when: ({ fromRouteName }) => fromRouteName === "products.list" });
 
 // Hold only after a specific action revalidated the route:
-transition({
-  when: ({ actionId }) => actionId === "src/actions/cart.ts#addToCart",
-});
+transition({ when: ({ isAction }) => isAction(addToCart) });
 ```
 
-| field                                                  | meaning                                      | populated                                                                             |
-| ------------------------------------------------------ | -------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `currentUrl` / `currentParams` / `fromRouteName`       | navigation **source**                        | soft nav + action-success; `undefined` on initial full load and action/PE error paths |
-| `nextUrl` / `nextParams`                               | navigation **target**                        | always                                                                                |
-| `toRouteName` (and `fromRouteName`)                    | route **name**                               | when the route is named (undefined for unnamed/auto-generated)                        |
-| `actionId` / `actionUrl` / `actionResult` / `formData` | the server action that triggered this render | action-triggered renders only                                                         |
-| `method`                                               | `"GET"` (nav) / `"POST"` (action)            | always                                                                                |
-| `get` / `env`                                          | read handler/middleware vars + app env       | always                                                                                |
+For a predicate you share between routes or unit-test, export it from a
+`"use client"` module and import it into the urls file:
 
-A predicate that throws is reported to `router.onError` (phase `"rendering"`) and treated as no-hold (conservative).
+```ts
+// src/transitions.ts
+"use client";
+import type { TransitionWhenContext } from "@rangojs/router";
+import { Slide } from "./location-states.js";
 
-**Same-route content-holds need the transition present on the FIRST render.** The same-route hold works by giving the route a param-agnostic key so a param change reconciles instead of remounting — but that key is established when the route first mounts. A source gate that returns `false` on the initial full load (where `currentUrl`/`currentParams`/`fromRouteName` are undefined) drops the transition before the route mounts, so the route mounts _outside_ a transition scope and **every** later same-route param nav remounts (flashing the skeleton) regardless of what the gate decides on those navs. Write source gates so they hold when there is no source — e.g. `({ currentParams }) => currentParams?.tab !== "raw"` (true on the initial load) rather than `=== "details"` (false on the initial load) — when the same-route content-hold must engage. This only affects same-route param navigations; action-only or cross-route gating is unaffected (no shared param key is in play).
+export function slideWhen({ to }: TransitionWhenContext): boolean {
+  return Slide.read(to)?.animate !== false;
+}
 
-**Prefetch / cache caveat.** The gate runs during resolution, so a **prefetched** navigation decides at prefetch time — `currentUrl`/`currentParams`/`fromRouteName` reflect the page the prefetch fired from, not necessarily the click-time source — and a `cache()`/prerender hit replays the stored transition without re-running the predicate. A source-sensitive gate can therefore be frozen to prefetch/store-time state. This covers ~99% of navigations; if yours must reflect the exact click-time source, source-scope the prefetch (`<Link prefetchKey=":source">`) and don't `cache()` that segment.
+// src/urls.tsx
+import { slideWhen } from "./transitions.js";
+path("/photos/:id", PhotoPage, { name: "photo" }, () => [
+  transition({ default: "slide", when: slideWhen }),
+]);
+
+// A Link that opts this navigation out through location state:
+<Link to="/photos/2" state={[Slide({ animate: false })]}>Next</Link>;
+```
+
+Predicate modules (a `"use client"` export, or a hoisted inline literal) load
+with the client entry chunk, because the router must be able to call them at
+the first navigation. Keep them small: type imports and location-state
+definitions only, and nothing that touches `window` at module scope (the
+module is also evaluated during SSR).
+
+The rule is "a predicate runs where its effect lands": the hold is a browser
+commit decision, so the predicate runs in the browser. An inline literal may
+reference module-level imports only when they are client-safe (they are
+re-emitted into the hoisted module); a free server binding (a `const` in the
+urls file, a handler variable, a component used as JSX) or a server-only
+import is a build error that names it, and so are `import()`, `import.meta`
+other than `import.meta.env`, `this` / `arguments` of the enclosing
+function, and a `get when()` accessor. A server function passed by name, or a non-function, fails dev
+startup, the build and HMR re-discovery with the route name and pattern.
+
+### Context
+
+```ts
+interface RouteLocation {
+  url: URL;
+  params: Record<string, string>;
+  routeName: string | undefined;
+  state: unknown; // the entry's history.state; read slots with Def.read(location)
+}
+
+interface TransitionWhenContext {
+  kind: "push" | "replace" | "pop" | "action" | "revalidate";
+  from: RouteLocation; // the committed location being left
+  to: RouteLocation; // the destination; === from for "action" and "revalidate"
+  isAction: IsActionFn; // the revalidate() matcher; false off-action
+  action?: { id; formData; result; error }; // kind "action" only
+}
+```
+
+| `kind`         | started by                                           | `to.state`                                                                                                                         |
+| -------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `"push"`       | `Link`, `router.push()`                              | the pushed state plus server `ctx.setLocationState()` (handler, middleware, action)                                                |
+| `"replace"`    | `Link replace`, `router.replace()`                   | same as push                                                                                                                       |
+| `"pop"`        | back/forward                                         | the target entry's stored state                                                                                                    |
+| `"action"`     | a server action's revalidation, error boundary incl. | the current entry's state plus action-set state (none on the error lane: an error response sets no location state); `action.*` set |
+| `"revalidate"` | `router.refresh()`, a stale entry's revalidation     | the current entry's state                                                                                                          |
+
+- `Def.read(location)` reads a location-state slot from `from` or `to`
+  without clearing flash state.
+- Middleware-set location state reaches `to.state` on a PPR replay HIT too
+  (middleware runs on every HIT); a route handler's does not, because a HIT
+  runs no handler. Set it from middleware when a `ppr` route decides on it.
+- A `clientUrls()` cross-route navigation decides at its optimistic swap,
+  before the server responds, so its `to.state` holds only the pushed
+  state.
+- On `"pop"`, `from.state` and `from.routeName` come from the router's
+  per-history-entry memory; after a reload they are `undefined`.
+- `get()`, `env` and handler state do not exist in the browser.
+
+### Combination and `false`
+
+- The navigation holds only when **every** committed segment's `when`
+  returns true, kept or re-sent: a layout the navigation keeps still gates
+  it ([#989](https://github.com/rangojs/rango/issues/989)). The same function
+  on several segments is called once.
+- `false` makes the whole navigation urgent, so no segment animates. Every
+  `<ViewTransition>` stays in the tree with its classes set to `"none"`, so a
+  same-route navigation that flips `true -> false -> true` never remounts
+  the route or loses its state
+  ([#995](https://github.com/rangojs/rango/issues/995)).
+- That holds for every kind, actions and revalidations included: a gated-off
+  action or revalidation commit is urgent too, so a segment it re-renders
+  streams its `loading()`. The router commits an action's result after the
+  response arrives, outside the transition React opens for a form action or
+  `useActionState` call, so React does not hold it either.
+- A predicate that throws counts as `false` and is logged with
+  `console.error` (the conservative default: no hold).
+- Intercept (modal) commits skip the evaluation, including a back/forward
+  that opens or closes a modal.
+- A stale revalidation the user navigated away from before it landed is
+  discarded without calling the predicate.
+- Intercept `from` differs: while a modal is open, an intercept selector's
+  `from` is the page under the modal (see the intercept skill); here it is
+  always the location on screen.
+- In a `clientUrls()` group, `false` also opts a same-route navigation out of
+  the group's default hold.
+
+`kind` lines up with the class keys in "Direction-aware transitions": a
+`"pop"` restored from the history cache animates with `"navigation-back"`
+(a pop that refetches uses `"navigation"`); `"push"`, `"replace"` and a
+`router.refresh()` (`"revalidate"`) use `"navigation"`; a stale entry's
+revalidation (`"revalidate"`) and an action's refetch (`"action"`) use
+`"action"`. An action's own commit (`useActionState`, a form action) carries
+no transition type (see the note under "Direction-aware transitions").
+
+### Opting out per navigation
+
+`router.push(url, { transition: false })`, `router.replace(url, {
+transition: false })` and `<Link transition={false}>` present one
+navigation the way `when` returning `false` does, without calling any
+predicate. Back/forward, actions and revalidation have no per-navigation
+options and are unaffected.
+
+```tsx
+<Link to="/photos/2" transition={false}>
+  Jump without the slide
+</Link>
+```
 
 ## Opting out of the router boundary (place your own `<ViewTransition>`)
 
@@ -276,7 +413,10 @@ urls(({ path, transition }) => [
   ]),
 ]);
 
-// ProductPage renders the boundary itself, exactly where it's wanted:
+// ProductPage renders the boundary itself, exactly where it's wanted
+// (ViewTransition is exported by React 19.3+ and experimental builds):
+import { ViewTransition } from "react";
+
 function ProductPage() {
   return (
     <ViewTransition name="hero">
@@ -307,7 +447,7 @@ const router = createRouter<AppEnv>({ viewTransition: false });
 | `transition({ viewTransition: false })`  | `"auto"`                | no wrap (per-route wins) | **ST only** |
 | `transition({ viewTransition: false })`  | `false`                 | no wrap                  | ST only     |
 
-On stable React the "VT" column is always a no-op (there is no `<ViewTransition>`), so every row collapses to its `startTransition`-only behavior there.
+On React 19.2 (no `<ViewTransition>` export) the "VT" column is a no-op, so every row collapses to its `startTransition`-only behavior there.
 
 | Config                                               | Router boundary  | startTransition driving (no skeleton flash) | Your own `<ViewTransition name>`   |
 | ---------------------------------------------------- | ---------------- | ------------------------------------------- | ---------------------------------- |
@@ -316,7 +456,31 @@ On stable React the "VT" column is always a no-op (there is no `<ViewTransition>
 | `transition({ viewTransition: false })`              | none             | yes                                         | fires alone                        |
 | global `viewTransition: false`, route `transition()` | none             | yes                                         | fires alone                        |
 
-> On **stable** React there is no `<ViewTransition>` at all, so `viewTransition: false` is visually a no-op there — but the startTransition driving and content-hold still apply, identical to `transition({})`.
+> On React 19.2 there is no `<ViewTransition>` at all, so `viewTransition: false` is visually a no-op there — but the startTransition driving and content-hold still apply, identical to `transition({})`.
+
+## Testing a transition() route
+
+On React 19.3+ a transition commit briefly keeps the exiting `<ViewTransition>`
+host in the DOM next to the entering one (hidden, carrying React's `vt-*`
+attributes) for a few hundred milliseconds. A strict Playwright locator on a
+test id that exists in both the old and the new view (same route, different
+params; a hard load followed by a revalidation commit) resolves to two elements
+during that window. Target the entering host, which is appended after the
+exiting one:
+
+```ts
+const page$ = page.getByTestId("feature-page").last();
+await expect(page$).toBeVisible();
+```
+
+Waiting for `toHaveCount(1)` first is not enough: the count passes through 1
+before the second host is inserted.
+
+Unit-test a `when` with `runTransitionWhen(when, { kind, from, to, action })`
+from `@rangojs/router/testing`, and a route's hold with `renderRoute`:
+`router.navigate()` decides with `kind: "push"`, `router.refresh()` with
+`kind: "revalidate"`. Pop, action and `clientUrls()` optimistic-swap
+decisions are e2e territory. See the testing skill, `predicates.md`.
 
 ## Recommendations
 

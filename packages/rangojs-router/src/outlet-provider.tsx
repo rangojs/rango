@@ -12,12 +12,18 @@ export function OutletProvider({
   parallel,
   segment,
   loaderData,
+  loaderStreams,
+  awaitedLoaderIds,
+  pending = false,
   children,
 }: {
   content: ReactNode;
   parallel?: ResolvedSegment[];
   segment?: ResolvedSegment;
   loaderData?: Record<string, any>;
+  loaderStreams?: Record<string, unknown>;
+  awaitedLoaderIds?: readonly string[];
+  pending?: boolean;
   children: ReactNode;
 }): ReactNode {
   // Get parent context to enable walking up the chain for loader lookups
@@ -29,10 +35,22 @@ export function OutletProvider({
       parallel,
       segment,
       loaderData,
+      loaderStreams,
+      awaitedLoaderIds,
+      pending,
       parent: parentContext,
       loading: segment?.loading,
     }),
-    [content, parallel, segment, loaderData, parentContext],
+    [
+      content,
+      parallel,
+      segment,
+      loaderData,
+      loaderStreams,
+      awaitedLoaderIds,
+      pending,
+      parentContext,
+    ],
   );
 
   return (

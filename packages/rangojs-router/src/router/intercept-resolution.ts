@@ -26,8 +26,13 @@ import {
   warnOnStreamedResponse,
   buildLoaderErrorContext,
 } from "./segment-resolution.js";
+import { catchSegmentError } from "./segment-resolution/helpers.js";
+import { findInOrphans } from "./error-handling.js";
+import { resolveLoaderData } from "./segment-resolution/loader-cache.js";
 import type { SegmentResolutionDeps } from "./types.js";
 import { debugLog } from "./logging.js";
+import { getRouterContext } from "./router-context.js";
+import { runInSegmentTagScope } from "../cache/cache-tag.js";
 import {
   RangoContext,
   latchPprHeaderScopeForEntries,
@@ -59,6 +64,8 @@ function latchPprHeaderScopeForInterceptTarget(
  * Check if an intercept's when conditions are satisfied.
  * All when() functions must return true for the intercept to activate.
  * If no when() conditions are defined, the intercept always activates.
+ * A selector that throws yields the conservative default, no intercept (the
+ * full page renders), and is logged; it never fails the request.
  *
  * During action revalidation, when() is NOT evaluated.
  */
@@ -79,38 +86,115 @@ export function evaluateInterceptWhen(
     return false;
   }
 
-  return intercept.when.every((fn) => fn(selectorContext));
+  try {
+    return intercept.when.every((fn) => fn(selectorContext));
+  } catch (error) {
+    console.error(
+      `[rango] intercept({ when }) for route "${selectorContext.to.routeName ?? intercept.routeName}" (${intercept.slotName}) threw; rendering the full page without the intercept.`,
+      error,
+    );
+    return false;
+  }
 }
 
 /**
  * Find an intercept for the target route by walking up the entry chain.
  * Returns the first (innermost) matching intercept along with the entry that defines it.
  */
+/**
+ * Collect every intercept TARGET route name reachable from an origin entry —
+ * the same chain walk findInterceptForRoute() performs when this location is
+ * the navigation origin. Shipped in payload metadata so the browser-local
+ * clientUrls matcher can DECLINE its optimistic presentation for targets an
+ * intercept would claim (the committed result keeps the origin page + modal,
+ * so destination loading would flash and revert). Deliberately includes
+ * `when`-conditional intercepts: selectors need the live navigation context,
+ * so the browser stays conservative — worst case a non-intercepted navigation
+ * loses its optimistic loading, never the reverse.
+ */
+export function collectInterceptTargetNames(
+  fromEntry: EntryData | null,
+): string[] {
+  const names = new Set<string>();
+  // Tolerate partial entries (unit-test mocks omit the arrays); real
+  // registration always populates layout/intercept.
+  const add = (source: EntryData): undefined => {
+    for (const intercept of source.intercept ?? []) {
+      names.add(intercept.routeName);
+    }
+    return undefined;
+  };
+  let current: EntryData | null = fromEntry;
+  let prev: EntryData | null = null;
+  while (current) {
+    add(current);
+    findInOrphans(current, add, prev);
+    prev = current;
+    current = current.parent;
+  }
+  return [...names];
+}
+
 export function findInterceptForRoute(
   targetRouteKey: string,
   fromEntry: EntryData | null,
   selectorContext: InterceptSelectorContext | null = null,
   isAction: boolean = false,
 ): { intercept: InterceptEntry; entry: EntryData } | null {
-  let current: EntryData | null = fromEntry;
-
-  while (current) {
-    // current first, then its sibling layouts — same order as before.
-    for (const source of [current, ...current.layout]) {
-      for (const intercept of source.intercept) {
-        if (
-          intercept.routeName === targetRouteKey &&
-          evaluateInterceptWhen(intercept, selectorContext, isAction)
-        ) {
-          return { intercept, entry: source };
-        }
+  const match = (source: EntryData) => {
+    for (const intercept of source.intercept) {
+      if (
+        intercept.routeName === targetRouteKey &&
+        evaluateInterceptWhen(intercept, selectorContext, isAction)
+      ) {
+        return { intercept, entry: source };
       }
     }
+    return undefined;
+  };
+  let current: EntryData | null = fromEntry;
+  let prev: EntryData | null = null;
 
+  while (current) {
+    // current first, then its orphans (nested ones included) in render order.
+    const found = match(current) ?? findInOrphans(current, match, prev);
+    if (found) return found;
+
+    prev = current;
     current = current.parent;
   }
 
   return null;
+}
+
+/**
+ * An intercept handler's throw or notFound() renders the declaring entry's
+ * boundary as the slot component (catchSegmentError, as for route handlers on
+ * partial navigations: 500/404 status, onError "handler"). Responses and every
+ * error on the background re-render (skipMiddleware) rethrow, so a failed
+ * re-render aborts its cache write instead of storing the fallback.
+ */
+function renderInterceptHandlerError<TEnv>(
+  error: unknown,
+  parentEntry: EntryData,
+  params: Record<string, string>,
+  context: HandlerContext<any, TEnv>,
+  deps: SegmentResolutionDeps<TEnv>,
+  skipMiddleware: boolean | undefined,
+): ReactNode {
+  if (error instanceof Response || skipMiddleware) throw error;
+  return catchSegmentError(
+    error,
+    parentEntry,
+    params,
+    deps,
+    {
+      ...buildLoaderErrorContext(context),
+      isPartial: true,
+      telemetry: getRouterContext()?.telemetry,
+    },
+    context.pathname,
+  ).component;
 }
 
 /**
@@ -181,8 +265,8 @@ export async function resolveInterceptEntry<TEnv>(
   const loaderIds: string[] = [];
 
   for (let i = 0; i < interceptEntry.loader.length; i++) {
-    const { loader, revalidate: loaderRevalidateFns } =
-      interceptEntry.loader[i];
+    const loaderEntry = interceptEntry.loader[i];
+    const { loader, revalidate: loaderRevalidateFns } = loaderEntry;
     const segmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}D${i}.${loader.$$id}`;
 
     if (revalidationContext) {
@@ -244,7 +328,11 @@ export async function resolveInterceptEntry<TEnv>(
     loaderIds.push(loader.$$id);
     loaderPromises.push(
       deps.wrapLoaderPromise(
-        runInsideLoaderScope(() => context.use(loader)),
+        // The DSL binding's funnel, as for route loaders: a loader's own
+        // cache() applies here too.
+        runInsideLoaderScope(() =>
+          resolveLoaderData(loaderEntry, context, context.pathname),
+        ),
         parentEntry,
         segmentId,
         context.pathname,
@@ -255,26 +343,61 @@ export async function resolveInterceptEntry<TEnv>(
     );
   }
 
-  const handlerResult =
-    typeof interceptEntry.handler === "function"
-      ? handleHandlerResult(interceptEntry.handler(context))
-      : interceptEntry.handler;
+  // The intercept segment's id, and the tag scope its handler and layout
+  // record in (#957, cache-tag.ts runInSegmentTagScope).
+  const slotSegmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}`;
+  let handlerResult: ReactNode;
+  try {
+    const handler = interceptEntry.handler;
+    handlerResult =
+      typeof handler === "function"
+        ? handleHandlerResult(
+            runInSegmentTagScope(slotSegmentId, handler, context),
+          )
+        : handler;
+  } catch (error) {
+    handlerResult = renderInterceptHandlerError(
+      error,
+      parentEntry,
+      params,
+      context,
+      deps,
+      options?.skipMiddleware,
+    );
+  }
+  // Consumed only after the layout and loader awaits below; a rejection in that
+  // window would be an unhandledRejection (process crash on Node's default
+  // mode). The later await / trackHandler still observes it.
+  if (handlerResult instanceof Promise) handlerResult.catch(() => {});
 
   let layoutElement: ReactNode | undefined;
   if (interceptEntry.layout) {
-    if (typeof interceptEntry.layout === "function") {
-      const layoutResult = await interceptEntry.layout(context);
+    const layout = interceptEntry.layout;
+    if (typeof layout === "function") {
+      const layoutResult = await runInSegmentTagScope(
+        slotSegmentId,
+        layout,
+        context,
+      );
       if (layoutResult instanceof Response) {
         throw layoutResult;
       }
       layoutElement = layoutResult;
     } else {
-      layoutElement = interceptEntry.layout;
+      layoutElement = layout;
     }
   }
 
   let component: ReactNode;
   let loaderDataPromise: Promise<any[]> | any[] | undefined;
+  // A streamed (loading()) handler resolves after the 200 has started, so its
+  // rejection stays with the client; track it like route handlers do
+  // (onError report, handle-store completion).
+  const trackStreamedHandler = (promise: Promise<unknown>): ReactNode =>
+    deps.trackHandler(promise, {
+      segmentId: `${parentEntry.shortCode}.${interceptEntry.slotName}`,
+      segmentType: "parallel",
+    }) as ReactNode;
 
   if (interceptEntry.loading && loaderPromises.length > 0) {
     if (handlerResult instanceof Promise) {
@@ -285,24 +408,34 @@ export async function resolveInterceptEntry<TEnv>(
     }
     component =
       handlerResult instanceof Promise
-        ? handlerResult
+        ? trackStreamedHandler(handlerResult)
         : (Promise.resolve(handlerResult) as ReactNode);
     loaderDataPromise = Promise.all(loaderPromises);
-  } else if (loaderPromises.length > 0) {
-    loaderDataPromise = await Promise.all(loaderPromises);
-    component =
-      handlerResult instanceof Promise ? await handlerResult : handlerResult;
+  } else if (interceptEntry.loading && handlerResult instanceof Promise) {
+    component = trackStreamedHandler(handlerResult);
   } else {
-    component =
-      interceptEntry.loading && handlerResult instanceof Promise
-        ? handlerResult
-        : handlerResult instanceof Promise
-          ? await handlerResult
-          : handlerResult;
+    if (loaderPromises.length > 0) {
+      loaderDataPromise = await Promise.all(loaderPromises);
+    }
+    component = handlerResult;
+    if (handlerResult instanceof Promise) {
+      try {
+        component = await handlerResult;
+      } catch (error) {
+        component = renderInterceptHandlerError(
+          error,
+          parentEntry,
+          params,
+          context,
+          deps,
+          options?.skipMiddleware,
+        );
+      }
+    }
   }
 
   const interceptSegment = {
-    id: `${parentEntry.shortCode}.${interceptEntry.slotName}`,
+    id: slotSegmentId,
     namespace: `intercept:${interceptEntry.routeName}`,
     type: "parallel" as const,
     index: 0,
@@ -372,8 +505,8 @@ export async function resolveInterceptLoadersOnly<TEnv>(
   } = revalidationContext;
 
   for (let i = 0; i < interceptEntry.loader.length; i++) {
-    const { loader, revalidate: loaderRevalidateFns } =
-      interceptEntry.loader[i];
+    const loaderEntry = interceptEntry.loader[i];
+    const { loader, revalidate: loaderRevalidateFns } = loaderEntry;
     const segmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}D${i}.${loader.$$id}`;
 
     const interceptSegmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}`;
@@ -422,7 +555,11 @@ export async function resolveInterceptLoadersOnly<TEnv>(
     loaderIds.push(loader.$$id);
     loaderPromises.push(
       deps.wrapLoaderPromise(
-        runInsideLoaderScope(() => context.use(loader)),
+        // The DSL binding's funnel, as for route loaders: a loader's own
+        // cache() applies here too.
+        runInsideLoaderScope(() =>
+          resolveLoaderData(loaderEntry, context, context.pathname),
+        ),
         parentEntry,
         segmentId,
         context.pathname,

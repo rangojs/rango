@@ -21,30 +21,31 @@ const serializationError = new Error("Flight cannot serialize this value");
 
 // renderToReadableStream fires onError, mimicking a serialization failure on
 // the redirect payload. The stream contents are irrelevant for this test.
-vi.mock("@vitejs/plugin-rsc/rsc", () => ({
-  renderToReadableStream: (
-    _payload: unknown,
-    options?: { onError?: (error: unknown) => void },
-  ) => {
-    options?.onError?.(serializationError);
-    return new ReadableStream();
-  },
-  decodeReply: vi.fn(),
-  createTemporaryReferenceSet: vi.fn(() => new Set()),
-  loadServerAction: vi.fn(),
-  decodeAction: vi.fn(),
-  decodeFormState: vi.fn(),
-}));
+function pluginRscMock() {
+  return {
+    renderToReadableStream: (
+      _payload: unknown,
+      options?: { onError?: (error: unknown) => void },
+    ) => {
+      options?.onError?.(serializationError);
+      return new ReadableStream();
+    },
+    decodeReply: vi.fn(),
+    createTemporaryReferenceSet: vi.fn(() => new Set()),
+    loadServerAction: vi.fn(),
+    decodeAction: vi.fn(),
+    decodeFormState: vi.fn(),
+    createFromReadableStream: vi.fn(),
+    encodeReply: vi.fn(),
+    createClientTemporaryReferenceSet: vi.fn(() => ({})),
+  };
+}
+vi.mock("@vitejs/plugin-rsc/rsc/server", pluginRscMock);
+vi.mock("@vitejs/plugin-rsc/rsc/client", pluginRscMock);
 
-// Manifest is always "available" so the handler does not short-circuit.
-vi.mock("../../route-map-builder.js", () => ({
-  hasCachedManifest: () => true,
-  waitForManifestReady: () => null,
-  getRouterManifest: () => ({ home: "/" }),
-  getRouterTrie: () => null,
-  getGlobalRouteMap: () => ({ home: "/" }),
-  isRouteRootScoped: () => false,
-}));
+vi.mock("../../route-map-builder.js", async () =>
+  (await import("./handler-mock-factories.js")).routeMapBuilderMock(),
+);
 
 // Drive the partial-redirect short-circuit (handler.ts plan.mode === "redirect"
 // with _rsc_partial): resolveRoute returns a redirect so classifyRequest yields
@@ -56,23 +57,18 @@ vi.mock("../../router/route-snapshot.js", () => ({
   })),
 }));
 
-vi.mock("../nonce.js", () => ({
-  generateNonce: () => undefined,
-  nonce: Symbol("nonce"),
-}));
-
-vi.mock("../manifest-init.js", () => ({
-  buildRouterTrieFromUrlpatterns: vi.fn(),
-}));
-
-vi.mock("../../router/telemetry.js", () => ({
-  resolveSink: () => null,
-  safeEmit: vi.fn(),
-}));
-
-vi.mock("../../router/router-context.js", () => ({
-  getRouterContext: () => null,
-}));
+vi.mock("../nonce.js", async () =>
+  (await import("./handler-mock-factories.js")).nonceMock(),
+);
+vi.mock("../manifest-init.js", async () =>
+  (await import("./handler-mock-factories.js")).manifestInitMock(),
+);
+vi.mock("../../router/telemetry.js", async () =>
+  (await import("./handler-mock-factories.js")).telemetryMock(),
+);
+vi.mock("../../router/router-context.js", async () =>
+  (await import("./handler-mock-factories.js")).routerContextMock(),
+);
 
 import { createRSCHandler } from "../handler.js";
 import type { RangoInternal } from "../../router/router-interfaces.js";

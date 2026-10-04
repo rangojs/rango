@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
-import { createDocumentCacheMiddleware } from "../document-cache.js";
+import {
+  createDocumentCacheMiddleware,
+  type DocumentCacheOptions,
+} from "../document-cache.js";
 import type { MiddlewareContext } from "../../router/middleware.js";
 // The REAL cacheTag + runWithRequestContext (statically bound before the
 // per-test vi.doMock of request-context, so they use the real ALS). Lets a
@@ -132,10 +135,16 @@ describe("createDocumentCacheMiddleware", () => {
 
     // Mock getRequestContext to return our mock. runWithRequestContext is
     // exercised by the background document revalidation (it re-establishes the
-    // request-context ALS around next()); the mock just invokes the callback.
+    // request-context ALS around next()); delegate to the REAL implementation
+    // (statically imported above, real ALS) so ambient reads inside the
+    // background task — observePhase's _getRequestContext for the
+    // rango.background span, ctx.rendered() gating — resolve the threaded
+    // context exactly like production. _getRequestContext mirrors that for
+    // importers bound to this mocked registry.
     vi.doMock("../../server/request-context.js", () => ({
       getRequestContext: () => mockRequestCtx,
-      runWithRequestContext: <T>(_ctx: unknown, fn: () => T): T => fn(),
+      _getRequestContext: () => mockRequestCtx,
+      runWithRequestContext,
     }));
   });
 
@@ -569,6 +578,30 @@ describe("createDocumentCacheMiddleware", () => {
     it("should return stale response and revalidate in background", async () => {
       const { createDocumentCacheMiddleware } =
         await import("../document-cache.js");
+      const { resolveTracing } = await import("../../router/tracing.js");
+      const spans: Array<{
+        name: string;
+        attributes: Record<string, unknown>;
+      }> = [];
+      (mockRequestCtx as any)._tracing = resolveTracing({
+        runner: (name, fn) => {
+          const record = { name, attributes: {} as Record<string, unknown> };
+          spans.push(record);
+          return fn({
+            setAttribute(key, value) {
+              record.attributes[key] = value;
+            },
+          });
+        },
+      });
+
+      // Capture the background task WITHOUT invoking it (the shared harness
+      // mock runs it inline), so the foreground/background split is
+      // deterministic for the span assertions below.
+      const backgroundTasks: Array<() => Promise<void>> = [];
+      (mockRequestCtx as any).waitUntil = vi.fn((fn: () => Promise<void>) => {
+        backgroundTasks.push(fn);
+      });
 
       // Pre-populate cache with stale entry
       const staleResponse = new Response("Stale content", {
@@ -598,14 +631,20 @@ describe("createDocumentCacheMiddleware", () => {
       expect(response.headers.get("x-document-cache-status")).toBe("STALE");
       expect(await response.text()).toBe("Stale content");
 
-      // Background revalidation should be scheduled
+      // Background revalidation should be scheduled but not yet run: no
+      // rango.background span exists before the task executes.
       expect(mockRequestCtx.waitUntil).toHaveBeenCalledTimes(1);
+      expect(spans).toHaveLength(0);
 
       // Execute background task
-      await vi.runAllTimersAsync();
+      await backgroundTasks[0]!();
 
       // next() should have been called for revalidation
       expect(next).toHaveBeenCalledTimes(1);
+      expect(spans.map((span) => span.name)).toEqual(["rango.background"]);
+      expect(spans[0].attributes["rango.background.kind"]).toBe(
+        "document-revalidation",
+      );
     });
 
     it("reports a background revalidation write failure via _reportBackgroundError (captured requestCtx)", async () => {
@@ -647,6 +686,103 @@ describe("createDocumentCacheMiddleware", () => {
         writeError,
         "cache-write",
       );
+    });
+  });
+
+  describe("initialTheme (#978)", () => {
+    type ThemeMarks = {
+      _documentCacheRender?: boolean;
+      _payloadVisitorTheme?: boolean;
+    };
+    const marks = () => mockRequestCtx as ThemeMarks;
+
+    async function run(
+      options: DocumentCacheOptions = {},
+      visitorTheme = false,
+    ) {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+      // The render records the mark it ran under; payloadInitialTheme sets
+      // _payloadVisitorTheme when it emits a non-default visitor theme.
+      const seen: Array<boolean | undefined> = [];
+      const next = vi.fn(async () => {
+        seen.push(marks()._documentCacheRender);
+        if (visitorTheme) marks()._payloadVisitorTheme = true;
+        return new Response("doc", {
+          headers: { "Cache-Control": "s-maxage=60" },
+        });
+      });
+      const response = (await createDocumentCacheMiddleware(options)(
+        createMockMiddlewareContext("http://localhost/page"),
+        next,
+      )) as Response;
+      await vi.runAllTimersAsync();
+      return { response, seen };
+    }
+
+    it("marks the render of a MISS", async () => {
+      const { response, seen } = await run();
+
+      expect(seen).toEqual([true]);
+      expect(response.headers.get("x-document-cache-status")).toBe("MISS");
+      expect(mockStore.cache.size).toBe(1);
+    });
+
+    it("does not mark a render it skips", async () => {
+      const { seen } = await run({ isEnabled: () => false });
+
+      expect(seen).toEqual([undefined]);
+    });
+
+    it("does not store a MISS whose payload carries the visitor's theme", async () => {
+      const { response, seen } = await run({}, true);
+
+      expect(seen).toEqual([true]);
+      expect(response.headers.has("x-document-cache-status")).toBe(false);
+      expect(await response.text()).toBe("doc");
+      expect(mockStore.cache.size).toBe(0);
+    });
+
+    it("marks a stale refresh, and does not store it when its payload carries the visitor's theme", async () => {
+      mockStore.cache.set("localhost/page:html", {
+        response: new Response("stale", {
+          headers: { "Cache-Control": "s-maxage=60" },
+        }),
+        staleAt: Date.now() - 1000,
+      });
+      const putResponse = vi.spyOn(mockStore, "putResponse");
+
+      const { response, seen } = await run({}, true);
+
+      expect(response.headers.get("x-document-cache-status")).toBe("STALE");
+      expect(seen).toEqual([true]);
+      expect(putResponse).not.toHaveBeenCalled();
+    });
+
+    it("documentCacheStoresRender needs the mark and a response stub the cache stores", async () => {
+      const { documentCacheStoresRender } =
+        await import("../document-cache.js");
+      const sMaxAge = { "Cache-Control": "s-maxage=60" };
+      const stores = (mark: boolean | undefined, init: ResponseInit) =>
+        documentCacheStoresRender({
+          _documentCacheRender: mark,
+          res: new Response(null, init),
+        });
+
+      expect(stores(true, { headers: sMaxAge })).toBe(true);
+      expect(stores(undefined, { headers: sMaxAge })).toBe(false);
+      expect(stores(true, {})).toBe(false);
+      expect(
+        stores(true, { headers: { "Cache-Control": "private, s-maxage=60" } }),
+      ).toBe(false);
+      expect(stores(true, { status: 404, headers: sMaxAge })).toBe(false);
+      expect(
+        stores(true, { headers: { ...sMaxAge, "Set-Cookie": "a=1; Path=/" } }),
+      ).toBe(false);
     });
   });
 
@@ -928,6 +1064,99 @@ describe("createDocumentCacheMiddleware", () => {
       // Should be a MISS because different segments = different cache key
       expect(next2).toHaveBeenCalledTimes(1);
       expect(response2.headers.get("x-document-cache-status")).toBe("MISS");
+    });
+
+    it("separates fragment-capable partial responses from context-less clients", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+      const middleware = createDocumentCacheMiddleware();
+      const url =
+        "http://localhost/page?_rsc_partial=true&_rsc_segments=root,layout";
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      const capableCtx = createMockMiddlewareContext(url, {
+        headers: { "X-Rango-Fragment-Passthrough": "1" },
+      });
+      const capableNext = vi.fn().mockResolvedValue(
+        new Response("fragment envelopes", {
+          headers: { "Cache-Control": "s-maxage=60" },
+        }),
+      );
+      await middleware(capableCtx, capableNext);
+      await vi.runAllTimersAsync();
+
+      const probeCtx = createMockMiddlewareContext(url);
+      const probeNext = vi.fn().mockResolvedValue(
+        new Response("decoded elements", {
+          headers: { "Cache-Control": "s-maxage=60" },
+        }),
+      );
+      const probeResponse = (await middleware(probeCtx, probeNext)) as Response;
+
+      expect(probeNext).toHaveBeenCalledTimes(1);
+      expect(probeResponse.headers.get("x-document-cache-status")).toBe("MISS");
+      expect(await probeResponse.text()).toBe("decoded elements");
+    });
+
+    it("bypasses an existing response-cache hit during fragment recovery", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+      const middleware = createDocumentCacheMiddleware();
+      const url =
+        "http://localhost/page?_rsc_partial=true&_rsc_segments=root,layout";
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      const cachedCtx = createMockMiddlewareContext(url, {
+        headers: { "X-Rango-Fragment-Passthrough": "1" },
+      });
+      await middleware(
+        cachedCtx,
+        vi.fn().mockResolvedValue(
+          new Response("cached response", {
+            headers: { "Cache-Control": "s-maxage=60" },
+          }),
+        ),
+      );
+      await vi.runAllTimersAsync();
+
+      const recoveryCtx = createMockMiddlewareContext(url, {
+        headers: { "X-Rango-Fragment-Recovery": "1" },
+      });
+      const recoveryNext = vi.fn().mockResolvedValue(
+        new Response("server-decoded recovery", {
+          headers: { "Cache-Control": "s-maxage=60" },
+        }),
+      );
+      const response = (await middleware(
+        recoveryCtx,
+        recoveryNext,
+      )) as Response;
+
+      expect(recoveryNext).toHaveBeenCalledTimes(1);
+      expect(response.headers.get("x-document-cache-status")).toBe("MISS");
+      expect(await response.text()).toBe("server-decoded recovery");
+      await vi.runAllTimersAsync();
+
+      const capableAgain = createMockMiddlewareContext(url, {
+        headers: { "X-Rango-Fragment-Passthrough": "1" },
+      });
+      const shouldNotRun = vi.fn();
+      const replaced = (await middleware(
+        capableAgain,
+        shouldNotRun,
+      )) as Response;
+
+      expect(shouldNotRun).not.toHaveBeenCalled();
+      expect(replaced.headers.get("x-document-cache-status")).toBe("HIT");
+      expect(await replaced.text()).toBe("server-decoded recovery");
     });
 
     it("should scope default cache key by user-facing search params", async () => {

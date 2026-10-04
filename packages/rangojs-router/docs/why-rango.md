@@ -36,11 +36,16 @@ file-system convention, no hunting across `page.tsx` / `layout.tsx` /
 `route.ts` siblings.
 
 ```tsx
+import { urls } from "@rangojs/router";
+
 export const urlpatterns = urls(
   ({ path, layout, loader, loading, cache, revalidate }) => [
     layout(<ShopLayout />, () => [
       loader(CartLoader, () => [
-        revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+        // after an action, re-run only for cart actions; on navigation, keep the default
+        revalidate((ctx) =>
+          ctx.isAction() ? ctx.isAction(CartActions) : undefined,
+        ),
       ]),
       path("/shop/:slug", ProductPage, { name: "product" }, () => [
         loader(ProductLoader, () => [cache({ ttl: 60 })]),
@@ -64,18 +69,18 @@ lazily loaded, still fully typed, so the tree scales without boot cost.
 
 ## Names, not strings
 
-The opening said "Django-inspired" is a lineage, not a reason. This is the
-part of the lineage that is a reason: every route carries a name, and URLs
-are built from names, never hand-assembled from strings.
+This is the part of the Django lineage that is a reason: every route carries
+a name, and URLs are built from names, never hand-assembled from strings.
 
 ```tsx
 // in a handler, action, or middleware — far from the tree
 throw redirect(ctx.reverse("product", { slug: "espresso-cup" }));
 ```
 
-`ctx.reverse()` on the server and `useReverse()` on the client are
-compile-time checked against the generated route map: a misspelled name or a
-missing param is a type error, not a runtime 404. The payoff is rename
+`ctx.reverse()` on the server is compile-time checked against the generated
+route map, and `useReverse(routes)` on the client against the routes map the
+build generates next to each named module (`<module>.gen.ts`): a misspelled
+name or a missing param is a type error, not a runtime 404. The payoff is rename
 safety — change `/shop/:slug` to `/store/:slug` in the one place it is
 defined, and every link, redirect, and prefetch in the codebase follows.
 There is no grep-for-the-old-URL migration, because no call site ever knew
@@ -107,6 +112,8 @@ response route is inferred from its handler — no codegen, no schema
 duplication:
 
 ```ts
+import type { RouteResponse } from "@rangojs/router";
+
 type Product = RouteResponse<typeof urlpatterns, "productJson">;
 ```
 
@@ -153,12 +160,16 @@ parallel right after middleware, so data latency overlaps the render instead
 of serializing after it, and client components read them with `useLoader()`:
 
 ```tsx
+// loaders/stock.ts
+import { createLoader } from "@rangojs/router";
+
 export const StockLoader = createLoader(async (ctx) => {
-  "use server";
   return ctx.env.DB.stockFor(ctx.params.slug);
 });
 
 // in a client component
+import { useLoader } from "@rangojs/router/client";
+
 const { data, isLoading } = useLoader(StockLoader);
 ```
 
@@ -187,7 +198,8 @@ A cache hit streams the stored UI instantly while `StockLoader` resolves
 fresh alongside it. Caching a loader's data is a separate, explicit opt-in
 (`loader(Fn, () => [cache({ ttl })])`). The guards are correctness-first:
 `cookies()` and `headers()` throw inside cache scopes rather than silently
-baking one visitor's data into a shared shell.
+baking one visitor's data into a shared shell, and so does a raw
+`ctx.request.headers` read.
 
 **Fetchable on demand.** `createLoader(fn, true)` makes a loader callable
 from any client component via `useFetchLoader()` / `load()` — typed params,
@@ -203,7 +215,6 @@ exactly when the client asks for it, and cacheable with the same opt-in:
 
 ```tsx
 export const ReviewsPanel = createLoader(async (ctx) => {
-  "use server";
   const reviews = await db.reviewsFor(ctx.params.slug);
   return <ReviewList reviews={reviews} />; // RSC, streamed to the client
 }, true);
@@ -266,11 +277,15 @@ The canonical case: a prerendered product list with live prices.
 
 ```tsx
 // handles/products-on-page.ts
+import { createHandle } from "@rangojs/router";
+
 export const ProductsOnPage = createHandle<string, string[]>((segments) =>
   segments.flat(),
 );
 
 // routes/products.tsx — the list is baked at build time; prices are not
+import { Prerender } from "@rangojs/router";
+
 export const ProductList = Prerender(
   async () => [{ category: "espresso" }, { category: "filter" }],
   async (ctx) => {
@@ -291,12 +306,15 @@ export const ProductList = Prerender(
 
 // loaders/prices.ts — one batched query for exactly the rendered products
 export const PriceLoader = createLoader(async (ctx) => {
-  "use server";
-  await ctx.rendered();
-  const ids = ctx.use(ProductsOnPage);
+  await ctx.rendered(); // wait for the shell (fresh render or replay)
+  const ids = ctx.get(ProductsOnPage); // read the collected handle data
   return db.pricesFor(ids);
 });
 ```
+
+In a loader, `ctx.get(handle)` reads collected handle data and is only legal
+after `await ctx.rendered()`; `ctx.use(handle)` is the write (it returns the
+push function), exactly as in a handler.
 
 At build time the handler runs once, renders the shell, and pushes the ids it
 rendered. At request time the stored payload replays — handler code never
@@ -329,10 +347,16 @@ stream drained and decoded cleanly, the router renders the resolved payload
 synchronously instead of suspending into skeletons.
 
 ```tsx
-<Link to={href("/shop/:slug", { slug })} prefetch="viewport">
+import { Link, href } from "@rangojs/router/client";
+
+<Link to={href(`/shop/${slug}`)} prefetch="viewport">
   {name}
-</Link>
+</Link>;
 ```
+
+`href()` takes a concrete path and type-checks it against the registered route
+patterns. Without a `prefetch` prop, a Link uses the router's
+`defaultPrefetch`, which is `"none"` in dev and `"viewport"` in production.
 
 The interesting part is why turning prefetch up is _safe_. Aggressive
 client caching is only as good as its invalidation, and that is where client
@@ -351,6 +375,8 @@ automatically and coherently:
   turns out to be a no-op keeps the caches warm by saying so:
 
 ```ts
+import { keepClientCache } from "@rangojs/router";
+
 export async function addToCart(productId: string) {
   "use server";
   const result = await tryAddToCart(productId);
@@ -364,6 +390,66 @@ export async function addToCart(productId: string) {
 Forget the call and you merely lose warmth — the default invalidation covers
 you. Every failure direction in this subsystem points toward freshness, never
 toward staleness.
+
+## Instant loading with server authority
+
+An opt-in `clientUrls()` module lets the hydrated browser recognize a destination
+route and render it before the server response arrives. The destination
+component renders at once; its `useLoader()` reads suspend into the route's
+`loading()` until the canonical response commits:
+
+```tsx
+// catalog.client-urls.tsx
+"use client";
+
+import { clientUrls } from "@rangojs/router/client";
+import { ProductLoader } from "./product.loader.js";
+
+// Patterns are local to the definition: the include() below adds "/catalog".
+export default clientUrls(({ path, layout, loader, loading }) => [
+  layout(CatalogLayout, () => [
+    path("/", CatalogIndex),
+    path("/:productId", ProductPage, () => [
+      loader(ProductLoader),
+      loading(<ProductLoading />),
+    ]),
+  ]),
+]);
+
+// urls.tsx
+import { urls } from "@rangojs/router";
+import catalogClientUrls from "./catalog.client-urls.js";
+
+export const urlpatterns = urls(({ include, layout }) => [
+  layout(<CatalogRscLayout />, () => [
+    include("/catalog", catalogClientUrls, { name: "catalog" }),
+  ]),
+]);
+```
+
+The browser match is not a second authority. It only selects the optimistic
+destination render and `useOutlet().pending` after hydration. The existing
+partial Flight request still runs the canonical server matcher, global router
+middleware, and the route's `createLoader()` definitions by ID; its response
+commits URL, history, and content. Hard requests use the same projected routes
+for SSR and hydration.
+
+That narrower contract avoids a second loader cache or navigation protocol, and
+it keeps the DSL inside `clientUrls()` small: named client components,
+`path`/`layout`/`loader`/`loading`, a restricted `intercept()` (no `when`
+selector), a `transition()` that takes ViewTransition classes,
+`viewTransition` and a browser-run `when`, a browser-run per-loader `revalidate()`, and the `name`,
+`search`, `trailingSlash`, and `ppr` path options. The `include()` that mounts
+the group in the canonical `urls()` tree supplies URL/name prefixes and the
+surrounding RSC layouts, middleware scope, and boundaries; `middleware()`,
+`include()`, `parallel()`, `cache()`, and error/not-found boundaries are not
+available INSIDE `clientUrls()`. See the
+[client URL guide](./client-urls.md) for the complete limits.
+
+The destination renders before global auth middleware completes. It has no
+data (every loader read suspends), so it cannot reveal protected data; it does
+reveal the destination's shell. A route whose shell is itself sensitive belongs
+in `urls()`, not in a client route group.
 
 ## Semantics are a contract, not folklore
 
@@ -388,6 +474,8 @@ primitives — real handlers, real middleware chains, real Flight
 serialization, no framework mocks:
 
 ```ts
+import { renderHandler, findElements } from "@rangojs/router/testing/flight";
+
 const { tree, headers } = await renderHandler(ProductPage, {
   params: { slug: "widget" },
   loaders: [[ProductLoader, { name: "Widget" }]],
@@ -395,8 +483,8 @@ const { tree, headers } = await renderHandler(ProductPage, {
 expect(findElements(tree, { tag: "h1" })[0].text).toContain("Widget");
 ```
 
-`runLoader`, `runMiddleware`, `dispatch`, `renderRoute`, and the Flight
-renderers cover the tiers below e2e; the repo's own rule is that if a feature
+`runLoader`, `runMiddleware`, `runTransitionWhen`, `runClientRevalidate`,
+`dispatch`, `renderRoute`, `serveShellRequest`, and the Flight renderers cover the tiers below e2e; the repo's own rule is that if a feature
 cannot be tested through these primitives, the primitive gets extended in the
 same PR. What we use to test the router is what you get to test your app.
 
@@ -412,8 +500,11 @@ them:
   internalize, precisely because other frameworks use the same words for
   different things. The [skills](../skills/rango/SKILL.md) exist to make
   that session short.
-- **The router is experimental.** The semantics are pinned and tested, and
-  the API is converging, but pre-1.0 means pre-1.0.
+- **Client URL rendering is optimistic, not authorization.** The destination
+  branch can render before global middleware finishes, and the `clientUrls()`
+  DSL intentionally omits route middleware, nested `include()`/`parallel()`,
+  error/not-found boundaries, and `cache()` — those stay in the server tree
+  around the mount.
 
 If you want a router where the behavior you get is the behavior you can read
 — in your own route tree, in a contract document, and in the tests that pin

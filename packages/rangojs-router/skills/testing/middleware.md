@@ -2,14 +2,17 @@
 
 **Layer:** unit (node) · **Import:** `@rangojs/router/testing` · **DSL it tests:** `middleware()` (see `/middleware`)
 
-`runMiddleware` executes your chain through the router's REAL `executeLoaderMiddleware`, so `next()`, return-Response and throw-Response short-circuits, double-next guards, and header/cookie merge are production-identical. You SEED the request and any prior-middleware state (`vars`, `params`, `env`, `routeMap`); everything else (cookie/header merge, request-context resolution) is real machinery.
+`runMiddleware(mw | mw[], opts)` executes your chain through the router's REAL `executeLoaderMiddleware`, so `next()`, return-Response and throw-Response short-circuits, double-next guards, and header/cookie merge are production-identical. You SEED the request and any prior-middleware state (`vars`, `params`, `env`, `routeMap`); everything else (cookie/header merge, request-context resolution) is real machinery.
 
 ## API
 
 ### Options — `RunMiddlewareOptions<TEnv>`
 
+`opts` is a required argument (unlike `runLoader`); pass `{}` when you need no seeds.
+
 | Field           | Type                                                   | Meaning                                                                                                                                                                                                                                                                               |
 | --------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `build`         | `boolean`                                              | Seed `ctx.build` (default `false`) to test a middleware that branches on the build-time PPR shell-capture pass (e.g. `if (ctx.build) ctx.dynamic()`). With `true`, `ctx.waitUntil()` is inert, as at build time. Assert the opt-out via `result.dynamic`.                             |
 | `request`       | `Request \| string`                                    | The request the chain runs under: a `Request`, or a URL string (absolute or path). Optional — defaults to `http://localhost/`; pass it for path-, header-, or cookie-driven middleware.                                                                                               |
 | `env`           | `TEnv`                                                 | Environment bindings surfaced as `ctx.env`. Your seam for doubling platform bindings (see `./bindings.md`).                                                                                                                                                                           |
 | `params`        | `Record<string, string>`                               | Route params surfaced as `ctx.params`.                                                                                                                                                                                                                                                |
@@ -33,10 +36,11 @@ The `ctx` your middleware reads. Notable fields:
 | `env`                       | `TEnv`                  | Bindings from `opts.env`.                                                          |
 | `get` / `set`               | fns                     | Read/write context vars (shared with handlers); `get` resolves what `vars` seeded. |
 | `header(name, value)`       | fn                      | Queue a response header before `next()`, or set it directly after.                 |
-| `reverse`                   | `ScopedReverseFunction` | URL-from-name. Map-only (no auto-fill); needs `routeMap`.                          |
+| `reverse`                   | `GlobalReverseFunction` | Global names only: no auto-fill, `.name` is a type error. Needs `routeMap`.        |
 | `setLocationState(entries)` | fn                      | Attach flash/location state to the response.                                       |
 | `theme` / `setTheme`        | `Theme` / fn            | Current theme; `undefined` unless `theme` is passed.                               |
 | `routeName`                 | `string`                | Matched route name (from `opts.routeName`).                                        |
+| `build` / `dynamic()`       | `boolean` / fn          | Build-pass flag (from `opts.build`) and the PPR shell opt-out (`result.dynamic`).  |
 
 ### Returns — `RunMiddlewareResult<TEnv>`
 
@@ -45,6 +49,7 @@ The `ctx` your middleware reads. Notable fields:
 | `response`        | `Response`                | The final Response: the downstream response, or a middleware short-circuit.                                                                                                                                                                                  |
 | `ctx`             | `RequestContext<TEnv>`    | The underlying RequestContext (NOT a per-middleware `MiddlewareContext`). Use `ctx.get(...)` for anything the envelope above doesn't surface.                                                                                                                |
 | `nextCalled`      | `number`                  | Times the terminal handler ran: `0` on short-circuit, `1` on pass-through.                                                                                                                                                                                   |
+| `dynamic`         | `boolean`                 | Whether the chain called `ctx.dynamic()` (the PPR shell opt-out).                                                                                                                                                                                            |
 | `cookies`         | `Record<string, string>`  | Effective cookie view: request cookies merged with chain sets/deletes (last-write-wins), as `{ name: value }`.                                                                                                                                               |
 | `headers`         | `Record<string, string>`  | Final response headers as `{ name: value }`, lowercased, EXCLUDING `set-cookie` (use `cookies`).                                                                                                                                                             |
 | `locationState`   | `Record<string, unknown>` | Flat `{ key: value }` state set via `setLocationState()` / `redirect({ state })` (empty when none).                                                                                                                                                          |
@@ -86,14 +91,15 @@ Pass an array to run several in order. Cookies set inside middleware via the sta
 
 ## Caveats
 
-- No `handles`/`rendered` option by design: middleware runs BEFORE the render barrier, so it has no post-barrier `ctx.use(Handle)` access in production. Read handle data in a loader/handler and test it with `runLoader` (see `./handles.md`).
+- No `handles`/`rendered` option by design: the middleware context has no handle APIs in production — no push (`ctx.use(Handle)` is a handler/loader API) and no post-barrier read (`ctx.get(handle)` is loader-only, and middleware runs BEFORE the render barrier anyway). Read handle data in a loader and test it with `runLoader`; assert loader pushes via `runLoaderResult(...).handlePushes` (see `./handles.md`).
 - A COMPONENT route's guard stack cannot be exercised through `dispatch` (it throws on component routes), and `renderToFlightString`/`renderRoute` don't run route middleware. Extract the middleware fn and unit-test it here, or assert the guard stack at e2e.
-- Middleware-phase `ctx.reverse` is map-only (no auto-fill from current params), matching production — enable it with `routeMap`. `routeName` only feeds `ctx.routeName`; it does NOT scope `.name` reverse (the chain reverse stays map-only by design).
+- Middleware-phase `ctx.reverse` is map-only (global names only, no auto-fill from current params), matching production — enable it with `routeMap`. `routeName` only feeds `ctx.routeName`; it does NOT scope `.name` reverse (the chain reverse stays map-only by design, and `MiddlewareContext["reverse"]` rejects `.name` at compile time).
 - `ctx.theme` is `undefined` unless `theme` is passed; `redirect()` does no basename prefixing unless `basename` is seeded.
+- Location state needs a key: a `createLocationState()` definition gets it from the Vite plugin, which a test project does not run, and outside production an unkeyed `Flash(value)` throws inside the middleware (before `redirect()` or `ctx.setLocationState()` runs). Call `withLocationStateKey(Flash, "Flash")` from `@rangojs/router/testing` once per definition and assert `locationState` as `{ __rsc_ls_Flash: value }` (the helper adds the `__rsc_ls_` prefix). A definition with `clearOnReload` appends a suffix to its key (`__rsc_ls_Flash~r`), so `{ [Flash.__rsc_ls_key]: value }` is the form that holds for any definition.
 - Platform bindings are yours to double via `env` (see `./bindings.md`).
 
 ## See also
 
 - `/middleware` — the DSL this tests
 - Siblings: `./response-routes.md`, `./server-actions.md`, `./loader.md`, `./bindings.md`
-- Long-form prose: [docs/testing.md](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/testing.md) — section "Middleware"
+- Long-form prose: [docs/testing.md](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/testing.md) — section "Middleware"

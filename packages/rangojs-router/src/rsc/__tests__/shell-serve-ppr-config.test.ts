@@ -1,10 +1,17 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { createElement } from "react";
-import { resolvePprConfig } from "../shell-serve.js";
+import {
+  buildShellKey,
+  resolvePprConfig,
+  shellReloadScript,
+  shellSearchSeed,
+} from "../shell-serve.js";
 import type { EntryData } from "../../server/context.js";
 import { RangoContext } from "../../server/context.js";
 import { loadManifest, clearManifestCache } from "../../router/manifest.js";
 import { urls } from "../../urls.js";
+import { clientUrls } from "../../client-urls/client-urls.js";
+import { clientUrlIncludePatterns } from "../../client-urls/server-projection.js";
 import type { RouteEntry } from "../../types.js";
 
 // resolvePprConfig policy pins (issues #714 / #715): captureTimeout parsing
@@ -24,6 +31,12 @@ describe("resolvePprConfig — captureTimeout parsing (issue #715)", () => {
       tags: undefined,
       captureTimeout: 10000,
     });
+  });
+
+  it("clamps values above the tightening-only default", () => {
+    expect(
+      resolvePprConfig(routeEntry({ captureTimeout: 60_000 }))?.captureTimeout,
+    ).toBe(15_000);
   });
 
   it("keeps ttl/swr/tags alongside captureTimeout", () => {
@@ -131,5 +144,119 @@ describe("nameless path() keeps ppr on its manifest entry (issue #714)", () => {
         });
       },
     );
+  });
+});
+
+describe("clientUrls group route keeps ppr on its manifest entry", () => {
+  beforeEach(() => {
+    clearManifestCache();
+  });
+
+  // The group round-trip: a clientUrls() path() with the projected `ppr`
+  // option materializes into a server path() whose manifest entry carries
+  // ppr — resolvePprConfig classifies the group route exactly like a
+  // hand-written ppr page, which is what engages the runtime shell
+  // capture/serve lanes for group landings.
+  it("materialized group path() carries ppr through loadManifest to resolvePprConfig", async () => {
+    function GroupPage() {
+      return null;
+    }
+    const patterns = clientUrlIncludePatterns(
+      clientUrls(({ path }) => [
+        path("/ppr", GroupPage, { ppr: { ttl: 300, swr: 120 } }),
+      ]),
+    );
+    const routeKey = "$path__ppr";
+    const entry = {
+      prefix: "/",
+      staticPrefix: "/",
+      routes: { [routeKey]: "/ppr" },
+      handler: patterns.handler,
+      mountIndex: 0,
+    } as unknown as RouteEntry;
+
+    await RangoContext.run(
+      {
+        manifest: new Map(),
+        namespace: "",
+        parent: null,
+        counters: {},
+        patterns: new Map(),
+        patternsByPrefix: new Map(),
+        trailingSlash: new Map(),
+        searchSchemas: new Map(),
+      } as never,
+      async () => {
+        const manifestEntry = await loadManifest(
+          entry,
+          routeKey,
+          "/ppr",
+          undefined,
+          true,
+        );
+        expect(manifestEntry.type).toBe("route");
+        expect((manifestEntry as { ppr?: unknown }).ppr).toEqual({
+          ttl: 300,
+          swr: 120,
+        });
+        expect(resolvePprConfig(manifestEntry)).toEqual({
+          ttl: 300,
+          swr: 120,
+          tags: undefined,
+          captureTimeout: undefined,
+        });
+      },
+    );
+  });
+});
+
+describe("shellSearchSeed — the key's search portion IS the render seed", () => {
+  it("sorts params and prefixes with ? (empty search seeds empty)", () => {
+    const url = new URL("https://shop.example/products?b=2&a=1");
+    expect(shellSearchSeed(url)).toBe("?a=1&b=2");
+    expect(shellSearchSeed(new URL("https://shop.example/products"))).toBe("");
+  });
+
+  it("buildShellKey embeds exactly the seed, so key and render can never disagree", () => {
+    const url = new URL("https://shop.example/products?b=2&a=1");
+    expect(buildShellKey(url)).toBe(
+      `shop.example/products${shellSearchSeed(url)}:shell`,
+    );
+  });
+});
+
+// The degrade's client half (serveShellHit): reload once into a forced MISS.
+// Run against a stand-in window, the way a browser runs the inline script.
+describe("shellReloadScript", () => {
+  function runScript(href: string) {
+    const calls: string[] = [];
+    const html = shellReloadScript();
+    const body = html.replace(/^<script[^>]*>/, "").replace(/<\/script>$/, "");
+    const location = {
+      href,
+      replace: (to: string) => calls.push(`replace ${to}`),
+    };
+    const window = { stop: () => calls.push("stop") };
+    new Function("window", "location", body)(window, location);
+    return { calls, html };
+  }
+
+  it("stops the half-sent page, then replaces it with the forced-MISS URL", () => {
+    const { calls } = runScript("https://shop.test/p?color=blue");
+    expect(calls).toEqual([
+      "stop",
+      "replace https://shop.test/p?color=blue&_rsc_shell=miss",
+    ]);
+  });
+
+  it("does nothing on a URL that already carries the marker (the loop bound)", () => {
+    const { calls } = runScript("https://shop.test/p?_rsc_shell=miss");
+    expect(calls).toEqual([]);
+  });
+
+  it("the marker never partitions the shell key", () => {
+    expect(
+      buildShellKey(new URL("https://shop.test/p?b=2&_rsc_shell=miss&a=1")),
+    ).toBe(buildShellKey(new URL("https://shop.test/p?a=1&b=2")));
   });
 });

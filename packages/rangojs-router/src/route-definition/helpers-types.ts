@@ -5,6 +5,7 @@ import type {
   PartialCacheOptions,
   ErrorBoundaryHandler,
   LoaderDefinition,
+  LoaderOptions,
   MiddlewareFn,
   NotFoundBoundaryHandler,
   ResolvedRouteMap,
@@ -33,6 +34,7 @@ import type {
   TransitionItem,
   UseItems,
 } from "../route-types.js";
+import type { StaticHandlerRef } from "../static-handler.js";
 
 // Re-export route item types for backward compatibility
 export type {
@@ -140,8 +142,8 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   },
    * })
    * ```
-   * @param slots - Object with slot names (prefixed with @) mapped to handlers
-   *                or `{ handler, use? }` slot descriptors.
+   * @param slots - Object with slot names (prefixed with @) mapped to handlers,
+   *                Static() definitions, or `{ handler, use? }` descriptors.
    * @param use - Optional callback for loaders, loading, revalidate, etc.
    *              Items here apply to every slot in the call (broadcast).
    *              For per-slot single-assignment items, use the slot descriptor's
@@ -157,8 +159,9 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
       `@${string}`,
       | Handler<any, any, TEnv>
       | ReactNode
+      | StaticHandlerRef
       | {
-          handler: Handler<any, any, TEnv> | ReactNode;
+          handler: Handler<any, any, TEnv> | ReactNode | StaticHandlerRef;
           use?: () => UseItems<ParallelUseItem>;
         }
     >,
@@ -177,15 +180,15 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   intercept("@modal", "card", () => <CardModal />),
    * ])
    *
-   * // With loaders and revalidation
+   * // With loaders and revalidation (revalidate() goes on the loader;
+   * // an intercept-level revalidate() throws)
    * intercept("@modal", "card", () => <CardModal />, () => [
-   *   loader(CardModalLoader),
-   *   revalidate(() => false),
+   *   loader(CardModalLoader, () => [revalidate(() => false)]),
    * ])
    *
    * // Conditional activation via the config object's `when` selector
    * intercept("@modal", "card", <CardModal />, {
-   *   when: ({ from }) => from.pathname.startsWith("/board"),
+   *   when: ({ from }) => from.url.pathname.startsWith("/board"),
    * })
    *
    * // Config + other use-items: config is arg 4, use is arg 5
@@ -193,7 +196,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   "@modal",
    *   "card",
    *   <CardModal />,
-   *   { when: ({ from }) => from.pathname.startsWith("/board") },
+   *   { when: ({ from }) => from.url.pathname.startsWith("/board") },
    *   () => [loader(CardDetailLoader)],
    * )
    * ```
@@ -202,7 +205,11 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * @param handler - Component or handler for intercepted render
    * @param config - Optional InterceptConfig (e.g. `{ when }`), or the use
    *   callback directly when there is no config
-   * @param use - Optional callback for loaders, middleware, revalidate, etc.
+   * @param use - Optional callback for loader(), middleware(), loading(),
+   *   transition() and a layout() modal chrome without use() items.
+   *   revalidate() (goes on the loader), errorBoundary()/notFoundBoundary()
+   *   (go on the enclosing layout) and cache() (goes on the target route)
+   *   throw here.
    */
   intercept: {
     // Local: dot-prefixed, params inferred from local route definition
@@ -282,6 +289,9 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   ({ defaultShouldRevalidate: true })
    * )
    * ```
+   * Not valid directly inside intercept() use() (throws at definition time):
+   * intercepts only revalidate their loaders, so attach it there with
+   * `loader(Def, () => [revalidate(...)])`.
    * @param fn - Function returning either:
    *   - `boolean` (hard decision — short-circuits the chain),
    *   - `{ defaultShouldRevalidate: boolean }` (soft — updates the suggestion
@@ -307,11 +317,24 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   return <div>{data.name}</div>;
    * }
    * ```
+   * Pass `{ ssr: false }` — the same knob as loading(fallback, { ssr:
+   * false }) — to await this loader before first flush on DOCUMENT requests
+   * (see {@link LoaderOptions}): the opt-in for loaders whose data, handle
+   * pushes, or thrown notFound()/redirect() must be in the SSR'd HTML.
+   * Per-loader: a streaming sibling in the same segment keeps streaming.
+   *
+   * ```typescript
+   * loader(ProductLoader, { ssr: false }, () => [cache()]),
+   * loader(RecommendationsLoader),  // still streams behind loading()
+   * ```
+   *
    * @param loaderDef - Loader created with createLoader()
+   * @param optionsOrUse - Delivery options, or the use() callback when passing none
    * @param use - Optional callback for loader-specific revalidation rules
    */
   loader: <TData>(
     loaderDef: LoaderDefinition<TData>,
+    optionsOrUse?: LoaderOptions | (() => UseItems<LoaderUseItem>),
     use?: () => UseItems<LoaderUseItem>,
   ) => LoaderItem;
   /**
@@ -336,16 +359,19 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * ```typescript
    * errorBoundary(<ErrorFallback />)
    *
-   * // With dynamic error handler
-   * errorBoundary(({ error, reset }) => (
+   * // With dynamic error handler (server fallback: receives only { error })
+   * errorBoundary(({ error }) => (
    *   <div>
    *     <h2>Something went wrong</h2>
    *     <p>{error.message}</p>
-   *     <button onClick={reset}>Try again</button>
+   *     <a href="/">Go home</a>
    *   </div>
    * ))
    * ```
-   * @param fallback - Static JSX or handler receiving error info and reset function
+   * Not valid inside intercept() use() (throws at definition time): an
+   * intercept has no boundary of its own, and its loader errors resolve
+   * against the enclosing layout/path boundary.
+   * @param fallback - Static JSX or handler receiving `{ error }`
    */
   errorBoundary: (
     fallback: ReactNode | ErrorBoundaryHandler,
@@ -363,6 +389,9 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   </div>
    * ))
    * ```
+   * Not valid inside intercept() use() (throws at definition time): an
+   * intercept has no boundary of its own, and notFound() from its loaders
+   * resolves against the enclosing layout/path boundary.
    * @param fallback - Static JSX or handler receiving not-found info
    */
   notFoundBoundary: (
@@ -379,6 +408,9 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *
    * Note: Loaders are NOT cached by default. Use cache() inside loader()
    * to explicitly opt-in to loader caching.
+   *
+   * Not valid inside intercept() use() (throws at definition time): an
+   * intercept navigation is cached under the target route's cache() scope.
    *
    * ```typescript
    * // Using app-level defaults (ttl inherited from store.defaults)
@@ -414,6 +446,12 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   route("archive/:year"),     // uses KV store
    * ])
    *
+   * // Among a path's children: caches that path (handler, layouts, parallels)
+   * path("/product/:id", ProductPage, { name: "product" }, () => [
+   *   cache({ ttl: 60 }),
+   *   layout(<ProductChrome />),  // cached with the path
+   * ])
+   *
    * // Opt-in loader caching
    * route("product/:id", ProductHandler, () => [
    *   loader(ProductLoader),               // NOT cached (default)
@@ -441,8 +479,12 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *    through React's startTransition, so a same-route nav (same route,
    *    different params, e.g. /product/1 -> /product/2) holds the previous
    *    content while the new loader resolves instead of flashing the route's
-   *    loading() skeleton (see segment-system.tsx inTransitionScope). This is
-   *    also the precondition for any view-transition animation.
+   *    loading() skeleton (see segment-system.tsx inTransitionScope). Held
+   *    useLoader readers of the re-run loaders report isLoading: true until
+   *    the new data commits (use-loader.tsx). The pin is per loader family
+   *    (`$$id`), not per segment — a layout reader of the same createLoader
+   *    the child is re-running is flagged too. This is also the precondition
+   *    for any view-transition animation.
    * 2. <ViewTransition> (experimental React only): the segment content is also
    *    wrapped in React's <ViewTransition>, so the held swap cross-fades/morphs.
    *    Layered on by default; pass { viewTransition: false } to keep #1 without
@@ -459,12 +501,12 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * transition({}) is startTransition + ViewTransition under the default and
    * startTransition only when the router sets viewTransition: false.
    *
-   * Conditional hold: pass `when: (ctx) => boolean` to gate the transition per
-   * request. It runs server-side AFTER the route handler (so it can read state
-   * the handler set via `ctx.get(...)`); returning false drops this transition
-   * for the request, so the navigation streams its loading() skeleton instead of
-   * holding. This is a post-handler predicate — distinct from intercept()'s
-   * match-time `when` config selector (`intercept(slot, route, Comp, { when })`).
+   * Conditional hold: pass `when` to gate the navigation in the browser,
+   * inline (the build hoists the literal into a client module) or as a
+   * "use client" export. It runs once per
+   * navigation with { kind, from, to, isAction, action }, never on the server;
+   * false makes the commit urgent (no hold, no view transition). This is
+   * distinct from intercept()'s match-time `when` selector.
    *
    * ```typescript
    * // Attach to a single route
@@ -483,15 +525,15 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   transition({ viewTransition: false }),
    * ])
    *
-   * // Hold only when the handler decided to (post-handler predicate):
+   * // Hold only when arriving from the list (a browser predicate):
    * path("/product/:id", ProductPage, { name: "product" }, () => [
-   *   transition({ when: (ctx) => ctx.get(KeepScroll) === true }),
+   *   transition({ when: ({ from }) => from.routeName === "products.list" }),
    * ])
    * ```
    * @param config - ViewTransition configuration (enter, exit, update, share,
    *   default, name), `viewTransition: "auto" | false` to toggle the router
    *   boundary (createRouter({ viewTransition }) sets the app-wide default), and
-   *   `when: (ctx) => boolean` to gate the transition per request post-handler
+   *   `when` to gate the transition per navigation (a browser predicate)
    * @param children - Optional callback returning child routes to wrap
    */
   transition: {

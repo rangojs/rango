@@ -1,21 +1,23 @@
 import type { Plugin, ResolvedConfig } from "vite";
+import { getPluginApi } from "@vitejs/plugin-rsc";
 import MagicString from "magic-string";
 import path from "node:path";
 import fs from "node:fs";
 import { normalizePath } from "./expose-id-utils.js";
+import { registerServerReferenceRegex } from "./server-reference-pattern.js";
 import { createRangoDebugger, createCounter, NS } from "../debug.js";
 
 const debug = createRangoDebugger(NS.transform);
 
+interface ServerReferenceMeta {
+  importId: string;
+  referenceKey: string;
+  exportNames: string[];
+}
+
 interface RscPluginManager {
-  serverReferenceMetaMap: Record<
-    string,
-    {
-      importId: string;
-      referenceKey: string;
-      exportNames: string[];
-    }
-  >;
+  serverReferenceMetaMap?: Record<string, ServerReferenceMeta>;
+  serverReferences?: { metaMap: Map<string, ServerReferenceMeta> };
   config: ResolvedConfig;
 }
 
@@ -23,21 +25,44 @@ interface RscPluginApi {
   manager: RscPluginManager;
 }
 
-function getRscPluginApi(config: ResolvedConfig): RscPluginApi | undefined {
-  let plugin = config.plugins.find((p) => p.name === "rsc:minimal");
+function getServerReferenceMetaEntries(
+  manager: RscPluginManager | undefined,
+): Iterable<[string, ServerReferenceMeta]> {
+  if (manager?.serverReferences?.metaMap) {
+    return manager.serverReferences.metaMap;
+  }
 
-  if (!plugin) {
-    plugin = config.plugins.find(
-      (p) =>
-        (p.api as RscPluginApi | undefined)?.manager?.serverReferenceMetaMap !==
-        undefined,
-    );
-    if (plugin) {
-      console.warn(
-        `[rango:expose-action-id] RSC plugin found by API structure (name: "${plugin.name}"). ` +
-          `Consider updating the name lookup if the plugin was renamed.`,
+  if (manager?.serverReferenceMetaMap) {
+    return Object.entries(manager.serverReferenceMetaMap);
+  }
+
+  throw new Error(
+    "[rango] Unsupported @vitejs/plugin-rsc server reference metadata shape. " +
+      "Expected manager.serverReferences.metaMap or manager.serverReferenceMetaMap.",
+  );
+}
+
+function getRscPluginApi(config: ResolvedConfig): RscPluginApi | undefined {
+  const pluginApi = getPluginApi(config) as RscPluginApi | undefined;
+  if (pluginApi) {
+    return pluginApi;
+  }
+
+  const plugin = config.plugins.find((p) => {
+    try {
+      getServerReferenceMetaEntries(
+        (p.api as RscPluginApi | undefined)?.manager,
       );
+      return true;
+    } catch {
+      return false;
     }
+  });
+  if (plugin) {
+    console.warn(
+      `[rango:expose-action-id] RSC plugin found by API structure (name: "${plugin.name}"). ` +
+        `Consider updating the name lookup if the plugin was renamed.`,
+    );
   }
 
   return plugin?.api as RscPluginApi | undefined;
@@ -66,6 +91,27 @@ function isUseServerModule(filePath: string): boolean {
     return false;
   }
 }
+
+/**
+ * Per-reference own `bind` injected next to `$$id`. React's client.browser
+ * build carries no server-reference metadata across `.bind()` (the
+ * edge/node/server builds install an own `bind` on each reference that
+ * does), so `isAction(boundStub)` would silently miss in the browser only.
+ * Installing the same per-reference own `bind` here — scoped to the stubs
+ * this plugin already wraps, guarded to never override an existing own
+ * `bind` — closes that without mutating the global Function.prototype
+ * (which would re-wrap once per Vite environment/HMR pass and break
+ * native-function detection for co-loaded code). The helper re-installs
+ * itself on the bound result so chained binds keep the metadata too.
+ */
+export const ACTION_BIND_HELPER_NAME: string = "__rangoActionBind";
+export const ACTION_BIND_HELPER_SOURCE: string = `var ${ACTION_BIND_HELPER_NAME} = function () {
+  var bound = Function.prototype.bind.apply(this, arguments);
+  if (typeof this.$id === "string") bound.$id = this.$id;
+  if (typeof this.$$id === "string") bound.$$id = this.$$id;
+  bound.bind = ${ACTION_BIND_HELPER_NAME};
+  return bound;
+};`;
 
 function applyServerReferenceWrapping(
   code: string,
@@ -101,8 +147,15 @@ function applyServerReferenceWrapping(
       }
     }
 
-    const replacement = `(function(fn) { fn.$$id = ${finalIdArg}; return fn; })(${fnCall}(${idArg}${rest}))`;
+    const replacement =
+      `(function(fn) { fn.$$id = ${finalIdArg}; ` +
+      `if (!Object.prototype.hasOwnProperty.call(fn, "bind")) fn.bind = ${ACTION_BIND_HELPER_NAME}; ` +
+      `return fn; })(${fnCall}(${idArg}${rest}))`;
     s.overwrite(start, end, replacement);
+  }
+
+  if (hasChanges) {
+    s.prepend(`${ACTION_BIND_HELPER_SOURCE}\n`);
   }
 
   return hasChanges;
@@ -133,8 +186,7 @@ function applyRegisterReferenceWrapping(
     return false;
   }
 
-  const pattern =
-    /registerServerReference\(([^,]+),\s*"([^"]+)",\s*"([^"]+)"\)/g;
+  const pattern = registerServerReferenceRegex();
 
   let hasChanges = false;
   let match: RegExpExecArray | null;
@@ -233,10 +285,8 @@ export function exposeActionId(): Plugin {
       if (!isBuild) return;
 
       hashToFileMap = new Map();
-      const { serverReferenceMetaMap } = rscPluginApi.manager;
-
-      for (const [absolutePath, meta] of Object.entries(
-        serverReferenceMetaMap,
+      for (const [absolutePath, meta] of getServerReferenceMetaEntries(
+        rscPluginApi.manager,
       )) {
         // Only include module-level "use server" files
         // Inline actions (defined in RSC components) should keep hashed IDs for client security

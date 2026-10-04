@@ -81,13 +81,15 @@ describe("resolveTracing", () => {
       handler: true,
       render: true,
       ssr: true,
+      response: true,
+      background: true,
     });
   });
 
   it("respects per-phase toggles and defaults omitted phases to on", () => {
     const resolved = resolveTracing({
       runner,
-      spans: { ssr: false, loader: false },
+      spans: { ssr: false, loader: false, background: false },
     });
     expect(resolved?.phases).toEqual({
       request: true,
@@ -97,6 +99,23 @@ describe("resolveTracing", () => {
       handler: true,
       render: true,
       ssr: false,
+      response: true,
+      background: false,
+    });
+  });
+
+  it("response: false suppresses only the response phase", () => {
+    const resolved = resolveTracing({ runner, spans: { response: false } });
+    expect(resolved?.phases).toEqual({
+      request: true,
+      middleware: true,
+      action: true,
+      loader: true,
+      handler: true,
+      render: true,
+      ssr: true,
+      response: false,
+      background: true,
     });
   });
 

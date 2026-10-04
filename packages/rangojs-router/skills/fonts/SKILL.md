@@ -6,7 +6,10 @@ argument-hint: [provider]
 
 # Fonts
 
-Load web fonts in the Document component with `<link rel="preload">` for optimal performance. Fonts are declared in `<head>` alongside your stylesheet.
+Three ways to load web fonts in a Rango app: a hosted provider (Google Fonts),
+self-hosted files in `public/`, or Fontsource packages bundled by Vite (the
+recommended default). Font links go in the Document `<head>` next to your
+stylesheet, which follows the `?url` + `precedence` pattern from `/css`.
 
 ## Google Fonts
 
@@ -15,7 +18,7 @@ Load web fonts in the Document component with `<link rel="preload">` for optimal
 "use client";
 
 import type { ReactNode } from "react";
-import { MetaTags } from "@rangojs/router/client";
+import { Html } from "@rangojs/router/client";
 import styles from "./index.css?url";
 
 export function Document({ children }: { children: ReactNode }) {
@@ -30,16 +33,17 @@ export function Document({ children }: { children: ReactNode }) {
           crossOrigin="anonymous"
         />
 
-        {/* Load font stylesheet */}
+        {/* Font stylesheet first, so app styles can override it */}
         <link
           href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
           rel="stylesheet"
+          precedence="default"
         />
 
         {/* App styles */}
         <link rel="preload" href={styles} as="style" />
-        <link rel="stylesheet" href={styles} />
-        <MetaTags />
+        <link rel="stylesheet" href={styles} precedence="default" />
+        <Html.Meta />
       </head>
       <body>{children}</body>
     </html>
@@ -60,6 +64,8 @@ Or with Tailwind (see `/tailwind`):
 
 ```css
 /* src/index.css */
+@import "tailwindcss";
+
 @theme {
   --font-sans: "Inter", sans-serif;
 }
@@ -92,7 +98,9 @@ body {
 }
 ```
 
-Preload the most critical weight in the Document:
+Preload the most critical weight in the Document (same imports as the Google
+Fonts example above). Font preloads need `crossOrigin` even for same-origin
+files, or the browser fetches the font twice:
 
 ```tsx
 export function Document({ children }: { children: ReactNode }) {
@@ -107,8 +115,8 @@ export function Document({ children }: { children: ReactNode }) {
           crossOrigin="anonymous"
         />
         <link rel="preload" href={styles} as="style" />
-        <link rel="stylesheet" href={styles} />
-        <MetaTags />
+        <link rel="stylesheet" href={styles} precedence="default" />
+        <Html.Meta />
       </head>
       <body>{children}</body>
     </html>

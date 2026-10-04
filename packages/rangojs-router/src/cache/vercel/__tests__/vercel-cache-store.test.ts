@@ -7,6 +7,28 @@ import {
   type VercelCacheReadDebugEvent,
 } from "../vercel-cache-store.js";
 import type { CachedEntryData, ShellCacheEntry } from "../../types.js";
+import {
+  CACHE_READ_ERROR,
+  type CacheReadError as CacheReadErrorT,
+} from "../../types.js";
+import {
+  createRequestContext,
+  runWithRequestContext,
+} from "../../../server/request-context.js";
+import { createMetricsStore } from "../../../router/metrics.js";
+import {
+  executionStart,
+  predatesInvalidation,
+  revalidateTag,
+} from "../../tag-invalidation.js";
+
+// get() may return CACHE_READ_ERROR (backend failure, distinct from a miss);
+// these tests assert hit/miss shapes, so narrow the sentinel away up front.
+function okHit(
+  r: import("../../types.js").CacheGetResult | null | CacheReadErrorT,
+): import("../../types.js").CacheGetResult | null {
+  return r === CACHE_READ_ERROR ? null : r;
+}
 
 /**
  * In-memory fake of Vercel's RuntimeCache. JSON round-trips every stored value
@@ -68,6 +90,17 @@ function makeFakeCache(): {
   };
 }
 
+/** A request context whose app store is `store`. */
+function requestFor(store: VercelCacheStore) {
+  return createRequestContext({
+    env: {},
+    request: new Request("https://example.com/"),
+    url: new URL("https://example.com/"),
+    variables: {},
+    cacheStore: store,
+  });
+}
+
 function segment(tags?: string[]): CachedEntryData {
   return { segments: [], handles: "", expiresAt: 0, ...(tags ? { tags } : {}) };
 }
@@ -99,7 +132,7 @@ describe("VercelCacheStore", () => {
       const { cache } = makeFakeCache();
       const s = new VercelCacheStore({ cache });
       await s.set("k", segment(), 60, 300);
-      const hit = await s.get("k");
+      const hit = okHit(await s.get("k"));
       expect(hit).not.toBeNull();
       expect(hit?.shouldRevalidate).toBe(false);
       expect(hit?.data.segments).toEqual([]);
@@ -108,7 +141,7 @@ describe("VercelCacheStore", () => {
     it("returns null on a miss", async () => {
       const { cache } = makeFakeCache();
       const s = new VercelCacheStore({ cache });
-      expect(await s.get("absent")).toBeNull();
+      expect(okHit(await s.get("absent"))).toBeNull();
     });
 
     it("delete reports success", async () => {
@@ -116,7 +149,7 @@ describe("VercelCacheStore", () => {
       const s = new VercelCacheStore({ cache });
       await s.set("k", segment(), 60);
       expect(await s.delete("k")).toBe(true);
-      expect(await s.get("k")).toBeNull();
+      expect(okHit(await s.get("k"))).toBeNull();
     });
 
     it("evicts and misses on a corrupt (non-envelope) stored value", async () => {
@@ -128,7 +161,7 @@ describe("VercelCacheStore", () => {
         expiresAt: null,
         tags: [],
       });
-      expect(await s.get("k")).toBeNull();
+      expect(okHit(await s.get("k"))).toBeNull();
       expect(store.has("rg:s:k")).toBe(false); // self-healed
       expect(consoleError).toHaveBeenCalled();
     });
@@ -141,13 +174,13 @@ describe("VercelCacheStore", () => {
       await s.set("k", segment(), 60, 300); // staleAt=+60s, expiresAt=+360s
 
       vi.setSystemTime(new Date(T0 + 30_000));
-      expect((await s.get("k"))?.shouldRevalidate).toBe(false);
+      expect(okHit(await s.get("k"))?.shouldRevalidate).toBe(false);
 
       vi.setSystemTime(new Date(T0 + 120_000));
-      expect((await s.get("k"))?.shouldRevalidate).toBe(true);
+      expect(okHit(await s.get("k"))?.shouldRevalidate).toBe(true);
 
       vi.setSystemTime(new Date(T0 + 400_000));
-      expect(await s.get("k")).toBeNull();
+      expect(okHit(await s.get("k"))).toBeNull();
     });
 
     it("dampens the herd: a stale read re-stamps so the next read is fresh", async () => {
@@ -162,11 +195,11 @@ describe("VercelCacheStore", () => {
       await s.set("k", segment(), 60, 300);
 
       vi.setSystemTime(new Date(T0 + 120_000));
-      expect((await s.get("k"))?.shouldRevalidate).toBe(true);
+      expect(okHit(await s.get("k"))?.shouldRevalidate).toBe(true);
       await Promise.all(pending); // let the re-stamp settle
 
       // Same instant: staleAt was pushed forward, so this read is fresh again.
-      expect((await s.get("k"))?.shouldRevalidate).toBe(false);
+      expect(okHit(await s.get("k"))?.shouldRevalidate).toBe(false);
     });
   });
 
@@ -175,9 +208,9 @@ describe("VercelCacheStore", () => {
       const { cache } = makeFakeCache();
       const s = new VercelCacheStore({ cache });
       await s.set("k", segment(["blog"]), 60, 300);
-      expect(await s.get("k")).not.toBeNull();
+      expect(okHit(await s.get("k"))).not.toBeNull();
       await s.invalidateTags(["blog"]);
-      expect(await s.get("k")).toBeNull();
+      expect(okHit(await s.get("k"))).toBeNull();
     });
 
     it("invalidateTags rejects when expireTag fails (read-your-own-writes)", async () => {
@@ -204,6 +237,77 @@ describe("VercelCacheStore", () => {
       expect(await s.isTagsInvalidatedSince(["absent", "home"], t0)).toBe(true);
     });
 
+    // #977: a page's writes finish together and share tags; each gate read
+    // its own tm marker.
+    it("the write gate shares one tm marker read among concurrent gates, and a later gate reads again", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      const getSpy = vi.spyOn(cache, "get");
+      const markerReads = () =>
+        getSpy.mock.calls.filter(([key]) => String(key).includes("hot")).length;
+
+      await runWithRequestContext(requestFor(s), async () => {
+        const start = executionStart();
+        await Promise.all(
+          Array.from({ length: 5 }, () =>
+            predatesInvalidation(s, ["hot"], start),
+          ),
+        );
+        expect(markerReads()).toBe(1);
+        for (let i = 0; i < 3; i++) {
+          await predatesInvalidation(s, ["hot"], start);
+        }
+        expect(markerReads()).toBe(4);
+      });
+    });
+
+    // #977: the write gate fails closed; other callers stay fail-open.
+    it("the write gate counts a tm marker read that fails as an invalidation", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      const get = cache.get.bind(cache);
+      vi.spyOn(cache, "get").mockImplementation((key) =>
+        String(key).includes("unread")
+          ? Promise.reject(new Error("runtime cache down"))
+          : get(key),
+      );
+
+      await runWithRequestContext(requestFor(s), async () => {
+        const start = executionStart();
+        expect(await predatesInvalidation(s, ["unread"], start)).toBe(true);
+        expect(await s.isTagsInvalidatedSince(["unread"], start.at)).toBe(
+          false,
+        );
+      });
+    });
+
+    // #977: a gate read made during the capture must not answer the
+    // capture's putShell: another instance's expireTag() in between has to
+    // reject the shell.
+    it("putShell rejects a shell invalidated after a gate read made during its capture", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      const otherInstance = new VercelCacheStore({ cache });
+
+      await runWithRequestContext(requestFor(s), async () => {
+        const createdAt = Date.now();
+        vi.advanceTimersByTime(10);
+        // A "use cache" write during the capture: its gate reads the marker.
+        expect(
+          await predatesInvalidation(s, ["shell-tag"], executionStart()),
+        ).toBe(false);
+        vi.advanceTimersByTime(10);
+        await otherInstance.invalidateTags(["shell-tag"]);
+        vi.advanceTimersByTime(10);
+
+        expect(
+          await s.putShell("k", shellEntry({ createdAt }), 60, 300, [
+            "shell-tag",
+          ]),
+        ).toBe("invalidated");
+      });
+    });
+
     it("tag markers survive expireTag (untagged) and live in the tm family", async () => {
       const { cache, store } = makeFakeCache();
       const s = new VercelCacheStore({ cache });
@@ -223,9 +327,9 @@ describe("VercelCacheStore", () => {
       await s.set("k", segment(["ok", "a,b", longTag]), 60, 300);
       // The bad tags never reached the backend, so they cannot invalidate.
       await s.invalidateTags(["a,b"]);
-      expect(await s.get("k")).not.toBeNull();
+      expect(okHit(await s.get("k"))).not.toBeNull();
       await s.invalidateTags(["ok"]);
-      expect(await s.get("k")).toBeNull();
+      expect(okHit(await s.get("k"))).toBeNull();
     });
 
     it("drops tags with URL metacharacters (&, #, %, ?) Vercel cannot round-trip", async () => {
@@ -242,10 +346,10 @@ describe("VercelCacheStore", () => {
       for (const bad of ["sale&fall", "a#b", "x%y", "q?z"]) {
         await s.invalidateTags([bad]);
       }
-      expect(await s.get("k")).not.toBeNull();
+      expect(okHit(await s.get("k"))).not.toBeNull();
       // The one valid tag still invalidates.
       await s.invalidateTags(["ok"]);
-      expect(await s.get("k")).toBeNull();
+      expect(okHit(await s.get("k"))).toBeNull();
     });
 
     it("stores the CLAMPED tag list in the item envelope (dropped tags don't resurface on a hit)", async () => {
@@ -262,7 +366,7 @@ describe("VercelCacheStore", () => {
       const { cache } = makeFakeCache();
       const s = new VercelCacheStore({ cache });
       await s.set("k", segment(["ok", "a&b"]), 60, 300);
-      const hit = await s.get("k");
+      const hit = okHit(await s.get("k"));
       // "a&b" was dropped from the backend tag index on write; it must not
       // ride back via env.d.tags into recordRequestTags (nor be re-clamped
       // with a spurious cache-write report on every stale read).
@@ -277,9 +381,9 @@ describe("VercelCacheStore", () => {
       await s.set("k", segment(tags), 60, 300);
       // The (cap+1)th tag is dropped on write, so it cannot invalidate.
       await s.invalidateTags([`t${VERCEL_MAX_TAGS_PER_ITEM}`]);
-      expect(await s.get("k")).not.toBeNull();
+      expect(okHit(await s.get("k"))).not.toBeNull();
       await s.invalidateTags(["t0"]); // kept (within the cap)
-      expect(await s.get("k")).toBeNull();
+      expect(okHit(await s.get("k"))).toBeNull();
     });
 
     it("documents the per-item tag cap as Vercel's getCache limit (128)", () => {
@@ -465,7 +569,7 @@ describe("VercelCacheStore", () => {
       await s.set("same", segment(), 60, 300);
       await s.setItem("same", "item-value", { ttl: 60 });
       await s.putResponse("same", new Response("resp"), 60);
-      expect((await s.get("same"))?.data.segments).toEqual([]);
+      expect(okHit(await s.get("same"))?.data.segments).toEqual([]);
       expect((await s.getItem("same"))?.value).toBe("item-value");
       expect(await (await s.getResponse("same"))?.response.text()).toBe("resp");
     });
@@ -475,7 +579,7 @@ describe("VercelCacheStore", () => {
       const s = new VercelCacheStore({ cache });
       await s.set("same", segment(), 60, 300);
       await s.putShell("same", shellEntry(), 60, 300);
-      expect((await s.get("same"))?.data.segments).toEqual([]);
+      expect(okHit(await s.get("same"))?.data.segments).toEqual([]);
       expect((await s.getShell("same"))?.entry.prelude).toBe(
         shellEntry().prelude,
       );
@@ -511,9 +615,9 @@ describe("VercelCacheStore", () => {
         initialTheme: "dark",
         snapshot: [
           {
-            family: "item",
-            key: "use-cache:x",
-            value: { value: "CAPVAL", tags: ["t1"] },
+            family: "loader",
+            key: "M0L0D0.x",
+            value: { value: "CAPVAL", holes: 0, runs: 0 },
           },
         ],
       });
@@ -523,18 +627,54 @@ describe("VercelCacheStore", () => {
       expect(hit?.entry.snapshot).toEqual(entry.snapshot);
     });
 
-    it("round-trips replay eligibility flags", async () => {
+    it("round-trips the replay fields (docKey, navigationOnly)", async () => {
       const { cache } = makeFakeCache();
       const s = new VercelCacheStore({ cache });
       await s.putShell(
         "k",
-        shellEntry({ handlerLiveHoles: true, transitionWhen: true }),
+        shellEntry({ docKey: "doc:host/p", navigationOnly: true }),
         60,
         300,
       );
       const entry = (await s.getShell("k"))?.entry;
-      expect(entry?.handlerLiveHoles).toBe(true);
-      expect(entry?.transitionWhen).toBe(true);
+      expect(entry?.docKey).toBe("doc:host/p");
+      expect(entry?.navigationOnly).toBe(true);
+    });
+
+    it("declares its shell entry limit below the item cap (base64 prelude)", () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache, maxItemBytes: 4000 });
+      expect(s.maxShellEntryBytes).toBe(3000);
+    });
+
+    it("round-trips a slim navigationOnly entry (no document half)", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      const slim = shellEntry({
+        navigationOnly: true,
+        docKey: "doc:localhost/p",
+      });
+      delete slim.prelude;
+      delete slim.postponed;
+      await s.putShell("k", slim, 60, 300);
+      const entry = (await s.getShell("k"))?.entry;
+      expect(entry?.navigationOnly).toBe(true);
+      expect(entry?.docKey).toBe("doc:localhost/p");
+      // asShellEnvelope accepts the absent document half only under `no`;
+      // nothing re-materializes it on the way out.
+      expect(entry?.prelude).toBeUndefined();
+      expect(entry?.postponed).toBeUndefined();
+    });
+
+    // docKey names the canonical doc segment record navigation replay
+    // consumes; dropping it in either direction reads back as "no consumable
+    // record" and every partial navigation reports no-segment-snapshot after
+    // a store round trip (the CF envelope had exactly this bug).
+    it("round-trips docKey", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await s.putShell("k", shellEntry({ docKey: "doc:localhost/p" }), 60, 300);
+      expect((await s.getShell("k"))?.entry.docKey).toBe("doc:localhost/p");
     });
 
     it("surfaces shouldRevalidate when stale, then expires after ttl+swr", async () => {
@@ -650,6 +790,419 @@ describe("VercelCacheStore", () => {
     });
   });
 
+  // Issue #941, decision 1: a fresh shell read is kept per cache handle for
+  // memo.shellMs; the tag-marker check still runs on every read.
+  describe("shell memo", () => {
+    /** Reads of the shell record itself (not tag markers or locks). */
+    function countShellReads(cache: VercelRuntimeCache): () => number {
+      const get = vi.spyOn(cache, "get");
+      return () => get.mock.calls.filter(([key]) => key === "rg:h:k").length;
+    }
+
+    it("serves a repeat read within the window without reading the cache", async () => {
+      const { cache } = makeFakeCache();
+      const events: VercelCacheReadDebugEvent[] = [];
+      const s = new VercelCacheStore({ cache, debug: (e) => events.push(e) });
+      const entry = shellEntry();
+      await s.putShell("k", entry, 60, 300);
+      const reads = countShellReads(cache);
+
+      expect((await s.getShell("k"))?.entry).toEqual(entry);
+      const hit = await s.getShell("k");
+      expect(hit?.entry).toEqual(entry);
+      expect(hit?.shouldRevalidate).toBe(false);
+      expect(reads()).toBe(1);
+      expect(events.map((e) => e.outcome)).toEqual(["fresh", "memo-hit"]);
+    });
+
+    it("is shared by store instances over one cache handle", async () => {
+      const { cache } = makeFakeCache();
+      await new VercelCacheStore({ cache }).putShell(
+        "k",
+        shellEntry(),
+        60,
+        300,
+      );
+      const reads = countShellReads(cache);
+      await new VercelCacheStore({ cache }).getShell("k");
+      await new VercelCacheStore({ cache }).getShell("k");
+      expect(reads()).toBe(1);
+    });
+
+    it("reads the cache again once the window has passed", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache, memo: { shellMs: 1000 } });
+      await s.putShell("k", shellEntry(), 60, 300);
+      const reads = countShellReads(cache);
+      await s.getShell("k");
+      vi.setSystemTime(new Date(T0 + 999));
+      await s.getShell("k");
+      expect(reads()).toBe(1);
+      vi.setSystemTime(new Date(T0 + 1000));
+      await s.getShell("k");
+      expect(reads()).toBe(2);
+    });
+
+    it("does not keep a stale read", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await s.putShell("k", shellEntry(), 60, 300);
+      vi.setSystemTime(new Date(T0 + 120_000));
+      const reads = countShellReads(cache);
+      const passive = { claimRevalidation: false };
+      expect((await s.getShell("k", passive))?.shouldRevalidate).toBe(true);
+      expect((await s.getShell("k", passive))?.shouldRevalidate).toBe(true);
+      expect(reads()).toBe(2);
+    });
+
+    it("stops serving a memoized shell once it turns stale", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache, memo: { shellMs: 5000 } });
+      await s.putShell("k", shellEntry(), 1, 300);
+      await s.getShell("k");
+      vi.setSystemTime(new Date(T0 + 1001));
+      expect((await s.getShell("k"))?.shouldRevalidate).toBe(true);
+    });
+
+    it("evicts the least recently used shell past memo.shellMaxBytes", async () => {
+      const { cache } = makeFakeCache();
+      const one = JSON.stringify(
+        (await (async () => {
+          const probe = makeFakeCache();
+          await new VercelCacheStore({ cache: probe.cache }).putShell(
+            "k",
+            shellEntry(),
+            60,
+            300,
+          );
+          return probe.store.get("rg:h:k")?.value;
+        })()) ?? null,
+      ).length;
+      // Room for one shell record, not two.
+      const s = new VercelCacheStore({
+        cache,
+        memo: { shellMaxBytes: Math.floor(one * 1.5) },
+      });
+      await s.putShell("k", shellEntry(), 60, 300);
+      await s.putShell("other", shellEntry(), 60, 300);
+      const reads = countShellReads(cache);
+      await s.getShell("k");
+      await s.getShell("other");
+      await s.getShell("k");
+      expect(reads()).toBe(2);
+    });
+
+    it("a newer capture from another instance is served once the window passes", async () => {
+      const shared = makeFakeCache();
+      // Two processes: separate handles over one backing cache.
+      const a = new VercelCacheStore({ cache: { ...shared.cache } });
+      const b = new VercelCacheStore({ cache: { ...shared.cache } });
+      await a.putShell("k", shellEntry({ prelude: "old" }), 60, 300);
+      expect((await b.getShell("k"))?.entry.prelude).toBe("old");
+
+      vi.setSystemTime(new Date(T0 + 500));
+      await a.putShell(
+        "k",
+        shellEntry({ prelude: "new", createdAt: T0 + 500 }),
+        60,
+        300,
+      );
+      expect((await b.getShell("k"))?.entry.prelude).toBe("old");
+      vi.setSystemTime(new Date(T0 + 2000));
+      expect((await b.getShell("k"))?.entry.prelude).toBe("new");
+    });
+
+    // Both memos in another instance can predate an invalidation; the
+    // mutating user's next request carries the fresh-reads cookie and reads
+    // past them (the isolate memo contract suite covers the SWR path).
+    it("an invalidateTags in another instance: a request with the fresh-reads cookie misses at once", async () => {
+      const shared = makeFakeCache();
+      const a = new VercelCacheStore({ cache: { ...shared.cache } });
+      const b = new VercelCacheStore({ cache: { ...shared.cache } });
+      await a.putShell("k", shellEntry(), 60, 300, ["home"]);
+      expect(await b.getShell("k")).not.toBeNull();
+
+      vi.setSystemTime(new Date(T0 + 100));
+      await a.invalidateTags(["home"]);
+      expect(await b.getShell("k")).not.toBeNull();
+      const request = new Request("https://test.internal/p", {
+        headers: { cookie: "rango-state-fresh=1" },
+      });
+      const ctx = createRequestContext({
+        env: {},
+        request,
+        url: new URL(request.url),
+        variables: {},
+        stateCookieName: "rango-state_router_0",
+      });
+      expect(
+        await runWithRequestContext(ctx, () => b.getShell("k")),
+      ).toBeNull();
+    });
+
+    // expireTag alone (a platform purge that skipped rango's invalidateTags)
+    // deletes the entry but writes no tm markers, so a memo hit cannot see it:
+    // the memoized shell serves until the window passes. updateTag and
+    // revalidateTag go through invalidateTags and are rejected at once (above).
+    it("a bare platform expireTag is honored once the window passes", async () => {
+      const shared = makeFakeCache();
+      const s = new VercelCacheStore({
+        cache: shared.cache,
+        memo: { shellMs: 1000 },
+      });
+      await s.putShell("k", shellEntry(), 60, 300, ["home"]);
+      expect(await s.getShell("k")).not.toBeNull();
+
+      await shared.cache.expireTag("home");
+      expect(shared.store.has("rg:h:k")).toBe(false);
+      expect(await s.getShell("k")).not.toBeNull();
+      vi.setSystemTime(new Date(T0 + 1000));
+      expect(await s.getShell("k")).toBeNull();
+    });
+
+    it("a memo hit keeps the stored pruned snapshot and prunedRecords", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      const snapshot: ShellCacheEntry["snapshot"] = [
+        {
+          family: "loader",
+          key: "M0L0D0.kept",
+          value: { value: "KEPT", holes: 0, runs: 0 },
+        },
+      ];
+      await s.putShell(
+        "k",
+        shellEntry({ snapshot, prunedRecords: "loader:4" }),
+        60,
+        300,
+      );
+      const reads = countShellReads(cache);
+      expect((await s.getShell("k"))!.entry.prunedRecords).toBe("loader:4");
+      const hit = await s.getShell("k");
+      expect(reads()).toBe(1);
+      expect(hit!.entry.prunedRecords).toBe("loader:4");
+      expect(hit!.entry.snapshot).toEqual(snapshot);
+    });
+
+    it("dropShellMemo sends the next read to the runtime cache", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await s.putShell("k", shellEntry(), 60, 300);
+      const reads = countShellReads(cache);
+      await s.getShell("k");
+      await s.getShell("k");
+      expect(reads()).toBe(1);
+      s.dropShellMemo("k");
+      await s.getShell("k");
+      expect(reads()).toBe(2);
+    });
+
+    // The race KV-less purge-mode CFCacheStore had (a read during the
+    // invalidation memoizes the shell again after invalidateTags dropped it)
+    // cannot leak here: every memo hit reads the tm markers, which land
+    // before invalidateTags resolves.
+    it("a read while invalidateTags writes its markers is rejected on its next hit", async () => {
+      const shared = makeFakeCache();
+      const s = new VercelCacheStore({ cache: shared.cache });
+      await s.putShell("k", shellEntry(), 60, 300, ["home"]);
+      vi.setSystemTime(new Date(T0 + 100));
+      const set = shared.cache.set.bind(shared.cache);
+      let releaseMarkers!: () => void;
+      const markersHeld = new Promise<void>((resolve) => {
+        releaseMarkers = resolve;
+      });
+      vi.spyOn(shared.cache, "set").mockImplementation(
+        async (key, value, options) => {
+          if (key.startsWith("rg:tm:")) await markersHeld;
+          return set(key, value, options);
+        },
+      );
+      const reads = countShellReads(shared.cache);
+
+      const invalidation = s.invalidateTags(["home"]);
+      // Served and memoized: neither the markers nor expireTag have landed.
+      expect(await s.getShell("k")).not.toBeNull();
+      expect(await s.getShell("k")).not.toBeNull();
+      expect(reads()).toBe(1);
+      releaseMarkers();
+      await invalidation;
+      expect(await s.getShell("k")).toBeNull();
+    });
+
+    it("a read while expireTag is in flight misses (the markers landed first)", async () => {
+      const shared = makeFakeCache();
+      const s = new VercelCacheStore({ cache: shared.cache });
+      await s.putShell("k", shellEntry(), 60, 300, ["home"]);
+      await s.getShell("k");
+      vi.setSystemTime(new Date(T0 + 100));
+      const expireTag = shared.cache.expireTag.bind(shared.cache);
+      let releaseExpire!: () => void;
+      const expireHeld = new Promise<void>((resolve) => {
+        releaseExpire = resolve;
+      });
+      vi.spyOn(shared.cache, "expireTag").mockImplementation(async (tag) => {
+        await expireHeld;
+        return expireTag(tag);
+      });
+
+      const invalidation = s.invalidateTags(["home"]);
+      await vi.waitFor(() => expect(shared.cache.expireTag).toHaveBeenCalled());
+      expect(shared.store.has("rg:h:k")).toBe(true);
+      expect(await s.getShell("k")).toBeNull();
+      releaseExpire();
+      await invalidation;
+      expect(await s.getShell("k")).toBeNull();
+    });
+  });
+
+  // The document serve path's read: the prelude decoded in the store, once
+  // per memoized shell, and debugPerformance stats when the request collects
+  // them (rsc-rendering.ts recordShellReadStats).
+  describe("readShellDocument", () => {
+    function withMetrics<T>(fn: () => Promise<T>): Promise<T> {
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request("https://test.internal/p"),
+        url: new URL("https://test.internal/p"),
+        variables: {},
+      });
+      ctx._metricsStore = createMetricsStore(true);
+      return runWithRequestContext(ctx, fn);
+    }
+
+    it("returns the decoded prelude, and the entry without prelude or snapshot", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      const snapshot: ShellCacheEntry["snapshot"] = [
+        {
+          family: "loader",
+          key: "M0L0D0.x",
+          value: { value: "PINNED", holes: 0, runs: 0 },
+        },
+      ];
+      await s.putShell("k", shellEntry({ snapshot }), 60, 300);
+      const read = await s.readShellDocument("k");
+      expect(new TextDecoder().decode(read!.prelude)).toBe(
+        "<html><body>SHELL</body></html>",
+      );
+      expect("prelude" in read!.entry).toBe(false);
+      expect("snapshot" in read!.entry).toBe(false);
+      expect(read!.entry.postponed).toBe(JSON.stringify({ hole: 1 }));
+      expect(await read!.snapshot).toEqual(snapshot);
+      expect("stats" in read!).toBe(false);
+    });
+
+    // Hinted tags (remembered from the last read/write, or the route's
+    // static ppr.tags) start their tm-marker reads alongside the entry read.
+    it("a hinted read starts the marker read before the entry read resolves", async () => {
+      vi.useRealTimers();
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({
+        cache,
+        memo: { shellMs: 0, markerFreshMs: 0 },
+      });
+      await s.putShell("k", shellEntry(), 60, 300, ["home"]);
+      let entryResolved = false;
+      let markerReadBeforeEntry = false;
+      const get = cache.get.bind(cache);
+      vi.spyOn(cache, "get").mockImplementation(async (key) => {
+        if (key === "rg:tm:home" && !entryResolved) {
+          markerReadBeforeEntry = true;
+        }
+        if (key === "rg:h:k") {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          const value = await get(key);
+          entryResolved = true;
+          return value;
+        }
+        return get(key);
+      });
+      expect(await s.readShellDocument("k")).not.toBeNull();
+      expect(markerReadBeforeEntry).toBe(true);
+    });
+
+    it("a wrong hint still rejects a shell invalidated under an unhinted tag", async () => {
+      const { cache } = makeFakeCache();
+      const writer = new VercelCacheStore({ cache: { ...cache } });
+      await writer.putShell("k", shellEntry(), 60, 300, ["b"]);
+      // A second handle: no remembered hint, only the (wrong) route tag.
+      const s = new VercelCacheStore({ cache: { ...cache } });
+      vi.setSystemTime(new Date(T0 + 100));
+      await writer.invalidateTags(["b"]);
+      expect(await s.readShellDocument("k", { tagHints: ["a"] })).toBeNull();
+    });
+
+    it("decodes a memoized shell's prelude once", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      const entry = shellEntry();
+      await s.putShell("k", entry, 60, 300);
+      const atob = vi.spyOn(globalThis, "atob");
+      try {
+        await s.readShellDocument("k");
+        await s.readShellDocument("k");
+        await s.readShellDocument("k");
+        expect(
+          atob.mock.calls.filter(([b64]) => b64 === entry.prelude).length,
+        ).toBe(1);
+      } finally {
+        atob.mockRestore();
+      }
+    });
+
+    it("evicts and misses a shell whose prelude does not decode", async () => {
+      const { cache, store } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await s.putShell(
+        "k",
+        shellEntry({ prelude: "%%%not-base64%%%" }),
+        60,
+        300,
+      );
+      expect(await s.readShellDocument("k")).toBeNull();
+      expect(store.has("rg:h:k")).toBe(false);
+      expect(consoleError).toHaveBeenCalled();
+      expect(await s.readShellDocument("k")).toBeNull();
+    });
+
+    it("reports the store read, then the memo hit, with a serial marker read", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await s.putShell("k", shellEntry(), 60, 300, ["home"]);
+      const first = await withMetrics(() => s.readShellDocument("k"));
+      expect(first!.stats).toMatchObject({
+        tier: "store",
+        memo: { hit: false },
+        tags: 1,
+        markerSerial: true,
+        preludeBytes: "<html><body>SHELL</body></html>".length,
+      });
+      expect(first!.stats!.matchMs).toBeGreaterThanOrEqual(0);
+      expect(first!.stats!.markerMs).toBeGreaterThanOrEqual(0);
+      const second = await withMetrics(() => s.readShellDocument("k"));
+      expect(second!.stats).toMatchObject({
+        tier: "memo",
+        memo: { hit: true },
+        tags: 1,
+        markerSerial: true,
+      });
+      expect(second!.stats!.matchMs).toBeUndefined();
+    });
+
+    it("counts the decoded prelude against the memo budget", async () => {
+      const { cache, store } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await s.putShell("k", shellEntry(), 60, 300);
+      await withMetrics(() => s.readShellDocument("k"));
+      const second = await withMetrics(() => s.readShellDocument("k"));
+      const record = store.get("rg:h:k")!.value as string;
+      expect(second!.stats!.memo).toEqual({
+        hit: true,
+        bytes: record.length + "<html><body>SHELL</body></html>".length,
+      });
+    });
+  });
+
   describe("serialize-once + companion-lock dampening (C6)", () => {
     it("stores new entries as pre-serialized strings (single serialization)", async () => {
       const { cache, store } = makeFakeCache();
@@ -688,7 +1241,7 @@ describe("VercelCacheStore", () => {
         expiresAt: null,
         tags: [],
       });
-      const hit = await s.get("legacy");
+      const hit = okHit(await s.get("legacy"));
       expect(hit).not.toBeNull();
       expect(hit?.data.segments).toEqual([]);
     });
@@ -750,6 +1303,199 @@ describe("VercelCacheStore", () => {
       expect((await s.getItem("fn"))?.shouldRevalidate).toBe(false);
     });
   });
+
+  // Issue #973: revalidateTag() does not wait for the tm marker writes or
+  // expireTag, so the request that ran it read the entries its invalidation
+  // covers until the platform deleted them.
+  describe("revalidateTag: the invalidating request reads its own writes (#973)", () => {
+    function requestWith(store: VercelCacheStore) {
+      return createRequestContext({
+        env: {},
+        request: new Request("https://test.internal/p"),
+        url: new URL("https://test.internal/p"),
+        variables: {},
+        cacheStore: store,
+      });
+    }
+
+    /** Park the tm marker writes and expireTag until release is called. */
+    function holdInvalidation(cache: VercelRuntimeCache): () => void {
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      const set = cache.set.bind(cache);
+      const expireTag = cache.expireTag.bind(cache);
+      vi.spyOn(cache, "set").mockImplementation(async (key, value, options) => {
+        if (key.startsWith("rg:tm:")) await held;
+        return set(key, value, options);
+      });
+      vi.spyOn(cache, "expireTag").mockImplementation(async (tag) => {
+        await held;
+        return expireTag(tag);
+      });
+      return release;
+    }
+
+    async function seed(s: VercelCacheStore): Promise<void> {
+      await s.setItem("item", "v1", { ttl: 60, tags: ["home"] });
+      await s.set("seg", segment(["home"]), 60, 300);
+      await s.putResponse("res", new Response("r1"), 60, 300, ["home"]);
+      await s.setItem("other", "v1", { ttl: 60, tags: ["unrelated"] });
+      vi.setSystemTime(new Date(T0 + 100));
+    }
+
+    it.each([
+      ["with no prior read", false],
+      ["after a prior read", true],
+    ])(
+      "segment, item and response reads miss while expireTag is in flight (%s)",
+      async (_label, priorRead) => {
+        const { cache } = makeFakeCache();
+        const s = new VercelCacheStore({ cache });
+        await seed(s);
+        const release = holdInvalidation(cache);
+        const req = requestWith(s);
+
+        await runWithRequestContext(req, async () => {
+          if (priorRead) expect(await s.getItem("item")).not.toBeNull();
+          revalidateTag("home");
+          expect(await s.getItem("item")).toBeNull();
+          expect(okHit(await s.get("seg"))).toBeNull();
+          expect(await s.getResponse("res")).toBeNull();
+          expect(await s.getItem("other")).not.toBeNull();
+        });
+
+        release();
+        await Promise.all(req._pendingBackgroundTasks ?? []);
+        expect(await s.getItem("item")).toBeNull();
+      },
+    );
+
+    it("an entry the request writes after its invalidation is served", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await seed(s);
+      const release = holdInvalidation(cache);
+
+      await runWithRequestContext(requestWith(s), async () => {
+        revalidateTag("home");
+        vi.setSystemTime(new Date(T0 + 200));
+        await s.setItem("item", "v2", { ttl: 60, tags: ["home"] });
+        expect((await s.getItem("item"))?.value).toBe("v2");
+      });
+      release();
+    });
+
+    // `>=`, as the marker checks: an entry stamped in the invalidation's
+    // millisecond may hold a value computed before it, so it misses. A false
+    // miss, never a stale read.
+    it("an entry written in the same millisecond as the invalidation misses", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await seed(s);
+      const release = holdInvalidation(cache);
+
+      await runWithRequestContext(requestWith(s), async () => {
+        revalidateTag("home");
+        await s.setItem("item", "v2", { ttl: 60, tags: ["home"] });
+        expect(await s.getItem("item")).toBeNull();
+      });
+      release();
+    });
+
+    it("an entry written before the ta stamp existed counts as older and misses", async () => {
+      const { cache, store } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await seed(s);
+      for (const key of ["rg:i:item", "rg:s:seg", "rg:r:res"]) {
+        const entry = store.get(key)!;
+        const envelope = JSON.parse(entry.value as string) as { ta?: number };
+        expect(envelope.ta).toBe(T0);
+        delete envelope.ta;
+        entry.value = JSON.stringify(envelope);
+      }
+      const release = holdInvalidation(cache);
+
+      await runWithRequestContext(requestWith(s), async () => {
+        revalidateTag("home");
+        expect(await s.getItem("item")).toBeNull();
+        expect(okHit(await s.get("seg"))).toBeNull();
+        expect(await s.getResponse("res")).toBeNull();
+      });
+      release();
+    });
+
+    it("a context derived from the request reads its mask, and a mask it sets reaches the request", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await seed(s);
+      const release = holdInvalidation(cache);
+      const req = requestWith(s);
+      const derived = () => Object.create(req) as typeof req;
+
+      runWithRequestContext(req, () => revalidateTag("home"));
+      await runWithRequestContext(derived(), async () => {
+        expect(await s.getItem("item")).toBeNull();
+        revalidateTag("unrelated");
+      });
+      await runWithRequestContext(req, async () => {
+        expect(await s.getItem("other")).toBeNull();
+      });
+      release();
+    });
+
+    // A marker read in flight when the request invalidates the tag resolves
+    // to the marker before the invalidation: the mask is checked again after
+    // the read, as CFCacheStore.isGloballyInvalidated does.
+    it("a shell read and the shell write gate whose marker read was in flight when it ran see it", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await s.putShell("k", shellEntry(), 60, 300, ["home"]);
+      vi.setSystemTime(new Date(T0 + 100));
+      let releaseMarkers!: () => void;
+      const markersHeld = new Promise<void>((r) => (releaseMarkers = r));
+      let markerReads = 0;
+      let markerReadStarted!: () => void;
+      const started = new Promise<void>((r) => (markerReadStarted = r));
+      const get = cache.get.bind(cache);
+      vi.spyOn(cache, "get").mockImplementation(async (key) => {
+        if (key.startsWith("rg:tm:")) {
+          if (++markerReads === 2) markerReadStarted();
+          await markersHeld;
+        }
+        return get(key);
+      });
+      const release = holdInvalidation(cache);
+
+      await runWithRequestContext(requestWith(s), async () => {
+        const gate = s.isTagsInvalidatedSince(["home"], T0);
+        const shell = s.getShell("k");
+        await started;
+        revalidateTag("home");
+        releaseMarkers();
+        expect(await gate).toBe(true);
+        expect(await shell).toBeNull();
+      });
+      release();
+    });
+
+    it("a shell read and the shell write gate see it after a memoized marker read", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await s.putShell("k", shellEntry(), 60, 300, ["home"]);
+      // Memoizes the shell and its absent tm marker for this process.
+      expect(await s.getShell("k")).not.toBeNull();
+      vi.setSystemTime(new Date(T0 + 100));
+      const release = holdInvalidation(cache);
+
+      await runWithRequestContext(requestWith(s), async () => {
+        revalidateTag("home");
+        expect(await s.getShell("k")).toBeNull();
+        expect(await s.readShellDocument("k")).toBeNull();
+        expect(await s.isTagsInvalidatedSince(["home"], T0)).toBe(true);
+      });
+      release();
+    });
+  });
 });
 
 /** A minimal shell entry for the shell-family tests. */
@@ -760,6 +1506,7 @@ function shellEntry(overrides: Partial<ShellCacheEntry> = {}): ShellCacheEntry {
     reactVersion: "19.2.6",
     buildVersion: "build-abc",
     createdAt: T0,
+    snapshot: [],
     ...overrides,
   };
 }

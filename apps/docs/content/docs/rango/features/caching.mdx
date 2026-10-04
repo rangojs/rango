@@ -17,11 +17,12 @@ They compose: a segment can be cached for ten minutes _and_ re-render instantly 
 
 ## Axis 1: cache()
 
-`cache()` wraps a subtree in the tree; on a hit the stored shell streams instantly while any loaders inside re-run fresh:
+`cache()` wraps a subtree in the tree and stores its rendered segments. On a hit the stored shell streams instantly while any loaders inside re-run fresh — a cached shell with live loader holes:
 
 <CacheHitDemo />
 
 ```tsx
+// inside urls(({ path, loader, cache }) => [ ... ])
 cache({ ttl: 600 }, () => [
   path("/products", ProductsPage, { name: "products" }, () => [
     loader(StockLoader), // never cached: re-runs on every hit
@@ -29,51 +30,135 @@ cache({ ttl: 600 }, () => [
 ]);
 ```
 
-Function-level caching uses the `"use cache"` directive, and a loader's data caches with an explicit opt-in (`loader(Fn, () => [cache({ ttl })])`).
+Handle pushes follow the same split: a handler's pushes are stored and replayed on a hit, while a loader's pushes come from its re-run.
 
-The guards are correctness-first: `cookies()` and `headers()` throw inside cache scopes rather than silently baking one visitor's data into a shared shell.
+`cache()` needs a store. Configure one on the router, and every `cache()` boundary, cached loader, and `"use cache"` function uses it; without a store, a boundary renders live:
+
+```tsx
+import { createRouter } from "@rangojs/router";
+import { MemorySegmentCacheStore } from "@rangojs/router/cache";
+
+export const router = createRouter({
+  document: Document,
+  cache: { store: new MemorySegmentCacheStore({ defaults: { ttl: 60 } }) },
+}).routes(urlpatterns);
+```
+
+`MemorySegmentCacheStore` suits dev, tests, and single-process servers; `CFCacheStore` (Cloudflare) and `VercelCacheStore` are the distributed stores, all from `@rangojs/router/cache`. The two distributed stores also keep per-isolate memos of PPR shell reads and their tag markers (their `memo` option; see [PPR](/docs/rango/guides/ppr#options-and-invalidation)). `cache({ ttl, swr, tags, key, condition, store })` options are all optional, and omitted `ttl`/`swr` fall back to the store's `defaults`.
+
+This is a Flight segment cache: HTML is still rendered on every request. Caching the rendered HTML shell and resuming only the holes is a separate layer, the `ppr` path option ([PPR](/docs/rango/guides/ppr)). Function-level caching uses the `"use cache"` directive ([use cache](/docs/rango/guides/use-cache)), and a loader's data caches with an explicit opt-in (`loader(Fn, () => [cache({ ttl })])`).
+
+The guards are correctness-first: `cookies()` and `headers()` throw inside cache scopes rather than silently baking one visitor's data into a shared shell, and so do the raw reads `ctx.request.headers` and `getRequestContext().cookie()` / `.cookies()`. Read request-scoped data in a loader instead. A cache's own `key()`, store `keyGenerator`, `condition()` and `tags()` read the request freely: the value picks or labels the entry, it isn't rendered into it. A loader with its own `cache()` stores its value too, so there a miss fails unless the loader's `cache()` has a `key()`, which must then include it ([Loaders](/docs/rango/features/loaders#live-by-default-even-inside-caches)). [Freshness](/docs/rango/concepts/freshness) covers keys, SWR, nesting, and every guard.
 
 ## Tags and invalidation
 
 Everything cacheable shares one identity scheme and one store. Entries expire by TTL/SWR and are tagged via `cache({ tags })` or runtime `cacheTag(...tags)`. Invalidate by tag:
 
 - `updateTag(...tags)` — awaitable, read-your-own-writes. Use inside an action when the next render must see the new value.
-- `revalidateTag(...tags)` — background, non-blocking.
+- `revalidateTag(...tags)` — background, non-blocking. The request that calls it still reads its own writes; other requests see the invalidation once the store's write lands.
 
 There is no path-based busting; use tags.
 
+A `"use cache"` call's tags also ride on every entry that holds its value: the enclosing route `cache()` record, a loader's own `cache()` entry, and an outer `"use cache"` entry that called it (whether the inner call ran, hit the store, or joined another call). Invalidating an inner tag evicts them all. Work that started before an invalidation of one of its tags, in any request, returns what it read but skips its store write, so the next read misses. This isolate's invalidations are checked from every request; another isolate's only where the store keeps tag markers (`CFCacheStore` with KV, `VercelCacheStore`), and ttl+swr bounds the rest.
+
 ## Axis 2: revalidate()
 
-`revalidate()` decides which segments re-render after a server action. The predicate receives the action's full context — match _which_ action by reference with `ctx.isAction()` (rename-safe), branch on _what it returned_ with `ctx.actionResult`:
+`revalidate()` decides which segments re-run and stream to the client on a navigation or after a server action. Without any `revalidate()`, the defaults are:
+
+| Segment                                                    | After an action | On navigation                        |
+| ---------------------------------------------------------- | --------------- | ------------------------------------ |
+| The route (`path()`)                                       | re-runs         | re-runs when params or search change |
+| Owned by the route (loaders, layouts, parallels inside it) | re-runs         | re-runs when params or search change |
+| Loader above the route (on a parent `layout()`)            | re-runs         | kept                                 |
+| Layout or parallel above the route                         | kept            | kept, even when params change        |
+
+A segment the client doesn't hold yet always renders. [Execution Model](/docs/rango/concepts/execution-model#partial-revalidation-briefly) explains why the route entry re-runs as a unit.
+
+A predicate returns one of three things. `true` or `false` is a **hard** decision: it ends the chain of revalidators on that segment and overrides the default. `undefined` (or no return) **defers** to the next revalidator or the default. The callback must be synchronous — a returned Promise is ignored — so move async work into a loader.
+
+The predicate receives the action's full context — match _which_ action by reference with `ctx.isAction()` (rename-safe), branch on _what it returned_ with `ctx.actionResult`:
 
 ```tsx
+import { revalidate } from "@rangojs/router";
 import * as CartActions from "./actions/cart";
 
 loader(CartLoader, () => [
-  // re-run on cart actions; defer to the default otherwise
-  revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+  // after an action, re-run only for cart actions; on navigation, keep the default
+  revalidate((ctx) => (ctx.isAction() ? ctx.isAction(CartActions) : undefined)),
 ]),
 ```
 
 ```tsx
-// re-render only when checkout actually succeeded; defer otherwise
+import { checkout } from "./actions/checkout";
+
+// on a parent layout (skipped after actions by default): also re-render when
+// checkout succeeded; defer to the default otherwise
 revalidate((ctx) => (ctx.isAction(checkout) && ctx.actionResult?.ok) || undefined),
 ```
 
-Two idioms, picked by what an _unrelated_ action should do: `ctx.isAction(X) || undefined` **defers** ("mine, else let the default decide"); bare `ctx.isAction(X)` **suppresses** ("mine only"). Prefer the defer form.
+`ctx.isAction(ref)` matches by reference: one action, several (`ctx.isAction(a, b)`), or a whole module (`import * as CartActions`). Called with no arguments, `ctx.isAction()` answers "was this any action?". It returns `false` on a plain navigation. The same context also carries `actionId`, `formData`, `currentParams`/`nextParams`, `currentUrl`/`nextUrl`, and `defaultShouldRevalidate`.
+
+Pick the idiom by what the default already does. After an action, loaders and the route's own segments re-run by default, and parent layouts are skipped:
+
+- **Add a signal** where the default skips: `ctx.isAction(X) || undefined` on a parent layout re-renders it after `X` and defers otherwise. On a loader or route segment it changes nothing, because they already re-run after every action.
+- **Narrow after actions** where the default re-runs: `ctx.isAction() ? ctx.isAction(X) : undefined` re-runs only for `X`'s actions and keeps the navigation default (params or search changed).
+- **Avoid bare `ctx.isAction(X)`.** It returns a hard `false` on navigation too, so a loader stops refetching when params change, and when several revalidators share a segment, the first hard `false` means the rest never run.
 
 ## Coming from another framework
 
 Same words, different jobs — this is the most common source of misreads:
 
-| You may know                            | Maps to    | Watch out                                                                               |
-| --------------------------------------- | ---------- | --------------------------------------------------------------------------------------- |
-| Next.js `export const revalidate = N`   | **Axis 1** | Same word, opposite meaning. Use `cache({ ttl })` for the Next behavior.                |
-| Next.js `revalidateTag` / `updateTag`   | **Axis 1** | Same idea here: tag via `cache({ tags })` / `cacheTag()`, bust via `updateTag()`.       |
-| React Router / Remix `shouldRevalidate` | **Axis 2** | This is the correct mental model for Rango's `revalidate()`.                            |
-| HTTP `Cache-Control` / ISR              | **Axis 1** | Edge/document layer — separate from both `cache()` and `revalidate()`.                  |
-| Remix / React Router `loader`           | live data  | Like Rango loaders — but Rango loaders run in parallel, stream, and can opt into cache. |
+| You may know                            | Maps to          | Watch out                                                                                                    |
+| --------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------ |
+| Next.js `export const revalidate = N`   | **Axis 1**       | Same word, opposite meaning. Use `cache({ ttl })` for the Next behavior.                                     |
+| Next.js `revalidateTag` / `updateTag`   | **Axis 1**       | Same idea here: tag via `cache({ tags })` / `cacheTag()`, bust via `updateTag()` or `revalidateTag()`.       |
+| React Router / Remix `shouldRevalidate` | **Axis 2**       | This is the correct mental model for Rango's `revalidate()`.                                                 |
+| HTTP `Cache-Control` / ISR              | Deployment layer | Complete-response deployment layer. A CDN hit bypasses Rango; the store-backed document middleware does not. |
+| Remix / React Router `loader`           | live data        | Like Rango loaders — but Rango loaders run in parallel, stream, and can opt into cache.                      |
 
 ## Nested caches
 
-The outer cache window bounds the inner: an inner shorter TTL only applies when the enclosing cache recomputes. If a value must be fresher than its surroundings, put it in a loader — that is what the live lane is for.
+The outer cache window bounds the inner: an inner shorter TTL only applies when the enclosing cache recomputes. If a value must be fresher than its surroundings, put it in a loader — that is what the live lane is for. `cache(false, () => [...])` turns caching off for a subtree inside a cached one.
+
+A `key()` partitions everything under its `cache()`, nested boundaries included, so a visitor in one partition never gets another partition's stored segments:
+
+```tsx
+const tier = (ctx) =>
+  ctx.request.headers.get("x-tier") === "gold" ? "gold" : "silver";
+
+cache({ ttl: 300, key: (ctx) => `tier:${tier(ctx)}` }, () => [
+  layout(TierLayout, () => [
+    // No key of its own: the outer key plus each route's own default key
+    cache({ ttl: 60 }, () => [
+      path("/pricing", PricingPage),
+      path("/faq", FaqPage),
+    ]),
+    // Its own key composes with the outer one
+    cache(
+      { ttl: 60, key: (ctx) => `v:${ctx.searchParams.get("v") ?? "a"}` },
+      () => [path("/plans", PlansPage)],
+    ),
+  ]),
+]);
+```
+
+An inner `cache()` without a `key` stores under the enclosing key plus its own default key (the store's `keyGenerator` result when it has one), so `/pricing` and `/faq` keep their own entries in each partition. One with its own `key` stores under both key results. The parts go outermost first, joined by `|`, so no two composed keys collide: two partitions never share an inner entry, and an inner key still splits within a partition. Deeper nesting composes the same way. A response route's entry is keyed the same way, and a [`ppr`](/docs/rango/guides/ppr) route's shell is partitioned by the key results. To share an inner cache across partitions, declare it outside the keyed `cache()`.
+
+Every `key()` result is stored namespaced, as `key:` plus its URI encoding (`tier:gold` becomes `key:tier%3Agold`), and a default key inside a composed key is URI-encoded. So no value a `key()` returns, request input included, can name another route's default-keyed entry or a nested partition's entry, and a request can't write one route's content under another's key. Normalize what `key()` reads to the values you serve: every distinct value is its own entry (and, on a `ppr` route, its own shell). A readable prefix (`` `tier:${value}` ``) remains good practice.
+
+`condition` and `tags` build up the same way. An inner `cache()` caches only when every enclosing `condition()` allows it, so a request an outer `condition()` refuses renders the whole subtree live, with no shell on a `ppr` route. Inner entries carry the enclosing `tags` as well as their own, static and function forms alike, so `updateTag(outerTag)` evicts them and the shells built from them:
+
+```tsx
+cache(
+  {
+    condition: (ctx) => !ctx.request.headers.has("x-preview"),
+    tags: ["catalog"],
+  },
+  () => [
+    cache({ ttl: 60, tags: ["prices"] }, () => [path("/prices", PricesPage)]),
+  ],
+);
+// A preview request renders /prices live; updateTag("catalog") evicts its entry.
+```
+
+A `cache({ store })` nested under a `cache()` without a `key` on another store is partitioned by that store's `keyGenerator` result too, so a locale-partitioned outer boundary never shares an inner entry across locales. With several such stores, each keeps its position: a store that returns the default key for a request adds an empty part while another's differs, and when every one returns it the key is unchanged. Return the default key, not `""`, to leave a request unpartitioned: an empty result fails key resolution and the request renders uncached. `ttl`, `swr` and `store` still come from the nearest `cache()`, and `cache(false)` still turns a subtree off. A loader's own `cache()` and `"use cache"` are separate layers, keyed only by what they declare.

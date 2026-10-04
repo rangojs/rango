@@ -10,4 +10,4 @@ Start with the mental model at `node_modules/@rangojs/router/skills/rango/SKILL.
 
 ## Contributing
 
-This package is developed in the monorepo at https://github.com/ivogt/vite-rsc. If you are contributing there rather than consuming the published package, read the root `AGENTS.md` in that repo for the pre-push gate and e2e rules — they apply to the monorepo, not to consumer apps.
+This package is developed in the monorepo at https://github.com/rangojs/rango. If you are contributing there rather than consuming the published package, read the root `AGENTS.md` in that repo for the pre-push gate and e2e rules — they apply to the monorepo, not to consumer apps.

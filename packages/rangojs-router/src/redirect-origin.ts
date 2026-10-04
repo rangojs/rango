@@ -135,6 +135,35 @@ export function isExternalRedirect(response: Response): boolean {
 }
 
 /**
+ * Out-of-band carrier for `redirect(url, { state })` location state, keyed on
+ * the Response object like the external brand above. Needed by the LOADER
+ * lane: streaming loaders settle AFTER attachLocationStateIfPresent stamped
+ * payload metadata (rsc-rendering.ts runs it between payload prep and Flight
+ * serialization), so request-context state set at throw time misses the
+ * payload. The thrown Response IS the object loader-resolution catches — no
+ * rebuild path intervenes — so a WeakMap entry survives to the catch site,
+ * where it is serialized onto the loader-result redirect marker and delivered
+ * WITH the redirect navigation (LoaderRedirect), merging at the target like
+ * an action write. Handler/middleware/action redirects keep the metadata lane.
+ */
+const redirectStates = new WeakMap<Response, Record<string, unknown>>();
+
+/** Brand a redirect Response with its RESOLVED location-state record. */
+export function attachRedirectState(
+  response: Response,
+  state: Record<string, unknown>,
+): void {
+  redirectStates.set(response, state);
+}
+
+/** Read the resolved location-state record off a redirect Response. */
+export function getRedirectState(
+  response: Response,
+): Record<string, unknown> | undefined {
+  return redirectStates.get(response);
+}
+
+/**
  * Reserved internal header name. No longer a trust signal -- the external
  * opt-in is the out-of-band brand above. It is kept only so the redirect-rebuild
  * paths and the guard can defensively strip any value (e.g. one forged by a

@@ -6,6 +6,13 @@ argument-hint: [path-to-nextjs-app]
 
 # Migrate from Next.js App Router to @rangojs/router
 
+This skill maps a Next.js App Router project onto Rango: project setup, the
+`app/` file conventions to the `urls()` DSL, data fetching and rendering modes
+(SSG, ISR, PPR), middleware, navigation, server actions, metadata, API routes,
+and theming. Use it when porting a Next.js app, or when a Next.js habit needs a
+Rango equivalent. For a side-by-side evaluation rather than a port, see
+`/comparison`; for React Router or Remix apps, see `/migrate-react-router`.
+
 ## Why Rango
 
 Common reasons to migrate:
@@ -33,8 +40,10 @@ Common reasons to migrate:
   build-time rendering instead of mixing rendering and caching behind conventions.
   See: `/prerender`
 - **Partial prerendering, shipped** — the `ppr` path option caches a page's
-  HTML shell and resumes only the live holes on each request; loaders stay
-  fresh. The equivalent of Next's `experimental_ppr`, stable and per-route.
+  HTML shell and resumes its holes per request: loaders without `ssr: false`,
+  read under `loading()` or an inline `<Suspense>`. Handler output bakes into
+  the shell. It maps to Next's `experimental_ppr`, stable and per-route, but
+  holes come from loaders, not from any `<Suspense>`.
   See: `/ppr`
 - **Composable route tree** — layouts, includes, middleware, parallels, and
   intercepts compose directly in the route definition.
@@ -86,6 +95,13 @@ its call site with the real Rango API:
 | `next/font`                                                                  | see `/fonts`                                                                                   |
 | `next/script` `Script`                                                       | see `/scripts`                                                                                 |
 | `next-themes`                                                                | `theme: true` in `createRouter` (see §10)                                                      |
+| `next/dynamic` `dynamic(() => import(...), { ssr: false })`                  | render it after mount in a `"use client"` component (see the note below)                       |
+
+`next/dynamic`'s `{ ssr: false }` keeps a component out of server rendering:
+render it only after mount in a `"use client"` component (a `useEffect` flag,
+with `React.lazy()` if its code should split out). Do not map it to
+`loader(L, { ssr: false })`, which does the opposite: the server settles that
+loader before the first flush, and under `ppr` it bakes into the shell.
 
 If an import has no row here and no obvious Rango equivalent, stop and surface
 it to the user — do not mock it to keep the build green.
@@ -99,9 +115,13 @@ Replace Next.js tooling with Vite + Rango:
 
 ```bash
 npm remove next @next/env
-npm install @rangojs/router @vitejs/plugin-react
+npm install @rangojs/router   # keep react and react-dom
 npm install -D vite
 ```
+
+`rango()` already includes `@vitejs/plugin-rsc` and supplies the client and
+server entries. Add `@vitejs/plugin-react` only if you want Fast Refresh or the
+React Compiler (see `/react-compiler`).
 
 ```typescript
 // vite.config.ts
@@ -119,7 +139,7 @@ import { createRouter } from "@rangojs/router";
 import { Document } from "./document";
 import { urlpatterns } from "./urls";
 
-export default createRouter({
+export const router = createRouter({
   document: Document,
 }).routes(urlpatterns);
 ```
@@ -223,8 +243,8 @@ The `include()` name has three deliberate modes:
 | Form                                            | Child route names                                                       |
 | ----------------------------------------------- | ----------------------------------------------------------------------- |
 | `include("/", patterns)`                        | private to the included module; omitted from the app-wide generated map |
-| `include("/", patterns, { name: "marketing" })` | globally registered as `marketing.home`, `marketing.pricing`, ...       |
-| `include("/", patterns, { name: "" })`          | flattened into the parent map as `home`, `pricing`, ...                 |
+| `include("/", patterns, { name: "marketing" })` | globally registered as `marketing.landing`, `marketing.pricing`, ...    |
+| `include("/", patterns, { name: "" })`          | flattened into the parent map as `landing`, `pricing`, ...              |
 
 Use the empty-string form only when the child names are intentionally global
 and unique. Inside a private/namespaced module, prefer dot-local reversal or
@@ -283,7 +303,7 @@ The main content always goes through `<Outlet />` via the `path()` handler.
 layout(<ShopLayout />, () => [
   path("/product/:id", ProductPage, { name: "product" }),
   intercept("@modal", ".product", <ProductModal />, {
-    when: ({ from }) => from.pathname.startsWith("/shop"),
+    when: ({ from }) => from.url.pathname.startsWith("/shop"),
   }),
 ])
 ```
@@ -300,16 +320,22 @@ run the Phase 0 audit before carrying those calls over unchanged.
 ```typescript
 // Next.js:
 async function ProductPage({ params }) {
-  const product = await fetch(`/api/products/${params.slug}`).then(r => r.json());
+  const product = await fetch(`https://api.example.com/products/${params.slug}`).then(r => r.json());
   return <div>{product.name}</div>;
 }
 
 // Rango: same pattern, params come from ctx
+import type { Handler } from "@rangojs/router";
+
 const ProductPage: Handler<"product"> = async (ctx) => {
-  const product = await fetch(`/api/products/${ctx.params.slug}`).then(r => r.json());
+  const product = await fetch(`https://api.example.com/products/${ctx.params.slug}`).then(r => r.json());
   return <div>{product.name}</div>;
 };
 ```
+
+If the Next page fetched its own `/api/...` route, call the underlying service
+function directly instead of making a request back to the same app (see
+[backend-host-swap.md](backend-host-swap.md#extract-shared-server-services)).
 
 ### When to use createLoader
 
@@ -360,9 +386,11 @@ export const ProductDef = Prerender<{ slug: string }>(
 );
 
 // Rango (with live fallback — matches Next.js dynamicParams behavior):
-import { Prerender, Passthrough } from "@rangojs/router";
+import { Prerender, Passthrough, notFound } from "@rangojs/router";
 
-const ProductDef = Prerender<{ slug: string }>(
+// Keep the definition exported: the Vite plugin injects the stable id only
+// into `export const X = Prerender(...)` (or `const X = ...; export { X }`).
+export const ProductDef = Prerender<{ slug: string }>(
   async () => [{ slug: "a" }, { slug: "b" }],
   async (ctx) => {
     const product = await getProduct(ctx.params.slug);
@@ -373,8 +401,12 @@ const ProductDef = Prerender<{ slug: string }>(
 
 export const Product = Passthrough(ProductDef, async (ctx) => {
   const product = await getProduct(ctx.params.slug);
+  if (!product) notFound();
   return <ProductPage product={product} />;
 });
+
+// In urls:
+path("/products/:slug", Product, { name: "product" });
 ```
 
 Use `Passthrough()` whenever the Next.js route has `dynamicParams: true` (the
@@ -395,9 +427,12 @@ Next.js route segment config maps onto Rango's explicit primitives:
 ### Partial prerendering → the `ppr` path option
 
 Next.js PPR statically prerenders a shell at build time and streams the parts
-inside `<Suspense>` at request time. Rango ships the same model as a path
+inside `<Suspense>` at request time. Rango ships a similar model as a path
 option — the shell is captured at runtime into the app cache store and resumed
-on later requests, with the holes rendered fresh per request:
+on later requests, with the holes rendered fresh per request. The difference is
+what counts as a hole: in Rango everything a handler produces is shell
+material, as it is under `cache()`, including a promise it hands to a component
+under `<Suspense>`. A live hole is loader data:
 
 ```typescript
 // Next.js: app/products/[id]/page.tsx
@@ -412,11 +447,14 @@ export default async function Page({ params }) {
   );
 }
 
-// Rango, step 1 — direct carry-over. Your Suspense tree IS the hole model:
-// hand the un-awaited promise down, keep the boundary, add the ppr option.
-// No loader, no loading(), no restructuring.
+// Rango: the direct carry-over BAKES. Under ppr the capture awaits a promise
+// the handler hands down (bounded by ppr.captureTimeout), and every shell HIT
+// shows the captured price.
+import { Suspense } from "react";
+import type { HandlerContext } from "@rangojs/router";
+
 function ProductPage(ctx: HandlerContext) {
-  const price = fetchPrice(ctx.params.id); // pending promise — NOT awaited
+  const price = fetchPrice(ctx.params.id); // awaited at capture, then frozen
   return (
     <ProductShell>
       <Suspense fallback={<PriceSkeleton />}>
@@ -425,44 +463,54 @@ function ProductPage(ctx: HandlerContext) {
     </ProductShell>
   );
 }
-path("/products/:id", ProductPage, {
-  name: "product",
-  ppr: { ttl: 600, swr: 120 }, // or ppr: true (default ttl 300s)
-});
 
-// Rango, step 2 (optional refinement) — promote the fetch to a loader for a
-// GUARANTEED hole: loaders are masked at capture and fresh on every serve,
-// even when the value resolves instantly (a raw promise that settles fast
-// would bake into the shell). loading() is the loader's hole boundary.
+// Rango, live price: a loader without ssr: false, read with
+// useLoader(LivePriceLoader) in a client component. loading() (or an inline
+// <Suspense> around the reader) is the hole boundary (/ppr → The loader lane
+// rule).
+function ProductPageLive() {
+  return (
+    <ProductShell>
+      <LivePriceFromLoader /> {/* "use client": useLoader(LivePriceLoader) */}
+    </ProductShell>
+  );
+}
 path(
   "/products/:id",
-  ProductPage,
-  { name: "product", ppr: { ttl: 600, swr: 120 } },
+  ProductPageLive,
+  { name: "product", ppr: { ttl: 600, swr: 120 } }, // or ppr: true (ttl 300s)
   () => [loader(LivePriceLoader), loading(<PriceSkeleton />)],
 ),
 ```
 
 Differences that matter during migration:
 
-- **The Suspense/promise model carries over.** As in Next, a still-pending
-  promise handed to a component that suspends under its own `<Suspense>`
-  postpones at capture and becomes a hole — existing Next PPR trees keep
-  working as-is, no `loading()` required. One container rule everywhere
-  (handlers, handles, loaders): awaited/settled data bakes into the shell; a
-  promise nested inside your data stays a live hole. For loaders, `loading()`
-  selects the lane: present = guaranteed live (masked at capture, fresh every
-  serve, immune to fast resolution — prefer it for per-request data); absent =
-  the bake lane (the settled container bakes and is snapshot-pinned per shell,
-  nested promises stay live). Identity reads (`cookies()`/`headers()`) where
-  the value would bake refuse the capture by construction.
+- **Handler output bakes; loader data is the hole.** Unlike Next, a pending
+  promise the handler hands to a component under `<Suspense>` does NOT make a
+  hole. Everything a handler produces — that promise, an async server
+  component, a nested promise in a handle it pushes, a loader it awaits — is
+  awaited at capture (bounded by `ppr.captureTimeout`) and served frozen for
+  the shell's lifetime; a shell HIT never runs a handler. Keep the parts that
+  must be fresh in loaders without `ssr: false`, read with `useLoader` under
+  `loading()` or an inline `<Suspense>`; inside an `ssr: false` loader, return
+  them as nested promises. For loaders, `ssr: false` (not `loading()`) selects
+  the lane — see `/ppr` → The loader lane rule.
 - **Shell freshness is explicit.** Next's PPR shell is fixed until the next
   build; Rango's has `ttl`/`swr`/`tags` per route, and `updateTag()` /
   `revalidateTag()` drop the shell (`revalidate()` does not — it is a data
-  lever and never touches shell HTML).
-- **`cookies()`/`headers()` in shell material THROW during capture** (in Next
-  they silently force dynamic rendering). Per-user reads must move behind a
-  `loading()` boundary (the live loader lane) or into a nested promise — the
-  refusal surfaces at migration time, which is the point.
+  lever and never touches shell HTML). Under a route `cache()`, the shell
+  lives no longer than that entry: its ttl/swr are capped by the entry's (dev
+  warns when an explicit `ppr` window is reduced). A route `cache({ key })`
+  gives one shell per key value, and `cache(false)` or a false `condition()`
+  means no shell.
+- **Request-scoped reads in shell material refuse the capture** (in Next they
+  silently force dynamic rendering). `cookies()`, `headers()`,
+  `ctx.request.headers`, a `{ cache: false }` variable, and `ctx.dynamic()` refuse it anywhere the
+  capture waits: a handler, a promise it passes or pushes, an async component,
+  a loader it awaits. Per-user reads must move into a live loader (no
+  `ssr: false`; a nested promise does not help). A normal `ctx.get()` value is
+  not guarded and bakes as the capturing request's value. The refusal surfaces
+  at migration time, which is the point.
 - **A store is required.** PPR needs the app-level `createRouter({ cache })`
   store to implement the shell family (`MemorySegmentCacheStore`,
   `CFCacheStore`, `VercelCacheStore`). Without one the route quietly stays
@@ -483,20 +531,27 @@ tag-based cache invalidation now maps directly.
 with `cache({ tags })` or runtime `cacheTag(...tags)`. `cacheTag()` works inside a
 `"use cache"` function (tags that entry) AND render-callable in a plain server
 component (no `"use cache"` needed — it tags the document / PPR shell the component
-renders into). Then invalidate by tag:
+renders into, and the route `cache()` entry it renders inside). Then invalidate by tag:
 
 ```typescript
 // Next.js                    Rango
 // revalidateTag("products")  →  await updateTag("products")  // in a server action: awaitable,
 //                                                            // read-your-own-writes (next render is fresh)
 //                            or  revalidateTag("products")    // in a route handler / webhook:
-//                                                            // background, non-blocking (hard-purge)
+//                                                            // background, non-blocking (evicts)
 ```
 
 `updateTag` is awaitable and immediate; `revalidateTag` is fire-and-forget. Both
-hard-purge (the next read re-renders fresh); the only difference is awaitability —
-despite the Next.js name, `revalidateTag` here is NOT stale-while-revalidate.
-Built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`) index by tag. Next's
+evict (despite the Next.js name, `revalidateTag` here is NOT
+stale-while-revalidate), and the request that calls either reads its own
+writes. `updateTag()` also waits for the durable write and rejects when it
+fails; `revalidateTag()` runs it in the background. The mutating user's next
+requests skip the stores' per-isolate PPR shell memos via the fresh-reads
+cookie (`rango-state-fresh`); other users, and other locations on
+`CFCacheStore`, see the invalidation once the memo refreshes and KV
+propagates (`/caching` → "The fresh-reads cookie").
+Built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`, `VercelCacheStore`)
+index by tag. Next's
 `revalidatePath` has no path-based equivalent — tag the relevant entries instead.
 
 **2. Partial-render selection (which segments re-run after an action).** This is
@@ -507,7 +562,8 @@ re-rendering:
 ```typescript
 import { updateBlog } from "./actions/blog";
 
-// Re-run this layout when a blog action fires
+// Re-run this layout when a blog action fires (layouts above the route are
+// skipped after actions by default; undefined defers otherwise)
 layout(BlogLayout, () => [
   revalidate((ctx) => ctx.isAction(updateBlog) || undefined),
   path("/blog/:slug", BlogPost, { name: "blogPost" }),
@@ -617,17 +673,43 @@ path("/dashboard", DashboardPage, { name: "dashboard" }, () => [
 "use client";
 export default function Error({ error, reset }) { ... }
 
-// Rango: errorBoundary wrapping a group of routes
+// Rango: errorBoundary wrapping a group of routes. The fallback renders on the
+// server and receives only `error` — there is no `reset` (a server render
+// cannot be retried in place; the user navigates away or reloads).
 layout(<DashboardLayout />, () => [
-  errorBoundary(({ error, reset }) => (
+  errorBoundary(({ error }) => (
     <div>
       <h2>Something went wrong</h2>
-      <button onClick={reset}>Try again</button>
+      <p>{error.message}</p>
     </div>
   )),
   path("/dashboard", DashboardIndex, { name: "dashboard" }),
   path("/dashboard/settings", Settings, { name: "settings" }),
 ])
+```
+
+For client-side render errors with a "Try again" button (Next's `reset`), wrap
+the client subtree in `ErrorBoundary` from `@rangojs/router/client`; its
+function fallback receives `{ error, reset }`:
+
+```tsx
+"use client";
+import { ErrorBoundary } from "@rangojs/router/client";
+
+export function ChartPanel() {
+  return (
+    <ErrorBoundary
+      fallback={({ error, reset }) => (
+        <div>
+          <p>{error.message}</p>
+          <button onClick={reset}>Try again</button>
+        </div>
+      )}
+    >
+      <Chart />
+    </ErrorBoundary>
+  );
+}
 ```
 
 ```typescript
@@ -657,34 +739,66 @@ children in their scope — handlers, loaders, and nested segments.
 
 ## 6. Navigation
 
-| Next.js                         | Rango                                             |
-| ------------------------------- | ------------------------------------------------- |
-| `import Link from "next/link"`  | `import { Link } from "@rangojs/router/client"`   |
-| `<Link href="/about">`          | `<Link to="/about">`                              |
-| `useRouter().push("/about")`    | `useRouter().push("/about")`                      |
-| `useRouter().replace("/about")` | `useRouter().replace("/about")`                   |
-| `usePathname()`                 | `usePathname()` from `@rangojs/router/client`     |
-| `useSearchParams()`             | `useSearchParams()` from `@rangojs/router/client` |
-| `redirect("/login")` (server)   | `redirect("/login")` from `@rangojs/router`       |
+| Next.js                                              | Rango                                                                                                                                                                                                   |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `import Link from "next/link"`                       | `import { Link } from "@rangojs/router/client"`                                                                                                                                                         |
+| `<Link href="/about">`                               | `<Link to="/about">`                                                                                                                                                                                    |
+| `useRouter().push("/about")`                         | `useRouter().push("/about")`                                                                                                                                                                            |
+| `useRouter().replace("/about")`                      | `useRouter().replace("/about")`                                                                                                                                                                         |
+| `useRouter().back()` / `refresh()` / `prefetch(url)` | same methods on `useRouter()` from `@rangojs/router/client`                                                                                                                                             |
+| `useParams()`                                        | `useParams()` from `@rangojs/router/client` (or `ctx.params` in a server handler)                                                                                                                       |
+| `usePathname()`                                      | `usePathname()` from `@rangojs/router/client`                                                                                                                                                           |
+| `useSearchParams()`                                  | `useSearchParams()` from `@rangojs/router/client` — returns an RR-style TUPLE, so destructure the reader: `const [searchParams] = useSearchParams()`; the second element is a setter Next does not have |
+| `redirect("/login")` (server)                        | `redirect("/login")` from `@rangojs/router`                                                                                                                                                             |
+
+### "Instant navigations" (Link prefetching)
+
+Next.js's instant navigations — `<Link>` auto-prefetch feeding the client
+router cache — map to Rango's prefetch system: per-Link
+`prefetch="viewport" | "hover" | "none"` (or the router-wide `defaultPrefetch`
+option) warms the target's partial RSC payload before the click, and a click
+on a warmed link commits the prefetched payload as a whole — the complete
+page lands instantly, no fetch waterfall. Prefetched entries survive being
+used (they re-arm in place) and expire by `prefetchCacheTTL`; actions and
+`invalidateClientCache()` flush them so a stale payload is never committed.
+
+```tsx
+<Link to="/product/widget" prefetch="viewport">
+  Widget
+</Link>
+```
+
+Two differences from Next.js worth knowing: the trigger is an explicit choice
+(viewport vs hover vs none) rather than an internal scheduler, and container
+opt-outs exist for whole DOM sections (`data-prefetch-scope="none"`). See
+`/links` → "Prefetch boundaries".
+
+For **dashboard / admin / settings-shaped sections** — high navigation
+frequency inside one layout, mostly tab/param/filter switches — also consider
+porting that route group to `clientUrls()` (`/client-urls`): the definition
+matches in the browser (instant optimistic pending, no server round-trip to
+start a transition) and browser-run `revalidate()` predicates hold data across
+switches that don't invalidate it, which is the fastest transition shape Rango
+has. Server-component routes and `clientUrls()` groups compose in one tree.
 
 ## 7. Server Actions
 
-Server actions work the same way — `"use server"` directive, `useActionState`, form actions. No migration needed for action logic.
+Server actions work the same way — `"use server"` directive, `useActionState`, form actions. No migration needed for action logic. Keep passing the imported action itself to `<form action={...}>` or `useActionState(action, initial)` (not a client-side closure around it) so the form still submits with JavaScript disabled.
 
 Key difference: in Rango, route middleware does NOT wrap action execution. Actions only see global middleware context. Use `getRequestContext()` in actions to access `ctx.set()`/`ctx.get()`.
 
-Next.js's `revalidateTag()` maps directly: tag entries via `cache({ tags })` / `cacheTag(...)`, then invalidate. **In a server action use `await updateTag(tag)`** — it is read-your-own-writes, so the action's own re-render sees fresh data; `revalidateTag(tag)` is a background (non-blocking) hard-purge and is NOT read-your-own-writes, so reserve it for route handlers / webhooks (calling it from an action can leave that action's re-render stale). `revalidatePath()` has no path-based equivalent — tag the route's entries instead. Separately, to force specific matched segments (path/layout/parallel/intercept) and their loaders to re-render after an action, attach a `revalidate(({ actionId }) => ...)` rule to that segment or loader registration. See `/server-actions` for the full pattern (validation, error handling, file uploads), `/caching` for tag invalidation, and `/loader` for revalidation rule semantics.
+Next.js's `revalidateTag()` maps directly: tag entries via `cache({ tags })` / `cacheTag(...)`, then invalidate. **In a server action use `await updateTag(tag)`** — it is read-your-own-writes, so the action's own re-render sees fresh data, and it rejects when the store's durable write fails; `revalidateTag(tag)` is a background (non-blocking) hard-purge for route handlers / webhooks. The request that calls `revalidateTag()` also reads its own writes, but a failed durable write only reaches `onError`. `revalidatePath()` has no path-based equivalent — tag the route's entries instead. Separately, the route, the segments inside its `path()`, and all loaders already re-run after every action; layouts and parallels above the route are skipped. To re-render one of those skipped segments after an action, attach `revalidate((ctx) => ctx.isAction(updateBlog) || undefined)` to it; to narrow a loader or route segment to one action, use `revalidate((ctx) => (ctx.isAction() ? ctx.isAction(updateBlog) : undefined))` (match the imported action by reference, as in §3). See `/server-actions` for the full pattern (validation, error handling, file uploads), `/caching` for tag invalidation, and `/loader` for revalidation rule semantics.
 
 ## 8. Metadata / Head
 
-Rango uses the `Meta` handle + `<MetaTags />` client component:
+Rango uses the `Meta` handle + `<Html.Meta />` client component:
 
 ```typescript
 // Next.js: export const metadata = { title: "Home" }
 // Next.js: export function generateMetadata({ params }) { ... }
 
-// Rango: Meta handle in handlers (server), MetaTags in document <head> (client)
-import { Meta } from "@rangojs/router";
+// Rango: Meta handle in handlers (server), Html.Meta in document <head> (client)
+import { Meta, type Handler } from "@rangojs/router";
 
 const HomePage: Handler<"home"> = (ctx) => {
   const meta = ctx.use(Meta);
@@ -694,16 +808,43 @@ const HomePage: Handler<"home"> = (ctx) => {
 };
 ```
 
-Add `<MetaTags />` in the Document component's `<head>`:
+`generateMetadata({ params })` — DATA-derived, document-blocking metadata —
+maps to a Meta push from the LOADER that owns the data, plus
+`{ ssr: false }` for the blocking-until-in-head part:
 
 ```typescript
-import { MetaTags } from "@rangojs/router/client";
+// Next.js: export async function generateMetadata({ params }) {
+//   const product = await getProduct(params.slug);
+//   return { title: product.name };
+// }
+
+// Rango: push from the loader; the flag makes the document render await it,
+// so the title is in the SSR'd <head> like generateMetadata guarantees.
+export const ProductLoader = createLoader(async (ctx) => {
+  const product = await getProduct(ctx.params.slug);
+  ctx.use(Meta)({ title: product.name });
+  return product;
+});
+
+path("/product/:slug", ProductPage, { name: "product" }, () => [
+  loader(ProductLoader, { ssr: false }),
+]);
+```
+
+Without the flag the push still applies, but a slow loader's title lands
+post-hydration instead of in the document — see `/loader` → "Writing Handles
+from Loaders" for the delivery race.
+
+Add `<Html.Meta />` in the Document component's `<head>`:
+
+```typescript
+import { Html } from "@rangojs/router/client";
 
 function Document({ children }: { children: ReactNode }) {
   return (
     <html>
       <head>
-        <MetaTags />
+        <Html.Meta />
       </head>
       <body>{children}</body>
     </html>
@@ -778,12 +919,16 @@ See `/theme` for full API including system detection and cookie persistence.
 4. [ ] Create `router.tsx` with `createRouter()`
 5. [ ] Convert file-based routes to `urls()` DSL in `urls.tsx`
 6. [ ] Migrate layouts to `layout()` with `<Outlet />`
-7. [ ] Convert data fetching to `createLoader()` + `ctx.use()`
+7. [ ] Keep inline server `fetch`/DB calls in handlers; add `createLoader()` +
+       `loader()` only where you need live, refreshable, or independently
+       cached data (§3)
 8. [ ] Migrate `middleware.ts` to `router.use()` (auth, guards, logging)
-9. [ ] Replace `next/link` with `Link` from `@rangojs/router/client`
+9. [ ] Replace `next/link` with `Link` from `@rangojs/router/client`; keep
+       "instant navigations" via `prefetch="viewport"`/`defaultPrefetch` (§6)
 10. [ ] Convert loading/error files to `loading()` / `errorBoundary()`
 11. [ ] Migrate API routes to `path.json()` / `path.text()`
-12. [ ] Update metadata to use `Meta` handle + `<MetaTags />` in document head
+12. [ ] Update metadata to use `Meta` handle + `<Html.Meta />` in document head
+        (`generateMetadata` → loader push + `{ ssr: false }`)
 13. [ ] Replace `next-themes` with `theme: true` in createRouter (see `/theme`)
 14. [ ] Map rendering-mode segment config: `revalidate = N` → `cache({ ttl })`,
         `force-static` → `Static()`/`Prerender()`, `experimental_ppr` → the

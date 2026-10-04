@@ -5,6 +5,10 @@ description: Build a typed client for consuming your own response-route JSON API
 
 # Typed API Client
 
+Use this skill when first-party TypeScript code (a client component, another
+worker, a script) calls your own `path.json()` endpoints and you want typed
+params and payloads without writing `fetch` + URL building by hand.
+
 Response routes (`path.json()`) already ship typed responses — `RouteResponse<typeof patterns, "name">` resolves to the **bare payload**, inferred from your handler with no codegen. This skill wraps that inference in a small **typed client** so first-party TypeScript code calls your endpoints like functions instead of hand-writing `fetch` + URL building per call site.
 
 This is a **recipe, not a framework feature** — copy the helper below into your app. It depends only on **type-only** imports from `@rangojs/router` (`RouteResponse`, `ExtractParams`, `ProblemDetails`), which are erased at build time, so it runs anywhere a `fetch` does — **browser, worker, or server**. Nothing new to install or version.
@@ -14,7 +18,9 @@ This is a **recipe, not a framework feature** — copy the helper below into you
 ## What you get
 
 ```ts
-const api = createApiClient(apiShopPatterns, routes, { baseUrl });
+const api = createApiClient<typeof apiShopPatterns, typeof routes>(routes, {
+  baseUrl,
+});
 
 await api.health.get(); // no params → callable bare
 await api.product.get({ params: { productId } }); // params typed + required
@@ -31,8 +37,8 @@ await api.cart.post({ body: { productId, qty: 2 } }); // body sent as JSON
 
 ## The two inputs
 
-1. **The `urls()` patterns value** — the type source. `typeof apiShopPatterns` carries the per-route response payloads (`_responses`) and patterns (`_routes`).
-2. **The generated route map** — the name → pattern source. `rango generate` emits a per-module `<name>.gen.ts` exporting `routes`:
+1. **The `urls()` patterns type** — the type source, passed as the first type argument. `typeof apiShopPatterns` carries the per-route response payloads and patterns. Only the type is needed, so import it with `import type` (see Notes).
+2. **The generated route map** — the name → pattern source, passed as the value argument (and its `typeof` as the second type argument). `rango generate` emits a per-module `<name>.gen.ts` exporting `routes`:
 
 ```ts
 // api-shop.gen.ts (generated — do not edit)
@@ -44,7 +50,9 @@ export const routes = {
 } as const;
 ```
 
-Routes that declare a **search schema** are generated as objects instead — `index: { path: "/", search: { q: "string" } }`. The helper accepts both the string and `{ path }` forms. If a `urls()` block is mounted under a name prefix, build a local-keyed map from your global `NamedRoutes` so the keys match the block's route names (e.g. `{ catalog: NamedRoutes["apiShop.catalog"], ... } as const`).
+Routes that declare a **search schema** are generated as objects instead — `index: { path: "/", search: { q: "string" } }`. The helper accepts both the string and `{ path }` forms.
+
+The per-module map's keys are the block's local route names (matching `RouteResponse`), but its patterns are **mount-relative**: `"/catalog"`, not `"/api/shop/catalog"`. When the block is mounted under a URL prefix, either put the prefix in `baseUrl` (`` `${origin}/api/shop` ``) or build a local-keyed map of absolute patterns from the global `NamedRoutes` in `router.named-routes.gen.ts` (e.g. `{ catalog: NamedRoutes["apiShop.catalog"], ... } as const`).
 
 ## The helper (copy into your app)
 
@@ -54,6 +62,7 @@ import type {
   RouteResponse,
   ExtractParams,
   ProblemDetails,
+  UrlPatterns,
 } from "@rangojs/router";
 
 type SearchParams = Record<string, string | number | boolean>;
@@ -121,11 +130,12 @@ function fillPath(pattern: string, params?: Record<string, string>): string {
     .replace(/\/{2,}/g, "/");
 }
 
+// Both type arguments are explicit: TPatterns has no value to infer from,
+// and TypeScript does not mix explicit and inferred type arguments.
 export function createApiClient<
-  TPatterns,
-  const TRouteMap extends Record<string, RouteMapEntry>,
+  TPatterns extends UrlPatterns<any, any, Record<string, unknown>>,
+  TRouteMap extends Record<string, RouteMapEntry>,
 >(
-  _patterns: TPatterns,
   routeMap: TRouteMap,
   opts: { baseUrl?: string; fetch?: typeof fetch } = {},
 ): ApiClient<TPatterns, TRouteMap> {
@@ -179,11 +189,11 @@ export function createApiClient<
 ## Using it
 
 ```ts
-import { apiShopPatterns } from "./urls/api-shop";
+import type { apiShopPatterns } from "./urls/api-shop";
 import { routes } from "./urls/api-shop.gen";
 import { createApiClient, ApiError } from "./lib/api-client";
 
-const api = createApiClient(apiShopPatterns, routes, {
+const api = createApiClient<typeof apiShopPatterns, typeof routes>(routes, {
   baseUrl: import.meta.env.VITE_API_URL ?? "",
 });
 
@@ -202,8 +212,10 @@ try {
 ## Notes
 
 - **Client-safe by construction.** The helper imports only **types** from `@rangojs/router` (erased at build) and builds URLs itself by substituting `:params` into the pattern — it does **not** use `createReverse`, which is a server/RSC-only export that throws in the browser. So `createApiClient` works in client components, workers, and on the server alike.
+- **Import the `urls()` module with `import type`.** `urls()` only runs on the server: in client code a value import throws when the module loads, and it would pull the route handlers into the client bundle. A type import is erased at build, so the same call works in client components, workers and server code. The generated `*.gen.ts` map has no imports and is safe to import anywhere.
+- **Always pass both type arguments.** If you leave them out, `TPatterns` falls back to its constraint and every response is typed `never`, so the first property access on a result is a compile error rather than a silent `any`.
 - **Params are route-typed; search and body are not.** Path params come from the route pattern (`ExtractParams`), so they are precise and required. `search` is generically typed (`Record<string, string | number | boolean>`), and `body` is `unknown` (serialized to JSON). Typed request **input** needs a declared schema layer, which is intentionally out of scope here — thread per-route schemas in yourself if you want typed search/body.
-- **Verb-agnostic wire.** Rango response routes do not dispatch on HTTP method — `.get`/`.post`/etc. set the request method but hit the same handler. Use whichever verb reads best for the operation.
+- **Verb-agnostic wire.** Rango response routes do not dispatch on HTTP method — `.get`/`.post`/etc. set the request method but hit the same handler (branch on `ctx.request.method` inside it if you need to). Use whichever verb reads best for the operation. Response-route `cache()` only serves and stores GET/HEAD.
 - **Path building.** `fillPath` handles standard `:param`, optional `:param?`, and constrained `:param(a|b)` forms. For exotic patterns or strict trailing-slash policies, swap in your own builder (or the router's `reverse` on the server).
 - **Want a return-based style instead of throwing?** Branch on `res.ok` yourself: the wire is the bare value on 2xx and `ProblemDetails` on non-2xx (see `/response-routes`). Wrapping the calls in a `{ ok, data } | { ok: false, error }` result type is a small variation on the same helper.
 - **Third parties.** The typed client is TypeScript-only and needs your route types. External consumers in any language use the plain wire as-is (bare JSON + problem+json); no client required.

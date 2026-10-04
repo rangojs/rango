@@ -78,34 +78,39 @@ the full timeline for specific routes or conditions without paying for it on
 every request.
 
 ```typescript
+import type { MiddlewareFn } from "@rangojs/router";
+
 // Query param toggle — append ?debug to any URL
-async function debugMiddleware(ctx, next) {
+export const debugMiddleware: MiddlewareFn = async (ctx, next) => {
   if (ctx.url.searchParams.has("debug")) {
     ctx.debugPerformance();
   }
   await next();
-}
+};
 ```
 
 ```typescript
 // Target a specific slow route
-async function checkoutPerfMiddleware(ctx, next) {
+export const checkoutPerfMiddleware: MiddlewareFn = async (ctx, next) => {
   if (ctx.url.pathname.startsWith("/checkout")) {
     ctx.debugPerformance();
   }
   await next();
-}
+};
 ```
 
 ```typescript
 // Internal team debug cookie
-async function teamDebugMiddleware(ctx, next) {
-  if (ctx.req.headers.get("cookie")?.includes("__perf=1")) {
+export const teamDebugMiddleware: MiddlewareFn = async (ctx, next) => {
+  if (ctx.request.headers.get("cookie")?.includes("__perf=1")) {
     ctx.debugPerformance();
   }
   await next();
-}
+};
 ```
+
+Register it like any middleware — globally with `createRouter(...).use(...)`
+or scoped with `middleware()` in the route tree.
 
 The metrics store is created for that request only. The console timeline is
 printed and `Server-Timing` headers are emitted as if `debugPerformance`
@@ -156,32 +161,49 @@ Bootstrap handler phases (`handler-nonce`, `handler-mw-match`,
 emitted in the `Server-Timing` header, even without `debugPerformance`, to give
 a baseline view of handler overhead on every request.
 
+PPR partial navigations also expose an always-on bounded response signal:
+`x-rango-ppr-replay: HIT; freshness=fresh|stale` when matching consumed the
+captured segment record, or `BYPASS; reason=<token>` when it fell open. This is
+separate from document-only `x-rango-shell`. When metrics are enabled, the same
+decision appears as `ppr-navigation-replay` with description `fresh`, `stale`,
+or `bypass:<reason>`.
+
 ### Early SSR setup
 
 SSR module loading and stream mode resolution are kicked off in parallel with
 route matching. Requests that won't need SSR (RSC partials, actions, loaders,
-Accept-based RSC, prerender collection) skip this entirely. Response and mime
+Accept-based RSC) skip this entirely. Response and mime
 routes also skip it — the setup runs after `classifyRequest()` determines the
 request mode. In production, the SSR module is memoized across requests so
 repeated imports resolve instantly.
 
 ### Metric reference
 
-| Metric                                                 | Phase      | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| ------------------------------------------------------ | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `handler:total`                                        | Handler    | Full request duration from handler entry to response                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `route-matching`                                       | Matching   | Route lookups: full renders or partial fresh (all findMatch calls combined)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `route-matching:nav`                                   | Matching   | Prev + intercept-source lookups (partial reuse path)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `manifest-loading`                                     | Matching   | Async manifest load (when not cached)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `ssr:module-load`                                      | SSR setup  | Dynamic import of the SSR module                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `ssr:stream-mode`                                      | SSR setup  | Stream mode resolution (sync or async)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `rsc-serialize`                                        | Rendering  | Synchronous RSC stream creation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `ssr:render-html`                                      | Rendering  | SSR HTML rendering from RSC stream (co-emitted with the `rango.ssr` span). Server-Timing folds the colon to a hyphen (`ssr-render-html`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `action:{id}`                                          | Action     | Server-action execution (decode args + run the action body), before the revalidation render (co-emitted with `rango.action`); `{id}` is the action $$id, so the timeline shows which action ran. JS and no-JS/PE form actions                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `render:total:{route}`                                 | Rendering  | Whole render phase: match + serialize + SSR (co-emitted with `rango.render`); `{route}` is the matched route name (resolved at record time), falling back to bare `render:total` for unmatched / auto-named routes. Also emitted for an action-revalidation render                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `loader:{id}`                                          | Loader     | Per-loader EXECUTION, every executing path incl. fetchable (co-emitted with `rango.loader`). A loader-cache HIT does not execute, so it emits no `loader:` entry                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `handler:{id}`                                         | Handler    | Per-segment route/layout handler EXECUTION (the component/handler that produces a segment) — the dominant per-segment work. Paired with the `rango.handler` span (`rango.handler_id={id}`, mirroring `rango.loader_id`/`rango.action_id` — the handler id, NOT the emitted segment's `shortCode`); the metric is owned by `track()` at the call site, the span by `observeHandler`. A static/prerender HIT emits NO `rango.handler` span (no handler runs); the `handler:{id}` metric is still recorded for **layout/cache** entries (their `track()` wraps `resolveLayoutComponent`, which does the static lookup) but NOT for **route/parallel** entries (their static lookup precedes `track()`, so a static hit records neither). Server-Timing prefixes the depth (`d2-handler-{id}`) |
-| `middleware:{name}@{scope}` / `middleware:{scope}#{n}` | Middleware | Combined pre + post own-time. Named handlers use `{name}@{scope}`; anonymous handlers use `{scope}#{ordinal}`. `scope` is the registered pattern or `*`. Span-only via `observePhase`; this metric is recorded directly                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Metric                                                                                                             | Phase      | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------------------------------------------------------------------------------------------------------------------ | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `handler:total`                                                                                                    | Handler    | Full request duration from handler entry to response                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `route-matching`                                                                                                   | Matching   | Route lookups: full renders or partial fresh (all findMatch calls combined)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `route-matching:nav`                                                                                               | Matching   | Prev + intercept-source lookups (partial reuse path)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `route-matching:reuse`                                                                                             | Matching   | Partial navigations that reuse the classified route: only the cheap entry/cache-scope materialization is timed here, because matching already ran during request classification                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `manifest-loading`                                                                                                 | Matching   | Async manifest load (when not cached)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `manifest:cache-hit` / `manifest:store-setup` / `manifest:clear` / `manifest:handler-exec` / `manifest:validation` | Matching   | Sub-phases of the per-route manifest load (`src/router/manifest.ts` `loadManifest`): a module-cache hit, or store setup, clear, handler execution, and validation on a fresh load                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `ppr:navigation-replay`                                                                                            | Matching   | PPR partial-navigation decision; description is `fresh`, `stale`, or `bypass:<bounded-reason>`. Server-Timing folds the colon to `ppr-navigation-replay`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `ppr:shell-read`                                                                                                   | PPR        | PPR shell store read; description is `hit` or `miss` (the raw store outcome, before validity gates such as a version mismatch), plus the answering tier for a built-in store (`hit memo` from its shell memo; `hit l1` / `hit kv` for `CFCacheStore`; `hit store` for `VercelCacheStore`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `ppr:shell-memo`                                                                                                   | PPR        | Depth 1 under `ppr:shell-read`, when the store's shell memo is on (`CFCacheStore`, `VercelCacheStore`; the `memo.shellMs` option): `hit` or `miss` and the memo's size (`size=` bytes). A hit has no match/head/prelude rows; its marker row is the whole read                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `ppr:shell-l1-miss`                                                                                                | PPR        | Depth 1 under `ppr:shell-read`, `CFCacheStore` only: a KV hit after a Cache API miss records the L1 attempt first (description: why it missed, e.g. `absent`, `timeout`, `malformed`); the KV rows start after it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `ppr:shell-match` / `ppr:shell-head` / `ppr:shell-prelude` / `ppr:shell-marker`                                    | PPR        | Depth 1 under `ppr:shell-read`, built-in stores only: the Cache API match, KV get, or runtime-cache read (description: tier); for `CFCacheStore`'s prelude-first read, the entry head read and parse (`bytes=`) and the raw prelude read (`bytes=`); and the tag-marker read (`tags=`), `parallel` with the prelude read (`CFCacheStore`) or `serial`, awaited after the entry read (`VercelCacheStore`); `commit-wait=` is how long the read still waited on it. A tagged shell's marker row adds `memo=` (the per-isolate marker memo: `fresh`, `stale` served while it refreshes, `read` from the store, `bypass` under the fresh-reads cookie), `hint=<shell tags hinted>/<tags hinted>` and `lead=` (how long hinted marker reads ran before the entry named its tags), and `fresh-reads` when the request carried the cookie  |
+| `ppr:shell-open`                                                                                                   | PPR        | The HIT's integrity check and only prelude decode (description `cpu raw` or `cpu base64-decode`, and `prelude=` bytes). CPU only: it reads 0 ms on a deployed worker                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `ppr:shell-commit`                                                                                                 | PPR        | The prelude enqueued as the response's first bytes (`cpu chunks=`, `prelude=` bytes). CPU only: it reads 0 ms on a deployed worker                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `ppr:capture` / `ppr:tail`                                                                                         | PPR        | The previous shell capture's outcome (`ppr:capture`, dev only) and the previous shell HIT's tail timing (`ppr:tail`, duration = complete ms; description: `snapshot=` offset until the snapshot was read and parsed, its `snapshot-read=`, `snapshot-parse-cpu=` durations, `snapshot-bytes=`, `records=`, `pruned=` per family, the `seed=` offset and the seed decode's `seed-cpu=` duration (Flight deserialization, CPU only), then `match`/`handover`/`first-html` offsets from the commit and `prelude`/`tail` bytes). Both finish after their own response commits, so they ride the NEXT request's `Server-Timing`. `ppr:tail` is collected in dev, and in production for a HIT that itself collected metrics; that HIT also prints the same numbers as a `[RSC Perf] ... shell tail:` console line when its tail completes |
+| `ssr:module-load`                                                                                                  | SSR setup  | Dynamic import of the SSR module                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `ssr:stream-mode`                                                                                                  | SSR setup  | Stream mode resolution (sync or async)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `rsc-serialize`                                                                                                    | Rendering  | Synchronous RSC stream creation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `ssr:render-html`                                                                                                  | Rendering  | SSR HTML rendering from RSC stream (co-emitted with the `rango.ssr` span). Server-Timing folds the colon to a hyphen (`ssr-render-html`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `action:{id}`                                                                                                      | Action     | Server-action execution (decode args + run the action body), before the revalidation render (co-emitted with `rango.action`); `{id}` is the action $$id, so the timeline shows which action ran. JS and no-JS/PE form actions                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `render:total:{route}`                                                                                             | Rendering  | Whole render phase: match + serialize + SSR (co-emitted with `rango.render`); `{route}` is the matched route name (resolved at record time), falling back to bare `render:total` for unmatched / auto-named routes. Also emitted for an action-revalidation render                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `loader:{id}`                                                                                                      | Loader     | Per-loader EXECUTION, every executing path incl. fetchable (co-emitted with `rango.loader`). A loader-cache HIT does not execute, so it emits no `loader:` entry                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `handler:{id}`                                                                                                     | Handler    | Per-segment route/layout handler EXECUTION (the component/handler that produces a segment) — the dominant per-segment work. Paired with the `rango.handler` span (`rango.handler_id={id}`, mirroring `rango.loader_id`/`rango.action_id` — the handler id, NOT the emitted segment's `shortCode`); the metric is owned by `track()` at the call site, the span by `observeHandler`. A static/prerender HIT emits NO `rango.handler` span (no handler runs); the `handler:{id}` metric is still recorded for **layout/cache** entries (their `track()` wraps `resolveLayoutComponent`, which does the static lookup) but NOT for **route/parallel** entries (their static lookup precedes `track()`, so a static hit records neither). Server-Timing prefixes the depth (`d2-handler-{id}`)                                          |
+| `middleware:{name}@{scope}` / `middleware:{scope}#{n}`                                                             | Middleware | Combined pre + post own-time. Named handlers use `{name}@{scope}`; anonymous handlers use `{scope}#{ordinal}`. `scope` is the registered pattern or `*`. Span-only via `observePhase`; this metric is recorded directly                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
 ### Zero overhead when disabled
 
@@ -316,9 +338,12 @@ const router = createRouter({
 
 ## Event Types
 
-All events include a `timestamp` (from `performance.now()`) and an optional
-`requestId` extracted from request headers. The router checks
-`x-rsc-router-request-id`, `x-request-id`, and `cf-ray` (in that order).
+All events include a `timestamp` (from `performance.now()`) and, wherever the
+router knows the request, a `requestId` for correlation (the field is typed
+optional). The router takes it from the first non-empty header among
+`x-rsc-router-request-id`, `x-request-id`, and `cf-ray` (in that order), and
+otherwise generates an internal id of the form `t-{base36 counter}`. The same
+request always reports the same id.
 
 | Event                     | Lifecycle                                             |
 | ------------------------- | ----------------------------------------------------- |
@@ -427,7 +452,7 @@ during segment resolution.
   error: Error,
   handledByBoundary: true,
   pathname: "/blog/hello",      // optional
-  routeKey: "blog:post",        // optional
+  routeKey: "blog.post",        // optional
   params: { slug: "hello" },    // optional
 }
 ```
@@ -438,12 +463,12 @@ during segment resolution.
 {
   type: "cache.decision",
   pathname: "/blog/hello",
-  routeKey: "blog:post",
+  routeKey: "blog.post",
   hit: true,
   shouldRevalidate: false,
   source: "runtime" | "prerender",  // optional
   segments: [                       // optional (CacheSegmentSignal[])
-    { id: "blog:post", type: "route", cacheStatus: "hit", shouldRevalidate: false },
+    { id: "blog.post", type: "route", cacheStatus: "hit", shouldRevalidate: false },
   ],
 }
 ```
@@ -463,7 +488,7 @@ genuine per-segment status if the pipeline later exposes it.
   type: "revalidation.decision",
   segmentId: "blog-page",
   pathname: "/blog/hello",
-  routeKey: "blog:post",
+  routeKey: "blog.post",
   shouldRevalidate: true,
 }
 ```
@@ -479,12 +504,20 @@ frozen snapshot of the foreground Flight/HTML/response operation. It is absent
 when the deadline fired before the response-construction driver started (for
 example, in a slow route handler) or on a response route.
 
+For `"stream-idle"` (`timeouts.streamIdleMs`, opt-in) the trip happens AFTER
+the response was handed off: the body stream is errored and the source render
+canceled once no chunk flowed for the budget. `onTimeout` cannot apply — no
+replacement Response can be served mid-stream — so `customHandler` is always
+`false`; the trip also reaches `onError`. Semantics are end-to-end idle flow
+(a stalled slow client counts the same as a wedged producer), so budgets
+should be generous.
+
 ```typescript
 {
   type: "request.timeout",
   phase: "stream-idle",   // TimeoutPhase: "action" | "render-start" | "stream-idle"
   pathname: "/blog/hello",
-  routeKey: "blog:post",  // optional
+  routeKey: "blog.post",  // optional
   actionId: "submit",     // optional (present for action-phase timeouts)
   durationMs: 5000,
   customHandler: false,   // whether onTimeout was configured
@@ -529,16 +562,18 @@ header values (either may be `null` when the header is absent).
 The `createOTelSink` adapter maps the router's **discrete-fact events** to
 **instant** OpenTelemetry spans (one span per fact):
 
-| Span Name                       | Key Attributes                                                                                          |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `rango.handler.error`           | `rango.segment_id`, `rango.segment_type`, `rango.route_key`, `rango.handled_by_boundary` (error status) |
-| `rango.cache.decision`          | `rango.cache.hit`, `rango.cache.should_revalidate`, `rango.cache.source`                                |
-| `rango.revalidation.decision`   | `rango.segment_id`, `http.route`, `rango.route_key`, `rango.revalidate`                                 |
-| `rango.request.timeout`         | `rango.phase`, `http.route`, `rango.duration_ms`, `rango.timeout.custom_handler` (error status)         |
-| `rango.request.origin-rejected` | `http.method`, `http.route`, `rango.phase`, `rango.origin` (error status)                               |
+| Span Name                       | Attributes                                                                                                                                                                                                                                         |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rango.handler.error`           | `rango.handled_by_boundary`, and when present `rango.segment_id`, `rango.segment_type`, `http.route` (the pathname), `rango.route_key`, `rango.params` (JSON) (error status, exception recorded)                                                   |
+| `rango.cache.decision`          | `http.route`, `rango.route_key`, `rango.cache.hit`, `rango.cache.should_revalidate`, `rango.cache.source` (when present)                                                                                                                           |
+| `rango.revalidation.decision`   | `rango.segment_id`, `http.route`, `rango.route_key`, `rango.revalidate`                                                                                                                                                                            |
+| `rango.request.timeout`         | `rango.phase`, `http.route`, `rango.duration_ms`, `rango.timeout.custom_handler`, and when present `rango.route_key`, `rango.action_id`, `rango.render.mode` / `.phase` / `.state` / `.completed` / `.total` / `.phase_duration_ms` (error status) |
+| `rango.request.origin-rejected` | `http.method`, `http.route`, `rango.phase`, and when present `rango.origin`, `http.host` (error status)                                                                                                                                            |
+
+`http.route` carries the request **pathname** here, not the route pattern.
 
 The **phase** spans — `rango.request`, `rango.middleware`, `rango.action`,
-`rango.loader`, `rango.handler`, `rango.render`, `rango.ssr` — are NOT produced by the sink. They are duration
+`rango.loader`, `rango.handler`, `rango.render`, `rango.ssr`, `rango.response`, `rango.background` — are NOT produced by the sink. They are duration
 spans owned by the `tracing` slot (`createOTelTracing` / `createCloudflareTracing`),
 which wraps the actual work via the callback boundary so they nest by async
 context. `createOTelSink` therefore ignores the `request.start/end/error` and
@@ -549,8 +584,9 @@ custom spans_ below).
 ### Error Recording
 
 Error spans (`rango.handler.error`, `rango.request.timeout`,
-`rango.request.origin-rejected`) call `span.recordException(error)` where an
-error object is present and set `SpanStatusCode.ERROR` with a message.
+`rango.request.origin-rejected`) set `SpanStatusCode.ERROR` with a message.
+Only `rango.handler.error` carries an error object, so only it calls
+`span.recordException(error)`.
 
 ## Cloudflare Workers Example
 
@@ -603,7 +639,7 @@ export const router = createRouter<AppBindings>({
 ```
 
 Emitted spans: `rango.request`, `rango.middleware`, `rango.action`,
-`rango.loader`, `rango.handler`, `rango.render`, `rango.ssr`. Unlike the OTel sink (which builds spans from
+`rango.loader`, `rango.handler`, `rango.render`, `rango.ssr`, `rango.response`, `rango.background`. Unlike the OTel sink (which builds spans from
 lifecycle _events_ after the fact), `createCloudflareTracing` **wraps the actual
 work** with `executionContext.tracing.enterSpan`, so spans nest by async context
 and the platform's automatic KV/D1/fetch spans land under the right phase.
@@ -613,17 +649,15 @@ and the platform's automatic KV/D1/fetch spans land under the right phase.
 ### One instrumentation model
 
 These spans and the `debugPerformance` perf timeline above are **one model, not
-two**. Every router phase is wrapped exactly once by the internal
-`observePhase()` primitive (`src/router/instrument.ts`), which from a single
-wrap site opens the span AND — unless the phase meters its own perf metric —
-records the perf metric, reading the metrics store and tracing config off the
-request context. So the span set is always a subset of the perf phases and the
-two surfaces cannot drift (e.g. a fetchable `_rsc_loader` request appears in
-both, not one).
+two**. Every router phase uses the `PHASES` registry and the internal
+`observePhase()` primitive (`src/router/instrument.ts`), which opens the span
+and records a perf metric when that phase has one. Span-only phases stay in the
+same registry and execution boundary, so phase identity and wrapping cannot
+drift between the two surfaces.
 
-Three phases pass `metric: false` to `observePhase` — their perf metric is
-recorded elsewhere, not as a single combined metric from the wrap site (still
-one owner per surface):
+Five phases pass `metric: false` to `observePhase` — their perf metric is
+recorded elsewhere (or deliberately not at all), not as a single combined
+metric from the wrap site (still one owner per surface):
 
 - `rango.request` — `handler:total` is the grand total incl. the pre-context
   bootstrap timings.
@@ -632,6 +666,11 @@ one owner per surface):
 - `rango.handler` — the `handler:{id}` metric is owned by the call-site `track()`
   (the span is added separately by `observeHandler`), so this phase is span-only
   here; see the metric table above for when a static hit records it.
+- `rango.response` — span-only by design: this phase finalizes the
+  `Server-Timing` header itself, so a co-emitted metric would be circular.
+- `rango.background` — span-only by design: the perf timeline is finalized
+  with the response, so a metric recorded by post-handoff work could never
+  reach it.
 
 Discrete facts (cache decisions, handler errors, timeouts, …) are the **other**
 surface — `observeEvent()` → the `TelemetrySink`. Spans drive; events are
@@ -667,6 +706,40 @@ Key properties:
   declares `loading()` (its handler promise settles during the stream). Overlapping
   spans are valid; the child really did take that long. Trace consumers that
   enforce strict end-nesting should expect this.
+- **`rango.response` is the explicit handoff marker.** One span at most per
+  traced request, a direct child of `rango.request`, opened only after
+  downstream middleware/core execution returned a response. It covers response
+  finalization (partial-redirect interception, `Server-Timing` mutation, the
+  open-redirect guard) and ends immediately before the router handler returns
+  the response to the host — handoff-bound, never drain-bound. It never reads
+  or wraps `response.body`, is absent when the request throws before a response
+  exists, and carries `http.response.status_code`, `rango.response.mode` (the
+  classified request mode, or `middleware-short-circuit`), and
+  `rango.response.body_kind` (`stream` / `empty` / `websocket`) describing the
+  response actually handed to the host. For request modes that render nothing
+  (a fetchable `_rsc_loader`, a response route, a middleware short-circuit) it
+  is the terminal marker that shows the trace is complete rather than
+  truncated. On deployed Workers it may report 0 ms (non-I/O timers are
+  frozen); its position and attributes are the value. Toggle with
+  `spans: { response: false }` — one billable span per sampled response matters
+  at volume.
+- **`rango.background` wraps detached work.** waitUntil tasks that outlive the
+  response — the PPR shell capture and the SWR background revalidations — run
+  after the foreground phase spans ended, so their spans (the platform's
+  automatic KV/fetch/cache spans, and for the revalidation lanes the re-run's
+  own `rango.*` set) would otherwise dangle as unexplained orphans in the
+  trace (field-observed: a capture parked ~24 s in the per-isolate capture
+  queue read as an inexplicable late span wave). The wrapper is opened at each
+  lane's execution boundary with `rango.background.kind` =
+  `shell-capture` / `document-revalidation` / `loader-revalidation` /
+  `use-cache-revalidation`. Per-lane inner-span policy: the shell-capture lane
+  KEEPS its inner phase spans suppressed (`deriveShellCaptureContext` strips
+  `_tracing` — a capture re-render duplicating the foreground span set was the
+  original #670 leak) and instead carries `rango.shell_key`,
+  `rango.background.outcome`, and `rango.background.queue_wait_ms` (queue
+  parking made visible); the revalidation lanes keep their inner `rango.*`
+  spans, now nested under the wrapper. Toggle with
+  `spans: { background: false }`.
 - **Full phase coverage.** Intercept-route middleware emits `rango.middleware`,
   and action-revalidation renders emit `rango.render`, so an action
   revalidation's loaders nest under a `rango.render` parent like a normal
@@ -711,7 +784,7 @@ export const router = createRouter({ document: Document, tracing });
 
 Emitted spans are the same set as everywhere else: `rango.request`,
 `rango.middleware`, `rango.action`, `rango.loader`, `rango.handler`,
-`rango.render`, `rango.ssr`. Options: `enabled`, per-phase `spans`, an
+`rango.render`, `rango.ssr`, `rango.response`, `rango.background`. Options: `enabled`, per-phase `spans`, an
 OTel-instrumentation-scope `tracerName` (default `"rango"`), and a `tracer`
 override (defaults to the global `trace.getTracer(tracerName)`).
 

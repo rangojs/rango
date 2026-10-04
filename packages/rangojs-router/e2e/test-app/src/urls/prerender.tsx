@@ -1,6 +1,7 @@
 import {
   urls,
   Prerender,
+  Passthrough,
   Static,
   createLoader,
   getRequestContext,
@@ -8,11 +9,18 @@ import {
   type Middleware,
 } from "@rangojs/router";
 import { Suspense } from "react";
-import { ParallelOutlet } from "@rangojs/router/client";
+import { Link, ParallelOutlet } from "@rangojs/router/client";
+import { docsWhen } from "../components/transition-when.js";
 import { ChangelogPage } from "./prerender-fs.js";
 import { PrerenderTestLoader } from "../loaders.js";
 import { PrerenderClientTest } from "../components/PrerenderClientTest.js";
+import {
+  CachedInlineActionForm,
+  type CachedInlineActionState,
+} from "../components/CachedInlineActionForm.js";
 import { PrerenderPprSeq } from "../components/PrerenderPprSeq.js";
+import { PrerenderPprActionForm } from "../components/InlineBoundActionForm.js";
+import { buildInlineActionState } from "../inline-action-helpers.js";
 // Resolved by the `test-parity-alias` resolveId plugin (vite.config.ts), not
 // resolve.alias. Reaching this through build-time Static/Prerender handlers
 // asserts discovery's runner honors third-party resolvers (issue #500).
@@ -77,6 +85,13 @@ export const DocsArticle = Prerender(
         <h1 data-testid="docs-article-title">{ctx.params.slug}</h1>
         <p data-testid="docs-article-content">Content for {ctx.params.slug}</p>
         <PrerenderClientTest loader={PrerenderTestLoader} />
+        <Link
+          to="/docs/api-reference"
+          prefetch="none"
+          data-testid="docs-to-api-reference"
+        >
+          api-reference
+        </Link>
       </div>
     );
   },
@@ -152,6 +167,54 @@ export const PrerenderHandle = Prerender(async (ctx) => {
     </div>
   );
 });
+
+// Static handler embedding an inline action with build-time captured scope.
+// Runtime serves the stored Flight without re-running this handler, so action
+// invocation must resolve through the production server-reference manifest.
+export const StaticInlineActionPage = Static(() => {
+  const token = `stok-${Date.now().toString(36)}-${Math.floor(
+    Math.random() * 1e6,
+  ).toString(36)}`;
+
+  async function staticInlineAction(
+    _prev: CachedInlineActionState,
+    _formData: FormData,
+  ): Promise<CachedInlineActionState> {
+    "use server";
+    return buildInlineActionState(token);
+  }
+
+  return (
+    <CachedInlineActionForm
+      renderedToken={token}
+      cachedAction={staticInlineAction}
+    />
+  );
+});
+
+// Parameterized prerender fixture for a cached list-style action: each built
+// page freezes its id into the action while the action body remains live.
+export const PrerenderInlineActionPage = Prerender(
+  async () => [{ id: "a1" }, { id: "a2" }],
+  async (ctx) => {
+    const articleId = ctx.params.id;
+
+    async function likeAction(
+      _prev: CachedInlineActionState,
+      _formData: FormData,
+    ): Promise<CachedInlineActionState> {
+      "use server";
+      return buildInlineActionState(articleId);
+    }
+
+    return (
+      <CachedInlineActionForm
+        renderedToken={articleId}
+        cachedAction={likeAction}
+      />
+    );
+  },
+);
 
 // Prerender + ppr composition (docs/design/shell-fast-path.md): the SAME route
 // carries a build-time prerendered handler (trie pr:true) AND the ppr shell
@@ -259,8 +322,54 @@ export const PrerenderPprEvictArticle = Prerender(
   },
 );
 
+/**
+ * Passthrough + Prerender + ppr fixture for the replay gate's existence
+ * probe: only "baked" bakes at build time; every other slug misses the
+ * prerender store and renders LIVE through the Passthrough handler. The trie
+ * still marks the route pr:true, so the gate must probe the store instead of
+ * trusting the flag — live params keep navigation replay (their captures
+ * record the doc segment record), baked params keep the prerender-store
+ * bypass.
+ */
+let ppPassthroughExec = 0;
+
+export const PrerenderPprPassthroughDef = Prerender<{ slug: string }>(
+  async () => [{ slug: "baked" }],
+  async (ctx) => (
+    <div data-testid="ppp-article">
+      <p data-testid="ppp-source">baked</p>
+      <p data-testid="ppp-content">{`PPP content for ${ctx.params.slug}`}</p>
+      <PrerenderPprActionForm />
+    </div>
+  ),
+);
+
+export const PrerenderPprPassthroughArticle = Passthrough(
+  PrerenderPprPassthroughDef,
+  async (ctx) => {
+    ppPassthroughExec += 1;
+    return (
+      <div data-testid="ppp-article">
+        <p data-testid="ppp-source">live</p>
+        <p data-testid="ppp-content">{`PPP content for ${ctx.params.slug}`}</p>
+        <p data-testid="ppp-exec">{`ppp-exec-${ppPassthroughExec}`}</p>
+        <PrerenderPprActionForm />
+      </div>
+    );
+  },
+);
+
 export const prerenderPatterns = urls(
-  ({ path, loader, loading, parallel, middleware, notFoundBoundary }) => [
+  ({
+    path,
+    loader,
+    loading,
+    parallel,
+    middleware,
+    notFoundBoundary,
+    revalidate,
+    transition,
+  }) => [
     path("/prerender-handle", PrerenderHandle, { name: "prerender-handle" }),
     path("/docs", DocsPage, { name: "docs" }),
     // Prerender + ppr on ONE route: build-time segments become the frozen
@@ -282,6 +391,20 @@ export const prerenderPatterns = urls(
           },
         }),
       ],
+    ),
+    // Passthrough + Prerender + ppr (replay gate existence probe): only
+    // "baked" bakes; other slugs render live and must keep navigation replay.
+    path(
+      "/ppp/:slug",
+      PrerenderPprPassthroughArticle,
+      {
+        name: "pp.passthrough",
+        ppr: { ttl: 300, swr: 120 },
+      },
+      // Retaining the prerendered client boundary is part of this streaming
+      // contract. Default Passthrough revalidation replaces it with the live
+      // handler and therefore discards its local useActionState result.
+      () => [revalidate(({ actionId }) => (actionId ? false : undefined))],
     ),
     // Build-shell eviction fixture (#699): tagged so updateTag can reject the
     // baked entry via the store's tag markers (manifest entries are immutable
@@ -334,6 +457,7 @@ export const prerenderPatterns = urls(
       }),
     ]),
     path("/docs/:slug", DocsArticle, { name: "docs.article" }, () => [
+      transition({ when: docsWhen }),
       loader(PrerenderTestLoader),
       notFoundBoundary(({ notFound: info }) => (
         <div data-testid="docs-not-found">
@@ -352,5 +476,11 @@ export const prerenderPatterns = urls(
       name: "prerender-reverse",
     }),
     path("/static-reverse", StaticWithReverse, { name: "static-reverse" }),
+    path("/static-inline-action", StaticInlineActionPage, {
+      name: "static-inline-action",
+    }),
+    path("/prerender-inline-action/:id", PrerenderInlineActionPage, {
+      name: "prerender-inline-action",
+    }),
   ],
 );

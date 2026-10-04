@@ -1,5 +1,3 @@
-/// <reference path="../../vite/plugins/version.d.ts" />
-
 // Extend CacheStorage with Cloudflare's default cache property
 declare global {
   interface CacheStorage {
@@ -27,6 +25,7 @@ declare global {
  * - KV L2 for cross-colo cache persistence
  */
 
+import { requestHeaders } from "../../server/request-headers.js";
 import type {
   SegmentCacheStore,
   CachedEntryData,
@@ -35,12 +34,24 @@ import type {
   CacheItemResult,
   CacheItemOptions,
   ShellCacheEntry,
+  ShellDocumentRead,
+  ShellDocumentReadOptions,
+  ShellEntryHead,
+  ShellReadStats,
+  ShellSnapshotFailure,
+  ShellSnapshotRecord,
+  CacheReadError,
 } from "../types.js";
+import { CACHE_READ_ERROR } from "../types.js";
 import {
   _getRequestContext,
   type RequestContext,
 } from "../../server/request-context.js";
-import { VERSION } from "@rangojs/router:version";
+import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
+import {
+  versionKeyPrefix,
+  type KeyVersion,
+} from "../../server/build-version-table.js";
 import {
   isPerClientSignalHeader,
   stripPerClientSignals,
@@ -52,19 +63,60 @@ import {
 } from "../cache-policy.js";
 import { reportCacheError, reportingAsync } from "../cache-error.js";
 import type { CacheErrorCategory } from "../cache-error.js";
-import { bufferToBase64, base64ToBuffer } from "./cf-base64.js";
 import {
+  bufferToBase64,
+  base64ToBuffer,
+  base64ToBytes,
+  bytesToBase64,
+} from "./cf-base64.js";
+import {
+  ShellFrameReader,
+  encodeShellFrame,
+  encodeShellSnapshot,
+  parseShellSnapshot,
+  shellFrameToText,
+  type ShellFrameHead,
+} from "./cf-shell-frame.js";
+import {
+  ShellMemo,
+  RecentTagInvalidations,
+  DEFAULT_SHELL_MEMO_MS,
+  freshReadsWindowMs,
+  isShellFresh,
+  resolveShellMemoOptions,
+  shellHasAnyTag,
+  type ResolvedShellMemoOptions,
+} from "../shell-memo.js";
+import {
+  KV_KEY_PRESERVED_PREFIX_BYTES,
   KV_MAX_KEY_BYTES,
   KV_MIN_EXPIRATION_TTL,
   kvKeyByteLength,
+  kvKeyDigest,
   remainingCacheControl,
+  truncateToBytes,
 } from "./cf-kv-utils.js";
 import {
   TAG_MARKER_CACHE_PREFIX,
   TAG_MARKER_ABSENT,
   getTagMarkerMemo,
   getTagMarkerInflight,
+  getShellMarkerReads,
 } from "./cf-tag-marker-memo.js";
+import {
+  gateMarkerRead,
+  maskRequestTags,
+  maskedForRequest,
+} from "../request-tag-mask.js";
+import {
+  TagMarkerMemo,
+  TagNameHints,
+  hintedTags,
+  freshReadsRequired,
+  recordMarkerRow,
+  DEFAULT_CF_MARKER_FRESH_MS,
+  DEFAULT_CF_MARKER_MAX_STALE_MS,
+} from "../isolate-tag-memo.js";
 import { createCloudflareZonePurge } from "./cf-zone-purge.js";
 
 // ============================================================================
@@ -88,6 +140,7 @@ import {
   EDGE_LOOKUP_TIMEOUT_MS,
   EDGE_READ_TIMEOUT_MS,
   KV_READ_TIMEOUT_MS,
+  SHELL_SNAPSHOT_READ_MIN_TIMEOUT_MS,
 } from "./cf-cache-constants.js";
 
 // Re-export the public constants so consumers/tests importing them from
@@ -139,11 +192,12 @@ const warnedNoKvReadInvalidation = new Set<string>();
 const warnedTagInvalidationTtlFloor = new Set<string>();
 
 /**
- * Stores (by namespace) already warned about the shell family being inert
- * (getShell/putShell no-op without a KV namespace), so a ppr route hitting the
- * silent fail-open warns once per isolate instead of on every request.
+ * Stores (by namespace) already warned that a TAGGED shell was written on a
+ * KV-less store without tagPurge: no markers and no purge means updateTag()
+ * cannot reach the shell (freshness is ttl/swr only). Once per isolate, not
+ * per capture (CFCacheStore is constructed per request).
  */
-const warnedShellFamilyInert = new Set<string>();
+const warnedShellTagsNoEviction = new Set<string>();
 
 /**
  * Stores (by namespace) already warned that tag invalidation is writing KV
@@ -260,41 +314,146 @@ interface KVItemEnvelope {
 }
 
 /**
- * KV envelope for PPR shell cache entries.
- * @internal
+ * Key namespace of the shell family. `shell2:` holds the prelude-first frame
+ * (cf-shell-frame.ts); `shell:` held the JSON envelope. The separate
+ * namespace keeps new code from reporting an old body as corrupt and a
+ * rollback from parsing a frame. Old keys age out by their TTL.
  */
-interface KVShellEnvelope {
-  /** base64-encoded prelude bytes */
-  p: string;
-  /** postponed state JSON, or null (DATA variant — no holes) */
-  po: string | null;
-  /** React.version captured at prerender time */
-  rv: string;
-  /** Build version captured at prerender time (ShellCacheEntry.buildVersion) */
-  bv?: string;
-  /** Capture-generation start time (ms epoch), used by tag marker checks. */
-  c: number;
-  /** When entry becomes stale (ms epoch) */
-  s: number;
-  /** When entry hard-expires (ms epoch) */
-  e: number;
-  /** Cache tags (for distributed tag invalidation) */
-  t?: string[];
-  /** Timestamp when tags were attached (ms epoch) */
-  ta?: number;
-  /** initialTheme the capture render was built with (resume theme fidelity) */
-  i?: string;
-  /** Capture data snapshot: recorded cache-store hits/writes for HIT parity */
-  sn?: import("../types.js").ShellSnapshotRecord[];
-  /**
-   * ShellCacheEntry.handlerLiveHoles. Must round-trip: the serve side arms the
-   * handler-free fast path on `!entry.handlerLiveHoles`, so dropping the flag
-   * here silently fast-pathed handler-live entries after a KV round trip —
-   * their holes only a handler re-run can fill.
-   */
-  lh?: boolean;
-  /** ShellCacheEntry.transitionWhen; conditional transitions must re-run. */
-  tw?: true;
+const SHELL_KEY_PREFIX = "shell2:";
+
+/** A shell snapshot read's timeout, and its warning's consequence text. */
+interface SnapshotReadBudget {
+  ms: number;
+  consequence?: string;
+}
+
+/** A memoized fresh shell read (shell-memo.ts). */
+interface CFShellMemoValue {
+  head: ShellFrameHead;
+  prelude: Uint8Array;
+  snapshot: ShellSnapshotRecord[] | undefined;
+  /** L1 response headers: the KV-less purge-mode marker check reads them. */
+  headers?: Headers;
+}
+
+/** The per-isolate shell memo shared by every CFCacheStore in the isolate. */
+const cfShellMemo = new ShellMemo<CFShellMemoValue>();
+/** Per-isolate tag-marker values (isolate-tag-memo.ts), keyed per namespace. */
+const cfMarkerMemo = new TagMarkerMemo();
+/** Per-isolate shell-key -> tag-name hints for the marker prefetch. */
+const cfTagHints = new TagNameHints();
+
+/** Tags this isolate invalidated recently: they keep shells out of cfShellMemo. */
+const recentShellInvalidations = new RecentTagInvalidations();
+
+/**
+ * Whether cfShellMemo may keep or serve this shell: still fresh (a stale one
+ * stays with the store read, which schedules the recapture), and not tagged
+ * at or before an invalidation this isolate is running or just ran.
+ */
+function isMemoizableShell(head: ShellFrameHead): boolean {
+  return (
+    isShellFresh(head.s, head.e) &&
+    !recentShellInvalidations.covers(head.t, head.ta)
+  );
+}
+
+/**
+ * @internal Reset the per-isolate shell and marker memos and the once-per-
+ * isolate warnings (tests).
+ */
+export function resetCFShellMemoForTests(): void {
+  cfShellMemo.clear();
+  recentShellInvalidations.clear();
+  cfMarkerMemo.clear();
+  cfTagHints.clear();
+  warnedNoKvReadInvalidation.clear();
+  warnedTagInvalidationTtlFloor.clear();
+  warnedShellTagsNoEviction.clear();
+  warnedNoTagInvalidationTtl.clear();
+  warnedCacheTagHeaderOverflow.clear();
+  warnedCacheTagOverflowUncacheable.clear();
+}
+
+/** openShellFrame outcome: the head and prelude, or why the read failed. */
+type OpenedShellFrame =
+  | {
+      status: "ok";
+      head: ShellFrameHead;
+      prelude: Uint8Array;
+      reader: ShellFrameReader;
+    }
+  | { status: "corrupt"; error: Error; head?: undefined }
+  | { status: "expired"; head: ShellFrameHead }
+  | { status: "timeout"; head?: undefined }
+  | { status: "invalidated"; head?: undefined };
+
+/** The `[CFCacheStore][shell]` trace's timings, from a read's stats. */
+function debugTimings(
+  stats: ShellReadStats | undefined,
+): Pick<CFShellDebugDetails, "matchMs" | "readMs" | "bodyReadMs" | "markerMs"> {
+  if (!stats) return {};
+  if (stats.tier === "memo")
+    return { markerMs: Math.round(stats.markerMs ?? 0) };
+  const round = (ms: number | undefined) =>
+    ms === undefined ? undefined : Math.round(ms);
+  const bodyReadMs =
+    stats.headMs === undefined && stats.preludeMs === undefined
+      ? undefined
+      : (stats.headMs ?? 0) + (stats.preludeMs ?? 0);
+  return {
+    ...(stats.tier === "kv"
+      ? { readMs: round(stats.matchMs) }
+      : { matchMs: round(stats.matchMs) }),
+    bodyReadMs: round(bodyReadMs),
+    markerMs: round(stats.markerMs),
+  };
+}
+
+/** The public entry shape of a frame head (no prelude, no snapshot). */
+function shellHeadToEntry(head: ShellFrameHead): ShellEntryHead {
+  return {
+    ...(head.po !== undefined ? { postponed: head.po } : {}),
+    reactVersion: head.rv,
+    buildVersion: head.bv,
+    initialTheme: head.i,
+    docKey: head.dk,
+    prunedRecords: head.pr,
+    navigationOnly: head.no,
+    createdAt: head.c,
+  };
+}
+
+type CFShellDebugOutcome =
+  | "memo-hit"
+  | "l1-hit"
+  | "l1-miss"
+  | "kv-hit"
+  | "kv-miss"
+  | "kv-promoted"
+  | "marker-invalidated"
+  | "l1-stored"
+  | "kv-stored"
+  | "write-invalidated";
+
+interface CFShellDebugDetails {
+  tier?: "memo" | "l1" | "kv";
+  reason?:
+    | "absent"
+    | "timeout"
+    | "error"
+    | "non-200"
+    | "malformed"
+    | "expired"
+    | "unavailable";
+  freshness?: "fresh" | "stale";
+  status?: number;
+  matchMs?: number;
+  bodyReadMs?: number;
+  markerMs?: number;
+  readMs?: number;
+  expiresAt?: number;
+  remainingTtl?: number;
 }
 
 /**
@@ -335,12 +494,31 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private readonly namespace?: string;
   private readonly explicitBaseUrl?: string;
   private readonly waitUntil?: (fn: () => Promise<void>) => void;
-  private readonly version?: string;
+  /** The `version` option: used for every versioned family when set. */
+  private readonly explicitVersion?: string;
   private readonly edgeLookupTimeoutMs: number;
   private readonly edgeReadTimeoutMs: number;
   private readonly kvReadTimeoutMs: number;
+  /**
+   * The shell snapshot read's budgets. `read` (getShell: partial replay, the
+   * testing helpers) has nothing committed, so a slow snapshot is a quick
+   * miss at kvReadTimeoutMs. `document` (readShellDocument, the serve path)
+   * has sent the prelude and cannot finish without the snapshot's doc
+   * record; a timeout there reloads the page, so it waits at least
+   * SHELL_SNAPSHOT_READ_MIN_TIMEOUT_MS. `kvReadTimeoutMs <= 0` keeps both
+   * unbounded.
+   */
+  private readonly snapshotBudgets: {
+    read: SnapshotReadBudget;
+    document: SnapshotReadBudget;
+  };
+  private readonly memo: ResolvedShellMemoOptions;
+  /** @internal SegmentCacheStore.freshReadsWindowMs */
+  readonly freshReadsWindowMs: number;
   private readonly debug?: (event: CFCacheReadDebugEvent) => void;
   private readonly kv?: KVNamespace;
+  /** True when constructed without KV: no durable tag history (see ctor). */
+  readonly tagHistoryInert?: boolean;
   private readonly onRevalidateTag?: (tags: string[]) => Promise<void>;
   private readonly tagPurge?: (cacheTags: string[]) => Promise<void>;
   private readonly tagInvalidationTtl?: number;
@@ -363,7 +541,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     // the internal host. Only the explicit override can be captured eagerly.
     this.explicitBaseUrl = options.baseUrl;
     this.defaults = options.defaults;
-    this.version = options.version ?? VERSION;
+    this.explicitVersion = options.version;
     // Coalesce only finite numbers to the override; a non-finite value (NaN from
     // `Number(env.UNSET)`, or Infinity) would otherwise sail past `?? DEFAULT`
     // (which only replaces null/undefined) into setTimeout, where NaN/Infinity
@@ -387,6 +565,28 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       options.kvReadTimeoutMs,
       KV_READ_TIMEOUT_MS,
     );
+    this.snapshotBudgets = {
+      read: { ms: this.kvReadTimeoutMs },
+      document:
+        this.kvReadTimeoutMs > 0
+          ? {
+              ms: Math.max(
+                this.kvReadTimeoutMs,
+                SHELL_SNAPSHOT_READ_MIN_TIMEOUT_MS,
+              ),
+              consequence: "the HIT reloads the page into a cache-miss render",
+            }
+          : { ms: this.kvReadTimeoutMs },
+    };
+    this.memo = resolveShellMemoOptions(options.memo, {
+      markerFreshMs: DEFAULT_CF_MARKER_FRESH_MS,
+      markerMaxStaleMs: DEFAULT_CF_MARKER_MAX_STALE_MS,
+    });
+    // Without KV there are no markers, so no marker memo to outwait.
+    this.freshReadsWindowMs = freshReadsWindowMs(
+      this.memo,
+      Boolean(options.kv),
+    );
     this.debug =
       options.debug === true
         ? (event) =>
@@ -397,6 +597,13 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     this.keyGenerator = options.keyGenerator;
     this.waitUntil = (fn) => options.ctx.waitUntil(fn());
     this.kv = options.kv;
+    // Without KV, isTagsInvalidatedSince has no durable history — it answers
+    // from the per-request mask at best. Runtime shells tolerate that (purge
+    // eviction + ttl/swr bound the staleness), but an immutable TAGGED
+    // build-manifest shell must not serve on such a store: nothing could ever
+    // evict it (purge cannot delete a build asset), so the manifest gate
+    // declines on this flag (shell-build-manifest.ts).
+    this.tagHistoryInert = options.kv ? undefined : true;
     this.onRevalidateTag = options.onRevalidateTag;
     // tagPurge accepts a ready purge function or a credentials object; the
     // object form is normalized through the built-in zone purge client, which
@@ -413,9 +620,12 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     // marker write throw and break ALL invalidation. Floor it (and warn once);
     // a non-finite/non-positive value falls back to the no-expiry default
     // (markers persist) rather than silently sailing a NaN into expirationTtl.
-    this.tagInvalidationTtl = this.sanitizeTagInvalidationTtl(
-      options.tagInvalidationTtl,
-    );
+    // KV-less the option is dead config — no markers to expire, and the
+    // retention cap it used to imply is KV-conditional (putShell) — so it is
+    // dropped without the KV-floor validation/warning, which would misdirect.
+    this.tagInvalidationTtl = options.kv
+      ? this.sanitizeTagInvalidationTtl(options.tagInvalidationTtl)
+      : undefined;
     // tagCacheTtl gates the L1 marker cache via `> 0`. A non-finite value (NaN
     // from `Number(env.UNSET)`) is not null/undefined, so `?? 0` would let it
     // through and silently disable the cache while reading as "configured".
@@ -501,6 +711,45 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     } catch {
       // A broken debug sink must not affect the request.
     }
+  }
+
+  /**
+   * Build-time-gated shell tier trace for deployed cross-colo diagnostics.
+   * A read's `stats` print as its timings, after the other details and before
+   * `expiresAt`.
+   */
+  private debugShell(
+    key: string,
+    outcome: CFShellDebugOutcome,
+    details: CFShellDebugDetails & { stats?: ShellReadStats } = {},
+  ): void {
+    if (!INTERNAL_RANGO_DEBUG) return;
+    const request = _getRequestContext()?.request as
+      | (Request & { cf?: { colo?: unknown } })
+      | undefined;
+    const ray = request
+      ? (requestHeaders(request).get("cf-ray") ?? undefined)
+      : undefined;
+    const cfColo = request?.cf?.colo;
+    const colo =
+      typeof cfColo === "string"
+        ? cfColo
+        : ray?.includes("-")
+          ? ray.slice(ray.lastIndexOf("-") + 1)
+          : undefined;
+    const { stats, expiresAt, ...rest } = details;
+    console.log(
+      `[CFCacheStore][shell] ${JSON.stringify({
+        key,
+        outcome,
+        at: Date.now(),
+        ray,
+        colo,
+        ...rest,
+        ...debugTimings(stats),
+        expiresAt,
+      })}`,
+    );
   }
 
   /**
@@ -594,6 +843,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     read: () => Promise<T>,
     budgetMs: number,
     label: string,
+    consequence = "treating as miss",
   ): Promise<{ value: T | undefined; timedOut: boolean }> {
     if (budgetMs <= 0) return { value: await read(), timedOut: false };
 
@@ -612,7 +862,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       ]);
       if (result.timedOut) {
         console.warn(
-          `[CFCacheStore] ${label} exceeded ${budgetMs}ms; treating as miss`,
+          `[CFCacheStore] ${label} exceeded ${budgetMs}ms; ${consequence}`,
         );
         return { value: undefined, timedOut: true };
       }
@@ -881,11 +1131,11 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * On L1 miss, falls back to KV (L2) if configured.
    * KV hits are promoted to L1 in the background.
    */
-  async get(key: string): Promise<CacheGetResult | null> {
+  async get(key: string): Promise<CacheGetResult | null | CacheReadError> {
     if (this.isReservedSegmentKey(key, "cache-read")) return null;
     try {
       const cache = await this.getCache();
-      const request = this.keyToRequest(key);
+      const request = this.keyToRequest(key, "data");
       const matchStart = Date.now();
       const {
         response,
@@ -895,27 +1145,40 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const matchMs = Date.now() - matchStart;
 
       if (!response) {
-        // A transient L1 match error (matchError set) is reported as cache-read
-        // but, like a genuine miss or an abandoned slow match (timedOut), still
-        // degrades to L2/KV rather than failing the read.
-        if (matchError)
+        if (matchError) {
+          // A match REJECTION is reported as cache-read and still degrades to
+          // L2/KV -- a real KV value (or KV's own CACHE_READ_ERROR) stands on
+          // its own. But a null KV result (unconfigured namespace, kv-miss,
+          // kv-timeout) is NOT proof of absence under a rejected L1 match:
+          // the only real signal this read produced is the failure, so
+          // surface CACHE_READ_ERROR instead of a replayable miss (the PPR
+          // seeded fallback must render uncached, not substitute the doc
+          // record for a partition the store could not actually read).
           reportCacheError(
             matchError,
             "cache-read",
             "[CFCacheStore] get L1 match",
           );
+          if (this.debug)
+            this.emitDebug({
+              op: "get",
+              key,
+              // Distinct from a genuine absence: surface it as match-error so
+              // debug agrees with the cache-read already routed to onError,
+              // instead of masquerading as l1-miss.
+              outcome: "match-error",
+              matchMs,
+            });
+          const kvResult = await this.kvGetSegment(key);
+          return kvResult ?? CACHE_READ_ERROR;
+        }
+        // An abandoned slow match (timedOut) keeps the fail-open latency-budget
+        // policy: degrade to L2/KV, and a KV null stays a miss.
         if (this.debug)
           this.emitDebug({
             op: "get",
             key,
-            // A match REJECTION (matchError) is distinct from a genuine absence:
-            // surface it as match-error so debug agrees with the cache-read
-            // already routed to onError, instead of masquerading as l1-miss.
-            outcome: matchError
-              ? "match-error"
-              : timedOut
-                ? "match-timeout"
-                : "l1-miss",
+            outcome: timedOut ? "match-timeout" : "l1-miss",
             matchMs,
           });
         return this.kvGetSegment(key);
@@ -1096,13 +1359,17 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // emit is the separate wrangler-tail signal. Keep both observability paths.
       reportCacheError(error, "cache-read", "[CFCacheStore] get");
       if (this.debug) this.emitDebug({ op: "get", key, outcome: "error" });
-      return null;
+      // Distinct from a miss so the PPR replay composition renders uncached
+      // instead of substituting the seeded doc record (CACHE_READ_ERROR).
+      return CACHE_READ_ERROR;
     }
   }
 
   /**
    * Store entry data with TTL and optional SWR window.
-   * Uses waitUntil for non-blocking write when available.
+   * Resolves once the L1 write lands, per the SegmentCacheStore.set contract
+   * (also held by waitUntil when available); the KV write stays in the
+   * background.
    * When KV is configured, also persists to L2.
    */
   async set(
@@ -1115,7 +1382,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     if (this.skipUncacheableTagSet(data.tags)) return;
     try {
       const cache = await this.getCache();
-      const request = this.keyToRequest(key);
+      const request = this.keyToRequest(key, "data");
 
       // Extended TTL covers SWR window
       const swrWindow = resolveSwrWindow(swr, this.defaults);
@@ -1153,20 +1420,21 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
       const putPromise = cache.put(request, response);
 
+      let l1Write: Promise<void> | undefined;
       if (this.waitUntil) {
-        // Non-blocking write. These store-level background tasks intentionally
-        // omit the reportingAsync ctx argument: the store is a request-agnostic
+        // These store-level background tasks intentionally omit the
+        // reportingAsync ctx argument: the store is a request-agnostic
         // singleton and this.waitUntil is the execution context's, not a single
         // request's, so a failure is reported console-loud only (it cannot be
         // attributed to one request's onError). The request-scoped tag verbs
         // (revalidateTag / stale-revalidation) DO thread their captured ctx.
-        this.waitUntil(() =>
-          reportingAsync(
-            () => putPromise,
-            "cache-write",
-            "[CFCacheStore] L1 write",
-          ),
+        const put = reportingAsync(
+          () => putPromise,
+          "cache-write",
+          "[CFCacheStore] L1 write",
         );
+        this.waitUntil(() => put);
+        l1Write = put;
       } else {
         // Blocking fallback
         await putPromise;
@@ -1174,6 +1442,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
       // L2: persist to KV (reuses `body` as envelope.d)
       this.kvSetSegment(key, body, staleAt, totalTtl, swrWindow);
+
+      // The set() contract (SegmentCacheStore.set, #957): resolve once L1 is
+      // readable.
+      await l1Write;
     } catch (error) {
       reportCacheError(error, "cache-write", "[CFCacheStore] set");
     }
@@ -1186,11 +1458,11 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     if (this.isReservedSegmentKey(key, "cache-delete")) return false;
     try {
       const cache = await this.getCache();
-      const result = await cache.delete(this.keyToRequest(key));
+      const result = await cache.delete(this.keyToRequest(key, "data"));
 
       // L2: delete from KV
       if (this.kv && this.waitUntil) {
-        const kvKey = this.toKVKey(key);
+        const kvKey = await this.toKVKey(key, "data");
         this.waitUntil(() =>
           reportingAsync(
             () => this.kv!.delete(kvKey),
@@ -1221,7 +1493,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   ): Promise<{ response: Response; shouldRevalidate: boolean } | null> {
     try {
       const cache = await this.getCache();
-      const request = this.keyToRequest(`doc:${key}`);
+      const request = this.keyToRequest(`doc:${key}`, "document");
       // The document path is outside the debug surface (op is only get/getItem),
       // so the match-timeout flag is not surfaced as an event here -- though
       // matchWithTimeout still warns on a slow match. A miss or timeout falls
@@ -1362,7 +1634,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     if (this.skipUncacheableTagSet(tags)) return;
     try {
       const cache = await this.getCache();
-      const request = this.keyToRequest(`doc:${key}`);
+      const request = this.keyToRequest(`doc:${key}`, "document");
 
       // Extended TTL covers SWR window
       const swrWindow = resolveSwrWindow(swr, this.defaults);
@@ -1424,7 +1696,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
       // L2: persist to KV (KV requires expirationTtl >= 60s)
       if (this.kv && this.waitUntil && totalTtl >= 60) {
-        const kvKey = this.toDocKVKey(key);
+        const kvKey = await this.toDocKVKey(key);
         // Finding #3: never persist a per-client signal in the KV envelope.
         const headersArray: [string, string][] = [];
         response.headers.forEach((v, k) => {
@@ -1476,7 +1748,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   async getItem(key: string): Promise<CacheItemResult | null> {
     try {
       const cache = await this.getCache();
-      const request = this.keyToRequest(`fn:${key}`);
+      const request = this.keyToRequest(`fn:${key}`, "data");
       const matchStart = Date.now();
       const {
         response,
@@ -1661,7 +1933,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     if (this.skipUncacheableTagSet(options?.tags)) return;
     try {
       const cache = await this.getCache();
-      const request = this.keyToRequest(`fn:${key}`);
+      const request = this.keyToRequest(`fn:${key}`, "data");
 
       const ttl = resolveTtl(options?.ttl, this.defaults, DEFAULT_FUNCTION_TTL);
       const swrWindow = resolveSwrWindow(options?.swr, this.defaults);
@@ -1713,7 +1985,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // JSON.stringify(KVItemEnvelope); field names differ from L1 so we assemble
       // from the pre-escaped value/handles pieces rather than re-stringifying.
       if (this.kv && this.waitUntil && totalTtl >= 60) {
-        const kvKey = this.toKVKey(`fn:${key}`);
+        const kvKey = await this.toKVKey(`fn:${key}`, "data");
         const expiresAt = staleAt + swrWindow * 1000;
         let envelopeJson = `{"v":${valueJson}`;
         if (handlesJson !== undefined) envelopeJson += `,"h":${handlesJson}`;
@@ -1738,102 +2010,596 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   }
 
   // ============================================================================
-  // Shell Cache Methods (PPR shell resume) — KV-only in v1
+  // Shell Cache Methods (PPR shell resume) — Cache API L1 + optional KV L2
   // ============================================================================
   //
-  // Unlike the segment/item/document tiers, the shell family has NO Cache-API L1
-  // tier: the prelude bytes + postponed blob are large and version-coupled, and a
-  // per-colo L1 for them is a deliberate follow-up (see the PPR shell-resume
-  // design doc). Shell entries live only in KV (the global tier), so the family
-  // requires a configured KV namespace; without one, getShell/putShell no-op and
-  // the integrated PPR serve path fails open to a full HTML render. Tag invalidation
-  // still applies: shell entries carry tags/taggedAt and are checked against the
-  // same KV markers isGloballyInvalidated() reads for every other tier.
+  // With KV it is the durable, cross-colo shell tier: writes populate both
+  // tiers, a valid KV hit promotes the same coupled envelope into L1, and
+  // shell L1 hits deliberately keep the KV generation-marker check even in
+  // purge mode. A shell's taggedAt is its CAPTURE START, not its write time:
+  // an invalidation can purge while an older capture is still running, then
+  // that capture can land after the purge. The marker check rejects that
+  // resurrection.
+  //
+  // Without KV the family is L1-only (edge-only ppr): every colo captures and
+  // serves its own shell from the Cache API. Tag eviction then needs purge
+  // mode (tagPurge) — shell L1 entries carry the same namespaced Cache-Tag
+  // tokens as the data families, read-your-own-writes comes from the
+  // per-request tag mask, and the capture resurrection race narrows to
+  // cross-request timing bounded by ttl+swr (the data families' documented
+  // purge-mode stance). KV-less WITHOUT tagPurge still caches: freshness is
+  // ttl/swr only, and a tagged write warns once that invalidation cannot
+  // reach it (see warnShellTagsNoEvictionOnce).
 
   /**
-   * Warn once per isolate that the shell family is inert: getShell/putShell
-   * are ONLY called for routes that declared the `ppr` path option, so firing
-   * here (not in the constructor) scopes the warning to apps that actually
-   * use PPR — a KV-less CFCacheStore is a perfectly fine config otherwise.
-   * Without it, the correctness-first fail-open (issue #651) is invisible:
-   * every ppr route is a permanent MISS with zero diagnostics.
+   * Warn once per isolate that a TAGGED shell landed on a store with no
+   * eviction path for it: no KV (markers) and no tagPurge (purge-by-tag).
+   * The shell still caches and expires by ttl+swr, but updateTag()/
+   * revalidateTag() cannot reach it — silent staleness a consumer who tagged
+   * the route clearly did not intend. Fired from putShell (not the
+   * constructor) so an untagged edge-only ppr config stays warning-free.
    * @internal
    */
-  private warnShellFamilyInertOnce(): void {
+  private warnShellTagsNoEvictionOnce(): void {
     this.warnOncePerNamespace(
-      warnedShellFamilyInert,
-      `[CFCacheStore] a ppr route resolved to this store, but no KV namespace ` +
-        `is configured, so the shell family (getShell/putShell) is a no-op: ` +
-        `every ppr route stays a permanent shell MISS (the page still serves ` +
-        `via a full render). Bind a KV namespace and pass it — ` +
-        `new CFCacheStore({ ctx, kv: env.CACHE_KV }) — or use a shell-capable ` +
-        `store via createRouter({ cache }).`,
+      warnedShellTagsNoEviction,
+      `[CFCacheStore] a ppr shell with tags was stored on a KV-less store ` +
+        `without tagPurge: tag invalidation cannot evict it (no KV markers, ` +
+        `no purge-by-tag), so updateTag()/revalidateTag() will not reach ` +
+        `this shell — it serves until ttl+swr expiry. Configure { kv } for ` +
+        `marker invalidation or { tagPurge } for purge-by-tag eviction; ` +
+        `untagged ppr routes (ttl/swr freshness) are unaffected.`,
     );
   }
 
   /**
-   * Get a cached PPR shell entry by key from KV (no L1). Applies the KV read
-   * budget, corrupt-entry eviction, hard-expiry, and tag invalidation exactly
-   * like kvGetItem, minus the L1 promote. SWR is a plain staleness flag — KV has
-   * no REVALIDATING herd guard, so the capture scheduler's module-level
-   * in-flight set is the recapture stampede guard.
+   * Generation gate for shell writes and the capture scheduler
+   * (isTagsInvalidatedSince). With KV it is the durable marker cascade.
+   * Without KV there are no markers: in purge mode the per-request mask is
+   * the only signal — a capture racing THIS request's updateTag() is still
+   * rejected (read-your-own-writes), while cross-request races are bounded
+   * by ttl+swr exactly like the data families' purge-mode writes. Without
+   * either, fail open (ttl/swr-only semantics, warned at putShell).
+   * @internal
+   */
+  private async isShellGenerationInvalidated(
+    tags: string[] | undefined,
+    since: number | undefined,
+  ): Promise<boolean> {
+    if (this.kv) return this.isGloballyInvalidated(tags, since);
+    if (!this.tagPurge || !Array.isArray(tags) || tags.length === 0 || !since)
+      return false;
+    return maskedForRequest(_getRequestContext(), this, tags, since);
+  }
+
+  /**
+   * Get a cached PPR shell entry: the public custom-store contract, built on
+   * readShellDocument. It waits for the snapshot and re-encodes the prelude to
+   * the base64 `ShellCacheEntry.prelude` the contract carries (native
+   * `toBase64` in workerd). Partial replay and the testing helpers read
+   * through here; the document serve path reads readShellDocument directly.
+   * A snapshot that failed to read is a miss here: with no committed response
+   * to protect, an entry without its pins is worse than none.
    */
   async getShell(
     key: string,
   ): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null> {
-    if (!this.kv) {
-      this.warnShellFamilyInertOnce();
-      return null;
+    const read = await this.readShellDocumentWithin(
+      key,
+      undefined,
+      this.snapshotBudgets.read,
+    );
+    if (!read) return null;
+    const snapshot = await read.snapshot;
+    if (await read.snapshotFailure) return null;
+    // A frame with no snapshot bytes carries no records.
+    const entry: ShellCacheEntry = { ...read.entry, snapshot: snapshot ?? [] };
+    if (!entry.navigationOnly) entry.prelude = bytesToBase64(read.prelude);
+    return { entry, shouldRevalidate: read.shouldRevalidate };
+  }
+
+  /**
+   * @internal Prelude-first read of a shell (SegmentCacheStore
+   * .readShellDocument). Cache API first, then KV; both tiers hold one
+   * cf-shell-frame body, so the prelude, postponed state, snapshot, versions,
+   * and generation metadata cannot mix. Before it resolves it reads only the
+   * head and the prelude's bytes, and the tag-marker read runs alongside the
+   * prelude read (it starts as soon as the head is parsed, and is awaited
+   * before this resolves, so an invalidated shell is never returned). The
+   * snapshot is the rest of the same body, read on its own promise, bounded
+   * by the document read's budget (`snapshotBudgets.document`; getShell uses
+   * `snapshotBudgets.read`). SWR is a plain staleness flag; the capture
+   * scheduler's in-flight set is the recapture stampede guard.
+   */
+  async readShellDocument(
+    key: string,
+    options?: ShellDocumentReadOptions,
+  ): Promise<ShellDocumentRead | null> {
+    return this.readShellDocumentWithin(
+      key,
+      options,
+      this.snapshotBudgets.document,
+    );
+  }
+
+  private async readShellDocumentWithin(
+    key: string,
+    options: ShellDocumentReadOptions | undefined,
+    snapshotBudget: SnapshotReadBudget,
+  ): Promise<ShellDocumentRead | null> {
+    const memoKey = this.shellMemoKey(key);
+    const ctx = _getRequestContext();
+    // A request after the same user's updateTag() reads past the isolate
+    // memos (isolate-tag-memo.ts freshReadsRequired).
+    const freshReads = freshReadsRequired(ctx);
+    const memoized = freshReads
+      ? undefined
+      : cfShellMemo.get(memoKey, this.memo.shellMs);
+    if (memoized) {
+      return this.readMemoizedShell(
+        key,
+        memoKey,
+        memoized,
+        options,
+        snapshotBudget,
+      );
+    }
+    const stats = this.shellReadStats("l1");
+    const l1StartedAt = stats ? performance.now() : 0;
+    const kvFallback = (reason: string): Promise<ShellDocumentRead | null> =>
+      this.kvReadShellDocument(key, snapshotBudget, stats, l1StartedAt, reason);
+    if (stats && freshReads) stats.freshReads = true;
+    this.prefetchShellMarkers(memoKey, options?.tagHints, stats);
+    if (stats && this.memo.shellMs > 0) {
+      stats.memo = { hit: false, bytes: cfShellMemo.size };
     }
     try {
-      const kvKey = this.toKVKey(`shell:${key}`);
-      const { value: envelope, timedOut } =
-        await this.kvGetOrEvict<KVShellEnvelope>(
-          kvKey,
-          (e) =>
-            typeof e.p === "string" &&
-            (e.po === null || typeof e.po === "string") &&
-            typeof e.rv === "string" &&
-            typeof e.e === "number" &&
-            typeof e.s === "number",
-          "getShell",
-        );
-      // A timeout, a missing key, or an already-evicted corrupt entry is a miss.
-      if (timedOut || !envelope) return null;
+      const cache = await this.getCache();
+      const request = this.shellRequest(key);
+      const matchStartedAt = stats ? performance.now() : 0;
+      const {
+        response,
+        timedOut,
+        error: matchError,
+      } = await this.matchWithTimeout(cache, request);
+      if (stats) stats.matchMs = performance.now() - matchStartedAt;
 
-      const now = Date.now();
-      if (now > envelope.e) return null;
-
-      if (await this.isGloballyInvalidated(envelope.t, envelope.ta)) {
-        return null;
+      if (!response) {
+        if (matchError) {
+          reportCacheError(
+            matchError,
+            "cache-read",
+            "[CFCacheStore] getShell L1 match",
+          );
+        }
+        const reason = matchError ? "error" : timedOut ? "timeout" : "absent";
+        this.debugShell(key, "l1-miss", { reason, stats });
+        return kvFallback(reason);
+      }
+      if (response.status !== 200 || !response.body) {
+        this.debugShell(key, "l1-miss", {
+          reason: "non-200",
+          status: response.status,
+          stats,
+        });
+        return kvFallback("non-200");
       }
 
-      const shouldRevalidate = envelope.s > 0 && now > envelope.s;
-      return {
-        entry: {
-          prelude: envelope.p,
-          postponed: envelope.po,
-          reactVersion: envelope.rv,
-          buildVersion: envelope.bv,
-          initialTheme: envelope.i,
-          snapshot: envelope.sn,
-          handlerLiveHoles: envelope.lh,
-          transitionWhen: envelope.tw,
-          createdAt: envelope.c,
-        },
-        shouldRevalidate,
-      };
+      // Unlike other L1 families, shells with KV always check the durable
+      // generation marker — see the capture-start/purge race documented
+      // above. Without KV there are no markers: L1-only shells adopt the
+      // data families' purge-mode read semantics (a hit that survived the
+      // purge is trusted; the per-request mask covers this request's own
+      // updateTag() writes; entries a purge cannot reach fall back to the
+      // marker check, which fails open KV-less).
+      const opened = await this.openShellFrame(
+        response.body,
+        this.edgeReadTimeoutMs,
+        "edge cache body read",
+        (head) =>
+          this.kv
+            ? this.isGloballyInvalidated(head.t, head.ta, true)
+            : this.isL1Invalidated(head.t, head.ta, response.headers),
+        stats,
+      );
+      if (opened.status === "corrupt") {
+        this.debugShell(key, "l1-miss", {
+          reason: "malformed",
+          stats,
+        });
+        return this.healCorruptL1(
+          cache,
+          request,
+          opened.error,
+          "getShell",
+          () => kvFallback("malformed"),
+        );
+      }
+      if (opened.status === "timeout" || opened.status === "expired") {
+        this.debugShell(key, "l1-miss", {
+          reason: opened.status,
+          stats,
+          expiresAt: opened.head?.e,
+        });
+        return kvFallback(opened.status);
+      }
+      if (opened.status === "invalidated") {
+        this.debugShell(key, "marker-invalidated", {
+          tier: "l1",
+          stats,
+        });
+        return null;
+      }
+      const read = this.shellDocumentRead(
+        key,
+        opened,
+        snapshotBudget,
+        stats,
+        response.headers,
+      );
+      if (INTERNAL_RANGO_DEBUG) {
+        this.debugShell(key, "l1-hit", {
+          freshness: read.shouldRevalidate ? "stale" : "fresh",
+          stats,
+          expiresAt: opened.head.e,
+        });
+      }
+      return read;
     } catch (error) {
       reportCacheError(error, "cache-read", "[CFCacheStore] getShell");
-      return null;
+      this.debugShell(key, "l1-miss", { reason: "error" });
+      return kvFallback("error");
+    }
+  }
+
+  /** @internal SegmentCacheStore.dropShellMemo */
+  dropShellMemo(key: string): void {
+    cfShellMemo.delete(this.shellMemoKey(key));
+  }
+
+  /**
+   * Start the marker reads of the tags this shell key carried last time (and
+   * the route's static tags) alongside the entry read (readShellTagMarker),
+   * so the marker check after the head reuses them. With KV only: without it
+   * there are no markers to read. A wrong hint costs a wasted read; the check
+   * itself uses the head's tags.
+   */
+  private prefetchShellMarkers(
+    memoKey: string,
+    routeTags: readonly string[] | undefined,
+    stats: ShellReadStats | undefined,
+  ): void {
+    if (!this.kv) return;
+    const tags = hintedTags(cfTagHints.get(memoKey), routeTags);
+    if (tags.length === 0) return;
+    if (stats) {
+      stats.markerHinted = tags;
+      stats.markerHintStartedAt = performance.now();
+    }
+    for (const tag of tags) this.readShellTagMarker(tag).catch(() => {});
+  }
+
+  /**
+   * A HIT: remember the entry's tags for the next read's hints, and fill the
+   * marker row. The shell-read marker values stay in their own record: the
+   * request's data reads (the tail's, or a partial navigation's matchPartial
+   * on the same context) read their markers as before.
+   */
+  private recordShellHit(
+    key: string,
+    tags: string[] | undefined,
+    stats: ShellReadStats | undefined,
+  ): void {
+    cfTagHints.remember(this.shellMemoKey(key), tags);
+    if (!stats) return;
+    const ctx = _getRequestContext();
+    if (ctx) {
+      recordMarkerRow(stats, tags, getShellMarkerReads(ctx, this).outcomes);
     }
   }
 
   /**
-   * Store a PPR shell entry in KV with TTL and optional SWR window. The write is
-   * registered with waitUntil and awaited so invalidation rejection can be
-   * acknowledged to the capture scheduler. The tags/taggedAt ride in the envelope
-   * so isGloballyInvalidated() can invalidate the shell via the shared KV markers.
+   * The isolate marker memo's key for a tag: markers are per namespace, and
+   * shared by every version (tagMarkerKey).
+   */
+  private markerMemoKey(tag: string): string {
+    return `${this.namespace ?? ""}\u0000${tag}`;
+  }
+
+  /** The memo key: one per namespace, document version, base URL, and shell key. */
+  private shellMemoKey(key: string): string {
+    return `${this.namespace ?? ""}\u0000${this.shellRequest(key).url}`;
+  }
+
+  /**
+   * Serve a memoized shell (shell-memo.ts). The tag-marker check is the only
+   * store I/O left, so it is started first and awaited before anything is
+   * returned: nothing of an invalidated shell reaches the response. A shell
+   * that went stale since it was memoized, or that predates a tag this
+   * isolate is invalidating or just invalidated (RecentTagInvalidations), is
+   * dropped and read from the store (SWR recapture scheduling and each mode's
+   * invalidation semantics stay with the store read). That read keeps the
+   * caller's `tagHints`: cfTagHints may have evicted the key while the memo
+   * still holds it.
+   */
+  private async readMemoizedShell(
+    key: string,
+    memoKey: string,
+    memoized: CFShellMemoValue,
+    options: ShellDocumentReadOptions | undefined,
+    snapshotBudget: SnapshotReadBudget,
+  ): Promise<ShellDocumentRead | null> {
+    const { head } = memoized;
+    if (!isMemoizableShell(head)) {
+      cfShellMemo.delete(memoKey);
+      return this.readShellDocumentWithin(key, options, snapshotBudget);
+    }
+    const stats = this.shellReadStats("memo");
+    const markerStartedAt = stats ? performance.now() : 0;
+    const invalidated = await (this.kv
+      ? this.isGloballyInvalidated(head.t, head.ta, true)
+      : this.isL1Invalidated(
+          head.t,
+          head.ta,
+          memoized.headers ?? new Headers(),
+        ));
+    if (stats) {
+      // Nothing else to wait for: the marker IS the memo hit's critical path.
+      stats.markerMs = stats.markerWaitMs = performance.now() - markerStartedAt;
+      stats.tags = head.t?.length ?? 0;
+      stats.preludeBytes = memoized.prelude.length;
+    }
+    if (invalidated) {
+      cfShellMemo.delete(memoKey);
+      this.debugShell(key, "marker-invalidated", {
+        tier: "memo",
+        stats,
+      });
+      return null;
+    }
+    if (stats) stats.memo = { hit: true, bytes: cfShellMemo.size };
+    this.recordShellHit(key, head.t, stats);
+    this.debugShell(key, "memo-hit", {
+      freshness: "fresh",
+      stats,
+      expiresAt: head.e,
+    });
+    return {
+      entry: shellHeadToEntry(head),
+      prelude: memoized.prelude,
+      shouldRevalidate: false,
+      snapshot: Promise.resolve(memoized.snapshot),
+      ...(stats ? { stats } : {}),
+    };
+  }
+
+  /**
+   * Stats for one shell read, allocated only when the request collects
+   * `debugPerformance` metrics or the build has the internal shell trace on,
+   * so a normal HIT takes no timestamps for them.
+   */
+  private shellReadStats(
+    tier: ShellReadStats["tier"],
+  ): ShellReadStats | undefined {
+    return INTERNAL_RANGO_DEBUG || _getRequestContext()?._metricsStore
+      ? { tier }
+      : undefined;
+  }
+
+  /**
+   * Read a frame's head and prelude under one budget, starting the
+   * tag-marker read (`isInvalidated`) the moment the head is parsed so it
+   * overlaps the prelude read, then await it. Expired heads are rejected
+   * before the marker read starts.
+   */
+  private async openShellFrame(
+    body: ReadableStream<Uint8Array>,
+    budgetMs: number,
+    label: string,
+    isInvalidated: (head: ShellFrameHead) => Promise<boolean>,
+    stats: ShellReadStats | undefined,
+  ): Promise<OpenedShellFrame> {
+    const reader = new ShellFrameReader(body);
+    let marker: Promise<boolean> | undefined;
+    let markerSettledAt = 0;
+    const headStartedAt = stats ? performance.now() : 0;
+    const { value, timedOut } = await this.readWithTimeout(
+      async (): Promise<OpenedShellFrame> => {
+        const head = await reader.readHead();
+        if (!head) {
+          return {
+            status: "corrupt",
+            error: new Error("malformed/partial shell frame head"),
+          };
+        }
+        const markerStartedAt = stats ? performance.now() : 0;
+        if (stats) {
+          stats.headMs = markerStartedAt - headStartedAt;
+          stats.headBytes = reader.headBytes;
+          stats.tags = head.t?.length ?? 0;
+          if (stats.markerHintStartedAt !== undefined) {
+            stats.markerLeadMs = markerStartedAt - stats.markerHintStartedAt;
+          }
+        }
+        if (Date.now() > head.e) return { status: "expired", head };
+        marker = isInvalidated(head).then((invalidated) => {
+          if (stats) {
+            markerSettledAt = performance.now();
+            stats.markerMs = markerSettledAt - markerStartedAt;
+          }
+          return invalidated;
+        });
+        marker.catch(() => {});
+        const prelude = await reader.take(head.pl);
+        if (!prelude) {
+          return {
+            status: "corrupt",
+            error: new Error("shell frame ends inside the prelude"),
+          };
+        }
+        if (stats) {
+          stats.preludeMs = performance.now() - markerStartedAt;
+          stats.preludeBytes = prelude.length;
+        }
+        return { status: "ok", head, prelude, reader };
+      },
+      budgetMs,
+      label,
+    );
+    if (timedOut || !value) {
+      reader.cancel();
+      if (stats) {
+        // The budget ran out: the whole elapsed read, split at the head.
+        const elapsed = performance.now() - headStartedAt;
+        if (stats.headMs === undefined) stats.headMs = elapsed;
+        else stats.preludeMs = elapsed - stats.headMs;
+      }
+      return { status: "timeout" };
+    }
+    if (value.status !== "ok") {
+      reader.cancel();
+      return value;
+    }
+    const preludeReadAt = stats ? performance.now() : 0;
+    const invalidated = await marker!;
+    if (stats) {
+      stats.markerWaitMs = Math.max(0, markerSettledAt - preludeReadAt);
+    }
+    if (invalidated) {
+      reader.cancel();
+      return { status: "invalidated" };
+    }
+    return value;
+  }
+
+  /**
+   * The ShellDocumentRead for an opened frame. Its snapshot promise starts
+   * reading the rest of the body now (off the commit path, not after it),
+   * bounded by `budget` ({@link snapshotReadBudget}), and is registered with
+   * waitUntil so the KV tier's L1 promotion and a corrupt entry's eviction
+   * still run when nothing awaits it (a read that is not served). A snapshot
+   * whose length differs from the head's `sl`, or that fails to parse, evicts
+   * the entry from both tiers and reports cache-corrupt. Every failure
+   * resolves undefined and names itself on `snapshotFailure` (`unavailable`
+   * for a timeout or read error, `corrupt` otherwise): a document HIT then
+   * degrades (rsc-rendering.ts serveShellHit), and getShell misses. Only
+   * a read whose snapshot parsed goes into the per-isolate memo (when still
+   * fresh), and `promote` receives its snapshot bytes (the KV tier's L1
+   * promotion). `headers` are the L1 response's, kept for the KV-less
+   * memo-hit marker check.
+   */
+  private shellDocumentRead(
+    key: string,
+    opened: Extract<OpenedShellFrame, { status: "ok" }>,
+    budget: SnapshotReadBudget,
+    stats: ShellReadStats | undefined,
+    headers?: Headers,
+    promote?: (snapshotBytes: Uint8Array) => void,
+  ): ShellDocumentRead {
+    const { head, prelude, reader } = opened;
+    this.recordShellHit(key, head.t, stats);
+    type SnapshotOutcome = {
+      records?: ShellSnapshotRecord[];
+      failure?: ShellSnapshotFailure;
+    };
+    const outcome = (async (): Promise<SnapshotOutcome> => {
+      const readStartedAt = stats ? performance.now() : 0;
+      const { value: rest, timedOut } = await this.readWithTimeout(
+        () => reader.readRest(),
+        budget.ms,
+        "shell snapshot read",
+        budget.consequence,
+      );
+      if (timedOut || !rest) {
+        reader.cancel();
+        return { failure: "unavailable" };
+      }
+      const parseStartedAt = stats ? performance.now() : 0;
+      let records: ShellSnapshotRecord[] | undefined;
+      try {
+        if (rest.length !== head.sl) {
+          throw new Error(
+            `shell snapshot is ${rest.length} bytes, the head says ${head.sl}`,
+          );
+        }
+        records = parseShellSnapshot(rest);
+      } catch (error) {
+        reportCacheError(
+          error,
+          "cache-corrupt",
+          "[CFCacheStore] getShell: corrupt shell snapshot, evicting",
+        );
+        this.evictShell(key);
+        return { failure: "corrupt" };
+      }
+      if (stats) {
+        stats.snapshot = {
+          readMs: parseStartedAt - readStartedAt,
+          parseMs: performance.now() - parseStartedAt,
+          bytes: rest.length,
+        };
+      }
+      if (isMemoizableShell(head)) {
+        // A view into a larger body chunk would pin that chunk in the memo.
+        const ownPrelude =
+          prelude.byteLength === prelude.buffer.byteLength
+            ? prelude
+            : prelude.slice();
+        cfShellMemo.set(
+          this.shellMemoKey(key),
+          { head, prelude: ownPrelude, snapshot: records, headers },
+          ownPrelude.length + rest.length,
+          this.memo.shellMs,
+          this.memo.shellMaxBytes,
+        );
+      }
+      promote?.(rest);
+      return { records };
+    })().catch((error: unknown): SnapshotOutcome => {
+      reportCacheError(error, "cache-read", "[CFCacheStore] getShell snapshot");
+      return { failure: "unavailable" };
+    });
+    if (this.waitUntil) this.waitUntil(() => outcome.then(() => {}));
+    return {
+      entry: shellHeadToEntry(head),
+      prelude,
+      shouldRevalidate: head.s > 0 && Date.now() > head.s,
+      snapshot: outcome.then(({ records }) => records),
+      snapshotFailure: outcome.then(({ failure }) => failure),
+      ...(stats && { stats }),
+    };
+  }
+
+  /** Delete a shell from both tiers (non-blocking). */
+  private evictShell(key: string): void {
+    const evict = async (): Promise<void> => {
+      const cache = await this.getCache();
+      await reportingAsync(
+        () => cache.delete(this.shellRequest(key)),
+        "cache-delete",
+        "[CFCacheStore] getShell: evict corrupt L1",
+      );
+      if (this.kv) {
+        await this.evictKvKey(await this.shellKVKey(key), "getShell");
+      }
+    };
+    if (this.waitUntil) this.waitUntil(evict);
+    else void evict();
+  }
+
+  /**
+   * Store a PPR shell in Cache API and, when KV is configured, KV — the same
+   * cf-shell-frame bytes in both. The shared write is registered with
+   * waitUntil and awaited so invalidation rejection can be acknowledged to
+   * the capture scheduler. A KV-less store is L1-only by design (edge-only
+   * ppr — see the section comment).
+   *
+   * KV rejects an expirationTtl below KV_MIN_EXPIRATION_TTL, so a shorter
+   * retention (a `ppr` ttl + swr under 60, or a shell capped to a short or
+   * aging route cache() entry) is written with that floor: the frame head's deadlines (`s`, `e`) are the
+   * entry's, and every read checks `e` (openShellFrame), so the extra KV
+   * lifetime is never served, and the shell is readable from every colo, not
+   * only from the capturing colo's L1.
    */
   async putShell(
     key: string,
@@ -1841,25 +2607,32 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     ttlSeconds?: number,
     swrSeconds?: number,
     tags?: string[],
-  ): Promise<"stored" | "invalidated" | void> {
-    // KV-only tier: needs a KV namespace and waitUntil. The same write promise is
-    // registered for isolate lifetime and awaited so invalidation rejection can
-    // be acknowledged to the capture scheduler.
-    if (!this.kv) {
-      this.warnShellFamilyInertOnce();
-      return;
-    }
+  ): Promise<"stored" | "invalidated" | "uncacheable" | void> {
     if (!this.waitUntil) return;
+    // Same write gate as the data families: in KV-less purge mode an
+    // over-limit tag set has NO eviction path (no tokens, no markers), so the
+    // shell is not cached rather than becoming un-invalidatable. Unlike the
+    // void-returning data puts, this is ACKNOWLEDGED — the capture scheduler
+    // must back the key off (every write would refuse identically), not
+    // treat the capture as stored and re-render on every MISS.
+    if (this.skipUncacheableTagSet(tags)) return "uncacheable";
+    if (!this.kv && !this.tagPurge && Array.isArray(tags) && tags.length > 0) {
+      this.warnShellTagsNoEvictionOnce();
+    }
+    // This isolate serves its own new capture from the next read on.
+    cfShellMemo.delete(this.shellMemoKey(key));
+    cfTagHints.remember(this.shellMemoKey(key), tags);
     try {
       const ttl = resolveTtl(ttlSeconds, this.defaults, DEFAULT_FUNCTION_TTL);
       const swrWindow = resolveSwrWindow(swrSeconds, this.defaults);
       const totalTtl = ttl + swrWindow;
-      // KV requires expirationTtl >= 60s; skip a shorter-lived shell rather than
-      // letting kv.put reject inside waitUntil (mirrors setItem/kvSetSegment).
-      if (totalTtl < 60) return;
 
+      // The tagInvalidationTtl cap exists so a tagged entry can never outlive
+      // its KV markers (an expired marker would resurrect it). Without KV
+      // there are no markers to outlive — capping would just hard-expire the
+      // shell below its declared ttl+swr — so the cap is KV-conditional.
       const retentionTtl =
-        tags && tags.length > 0 && this.tagInvalidationTtl
+        tags && tags.length > 0 && this.kv && this.tagInvalidationTtl
           ? Math.min(totalTtl, this.tagInvalidationTtl)
           : totalTtl;
       const now = Date.now();
@@ -1868,54 +2641,89 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const taggedAt =
         Array.isArray(tags) && tags.length > 0 ? entry.createdAt : undefined;
 
-      const kvKey = this.toKVKey(`shell:${key}`);
-      // A key over the KV limit makes kv.put reject deep inside waitUntil; report
-      // and skip the doomed write (mirrors kvSetSegment).
-      const kvKeyBytes = kvKeyByteLength(kvKey);
-      if (kvKeyBytes > KV_MAX_KEY_BYTES) {
-        reportCacheError(
-          new Error(
-            `shell cache key produces a ${kvKeyBytes}-byte KV key, over the ` +
-              `${KV_MAX_KEY_BYTES}-byte limit; the shell was not persisted.`,
-          ),
-          "cache-write",
-          "[CFCacheStore] putShell",
-        );
-        return;
-      }
+      const writeKv = !!this.kv && retentionTtl > 0;
+      const kvKey = writeKv ? await this.shellKVKey(key) : null;
 
       const write = (async (): Promise<"stored" | "invalidated" | void> => {
-        try {
-          if (
-            tags &&
-            tags.length > 0 &&
-            (await this.isGloballyInvalidated(tags, entry.createdAt))
-          ) {
-            return "invalidated";
-          }
-          const envelope: KVShellEnvelope = {
-            p: entry.prelude,
-            po: entry.postponed,
-            rv: entry.reactVersion,
-            bv: entry.buildVersion,
-            c: entry.createdAt,
-            s: staleAt,
-            e: expiresAt,
-            t: tags,
-            ta: taggedAt,
-            i: entry.initialTheme,
-            sn: entry.snapshot,
-            lh: entry.handlerLiveHoles,
-            tw: entry.transitionWhen,
-          };
-          await this.kv!.put(kvKey, JSON.stringify(envelope), {
-            expirationTtl: retentionTtl,
-          });
-          return "stored";
-        } catch (error) {
-          reportCacheError(error, "cache-write", "[CFCacheStore] putShell");
-          return undefined;
+        if (
+          tags &&
+          tags.length > 0 &&
+          (await this.isShellGenerationInvalidated(tags, entry.createdAt))
+        ) {
+          this.debugShell(key, "write-invalidated");
+          return "invalidated";
         }
+
+        // A navigationOnly entry stores no document half: no prelude bytes
+        // and no postponed field (an omitted key, not an explicit undefined).
+        const prelude =
+          entry.prelude !== undefined
+            ? base64ToBytes(entry.prelude)
+            : new Uint8Array(0);
+        const snapshotBytes = encodeShellSnapshot(entry.snapshot);
+        const head: ShellFrameHead = {
+          rv: entry.reactVersion,
+          bv: entry.buildVersion,
+          c: entry.createdAt,
+          s: staleAt,
+          e: expiresAt,
+          t: tags,
+          ta: taggedAt,
+          i: entry.initialTheme,
+          dk: entry.docKey,
+          pr: entry.prunedRecords,
+          no: entry.navigationOnly,
+          ...(entry.postponed !== undefined ? { po: entry.postponed } : {}),
+          pl: prelude.length,
+          sl: snapshotBytes?.length ?? 0,
+        };
+        const frame = encodeShellFrame(head, prelude, snapshotBytes);
+        const writes: Promise<boolean>[] = [
+          (async () => {
+            try {
+              const cache = await this.getCache();
+              await cache.put(
+                this.shellRequest(key),
+                this.shellFrameResponse(frame, head),
+              );
+              this.debugShell(key, "l1-stored", { expiresAt: head.e });
+              return true;
+            } catch (error) {
+              reportCacheError(
+                error,
+                "cache-write",
+                "[CFCacheStore] putShell L1",
+              );
+              return false;
+            }
+          })(),
+        ];
+        if (writeKv && kvKey !== null) {
+          writes.push(
+            (async () => {
+              try {
+                await this.kv!.put(kvKey, shellFrameToText(frame), {
+                  // Whole seconds, at least KV's floor: the frame head keeps
+                  // the exact deadlines the reads check.
+                  expirationTtl: Math.max(
+                    KV_MIN_EXPIRATION_TTL,
+                    Math.ceil(retentionTtl),
+                  ),
+                });
+                this.debugShell(key, "kv-stored", { expiresAt: head.e });
+                return true;
+              } catch (error) {
+                reportCacheError(
+                  error,
+                  "cache-write",
+                  "[CFCacheStore] putShell L2",
+                );
+                return false;
+              }
+            })(),
+          );
+        }
+        return (await Promise.all(writes)).some(Boolean) ? "stored" : undefined;
       })();
       this.waitUntil(async () => {
         await write;
@@ -1926,32 +2734,225 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     }
   }
 
+  /** The Cache API representation of a shell frame. */
+  private shellFrameResponse(
+    frame: Uint8Array<ArrayBuffer>,
+    head: ShellFrameHead,
+  ): Response {
+    const remainingTtl = Math.max(1, Math.floor((head.e - Date.now()) / 1000));
+    return new Response(frame, {
+      headers: {
+        "Content-Type": "application/octet-stream",
+        "Cache-Control": `public, max-age=${remainingTtl}`,
+        [CACHE_STALE_AT_HEADER]: String(head.s),
+        [CACHE_EXPIRES_AT_HEADER]: String(head.e),
+        [CACHE_STATUS_HEADER]: "HIT",
+        ...this.tagHeaderEntries(head.t, head.ta),
+      },
+    });
+  }
+
+  /**
+   * KV shell fallback: the same prelude-first read, then L1 promotion. After
+   * an L1 attempt, `stats` is that read's and gains the L1 attempt's time
+   * (`l1MissMs`) before its per-tier fields restart for KV.
+   */
+  private async kvReadShellDocument(
+    key: string,
+    snapshotBudget: SnapshotReadBudget,
+    stats?: ShellReadStats,
+    l1StartedAt = 0,
+    l1MissReason?: string,
+  ): Promise<ShellDocumentRead | null> {
+    if (!this.kv) return null;
+    if (stats) {
+      stats.l1MissMs = performance.now() - l1StartedAt;
+      stats.l1MissReason = l1MissReason;
+      stats.tier = "kv";
+      stats.matchMs = stats.headMs = stats.preludeMs = undefined;
+      stats.markerMs = stats.markerWaitMs = undefined;
+      stats.headBytes = stats.preludeBytes = stats.tags = undefined;
+    } else {
+      stats = this.shellReadStats("kv");
+    }
+    try {
+      const readStartedAt = stats ? performance.now() : 0;
+      // One kvReadTimeoutMs budget covers opening the value and reading its
+      // head and prelude; the remainder after the open bounds the frame read.
+      const deadline = Date.now() + this.kvReadTimeoutMs;
+      const kvKey = await this.shellKVKey(key);
+      // A transient read REJECTION propagates to the catch below (reported
+      // cache-read, the entry left intact); only a malformed frame on a body
+      // that WAS read is corruption that evicts.
+      const { value: raw, timedOut } = await this.readWithTimeout<unknown>(
+        () => this.kv!.get(kvKey, { type: "stream" }),
+        this.kvReadTimeoutMs,
+        "KV read",
+      );
+      if (stats) stats.matchMs = performance.now() - readStartedAt;
+      if (timedOut || raw == null) {
+        this.debugShell(key, "kv-miss", {
+          reason: timedOut ? "timeout" : "unavailable",
+          stats,
+        });
+        return null;
+      }
+      // A binding that ignores `type` (a test shim) hands back the stored
+      // string itself.
+      const body =
+        raw instanceof ReadableStream
+          ? (raw as ReadableStream<Uint8Array>)
+          : new Response(raw as BodyInit).body!;
+      const opened = await this.openShellFrame(
+        body,
+        // readWithTimeout treats <= 0 as "no budget": keep a spent budget
+        // spent (1 ms) rather than unbounded.
+        this.kvReadTimeoutMs > 0 ? Math.max(1, deadline - Date.now()) : 0,
+        "KV read",
+        (head) => this.isGloballyInvalidated(head.t, head.ta, true),
+        stats,
+      );
+      if (opened.status === "corrupt") {
+        reportCacheError(
+          opened.error,
+          "cache-corrupt",
+          "[CFCacheStore] getShell: malformed shell frame in KV, evicting",
+        );
+        this.scheduleKvEvict(kvKey, "getShell");
+        this.debugShell(key, "kv-miss", {
+          reason: "malformed",
+          stats,
+        });
+        return null;
+      }
+      if (opened.status === "timeout" || opened.status === "expired") {
+        this.debugShell(key, "kv-miss", {
+          reason: opened.status,
+          stats,
+          expiresAt: opened.head?.e,
+        });
+        return null;
+      }
+      if (opened.status === "invalidated") {
+        this.debugShell(key, "marker-invalidated", {
+          tier: "kv",
+          stats,
+        });
+        return null;
+      }
+      const read = this.shellDocumentRead(
+        key,
+        opened,
+        snapshotBudget,
+        stats,
+        undefined,
+        (snapshotBytes) =>
+          this.promoteShellToL1(
+            key,
+            opened.head,
+            opened.prelude,
+            snapshotBytes,
+          ),
+      );
+      if (INTERNAL_RANGO_DEBUG) {
+        this.debugShell(key, "kv-hit", {
+          freshness: read.shouldRevalidate ? "stale" : "fresh",
+          stats,
+          expiresAt: opened.head.e,
+        });
+      }
+      return read;
+    } catch (error) {
+      reportCacheError(error, "cache-read", "[CFCacheStore] kvGetShell");
+      this.debugShell(key, "kv-miss", { reason: "error" });
+      return null;
+    }
+  }
+
+  /** Promote a valid KV shell into the per-colo Cache API tier. */
+  private promoteShellToL1(
+    key: string,
+    head: ShellFrameHead,
+    prelude: Uint8Array,
+    snapshotBytes: Uint8Array,
+  ): void {
+    if (!this.waitUntil) return;
+    this.waitUntil(() =>
+      reportingAsync(
+        async () => {
+          if (Date.now() > head.e) return;
+          const cache = await this.getCache();
+          await cache.put(
+            this.shellRequest(key),
+            this.shellFrameResponse(
+              encodeShellFrame(head, prelude, snapshotBytes),
+              head,
+            ),
+          );
+          this.debugShell(key, "kv-promoted", {
+            remainingTtl: Math.max(1, Math.floor((head.e - Date.now()) / 1000)),
+            expiresAt: head.e,
+          });
+        },
+        "cache-write",
+        "[CFCacheStore] promoteShellToL1",
+      ),
+    );
+  }
+
   // ============================================================================
   // Key Helpers
   // ============================================================================
 
+  private shellRequest(key: string): Request {
+    return this.keyToRequest(`${SHELL_KEY_PREFIX}${key}`, "document");
+  }
+
+  private shellKVKey(key: string): Promise<string> {
+    return this.toKVKey(`${SHELL_KEY_PREFIX}${key}`, "document");
+  }
+
   /**
    * Convert string key to Request object for CF Cache API.
-   * Includes version in URL if specified (for cache invalidation on code changes).
+   *
+   * `family` picks the version in the URL path, so a version change misses:
+   * `"data"` for segment entries and `fn:` items (cached RSC data, valid while
+   * the router's server code is unchanged), `"document"` for `doc:` responses
+   * and `shell2:` shells (their bytes carry asset URLs and the handler
+   * version), `null` for tag markers, which apply to every version.
    * @internal
    */
-  private keyToRequest(key: string): Request {
+  private keyToRequest(key: string, family: KeyVersion): Request {
     const encodedKey = encodeURIComponent(key);
-    // Include version in URL path to invalidate cache when version changes
-    const versionPath = this.version ? `v/${this.version}/` : "";
-    return new Request(`${this.resolveBaseUrl()}${versionPath}${encodedKey}`, {
-      method: "GET",
-    });
+    return new Request(
+      `${this.resolveBaseUrl()}${versionKeyPrefix(this.explicitVersion, family)}${encodedKey}`,
+      { method: "GET" },
+    );
   }
 
   /**
    * Convert string key to KV key string.
    * Uses same version prefix as Cache API for consistent invalidation.
+   *
+   * Single chokepoint for EVERY KV family (segments, items, shells, documents
+   * via toDocKVKey, tag markers via tagMarkerKey): a composed key over
+   * Cloudflare KV's 512-byte limit is normalized to a preserved readable
+   * prefix plus a SHA-256-derived 128-bit digest of the FULL key. Without
+   * this, kv.put/get reject with `414 ... exceeds key length limit of 512`
+   * and the entry silently never reaches L2 (observed in production for
+   * "use cache" items whose serialized args — e.g. a CMS query object — blow
+   * the cap; production pilot). Keys are opaque storage identifiers, so
+   * normalization is semantics-preserving as long as distinct logical keys
+   * stay distinct: colliding requires an identical 400-byte prefix AND a
+   * 128-bit SHA-256 collision. Deterministic, so every family's read, write,
+   * and delete paths agree on the stored key.
    * @internal
    */
-  private toKVKey(key: string): string {
-    const versionPath = this.version ? `v/${this.version}/` : "";
-    return `${versionPath}${key}`;
+  private async toKVKey(key: string, family: KeyVersion): Promise<string> {
+    const composed = `${versionKeyPrefix(this.explicitVersion, family)}${key}`;
+    if (kvKeyByteLength(composed) <= KV_MAX_KEY_BYTES) return composed;
+    const prefix = truncateToBytes(composed, KV_KEY_PRESERVED_PREFIX_BYTES);
+    return `${prefix}~${await kvKeyDigest(composed)}`;
   }
 
   /**
@@ -1981,8 +2982,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * document tier is the one with a request-host context here.
    * @internal
    */
-  private toDocKVKey(key: string): string {
-    return this.toKVKey(`h/${this.docKVHost()}/doc:${key}`);
+  private toDocKVKey(key: string): Promise<string> {
+    return this.toKVKey(`h/${this.docKVHost()}/doc:${key}`, "document");
   }
 
   /**
@@ -2096,9 +3097,15 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   // Tag Invalidation (single-store: markers live in this.kv)
   // ============================================================================
 
-  /** KV key for a tag's invalidation marker. */
-  private tagMarkerKey(tag: string): string {
-    return this.toKVKey(`${TAG_MARKER_PREFIX}${tag}`);
+  /**
+   * KV key for a tag's invalidation marker. Unversioned: a content-hash
+   * version can come back (deploy A, deploy B, roll back to A), and a marker
+   * written while B was live has to be visible to A's entries. The staleness
+   * check compares the marker time with the entry's taggedAt and nothing else
+   * (isGloballyInvalidated), so one marker per tag serves every version.
+   */
+  private tagMarkerKey(tag: string): Promise<string> {
+    return this.toKVKey(`${TAG_MARKER_PREFIX}${tag}`, null);
   }
 
   /**
@@ -2248,6 +3255,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private async isGloballyInvalidated(
     tags: string[] | undefined,
     taggedAt: number | undefined,
+    isolateMemo = false,
   ): Promise<boolean> {
     // Array.isArray (not just truthiness): a non-array tags value - direct store
     // misuse like setItem(k, v, { tags: "products" }), or a skewed KV envelope -
@@ -2256,12 +3264,21 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     if (!this.kv || !Array.isArray(tags) || tags.length === 0 || !taggedAt)
       return false;
     const ctx = _getRequestContext();
+    // This request's own invalidations first (#973): no marker read needed.
+    if (maskedForRequest(ctx, this, tags, taggedAt)) return true;
     const memo = ctx ? getTagMarkerMemo(ctx, this) : undefined;
     const inflight = ctx ? getTagMarkerInflight(ctx, this) : undefined;
     try {
       const markers = await Promise.all(
-        tags.map((tag) => this.readTagMarker(tag, memo, inflight)),
+        tags.map((tag) =>
+          isolateMemo
+            ? this.readShellTagMarker(tag)
+            : this.readTagMarker(tag, memo, inflight),
+        ),
       );
+      // A read in flight when this request invalidated one of the tags (a
+      // sibling segment's updateTag()) resolved to the marker before it.
+      if (maskedForRequest(ctx, this, tags, taggedAt)) return true;
       for (const marker of markers) {
         if (marker != null && marker >= taggedAt) return true;
       }
@@ -2281,15 +3298,16 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * configured), invalidateTags() evicts L1 entries via a Cloudflare
    * purge-by-tag call, so a hit that SURVIVED is trusted without a per-read
    * marker lookup — that skipped lookup is the entire point of purge mode.
-   * Only the per-request memo is consulted (synchronous, no KV read) so a
-   * request that ran updateTag() still masks its own entries during the purge
-   * propagation window (read-your-own-writes).
+   * Only the request's mask and its memo are consulted (synchronous, no KV
+   * read) so a request that ran updateTag() still misses its own entries
+   * during the purge propagation window (read-your-own-writes).
    *
    * The trust is conditional on the entry actually CARRYING this store's
    * entry Cache-Tag tokens (`headers`): an entry a purge cannot reach — one
    * written before the tokens existed, or whose tag set overflowed the
    * Cache-Tag header limit — keeps the full marker check, or purge mode
-   * would serve it stale until TTL with no eviction path.
+   * would serve it stale until TTL with no eviction path. KV-less there are
+   * no markers, so it gets the per-request mask check like any hit (#973).
    *
    * Without tagPurge this is the full marker cascade. KV-tier reads and
    * shells always use isGloballyInvalidated directly: purge cannot reach KV,
@@ -2303,11 +3321,13 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   ): Promise<boolean> {
     if (!this.tagPurge) return this.isGloballyInvalidated(tags, taggedAt);
     if (!Array.isArray(tags) || tags.length === 0 || !taggedAt) return false;
-    if (!this.hasEntryCacheTags(headers)) {
+    if (this.kv && !this.hasEntryCacheTags(headers)) {
       return this.isGloballyInvalidated(tags, taggedAt);
     }
     const ctx = _getRequestContext();
     if (!ctx) return false;
+    if (maskedForRequest(ctx, this, tags, taggedAt)) return true;
+    // Markers this request read from KV for other entries.
     const memo = getTagMarkerMemo(ctx, this);
     for (const tag of tags) {
       const marker = memo.get(tag);
@@ -2316,17 +3336,20 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     return false;
   }
 
-  /** Synthetic Cache API request for a tag's L1-cached invalidation marker. */
+  /**
+   * Synthetic Cache API request for a tag's L1-cached invalidation marker.
+   * Unversioned for the same reason as tagMarkerKey; the cache namespace
+   * (getCache) still scopes it.
+   */
   private tagMarkerRequest(tag: string): Request {
-    return this.keyToRequest(`${TAG_MARKER_CACHE_PREFIX}${tag}`);
+    return this.keyToRequest(`${TAG_MARKER_CACHE_PREFIX}${tag}`, null);
   }
 
   /**
    * Read a tag's latest invalidation timestamp (or null if never invalidated)
    * through the cascade: per-request memo -> per-colo L1 cache (only when
-   * tagCacheTtl > 0) -> KV (the global truth). The memo is always consulted
-   * first so it stays authoritative within a request (read-your-own-writes),
-   * and every KV/L1 result is written back into the memo. A Cache API miss
+   * tagCacheTtl > 0) -> KV (the global truth). Every KV/L1 result is written
+   * back into the memo, so the request reads one value per tag. A Cache API miss
    * always falls through to KV; absence is represented by a cached sentinel,
    * never by a miss.
    *
@@ -2360,6 +3383,52 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   }
 
   /**
+   * A PPR shell read's marker for `tag`: this request's own store read if it
+   * has one, else through the per-isolate marker memo (isolate-tag-memo.ts,
+   * stale-while-revalidate
+   * under `markerFreshMs` / `markerMaxStaleMs`; a request carrying the
+   * fresh-reads cookie reads L1/KV). The value is kept in the request's
+   * shell-read record, never in the per-request memo the data families read,
+   * HIT or MISS. A store read still lands in the per-request memo, as any
+   * marker read does; it is not stale. A timed-out read fails open for this
+   * request and is not memoized.
+   */
+  private readShellTagMarker(tag: string): Promise<number | null> {
+    const ctx = _getRequestContext();
+    const memo = ctx ? getTagMarkerMemo(ctx, this) : undefined;
+    if (memo?.has(tag)) return Promise.resolve(memo.get(tag) ?? null);
+    const shell = ctx ? getShellMarkerReads(ctx, this) : undefined;
+    const pending = shell?.reads.get(tag);
+    if (pending) return pending;
+    const read = cfMarkerMemo.readThrough(
+      this.markerMemoKey(tag),
+      async (background) => {
+        const outcome = { timedOut: false, masked: false };
+        const value = await this.fetchTagMarker(
+          tag,
+          background ? undefined : memo,
+          outcome,
+        );
+        return { value, memoize: !outcome.timedOut && !outcome.masked };
+      },
+      {
+        freshMs: this.memo.markerFreshMs,
+        maxStaleMs: this.memo.markerMaxStaleMs,
+        bypass: freshReadsRequired(ctx),
+        keepAlive: this.waitUntil
+          ? (refresh) => this.waitUntil!(() => refresh)
+          : undefined,
+        onOutcome:
+          shell && (INTERNAL_RANGO_DEBUG || ctx?._metricsStore)
+            ? (outcome) => shell.outcomes.set(tag, outcome)
+            : undefined,
+      },
+    );
+    shell?.reads.set(tag, read);
+    return read;
+  }
+
+  /**
    * Uncached body of readTagMarker: L1 (per-colo Cache API, opt-in via
    * tagCacheTtl) -> KV. Writes the resolved value back into the memo.
    * @internal
@@ -2367,19 +3436,18 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private async fetchTagMarker(
     tag: string,
     memo: Map<string, number | null> | undefined,
+    read?: { timedOut: boolean; masked?: boolean },
+    /** false: populate no L1 marker (isInvalidatedSincePastMemo). */
+    publish = true,
   ): Promise<number | null> {
-    // Write the resolved marker into the memo WITHOUT clobbering a value a
-    // concurrent invalidateTags() wrote during our await. The router resolves
-    // sibling slots in parallel, so a slot's updateTag() can land the
-    // authoritative invalidatedAt into the memo while this read is still in
-    // flight; overwriting it with our (pre-invalidation) read result would break
-    // read-your-own-writes for the rest of the request. If the tag was memoized
-    // mid-read, that value wins and is returned. Without a memo, the read result
-    // stands as-is.
-    const memoize = (read: number | null): number | null => {
+    // Write the resolved marker into the memo WITHOUT clobbering a value
+    // another read of the tag memoized during our await: that value wins and
+    // is returned, so the request keeps one value per tag. Without a memo,
+    // the read result stands.
+    const memoize = (value: number | null): number | null => {
       if (memo && memo.has(tag)) return memo.get(tag) ?? null;
-      memo?.set(tag, read);
-      return read;
+      memo?.set(tag, value);
+      return value;
     };
 
     // L1 (per-colo) marker cache - opt-in via tagCacheTtl. Bounded by the same
@@ -2422,11 +3490,12 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     // (reported cache-read), which also fails open. Either way one slow tag
     // never amplifies into a per-segment stall.
     const { value: raw, timedOut } = await this.readWithTimeout<string | null>(
-      () => this.kv!.get(this.tagMarkerKey(tag), { type: "text" }),
+      async () => this.kv!.get(await this.tagMarkerKey(tag), { type: "text" }),
       this.kvReadTimeoutMs,
       "tag marker KV read",
     );
     if (timedOut) {
+      if (read) read.timedOut = true;
       // Memoize the fail-open result so the rest of this request is consistent
       // (and does not re-pay the timeout per segment sharing the tag).
       return memoize(null);
@@ -2434,10 +3503,17 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     const value = raw != null ? Number(raw) : null;
     const resolved = memoize(value);
 
-    // Populate L1 for subsequent reads in this colo (non-blocking). Use the
-    // resolved (memo-aware) value so a marker invalidated mid-read is not
-    // re-cached stale into this colo's L1.
-    if (this.tagCacheTtl > 0) {
+    // A value read while this request invalidates the tag may predate the
+    // invalidation's KV put: an L1 put of it could land after the put's own
+    // write-through and hide the invalidation from the colo. The request
+    // itself answers from its mask (#973). A shell read also skips the isolate
+    // marker memo through `read.masked`; that memo keeps the higher value, so
+    // the skip is conservative there.
+    const masked = maskedForRequest(_getRequestContext(), this, [tag], 0);
+    if (read) read.masked = masked;
+
+    // Populate L1 for subsequent reads in this colo (non-blocking).
+    if (this.tagCacheTtl > 0 && !masked && publish) {
       const put = () => this.putTagMarkerL1(tag, resolved);
       if (this.waitUntil) this.waitUntil(put);
       else void put();
@@ -2613,46 +3689,163 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   }
 
   /**
-   * Invalidate every entry tagged with any of `tags`. Receives the whole batch
-   * from one updateTag()/revalidateTag() call so the eager-purge hook fires
-   * ONCE (one CDN purge request, not one per tag). For each tag: records the KV
-   * marker (the durable cross-colo truth that reads compare taggedAt against),
-   * writes the fresh marker straight into this colo's L1 (write-through, NOT
-   * delete - a delete would let the next read re-read a not-yet-converged KV
-   * value and re-arm the stale window), and memoizes it for same-request
-   * read-your-own-writes. In purge mode (tagPurge) it then AWAITS the
-   * consumer's purge-by-tag call with the entry Cache-Tags — the eviction the
-   * per-read marker skip on L1 hits relies on. Finally fires onRevalidateTag
-   * with the namespaced lookup Cache-Tags so a consumer purge evicts the
-   * cached lookups in other colos promptly (otherwise they converge within
-   * tagCacheTtl).
-   *
-   * Durable-write integrity: the in-memory write-through (memo + L1) for a tag
-   * runs ONLY after that tag's KV marker write is confirmed. If any KV write
-   * fails (transient error, or an over-512-byte key), this rejects with the
-   * failed tags so an awaiting updateTag() surfaces the failure instead of
-   * silently reporting success while other requests/colos serve stale data. The
-   * eager purge still fires for the whole batch first (it is additive).
-   */
-  /**
-   * Shell tag-generation gate (SegmentCacheStore.isTagsInvalidatedSince): the
-   * SAME KV markers used by runtime envelopes also evict immutable build shells
-   * and captures whose write races updateTag(). Thin public wrapper over the
-   * private envelope check (marker >= since, fail open).
+   * SegmentCacheStore.isTagsInvalidatedSince: the SAME KV markers used by
+   * runtime envelopes also evict immutable build shells, and gate the writes
+   * of cache executions that started before an invalidation (#977,
+   * tag-invalidation.ts predatesInvalidation). Marker >= since. A marker read
+   * that fails or times out answers false (fail open), or true for the write
+   * gate (`failClosed`). With KV each marker is read past the per-request
+   * memo (isInvalidatedSincePastMemo); KV-less it degrades to the per-request
+   * mask in purge mode and to false otherwise — see
+   * isShellGenerationInvalidated.
    */
   async isTagsInvalidatedSince(
     tags: string[],
     sinceMs: number,
+    options?: { failClosed?: boolean },
   ): Promise<boolean> {
-    return this.isGloballyInvalidated(tags, sinceMs);
+    if (!this.kv) return this.isShellGenerationInvalidated(tags, sinceMs);
+    return this.isInvalidatedSincePastMemo(
+      tags,
+      sinceMs,
+      options?.failClosed === true,
+    );
   }
 
+  /**
+   * isTagsInvalidatedSince with KV, never answered from a marker value this
+   * request read before the asking gate. A write gate asks after an
+   * execution that can run for seconds, and the per-request memo can hold
+   * the marker the request read before it (a stale hit reads its entry's
+   * markers, then its refresh runs): answered from it, another isolate's
+   * invalidation in between let the refresh write.
+   *
+   * - This request's own invalidations answer from its mask, checked again
+   *   once the reads are back: a read in flight when the request invalidated
+   *   one of the tags resolved to the marker before it.
+   * - Each tag is read through gateMarkerRead (request-tag-mask.ts): gates
+   *   asking while a read is in flight share it; a settled read is not
+   *   reused.
+   * - The read returns its own value from L1 (tagCacheTtl) or KV, not one an
+   *   older read of the tag memoized while it was in flight, and fills the
+   *   memo only when it holds nothing, so a build shell's check still serves
+   *   the request's later reads. A timed-out read fills nothing.
+   * - It publishes to L1 unless the request masked the tag
+   *   (fetchTagMarker), and never without a request context (a detached
+   *   waitUntil task), where a mask cannot be told apart.
+   * - A read that fails or times out answers `failClosed`: the write gate
+   *   counts it as an invalidation, other callers as none.
+   * @internal
+   */
+  private async isInvalidatedSincePastMemo(
+    tags: string[],
+    since: number,
+    failClosed: boolean,
+  ): Promise<boolean> {
+    if (!Array.isArray(tags) || tags.length === 0 || !since) return false;
+    const ctx = _getRequestContext();
+    if (maskedForRequest(ctx, this, tags, since)) return true;
+    const memo = ctx ? getTagMarkerMemo(ctx, this) : undefined;
+    try {
+      const reads = await Promise.all(
+        tags.map((tag) =>
+          gateMarkerRead(ctx, this, tag, since, async () => {
+            const outcome = { timedOut: false };
+            const marker = await this.fetchTagMarker(
+              tag,
+              undefined,
+              outcome,
+              ctx !== undefined,
+            );
+            if (outcome.timedOut) return { marker, answered: false };
+            if (memo && !memo.has(tag)) memo.set(tag, marker);
+            return { marker, answered: true };
+          }),
+        ),
+      );
+      if (maskedForRequest(ctx, this, tags, since)) return true;
+      return reads.some(
+        ({ marker, answered }) =>
+          (!answered && failClosed) || (marker != null && marker >= since),
+      );
+    } catch (error) {
+      reportCacheError(
+        error,
+        "cache-read",
+        "[CFCacheStore] tag invalidation check",
+      );
+      return failClosed;
+    }
+  }
+
+  /**
+   * Invalidate every entry tagged with any of `tags`. Receives the whole batch
+   * from one updateTag()/revalidateTag() call so the eager-purge hook fires
+   * ONCE (one CDN purge request, not one per tag). Before its first await it
+   * masks the tags for the rest of the request (maskTagsForRequest), which is
+   * all revalidateTag() waits for. For each tag it then records the KV marker
+   * (the durable cross-colo truth that reads compare taggedAt against) and
+   * writes the fresh marker straight into this colo's L1 (write-through, NOT
+   * delete - a delete would let the next read re-read a not-yet-converged KV
+   * value and re-arm the stale window). In purge mode (tagPurge) it then
+   * AWAITS the consumer's purge-by-tag call with the entry Cache-Tags — the
+   * eviction the per-read marker skip on L1 hits relies on. Finally fires
+   * onRevalidateTag with the namespaced lookup Cache-Tags so a consumer purge
+   * evicts the cached lookups in other colos promptly (otherwise they converge
+   * within tagCacheTtl).
+   *
+   * Durable-write integrity: the write-through other requests read (the
+   * isolate marker memo and L1) for a tag runs ONLY after that tag's KV marker
+   * write is confirmed. If any KV write fails (transient error; over-limit
+   * keys are normalized by toKVKey rather than rejected), this rejects with
+   * the failed tags so an awaiting updateTag() surfaces the failure instead of
+   * silently reporting success while other requests/colos serve stale data.
+   * The purge and onRevalidateTag still fire for the whole batch once the
+   * puts settle, whether or not one failed (they are additive); the rejection
+   * follows them.
+   */
   async invalidateTags(tags: string[]): Promise<void> {
     if (tags.length === 0) return;
     const invalidatedAt = Date.now();
-    const ctx = _getRequestContext();
-    const memo = ctx ? getTagMarkerMemo(ctx, this) : undefined;
+    this.maskTagsForRequest(tags, invalidatedAt);
+    // The invalidating isolate drops its memoized shells for these tags at
+    // once; with KV every isolate's per-read marker check rejects the rest.
+    // Reads already in flight must not memoize them again while the markers
+    // and the purge are written (KV-less purge mode has no marker to reject
+    // that copy): the record holds them out until one window after this
+    // settles, at least the default window so a store with the memo off still
+    // covers another store's reads in this isolate.
+    cfShellMemo.deleteWhere((shell) => shellHasAnyTag(shell.head.t, tags));
+    recentShellInvalidations.begin(tags, invalidatedAt);
+    try {
+      await this.writeTagInvalidation(tags, invalidatedAt);
+    } finally {
+      recentShellInvalidations.settle(
+        tags,
+        Math.max(this.memo.shellMs, DEFAULT_SHELL_MEMO_MS),
+      );
+    }
+  }
 
+  /**
+   * The request-local half of invalidateTags(), run before its first await
+   * (#973): the request masks the tags (request-tag-mask.ts), so every later
+   * read in the request (data families, purge-mode L1 hits, shell reads)
+   * treats them as invalidated at `invalidatedAt` without waiting for the KV
+   * put or the purge that revalidateTag() leaves to waitUntil. Skipped where
+   * no read consults the mask (neither KV nor tagPurge).
+   */
+  private maskTagsForRequest(tags: string[], invalidatedAt: number): void {
+    if (!this.kv && !this.tagPurge) return;
+    const ctx = _getRequestContext();
+    if (ctx) maskRequestTags(ctx, this, tags, invalidatedAt);
+  }
+
+  /** invalidateTags' marker writes, tag purge, and hooks. */
+  private async writeTagInvalidation(
+    tags: string[],
+    invalidatedAt: number,
+  ): Promise<void> {
     if (!this.kv && !this.onRevalidateTag && !this.tagPurge) {
       console.warn(
         `[CFCacheStore] invalidateTags had no effect: configure a KV namespace ` +
@@ -2663,6 +3856,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
     const failedTags = new Set<string>();
     const errors: unknown[] = [];
+    const lookupMarkerCacheActive = Boolean(this.kv) && this.tagCacheTtl > 0;
     if (this.kv) {
       // Markers written with no expiry (tagInvalidationTtl unset) never expire,
       // so high-cardinality tags accumulate KV keys unboundedly with no reaper.
@@ -2682,18 +3876,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       }
       await Promise.all(
         tags.map(async (tag) => {
-          const markerKey = this.tagMarkerKey(tag);
-          const markerKeyBytes = kvKeyByteLength(markerKey);
-          if (markerKeyBytes > KV_MAX_KEY_BYTES) {
-            failedTags.add(tag);
-            errors.push(
-              new Error(
-                `tag "${tag}" produces a ${markerKeyBytes}-byte KV ` +
-                  `marker key, over the ${KV_MAX_KEY_BYTES}-byte limit`,
-              ),
-            );
-            return;
-          }
+          // An over-limit tag no longer rejects: tagMarkerKey normalizes
+          // through toKVKey, and the marker read path derives the key the same
+          // way, so oversized tags invalidate correctly instead of erroring.
+          const markerKey = await this.tagMarkerKey(tag);
           try {
             await this.kv!.put(markerKey, String(invalidatedAt), {
               ...(this.tagInvalidationTtl
@@ -2706,25 +3892,16 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           }
         }),
       );
-    }
 
-    // Write-through memo + L1 only for tags with a confirmed durable marker, and
-    // only when KV is configured. Markers are read exclusively through
-    // isGloballyInvalidated(), which short-circuits to "not invalidated" when
-    // !this.kv; writing memo/L1 markers without KV would be dead state no read
-    // path ever consults — EXCEPT the memo in purge mode: isL1Invalidated()
-    // consults it (and only it) on every L1 hit, so a KV-less purge-mode store
-    // still writes the memo for same-request read-your-own-writes. The
-    // onRevalidateTag purge below still fires regardless (it is additive and
-    // external to the marker cascade). The memo write is synchronous
-    // (read-your-own-writes); the L1 Cache API writes are independent, so fan
-    // them out in parallel rather than awaiting each.
-    const lookupMarkerCacheActive = Boolean(this.kv) && this.tagCacheTtl > 0;
-    if (this.kv || this.tagPurge) {
+      // Write-through (isolate marker memo + L1) only for tags with a
+      // confirmed durable marker; this request's own mask was set up front
+      // (maskTagsForRequest). The L1 Cache API writes are independent,
+      // so fan them out in parallel rather than awaiting each.
       const l1Writes: Promise<void>[] = [];
       for (const tag of tags) {
         if (failedTags.has(tag)) continue;
-        memo?.set(tag, invalidatedAt);
+        // Same isolate: later requests here see the invalidation at once.
+        cfMarkerMemo.store(this.markerMemoKey(tag), invalidatedAt);
         if (lookupMarkerCacheActive) {
           l1Writes.push(
             this.putTagMarkerL1(tag, invalidatedAt, { critical: true }),
@@ -2813,11 +3990,11 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private async kvGetSegment(
     key: string,
     opts?: { suppressRevalidate?: boolean },
-  ): Promise<CacheGetResult | null> {
+  ): Promise<CacheGetResult | null | CacheReadError> {
     if (!this.kv) return null;
 
     try {
-      const kvKey = this.toKVKey(key);
+      const kvKey = await this.toKVKey(key, "data");
       const { value: envelope, timedOut } =
         await this.kvGetOrEvict<KVSegmentEnvelope>(
           kvKey,
@@ -2882,7 +4059,15 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     } catch (error) {
       reportCacheError(error, "cache-read", "[CFCacheStore] kvGetSegment");
       if (this.debug) this.emitDebug({ op: "get", key, outcome: "error" });
-      return null;
+      // A KV failure is NOT proof of absence: returning null classified it a
+      // real miss and let the PPR seeded fallback substitute the doc record
+      // for a key partition the store could not actually read. Same sentinel
+      // as get()'s own catch — lookupRouteDetailed classifies it `error` and
+      // the render stays uncached. (A kvGetOrEvict TIMEOUT above stays null
+      // by design: it is a bounded-latency degrade of a likely-healthy read,
+      // and serving the equivalent seeded record there is the fallback
+      // working as intended, not a masked failure.)
+      return CACHE_READ_ERROR;
     }
   }
 
@@ -2903,29 +4088,6 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     // KV requires expirationTtl >= 60s. Skip write for short-lived entries.
     if (!this.kv || !this.waitUntil || totalTtl < 60) return;
 
-    const kvKey = this.toKVKey(key);
-
-    // Reject an oversized data-segment KV key the same way tag-marker keys are
-    // rejected in invalidateTags(). A key over KV_MAX_KEY_BYTES makes kv.put()
-    // fail, so the segment silently never lands in L2 (KV) and every cold-colo
-    // or TTL-expired read re-renders instead of serving stale. Segment keys can
-    // grow with user-controlled inputs (e.g. a route's search params), so report
-    // a clear, actionable error and skip the doomed write rather than letting it
-    // reject deep inside waitUntil as an opaque cache-write failure.
-    const kvKeyBytes = kvKeyByteLength(kvKey);
-    if (kvKeyBytes > KV_MAX_KEY_BYTES) {
-      reportCacheError(
-        new Error(
-          `cache segment key produces a ${kvKeyBytes}-byte KV key, over the ` +
-            `${KV_MAX_KEY_BYTES}-byte limit; the segment was not persisted to KV (L2). ` +
-            `Reduce the cache-key inputs (e.g. large search params on this route).`,
-        ),
-        "cache-write",
-        "[CFCacheStore] kvSetSegment",
-      );
-      return;
-    }
-
     const expiresAt = staleAt + swrWindow * 1000;
     // Same wire shape as JSON.stringify({ d, s, e }) — dataJson is already
     // valid JSON for CachedEntryData, so embedding it avoids re-walking the tree.
@@ -2933,8 +4095,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
     this.waitUntil(() =>
       reportingAsync(
-        () =>
-          this.kv!.put(kvKey, envelopeJson, {
+        async () =>
+          this.kv!.put(await this.toKVKey(key, "data"), envelopeJson, {
             expirationTtl: totalTtl,
           }),
         "cache-write",
@@ -2959,7 +4121,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
             Math.floor((envelope.e - now) / 1000),
           );
           const cache = await this.getCache();
-          const request = this.keyToRequest(key);
+          const request = this.keyToRequest(key, "data");
 
           const response = new Response(JSON.stringify(envelope.d), {
             headers: {
@@ -2995,7 +4157,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     if (!this.kv) return null;
 
     try {
-      const kvKey = this.toKVKey(`fn:${key}`);
+      const kvKey = await this.toKVKey(`fn:${key}`, "data");
       const { value: envelope, timedOut } =
         await this.kvGetOrEvict<KVItemEnvelope>(
           kvKey,
@@ -3079,7 +4241,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
             Math.floor((envelope.e - now) / 1000),
           );
           const cache = await this.getCache();
-          const request = this.keyToRequest(`fn:${key}`);
+          const request = this.keyToRequest(`fn:${key}`, "data");
 
           const body = JSON.stringify({
             value: envelope.v,
@@ -3117,7 +4279,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     if (!this.kv) return null;
 
     try {
-      const kvKey = this.toDocKVKey(key);
+      const kvKey = await this.toDocKVKey(key);
       // The document path is debug-silent (op is only get/getItem): a KV-read
       // timeout here is bounded for resilience parity (kvGetOrEvict applies the
       // budget) but emits no kv-timeout event, so its absence from the debug
@@ -3213,7 +4375,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
             Math.floor((envelope.e - now) / 1000),
           );
           const cache = await this.getCache();
-          const request = this.keyToRequest(`doc:${key}`);
+          const request = this.keyToRequest(`doc:${key}`, "document");
 
           const headers = new Headers(envelope.hd);
           const originalCacheControl = headers.get("Cache-Control");

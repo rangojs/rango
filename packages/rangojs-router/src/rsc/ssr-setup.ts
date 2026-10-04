@@ -6,6 +6,7 @@
  * matching, so they can run in parallel with segment resolution.
  */
 
+import { requestHeaders } from "../server/request-headers.js";
 import type { HandlerContext } from "./handler-context.js";
 import type { SSRModule, SSRRenderOptions } from "./types.js";
 import type { SSRStreamMode } from "../router/router-options.js";
@@ -82,11 +83,11 @@ export interface SsrHtmlStageOptions<TEnv> {
   /** Metrics store for ssr:module-load / ssr:stream-mode timing (per call site). */
   metricsStore: MetricsStore | undefined;
   /**
-   * renderHTML options minus streamMode (the stage resolves streamMode). Carries
-   * the per-site nonce and, for the PE action re-render, formState. Spread
-   * verbatim so each call site's exact key set is preserved.
+   * renderHTML options minus streamMode and onError (the stage owns both).
+   * Carries the per-site nonce and, for the PE action re-render, formState.
+   * Spread verbatim so each call site's exact key set is preserved.
    */
-  render: Omit<SSRRenderOptions, "streamMode">;
+  render: Omit<SSRRenderOptions, "streamMode" | "onError">;
   /** ResponseInit merged into the prepared render (e.g. content-type). */
   init?: ResponseInit;
 }
@@ -109,9 +110,29 @@ export function createSsrHtmlStage<TEnv>(
       options.url,
       options.metricsStore,
     );
+    const renderErrors = _getRequestContext()?._renderErrors;
     return {
       render: () =>
-        ssrModule.renderHTML(flight.stream, { ...options.render, streamMode }),
+        // search: the LIVE request's query string, threaded out-of-band into
+        // the SSR pass so useSearchParams sees real values during document
+        // renders. Deliberately not payload metadata: cached/prerendered
+        // payloads replay captured metadata, and search is not route
+        // identity — it must always come from the request being served.
+        ssrModule.renderHTML(flight.stream, {
+          ...options.render,
+          streamMode,
+          search: options.url.search,
+          // origin: same out-of-band channel — seeds the SSR store location
+          // so origin-dependent markup (Link's data-external) agrees with the
+          // browser's window.location across hydration.
+          origin: options.url.origin,
+          // A component that throws inside a Suspense boundary leaves an
+          // errored boundary in a completed document; the document cache
+          // reads the list before storing it.
+          onError: (error) => {
+            renderErrors?.push(error);
+          },
+        }),
       ...(options.init && { init: options.init }),
     };
   };
@@ -163,7 +184,7 @@ export function getSSRSetup<TEnv>(
  */
 function acceptsFlightExplicitly(request: Request, url: URL): boolean {
   if (url.searchParams.has("__html")) return false;
-  const accept = request.headers.get("accept");
+  const accept = requestHeaders(request).get("accept");
   if (accept === null || !accept.includes(RSC_WIRE_MIME)) return false;
   return prefersFlightRepresentation(parseAcceptTypes(accept));
 }
@@ -172,8 +193,8 @@ function acceptsFlightExplicitly(request: Request, url: URL): boolean {
  * Classify whether a request may require SSR (HTML rendering).
  *
  * Returns false for requests that are definitively RSC-only: transport
- * params (partial/action/loader/__rsc), prerender collection, or an explicit
- * Accept: text/x-component. Must never return false for a request whose
+ * params (partial/action/loader/__rsc) or an explicit Accept:
+ * text/x-component. Must never return false for a request whose
  * render-time decision (isRscRequest) will be HTML — the two share
  * acceptsFlightExplicitly so the Accept rule cannot drift. document-cache.ts
  * keys its HTML/RSC response slots off this function, so any divergence from
@@ -186,10 +207,9 @@ export function mayNeedSSR(request: Request, url: URL): boolean {
   if (
     url.searchParams.has("_rsc_partial") ||
     url.searchParams.has("_rsc_action") ||
-    request.headers.has("rsc-action") ||
+    requestHeaders(request).has("rsc-action") ||
     url.searchParams.has("_rsc_loader") ||
-    url.searchParams.has("__rsc") ||
-    url.searchParams.has("__prerender_collect")
+    url.searchParams.has("__rsc")
   ) {
     return false;
   }

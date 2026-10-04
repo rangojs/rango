@@ -10,6 +10,8 @@
  *   header/setCookie/deleteCookie/setTheme and the raw ctx.res.headers
  *   escape, all via the guarded-stub-headers choke point; setStatus
  *   enumerated),
+ * - Node util.inspect of a handler ctx, ctx.res, and ctx.res.headers
+ *   shows the live stub headers and does not throw (#1000),
  * - PPR/cache() message-family EQUIVALENCE (same Error class, same family),
  * - the pinned cache()-loader write exemption — DSL (registered) loaders ONLY
  *   (vite-rsc-demo shop cart); a handler-invoked loader body throws under
@@ -20,6 +22,7 @@
  *   (createResponseWithMergedHeaders: serve-owned headers win, middleware
  *   headers merge, Set-Cookie appends).
  */
+import { inspect } from "node:util";
 import { describe, expect, it } from "vitest";
 import {
   RangoContext,
@@ -112,16 +115,12 @@ describe("assertCachedHeaderWriteAllowed (the seam)", () => {
   it("ppr + loader (handler-invoked loader body): throws with the loader wording", () => {
     RangoContext.run(makeStore() as never, () => {
       latchCachedHeaderScope("ppr");
-      runInsideLoaderBodyScope(
-        () => {
-          const err = captureError(() =>
-            assertCachedHeaderWriteAllowed("ctx.setCookie()"),
-          );
-          expect(err.message).toContain("from a loader");
-        },
-        "TestLoader",
-        true,
-      );
+      runInsideLoaderBodyScope(() => {
+        const err = captureError(() =>
+          assertCachedHeaderWriteAllowed("ctx.setCookie()"),
+        );
+        expect(err.message).toContain("from a loader");
+      }, "TestLoader");
     });
   });
 
@@ -174,19 +173,15 @@ describe("assertCachedHeaderWriteAllowed (the seam)", () => {
   it("cache() + handler-invoked loader body: THROWS (handler skipped on hit, write would vanish)", () => {
     RangoContext.run(makeStore() as never, () => {
       latchCachedHeaderScope("cache", "shop");
-      runInsideLoaderBodyScope(
-        () => {
-          const err = captureError(() =>
-            assertCachedHeaderWriteAllowed("ctx.setCookie()"),
-          );
-          expect(err.message).toContain("from a loader");
-          expect(err.message).toContain("cache() boundary");
-          expect(err.message).toContain("the handler is skipped");
-          expect(err.message).toMatch(FAMILY_RE);
-        },
-        "CartLoader",
-        true,
-      );
+      runInsideLoaderBodyScope(() => {
+        const err = captureError(() =>
+          assertCachedHeaderWriteAllowed("ctx.setCookie()"),
+        );
+        expect(err.message).toContain("from a loader");
+        expect(err.message).toContain("cache() boundary");
+        expect(err.message).toContain("the handler is skipped");
+        expect(err.message).toMatch(FAMILY_RE);
+      }, "CartLoader");
     });
   });
 
@@ -197,15 +192,11 @@ describe("assertCachedHeaderWriteAllowed (the seam)", () => {
     RangoContext.run(makeStore() as never, () => {
       latchCachedHeaderScope("cache", "shop");
       runInsideLoaderScope(() => {
-        runInsideLoaderBodyScope(
-          () => {
-            expect(() =>
-              assertCachedHeaderWriteAllowed("ctx.setCookie()"),
-            ).not.toThrow();
-          },
-          "NestedLoader",
-          true,
-        );
+        runInsideLoaderBodyScope(() => {
+          expect(() =>
+            assertCachedHeaderWriteAllowed("ctx.setCookie()"),
+          ).not.toThrow();
+        }, "NestedLoader");
       });
     });
   });
@@ -461,6 +452,45 @@ describe("guarded surfaces", () => {
     );
     expect(response.headers.getSetCookie().join(";")).toContain("session=abc");
     expect(reqCtx.res.headers.get("Set-Cookie")).toBeNull();
+  });
+
+  it("util.inspect of a handler ctx, ctx.res, and ctx.res.headers shows the live stub headers (#1000)", () => {
+    // Outside any cached scope: the throw is the proxy shape, not the latch.
+    const reqCtx = makeReqCtx();
+    reqCtx.header("X-Real", "yes");
+    const ctx = runWithRequestContext(reqCtx, () =>
+      createHandlerContext(
+        {},
+        new Request("http://localhost/p"),
+        new URLSearchParams(),
+        "/p",
+        new URL("http://localhost/p"),
+      ),
+    );
+    // Undici prints the case passed to Headers.set. An empty proxy target
+    // would be `Headers {}` and would not contain this entry.
+    for (const text of [
+      inspect(ctx),
+      inspect(ctx.res),
+      inspect(ctx.res.headers),
+    ]) {
+      expect(text).toContain("'X-Real': 'yes'");
+    }
+    // setStatus rebinds the stub Headers. A header set after that must be
+    // the one inspect prints — not the Headers the proxy was built around.
+    reqCtx.setStatus(201);
+    reqCtx.header("X-After", "1");
+    const rebound = inspect(reqCtx.res);
+    expect(rebound).toContain("status: 201");
+    expect(rebound).toContain("'X-Real': 'yes'");
+    expect(rebound).toContain("'X-After': '1'");
+    expect(inspect(reqCtx.res.headers)).toContain("'X-After': '1'");
+    RangoContext.run(makeStore() as never, () => {
+      latchCachedHeaderScope("ppr", "p");
+      expect(() => reqCtx.res.headers.set("X-No", "1")).toThrowError(FAMILY_RE);
+      expect(inspect(reqCtx.res.headers)).toContain("'X-After': '1'");
+      expect(reqCtx.res.headers.get("X-No")).toBeNull();
+    });
   });
 
   it("middleware lane stays open: writes made before the latch (pre-next) land on the stub", () => {

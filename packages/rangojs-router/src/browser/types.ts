@@ -49,15 +49,36 @@ export interface RscMetadata {
   /** Merged route params from the matched route */
   params?: Record<string, string>;
   /**
+   * The matched route's name (include name prefix applied), when the route is
+   * named. The browser keeps it per history entry for transition({ when })'s
+   * `from.routeName` / `to.routeName` (browser/transition-when.ts).
+   */
+  routeName?: string;
+  /**
    * State of named slots for this route match
    * Key is slot name (e.g., "@modal"), value is slot state
    * Slots are used for intercepting routes during soft navigation
    */
   slots?: Record<string, SlotState>;
+  /**
+   * Intercept TARGET route names reachable from this location as a
+   * navigation origin. The browser-local clientUrls matcher declines its
+   * optimistic presentation for these targets (the canonical response would
+   * commit the intercept over the ORIGIN page, so destination loading would
+   * flash and revert). Missing/empty means no targets.
+   */
+  interceptTargets?: string[];
   /** Root layout component for browser-side re-renders */
   rootLayout?: ComponentType<{ children: ReactNode }>;
   /** Handle data accumulated across route segments (async generator that yields on each push) */
   handles?: AsyncGenerator<HandleData, void, unknown>;
+  /**
+   * Document-lane late handle channel: pushes landing after the handler
+   * barrier (streaming loader ctx.use(Handle) writes). Consumed non-blocking
+   * post-hydration (rsc-router.tsx); `handles` above is drained in blocking
+   * positions and must complete at the handler barrier.
+   */
+  handlesLate?: AsyncGenerator<HandleData, void, unknown>;
   /** Cached handle data (for back/forward navigation from cache) */
   cachedHandleData?: HandleData;
   /**
@@ -82,6 +103,11 @@ export interface RscMetadata {
    * Sent on initial render so the browser can configure its prefetch queue.
    */
   prefetchConcurrency?: number;
+  /**
+   * Router-wide default prefetch strategy for Links without a `prefetch` prop.
+   * Sent on initial render; applied once at init (default-strategy.ts).
+   */
+  defaultPrefetch?: import("../router/prefetch-default.js").PrefetchStrategy;
   /**
    * Server-resolved rango state cookie name (`{prefix}_{routerId}`). The client
    * reads it verbatim and binds the rango state cookie to it; composition
@@ -257,6 +283,18 @@ export interface SegmentState {
 }
 
 /**
+ * What the router remembers about one history entry for transition({ when })
+ * (NavigationStore.rememberDisplayedEntry).
+ *
+ * @internal This type is an implementation detail and may change without notice.
+ */
+export interface HistoryEntryMemory {
+  readonly routeName: string | undefined;
+  /** The entry's `history.state` as last recorded. */
+  readonly state: unknown;
+}
+
+/**
  * Navigation update emitted when UI should re-render
  *
  * @internal This type is an implementation detail and may change without notice.
@@ -276,13 +314,67 @@ export interface NavigationUpdate {
 }
 
 /**
- * State value for navigate/Link
- * - LocationStateEntry[]: Type-safe state entries (recommended)
- * - unknown: Plain state format (object or getter function)
+ * Plain object accepted as {@link PlainHistoryState}. The `any` string index
+ * admits interface-typed values (an `unknown` index would reject interfaces,
+ * which carry no implicit index signature). The `never` members reject:
+ * - a single typed entry (`GridState(value)` without the array) — its
+ *   `__rsc_ls_*` fields would be spread onto history.state and
+ *   `useLocationState(GridState)` would read `undefined`;
+ * - functions, including a location-state definition passed uncalled
+ *   (`Symbol.hasInstance` comes from `Function.prototype`), which throw
+ *   `DataCloneError`;
+ * - arrays and other iterables (`Symbol.iterator`), so an array must match the
+ *   typed-entry or plain-array member instead;
+ * - built-ins tagged with `Symbol.toStringTag` (`Promise`, `WeakMap`,
+ *   `WeakSet`), which throw `DataCloneError`. The cloneable tagged ones
+ *   (`Map`, `Set`, `ArrayBuffer`, typed arrays) have their own members.
+ *
+ * Members are not checked: a function, symbol, or React element inside a
+ * plain object still compiles, as does a top-level `ReactElement` or DOM node
+ * (an object with none of the keys above).
+ */
+export interface PlainHistoryObject {
+  readonly [key: string]: any;
+  readonly __rsc_ls_key?: never;
+  readonly __rsc_ls_value?: never;
+  readonly __rsc_ls_lazy?: never;
+  readonly [Symbol.iterator]?: never;
+  readonly [Symbol.hasInstance]?: never;
+  readonly [Symbol.toStringTag]?: never;
+}
+
+/**
+ * Plain (untyped) navigation state, stored under `history.state.state` and
+ * read with `useLocationState<T>()`. A structured-clone-safe value: primitives,
+ * arrays, `Map`/`Set`, `ArrayBuffer`, typed arrays, and plain objects. Excludes
+ * functions, symbols, `Promise`/`WeakMap`/`WeakSet`, and objects carrying
+ * `__rsc_ls_*` keys (a typed entry passed without its array). Arrays, `Map`,
+ * and `Set` are checked element by element; plain object members are not
+ * checked (see {@link PlainHistoryObject}).
+ */
+export type PlainHistoryState =
+  | string
+  | number
+  | boolean
+  | bigint
+  | null
+  | undefined
+  | readonly PlainHistoryState[]
+  | ReadonlyMap<PlainHistoryState, PlainHistoryState>
+  | ReadonlySet<PlainHistoryState>
+  | ArrayBuffer
+  | ArrayBufferView
+  | PlainHistoryObject;
+
+/**
+ * State value for `router.push()` / `router.replace()` / `<Link state>`.
+ * - `readonly LocationStateEntry[]`: typed entries from `createLocationState()`
+ *   definitions, e.g. `[GridState({ count: 3 })]` (recommended)
+ * - {@link PlainHistoryState}: plain structured-clone-safe state
  */
 export type HistoryState =
-  | import("./react/location-state-shared.js").LocationStateEntry[]
-  | unknown;
+  | readonly import("./react/location-state-shared.js").LocationStateEntry[]
+  | PlainHistoryState;
 
 /**
  * Options for navigation operations
@@ -310,6 +402,22 @@ export interface NavigateOptions {
    */
   revalidate?: boolean;
   /**
+   * Set to `false` to present this navigation without a transition: the
+   * commit is urgent and every `<ViewTransition>` class resolves to `"none"`,
+   * the same result as a `transition({ when })` predicate returning `false`.
+   * No `when` predicate is called. Back/forward, action and revalidation
+   * commits are unaffected (they are not started by this call).
+   *
+   * @default true (the route's transition config applies)
+   *
+   * @example
+   * ```tsx
+   * router.push("/photos/2", { transition: false });
+   * <Link to="/photos/2" transition={false}>Next</Link>
+   * ```
+   */
+  transition?: boolean;
+  /**
    * State to pass to history.pushState/replaceState
    * Accessible via useLocationState() hook.
    *
@@ -330,15 +438,25 @@ export interface NavigateOptions {
    * // Plain static state
    * navigate("/product", { state: { from: "list" } });
    *
-   * // Plain just-in-time state
-   * navigate("/product", { state: () => ({ from: window.location.pathname }) });
+   * // Compile errors (and a dev-mode runtime error for untyped callers):
+   * navigate("/product", { state: ProductState(p) }); // entry without the array
+   * navigate("/product", { state: [ProductState] }); // definition not called
    * ```
    */
   state?: HistoryState;
 }
 
-/** @internal Extended options used only within the navigation bridge */
-export interface NavigateOptionsInternal extends NavigateOptions {
+/**
+ * @internal Extended options used only within the navigation bridge. `state`
+ * is widened to `unknown`: the redirect lanes pass state already resolved to
+ * a flat `history.state` record, and in dev Link passes an uncalled
+ * definition through to resolveNavigationState's check.
+ */
+export interface NavigateOptionsInternal extends Omit<
+  NavigateOptions,
+  "state"
+> {
+  state?: unknown;
   /** Skip segment cache (used by redirect-with-state to force re-render) */
   _skipCache?: boolean;
 }
@@ -445,6 +563,22 @@ export interface NavigationStore {
   // History-based segment cache (for back/forward navigation and partial merging)
   getHistoryKey(): string;
   setHistoryKey(key: string): void;
+
+  /**
+   * Per-history-entry memory for transition({ when }) sources: record the
+   * entry on screen (keyed by its `history.state.key`) with its current
+   * `history.state` and, when given, its route name (kept from the last
+   * record otherwise; every push/replace creates a new key, so a stale name
+   * never carries to another entry). Called after every commit, restore and
+   * state merge.
+   */
+  rememberDisplayedEntry(routeName?: string): void;
+  /**
+   * The memory of the entry on screen, or of `entryKey`. At popstate
+   * history.state already belongs to the destination, so back/forward reads
+   * the entry being LEFT from here. In-memory only: empty after a reload.
+   */
+  getHistoryEntryMemory(entryKey?: string): HistoryEntryMemory | undefined;
   /** Monotonic token of the most recently committed navigation. */
   getNavInstance(): number;
   cacheSegmentsForHistory(
@@ -526,6 +660,13 @@ export interface FetchPartialOptions {
   signal?: AbortSignal;
   /** If true, this is a stale cache revalidation request - server should force revalidators */
   staleRevalidation?: boolean;
+  /**
+   * Encoded client-run per-loader revalidation decisions
+   * (clientUrls revalidate() predicates executed in the browser); sent as
+   * X-Rango-Client-Reval and honored only by materialized client-urls loader
+   * stubs. Null/absent = locked server defaults.
+   */
+  clientRevalidation?: string | null;
   interceptSourceUrl?: string;
   /** RSC version for cache invalidation detection */
   version?: string;
@@ -604,10 +745,11 @@ export interface ServerActionBridgeConfig {
  * Navigation bridge for handling client-side navigation
  */
 export interface NavigationBridge {
-  navigate(url: string, options?: NavigateOptions): Promise<void>;
+  navigate(url: string, options?: NavigateOptionsInternal): Promise<void>;
   refresh(): Promise<void>;
   handlePopstate(): Promise<void>;
   registerLinkInterception(): () => void;
+  registerDelegatedPrefetch(): () => void;
   /** Current RSC version (live, reflects the latest updateVersion). */
   getVersion(): string | undefined;
   /** Update the RSC version (e.g. after HMR). Clears prefetch cache. */

@@ -9,13 +9,32 @@ import {
   createRequestContext,
   runWithRequestContext,
 } from "../../../server/request-context";
+import {
+  CACHE_READ_ERROR,
+  type CacheReadError as CacheReadErrorT,
+} from "../../types.js";
+import {
+  executionStart,
+  predatesInvalidation,
+  revalidateTag,
+  updateTag,
+} from "../../tag-invalidation.js";
 
-function makeReqCtx() {
+// get() may return CACHE_READ_ERROR (backend failure, distinct from a miss);
+// these tests assert hit/miss shapes, so narrow the sentinel away up front.
+function hit(
+  r: import("../../types.js").CacheGetResult | null | CacheReadErrorT,
+): import("../../types.js").CacheGetResult | null {
+  return r === CACHE_READ_ERROR ? null : r;
+}
+
+function makeReqCtx(cacheStore?: CFCacheStore) {
   return createRequestContext({
     env: {},
     request: new Request("https://test.internal/"),
     url: new URL("https://test.internal/"),
     variables: {},
+    cacheStore,
   });
 }
 
@@ -164,12 +183,12 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       await store.set("k", createTestData(["products"]), 300);
       await ctx.flush();
 
-      expect(await store.get("k")).not.toBeNull();
+      expect(hit(await store.get("k"))).not.toBeNull();
 
       vi.advanceTimersByTime(10);
       await store.invalidateTags(["products"]);
 
-      expect(await store.get("k")).toBeNull();
+      expect(hit(await store.get("k"))).toBeNull();
     });
 
     it("leaves untagged segments untouched", async () => {
@@ -178,7 +197,7 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       await ctx.flush();
 
       await store.invalidateTags(["products"]);
-      expect(await store.get("k")).not.toBeNull();
+      expect(hit(await store.get("k"))).not.toBeNull();
     });
 
     it("does not invalidate an entry tagged AFTER the invalidation", async () => {
@@ -190,7 +209,7 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       await ctx.flush();
 
       // taggedAt is now newer than the invalidation marker -> still a hit.
-      expect(await store.get("k")).not.toBeNull();
+      expect(hit(await store.get("k"))).not.toBeNull();
     });
   });
 
@@ -358,9 +377,9 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
 
       const getSpy = vi.spyOn(kv, "get");
       await runWithRequestContext(makeReqCtx(), async () => {
-        await store.get("k1");
-        await store.get("k2");
-        await store.get("k1");
+        hit(await store.get("k1"));
+        hit(await store.get("k2"));
+        hit(await store.get("k1"));
       });
 
       // Three reads of "shared"-tagged entries -> exactly one marker KV read.
@@ -386,6 +405,438 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
         expect(await store.getItem("k")).toBeNull();
       });
     });
+
+    // #977: the write gate asks after an execution, and a stale hit memoized
+    // the marker before its refresh ran.
+    it("isTagsInvalidatedSince reads past a marker this request memoized earlier", async () => {
+      const store = makeStore();
+      const otherIsolate = makeStore();
+      await store.setItem("k", "v", { ttl: 300, tags: ["catalog"] });
+      await ctx.flush();
+
+      await runWithRequestContext(makeReqCtx(), async () => {
+        // Memoizes "catalog" -> no marker.
+        expect(await store.getItem("k")).not.toBeNull();
+        const startedAt = Date.now();
+        vi.advanceTimersByTime(10);
+        await otherIsolate.invalidateTags(["catalog"]);
+        await ctx.flush();
+
+        expect(await store.isTagsInvalidatedSince(["catalog"], startedAt)).toBe(
+          true,
+        );
+        // Asked about a later millisecond than the invalidation's: no.
+        expect(
+          await store.isTagsInvalidatedSince(["catalog"], Date.now() + 1),
+        ).toBe(false);
+      });
+    });
+
+    // #977: a page's writes finish together and share tags; each gate read
+    // its own marker.
+    it("the write gate shares one marker read among concurrent gates, and a later gate reads again", async () => {
+      const store = makeStore();
+      const getSpy = vi.spyOn(kv, "get");
+      const markerReads = () =>
+        getSpy.mock.calls.filter(([key]) => String(key).includes("__tag__/hot"))
+          .length;
+
+      await runWithRequestContext(makeReqCtx(store), async () => {
+        const start = executionStart();
+        await Promise.all(
+          Array.from({ length: 5 }, () =>
+            predatesInvalidation(store, ["hot"], start),
+          ),
+        );
+        expect(markerReads()).toBe(1);
+        // A settled read covers only what was invalidated before it.
+        for (let i = 0; i < 3; i++) {
+          await predatesInvalidation(store, ["hot"], start);
+        }
+        expect(markerReads()).toBe(4);
+      });
+    });
+
+    // #977: a read another gate issued answers only for invalidations before
+    // it; B's execution is older than A's read but asks after it settled.
+    it("a gate asking after another gate's read settled reads again", async () => {
+      const store = makeStore();
+      const otherIsolate = makeStore();
+
+      await runWithRequestContext(makeReqCtx(store), async () => {
+        const startB = executionStart();
+        vi.advanceTimersByTime(10);
+        // A's gate: its read settles with no marker.
+        expect(
+          await predatesInvalidation(store, ["probe"], executionStart()),
+        ).toBe(false);
+        vi.advanceTimersByTime(490);
+        await otherIsolate.invalidateTags(["probe"]);
+        await ctx.flush();
+        vi.advanceTimersByTime(500);
+
+        expect(await predatesInvalidation(store, ["probe"], startB)).toBe(true);
+      });
+    });
+
+    // #977: the write gate fails closed (a skipped write costs a miss); the
+    // store's own contract for other callers (a build shell's read) stays
+    // fail-open.
+    it("the write gate counts a marker read that times out or fails as an invalidation", async () => {
+      const store = makeStore();
+      let mode: "hang" | "throw" = "hang";
+      vi.spyOn(kv, "get").mockImplementation((key: string) => {
+        if (!key.includes(TAG_MARKER_PREFIX)) return Promise.resolve(null);
+        return mode === "hang"
+          ? new Promise(() => {})
+          : Promise.reject(new Error("KV down"));
+      });
+
+      await runWithRequestContext(makeReqCtx(store), async () => {
+        const start = executionStart();
+        vi.advanceTimersByTime(10);
+        const timedOut = predatesInvalidation(store, ["unread"], start);
+        await vi.advanceTimersByTimeAsync(KV_READ_TIMEOUT_MS);
+        expect(await timedOut).toBe(true);
+
+        mode = "throw";
+        expect(await predatesInvalidation(store, ["unread"], start)).toBe(true);
+        // Asked without the gate's option: fail-open, as before.
+        expect(await store.isTagsInvalidatedSince(["unread"], start.at)).toBe(
+          false,
+        );
+      });
+    });
+
+    it("a gate's marker read that timed out is not reused by a later gate", async () => {
+      const store = makeStore();
+      const otherIsolate = makeStore();
+      const get = kv.get.bind(kv);
+      let hang = true;
+      vi.spyOn(kv, "get").mockImplementation((key: string, options?: any) =>
+        hang && key.includes(TAG_MARKER_PREFIX)
+          ? new Promise(() => {})
+          : get(key, options),
+      );
+
+      await runWithRequestContext(makeReqCtx(store), async () => {
+        const start = executionStart();
+        vi.advanceTimersByTime(10);
+        const timedOut = predatesInvalidation(store, ["slow"], start);
+        await vi.advanceTimersByTimeAsync(KV_READ_TIMEOUT_MS);
+        await timedOut;
+
+        hang = false;
+        await otherIsolate.invalidateTags(["slow"]);
+        await ctx.flush();
+        vi.advanceTimersByTime(10);
+        expect(await predatesInvalidation(store, ["slow"], start)).toBe(true);
+      });
+    });
+
+    // #977: a read of the tag this request started earlier, still in flight,
+    // lands during the gate's own read with the marker from before.
+    it("the write gate answers from its own read, not from an older read that lands meanwhile", async () => {
+      const store = makeStore();
+      const otherIsolate = makeStore();
+      await store.setItem("k", "v", { ttl: 300, tags: ["raced"] });
+      await ctx.flush();
+      const markerGets: Array<() => void> = [];
+      const get = kv.get.bind(kv);
+      vi.spyOn(kv, "get").mockImplementation(async (key, options) => {
+        if (!String(key).includes("__tag__/raced")) return get(key, options);
+        const value = await get(key, options);
+        await new Promise<void>((resolve) => markerGets.push(resolve));
+        return value;
+      });
+
+      await runWithRequestContext(makeReqCtx(store), async () => {
+        // The entry read's marker read: issued now, before the invalidation.
+        const hit = store.getItem("k");
+        await vi.waitFor(() => expect(markerGets).toHaveLength(1));
+        vi.advanceTimersByTime(10);
+        const startedAt = Date.now();
+        vi.advanceTimersByTime(10);
+        await otherIsolate.invalidateTags(["raced"]);
+        await ctx.flush();
+
+        const gate = store.isTagsInvalidatedSince(["raced"], startedAt + 1);
+        await vi.waitFor(() => expect(markerGets).toHaveLength(2));
+        // The older read lands first and memoizes "no marker".
+        markerGets[0]!();
+        expect(await hit).not.toBeNull();
+        markerGets[1]!();
+        expect(await gate).toBe(true);
+      });
+    });
+
+    it("isTagsInvalidatedSince: a tag this request masks while the read is in flight counts", async () => {
+      const store = makeStore();
+      const heldReads: Array<() => void> = [];
+      const get = kv.get.bind(kv);
+      vi.spyOn(kv, "get").mockImplementation(async (key, options) => {
+        const value = await get(key, options);
+        if (String(key).includes("__tag__/in-flight")) {
+          await new Promise<void>((resolve) => heldReads.push(resolve));
+        }
+        return value;
+      });
+
+      await runWithRequestContext(makeReqCtx(store), async () => {
+        const startedAt = Date.now();
+        vi.advanceTimersByTime(10);
+        const gate = store.isTagsInvalidatedSince(["in-flight"], startedAt + 1);
+        await vi.waitFor(() => expect(heldReads).toHaveLength(1));
+        // The request's own invalidation, straight through the store.
+        void store.invalidateTags(["in-flight"]);
+        heldReads[0]!();
+        expect(await gate).toBe(true);
+      });
+    });
+
+    it("isTagsInvalidatedSince memoizes a tag it reads first in the request, so a later read of it does no KV read", async () => {
+      const store = makeStore();
+      await store.setItem("k", "v", { ttl: 300, tags: ["first"] });
+      await ctx.flush();
+      const getSpy = vi.spyOn(kv, "get");
+
+      await runWithRequestContext(makeReqCtx(), async () => {
+        expect(await store.isTagsInvalidatedSince(["first"], 1)).toBe(false);
+        expect(await store.getItem("k")).not.toBeNull();
+      });
+
+      const markerReads = getSpy.mock.calls.filter(([key]) =>
+        String(key).includes("__tag__/first"),
+      );
+      expect(markerReads).toHaveLength(1);
+    });
+
+    it("isTagsInvalidatedSince without a request context publishes no L1 marker", async () => {
+      const store = makeStore({ tagCacheTtl: 60 });
+      const putSpy = vi.spyOn(mockCaches._default, "put");
+
+      expect(await store.isTagsInvalidatedSince(["detached"], 1)).toBe(false);
+      await ctx.flush();
+
+      expect(
+        putSpy.mock.calls.some(([req]) =>
+          decodeURIComponent((req as Request).url).includes(
+            "__tagmarker__/detached",
+          ),
+        ),
+      ).toBe(false);
+    });
+
+    it("isTagsInvalidatedSince answers a tag this request masked from its mask, without a KV read", async () => {
+      const store = makeStore();
+      await runWithRequestContext(makeReqCtx(store), async () => {
+        const startedAt = Date.now();
+        vi.advanceTimersByTime(10);
+        revalidateTag("masked");
+        const getSpy = vi.spyOn(kv, "get");
+
+        expect(await store.isTagsInvalidatedSince(["masked"], startedAt)).toBe(
+          true,
+        );
+        expect(
+          getSpy.mock.calls.filter(([key]) =>
+            String(key).includes("__tag__/masked"),
+          ),
+        ).toEqual([]);
+      });
+    });
+  });
+
+  // Issue #973: revalidateTag() does not wait for the KV marker write, so the
+  // request that ran it read entries its own invalidation covers until the
+  // put landed (and memoized the absent marker for the rest of the request).
+  describe("revalidateTag: the invalidating request reads its own writes (#973)", () => {
+    /** Park every KV marker put until the returned release is called. */
+    function holdMarkerWrites(): () => void {
+      const put = kv.put.bind(kv);
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      vi.spyOn(kv, "put").mockImplementation(async (key, value, options) => {
+        if (key.includes(TAG_MARKER_PREFIX)) await held;
+        return put(key, value, options);
+      });
+      return release;
+    }
+
+    async function seed(store: CFCacheStore): Promise<void> {
+      await store.setItem("item", "v", { ttl: 300, tags: ["catalog"] });
+      await store.set("seg", createTestData(["catalog"]), 300);
+      await store.setItem("other", "v", { ttl: 300, tags: ["unrelated"] });
+      await ctx.flush();
+      vi.advanceTimersByTime(10);
+    }
+
+    it("a read with no prior marker read misses while the KV marker write is in flight", async () => {
+      const store = makeStore();
+      await seed(store);
+      const release = holdMarkerWrites();
+      const req = makeReqCtx(store);
+
+      await runWithRequestContext(req, async () => {
+        revalidateTag("catalog");
+        expect(await store.getItem("item")).toBeNull();
+        expect(hit(await store.get("seg"))).toBeNull();
+        expect(await store.getItem("other")).not.toBeNull();
+      });
+      const markerWritten = () =>
+        [...kv.store.keys()].some((key) =>
+          key.endsWith(`${TAG_MARKER_PREFIX}catalog`),
+        );
+      expect(markerWritten()).toBe(false);
+
+      release();
+      await Promise.all(req._pendingBackgroundTasks ?? []);
+      await ctx.flush();
+      const next = await runWithRequestContext(makeReqCtx(), () =>
+        store.getItem("item"),
+      );
+      expect(next).toBeNull();
+    });
+
+    it("a read after the request already read the marker misses too", async () => {
+      const store = makeStore();
+      await seed(store);
+      const release = holdMarkerWrites();
+
+      await runWithRequestContext(makeReqCtx(store), async () => {
+        // Memoizes the absent marker for this request.
+        expect(await store.getItem("item")).not.toBeNull();
+        vi.advanceTimersByTime(10);
+        revalidateTag("catalog");
+        expect(await store.getItem("item")).toBeNull();
+        expect(hit(await store.get("seg"))).toBeNull();
+      });
+      release();
+    });
+
+    // A PPR HIT tail and a shell capture render on Object.create(reqCtx): the
+    // mask belongs to the request, not to the context object that set it.
+    it("a context derived from the request reads its mask, and a mask it sets reaches the request", async () => {
+      const store = makeStore();
+      await seed(store);
+      const release = holdMarkerWrites();
+      const req = makeReqCtx(store);
+      const derived = () => Object.create(req) as typeof req;
+
+      runWithRequestContext(req, () => revalidateTag("catalog"));
+      await runWithRequestContext(derived(), async () => {
+        expect(await store.getItem("item")).toBeNull();
+        revalidateTag("unrelated");
+      });
+      await runWithRequestContext(req, async () => {
+        expect(await store.getItem("other")).toBeNull();
+      });
+      release();
+    });
+
+    // A context that already memoized a marker keeps its memo, so a mask set
+    // after that, by the request or by a sibling, must reach that memo too.
+    it.each([
+      ["the request", (req: object) => req],
+      ["a sibling context", (req: object) => Object.create(req) as object],
+    ])(
+      "a context whose memo already exists sees a mask %s sets later",
+      async (_label, masker) => {
+        const store = makeStore();
+        await seed(store);
+        const release = holdMarkerWrites();
+        const req = makeReqCtx(store);
+        const derived = Object.create(req) as typeof req;
+
+        // Memoizes "catalog" as having no marker.
+        await runWithRequestContext(derived, async () => {
+          expect(await store.getItem("item")).not.toBeNull();
+        });
+        runWithRequestContext(masker(req) as typeof req, () =>
+          revalidateTag("catalog"),
+        );
+
+        await runWithRequestContext(derived, async () => {
+          expect(await store.getItem("item")).toBeNull();
+        });
+        release();
+      },
+    );
+
+    /** Park KV marker reads: resolves once one started; release lets all run. */
+    function holdMarkerReads(): {
+      started: Promise<void>;
+      release: () => void;
+    } {
+      const get = kv.get.bind(kv);
+      let release!: () => void;
+      let readStarted!: () => void;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      const started = new Promise<void>((resolve) => (readStarted = resolve));
+      vi.spyOn(kv, "get").mockImplementation(async (key, options) => {
+        if (key.includes(TAG_MARKER_PREFIX)) {
+          readStarted();
+          await held;
+        }
+        return get(key, options);
+      });
+      return { started, release };
+    }
+
+    it("a marker read in flight when revalidateTag() runs resolves to the invalidation", async () => {
+      const store = makeStore();
+      await seed(store);
+      const release = holdMarkerWrites();
+      const reads = holdMarkerReads();
+
+      await runWithRequestContext(makeReqCtx(store), async () => {
+        const inFlight = store.getItem("item");
+        await reads.started;
+        revalidateTag("catalog");
+        reads.release();
+        expect(await inFlight).toBeNull();
+        expect(await store.getItem("item")).toBeNull();
+      });
+      release();
+    });
+
+    // The request's mask is unconfirmed until the KV put lands. A marker read
+    // in flight when it is set resolves to it for this request, but must not
+    // publish it to the colo's L1 marker cache: if the put then fails, later
+    // requests would miss for tagCacheTtl with no marker in KV.
+    it.each(["updateTag", "revalidateTag"] as const)(
+      "%s: an in-flight marker read keeps the unconfirmed mask out of L1; after a failed put a later request hits",
+      async (verb) => {
+        const store = makeStore({ tagCacheTtl: 60 });
+        await seed(store);
+        const put = kv.put.bind(kv);
+        vi.spyOn(kv, "put").mockImplementation(async (key, value, options) => {
+          if (key.includes(TAG_MARKER_PREFIX)) throw new Error("KV down");
+          return put(key, value, options);
+        });
+        const reads = holdMarkerReads();
+        vi.spyOn(console, "error").mockImplementation(() => {});
+        const req = makeReqCtx(store);
+
+        await runWithRequestContext(req, async () => {
+          const inFlight = store.getItem("item");
+          await reads.started;
+          const invalidation =
+            verb === "updateTag" ? updateTag("catalog") : undefined;
+          if (verb === "revalidateTag") revalidateTag("catalog");
+          reads.release();
+          expect(await inFlight).toBeNull();
+          if (invalidation) await expect(invalidation).rejects.toThrow();
+        });
+        await Promise.all(req._pendingBackgroundTasks ?? []);
+        await ctx.flush();
+
+        const later = await runWithRequestContext(makeReqCtx(), () =>
+          store.getItem("item"),
+        );
+        expect(later).not.toBeNull();
+      },
+    );
   });
 
   describe("L1 marker cache (tagCacheTtl)", () => {
@@ -402,6 +853,24 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
         String(key).includes("__tag__/shared"),
       );
       expect(markerReads.length).toBe(2); // one KV read per request, no L1 cache
+      getSpy.mockRestore();
+    });
+
+    // The isolate marker memo (on by default) serves PPR shell reads only:
+    // a data family keeps reading its markers per request.
+    it("a data-family read is not served from the isolate marker memo", async () => {
+      const store = makeStore({ memo: { markerFreshMs: 60_000 } });
+      await store.set("k", createTestData(["shared"]), 300);
+      await ctx.flush();
+
+      const getSpy = vi.spyOn(kv, "get");
+      await runWithRequestContext(makeReqCtx(), () => store.get("k"));
+      await runWithRequestContext(makeReqCtx(), () => store.get("k"));
+
+      const markerReads = getSpy.mock.calls.filter(([key]) =>
+        String(key).includes("__tag__/shared"),
+      );
+      expect(markerReads.length).toBe(2);
       getSpy.mockRestore();
     });
 
@@ -447,7 +916,7 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
 
       // Prime L1 with the "no marker yet" (absent) sentinel for "shared".
       await runWithRequestContext(makeReqCtx(), async () => {
-        expect(await store.get("k")).not.toBeNull();
+        expect(hit(await store.get("k"))).not.toBeNull();
       });
       await ctx.flush();
 
@@ -458,7 +927,7 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       // A later request in the SAME colo, still within the 60s window, must see
       // the invalidation (a delete-then-rely-on-KV approach would serve stale).
       await runWithRequestContext(makeReqCtx(), async () => {
-        expect(await store.get("k")).toBeNull();
+        expect(hit(await store.get("k"))).toBeNull();
       });
     });
 
@@ -516,11 +985,11 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       await store.set("k", createTestData(["商品", "🛒"]), 300);
       await ctx.flush();
 
-      expect(await store.get("k")).not.toBeNull();
+      expect(hit(await store.get("k"))).not.toBeNull();
 
       vi.advanceTimersByTime(10);
       await store.invalidateTags(["商品"]);
-      expect(await store.get("k")).toBeNull();
+      expect(hit(await store.get("k"))).toBeNull();
     });
 
     it("round-trips emoji tags through an item entry", async () => {
@@ -554,8 +1023,12 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       );
     });
 
-    it("does not write-through the memo for a tag whose durable write failed", async () => {
-      const store = makeStore();
+    // #973: the invalidating request masks its tags before the durable write,
+    // so a failed write costs that request an extra miss, never a stale read.
+    // Nothing another request reads (KV, the isolate marker memo, L1) claims
+    // the invalidation.
+    it("a failed durable write rejects, masks only the invalidating request, and leaves later requests on the durable state", async () => {
+      const store = makeStore({ tagCacheTtl: 60 });
       await store.setItem("k", "v", { ttl: 300, tags: ["products"] });
       await ctx.flush();
 
@@ -569,28 +1042,42 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       await runWithRequestContext(makeReqCtx(), async () => {
         expect(await store.getItem("k")).not.toBeNull();
         vi.advanceTimersByTime(10);
-        // Rejects, and crucially must NOT poison the memo with a phantom success:
-        // a masked failure would make the same-request read below return null.
         await expect(store.invalidateTags(["products"])).rejects.toThrow();
-        expect(await store.getItem("k")).not.toBeNull();
+        expect(await store.getItem("k")).toBeNull();
       });
+      await ctx.flush();
+
+      const later = await runWithRequestContext(makeReqCtx(), () =>
+        store.getItem("k"),
+      );
+      expect(later).not.toBeNull();
     });
 
-    it("rejects (without calling KV) when a tag exceeds the 512-byte KV key limit", async () => {
+    it("normalizes a tag exceeding the 512-byte KV key limit and invalidation round-trips", async () => {
+      // Formerly rejected up front; toKVKey now normalizes the marker key
+      // (preserved prefix + digest), and the marker READ derives the key the
+      // same way, so an oversized tag invalidates instead of erroring.
       const store = makeStore();
       const hugeTag = "x".repeat(600);
       const putSpy = vi.spyOn(kv, "put");
 
-      const err = await store.invalidateTags([hugeTag]).catch((e) => e);
-      expect(err).toBeInstanceOf(Error);
-      expect((err as Error & { cause?: Error }).cause?.message).toMatch(
-        /over the 512-byte limit/,
-      );
-      // An over-limit key is rejected up front; KV is never even called for it.
+      await store.set("hk", createTestData([hugeTag]), 300);
+      await ctx.flush();
+      expect(hit(await store.get("hk"))).not.toBeNull();
+
+      vi.advanceTimersByTime(10);
+      await expect(store.invalidateTags([hugeTag])).resolves.not.toThrow();
+
       const markerPuts = putSpy.mock.calls.filter(([key]) =>
-        String(key).includes("__tag__/"),
+        String(key).includes(TAG_MARKER_PREFIX),
       );
-      expect(markerPuts.length).toBe(0);
+      expect(markerPuts.length).toBe(1);
+      const markerKey = String(markerPuts[0]![0]);
+      expect(markerKey.length).toBeLessThanOrEqual(512);
+      expect(markerKey).toMatch(/~[0-9a-f]{32}$/);
+
+      // The entry tagged with the huge tag is actually invalidated.
+      expect(hit(await store.get("hk"))).toBeNull();
       putSpy.mockRestore();
     });
   });
@@ -602,16 +1089,16 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       await store.set("kb", createTestData(["tag-b"]), 300);
       await ctx.flush();
 
-      expect(await store.get("ka")).not.toBeNull();
-      expect(await store.get("kb")).not.toBeNull();
+      expect(hit(await store.get("ka"))).not.toBeNull();
+      expect(hit(await store.get("kb"))).not.toBeNull();
 
       vi.advanceTimersByTime(10);
       await store.invalidateTags(["tag-a"]);
 
       // The marker is per-tag: only tag-a's entry is a miss; tag-b survives. A
       // regression that consulted a broader marker tier would over-invalidate kb.
-      expect(await store.get("ka")).toBeNull();
-      expect(await store.get("kb")).not.toBeNull();
+      expect(hit(await store.get("ka"))).toBeNull();
+      expect(hit(await store.get("kb"))).not.toBeNull();
     });
 
     it("invalidating one tag leaves a DIFFERENT-tagged item and response intact", async () => {
@@ -722,7 +1209,9 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       );
       const delSpy = vi.spyOn(mockCaches._default, "delete");
       const { reqCtx, reported } = ctxWithReporter();
-      const result = await runWithRequestContext(reqCtx, () => store.get("k"));
+      const result = hit(
+        await runWithRequestContext(reqCtx, () => store.get("k")),
+      );
 
       expect(result).toBeNull(); // L1 error -> L2 (empty) -> miss, no throw
       expect(reported.some((r) => r.category === "cache-read")).toBe(true);
@@ -732,11 +1221,10 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       expect(delSpy).not.toHaveBeenCalled();
     });
 
-    it("rejects an oversized segment KV key (>512 bytes) without calling KV, reports a clear onError", async () => {
-      // Symmetry with the tag-marker key guard: a data-segment key over the KV
-      // 512-byte limit (e.g. from large search params) would fail kv.put() and
-      // silently never persist to L2 -> cold-colo miss storm. It must be rejected
-      // up front with a clear, actionable error, not a doomed put inside waitUntil.
+    it("normalizes an oversized segment KV key (>512 bytes) so L2 persistence still works", async () => {
+      // Formerly warn-and-skip (the segment never reached L2 -> cold-colo miss
+      // storm). toKVKey now normalizes the key, so the write lands under a
+      // <=512-byte key and the read path derives the identical key.
       const store = makeStore();
       const hugeKey = "x".repeat(600); // > 512 bytes even before the version prefix
       const putSpy = vi.spyOn(kv, "put");
@@ -747,13 +1235,15 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       );
       await ctx.flush();
 
-      // The oversized key is rejected before the KV write; kv.put never fires.
-      expect(putSpy).not.toHaveBeenCalled();
-      // ...and it surfaces as a clear cache-write error naming the limit.
-      const writeErr = reported.find((r) => r.category === "cache-write");
-      expect(writeErr).toBeDefined();
-      expect((writeErr!.error as Error).message).toMatch(
-        /over the 512-byte limit/,
+      // The write goes through under a normalized key.
+      expect(putSpy).toHaveBeenCalledTimes(1);
+      const kvKey = String(putSpy.mock.calls[0]![0]);
+      expect(kvKey.length).toBeLessThanOrEqual(512);
+      expect(kvKey.startsWith("v/v1/")).toBe(true);
+      expect(kvKey).toMatch(/~[0-9a-f]{32}$/);
+      // No cache-write error is reported; the entry persists to L2.
+      expect(reported.filter((r) => r.category === "cache-write")).toHaveLength(
+        0,
       );
       putSpy.mockRestore();
     });
@@ -772,7 +1262,9 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       const delSpy = vi.spyOn(kv, "delete");
       const { reqCtx, reported } = ctxWithReporter();
 
-      const result = await runWithRequestContext(reqCtx, () => store.get("k"));
+      const result = hit(
+        await runWithRequestContext(reqCtx, () => store.get("k")),
+      );
 
       expect(result).toBeNull(); // degraded to a miss, no throw
       expect(reported.some((r) => r.category === "cache-read")).toBe(true);
@@ -791,7 +1283,7 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       const store = makeStore();
       await store.set("k", createTestData(), 300);
       await ctx.flush();
-      expect(await store.get("k")).not.toBeNull();
+      expect(hit(await store.get("k"))).not.toBeNull();
 
       // Corrupt the L1 body in place, keeping the valid HIT/stale-at headers so
       // the read reaches response.json() and fails there (partial/truncated body).
@@ -813,7 +1305,9 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
 
       const delSpy = vi.spyOn(mockCaches._default, "delete");
       const { reqCtx, reported } = ctxWithReporter();
-      const result = await runWithRequestContext(reqCtx, () => store.get("k"));
+      const result = hit(
+        await runWithRequestContext(reqCtx, () => store.get("k")),
+      );
 
       expect(result).toBeNull(); // corrupt L1 -> evict -> L2 (empty) -> miss
       expect(reported.some((r) => r.category === "cache-corrupt")).toBe(true);
@@ -827,7 +1321,9 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
 
       const delSpy = vi.spyOn(kv, "delete");
       const { reqCtx, reported } = ctxWithReporter();
-      const result = await runWithRequestContext(reqCtx, () => store.get("k"));
+      const result = hit(
+        await runWithRequestContext(reqCtx, () => store.get("k")),
+      );
 
       expect(result).toBeNull();
       expect(reported.some((r) => r.category === "cache-corrupt")).toBe(true);
@@ -879,7 +1375,9 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       );
       const delSpy = vi.spyOn(mockCaches._default, "delete");
       const { reqCtx, reported } = ctxWithReporter();
-      const result = await runWithRequestContext(reqCtx, () => store.get("k"));
+      const result = hit(
+        await runWithRequestContext(reqCtx, () => store.get("k")),
+      );
 
       expect(result).not.toBeNull(); // served from L2/KV, not a forced render
       expect(result!.data).toEqual(data);
@@ -893,7 +1391,7 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       const data = createTestData();
       await store.set("k", data, 300);
       await ctx.flush();
-      expect(await store.get("k")).not.toBeNull();
+      expect(hit(await store.get("k"))).not.toBeNull();
 
       // Corrupt the L1 body in place, keeping valid headers so the read reaches
       // response.json() and fails there.
@@ -911,7 +1409,9 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
 
       const delSpy = vi.spyOn(mockCaches._default, "delete");
       const { reqCtx, reported } = ctxWithReporter();
-      const result = await runWithRequestContext(reqCtx, () => store.get("k"));
+      const result = hit(
+        await runWithRequestContext(reqCtx, () => store.get("k")),
+      );
 
       expect(result).not.toBeNull(); // good KV copy served, not a forced render
       expect(result!.data).toEqual(data);
@@ -925,7 +1425,9 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       // the poison entry -- the property that makes skipping the eager evict safe.
       await ctx.flush();
       kv.clear();
-      const reread = await runWithRequestContext(reqCtx, () => store.get("k"));
+      const reread = hit(
+        await runWithRequestContext(reqCtx, () => store.get("k")),
+      );
       expect(reread).not.toBeNull();
       expect(reread!.data).toEqual(data);
     });
@@ -1019,7 +1521,7 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       const resultPromise = runWithRequestContext(reqCtx, () => store.get("k"));
       // Advance past the KV budget so the marker read times out and fails open.
       await vi.advanceTimersByTimeAsync(KV_READ_TIMEOUT_MS);
-      const result = await resultPromise;
+      const result = hit(await resultPromise);
 
       // Fail-open: a marker read that cannot complete must not turn a good hit
       // into a wrongful invalidation. Not vacuous: the SAME tagged entry (with
@@ -1049,7 +1551,7 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
         store.invalidateTags(["x"]),
       );
       await ctx.flush();
-      const markerBefore = kv.store.get("v/v1/__tag__/x");
+      const markerBefore = kv.store.get("__tag__/x");
       expect(markerBefore).toBeDefined();
 
       // A misconfigured keyGenerator returning "__tag__/x" must NOT overwrite
@@ -1060,7 +1562,7 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       );
       await ctx.flush();
 
-      expect(kv.store.get("v/v1/__tag__/x")).toBe(markerBefore); // untouched
+      expect(kv.store.get("__tag__/x")).toBe(markerBefore); // untouched
       expect(reported.some((r) => r.category === "cache-write")).toBe(true);
     });
 
@@ -1070,7 +1572,7 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
         store.invalidateTags(["x"]),
       );
       await ctx.flush();
-      expect(kv.store.get("v/v1/__tag__/x")).toBeDefined();
+      expect(kv.store.get("__tag__/x")).toBeDefined();
 
       const delSpy = vi.spyOn(kv, "delete");
       const { reqCtx, reported } = ctxWithReporter();
@@ -1084,8 +1586,8 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
 
       expect(got).toBeNull();
       expect(deleted).toBe(false);
-      expect(delSpy).not.toHaveBeenCalledWith("v/v1/__tag__/x"); // marker safe
-      expect(kv.store.get("v/v1/__tag__/x")).toBeDefined();
+      expect(delSpy).not.toHaveBeenCalledWith("__tag__/x"); // marker safe
+      expect(kv.store.get("__tag__/x")).toBeDefined();
       expect(reported.some((r) => r.category === "cache-read")).toBe(true);
       expect(reported.some((r) => r.category === "cache-delete")).toBe(true);
     });
@@ -1185,7 +1687,9 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
 
       const delSpy = vi.spyOn(kv, "delete");
       const { reqCtx, reported } = ctxWithReporter();
-      const result = await runWithRequestContext(reqCtx, () => store.get("k"));
+      const result = hit(
+        await runWithRequestContext(reqCtx, () => store.get("k")),
+      );
       await ctx.flush(); // eviction is now background (F6)
 
       expect(result).toBeNull();
@@ -1287,7 +1791,9 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       );
 
       const { reqCtx, reported } = ctxWithReporter();
-      const result = await runWithRequestContext(reqCtx, () => store.get("k"));
+      const result = hit(
+        await runWithRequestContext(reqCtx, () => store.get("k")),
+      );
 
       // Served (marker match error falls through to the KV marker, which is
       // absent -> not invalidated), and the match error reached onError.
@@ -1450,7 +1956,7 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
 
         // Go stale, then read once -> marks REVALIDATING (re-put must carry tags).
         vi.advanceTimersByTime(1500);
-        const stale = await store.get("k");
+        const stale = hit(await store.get("k"));
         expect(stale).not.toBeNull();
         expect(stale!.shouldRevalidate).toBe(true);
         await ctx.flush(); // markRevalidating re-put lands
@@ -1459,7 +1965,7 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
         // and treat it as a miss (its tags survived the re-put).
         vi.advanceTimersByTime(10);
         await store.invalidateTags(["products"]);
-        expect(await store.get("k")).toBeNull();
+        expect(hit(await store.get("k"))).toBeNull();
       });
     });
 
@@ -1470,13 +1976,13 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
         await ctx.flush();
         mockCaches.clear(); // L1 gone, KV holds it
 
-        expect(await store.get("k")).not.toBeNull(); // KV serve + promote
+        expect(hit(await store.get("k"))).not.toBeNull(); // KV serve + promote
         await ctx.flush();
 
         vi.advanceTimersByTime(10);
         await store.invalidateTags(["products"]);
         // The promoted L1 entry must still carry tags (L1 hit, KV not consulted).
-        expect(await store.get("k")).toBeNull();
+        expect(hit(await store.get("k"))).toBeNull();
       });
 
       it("document tier: a promoted response stays invalidatable", async () => {

@@ -4,6 +4,13 @@ import {
   Breadcrumbs,
   getRequestContext,
 } from "@rangojs/router";
+import {
+  CachedInlineActionForm,
+  type CachedInlineActionState,
+} from "../components/CachedInlineActionForm.js";
+import { buildInlineActionState } from "../inline-action-helpers.js";
+import { DepCrumbCategoryLoader } from "../loaders.js";
+import { DepCrumbs } from "./dep-crumbs.handle.js";
 
 // Function-level "use cache" — each function has its own directive.
 
@@ -46,6 +53,27 @@ export async function fetchWithBreadcrumbs(
     href: "/use-cache-test/with-handles",
   });
   return { ts: Date.now(), rand: Math.random() };
+}
+
+/**
+ * Reads DepCrumbCategoryLoader (one DepCrumbs crumb per run, with a per-run
+ * id) inside the cached body. /use-cache-test/dep-crumbs also reads the
+ * loader live, so a HIT must show that loader's crumb once: the live one.
+ */
+export async function getUseCacheDepStamp(ctx: any): Promise<number> {
+  "use cache";
+  await ctx.use(DepCrumbCategoryLoader);
+  return Date.now();
+}
+
+/**
+ * Called by UseCacheLoaderCtxLoader with its own (loader) ctx: keyed by route
+ * and params, and the crumb pushed through it is replayed on a HIT (#940).
+ */
+export async function getLoaderCtxStamp(ctx: any): Promise<string> {
+  "use cache";
+  ctx.use(DepCrumbs)(`Item ${ctx.params.id}`);
+  return `${ctx.params.id} ${Date.now()} ${Math.random()}`;
 }
 
 /**
@@ -240,4 +268,45 @@ export async function cachedCallsCtxHeadersSet(ctx: any): Promise<string> {
   "use cache";
   ctx.headers.set("X-Test", "test-value");
   return "no-throw";
+}
+
+/**
+ * Cached server component that creates an inline "use server" action and hands
+ * it to a client component. Pins the cache + embedded-inline-action contract on
+ * three axes at once:
+ *
+ * - capturedToken: the render-scope `token` the action CLOSES OVER is captured
+ *   into the action's bound args (encryptActionBoundArgs in production) at
+ *   cache-WRITE time. On a cache hit there is no re-render, so the action
+ *   replays the frozen write-time token, identical to the cached rendered token.
+ *   The token mixes Date.now() and Math.random() so a fresh render would differ,
+ *   making the freeze observable across a reload.
+ * - asyncValue: the action BODY runs live per invocation. Calling the module-
+ *   level fetchRandomAsyncValue() returns a fresh value on every call, proving
+ *   the body is not frozen with the cache.
+ * - sessionCookie: cookies() read in the action body resolves against the LIVE
+ *   POST request context. cookies() is forbidden inside "use cache", so it can
+ *   only be read here, at invocation -- proving the action runs in the current
+ *   request's scope, not the cached render's. See use-cache-inline-action.test.ts.
+ */
+export async function getCachedInlineActionShell(): Promise<React.ReactNode> {
+  "use cache";
+  const token = `tok-${Date.now().toString(36)}-${Math.floor(
+    Math.random() * 1e6,
+  ).toString(36)}`;
+
+  async function cachedInlineAction(
+    _prev: CachedInlineActionState,
+    _formData: FormData,
+  ): Promise<CachedInlineActionState> {
+    "use server";
+    return buildInlineActionState(token);
+  }
+
+  return (
+    <CachedInlineActionForm
+      renderedToken={token}
+      cachedAction={cachedInlineAction}
+    />
+  );
 }

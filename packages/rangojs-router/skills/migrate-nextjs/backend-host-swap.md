@@ -55,7 +55,9 @@ actor and tenant scope at the repository boundary, verify membership/role, and
 perform the data query through that scope. Avoid exporting an unrestricted DB
 handle to page handlers.
 
-Tests must prove denial, not only success:
+Tests must prove denial, not only success (the `/testing` skill's `runMiddleware`,
+`runLoader`, and `runInRequestContext` take your DB double through `env`; see its
+`bindings.md`):
 
 - a user cannot read another tenant by guessing an ID;
 - a member cannot perform an owner/admin mutation;
@@ -102,7 +104,8 @@ For a Node-to-Workers move, search for:
 
 Prefer web standards (`fetch`, `Request`, `Response`, WebCrypto) and provider
 bindings. Test the production bundle in `vite preview`; a successful TypeScript
-check does not prove an SDK runs in workerd.
+check does not prove an SDK runs in workerd. `/cloudflare` covers bindings,
+local D1, streaming, and deploying the built Worker.
 
 ## Plan cutover and rollback
 

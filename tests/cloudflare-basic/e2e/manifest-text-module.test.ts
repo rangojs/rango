@@ -58,6 +58,8 @@ test.describe("manifest text module (production)", () => {
     // module would 404 (or 500 on import failure), not fall back silently.
     const response = await request.get(f.url("/docs"));
     expect(response.status()).toBe(200);
+    const scopedResponse = await request.get(f.url("/__prefetch-scope"));
+    expect(scopedResponse.status()).toBe(200);
   });
 
   test("build emits the manifest text module and the chunk imports it", () => {
@@ -65,31 +67,33 @@ test.describe("manifest text module (production)", () => {
     const textModules = assets.filter(
       (a) => a.startsWith("manifest-") && a.endsWith(".txt"),
     );
-    expect(textModules.length).toBeGreaterThanOrEqual(1);
+    expect(textModules).toHaveLength(2);
 
     // The payload is the real manifest data, not a stub: `t` is the route
     // trie (matched at runtime), `p` the precomputed entries.
-    const raw = fs.readFileSync(path.join(distAssets, textModules[0]!), "utf8");
-    const payload = JSON.parse(raw);
-    expect(payload).toHaveProperty("t");
+    for (const textModule of textModules) {
+      const raw = fs.readFileSync(path.join(distAssets, textModule), "utf8");
+      const payload = JSON.parse(raw);
+      expect(payload).toHaveProperty("t");
 
-    // The asset is raw, un-escaped JSON — never routed through JS minification,
-    // so no \\" bloat. This is half the point of the Text module (the other
-    // half being no JS compile); an inline literal would ship double-quoted.
-    expect(raw.startsWith('{"t":')).toBe(true);
-    expect(raw).not.toContain('\\"');
+      // The asset is raw, un-escaped JSON — never routed through JS minification,
+      // so no \\" bloat. This is half the point of the Text module (the other
+      // half being no JS compile); an inline literal would ship double-quoted.
+      expect(raw.startsWith('{"t":')).toBe(true);
+      expect(raw).not.toContain('\\"');
 
-    // Some rsc chunk must import the text module by its emitted filename —
-    // an orphaned .txt asset would mean the build silently reverted to the
-    // inline literal.
-    const imported = assets
-      .filter((a) => a.endsWith(".js"))
-      .some((a) =>
-        fs
-          .readFileSync(path.join(distAssets, a), "utf8")
-          .includes(textModules[0]!),
-      );
-    expect(imported).toBe(true);
+      // Some rsc chunk must import the text module by its emitted filename —
+      // an orphaned .txt asset would mean the build silently reverted to the
+      // inline literal.
+      const imported = assets
+        .filter((a) => a.endsWith(".js"))
+        .some((a) =>
+          fs
+            .readFileSync(path.join(distAssets, a), "utf8")
+            .includes(textModule),
+        );
+      expect(imported).toBe(true);
+    }
   });
 
   test("text-module hygiene: one txt per router, no dual channel, rsc-only", () => {
@@ -99,10 +103,15 @@ test.describe("manifest text module (production)", () => {
       (a) => a.startsWith("manifest-") && a.endsWith(".txt"),
     );
 
-    // Single-router app: exactly ONE staged manifest. A second .txt means
-    // per-router staging collided or duplicated (Bundle Hygiene rule #1 for
-    // the Text channel).
-    expect(textModules).toHaveLength(1);
+    // The app registers its main router and the isolated prefetch-scope router.
+    // Exactly one staged manifest per router catches collisions and duplicate
+    // staging (Bundle Hygiene rule #1 for the Text channel).
+    expect(textModules).toHaveLength(2);
+    expect(
+      textModules.filter((name) =>
+        name.startsWith("manifest-cloudflare-prefetch-scope-"),
+      ),
+    ).toHaveLength(1);
 
     // No dual channel: the trie must not ALSO ship as an inline
     // JSON.parse("<literal>") in any rsc chunk. That regression keeps every
@@ -120,16 +129,19 @@ test.describe("manifest text module (production)", () => {
 
     // RSC-only: the staged manifest (name or payload) must not reach the
     // client bundle.
-    const payloadHead = fs
-      .readFileSync(path.join(distAssets, textModules[0]!), "utf8")
-      .slice(0, 200);
+    const payloadHeads = textModules.map((textModule) =>
+      fs.readFileSync(path.join(distAssets, textModule), "utf8").slice(0, 200),
+    );
     const clientLeaks = walkFiles(path.join(distRoot, "client"))
       .filter((f) => {
         const base = path.basename(f);
         if (base.startsWith("manifest-") && base.endsWith(".txt")) return true;
         if (!base.endsWith(".js")) return false;
         const src = fs.readFileSync(f, "utf8");
-        return src.includes(textModules[0]!) || src.includes(payloadHead);
+        return (
+          textModules.some((textModule) => src.includes(textModule)) ||
+          payloadHeads.some((payloadHead) => src.includes(payloadHead))
+        );
       })
       .map((f) => path.relative(distRoot, f));
     expect(

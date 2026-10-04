@@ -2,7 +2,8 @@
 
 ## 4. Middleware / Route Protection
 
-React Router doesn't have built-in middleware. Protection is typically done in loaders:
+React Router v6 and Remix v2 have no middleware, so protection is typically done
+in loaders (v7 route `middleware` exports map to the same Rango shape below):
 
 ```typescript
 // React Router: auth check in loader
@@ -13,9 +14,27 @@ export async function loader({ request }) {
 }
 
 // Rango: router.use() for request-level auth
+import {
+  createRouter,
+  cookies,
+  redirect,
+  type Middleware,
+} from "@rangojs/router";
+
+const authInit: Middleware = async (ctx, next) => {
+  const session = cookies().get("session")?.value;
+  if (session) ctx.set("user", await getUserFromSession(session));
+  await next();
+};
+
+const requireAuth: Middleware = async (ctx, next) => {
+  if (!ctx.get("user")) return redirect("/login");
+  await next();
+};
+
 const router = createRouter({})
   .use(authInit) // all routes — resolves session
-  .use("/dashboard/*", requireAuth) // scoped guard
+  .use("/dashboard/*", requireAuth) // /dashboard and everything under it
   .routes(urlpatterns);
 ```
 
@@ -85,19 +104,19 @@ layout(<ShopLayout />, () => [
 
 ## 6. Navigation
 
-| React Router                              | Rango                                                                            |
-| ----------------------------------------- | -------------------------------------------------------------------------------- |
-| `import { Link } from "react-router-dom"` | `import { Link } from "@rangojs/router/client"`                                  |
-| `<Link to="/about">`                      | `<Link to="/about">`                                                             |
-| `useNavigate()`                           | `useRouter()` from `@rangojs/router/client`                                      |
-| `navigate("/about")`                      | `useRouter().push("/about")`                                                     |
-| `navigate("/about", { replace: true })`   | `useRouter().replace("/about")`                                                  |
-| `navigate(-1)`                            | `useRouter().back()`                                                             |
-| `useLocation().pathname`                  | `usePathname()` from `@rangojs/router/client`                                    |
-| `useSearchParams()`                       | `useSearchParams()` from `@rangojs/router/client`                                |
-| `useParams()`                             | `useParams()` from `@rangojs/router/client` (or `ctx.params` in server handlers) |
-| `useParams<T>()`                          | `useParams<T>()` — same generic annotation pattern                               |
-| `<NavLink>`                               | `<Link>` with `usePathname()` for active state                                   |
+| React Router                              | Rango                                                                                                                                                                    |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `import { Link } from "react-router-dom"` | `import { Link } from "@rangojs/router/client"`                                                                                                                          |
+| `<Link to="/about">`                      | `<Link to="/about">`                                                                                                                                                     |
+| `useNavigate()`                           | `useRouter()` from `@rangojs/router/client`                                                                                                                              |
+| `navigate("/about")`                      | `useRouter().push("/about")`                                                                                                                                             |
+| `navigate("/about", { replace: true })`   | `useRouter().replace("/about")`                                                                                                                                          |
+| `navigate(-1)`                            | `useRouter().back()`                                                                                                                                                     |
+| `useLocation().pathname`                  | `usePathname()` from `@rangojs/router/client`                                                                                                                            |
+| `useSearchParams()`                       | `useSearchParams()` from `@rangojs/router/client` — same `[params, setParams]` tuple; setter replaces the whole search string, options `{ replace, scroll, revalidate }` |
+| `useParams()`                             | `useParams()` from `@rangojs/router/client` (or `ctx.params` in server handlers)                                                                                         |
+| `useParams<T>()`                          | `useParams<T>()` — same generic annotation pattern                                                                                                                       |
+| `<NavLink>`                               | `<Link>` with `usePathname()` for active state                                                                                                                           |
 
 ### useNavigate → useRouter
 
@@ -122,7 +141,7 @@ export function meta() {
 }
 
 // Rango: Meta handle in server handlers
-import { Meta } from "@rangojs/router";
+import { Meta, type Handler } from "@rangojs/router";
 
 const HomePage: Handler<"home"> = (ctx) => {
   const meta = ctx.use(Meta);
@@ -132,16 +151,23 @@ const HomePage: Handler<"home"> = (ctx) => {
 };
 ```
 
-Add `<MetaTags />` in the Document component's `<head>`:
+RR's data-derived `meta({ data })` maps to the same push from the LOADER that
+owns the data — `ctx.use(Meta)({ title: data.name })` in the loader body, with
+`loader(Def, { ssr: false })` when the title must be in the SSR'd
+head. See `/loader` → "Writing Handles from Loaders". The loader flag is
+unrelated to RR7's `ssr: false` (SPA mode), which has no route-wide Rango
+equivalent: it makes the server settle that loader before the first flush.
+
+Add `<Html.Meta />` in the Document component's `<head>`:
 
 ```typescript
-import { MetaTags } from "@rangojs/router/client";
+import { Html } from "@rangojs/router/client";
 
 function Document({ children }: { children: ReactNode }) {
   return (
     <html>
       <head>
-        <MetaTags />
+        <Html.Meta />
       </head>
       <body>{children}</body>
     </html>

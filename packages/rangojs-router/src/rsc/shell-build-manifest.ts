@@ -11,8 +11,9 @@
  * served through the same serveShellHit as a captured one.
  *
  * Lifecycle:
- * - No expiry until the next deploy — the buildVersion gate retires entries
- *   the moment a new build ships (a new manifest replaces them anyway).
+ * - No expiry until the next deploy: every build ships its own manifest, and
+ *   its entries carry that build's document version for the router, which is
+ *   what the buildVersion gate compares.
  * - `ppr.ttl` drives STALENESS ONLY: past createdAt + ttl the entry still
  *   serves, but a runtime recapture is scheduled — SWR is the UPGRADE path
  *   from build entry to fresher runtime entry, not the bootstrap path. The
@@ -25,14 +26,23 @@
  *   markers say whether it is still current.
  */
 
-import type { SegmentCacheStore, ShellCacheEntry } from "../cache/types.js";
+import type {
+  DocumentShellCacheEntry,
+  SegmentCacheStore,
+  ShellCacheEntry,
+} from "../cache/types.js";
 import { sortedSearchString } from "../cache/cache-key-utils.js";
+import type { SearchParamsFilter } from "../cache/search-params-filter.js";
 import {
   DEV_SHELL_PROBE_TIMEOUT_MS,
   hasIntactShellPayload,
   isValidShellHit,
 } from "./shell-serve.js";
-import { SHELL_CAPTURE_MAX_WAIT_MS } from "./shell-capture.js";
+import {
+  SHELL_CAPTURE_MAX_WAIT_MS,
+  resetShellWarningsForTests,
+  warnOnce,
+} from "./shell-capture-constants.js";
 import { buildShellManifestKey } from "../prerender/shell-manifest-key.js";
 
 /** One baked manifest record (the __ps asset module's default export). */
@@ -40,10 +50,8 @@ export interface BuildShellEntry {
   entry: ShellCacheEntry;
   /** Resolved ppr ttl (seconds) — drives staleness/recapture, never expiry. */
   ttl: number;
-  swr?: number;
   /** The putShell-barrier tag union baked at build (static + recorded). */
   tags?: string[];
-  routeName: string;
 }
 
 interface ShellManifestModule {
@@ -76,48 +84,60 @@ function loadManifest(): Promise<ShellManifestModule | null> {
 }
 
 /**
- * Per-spec verdict memo for the version + integrity gates. A manifest record
+ * Per-spec verdict memo for the version + structural gates. A manifest record
  * is immutable for the process lifetime (content-hashed asset module), so its
- * gate verdict is constant — without this, EVERY request to a baked ppr route
- * re-decodes the full prelude base64 (hasIntactShellPayload) on the hot path:
- * a fresh build hit never populates the runtime store, so the store MISS +
- * read-through is the steady state, not a warm-up. Only the per-request
- * gates (tag markers, staleness) stay outside the memo. `null` memoizes a
- * failed verdict — deterministically invalid, don't re-pay the decode.
- * Spec-only keying is sound because buildVersion is process-constant on the
- * manifest path (folded into the shipped worker; dev never loads a manifest).
+ * gate verdict is constant: a fresh build hit never populates the runtime
+ * store, so the store MISS + read-through is the steady state, not a warm-up.
+ * Only the per-request gates (tag markers, staleness) stay outside the memo;
+ * the document HIT decodes the prelude once per serve (openShellDocument),
+ * partial replay never does. `null` memoizes a failed verdict —
+ * deterministically invalid. Keyed by the asking router's document version as
+ * well as the spec: the manifest key is pathname-only (shell-manifest-key.ts),
+ * so under a host router two routers with different versions can ask about one
+ * record.
  */
-const validatedSpecs = new Map<string, BuildShellEntry | null>();
+const validatedSpecs = new Map<string, ValidatedBuildShellEntry | null>();
+
+/**
+ * A manifest record whose document half passed hasIntactShellPayload — the
+ * casts below sit directly on that runtime gate (build entries are always
+ * document-shaped; the predicate narrows entry, not the record around it).
+ */
+type ValidatedBuildShellEntry = BuildShellEntry & {
+  entry: DocumentShellCacheEntry;
+};
 
 async function validatedManifestRecord(
   mod: ShellManifestModule,
   spec: string,
   buildVersion: string,
-): Promise<BuildShellEntry | undefined> {
-  let verdict = validatedSpecs.get(spec);
+): Promise<ValidatedBuildShellEntry | undefined> {
+  const memoKey = `${buildVersion}\u0000${spec}`;
+  let verdict = validatedSpecs.get(memoKey);
   if (verdict === undefined) {
     const record = (await mod.loadShellAsset(spec)).default;
     verdict =
       isValidShellHit(record.entry, buildVersion) &&
       hasIntactShellPayload(record.entry)
-        ? record
+        ? (record as ValidatedBuildShellEntry)
         : null;
-    validatedSpecs.set(spec, verdict);
+    validatedSpecs.set(memoKey, verdict);
   }
   return verdict ?? undefined;
 }
 
-/** Reset the memoized manifest (unit tests swap the global loader). */
+/**
+ * Reset the memoized manifest (unit tests swap the global loader) and the
+ * shell path's once-per-key warnings, the tag-check one included.
+ */
 export function resetBuildShellManifestForTests(): void {
   manifestPromise = null;
   validatedSpecs.clear();
+  resetShellWarningsForTests();
 }
 
-/** Keys already warned about a tag-check-incapable store (once per key). */
-const warnedTagCheckUnsupported = new Set<string>();
-
 export interface BuildShellHit {
-  entry: ShellCacheEntry;
+  entry: DocumentShellCacheEntry;
   /** Past createdAt + ttl: serve, but schedule the runtime recapture. */
   stale: boolean;
 }
@@ -246,18 +266,42 @@ async function fetchDevShellEntry(
 }
 
 /**
+ * Whether a build-time shell exists for `pathname` (the caller checks the
+ * request is search-less, like the entries lookupBuildShell serves): a
+ * manifest entry for the path in production, a Prerender route in dev. No
+ * asset load and no dev capture: it only decides whether a request that
+ * cannot read the build shell deserves a warning.
+ */
+export async function hasBuildShell(
+  pathname: string,
+  dev?: DevShellLookup,
+): Promise<boolean> {
+  if (globalThis.__loadShellManifestModule === undefined) {
+    return dev?.isPrerenderRoute === true;
+  }
+  const mod = await loadManifest();
+  return mod?.default[buildShellManifestKey(pathname)] !== undefined;
+}
+
+/**
  * Look up the baked shell entry for a request, applying every serve gate:
  * search-less requests only (the build captured the bare pathname; a
  * search-bearing URL has its own shell identity owned by runtime capture),
  * version validity, payload integrity, and tag-invalidation markers. Returns
  * null on any gate failure — the caller degrades to the ordinary MISS path
  * (axis 1 + runtime capture), never a broken serve.
+ *
+ * "Search-less" is evaluated AFTER the request's `cache.searchParams` filter:
+ * a URL whose only params are excluded ones (`?fbclid=…` under a tracking
+ * exclusion) matches the baked shell — ad-click traffic is exactly the
+ * traffic the shell was prerendered for.
  */
 export async function lookupBuildShell(
   url: URL,
   buildVersion: string,
   store: SegmentCacheStore,
   dev?: DevShellLookup,
+  filter?: SearchParamsFilter,
 ): Promise<BuildShellHit | null> {
   try {
     // Source-presence first: with no manifest and no dev context this is the
@@ -265,8 +309,8 @@ export async function lookupBuildShell(
     // the searchParams sort/allocation below.
     const hasManifest = globalThis.__loadShellManifestModule !== undefined;
     if (!hasManifest && !dev) return null;
-    if (sortedSearchString(url.searchParams) !== "") return null;
-    let record: BuildShellEntry | undefined;
+    if (sortedSearchString(url.searchParams, filter) !== "") return null;
+    let record: ValidatedBuildShellEntry | undefined;
     if (hasManifest) {
       const mod = await loadManifest();
       if (!mod) return null;
@@ -279,29 +323,35 @@ export async function lookupBuildShell(
         fetched !== undefined &&
         isValidShellHit(fetched.entry, buildVersion) &&
         hasIntactShellPayload(fetched.entry)
-          ? fetched
+          ? (fetched as ValidatedBuildShellEntry)
           : undefined;
     }
     if (!record) return null;
     const entry = record.entry;
     if (record.tags && record.tags.length > 0) {
       const check = store.isTagsInvalidatedSince;
-      if (typeof check !== "function") {
+      if (typeof check !== "function" || store.tagHistoryInert) {
         // A tagged build entry on a store that cannot answer "was this tag
         // invalidated since the build" must not serve: updateTag() could
-        // never evict it. Declared intent that cannot be honored deserves a
+        // never evict it. That covers a store missing the method AND one
+        // whose answers have no durable history behind them
+        // (SegmentCacheStore.tagHistoryInert — a KV-less CFCacheStore's
+        // memo-only answers would let the immutable asset resurrect on the
+        // next request). Declared intent that cannot be honored deserves a
         // diagnostic; the route keeps runtime-capture semantics.
-        const key = buildShellManifestKey(url.pathname);
-        if (!warnedTagCheckUnsupported.has(key)) {
-          warnedTagCheckUnsupported.add(key);
-          console.warn(
+        warnOnce(
+          "build-shell-tag-check",
+          buildShellManifestKey(url.pathname),
+          () =>
             `[rango] Build-time shell for "${url.pathname}" carries cache tags, but ` +
-              "the app cache store does not implement isTagsInvalidatedSince(), so " +
-              "updateTag() could not evict it. The entry is not served; the route " +
-              "keeps runtime shell capture. Use MemorySegmentCacheStore, CFCacheStore, " +
-              "or VercelCacheStore (or add the method to your custom store).",
-          );
-        }
+            "the app cache store cannot answer tag-invalidation history durably " +
+            (typeof check !== "function"
+              ? "(isTagsInvalidatedSince() is not implemented), "
+              : "(no durable tag history — a CFCacheStore without a KV namespace), ") +
+            "so updateTag() could not evict it. The entry is not served; the route " +
+            "keeps runtime shell capture. Use MemorySegmentCacheStore, a KV-backed " +
+            "CFCacheStore, or VercelCacheStore (or add the method to your custom store).",
+        );
         return null;
       }
       if (await check.call(store, record.tags, entry.createdAt)) return null;

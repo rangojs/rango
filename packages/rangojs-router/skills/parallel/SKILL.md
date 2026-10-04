@@ -1,12 +1,24 @@
 ---
 name: parallel
-description: Define parallel routes for multi-column layouts, sidebars, and modal slots in @rangojs/router. Use when a layout needs multiple independently-loading regions (e.g. a sidebar and main panel), or rendering more than one route segment at the same URL.
+description: Define parallel routes (named slots) for multi-column layouts, sidebars, and UI-less metadata slots in @rangojs/router. Use when a layout needs multiple independently-loading regions (e.g. a sidebar and main panel), or rendering more than one route segment at the same URL.
 argument-hint: [@slot-name]
 ---
 
 # Parallel Routes
 
-Parallel routes render multiple components simultaneously in named slots.
+`parallel({ "@slot": handler, ... }, use?)` renders extra components alongside
+the page in named slots. The owning layout (or route) places each slot with
+`<ParallelOutlet name="@slot" />`. Use it for sidebars, multi-column layouts,
+UI-less metadata slots, and regions that load and stream independently.
+
+Slot rules:
+
+- Slot names start with `@` and must not contain `.` (a dot is rejected at
+  definition time).
+- `parallel()` can't be nested inside another `parallel()`, and `intercept()`
+  can't be declared inside one.
+- A slot value is a handler function, a ReactNode, a `Static()` definition, or
+  a slot descriptor `{ handler, use }` (see "Two scopes for explicit `use`").
 
 ## Not this skill if…
 
@@ -80,7 +92,7 @@ set by an outer handler or layout, revalidate that outer segment too, or
 have the parallel reload/guard the data itself.
 
 ```typescript
-path("/dashboard/:id", (ctx) => {
+path("/dashboard/:id", async (ctx) => {
   const user = await getUser(ctx.params.id);
   ctx.set("user", user);
   return <DashboardPage user={user} />;
@@ -99,13 +111,19 @@ path("/dashboard/:id", (ctx) => {
 ## Setting Handles (Meta, Breadcrumbs)
 
 Parallel slot handlers can call `ctx.use(Meta)` or `ctx.use(Breadcrumbs)` to
-push handle data. The data is associated with the **parent** layout or route
-segment, not the parallel segment itself. This is because parallels execute
-after their parent handler and inherit its segment scope.
+push handle data. (Loader bodies can too — see `/loader` → "Writing Handles
+from Loaders" — which often replaces the UI-less `@meta` slot below.)
 
-This works well for document-level metadata — the handle data follows the
-parent's lifecycle (appears when the parent is mounted, removed when it
-unmounts).
+A slot's pushes are stored under the slot's own segment (`<parent>.@slot`),
+separate from the parent's pushes:
+
+- **Order:** they are collected immediately after the parent segment's pushes,
+  before any child route's. A route's `@meta` slot therefore comes after every
+  layout above it, and a layout-level slot comes before the routes it wraps.
+- **Lifecycle:** they appear while the slot is mounted with its parent and are
+  removed when it unmounts.
+- **Partial updates:** a slot-only revalidation replaces just the slot's
+  pushes; the parent's pushes stay intact.
 
 ```typescript
 parallel({
@@ -119,16 +137,29 @@ parallel({
 })
 ```
 
-Multiple parallels on the same parent can each push handle data — they all
-accumulate under the parent segment ID.
+Multiple parallels on the same parent can each push handle data — each slot's
+pushes accumulate in its own bucket.
 
 ### Pattern: `@meta` slot for per-route metadata overrides
 
 A dedicated `@meta` parallel slot lets routes define metadata separately from
 their handler logic. The layout sets defaults via a title template, and each
-route overrides via its own `@meta` slot. Since child segments push after
-parents and `collectMeta` uses last-wins deduplication, overrides work
-naturally.
+route overrides via its own `@meta` slot. The route's slot pushes after the
+layout, and `Meta` keeps the last value per key, so the override wins.
+
+> **Loader-derived metadata: push from the loader instead.** This slot's
+> `await ctx.use(ProductLoader)` routes the data through HANDLER consumption
+> just to reach a `ctx.use(Meta)` call: under `cache()` the slot's output is
+> stored with the segment, and on a `ppr` route it bakes into the shell and a
+> HIT replays it without running the slot. The loader can push `Meta` itself
+> (`/loader` → "Writing Handles from Loaders"). Without `ssr: false` the
+> loader runs per request, but on a `ppr` route its push is not in the
+> shell's `<head>` (it applies after hydration). Add
+> `loader(Def, { ssr: false })` when the meta must be in the SSR'd head; on a
+> `ppr` route that bakes the push into the shell, and a HIT serves it without
+> running the loader when its value has no promises. Keep the `@meta` slot for
+> metadata that is NOT loader-derived (templates, static descriptions,
+> structured data with independent inputs).
 
 ```typescript
 // Layout sets defaults
@@ -173,12 +204,19 @@ parallel(
     "@sidebar": () => <CategorySidebar />,
   },
   () => [
-    loader(CategoriesLoader),
+    // The loader keeps its own revalidation: by default it re-runs after
+    // every action. Scope it here to stop that.
+    loader(CategoriesLoader, () => [revalidate(() => false)]),
     loading(<SidebarSkeleton />),
-    revalidate(() => false),  // Never revalidate sidebar
+    revalidate(() => false), // the slot component renders once, then is kept
   ]
 )
 ```
+
+A `revalidate()` in the slot's `use()` decides whether the **slot component**
+re-renders. Each `loader()` inside it is revalidated separately, with its own
+`revalidate()` items and the loader defaults (see `/loader` → "`revalidate()`
+return shapes").
 
 ### Streaming Behavior
 
@@ -215,6 +253,9 @@ parallel(
 Slot handlers can carry their own loader, loading, error/notFound boundaries, revalidation, and transition defaults via `.use`. The mount site then declares **just the slot names** — no per-call data wiring.
 
 ```typescript
+import { loader, loading, revalidate, type Handler } from "@rangojs/router";
+import { revalidateCartData } from "./revalidation-contracts";
+
 const CartSummary: Handler = async (ctx) => {
   const cart = await ctx.use(CartLoader);
   return <CartSummaryView cart={cart} />;
@@ -239,7 +280,7 @@ layout(<AccountLayout />, () => [
 
 A slot's `loading()` (whether from `handler.use` or explicit) makes that slot an independent streaming unit, exactly as in the **Streaming Behavior** section above.
 
-Under a shared artifact (`cache()`, `"use cache"`, a PPR shell), the server-side `await ctx.use(CartLoader)` above is the BAKED lane — the capture-time value (identity reads included) freezes into the artifact; consume the loader client-side (`useLoader` in a `"use client"` component) to keep the slot live per request. One rule, stated once: `/rango` → Invariants ("the consumption-lane rule").
+Under a shared artifact (`cache()`, `"use cache"`, a PPR shell), the server-side `await ctx.use(CartLoader)` above is the BAKED lane — the capture-time value freezes into the artifact. An identity read (`cookies()`, `headers()`, `ctx.request.headers`) inside the loader bakes too under `cache()`; inside `"use cache"` it throws, whichever code started the loader first; under a PPR shell it refuses the capture, so the route stays uncached. Consume the loader client-side (`useLoader` in a `"use client"` component, the slot's `loading()` as its boundary) to keep the slot live per request. One rule, stated once: `/rango` → Invariants ("the consumption-lane rule").
 
 The `parallel` mount site has the narrowest allow-list for `handler.use` items — slots cannot bring their own middleware or layout, only `revalidate`, `loader`, `loading`, `errorBoundary`, `notFoundBoundary`, and `transition`. See [skills/handler-use](../handler-use/SKILL.md) for the full table and merge rules.
 
@@ -273,7 +314,7 @@ parallel(
 
 Per-slot merge order is **handler.use → shared use → slot-local use**. Slot-local is the narrowest scope, so it wins for last-write-wins items. See [skills/handler-use § `loading()` is a single-assignment item — scope it correctly](../handler-use/SKILL.md#loading-is-a-single-assignment-item--scope-it-correctly) for the full reasoning.
 
-Typing note: a BARE arrow slot handler infers its ctx (`"@cart": (ctx) => ...`), but an arrow inside a DESCRIPTOR needs an explicit annotation — `handler: (ctx: HandlerContext) => ...` — because `StaticHandlerDefinition` in the slot union contributes a second callable to the contextual type and TS declines to pick a signature.
+Both a bare arrow slot handler (`"@cart": (ctx) => ...`) and an arrow inside a descriptor (`handler: (ctx) => ...`) infer their `ctx`; no explicit annotation is needed.
 
 ## Slot Override Semantics
 
@@ -281,8 +322,8 @@ When multiple `parallel()` calls define the same slot name, **the last
 definition wins**. Earlier definitions of that slot are removed. Other
 slots from the earlier call are preserved.
 
-This enables composition patterns where included routes override
-parent-defined slots:
+This lets a mount site override one slot that a shared factory or a
+handler's `.use` defined (see `/handler-use` → "Replacing a whole slot"):
 
 ```typescript
 layout(DashboardLayout, () => [
@@ -299,10 +340,11 @@ layout(DashboardLayout, () => [
 ])
 ```
 
-After resolution, the layout has two parallel entries:
-
-- `{ "@footer": () => <Footer /> }` (first call, `@sidebar` removed)
-- `{ "@sidebar": () => <CustomSidebar /> }` (second call, wins)
+Each slot is stored as its own entry keyed by slot name, so a later
+`parallel()` replaces only the keys it names. After resolution `@footer` comes
+from the first call and `@sidebar` from the second — including that call's
+`use()` items (loaders, loading, revalidate); the first call's items for
+`@sidebar` are gone with it.
 
 ## Multiple Parallel Slots
 
@@ -349,18 +391,25 @@ parallel(
   },
   () => [
     loader(CartLoader),
-    // Revalidate when cart actions occur
+    // Layout-level slot (kept after actions by default): also re-render after
+    // cart actions. Under a path() the slot re-renders after every action anyway.
     revalidate((ctx) => ctx.isAction(CartActions) || undefined),
   ]
 )
 ```
 
-Where the slot sits decides its action default. A parallel under a
-`path()` (or one of its orphan layouts) belongs to the route entry and
-revalidates together with it on every action — handler-set data stays
-consistent with no configuration. A parallel under a standalone
-`layout()` entry follows the parent-chain default instead: skipped on
-actions unless a `revalidate()` opts it in.
+Where the slot sits decides its default (once it is on screen; the first
+render always happens):
+
+| Slot declared under                     | Navigation                           | Action     |
+| --------------------------------------- | ------------------------------------ | ---------- |
+| a `path()` or one of its orphan layouts | re-renders when params/search change | re-renders |
+| a standalone `layout()`                 | kept                                 | kept       |
+
+A route-scoped slot belongs to the route entry, so handler-set data stays
+consistent with no configuration. A layout-level slot follows the parent-chain
+default: kept unless a `revalidate()` opts it in. The slot's loaders are
+revalidated separately (see "Parallel Routes with Loaders").
 
 In either position, revalidating only the parallel does not re-run outer
 handlers/layouts. If the slot reads `ctx.get()` data established above
@@ -372,7 +421,29 @@ A `revalidate()` callback may return a hard `boolean`, a soft
 `undefined`) to defer to the next revalidator. See
 [loader/SKILL.md#revalidate-return-shapes](../loader/SKILL.md#revalidate-return-shapes)
 for the full contract — it's the same across `loader()`, `path()`,
-`layout()`, `parallel()`, and `intercept()`.
+`layout()`, and `parallel()`.
+
+A route-scoped slot revalidates on ANY params or search change by default —
+including query-only navigations (`?tab=…`) its content doesn't depend on. If
+the slot has no `loading()` of its own, that refresh suspends at the nearest
+boundary above it: the route's `loading()`, replacing the entire route content
+with the route skeleton while one slot refetches. Either scope the slot's
+`revalidate()` (share the route's named contract, as above) or give the slot
+its own `loading()` so the fallback stays local. Don't reach for a bare
+`revalidate(() => false)`: the slot then never refreshes on param changes
+either, and keeps the previous param's content on e.g. a product-to-product
+navigation.
+
+`revalidate()` decides whether to _re_-render a slot, never whether to render
+it the first time. A slot the browser has not rendered yet has nothing to keep
+showing, so on that first render the decision is clamped to `true` and your
+callback's `false` is ignored; from then on it is honored and the browser keeps
+the copy it already has. So `revalidate(() => false)` means "render once, then
+never re-render", never "don't appear".
+
+Revalidate callbacks must be synchronous. A callback that returns a Promise is
+ignored (the default decision is kept) and dev logs a warning — move async work
+into a loader.
 
 ### Revalidation Contracts for Parallel Dependencies
 
@@ -381,9 +452,10 @@ the parallel consumer:
 
 ```typescript
 // revalidation-contracts.ts
+import type { Revalidate } from "@rangojs/router";
 import * as CartActions from "./actions/cart";
 
-export const revalidateCartData = (ctx) =>
+export const revalidateCartData: Revalidate = (ctx) =>
   ctx.isAction(CartActions) || undefined;
 
 layout(CartLayout, () => [

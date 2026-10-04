@@ -1,8 +1,50 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useLocationState, Link } from "@rangojs/router/client";
+import { useLocationState, useRouter, Link } from "@rangojs/router/client";
 import { SlowProductLocationState } from "../location-states.js";
+
+/**
+ * router.push() / router.replace() with a typed entry array (the imperative
+ * counterpart of the typed Link state below).
+ */
+export function RouterPushStateButtons() {
+  const router = useRouter();
+  return (
+    <>
+      <button
+        data-testid="router-push-typed"
+        onClick={() =>
+          router.push("/location-state/link-state/target", {
+            state: [
+              SlowProductLocationState({
+                productName: "Pushed Product",
+                productPrice: 11,
+              }),
+            ],
+          })
+        }
+      >
+        router.push typed state
+      </button>
+      <button
+        data-testid="router-replace-typed"
+        onClick={() =>
+          router.replace("/location-state/link-state/target", {
+            state: [
+              SlowProductLocationState({
+                productName: "Replaced Product",
+                productPrice: 12,
+              }),
+            ],
+          })
+        }
+      >
+        router.replace typed state
+      </button>
+    </>
+  );
+}
 
 /**
  * Displays typed state from SlowProductLocationState

@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, vi } from "vitest";
 
-vi.mock("@vitejs/plugin-rsc/rsc", () => {
+function pluginRscMock() {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
 
@@ -32,7 +32,9 @@ vi.mock("@vitejs/plugin-rsc/rsc", () => {
       return new Set();
     },
   };
-});
+}
+vi.mock("@vitejs/plugin-rsc/rsc/server", pluginRscMock);
+vi.mock("@vitejs/plugin-rsc/rsc/client", pluginRscMock);
 
 // Import AFTER mock registration so the real module picks up the mock
 const { serializeResult, deserializeResult, rscSerialize, rscDeserialize } =

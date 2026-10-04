@@ -11,6 +11,11 @@ import {
 import type { UrlPatterns, IncludeOptions } from "./pattern-types.js";
 import type { IncludeProvider } from "./include-provider.js";
 import type { IncludeFn } from "./path-helper-types.js";
+import {
+  clientUrlIncludePatterns,
+  isClientUrlSource,
+} from "../client-urls/server-projection.js";
+import type { ClientUrlPatterns } from "../client-urls/types.js";
 
 function hasExplicitNameOption(options: IncludeOptions | undefined): boolean {
   return !!options && Object.prototype.hasOwnProperty.call(options, "name");
@@ -61,14 +66,23 @@ export function processItems(items: readonly AllUseItems[]): AllUseItems[] {
 export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
   return (
     prefix: string,
-    // A `urls()` value (eager) OR an async provider thunk
+    // A `urls()` value (eager), an async provider thunk
     // (`() => import("./routes")`) whose evaluation is deferred to the first
-    // request matching `prefix`. The provider is stored unevaluated and
-    // resolved by the runtime lazy-include expansion / build-time discovery.
-    patterns: UrlPatterns<TEnv> | IncludeProvider<TEnv>,
+    // request matching `prefix`, or a clientUrls() definition (object or
+    // client reference). Providers are stored unevaluated and resolved by the
+    // runtime lazy-include expansion / build-time discovery.
+    patterns: UrlPatterns<TEnv> | IncludeProvider<TEnv> | ClientUrlPatterns,
     options?: IncludeOptions,
   ): IncludeItem => {
     const { ctx } = requireDslContext("include() must be called inside urls()");
+
+    // clientUrls() sources mount like any urls() module: the adapter defers
+    // materialization to evaluation time (projection installed by then) and
+    // the include machinery applies URL/name prefixes as for server modules.
+    // Ordering: see isClientUrlSource.
+    if (isClientUrlSource(patterns)) {
+      patterns = clientUrlIncludePatterns(patterns) as UrlPatterns<TEnv>;
+    }
 
     const explicitName = options?.name;
     const hasExplicitName = hasExplicitNameOption(options);

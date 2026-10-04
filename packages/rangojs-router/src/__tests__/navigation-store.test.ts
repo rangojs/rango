@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   createNavigationStore,
   generateHistoryKey,
@@ -319,6 +319,68 @@ describe("navigation-store", () => {
       const store = createTestStore();
       store.setHistoryKey("/new-key");
       expect(store.getHistoryKey()).toBe("/new-key");
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // Per-history-entry memory (transition({ when }) sources)
+  // --------------------------------------------------------------------------
+  describe("history entry memory", () => {
+    function stubHistory(initial: Record<string, unknown> | null) {
+      const history = {
+        state: initial as Record<string, unknown> | null,
+        replaceState: vi.fn((state: Record<string, unknown>) => {
+          history.state = state;
+        }),
+      };
+      vi.stubGlobal("window", {
+        history,
+        location: { href: "http://localhost/" },
+      });
+      return history;
+    }
+
+    afterEach(() => vi.unstubAllGlobals());
+
+    it("remembers the displayed entry by history.state.key with its state and route name", () => {
+      const history = stubHistory({ key: "k1", __rsc_ls_x: 1 });
+      const store = createTestStore();
+      expect(store.getHistoryEntryMemory()).toBeUndefined();
+
+      store.rememberDisplayedEntry("list");
+      expect(store.getHistoryEntryMemory()).toEqual({
+        routeName: "list",
+        state: { key: "k1", __rsc_ls_x: 1 },
+      });
+
+      // Next entry: the previous one stays readable by key (back/forward).
+      history.state = { key: "k2" };
+      store.rememberDisplayedEntry("detail");
+      expect(store.getHistoryEntryMemory()?.routeName).toBe("detail");
+      expect(store.getHistoryEntryMemory("k1")?.routeName).toBe("list");
+
+      // A state refresh keeps the entry's route name.
+      history.state = { key: "k2", __rsc_ls_y: 2 };
+      store.rememberDisplayedEntry();
+      expect(store.getHistoryEntryMemory()).toEqual({
+        routeName: "detail",
+        state: { key: "k2", __rsc_ls_y: 2 },
+      });
+    });
+
+    it("mints an entry key when history.state has none", () => {
+      const history = stubHistory(null);
+      const store = createTestStore();
+      store.rememberDisplayedEntry("home");
+      const key = (history.state as { key?: string } | null)?.key;
+      expect(typeof key).toBe("string");
+      expect(store.getHistoryEntryMemory(key)?.routeName).toBe("home");
+    });
+
+    it("an unknown entry (after a reload) reads as undefined", () => {
+      stubHistory({ key: "k1" });
+      const store = createTestStore();
+      expect(store.getHistoryEntryMemory("never-seen")).toBeUndefined();
     });
   });
 

@@ -8,14 +8,21 @@
  */
 
 import type { CookieOptions } from "../router/middleware-types.js";
-import { getRequestContext, _getRequestContext } from "./request-context.js";
+import type { Theme } from "../theme/types.js";
 import {
-  isInsideCacheScope,
-  getCurrentLoaderBodyId,
-  isInsideHandlerInvokedLoaderBody,
+  getRequestContext,
+  _getRequestContext,
+  type RequestContext,
+} from "./request-context.js";
+import {
+  guardIdentityRead,
+  recordLoaderIdentityRead,
+  refuseInCacheScope,
+  requestReadCaptureFix,
+  type IdentityReadWording,
 } from "./context.js";
-import { INSIDE_CACHE_EXEC } from "../cache/taint.js";
 import { assertNotInsidePrerenderProducer } from "../prerender/producer-guard.js";
+import { requestHeaders, shadowRequestHeaders } from "./request-headers.js";
 
 /**
  * A single cookie entry returned by get() and getAll().
@@ -67,8 +74,7 @@ export interface CookieStore {
 export function cookies(): CookieStore {
   const ctx = getRequestContext();
   assertNotInsidePrerenderProducer(ctx, "cookies()");
-  assertNotInsideCacheContext(ctx, "cookies");
-  assertNotInsideShellCapture(ctx, "cookies");
+  guardIdentityRead(ctx, "cookies()", COOKIES_READ);
   return createCookieStore(ctx);
 }
 
@@ -92,120 +98,165 @@ export interface ReadonlyHeaders {
 type HeadersIterator<T> = IterableIterator<T>;
 
 /**
- * Throw if called inside a cache boundary — either a "use cache" function
- * (`INSIDE_CACHE_EXEC` stamped on ctx by the cache runtime) or a `cache()`
- * DSL boundary (`isInsideCacheScope()` — the render-store flag set while
- * resolving a `type: "cache"` route entry).
- *
- * Reading request-scoped data (cookies, headers) inside a cached scope
- * produces per-request values that are NOT reflected in the cache key, so
- * they would be frozen into the shared cache entry and served to the wrong
- * users. This is the same hazard for both scopes: a `cache()` boundary caches
- * everything except loaders (it is the document-level "PPR shell"), so a read
- * here is baked into the shell exactly like a `"use cache"` return value is
- * baked into its cache entry.
- *
- * `isInsideCacheScope()` returns false inside loaders (loaders always run
- * fresh on every request, even on a cache hit), so reading cookies()/headers()
- * from a loader is allowed — loaders are the dynamic "holes" of a cached
- * document.
+ * The cache-scope wording of cookies(), headers() and the response
+ * directives. Request-scoped data read in a cached scope is not reflected in
+ * its key, so it would be frozen into the shared entry and served to the
+ * wrong users; a "use cache" scope follows the cached body's own async chain
+ * (cache-exec-scope.ts), so a loader running in PARALLEL with a slow cached
+ * fetch on the same request reads cookies() freely. (Scar: an
+ * INSIDE_CACHE_EXEC stamp on the shared RequestContext made that parallel
+ * read throw for the fetch's whole execution window.)
  */
-function assertNotInsideCacheContext(ctx: unknown, fnName: string): void {
-  if (
-    ctx !== null &&
-    ctx !== undefined &&
-    typeof ctx === "object" &&
-    (INSIDE_CACHE_EXEC as symbol) in (ctx as Record<symbol, unknown>)
-  ) {
-    throw new Error(
-      `${fnName}() cannot be called inside a "use cache" function. ` +
-        `Request-scoped data (cookies, headers) varies per request but is not ` +
-        `reflected in the cache key, so cached results would be served to the ` +
-        `wrong users. Extract the value before the cached function and pass it ` +
-        `as an argument:\n\n` +
-        `  const locale = cookies().get("locale")?.value ?? "en";\n` +
-        `  const data = await getCachedData(locale); // locale is now in the cache key`,
-    );
-  }
-  if (isInsideCacheScope()) {
-    throw new Error(
-      `${fnName}() cannot be called inside a cache() boundary. ` +
-        `A cache() scope caches everything except loaders, so request-scoped ` +
-        `data (cookies, headers) read here would be frozen into the shared ` +
-        `cached shell and served to other users. Read it inside a loader ` +
-        `instead — loaders always run fresh on every request, even on a cache hit:\n\n` +
-        `  loader("user", () => getUser(cookies().get("session")?.value));`,
-    );
-  }
+const REQUEST_READ_CACHE_FIX: Pick<
+  IdentityReadWording["fix"],
+  "useCache" | "cacheScope"
+> = {
+  useCache:
+    "Request-scoped data (cookies, headers) varies per request but is not " +
+    "reflected in the cache key, so cached results would be served to the " +
+    "wrong users. Extract the value before the cached function and pass it " +
+    "as an argument:\n\n" +
+    '  const locale = cookies().get("locale")?.value ?? "en";\n' +
+    "  const data = await getCachedData(locale); // locale is now in the cache key",
+  cacheScope:
+    "A cache() scope caches everything except loaders, so request-scoped " +
+    "data (cookies, headers) read here would be frozen into the shared " +
+    "cached shell and served to other users. Read it inside a loader " +
+    "instead — loaders always run fresh on every request, even on a cache hit:\n\n" +
+    '  loader("user", () => getUser(cookies().get("session")?.value));',
+};
+
+/**
+ * cookies() and headers() record the read on the returned view's read
+ * methods (createCookieStore, the headers() proxy), so a write alone is not
+ * one (#972).
+ */
+function requestReadWording(what: string): IdentityReadWording {
+  return {
+    verb: "called",
+    fix: { ...REQUEST_READ_CACHE_FIX, ...requestReadCaptureFix(what) },
+    record: false,
+  };
+}
+
+const COOKIES_READ: IdentityReadWording = requestReadWording("cookies");
+const HEADERS_READ: IdentityReadWording = requestReadWording("headers");
+
+/**
+ * The raw reads (#976): `ctx.request.headers` and `getRequestContext()
+ * .cookie()` / `.cookies()`. Same wording as cookies()/headers(), but each
+ * returns the data itself, so the read is recorded at the access.
+ */
+const REQUEST_HEADERS_READ: IdentityReadWording = {
+  verb: "read",
+  fix: HEADERS_READ.fix,
+};
+const RAW_COOKIES_READ: IdentityReadWording = {
+  verb: "called",
+  fix: COOKIES_READ.fix,
+};
+
+/**
+ * Run the identity guard for a raw cookie read on `ctx`
+ * (request-context.ts `cookie()` / `cookies()`). Before #976 they were plain
+ * reads of the Cookie header that no shared scope refused. The guard reads
+ * the ambient context, as cookies() does, and falls back to `ctx`.
+ */
+export function guardRawCookieRead(
+  ctx: RequestContext<any>,
+  surface: "getRequestContext().cookie()" | "getRequestContext().cookies()",
+): void {
+  guardIdentityRead(_getRequestContext() ?? ctx, surface, RAW_COOKIES_READ);
+}
+
+function guardRequestHeadersRead(): void {
+  guardIdentityRead(
+    _getRequestContext(),
+    "ctx.request.headers",
+    REQUEST_HEADERS_READ,
+  );
 }
 
 /**
- * Throw if called during the ACTIVE background shell-capture render
- * (`_shellCaptureRun` true on the derived request context built by
- * shell-capture.ts). The captured shell prelude is shared across every user
- * hitting the URL, so a request-scoped read here would bake one user's
- * cookies/headers into markup served to others — same hazard as the cache
- * scopes above, at the document tier. DSL segment loaders need no exemption:
- * the live lane is masked (never executed) during capture, and the bake lane
- * is exactly what this guard exists for.
- *
- * HANDLER-INVOKED loader bodies (`await ctx.use(Loader)` from a handler) are
- * EXEMPT — the consumption-lane rule: handler consumption yields a BAKED
- * shared copy in every artifact tier, and the cache-purity guards above
- * already permit identity reads there (cache()/"use cache" bake the same
- * reads today). Guarding only the PPR tier made the same code legal under
- * cache() but capture-refusing under ppr (issue #672 / #674). The trade is
- * documented: an identity read in a handler-consumed loader bakes the CAPTURE
- * request's value into the shared shell; client-side consumption (useLoader)
- * is the live lane.
- *
- * Keys off `_shellCaptureRun`, NOT the `_shellCapture` descriptor: the descriptor
- * is also present during the FOREGROUND render (it means "a capture is wanted"),
- * and the foreground must read cookies/headers normally to serve the real user.
- * Only the derived capture context sets `_shellCaptureRun`.
- *
- * Applies only to the READ surfaces (cookies(), headers()) whose values
- * become markup. Response directives (invalidateClientCache(),
- * keepClientCache()) stay callable: during capture they are header effects on
- * a discarded response, and on the live HIT path the full pipeline runs so their
- * headers flow to the client normally.
- *
- * The throw makes such a route PPR-ineligible by construction: the capture
- * render errors, nothing is stored, and every request keeps getting the
- * normal axis-1 render.
+ * Guard `request.headers` like headers() (#976): the request every ctx
+ * exposes (request context, handler, middleware and loader `ctx.request`)
+ * gets an own getter that runs guardIdentityRead against the ambient request
+ * context, so a read inside a ppr capture, a cache() boundary, a "use cache"
+ * body or an unkeyed loader cache() fill refuses as cookies() does. A Request
+ * argument keys a "use cache" entry by its URL only (cache-runtime.ts), so a
+ * header read there baked the first caller's value into the shared entry.
+ * The router's own reads go through requestHeaders() (request-headers.ts).
+ * Idempotent; returns `request`.
  */
-function assertNotInsideShellCapture(ctx: unknown, fnName: string): void {
-  if (
-    ctx !== null &&
-    typeof ctx === "object" &&
-    (ctx as { _shellCaptureRun?: unknown })._shellCaptureRun === true
-  ) {
-    if (isInsideHandlerInvokedLoaderBody()) return;
-    // Flag the capture context BEFORE throwing: inside an executing bake-lane
-    // loader this throw is swallowed by wrapLoaderPromise into per-loader error
-    // UI, which would bake silently into the shared shell. The capture checks
-    // the flag after the render and refuses (shell-capture.ts). Also record
-    // WHICH loader body (if any) made the read, so the refusal warning can
-    // name the real source instead of hardcoding a lane — the read may come
-    // from a bake-lane loader OR from handler/render code (issue #672).
-    (ctx as { _shellCaptureGuardTripped?: string })._shellCaptureGuardTripped =
-      fnName;
-    (
-      ctx as { _shellCaptureGuardTrippedLoaderId?: string }
-    )._shellCaptureGuardTrippedLoaderId = getCurrentLoaderBodyId();
-    throw new Error(
-      `${fnName}() cannot be called while capturing a shared shell ` +
-        `(shell-cache middleware). The captured shell is served to every user ` +
-        `of this URL, so request-scoped data read here would leak one user's ` +
-        `${fnName === "cookies" ? "cookies" : "headers"} to others. Read it ` +
-        `inside a loader instead — loaders are never captured and always run ` +
-        `fresh per request:\n\n` +
-        `  loader("user", () => getUser(cookies().get("session")?.value));`,
-    );
-  }
+export function guardRequestHeaders(request: Request): Request {
+  return shadowRequestHeaders(request, guardRequestHeadersRead);
+}
+
+/** The fix for a theme read that a cache() boundary or a ppr capture refuses. */
+const THEME_READ_FIX =
+  "On ppr and cache() routes, read the theme with useTheme() in a client " +
+  "component, or in a live loader (no ssr: false) with cookies().get(<storageKey>). " +
+  "The <html> theme class needs neither: the theme script sets it before paint. " +
+  "See the /theme skill (node_modules/@rangojs/router/skills/theme/SKILL.md).";
+
+/**
+ * The theme is the visitor's theme cookie, so a read of it is an identity
+ * read like cookies() (guardIdentityRead). Before #971 each read was a plain
+ * cookie read, so a ppr shell, a cache() entry or a "use cache" entry stored
+ * the first visitor's theme and served it to every later visitor.
+ */
+const THEME_READ: IdentityReadWording = {
+  verb: "read",
+  fix: {
+    useCache:
+      "The theme comes from the visitor's cookie and is not in the cache " +
+      "key, so the first caller's theme would be served to later callers. " +
+      "Read it before the cached function and pass it in as an argument.",
+    cacheScope:
+      "The theme comes from the visitor's cookie, so the first visitor's " +
+      "theme would be stored in the shared entry and served to everyone. " +
+      THEME_READ_FIX,
+    capture:
+      "The captured shell is served to every visitor of this URL, so the " +
+      `capturing visitor's theme would reach everyone. ${THEME_READ_FIX}`,
+    warning: THEME_READ_FIX,
+  },
+};
+
+/** The public reads of the visitor's theme cookie that readGuardedTheme guards. */
+export type ThemeReadSurface = "ctx.theme" | "getRequestContext().theme";
+
+/**
+ * `ctx`'s theme through guardIdentityRead: the one body of every public theme
+ * read (the handler and middleware `ctx.theme`, handler-context.ts and
+ * middleware.ts, and `getRequestContext().theme`, request-context.ts). The
+ * guard reads the ambient context, as cookies() does, and falls back to
+ * `ctx`; the value is `ctx`'s unguarded `_readTheme()`, which the router's
+ * own payload read (payloadInitialTheme, rsc/full-payload.ts) calls directly.
+ * Undefined without a theme config.
+ */
+export function readGuardedTheme(
+  ctx: RequestContext<any> | undefined,
+  surface: ThemeReadSurface,
+): Theme | undefined {
+  if (!ctx?._themeConfig) return undefined;
+  guardIdentityRead(_getRequestContext() ?? ctx, surface, THEME_READ);
+  return ctx._readTheme();
 }
 
 const HEADERS_MUTATION_METHODS = new Set(["set", "append", "delete"]);
+// Reading one records the read (#972), like the cookies() read methods: a
+// headers() view taken outside a loader and read inside one still counts.
+const HEADERS_READ_PROPS = new Set<string | symbol>([
+  "get",
+  "has",
+  "entries",
+  "keys",
+  "values",
+  "forEach",
+  "getSetCookie",
+  Symbol.iterator,
+]);
 
 /**
  * Get the original request headers (read-only).
@@ -225,10 +276,10 @@ const HEADERS_MUTATION_METHODS = new Set(["set", "append", "delete"]);
 export function headers(): ReadonlyHeaders {
   const ctx = getRequestContext();
   assertNotInsidePrerenderProducer(ctx, "headers()");
-  assertNotInsideCacheContext(ctx, "headers");
-  assertNotInsideShellCapture(ctx, "headers");
-  return new Proxy(ctx.request.headers, {
+  guardIdentityRead(ctx, "headers()", HEADERS_READ);
+  return new Proxy(requestHeaders(ctx.request), {
     get(target, prop, receiver) {
+      if (HEADERS_READ_PROPS.has(prop)) recordLoaderIdentityRead("headers()");
       if (typeof prop === "string" && HEADERS_MUTATION_METHODS.has(prop)) {
         return () => {
           throw new Error(
@@ -266,7 +317,7 @@ export function invalidateClientCache(): void {
     return;
   }
   assertNotInsidePrerenderProducer(ctx, "invalidateClientCache()");
-  assertNotInsideCacheContext(ctx, "invalidateClientCache");
+  refuseInCacheScope("invalidateClientCache()", COOKIES_READ);
   ctx._rotateStateCookie();
 }
 
@@ -292,31 +343,31 @@ export function keepClientCache(): void {
     return;
   }
   assertNotInsidePrerenderProducer(ctx, "keepClientCache()");
-  assertNotInsideCacheContext(ctx, "keepClientCache");
+  refuseInCacheScope("keepClientCache()", COOKIES_READ);
   ctx._setKeepCacheDirective();
 }
 
 /**
- * Create a CookieStore backed by a RequestContext.
- * @internal Shared between cookies() shorthand and context methods.
+ * Create a CookieStore backed by a RequestContext. Reads go through the
+ * context's unguarded `_readCookie()` / `_readCookies()`: cookies() ran the
+ * guard at its call and records on each read method here.
  */
-function createCookieStore(ctx: {
-  cookie(name: string): string | undefined;
-  cookies(): Record<string, string>;
-  setCookie(name: string, value: string, options?: CookieOptions): void;
-  deleteCookie(
-    name: string,
-    options?: Pick<CookieOptions, "domain" | "path">,
-  ): void;
-}): CookieStore {
+function createCookieStore(
+  ctx: Pick<
+    RequestContext<any>,
+    "_readCookie" | "_readCookies" | "setCookie" | "deleteCookie"
+  >,
+): CookieStore {
   return {
     get(name: string): Cookie | undefined {
-      const value = ctx.cookie(name);
+      recordLoaderIdentityRead("cookies()");
+      const value = ctx._readCookie(name);
       return value !== undefined ? { name, value } : undefined;
     },
 
     getAll(name?: string): Cookie[] {
-      const all = ctx.cookies();
+      recordLoaderIdentityRead("cookies()");
+      const all = ctx._readCookies();
       if (name !== undefined) {
         const value = all[name];
         return value !== undefined ? [{ name, value }] : [];
@@ -325,7 +376,8 @@ function createCookieStore(ctx: {
     },
 
     has(name: string): boolean {
-      return ctx.cookie(name) !== undefined;
+      recordLoaderIdentityRead("cookies()");
+      return ctx._readCookie(name) !== undefined;
     },
 
     set(name: string, value: string, options?: CookieOptions): void {

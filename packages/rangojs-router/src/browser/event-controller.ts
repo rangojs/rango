@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import type {
   NavigationLocation,
-  NavigateOptions,
+  NavigateOptionsInternal,
   TrackedActionState,
   ActionLifecycleState,
   InflightAction,
@@ -14,6 +14,12 @@ import {
   filterSegmentOrder,
   filterRouteSegmentIds,
 } from "./react/filter-segment-order.js";
+import { notifyListeners } from "./notify-listeners.js";
+import { cloneHandleData } from "./navigation-store.js";
+import {
+  locationStateSnapshot,
+  type LocationStateSnapshot,
+} from "./react/location-state-shared.js";
 
 // Polyfill Symbol.dispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -45,7 +51,7 @@ export interface NavigationEntry {
   abort: AbortController;
   phase: NavigationPhase;
   startedAt: number;
-  options?: NavigateOptions & { skipLoadingState?: boolean };
+  options?: NavigateOptionsInternal & { skipLoadingState?: boolean };
 }
 
 /**
@@ -205,7 +211,7 @@ export interface EventController {
   // Navigation operations
   startNavigation(
     url: string,
-    options?: NavigateOptions & { skipLoadingState?: boolean },
+    options?: NavigateOptionsInternal & { skipLoadingState?: boolean },
   ): NavigationHandle;
   abortNavigation(): void;
 
@@ -223,7 +229,8 @@ export interface EventController {
   getActionState(actionId: string): TrackedActionState;
   getLocation(): NavigationLocation;
 
-  // Location updates (for popstate where navigation doesn't go through startNavigation)
+  // Location of a commit no transaction completes: a shallow navigation, a
+  // back/forward restored from the history cache, a back/forward that failed.
   setLocation(location: NavigationLocation): void;
 
   // Subscriptions
@@ -233,6 +240,12 @@ export interface EventController {
     listener: ActionStateListener,
   ): () => void;
   subscribeToHandles(listener: HandleListener): () => void;
+  /**
+   * Deliver queued location, params, navigation, and handle notifications now.
+   * NavigationProvider calls this inside the payload update so React assigns
+   * every route-state hook update to the same normal or transition lane.
+   */
+  flushRouteState(): void;
 
   // Handle operations
   setHandleData(
@@ -250,6 +263,23 @@ export interface EventController {
   ): void;
   getHandleState(): HandleState;
   /**
+   * Keep the current handle state as the one the document's HTML was rendered
+   * with. initBrowserApp calls it before hydrateRoot, once the document's
+   * handle snapshot is applied.
+   */
+  freezeHydrationHandleState(): void;
+  /**
+   * The handle state the document's HTML was rendered with, once the live
+   * state has moved on from it; undefined while the live state is still that
+   * state (nothing changed since the freeze, or nothing was frozen: a tree
+   * that was mounted, an SSR pass). A render React is hydrating reads it
+   * (useHandle), whenever its boundary hydrates: the late handle channel
+   * (rsc-router.tsx) waits for the root to hydrate, not for a `<Suspense>`
+   * boundary that hydrates after it, and by then the live state can hold
+   * values that boundary's HTML does not (issue #1035).
+   */
+  getHydrationHandleState(): HandleState | undefined;
+  /**
    * Update ONLY `routeSegmentIds` (what `useSegments` reads) from `matched`,
    * leaving `data` and `segmentOrder` (what `useHandle` collects over) untouched.
    * Used while a deferred handle is resolving: the route has changed (so
@@ -262,11 +292,91 @@ export interface EventController {
   setParams(params: Record<string, string>): void;
   getParams(): Record<string, string>;
 
+  /**
+   * Record the committed history entry's location state from `entryState`:
+   * the state object the commit pushed, restored or merged into the entry,
+   * so the entry and its readers have one source. Notifies nobody:
+   * NavigationProvider takes the snapshot with the entry's payload
+   * (LocationStateContext). `treeless` marks a commit no payload follows (a
+   * shallow navigation, a commit that keeps every segment, an action's
+   * state): the provider takes it with this commit's state notification, in
+   * the batch of the location.
+   */
+  commitLocationState(entryState: unknown, treeless?: boolean): void;
+  getLocationState(): LocationStateSnapshot;
+  /** True once after a `treeless` commit. */
+  takeTreelessLocationState(): boolean;
+
   // Direct state access for advanced use
   getCurrentNavigation(): NavigationEntry | null;
   getInflightActions(): Map<string, ActionEntry>;
   /** Whether any concurrent actions have occurred (shared across all handles) */
   hadAnyConcurrentActions(): boolean;
+}
+
+type LocationChangeController = Pick<EventController, "getState" | "subscribe">;
+
+interface LocationChangeSubscription {
+  registrations: Map<
+    symbol,
+    { href: string; listener: (href: string) => void }
+  >;
+  notificationVersion: number;
+  unsubscribe: () => void;
+}
+
+const locationChangeSubscriptions = new WeakMap<
+  LocationChangeController,
+  LocationChangeSubscription
+>();
+
+/** Share one controller subscription across all location-change consumers. */
+export function subscribeToLocationChange(
+  eventController: LocationChangeController,
+  listener: (href: string) => void,
+): () => void {
+  let subscription = locationChangeSubscriptions.get(eventController);
+  if (!subscription) {
+    subscription = {
+      registrations: new Map(),
+      notificationVersion: 0,
+      unsubscribe: () => {},
+    };
+    locationChangeSubscriptions.set(eventController, subscription);
+    const currentSubscription = subscription;
+    subscription.unsubscribe = eventController.subscribe(() => {
+      const notificationVersion = ++currentSubscription.notificationVersion;
+      const nextHref = eventController.getState().location.href;
+      notifyListeners(
+        [...currentSubscription.registrations],
+        ([, registration]) => {
+          if (registration.href === nextHref) return;
+          registration.href = nextHref;
+          registration.listener(nextHref);
+        },
+        ([token, registration]) =>
+          currentSubscription.registrations.get(token) === registration,
+        () => notificationVersion === currentSubscription.notificationVersion,
+      );
+    });
+  }
+
+  const token = Symbol();
+  subscription.registrations.set(token, {
+    href: eventController.getState().location.href,
+    listener,
+  });
+  let active = true;
+  return () => {
+    if (!active) return;
+    active = false;
+    subscription!.registrations.delete(token);
+    if (subscription!.registrations.size > 0) return;
+    if (locationChangeSubscriptions.get(eventController) === subscription) {
+      locationChangeSubscriptions.delete(eventController);
+    }
+    subscription!.unsubscribe();
+  };
 }
 
 const DEFAULT_ACTION_STATE: TrackedActionState = {
@@ -301,15 +411,32 @@ function matchesActionId(
   return entryActionId.endsWith(`#${subscriptionId}`);
 }
 
-// Batch rapid notifications into one microtask to prevent render storms
-function makeDebouncedNotifier(listeners: Set<() => void>): () => void {
+interface DebouncedNotifier {
+  schedule(): void;
+  flush(): void;
+}
+
+// Batch rapid notifications into one task to prevent render storms. The
+// explicit flush lets a React update owner preserve its scheduling lane.
+function makeDebouncedNotifier(listeners: Set<() => void>): DebouncedNotifier {
   let timeout: ReturnType<typeof setTimeout> | null = null;
-  return () => {
-    if (timeout !== null) clearTimeout(timeout);
-    timeout = setTimeout(() => {
-      timeout = null;
-      listeners.forEach((listener) => listener());
-    }, 0);
+  const flush = () => {
+    if (timeout === null) return;
+    clearTimeout(timeout);
+    timeout = null;
+    notifyListeners(
+      [...listeners],
+      (listener) => listener(),
+      (listener) => listeners.has(listener),
+    );
+  };
+
+  return {
+    schedule() {
+      if (timeout !== null) clearTimeout(timeout);
+      timeout = setTimeout(flush, 0);
+    },
+    flush,
   };
 }
 
@@ -371,8 +498,13 @@ export function createEventController(
   let handleData: HandleData = {};
   let handleSegmentOrder: string[] = [];
   let routeSegmentIds: string[] = [];
+  // freezeHydrationHandleState: what the document's HTML was rendered with.
+  let hydrationHandleState: HandleState | undefined;
 
   let routeParams: Record<string, string> = {};
+
+  let locationState: LocationStateSnapshot;
+  let treelessLocationState = false;
 
   const stateListeners = new Set<StateListener>();
   const actionListeners = new Map<string, Set<ActionStateListener>>();
@@ -389,10 +521,43 @@ export function createEventController(
 
   function notify(): void {
     cachedDerivedState = null;
-    notifyStateListeners();
+    notifyStateListeners.schedule();
   }
 
   const actionNotifyTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
+
+  function notifyActionListenerSets(
+    subscriptions: Iterable<[string, Set<ActionStateListener>]>,
+  ): void {
+    const subscriptionSnapshots = [...subscriptions].map(
+      ([subscriptionId, listeners]) => ({
+        listenerSnapshot: [...listeners],
+        listeners,
+        subscriptionId,
+      }),
+    );
+    function* notifications(): Generator<{
+      listener: ActionStateListener;
+      listeners: Set<ActionStateListener>;
+      state: TrackedActionState;
+    }> {
+      for (const {
+        listenerSnapshot,
+        listeners,
+        subscriptionId,
+      } of subscriptionSnapshots) {
+        const state = getActionState(subscriptionId);
+        for (const listener of listenerSnapshot) {
+          yield { listener, listeners, state };
+        }
+      }
+    }
+    notifyListeners(
+      notifications(),
+      ({ listener, state }) => listener(state),
+      ({ listener, listeners }) => listeners.has(listener),
+    );
+  }
 
   function notifyAction(actionId: string) {
     const existing = actionNotifyTimeouts.get(actionId);
@@ -403,17 +568,21 @@ export function createEventController(
       actionId,
       setTimeout(() => {
         actionNotifyTimeouts.delete(actionId);
-        for (const [subscriptionId, listeners] of actionListeners) {
-          if (matchesActionId(subscriptionId, actionId)) {
-            const state = getActionState(subscriptionId);
-            listeners.forEach((listener) => listener(state));
-          }
-        }
+        notifyActionListenerSets(
+          [...actionListeners].filter(([subscriptionId]) =>
+            matchesActionId(subscriptionId, actionId),
+          ),
+        );
       }, 0),
     );
   }
 
   const notifyHandles = makeDebouncedNotifier(handleListeners);
+
+  function flushRouteState(): void {
+    notifyStateListeners.flush();
+    notifyHandles.flush();
+  }
 
   function getState(): DerivedNavigationState {
     if (cachedDerivedState) return cachedDerivedState;
@@ -506,7 +675,7 @@ export function createEventController(
 
   function startNavigation(
     url: string,
-    options?: NavigateOptions & { skipLoadingState?: boolean },
+    options?: NavigateOptionsInternal & { skipLoadingState?: boolean },
   ): NavigationHandle {
     // Cancel existing navigation (switchMap semantics)
     if (currentNavigation) {
@@ -846,10 +1015,7 @@ export function createEventController(
     // "addToCart"), not full entry actionIds. Passing them to notifyAction
     // would fail the suffix matcher — instead, notify each subscriber with
     // its own state.
-    for (const [subscriptionId, listeners] of actionListeners) {
-      const state = getActionState(subscriptionId);
-      listeners.forEach((listener) => listener(state));
-    }
+    notifyActionListenerSets(actionListeners);
   }
 
   // ========================================================================
@@ -869,7 +1035,11 @@ export function createEventController(
     const newRouteSegmentIds = filterRouteSegmentIds(rawMatched);
 
     if (isPartial && newSegmentOrder.length > 0) {
-      // Partial update: merge new data with existing
+      // Partial update: merge new data with existing, into a copy of the
+      // containers. The object a reader was handed is never written to: the
+      // hydration snapshot (freezeHydrationHandleState) and a history entry
+      // restored from the store's cache can be that object.
+      handleData = cloneHandleData(handleData);
       for (const handleName of Object.keys(data)) {
         if (!handleData[handleName]) {
           handleData[handleName] = {};
@@ -902,7 +1072,7 @@ export function createEventController(
     handleSegmentOrder = newSegmentOrder;
     routeSegmentIds = newRouteSegmentIds;
 
-    notifyHandles();
+    notifyHandles.schedule();
   }
 
   function getHandleState(): HandleState {
@@ -922,7 +1092,7 @@ export function createEventController(
       return;
     }
     routeSegmentIds = next;
-    notifyHandles();
+    notifyHandles.schedule();
   }
 
   // ========================================================================
@@ -971,6 +1141,20 @@ export function createEventController(
     return routeParams;
   }
 
+  function commitLocationState(entryState: unknown, treeless?: boolean): void {
+    locationState = locationStateSnapshot(entryState, locationState);
+    if (treeless) {
+      treelessLocationState = true;
+      notify();
+    }
+  }
+
+  function takeTreelessLocationState(): boolean {
+    const taken = treelessLocationState;
+    treelessLocationState = false;
+    return taken;
+  }
+
   // ========================================================================
   // Return Controller
   // ========================================================================
@@ -993,16 +1177,29 @@ export function createEventController(
     // Handles
     setHandleData,
     getHandleState,
+    freezeHydrationHandleState: () => {
+      hydrationHandleState = getHandleState();
+    },
+    getHydrationHandleState: () =>
+      hydrationHandleState?.data === handleData
+        ? undefined
+        : hydrationHandleState,
     setRouteSegmentIds,
 
     // Params
     setParams,
     getParams,
 
+    // Location state
+    commitLocationState,
+    getLocationState: () => locationState,
+    takeTreelessLocationState,
+
     // Subscriptions
     subscribe,
     subscribeToAction,
     subscribeToHandles,
+    flushRouteState,
 
     // Direct access
     getCurrentNavigation: () => currentNavigation,

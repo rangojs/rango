@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   createEventController,
+  subscribeToLocationChange,
   type EventController,
 } from "../browser/event-controller.js";
 
@@ -50,6 +51,227 @@ describe("createEventController", () => {
       expect(actionState.payload).toBeNull();
       expect(actionState.error).toBeNull();
       expect(actionState.result).toBeNull();
+    });
+  });
+
+  describe("location subscriptions", () => {
+    it("fans out through one controller subscription", () => {
+      let location = loc("/");
+      const controllerListeners = new Set<() => void>();
+      const unsubscribe = vi.fn();
+      const subscribe = vi.fn((listener: () => void) => {
+        controllerListeners.add(listener);
+        return unsubscribe;
+      });
+      const controller = {
+        getState: () => ({ location }),
+        subscribe,
+      } as unknown as Pick<EventController, "getState" | "subscribe">;
+      const first = vi.fn();
+      const second = vi.fn();
+
+      const stopFirst = subscribeToLocationChange(controller, first);
+      const stopSecond = subscribeToLocationChange(controller, second);
+      expect(subscribe).toHaveBeenCalledOnce();
+
+      location = loc("/next");
+      controllerListeners.forEach((listener) => listener());
+      expect(first).toHaveBeenCalledWith(location.href);
+      expect(second).toHaveBeenCalledWith(location.href);
+
+      stopFirst();
+      expect(unsubscribe).not.toHaveBeenCalled();
+      stopSecond();
+      expect(unsubscribe).toHaveBeenCalledOnce();
+    });
+
+    it("tracks each registration baseline and cleanup independently", () => {
+      let location = loc("/");
+      const controllerListeners = new Set<() => void>();
+      const unsubscribe = vi.fn();
+      const subscribe = vi.fn((listener: () => void) => {
+        controllerListeners.add(listener);
+        return unsubscribe;
+      });
+      const controller = {
+        getState: () => ({ location }),
+        subscribe,
+      } as unknown as Pick<EventController, "getState" | "subscribe">;
+      const listener = vi.fn();
+
+      const stopFirst = subscribeToLocationChange(controller, listener);
+      location = loc("/next");
+      const stopSecond = subscribeToLocationChange(controller, listener);
+      controllerListeners.forEach((current) => current());
+      expect(listener).toHaveBeenCalledOnce();
+
+      stopFirst();
+      stopFirst();
+      expect(unsubscribe).not.toHaveBeenCalled();
+      location = loc("/last");
+      controllerListeners.forEach((current) => current());
+      expect(listener).toHaveBeenCalledTimes(2);
+
+      stopSecond();
+      stopSecond();
+      expect(unsubscribe).toHaveBeenCalledOnce();
+    });
+
+    it("does not notify a registration removed during fan-out", () => {
+      let location = loc("/");
+      let notifyController!: () => void;
+      const unsubscribe = vi.fn();
+      const controller = {
+        getState: () => ({ location }),
+        subscribe: vi.fn((listener: () => void) => {
+          notifyController = listener;
+          return unsubscribe;
+        }),
+      } as unknown as Pick<EventController, "getState" | "subscribe">;
+      let stopSecond!: () => void;
+      const first = vi.fn(() => stopSecond());
+      const second = vi.fn();
+
+      const stopFirst = subscribeToLocationChange(controller, first);
+      stopSecond = subscribeToLocationChange(controller, second);
+      location = loc("/next");
+      notifyController();
+
+      expect(first).toHaveBeenCalledOnce();
+      expect(second).not.toHaveBeenCalled();
+      stopFirst();
+      expect(unsubscribe).toHaveBeenCalledOnce();
+    });
+
+    it("does not regress later listeners after a nested notification", () => {
+      let location = loc("/");
+      let notifyController!: () => void;
+      const controller = {
+        getState: () => ({ location }),
+        subscribe: vi.fn((listener: () => void) => {
+          notifyController = listener;
+          return vi.fn();
+        }),
+      } as unknown as Pick<EventController, "getState" | "subscribe">;
+      const first = vi.fn((href: string) => {
+        if (href === loc("/next").href) {
+          location = loc("/last");
+          notifyController();
+        }
+      });
+      const second = vi.fn();
+
+      const stopFirst = subscribeToLocationChange(controller, first);
+      const stopSecond = subscribeToLocationChange(controller, second);
+      location = loc("/next");
+      notifyController();
+
+      expect(first).toHaveBeenNthCalledWith(1, loc("/next").href);
+      expect(first).toHaveBeenNthCalledWith(2, loc("/last").href);
+      expect(second).toHaveBeenCalledOnce();
+      expect(second).toHaveBeenCalledWith(loc("/last").href);
+      stopFirst();
+      stopSecond();
+    });
+
+    it("notifies later registrations when an earlier listener throws", () => {
+      let location = loc("/");
+      let notifyController!: () => void;
+      const controller = {
+        getState: () => ({ location }),
+        subscribe: vi.fn((listener: () => void) => {
+          notifyController = listener;
+          return vi.fn();
+        }),
+      } as unknown as Pick<EventController, "getState" | "subscribe">;
+      const second = vi.fn();
+      const error = new Error("first failed");
+      const stopFirst = subscribeToLocationChange(controller, () => {
+        throw error;
+      });
+      const stopSecond = subscribeToLocationChange(controller, second);
+
+      location = loc("/next");
+      let thrown: unknown;
+      try {
+        notifyController();
+      } catch (current) {
+        thrown = current;
+      }
+      expect(thrown).toBe(error);
+      expect(second).toHaveBeenCalledWith(location.href);
+
+      stopFirst();
+      stopSecond();
+    });
+
+    it("aggregates every location-listener error after fan-out", () => {
+      let location = loc("/");
+      let notifyController!: () => void;
+      const controller = {
+        getState: () => ({ location }),
+        subscribe: vi.fn((listener: () => void) => {
+          notifyController = listener;
+          return vi.fn();
+        }),
+      } as unknown as Pick<EventController, "getState" | "subscribe">;
+      const firstError = new Error("first failed");
+      const secondError = new Error("second failed");
+      const third = vi.fn();
+      subscribeToLocationChange(controller, () => {
+        throw firstError;
+      });
+      subscribeToLocationChange(controller, () => {
+        throw secondError;
+      });
+      subscribeToLocationChange(controller, third);
+
+      location = loc("/next");
+      let thrown: unknown;
+      try {
+        notifyController();
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(AggregateError);
+      expect((thrown as AggregateError).errors).toEqual([
+        firstError,
+        secondError,
+      ]);
+      expect(third).toHaveBeenCalledOnce();
+    });
+
+    it("notifies raw controller subscribers after a location listener throws", () => {
+      const controller = createController();
+      const stopLocation = subscribeToLocationChange(controller, () => {
+        throw new Error("location failed");
+      });
+      const rawListener = vi.fn();
+      const stopRaw = controller.subscribe(rawListener);
+
+      controller.setLocation(loc("/next"));
+      expect(() => vi.runOnlyPendingTimers()).toThrow("location failed");
+      expect(rawListener).toHaveBeenCalledOnce();
+
+      stopLocation();
+      stopRaw();
+    });
+
+    it("does not notify a raw subscriber removed during dispatch", () => {
+      const controller = createController();
+      let stopSecond!: () => void;
+      const first = vi.fn(() => stopSecond());
+      const second = vi.fn();
+      const stopFirst = controller.subscribe(first);
+      stopSecond = controller.subscribe(second);
+
+      controller.setLocation(loc("/next"));
+      vi.runOnlyPendingTimers();
+
+      expect(first).toHaveBeenCalledOnce();
+      expect(second).not.toHaveBeenCalled();
+      stopFirst();
     });
   });
 
@@ -676,6 +898,65 @@ describe("createEventController", () => {
       expect(observed.length).toBeGreaterThan(0);
       expect(observed).toContain("idle");
     });
+
+    it("aggregates action-listener errors after debounced fan-out", () => {
+      const ctrl = createController();
+      const firstError = new Error("first action listener failed");
+      const secondError = new Error("second action listener failed");
+      const third = vi.fn();
+      ctrl.subscribeToAction("save", () => {
+        throw firstError;
+      });
+      ctrl.subscribeToAction("save", () => {
+        throw secondError;
+      });
+      ctrl.subscribeToAction("save", third);
+
+      ctrl.startAction("hash#save", []);
+      let thrown: unknown;
+      try {
+        vi.advanceTimersByTime(0);
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(AggregateError);
+      expect((thrown as AggregateError).errors).toEqual([
+        firstError,
+        secondError,
+      ]);
+      expect(third).toHaveBeenCalledOnce();
+    });
+
+    it("aggregates action-listener errors during abortAllActions", () => {
+      const ctrl = createController();
+      ctrl.startAction("hash#save", []);
+      vi.advanceTimersByTime(0);
+      const firstError = new Error("first abort listener failed");
+      const secondError = new Error("second abort listener failed");
+      const third = vi.fn();
+      ctrl.subscribeToAction("save", () => {
+        throw firstError;
+      });
+      ctrl.subscribeToAction("save", () => {
+        throw secondError;
+      });
+      ctrl.subscribeToAction("save", third);
+
+      let thrown: unknown;
+      try {
+        ctrl.abortAllActions();
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(AggregateError);
+      expect((thrown as AggregateError).errors).toEqual([
+        firstError,
+        secondError,
+      ]);
+      expect(third).toHaveBeenCalledOnce();
+    });
   });
 
   // ======================================================================
@@ -980,6 +1261,92 @@ describe("createEventController", () => {
     });
   });
 
+  // Issue #1035: a render React is hydrating reads the handle state the
+  // document's HTML was rendered with (useHandle), whenever its boundary
+  // hydrates. The controller keeps that state from before hydrateRoot.
+  describe("hydration handle state", () => {
+    it("is undefined until the live state moves on from the frozen one", () => {
+      const ctrl = createController();
+      expect(ctrl.getHydrationHandleState()).toBeUndefined();
+
+      ctrl.setHandleData({ Notes: { R0: ["document"] } }, ["R0"]);
+      ctrl.freezeHydrationHandleState();
+
+      // Nothing arrived since: the live state is the document's state.
+      expect(ctrl.getHydrationHandleState()).toBeUndefined();
+    });
+
+    it("keeps the frozen state after a late (full) update", () => {
+      const ctrl = createController();
+      ctrl.setHandleData({ Notes: { R0: ["document"] } }, ["L0", "R0"]);
+      ctrl.freezeHydrationHandleState();
+
+      ctrl.setHandleData({ Notes: { R0: ["document", "late"] } }, ["L0", "R0"]);
+
+      expect(ctrl.getHydrationHandleState()).toEqual({
+        data: { Notes: { R0: ["document"] } },
+        segmentOrder: ["L0", "R0"],
+        routeSegmentIds: ["L0", "R0"],
+      });
+      expect(ctrl.getHandleState().data).toEqual({
+        Notes: { R0: ["document", "late"] },
+      });
+    });
+
+    it("a partial update merges into the live state, not into the frozen one", () => {
+      const ctrl = createController();
+      ctrl.setHandleData(
+        { Notes: { L0: ["layout"], R0: ["document"] }, Meta: { R0: ["m"] } },
+        ["L0", "R0"],
+      );
+      ctrl.freezeHydrationHandleState();
+
+      // A navigation's partial payload: R0 re-resolved, pushed Notes only.
+      ctrl.setHandleData({ Notes: { R0: ["navigated"] } }, ["L0", "R0"], true, [
+        "R0",
+      ]);
+
+      expect(ctrl.getHydrationHandleState()?.data).toEqual({
+        Notes: { L0: ["layout"], R0: ["document"] },
+        Meta: { R0: ["m"] },
+      });
+      expect(ctrl.getHandleState().data).toEqual({
+        Notes: { L0: ["layout"], R0: ["navigated"] },
+        Meta: {},
+      });
+    });
+
+    // A back/forward restore installs the history cache's own object as the
+    // live state (NavigationProvider, cachedHandleData): a later partial
+    // update must not write into it.
+    it("a partial update never writes into the object the state was set from", () => {
+      const ctrl = createController();
+      const restored = { Notes: { L0: ["layout"], R0: ["entry"] } };
+      ctrl.setHandleData(restored, ["L0", "R0"]);
+
+      ctrl.setHandleData({ Notes: { R0: ["navigated"] } }, ["L0", "R0"], true, [
+        "R0",
+      ]);
+
+      expect(restored).toEqual({ Notes: { L0: ["layout"], R0: ["entry"] } });
+      expect(ctrl.getHandleState().data).toEqual({
+        Notes: { L0: ["layout"], R0: ["navigated"] },
+      });
+    });
+
+    it("a partial update that changes nothing still moves the live state on", () => {
+      const ctrl = createController();
+      ctrl.setHandleData({ Notes: { R0: ["document"] } }, ["R0"]);
+      ctrl.freezeHydrationHandleState();
+
+      ctrl.setHandleData({}, ["R0"], true);
+
+      expect(ctrl.getHydrationHandleState()?.data).toEqual({
+        Notes: { R0: ["document"] },
+      });
+    });
+  });
+
   // ======================================================================
   // Subscriptions & Debounced Notifications
   // ======================================================================
@@ -1010,6 +1377,147 @@ describe("createEventController", () => {
       expect(listener).toHaveBeenCalledTimes(1);
     });
 
+    it("flushes pending route-state notifications synchronously", () => {
+      const ctrl = createController();
+      const stateListener = vi.fn();
+      const handleListener = vi.fn();
+      ctrl.subscribe(stateListener);
+      ctrl.subscribeToHandles(handleListener);
+
+      ctrl.startNavigation("/about");
+      ctrl.setHandleData({}, ["R0"]);
+      expect(stateListener).not.toHaveBeenCalled();
+      expect(handleListener).not.toHaveBeenCalled();
+
+      ctrl.flushRouteState();
+      expect(stateListener).toHaveBeenCalledOnce();
+      expect(handleListener).toHaveBeenCalledOnce();
+
+      vi.advanceTimersByTime(0);
+      expect(stateListener).toHaveBeenCalledOnce();
+      expect(handleListener).toHaveBeenCalledOnce();
+    });
+
+    // #1029: the controller records the committed entry's location state and
+    // notifies nobody. NavigationProvider takes it with the payload; only a
+    // commit marked treeless rides the state notification.
+    it("a location-state commit records the entry's state and notifies only when it is treeless", () => {
+      const ctrl = createController();
+      const listener = vi.fn();
+      ctrl.subscribe(listener);
+      expect(ctrl.getLocationState()).toBeUndefined();
+      expect(ctrl.takeTreelessLocationState()).toBe(false);
+
+      // A commit a payload follows: recorded, no notification scheduled.
+      ctrl.commitLocationState({ state: { from: "list" }, idx: 1 });
+      expect(ctrl.getLocationState()).toEqual({ state: { from: "list" } });
+      vi.advanceTimersByTime(0);
+      expect(listener).not.toHaveBeenCalled();
+      expect(ctrl.takeTreelessLocationState()).toBe(false);
+
+      // A treeless one: the notification is the provider's cue, taken once.
+      ctrl.commitLocationState({ state: { from: "tab" }, idx: 2 }, true);
+      expect(listener).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(0);
+      expect(listener).toHaveBeenCalledOnce();
+      expect(ctrl.takeTreelessLocationState()).toBe(true);
+      expect(ctrl.takeTreelessLocationState()).toBe(false);
+      expect(ctrl.getLocationState()).toEqual({ state: { from: "tab" } });
+
+      // flushRouteState delivers it at once, as for location and params.
+      ctrl.commitLocationState(null, true);
+      ctrl.flushRouteState();
+      expect(listener).toHaveBeenCalledTimes(2);
+      expect(ctrl.getLocationState()).toBeUndefined();
+    });
+
+    it("the recorded state keeps its identity while every slot holds the value readers already have", () => {
+      const ctrl = createController();
+      ctrl.commitLocationState({
+        __rsc_ls_filter: { colors: ["red"] },
+        __rsc_ls_note: "a",
+        idx: 1,
+        key: "k1",
+      });
+      const first = ctrl.getLocationState()!;
+      expect(first).toEqual({
+        __rsc_ls_filter: { colors: ["red"] },
+        __rsc_ls_note: "a",
+      });
+
+      // Another entry (idx, key) carrying the reader's own object forward and
+      // an equal primitive: nothing a reader holds changed.
+      ctrl.commitLocationState({
+        __rsc_ls_filter: first.__rsc_ls_filter,
+        __rsc_ls_note: "a",
+        idx: 2,
+        key: "k2",
+      });
+      expect(ctrl.getLocationState()).toBe(first);
+
+      // One slot changes: a new snapshot, the other slot's value kept.
+      ctrl.commitLocationState({
+        __rsc_ls_filter: first.__rsc_ls_filter,
+        __rsc_ls_note: "b",
+      });
+      const second = ctrl.getLocationState()!;
+      expect(second).not.toBe(first);
+      expect(second.__rsc_ls_filter).toBe(first.__rsc_ls_filter);
+
+      // An equal object that is not the one readers hold is a new value: a
+      // link clicked twice announces its state twice.
+      ctrl.commitLocationState({
+        __rsc_ls_filter: { colors: ["red"] },
+        __rsc_ls_note: "b",
+      });
+      const third = ctrl.getLocationState()!;
+      expect(third.__rsc_ls_filter).toEqual(second.__rsc_ls_filter);
+      expect(third.__rsc_ls_filter).not.toBe(second.__rsc_ls_filter);
+
+      // A slot removed.
+      ctrl.commitLocationState({ __rsc_ls_note: "b" });
+      expect(ctrl.getLocationState()).toEqual({ __rsc_ls_note: "b" });
+    });
+
+    it("a new value is a copy of what the commit passed", () => {
+      const ctrl = createController();
+      const passed = { colors: ["red"] };
+      ctrl.commitLocationState({ __rsc_ls_filter: passed });
+      passed.colors.push("blue");
+      expect(ctrl.getLocationState()).toEqual({
+        __rsc_ls_filter: { colors: ["red"] },
+      });
+    });
+
+    it("aggregates every state-listener error after fan-out", () => {
+      const ctrl = createController();
+      const firstError = new Error("first state listener failed");
+      const secondError = new Error("second state listener failed");
+      const third = vi.fn();
+      ctrl.subscribe(() => {
+        throw firstError;
+      });
+      ctrl.subscribe(() => {
+        throw secondError;
+      });
+      ctrl.subscribe(third);
+
+      ctrl.startNavigation("/about");
+      let thrown: unknown;
+      try {
+        vi.advanceTimersByTime(0);
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(AggregateError);
+      expect((thrown as AggregateError).errors).toEqual([
+        firstError,
+        secondError,
+      ]);
+      expect(third).toHaveBeenCalledOnce();
+    });
+
     it("unsubscribe stops notifications", () => {
       const ctrl = createController();
       const listener = vi.fn();
@@ -1037,6 +1545,23 @@ describe("createEventController", () => {
           actionId: "hash#addToCart",
         }),
       );
+    });
+
+    it("reads each subscription state when its fan-out begins", () => {
+      const ctrl = createController();
+      const observed: unknown[] = [];
+      ctrl.subscribeToAction("hash#save", () => {
+        vi.setSystemTime(new Date(Date.now() + 1));
+        ctrl.startAction("new#save", ["new"]);
+      });
+      ctrl.subscribeToAction("save", (state) => {
+        observed.push(state.payload);
+      });
+
+      ctrl.startAction("hash#save", ["old"]);
+      vi.advanceTimersByTime(0);
+
+      expect(observed[0]).toEqual(["new"]);
     });
 
     it("subscribeToAction does not notify for non-matching action", () => {
@@ -1083,6 +1608,35 @@ describe("createEventController", () => {
       vi.advanceTimersByTime(0);
 
       expect(listener).not.toHaveBeenCalled();
+    });
+
+    it("aggregates every handle-listener error after fan-out", () => {
+      const ctrl = createController();
+      const firstError = new Error("first handle listener failed");
+      const secondError = new Error("second handle listener failed");
+      const third = vi.fn();
+      ctrl.subscribeToHandles(() => {
+        throw firstError;
+      });
+      ctrl.subscribeToHandles(() => {
+        throw secondError;
+      });
+      ctrl.subscribeToHandles(third);
+
+      ctrl.setHandleData({ title: { s: ["T"] } }, ["s"]);
+      let thrown: unknown;
+      try {
+        vi.advanceTimersByTime(0);
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(AggregateError);
+      expect((thrown as AggregateError).errors).toEqual([
+        firstError,
+        secondError,
+      ]);
+      expect(third).toHaveBeenCalledOnce();
     });
   });
 

@@ -3,6 +3,11 @@ import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 import type { HandlerContext } from "@rangojs/router";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
 import {
+  InlineLikeButton,
+  type InlineActionState,
+} from "../components/InlineLikeButton.js";
+import { buildInlineActionState } from "../inline-action-helpers.js";
+import {
   getBlogPosts,
   getBlogPost,
   BlogSidebarLoader,
@@ -51,6 +56,13 @@ export function BlogLayout(ctx: HandlerContext) {
 
   return (
     <div data-testid="blog-layout" style={{ display: "flex", gap: "2rem" }}>
+      {/* #957: a per-render token for the eviction e2e. The layout sits in the
+          ppr route's cache() record, so a HIT shows the token of the render
+          that wrote the record; a new token after updateTag() proves the
+          record was invalidated with the shell and re-rendered. */}
+      {shellProbe || asyncShellProbe ? (
+        <span hidden data-shell-render={crypto.randomUUID()} />
+      ) : null}
       {asyncShellProbe ? <AsyncShellTagger probe={asyncShellProbe} /> : null}
       <main style={{ flex: 1 }}>
         <Outlet />
@@ -302,6 +314,20 @@ export function BlogPostPage(ctx: HandlerContext<{ slug: string }>) {
     href: ctx.reverse("blogPost", { slug: post.slug }),
   });
 
+  // Inline "use server" like action embedded in this runtime-cached blog post.
+  // It closes over the post slug (frozen into the cache entry at cache-write);
+  // the body runs live on click. On a cache HIT the handler is not re-run, so the
+  // action must resolve from the stored Flight -- exercising the embedded-action
+  // path on a runtime cache hit.
+  const postSlug = post.slug;
+  async function likeBlogPost(
+    _prev: InlineActionState,
+    _formData: FormData,
+  ): Promise<InlineActionState> {
+    "use server";
+    return buildInlineActionState(postSlug);
+  }
+
   return (
     <article data-testid="blog-post-detail">
       <nav
@@ -346,6 +372,7 @@ export function BlogPostPage(ctx: HandlerContext<{ slug: string }>) {
       >
         {post.content}
       </div>
+      <InlineLikeButton capturedId={postSlug} action={likeBlogPost} />
       <footer
         data-testid="cache-info"
         style={{

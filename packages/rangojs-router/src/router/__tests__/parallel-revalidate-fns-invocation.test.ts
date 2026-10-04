@@ -402,6 +402,225 @@ describe("parallel revalidate() fns invocation matrix (main path)", () => {
   });
 });
 
+// A slot missing from clientSegmentIds has no client-side content to fall back
+// on, so #482's "consult user fns even when unknown" contract let a `false`
+// lower a `new-segment` seed and render component:null — a blank slot.
+// Contract pinned here: the fns still run, but may only RAISE the decision,
+// the same first-render guarantee loaders/layouts/orphans get for free.
+describe("new-segment floor: a false revalidate cannot blank an unrendered slot", () => {
+  const params = { mailboxId: "x", folder: "draft", emailId: "2" };
+  const prevParams = { mailboxId: "x", folder: "draft", emailId: "1" };
+  const request = new Request("http://localhost/mailbox/x/emails/draft/2");
+  const prevUrl = new URL("http://localhost/mailbox/x/emails/draft/1");
+  const nextUrl = new URL("http://localhost/mailbox/x/emails/draft/2");
+
+  /** Layout whose @panel slot renders a sentinel, with caller-supplied fns. */
+  function layoutWithSentinelSlot(
+    shortCode: string,
+    revalidateFns: unknown[],
+    handler: () => unknown,
+  ): EntryData {
+    const parallelEntry = {
+      id: `${shortCode}.parallel`,
+      type: "parallel",
+      shortCode: `${shortCode}P0`,
+      handler: { "@panel": handler },
+      loader: [],
+      layout: [],
+      parallel: {},
+      intercept: [],
+      middleware: [],
+      revalidate: revalidateFns,
+      errorBoundary: [],
+      notFoundBoundary: [],
+    } as any;
+    return {
+      id: shortCode,
+      type: "layout",
+      shortCode,
+      handler: () => null,
+      loader: [],
+      layout: [],
+      parallel: { "@panel": parallelEntry },
+      intercept: [],
+      middleware: [],
+      revalidate: [],
+      errorBoundary: [],
+      notFoundBoundary: [],
+      handle: [],
+    } as any;
+  }
+
+  it("belongsToRoute seed: revalidate(() => false) still renders the slot", async () => {
+    // The reported shape: the parallel is declared on the ROUTE entry
+    // (belongsToRoute=true), the client arrives from a sibling route so the
+    // slot id is absent, and the user opted the slot out of revalidation.
+    const hardFalse = vi.fn(() => false);
+    const handler = vi.fn(() => "PANEL_RESOLVED");
+    const layout = layoutWithSentinelSlot("L0", [hardFalse], handler);
+    const clientIds = new Set(["L0"]);
+
+    const result = await resolveParallelSegmentsWithRevalidation(
+      layout,
+      params,
+      makeContext(),
+      true, // belongsToRoute -> seed true ("new-segment")
+      clientIds,
+      prevParams,
+      request,
+      prevUrl,
+      nextUrl,
+      "mailbox.email",
+      makeDeps(),
+    );
+
+    // #482's contract survives: the fn is still consulted.
+    expect(hardFalse).toHaveBeenCalledTimes(1);
+    // ...but it cannot blank a slot with no client-side fallback.
+    expect(handler).toHaveBeenCalledTimes(1);
+    const panelSeg = result.segments.find((s) => s.id === "L0.@panel");
+    expect(panelSeg?.component).toBe("PANEL_RESOLVED");
+    expect(result.matchedIds).toContain("L0.@panel");
+  });
+
+  it("isNewParent seed: revalidate(() => false) still renders the slot", async () => {
+    // Parent layout itself is new to the client — its slot must come with it.
+    const hardFalse = vi.fn(() => false);
+    const handler = vi.fn(() => "PANEL_RESOLVED");
+    const layout = layoutWithSentinelSlot("L0", [hardFalse], handler);
+    const clientIds = new Set(["someOtherSegment"]);
+
+    const result = await resolveParallelSegmentsWithRevalidation(
+      layout,
+      params,
+      makeContext(),
+      false, // belongsToRoute=false; isNewParent=true carries the seed
+      clientIds,
+      prevParams,
+      request,
+      prevUrl,
+      nextUrl,
+      "mailbox.email",
+      makeDeps(),
+    );
+
+    expect(hardFalse).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledTimes(1);
+    const panelSeg = result.segments.find((s) => s.id === "L0.@panel");
+    expect(panelSeg?.component).toBe("PANEL_RESOLVED");
+  });
+
+  it("soft-false ({ defaultShouldRevalidate: false }) is floored the same way", async () => {
+    // Distinct path from the hard-false case above: a hard return exits
+    // evaluateRevalidation inside the fn loop, a soft one falls through to the
+    // soft-chain exit. The floor is applied at both.
+    const softFalse = vi.fn(() => ({ defaultShouldRevalidate: false }));
+    const handler = vi.fn(() => "PANEL_RESOLVED");
+    const layout = layoutWithSentinelSlot("L0", [softFalse], handler);
+
+    const result = await resolveParallelSegmentsWithRevalidation(
+      layout,
+      params,
+      makeContext(),
+      true,
+      new Set(["L0"]),
+      prevParams,
+      request,
+      prevUrl,
+      nextUrl,
+      "mailbox.email",
+      makeDeps(),
+    );
+
+    expect(softFalse).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledTimes(1);
+    const panelSeg = result.segments.find((s) => s.id === "L0.@panel");
+    expect(panelSeg?.component).toBe("PANEL_RESOLVED");
+  });
+
+  it("orphan path force-render seed: revalidate(() => false) still renders the slot", async () => {
+    const hardFalse = vi.fn(() => false);
+    const handler = vi.fn(() => "PANEL_RESOLVED");
+    const orphan = layoutWithSentinelSlot("O0", [hardFalse], handler);
+
+    const result = await resolveOrphanLayoutWithRevalidation(
+      orphan,
+      params,
+      makeContext(),
+      new Set(["O0"]),
+      prevParams,
+      request,
+      prevUrl,
+      nextUrl,
+      "mailbox.email",
+      false, // orphan seeds true REGARDLESS (the #482 blank-slot guard)
+      makeDeps(),
+    );
+
+    expect(hardFalse).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledTimes(1);
+    const panelSeg = result.segments.find((s) => s.id === "O0.@panel");
+    expect(panelSeg?.component).toBe("PANEL_RESOLVED");
+  });
+
+  // The two cases the clamp must NOT touch. Without these, "clamp to true"
+  // could silently widen into "parallel slots always render", which would
+  // defeat revalidate() on parallels entirely.
+  it("does NOT clamp when the client HAS the slot — revalidate(() => false) still skips", async () => {
+    // The steady-state case the user actually wants: the sidebar rendered
+    // once, is on the client, and must not be re-resolved on later navs.
+    const hardFalse = vi.fn(() => false);
+    const handler = vi.fn(() => "PANEL_RESOLVED");
+    const layout = layoutWithSentinelSlot("L0", [hardFalse], handler);
+
+    const result = await resolveParallelSegmentsWithRevalidation(
+      layout,
+      params,
+      makeContext(),
+      true, // belongsToRoute — but the slot IS on the client
+      new Set(["L0", "L0.@panel"]),
+      prevParams,
+      request,
+      prevUrl,
+      nextUrl,
+      "mailbox.email",
+      makeDeps(),
+    );
+
+    expect(hardFalse).toHaveBeenCalledTimes(1);
+    expect(handler).not.toHaveBeenCalled();
+    const panelSeg = result.segments.find((s) => s.id === "L0.@panel");
+    expect(panelSeg?.component).toBeNull();
+  });
+
+  it("does NOT clamp the skip-parent-chain seed — hard-false stays skipped", async () => {
+    // Seed is already false (parent known, slot not on client,
+    // belongsToRoute=false), so there is no new-segment guarantee to protect.
+    const hardFalse = vi.fn(() => false);
+    const handler = vi.fn(() => "PANEL_RESOLVED");
+    const layout = layoutWithSentinelSlot("L0", [hardFalse], handler);
+
+    const result = await resolveParallelSegmentsWithRevalidation(
+      layout,
+      params,
+      makeContext(),
+      false,
+      new Set(["L0"]),
+      prevParams,
+      request,
+      prevUrl,
+      nextUrl,
+      "mailbox.email",
+      makeDeps(),
+    );
+
+    expect(hardFalse).toHaveBeenCalledTimes(1);
+    expect(handler).not.toHaveBeenCalled();
+    const panelSeg = result.segments.find((s) => s.id === "L0.@panel");
+    expect(panelSeg?.component).toBeNull();
+  });
+});
+
 describe("parallel revalidate() fns invocation matrix (orphan layout path)", () => {
   const params = { mailboxId: "x", folder: "draft", emailId: "2" };
   const prevParams = { mailboxId: "x", folder: "draft", emailId: "1" };

@@ -37,3 +37,33 @@ describe("boundary resolution: orphan-layout siblings", () => {
     expect(findNearestNotFoundBoundary(route)).toBe(nb);
   });
 });
+
+describe("boundary resolution: a walk that starts at an orphan", () => {
+  // An orphan's parent is null; the walk continues at orphanOwner, the entry
+  // whose layout[] holds it (issue #898).
+  it("reaches the owner's ancestors through orphanOwner", () => {
+    const eb = createElement("div", null, "root-error");
+    const nb = createElement("div", null, "root-notfound");
+    const root = entry({ errorBoundary: [eb], notFoundBoundary: [nb] });
+    const owner = entry({ parent: root });
+    const orphan = entry({ orphanOwner: owner });
+    owner.layout.push(orphan);
+    expect(findNearestErrorBoundary(orphan)).toBe(eb);
+    expect(findNearestNotFoundBoundary(orphan)).toBe(nb);
+  });
+
+  it("an orphan's own boundary wins over its owner's", () => {
+    const own = createElement("div", null, "own");
+    const rootEb = createElement("div", null, "root");
+    const owner = entry({ errorBoundary: [rootEb] });
+    const orphan = entry({ errorBoundary: [own], orphanOwner: owner });
+    owner.layout.push(orphan);
+    expect(findNearestErrorBoundary(orphan)).toBe(own);
+  });
+
+  it("an entry with neither parent nor orphanOwner falls back to the default", () => {
+    const fallback = createElement("div", null, "default");
+    expect(findNearestErrorBoundary(entry({}), fallback)).toBe(fallback);
+    expect(findNearestNotFoundBoundary(entry({}))).toBeNull();
+  });
+});

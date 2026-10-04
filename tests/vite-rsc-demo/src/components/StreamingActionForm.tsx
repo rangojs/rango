@@ -1,12 +1,22 @@
 "use client";
 
-import { use, useActionState, Suspense, startTransition } from "react";
-import { StreamingAction } from "../actions/test.actions";
+import { use, useActionState, Suspense } from "react";
 import { useAction } from "@rangojs/router/client";
+import {
+  addToCartSlowly,
+  type StreamingCartResult,
+} from "../actions/streaming.actions.js";
+
 export const StreamingActionStatus = () => {
-  const status = useAction(StreamingAction);
+  // useAction needs the module reference directly; an action passed through
+  // RSC as a prop intentionally does not retain the metadata this hook reads.
+  const status = useAction(addToCartSlowly);
   console.log("StreamingActionStatus", status.state);
-  return <div>StreamingAction status: {status.state}</div>;
+  return (
+    <div data-testid="shop-streaming-status">
+      StreamingAction status: {status.state}
+    </div>
+  );
 };
 const getOwnProps = (item: any) => {
   const reflect = Reflect.ownKeys(item);
@@ -44,34 +54,22 @@ export const ActionStatus = ({
  */
 export function StreamingActionForm({
   productId,
-  action,
   children,
 }: {
   productId: string | number;
-  action: (productId: string, quantity?: number) => Promise<any>;
   children?: React.ReactNode;
 }) {
-  const [state, formAction, isPending] = useActionState(
-    async (_prevState: unknown, formData: FormData) => {
-      try {
-        console.log("StreamingActionForm data set", { isPending, state });
-        const result = await StreamingAction(formData);
-        console.log("[StreamingAction] Action result:", result);
-        return result;
-      } catch (error) {
-        console.error("[StreamingAction] Action error:", error);
-        return { success: false, error: String(error) };
-      }
-    },
-    null,
-  );
+  const [state, formAction, isPending] = useActionState(addToCartSlowly, null);
 
   return (
     <div>
       <form action={formAction}>
+        <input type="hidden" name="productId" value={String(productId)} />
+        <input type="hidden" name="quantity" value="1" />
         <button
           type="submit"
           disabled={isPending}
+          data-testid="shop-streaming-submit"
           style={{
             background: isPending ? "#ccc" : "#ff6b6b",
             color: "white",
@@ -86,7 +84,7 @@ export function StreamingActionForm({
           {isPending ? "Processing..." : <>{children}</>}
         </button>
       </form>
-      {state && "promise" in state && (
+      {state && (
         <div
           style={{
             marginTop: "1rem",
@@ -98,10 +96,10 @@ export function StreamingActionForm({
         >
           <Suspense
             fallback={
-              <div>
+              <div data-testid="shop-streaming-fallback">
                 <h4 style={{ margin: "0 0 0.5rem 0" }}>⏳ Streaming...</h4>
                 <p style={{ margin: 0, fontSize: "0.9rem" }}>
-                  Waiting for server to complete slow operation (10 seconds)...
+                  Waiting for the streamed server result...
                 </p>
                 <div
                   style={{
@@ -125,9 +123,7 @@ export function StreamingActionForm({
               </div>
             }
           >
-            <PromiseResolver
-              promise={(state as { promise: Promise<any> }).promise}
-            />
+            <PromiseResolver promise={state.promise} />
           </Suspense>
         </div>
       )}
@@ -138,11 +134,11 @@ export function StreamingActionForm({
 /**
  * Component that uses() a Promise - triggers Suspense
  */
-function PromiseResolver({ promise }: { promise: Promise<any> }) {
+function PromiseResolver({ promise }: { promise: Promise<React.ReactNode> }) {
   // use() hook suspends until Promise resolves
   const result = use(promise);
 
   console.log("[PromiseResolver] Promise resolved:", result);
 
-  return promise;
+  return <p data-testid="shop-streaming-result">{result}</p>;
 }

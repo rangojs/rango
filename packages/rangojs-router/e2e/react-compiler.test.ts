@@ -9,10 +9,13 @@ import { waitForHydration, expectNoPageError } from "./helper";
  * React Compiler verification for the e2e-basic app — the non-Cloudflare path,
  * where rango() itself supplies @vitejs/plugin-rsc.
  *
- * The compiler is wired exactly like the @vitejs/plugin-rsc example: a
- * top-level @rolldown/plugin-babel running reactCompilerPreset(), ordered after
- * react() and before rango() (see e2e-basic/vite.config.ts). plugin-react v6
- * runs oxc and no longer carries Babel, so the compiler must be its own plugin.
+ * The compiler is plugin-react's native `compiler` option, backed by
+ * oxc-transform-react (see e2e-basic/vite.config.ts). plugin-react's
+ * vite:react-compiler transform runs in every environment but passes
+ * `reactCompiler: false` when `consumer === "server"`, so client components are
+ * compiled and ssr/rsc are left untouched. With the option on, plugin-react also
+ * hands TypeScript, JSX and Fast Refresh to that same native pass and disables
+ * Vite's built-in refresh injection.
  *
  * This suite proves the compiler actually transformed components in BOTH dev and
  * production — not just that the config parses.
@@ -90,12 +93,12 @@ test.describe("react compiler (e2e-basic)", () => {
   test("dev: client component is compiled (memo-cache output)", async ({
     page,
   }) => {
-    // Fetch the dev-transformed client module straight from Vite. The compiler
-    // runs in the babel pipeline, so the served module carries the universal
-    // per-module signature: the react/compiler-runtime allocator import and a
-    // `_c(n)` memo-cache allocation. (The sentinel *comparison* form is only
-    // emitted for input-independent JSX, so it is asserted at the aggregate
-    // bundle level in production, not per-module here.)
+    // Fetch the dev-transformed client module straight from Vite. The served
+    // module carries the universal per-module signature: the
+    // react/compiler-runtime allocator import and a `_c(n)` memo-cache
+    // allocation. (The sentinel *comparison* form is only emitted for
+    // input-independent JSX, so it is asserted at the aggregate bundle level in
+    // production, not per-module here.)
     const res = await page.request.get(
       f.url("/src/components/UseHrefDemo.tsx"),
     );
@@ -103,6 +106,10 @@ test.describe("react compiler (e2e-basic)", () => {
     const source = await res.text();
     expect(source).toContain("compiler-runtime");
     expect(source).toMatch(/_c\(/);
+    // Fast Refresh comes from the same native pass (Vite's own refresh
+    // injection is off while `compiler` is on): a compiled module must still
+    // carry the refresh registration.
+    expect(source).toContain("$RefreshReg$(");
   });
 
   test("dev: compiled app still renders and hydrates", async ({ page }) => {
@@ -129,13 +136,12 @@ test.describe("react compiler (e2e-basic) (production)", () => {
     expect(readClientBundle()).toMatch(COMPILED_MARKER);
   });
 
-  test("production: server (rsc/ssr) bundles are NOT compiled (client-only preset)", () => {
-    // reactCompilerPreset() gates on `applyToEnvironmentHook: consumer ===
-    // "client"`, so only the client environment is compiled. The rsc/ssr
-    // bundles therefore carry React core's bare sentinel *definition*
-    // (`= Symbol.for(...)`) but never the compiled comparison form
-    // (`=== Symbol.for(...)`). Pinning this catches both a regression in our
-    // wiring and an upstream change to the preset's environment scope.
+  test("production: server (rsc/ssr) bundles are NOT compiled (client-only)", () => {
+    // Client-only gating is described in the file header. The rsc/ssr bundles
+    // carry React core's bare sentinel *definition* (`= Symbol.for(...)`) but
+    // never the compiled comparison form (`=== Symbol.for(...)`). Pinning this
+    // catches both a regression in our wiring and an upstream change to the
+    // option's environment scope.
     expect(readServerBundles()).not.toMatch(COMPILED_MARKER);
   });
 

@@ -1,5 +1,7 @@
 /// <reference types="@vitejs/plugin-rsc/types" />
-// Re-export @vitejs/plugin-rsc/rsc for internal use by virtual entries
+// Re-export the RSC-environment *server* runtime for virtual entries.
+// Prefer `@vitejs/plugin-rsc/rsc/server` over the combined `/rsc` barrel so
+// Vite can skip bundling the unused `react-server-dom` client protocol.
 export {
   renderToReadableStream,
   decodeReply,
@@ -7,4 +9,4 @@ export {
   loadServerAction,
   decodeAction,
   decodeFormState,
-} from "@vitejs/plugin-rsc/rsc";
+} from "@vitejs/plugin-rsc/rsc/server";

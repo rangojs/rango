@@ -5,9 +5,11 @@
  * `@vercel/functions`). It is the production store analogue to CFCacheStore, but
  * far smaller: Vercel's Runtime Cache already IS a distributed, tag-aware cache
  * (regional storage, global tag-expire within ~300ms), so none of CFCacheStore's
- * L1/L2 tiering, KV tag-marker comparison, marker memoization, or per-tier
- * timeout budgets are needed here - the platform does that work. What this store
- * adds on top of the raw primitive is the parts Vercel does NOT give us:
+ * L1/L2 tiering or per-tier timeout budgets are needed here - the platform does
+ * that work. Tag markers (`tm`, see isTagsInvalidatedSince) gate shell reads
+ * and writes and every cache write that started before an invalidation
+ * (#977); only PPR shell reads memoize them. What this
+ * store adds on top of the raw primitive is the parts Vercel does NOT give us:
  *
  *   1. Stale-while-revalidate. `getCache` has no stale-but-serve: a TTL'd entry
  *      simply becomes a miss. We store our own {staleAt, expiresAt} envelope and
@@ -21,7 +23,8 @@
  *   3. The platform guardrails: the 2 MB per-item ceiling (oversized writes
  *      silently no-op on Vercel, so we skip + report), the per-item tag cap, and
  *      cross-deploy non-reconciliation (TTL/tag updates are not reconciled across
- *      deployments - bake a build id into `version` or the getCache namespace).
+ *      deployments - every key carries the serving router's cache version, see
+ *      toStoreKey).
  *
  * Dependency stance: this module imports NOTHING from `@vercel/functions`. The
  * runtime cache handle (and `waitUntil`) are injected through the constructor and
@@ -40,14 +43,27 @@ import type {
   CacheItemOptions,
   ShellCacheEntry,
   ShellSnapshotRecord,
+  ShellDocumentRead,
+  ShellDocumentReadOptions,
+  ShellReadStats,
+  CacheReadError,
 } from "../types.js";
-import type { RequestContext } from "../../server/request-context.js";
+import { CACHE_READ_ERROR } from "../types.js";
+import {
+  _getRequestContext,
+  type RequestContext,
+} from "../../server/request-context.js";
+import {
+  versionKeyPrefix,
+  type KeyVersion,
+} from "../../server/build-version-table.js";
 import { isPerClientSignalHeader } from "../../browser/cookie-name.js";
 import {
   resolveTtl,
   resolveSwrWindow,
   computeExpiration,
   DEFAULT_FUNCTION_TTL,
+  staleShellRecaptureDue,
 } from "../cache-policy.js";
 import { reportCacheError, reportingAsync } from "../cache-error.js";
 import type { CacheErrorCategory } from "../cache-error.js";
@@ -59,7 +75,37 @@ import type { CacheErrorCategory } from "../cache-error.js";
 // byte-identical to a per-byte encoder (chunk size does not affect base64), so
 // this is a robustness fix, not a format change. Do NOT reintroduce a local
 // spread-based encoder or raise the chunk here; cf-base64.ts is import-pure.
-import { bufferToBase64, base64ToBuffer } from "../cf/cf-base64.js";
+import {
+  bufferToBase64,
+  base64ByteLength,
+  base64ToBuffer,
+  base64ToBytes,
+} from "../cf/cf-base64.js";
+import {
+  gateMarkerRead,
+  maskRequestTags,
+  maskedForRequest,
+} from "../request-tag-mask.js";
+import {
+  ShellMemo,
+  freshReadsWindowMs,
+  isShellFresh,
+  resolveShellMemoOptions,
+  shellHasAnyTag,
+  type ResolvedShellMemoOptions,
+  type StoreMemoOptions,
+} from "../shell-memo.js";
+import {
+  TagMarkerMemo,
+  TagNameHints,
+  hintedTags,
+  freshReadsRequired,
+  recordMarkerRow,
+  DEFAULT_VERCEL_MARKER_FRESH_MS,
+  DEFAULT_VERCEL_MARKER_MAX_STALE_MS,
+  type MarkerFetch,
+  type MarkerMemoOutcome,
+} from "../isolate-tag-memo.js";
 
 /**
  * Minimal structural shape of the Vercel Runtime Cache returned by `getCache()`
@@ -130,12 +176,26 @@ const REVALIDATION_LOCK_MS = 30_000;
 type CacheFamily = "s" | "i" | "r" | "h" | "tm";
 
 /**
+ * Which of the serving router's versions each family's keys carry
+ * (versionKeyPrefix). A tag marker carries none: an invalidation applies to
+ * every version, including one a rollback brings back.
+ */
+const FAMILY_VERSION: Record<CacheFamily, KeyVersion> = {
+  s: "data",
+  i: "data",
+  r: "document",
+  h: "document",
+  tm: null,
+};
+
+/**
  * TTL for tag-invalidation marker entries ("tm" family), written by
- * invalidateTags for the build-shell read-through's isTagsInvalidatedSince
- * gate. The platform's expireTag() DELETES tagged entries (no queryable
+ * invalidateTags for isTagsInvalidatedSince (the build-shell read-through,
+ * the shell write gate, and the write gate of cache executions, #977).
+ * The platform's expireTag() DELETES tagged entries (no queryable
  * history), so the markers are rango's own record of "tag X was invalidated
  * at T". One year: runtime tagged-shell retention is capped to this lifetime,
- * while buildVersion retires build shells on the next deploy. An expired marker
+ * while a build shell is replaced by the next build's. An expired marker
  * therefore cannot resurrect a runtime shell that outlived its invalidation.
  */
 const TAG_MARKER_TTL_SECONDS = 365 * 24 * 60 * 60;
@@ -148,6 +208,8 @@ interface VercelSegmentEnvelope {
   s: number;
   /** expiresAt (ms since epoch). */
   e: number;
+  /** Write time of a tagged entry (ms), for the request tag mask. */
+  ta?: number;
 }
 
 /** Stored envelope for a "use cache" function result (getItem/setItem). */
@@ -162,6 +224,8 @@ interface VercelItemEnvelope {
   e: number;
   /** Tags, surfaced on read so a hit still contributes to the document tag set. */
   t?: string[];
+  /** Write time of a tagged entry (ms), for the request tag mask. */
+  ta?: number;
 }
 
 /** Stored envelope for a full Response (getResponse/putResponse). */
@@ -178,18 +242,23 @@ interface VercelResponseEnvelope {
   e: number;
   /** Tags, preserved so a background revalidation re-write keeps them. */
   t?: string[];
+  /** Write time of a tagged entry (ms), for the request tag mask. */
+  ta?: number;
 }
 
 /** Stored envelope for a PPR shell entry (getShell/putShell). */
 interface VercelShellEnvelope {
-  /** base64-encoded prelude bytes. */
-  p: string;
-  /** postponed state JSON, or null (DATA variant). */
-  po: string | null;
+  /**
+   * base64-encoded prelude bytes. Absent iff `no` (navigationOnly entries
+   * store no document half — ShellCacheEntry.prelude).
+   */
+  p?: string;
+  /** postponed state JSON, or null (DATA variant). Absent iff `no`. */
+  po?: string | null;
   /** React.version at capture. */
   rv: string;
   /** Build version at capture (ShellCacheEntry.buildVersion). */
-  bv?: string;
+  bv: string;
   /** Capture-generation start time, used by tag marker checks. */
   c: number;
   /** staleAt (ms since epoch). */
@@ -200,22 +269,25 @@ interface VercelShellEnvelope {
   t?: string[];
   /** initialTheme the capture render was built with (resume theme fidelity). */
   i?: string;
-  /** Capture data snapshot: recorded cache-store hits/writes for HIT parity. */
-  sn?: ShellSnapshotRecord[];
+  /** Capture data snapshot (ShellCacheEntry.snapshot). */
+  sn: ShellSnapshotRecord[];
   /**
-   * ShellCacheEntry.handlerLiveHoles. Must round-trip: the serve side arms the
-   * handler-free fast path on `!entry.handlerLiveHoles`, so dropping the flag
-   * here silently fast-pathed handler-live entries after a store round trip —
-   * their holes only a handler re-run can fill.
+   * ShellCacheEntry.docKey. Must round-trip: navigation-replay eligibility
+   * requires the exact canonical doc segment record named here — dropping the
+   * field reads back as "no consumable record" and every partial navigation
+   * reports `no-segment-snapshot` after a store round trip.
    */
-  lh?: boolean;
-  /** ShellCacheEntry.transitionWhen; conditional transitions must re-run. */
-  tw?: true;
+  dk?: string;
+  /** ShellCacheEntry.prunedRecords (diagnostic). */
+  pr?: string;
+  /** ShellCacheEntry.navigationOnly; its partial-context prelude is not document-safe. */
+  no?: true;
 }
 
 /** Read-path outcome for the debug sink. */
 export type VercelCacheReadOutcome =
   | "miss"
+  | "memo-hit"
   | "fresh"
   | "stale-revalidate"
   | "expired"
@@ -245,22 +317,31 @@ export type VercelCacheDebug =
 export interface VercelCacheStoreOptions<TEnv = unknown> {
   /**
    * The Vercel Runtime Cache handle - `getCache()` from `@vercel/functions`.
-   * Required. Construct it with a build-hash namespace to bust stale-shaped
-   * entries across deployments, since Vercel does not reconcile TTL/tags between
-   * deploys:
+   * Required.
    *
    * ```ts
    * import { getCache } from "@vercel/functions";
-   * new VercelCacheStore({ cache: getCache({ namespace: BUILD_ID }) });
+   * new VercelCacheStore({ cache: getCache() });
    * ```
+   *
+   * Vercel does not reconcile entries between deployments; the store does it
+   * through its keys, which carry the serving router's cache versions (see
+   * `version`). So a deploy that changes a router's code stops reading that
+   * router's old entries, and a deploy that does not keeps them. A namespace
+   * that changes per deployment (`getCache({ namespace: VERCEL_DEPLOYMENT_ID })`)
+   * still works and clears the cache on every deploy, which is what you want
+   * only if you need that.
    */
   cache: VercelRuntimeCache;
 
   /**
-   * `waitUntil` from `@vercel/functions`. Used only to run the stale-read lock
-   * write (herd dampening) off the response path - the router already
-   * backgrounds the actual writes. When omitted, the lock write runs detached
-   * (fire-and-forget) instead.
+   * `waitUntil` from `@vercel/functions`. Keeps two background reads/writes
+   * alive past the response: the stale-read lock write (herd dampening; the
+   * router already backgrounds the actual writes) and the PPR shell reads'
+   * tag-marker memo refreshes (`memo.markerMaxStaleMs`). When omitted, both
+   * run detached (fire-and-forget), and the platform may end a refresh when
+   * the response ends; the next read past the stale window then reads the
+   * marker itself.
    */
   waitUntil?: (promise: Promise<unknown>) => void;
 
@@ -279,9 +360,15 @@ export interface VercelCacheStoreOptions<TEnv = unknown> {
   ) => string | Promise<string>;
 
   /**
-   * Build/version id folded into every stored key as `v/{version}/...`. A second
-   * cross-deploy busting layer in addition to (or instead of) the getCache
-   * namespace. Changing it invalidates everything this store wrote previously.
+   * Version override, folded into every versioned key as `v/{version}/...`.
+   * When set, this exact value is used for cached data and stored HTML alike;
+   * changing it makes everything this store wrote before unreachable.
+   *
+   * Leave it unset for the default: the store keys with the versions of the
+   * router serving the request, as CFCacheStore does. Segments and `"use
+   * cache"` items use the router's data version; responses and PPR shells use
+   * its document version (see `createRouter({ version })`). Tag markers are
+   * never versioned, so an invalidation applies to every version.
    */
   version?: string;
 
@@ -302,10 +389,74 @@ export interface VercelCacheStoreOptions<TEnv = unknown> {
    * receives the structured VercelCacheReadDebugEvent.
    */
   debug?: VercelCacheDebug;
+
+  /**
+   * Per-process memos ({@link StoreMemoOptions}), kept per `cache` handle:
+   * create the `getCache()` handle once per process, not per request, or the
+   * memos never hit. `shellMs` (default 2000) and `shellMaxBytes` (default
+   * 16 MiB) size the PPR shell memo; `markerFreshMs` (default 300) and
+   * `markerMaxStaleMs` (default 2000) the memo of the tag markers
+   * `invalidateTags()` writes, which PPR shell reads use
+   * (stale-while-revalidate). The process that invalidates writes the new
+   * marker into its memo; another process in the region rejects a memoized
+   * shell once its marker memo sees it (up to `markerMaxStaleMs`). The
+   * markers are a regional `cache.set` (only `expireTag` is global), so
+   * another region serves a shell it memoized before the invalidation until
+   * its window passes, where without the memo `expireTag` removes it within
+   * about 300 ms; a platform `expireTag` issued outside rango is likewise
+   * seen once the window passes. The response of a request that ran
+   * `updateTag()` / `revalidateTag()` sets the fresh-reads cookie, and the
+   * same user's requests carrying it skip both memos. `{ shellMs: 0 }` turns
+   * the shell memo off, `{ markerFreshMs: 0 }` the marker memo.
+   */
+  memo?: StoreMemoOptions;
+}
+
+/** A memoized fresh shell read (shell-memo.ts). */
+interface VercelShellMemoValue {
+  entry: ShellCacheEntry;
+  /** The prelude decoded by the first document read that needed it. */
+  preludeBytes?: Uint8Array;
+  tags?: string[];
+  createdAt: number;
+  staleAt: number;
+  expiresAt: number;
+}
+
+/**
+ * The per-process memos of one runtime-cache handle: memoized shells,
+ * tag-marker values, and shell tag-name hints. Kept per handle because the
+ * handle carries the namespace, so stores over different namespaces never
+ * share them.
+ */
+interface VercelHandleMemos {
+  shells: ShellMemo<VercelShellMemoValue>;
+  markers: TagMarkerMemo;
+  hints: TagNameHints;
+}
+
+const vercelHandleMemos = new WeakMap<VercelRuntimeCache, VercelHandleMemos>();
+
+function handleMemos(cache: VercelRuntimeCache): VercelHandleMemos {
+  let memos = vercelHandleMemos.get(cache);
+  if (!memos) {
+    memos = {
+      shells: new ShellMemo<VercelShellMemoValue>(),
+      markers: new TagMarkerMemo(),
+      hints: new TagNameHints(),
+    };
+    vercelHandleMemos.set(cache, memos);
+  }
+  return memos;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+/** The envelope's `ta` write stamp, on tagged entries only. */
+function tagStamp(tags: string[]): { ta?: number } {
+  return tags.length > 0 ? { ta: Date.now() } : {};
 }
 
 /**
@@ -326,8 +477,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * that propagates expireTag rejections does get the strict guarantee, which is
  * what the unit suite exercises.)
  *
- * Key hashing / family isolation. The store namespaces its three value tiers as
- * `rg:{s|i|r}:{key}` so segment, `"use cache"`, and response entries occupy
+ * Key hashing / family isolation. The store namespaces its value tiers as
+ * `rg:{s|i|r|h}:{key}` so segment, `"use cache"`, response and shell entries occupy
  * disjoint keyspaces. That separation is only as strong as the cache's
  * `keyHashFunction`: `getCache`'s default is djb2, which folds every key to 32
  * bits (8 hex chars), so at a large live-key count a collision can let one
@@ -341,12 +492,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * import { getCache, waitUntil } from "@vercel/functions";
  * import { VercelCacheStore } from "@rangojs/router/cache";
  *
+ * // One handle per process: getCache() resolves the platform cache on every
+ * // call, and the PPR shell and tag-marker memos are kept per handle.
+ * // No deployment id in the namespace: the store's keys carry the serving
+ * // router's cache versions, so a deploy keeps what its code did not change.
+ * const runtimeCache = getCache();
+ *
  * export const router = createRouter({
  *   cache: () => ({
  *     store: new VercelCacheStore({
- *       // `process.env` (not `import.meta.env`, which needs a VITE_ prefix and
- *       // would be undefined here) so cross-deploy busting via `version` works.
- *       cache: getCache({ namespace: process.env.VERCEL_DEPLOYMENT_ID }),
+ *       cache: runtimeCache,
  *       waitUntil,
  *       defaults: { ttl: 60, swr: 300 },
  *     }),
@@ -366,8 +521,19 @@ export class VercelCacheStore<
 
   private readonly cache: VercelRuntimeCache;
   private readonly waitUntil?: (promise: Promise<unknown>) => void;
-  private readonly version?: string;
+  /** The `version` option: used for every versioned family when set. */
+  private readonly explicitVersion?: string;
   private readonly maxItemBytes: number;
+  private readonly memo: ResolvedShellMemoOptions;
+  private readonly handleMemos: VercelHandleMemos;
+  /** @internal SegmentCacheStore.freshReadsWindowMs */
+  readonly freshReadsWindowMs: number;
+  /**
+   * @internal SegmentCacheStore.maxShellEntryBytes: the item cap, less the
+   * base64 expansion of the prelude the shell envelope stores (the capture
+   * measures raw prelude bytes).
+   */
+  readonly maxShellEntryBytes: number;
   private readonly name?: string;
   private readonly debug?: VercelCacheDebug;
 
@@ -381,15 +547,22 @@ export class VercelCacheStore<
     this.waitUntil = options.waitUntil;
     this.defaults = options.defaults;
     this.keyGenerator = options.keyGenerator;
-    this.version = options.version;
+    this.explicitVersion = options.version;
     this.maxItemBytes = options.maxItemBytes ?? VERCEL_MAX_ITEM_BYTES;
+    this.maxShellEntryBytes = Math.floor((this.maxItemBytes * 3) / 4);
+    this.memo = resolveShellMemoOptions(options.memo, {
+      markerFreshMs: DEFAULT_VERCEL_MARKER_FRESH_MS,
+      markerMaxStaleMs: DEFAULT_VERCEL_MARKER_MAX_STALE_MS,
+    });
+    this.handleMemos = handleMemos(options.cache);
+    this.freshReadsWindowMs = freshReadsWindowMs(this.memo, true);
     this.name = options.name;
     this.debug = options.debug;
   }
 
   // --- Segment family (get/set/delete) ---
 
-  async get(key: string): Promise<CacheGetResult | null> {
+  async get(key: string): Promise<CacheGetResult | null | CacheReadError> {
     const storeKey = this.toStoreKey(key, "s");
     const started = Date.now();
     let raw: unknown;
@@ -398,7 +571,9 @@ export class VercelCacheStore<
     } catch (error) {
       reportCacheError(error, "cache-read", "[VercelCacheStore] get");
       this.emitDebug({ op: "get", key, outcome: "error" });
-      return null;
+      // Distinct from a miss so the PPR replay composition renders uncached
+      // instead of substituting the seeded doc record (CACHE_READ_ERROR).
+      return CACHE_READ_ERROR;
     }
     const readMs = Date.now() - started;
 
@@ -429,6 +604,9 @@ export class VercelCacheStore<
         expiresAt: env.e,
         readMs,
       });
+      return null;
+    }
+    if (this.maskedMiss("get", key, { t: env.d.tags, ta: env.ta }, readMs)) {
       return null;
     }
 
@@ -467,7 +645,12 @@ export class VercelCacheStore<
       const d: CachedEntryData = data.tags
         ? { ...data, tags: safeTags.length > 0 ? safeTags : undefined }
         : data;
-      const env: VercelSegmentEnvelope = { d, s: staleAt, e: expiresAt };
+      const env: VercelSegmentEnvelope = {
+        d,
+        s: staleAt,
+        e: expiresAt,
+        ...tagStamp(safeTags),
+      };
       await this.write(
         this.toStoreKey(key, "s"),
         env,
@@ -538,6 +721,7 @@ export class VercelCacheStore<
       });
       return null;
     }
+    if (this.maskedMiss("getResponse", key, env, readMs)) return null;
 
     // Reconstruct the Response BEFORE claiming revalidation. A corrupt body
     // (e.g. invalid base64 from base64ToBuffer, or bad header entries) would
@@ -613,6 +797,7 @@ export class VercelCacheStore<
         s: staleAt,
         e: expiresAt,
         t: safeTags.length > 0 ? safeTags : undefined,
+        ...tagStamp(safeTags),
       };
       await this.write(
         this.toStoreKey(key, "r"),
@@ -670,6 +855,7 @@ export class VercelCacheStore<
       });
       return null;
     }
+    if (this.maskedMiss("getItem", key, env, readMs)) return null;
 
     const isStale = env.s > 0 && now > env.s;
     const shouldRevalidate = isStale
@@ -717,6 +903,7 @@ export class VercelCacheStore<
         s: staleAt,
         e: expiresAt,
         t: safeTags.length > 0 ? safeTags : undefined,
+        ...tagStamp(safeTags),
       };
       await this.write(
         this.toStoreKey(key, "i"),
@@ -736,8 +923,140 @@ export class VercelCacheStore<
     key: string,
     options?: { claimRevalidation?: boolean },
   ): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null> {
+    const read = await this.readShell(key, options, undefined);
+    return read
+      ? { entry: read.entry, shouldRevalidate: read.shouldRevalidate }
+      : null;
+  }
+
+  /**
+   * @internal The document serve path's read (SegmentCacheStore
+   * .readShellDocument): the same read as getShell, with the prelude decoded
+   * here, once per memoized shell rather than once per HIT, and the read's
+   * `debugPerformance` stats. The runtime cache returns a parsed value, so
+   * there is no prelude-first read and the tag-marker read follows the entry
+   * read (`markerSerial`).
+   */
+  async readShellDocument(
+    key: string,
+    options?: ShellDocumentReadOptions,
+  ): Promise<ShellDocumentRead | null> {
+    const stats: ShellReadStats | undefined = _getRequestContext()
+      ?._metricsStore
+      ? { tier: "store" }
+      : undefined;
+    const read = await this.readShell(key, undefined, stats, options?.tagHints);
+    if (!read) return null;
+    const { entry, memoized } = read;
+    let prelude: Uint8Array;
+    if (entry.prelude === undefined) {
+      prelude = new Uint8Array(0);
+    } else if (memoized?.preludeBytes) {
+      prelude = memoized.preludeBytes;
+    } else {
+      try {
+        prelude = base64ToBytes(entry.prelude);
+      } catch (error) {
+        const storeKey = this.toStoreKey(key, "h");
+        reportCacheError(
+          error,
+          "cache-corrupt",
+          "[VercelCacheStore] getShell: undecodable prelude, evicting",
+        );
+        this.handleMemos.shells.delete(storeKey);
+        void this.safeDelete(storeKey);
+        return null;
+      }
+      if (memoized) memoized.preludeBytes = prelude;
+    }
+    if (stats) stats.preludeBytes = prelude.length;
+    const { prelude: _prelude, snapshot, ...rest } = entry;
+    return {
+      entry: rest,
+      prelude,
+      shouldRevalidate: read.shouldRevalidate,
+      snapshot: Promise.resolve(snapshot),
+      ...(stats && { stats }),
+    };
+  }
+
+  /** @internal SegmentCacheStore.dropShellMemo */
+  dropShellMemo(key: string): void {
+    this.handleMemos.shells.delete(this.toStoreKey(key, "h"));
+  }
+
+  /**
+   * getShell's read, shared with readShellDocument: the shell memo first
+   * (shell-memo.ts), then the runtime cache. A memoized shell still runs the
+   * tag-marker check; `memoized` is the memo slot's value when the read came
+   * from, or went into, the memo (readShellDocument keeps the decoded prelude
+   * there).
+   */
+  private async readShell(
+    key: string,
+    options: { claimRevalidation?: boolean } | undefined,
+    stats: ShellReadStats | undefined,
+    routeTags?: readonly string[],
+  ): Promise<{
+    entry: ShellCacheEntry;
+    shouldRevalidate: boolean;
+    memoized?: VercelShellMemoValue;
+  } | null> {
     const storeKey = this.toStoreKey(key, "h");
+    const memo = this.handleMemos.shells;
+    // A request after the same user's updateTag() reads past the memos.
+    const freshReads = freshReadsRequired(_getRequestContext());
+    if (stats && freshReads) stats.freshReads = true;
+    const outcomes = stats ? new Map<string, MarkerMemoOutcome>() : undefined;
+    const prefetched = this.prefetchShellMarkers(
+      storeKey,
+      routeTags,
+      stats,
+      outcomes,
+    );
+    const memoized = freshReads
+      ? undefined
+      : memo.get(storeKey, this.memo.shellMs);
+    if (memoized) {
+      if (isShellFresh(memoized.staleAt, memoized.expiresAt)) {
+        if (stats) stats.tier = "memo";
+        // The marker check is what decides whether a memoized shell may be
+        // served; it runs on every read, memoized or not.
+        if (
+          await this.shellTagsInvalidated(
+            memoized.tags,
+            memoized.createdAt,
+            stats,
+            prefetched,
+            outcomes,
+          )
+        ) {
+          memo.delete(storeKey);
+          void this.safeDelete(storeKey);
+          this.emitDebug({ op: "getShell", key, outcome: "miss" });
+          return null;
+        }
+        if (stats) stats.memo = { hit: true, bytes: memo.size };
+        this.emitDebug({
+          op: "getShell",
+          key,
+          outcome: "memo-hit",
+          staleAt: memoized.staleAt,
+          expiresAt: memoized.expiresAt,
+        });
+        return {
+          entry: memoized.entry,
+          shouldRevalidate: false,
+          memoized,
+        };
+      }
+      memo.delete(storeKey);
+    }
+    if (stats && this.memo.shellMs > 0) {
+      stats.memo = { hit: false, bytes: memo.size };
+    }
     const started = Date.now();
+    const readStartedAt = stats ? performance.now() : 0;
     let raw: unknown;
     try {
       raw = await this.cache.get(storeKey);
@@ -753,6 +1072,13 @@ export class VercelCacheStore<
       return null;
     }
     const env = this.asShellEnvelope(this.decodeRaw(raw));
+    if (stats) {
+      const readAt = performance.now();
+      stats.matchMs = readAt - readStartedAt;
+      if (stats.markerHintStartedAt !== undefined) {
+        stats.markerLeadMs = readAt - stats.markerHintStartedAt;
+      }
+    }
     if (!env) {
       reportCacheError(
         new Error("malformed shell envelope"),
@@ -778,10 +1104,9 @@ export class VercelCacheStore<
       return null;
     }
 
+    this.handleMemos.hints.remember(storeKey, env.t);
     if (
-      env.t &&
-      env.t.length > 0 &&
-      (await this.isTagsInvalidatedSince(env.t, env.c))
+      await this.shellTagsInvalidated(env.t, env.c, stats, prefetched, outcomes)
     ) {
       void this.safeDelete(storeKey);
       this.emitDebug({ op: "getShell", key, outcome: "miss", readMs });
@@ -790,7 +1115,14 @@ export class VercelCacheStore<
 
     const isStale = env.s > 0 && now > env.s;
     let shouldRevalidate = isStale;
-    if (isStale && options?.claimRevalidation !== false) {
+    // Inside the recapture floor the serve path schedules nothing, so the
+    // lock is left for the first stale read past it: claimed here, it held
+    // the shell REVALIDATION_LOCK_MS without a recapture.
+    if (
+      isStale &&
+      options?.claimRevalidation !== false &&
+      staleShellRecaptureDue({ createdAt: env.c }, now)
+    ) {
       shouldRevalidate = await this.claimRevalidation(
         storeKey,
         env.e,
@@ -806,20 +1138,132 @@ export class VercelCacheStore<
       expiresAt: env.e,
       readMs,
     });
-    return {
-      entry: {
-        prelude: env.p,
-        postponed: env.po,
-        reactVersion: env.rv,
-        buildVersion: env.bv,
-        initialTheme: env.i,
-        snapshot: env.sn,
-        handlerLiveHoles: env.lh,
-        transitionWhen: env.tw,
-        createdAt: env.c,
-      },
-      shouldRevalidate,
+    const entry: ShellCacheEntry = {
+      prelude: env.p,
+      postponed: env.po,
+      reactVersion: env.rv,
+      buildVersion: env.bv,
+      initialTheme: env.i,
+      snapshot: env.sn,
+      docKey: env.dk,
+      prunedRecords: env.pr,
+      navigationOnly: env.no,
+      createdAt: env.c,
     };
+    if (isStale) return { entry, shouldRevalidate };
+    const value: VercelShellMemoValue = {
+      entry,
+      tags: env.t,
+      createdAt: env.c,
+      staleAt: env.s,
+      expiresAt: env.e,
+    };
+    // Counted: the envelope, plus the decoded prelude readShellDocument
+    // attaches to the slot on first use.
+    memo.set(
+      storeKey,
+      value,
+      (typeof raw === "string" ? raw.length : JSON.stringify(env).length) +
+        (env.p === undefined ? 0 : base64ByteLength(env.p)),
+      this.memo.shellMs,
+      this.memo.shellMaxBytes,
+    );
+    return { entry, shouldRevalidate, memoized: value };
+  }
+
+  /**
+   * The shell's tag-marker check, timed into `stats`. Markers a prefetch
+   * already started (hinted tags) are awaited, not re-read; the check itself
+   * always uses the entry's own tags.
+   */
+  private async shellTagsInvalidated(
+    tags: string[] | undefined,
+    createdAt: number,
+    stats: ShellReadStats | undefined,
+    prefetched: Map<string, Promise<number | null>> | undefined,
+    outcomes: Map<string, MarkerMemoOutcome> | undefined,
+  ): Promise<boolean> {
+    if (stats) {
+      stats.tags = tags?.length ?? 0;
+      stats.markerSerial = true;
+    }
+    if (!tags || tags.length === 0) {
+      if (stats) stats.markerMs = stats.markerWaitMs = 0;
+      return false;
+    }
+    const startedAt = stats ? performance.now() : 0;
+    const invalidated = await this.tagsInvalidatedSince(
+      tags,
+      createdAt,
+      true,
+      prefetched,
+      outcomes,
+    );
+    if (stats) {
+      stats.markerMs = stats.markerWaitMs = performance.now() - startedAt;
+      recordMarkerRow(stats, tags, outcomes);
+    }
+    return invalidated;
+  }
+
+  /**
+   * Start the tm-marker reads of the tags this shell key carried last time
+   * (and the route's static tags) alongside the entry read.
+   */
+  private prefetchShellMarkers(
+    storeKey: string,
+    routeTags: readonly string[] | undefined,
+    stats: ShellReadStats | undefined,
+    outcomes: Map<string, MarkerMemoOutcome> | undefined,
+  ): Map<string, Promise<number | null>> | undefined {
+    const tags = hintedTags(this.handleMemos.hints.get(storeKey), routeTags);
+    if (tags.length === 0) return undefined;
+    if (stats) {
+      stats.markerHinted = tags;
+      stats.markerHintStartedAt = performance.now();
+    }
+    const prefetched = new Map<string, Promise<number | null>>();
+    for (const tag of tags) {
+      const read = this.readTagMarker(tag, true, outcomes);
+      read.catch(() => {});
+      prefetched.set(tag, read);
+    }
+    return prefetched;
+  }
+
+  /**
+   * A tag's latest invalidatedAt (or null). With `isolateMemo` (PPR shell
+   * reads only) through the per-process marker memo (isolate-tag-memo.ts):
+   * fresh values are used as is, stale ones are used and refreshed in the
+   * background, older ones block on the runtime-cache read. A request
+   * carrying the fresh-reads cookie skips the memo. A failed read rejects and
+   * is never memoized. The shell write gate, build shells and the data
+   * write gates (isTagsInvalidatedSince) read the runtime cache each time
+   * they ask; gates of a request asking while a read is in flight share it
+   * (gateMarkerRead), and nothing is kept once it settles.
+   */
+  private async readTagMarker(
+    tag: string,
+    isolateMemo: boolean,
+    outcomes?: Map<string, MarkerMemoOutcome>,
+  ): Promise<number | null> {
+    const key = this.toStoreKey(tag, "tm");
+    const read = async (): Promise<MarkerFetch> => {
+      const raw = await this.cache.get(key);
+      const decoded =
+        raw == null ? null : (this.decodeRaw(raw) as { at?: unknown } | null);
+      const value =
+        decoded && typeof decoded.at === "number" ? decoded.at : null;
+      return { value, memoize: true };
+    };
+    if (!isolateMemo) return (await read()).value;
+    return this.handleMemos.markers.readThrough(key, read, {
+      freshMs: this.memo.markerFreshMs,
+      maxStaleMs: this.memo.markerMaxStaleMs,
+      bypass: freshReadsRequired(_getRequestContext()),
+      keepAlive: this.waitUntil,
+      onOutcome: outcomes ? (outcome) => outcomes.set(tag, outcome) : undefined,
+    });
   }
 
   async putShell(
@@ -829,6 +1273,9 @@ export class VercelCacheStore<
     swrSeconds?: number,
     tags?: string[],
   ): Promise<"stored" | "invalidated" | void> {
+    // This instance serves its own new capture from the next read on.
+    this.handleMemos.shells.delete(this.toStoreKey(key, "h"));
+    this.handleMemos.hints.remember(this.toStoreKey(key, "h"), tags);
     try {
       const ttl = resolveTtl(ttlSeconds, this.defaults, DEFAULT_FUNCTION_TTL);
       const swrWindow = resolveSwrWindow(swrSeconds, this.defaults);
@@ -853,8 +1300,11 @@ export class VercelCacheStore<
           ? Math.min(totalTtl, TAG_MARKER_TTL_SECONDS)
           : totalTtl;
       const env: VercelShellEnvelope = {
-        p: entry.prelude,
-        po: entry.postponed,
+        // Presence-keyed: a navigationOnly entry has no document half, and an
+        // omitted key (vs an explicit undefined) also keeps it out of the
+        // serialized JSON.
+        ...(entry.prelude !== undefined ? { p: entry.prelude } : {}),
+        ...(entry.postponed !== undefined ? { po: entry.postponed } : {}),
         rv: entry.reactVersion,
         bv: entry.buildVersion,
         c: entry.createdAt,
@@ -863,8 +1313,9 @@ export class VercelCacheStore<
         t: safeTags.length > 0 ? safeTags : undefined,
         i: entry.initialTheme,
         sn: entry.snapshot,
-        lh: entry.handlerLiveHoles,
-        tw: entry.transitionWhen,
+        dk: entry.docKey,
+        pr: entry.prunedRecords,
+        no: entry.navigationOnly,
       };
       // write() enforces the 2 MB per-item ceiling (withinSizeLimit): an
       // oversized shell prelude is reported and skipped (fail-open to a full
@@ -885,24 +1336,62 @@ export class VercelCacheStore<
   // --- Tags ---
 
   /**
-   * Shell tag-generation gate (SegmentCacheStore.isTagsInvalidatedSince).
-   * expireTag() keeps no queryable history, so invalidateTags() writes "tm"
-   * markers for runtime capture races and immutable build shells. Marker >=
-   * generation start wins; read errors fail open like the CF marker check.
+   * SegmentCacheStore.isTagsInvalidatedSince. expireTag() keeps no queryable
+   * history, so invalidateTags() writes "tm" markers for runtime capture
+   * races, immutable build shells and data writes that started before an
+   * invalidation (#977, tag-invalidation.ts predatesInvalidation). Marker >=
+   * generation start wins. Read errors fail open like the CF marker check,
+   * except for the write gate (`failClosed`), which counts them as an
+   * invalidation. Each tag's marker is read through gateMarkerRead
+   * (request-tag-mask.ts): gates asking while a read is in flight share it.
    */
   async isTagsInvalidatedSince(
     tags: string[],
     sinceMs: number,
+    options?: { failClosed?: boolean },
   ): Promise<boolean> {
+    if (this.maskedForRequest(tags, sinceMs)) return true;
+    const ctx = _getRequestContext();
+    const reads = new Map(
+      tags.map((tag) => [
+        tag,
+        gateMarkerRead(ctx, this, tag, sinceMs, () =>
+          this.readTagMarker(tag, false),
+        ),
+      ]),
+    );
+    return this.tagsInvalidatedSince(
+      tags,
+      sinceMs,
+      false,
+      reads,
+      undefined,
+      options?.failClosed === true,
+    );
+  }
+
+  private async tagsInvalidatedSince(
+    tags: string[],
+    sinceMs: number,
+    isolateMemo: boolean,
+    prefetched?: Map<string, Promise<number | null>>,
+    outcomes?: Map<string, MarkerMemoOutcome>,
+    /** What a failed marker read answers: true for the write gate (#977). */
+    failClosed = false,
+  ): Promise<boolean> {
+    if (this.maskedForRequest(tags, sinceMs)) return true;
     try {
       const markers = await Promise.all(
-        tags.map((tag) => this.cache.get(this.toStoreKey(tag, "tm"))),
+        tags.map(
+          (tag) =>
+            prefetched?.get(tag) ??
+            this.readTagMarker(tag, isolateMemo, outcomes),
+        ),
       );
-      for (const raw of markers) {
-        if (raw == null) continue;
-        const decoded = this.decodeRaw(raw) as { at?: unknown } | null;
-        const at =
-          decoded && typeof decoded.at === "number" ? decoded.at : null;
+      // A read in flight when this request invalidated one of the tags
+      // resolved to the marker before it.
+      if (this.maskedForRequest(tags, sinceMs)) return true;
+      for (const at of markers) {
         if (at !== null && at >= sinceMs) return true;
       }
       return false;
@@ -912,12 +1401,18 @@ export class VercelCacheStore<
         "cache-read",
         "[VercelCacheStore] tag invalidation check",
       );
-      return false;
+      return failClosed;
     }
   }
 
   async invalidateTags(tags: string[]): Promise<void> {
     if (!tags || tags.length === 0) return;
+    // Every memo hit reads the tag markers, so a read in flight that memoizes
+    // one of these shells again is rejected on its next hit once the markers
+    // below land (no in-flight record needed, unlike KV-less CFCacheStore).
+    this.handleMemos.shells.deleteWhere((shell) =>
+      shellHasAnyTag(shell.tags, tags),
+    );
     // No per-item cap here: an invalidation must reach every requested tag.
     const safe = this.validateTags(
       tags,
@@ -925,6 +1420,8 @@ export class VercelCacheStore<
       "cache-invalidate",
     );
     if (safe.length === 0) return;
+    const at = Date.now();
+    this.maskTagsForRequest(safe, at);
     // Marker writes FIRST, and strict: isTagsInvalidatedSince() is how an
     // updateTag() reaches a build-time shell entry (expireTag cannot delete
     // what lives in the build manifest), so a failed marker write must reject
@@ -932,13 +1429,14 @@ export class VercelCacheStore<
     // the baked shell keeps serving.
     await Promise.all(
       safe.map((tag) =>
-        this.cache.set(
-          this.toStoreKey(tag, "tm"),
-          JSON.stringify({ at: Date.now() }),
-          { ttl: TAG_MARKER_TTL_SECONDS },
-        ),
+        this.cache.set(this.toStoreKey(tag, "tm"), JSON.stringify({ at }), {
+          ttl: TAG_MARKER_TTL_SECONDS,
+        }),
       ),
     );
+    // Same process: later reads here see the invalidation at once.
+    const { markers } = this.handleMemos;
+    for (const tag of safe) markers.store(this.toStoreKey(tag, "tm"), at);
     try {
       await this.cache.expireTag(safe);
     } catch (error) {
@@ -957,6 +1455,40 @@ export class VercelCacheStore<
     }
   }
 
+  /**
+   * The request-local half of invalidateTags(), run before its first await
+   * (#973): the request masks the tags (request-tag-mask.ts). The platform's
+   * expireTag() and the tm marker writes are what other requests see, and
+   * revalidateTag() does not wait for them.
+   */
+  private maskTagsForRequest(tags: string[], at: number): void {
+    const ctx = _getRequestContext();
+    if (ctx) maskRequestTags(ctx, this, tags, at);
+  }
+
+  /**
+   * Whether this request masked one of `tags` through this store at or after
+   * `taggedAt`. An entry without a stamp counts as older than any mask.
+   */
+  private maskedForRequest(
+    tags: string[] | undefined,
+    taggedAt: number | undefined,
+  ): boolean {
+    return maskedForRequest(_getRequestContext(), this, tags, taggedAt ?? 0);
+  }
+
+  /** A data read's mask check: reports the miss and returns true when masked. */
+  private maskedMiss(
+    op: "get" | "getItem" | "getResponse",
+    key: string,
+    env: { t?: string[]; ta?: number },
+    readMs: number,
+  ): boolean {
+    if (!this.maskedForRequest(env.t, env.ta)) return false;
+    this.emitDebug({ op, key, outcome: "miss", readMs });
+    return true;
+  }
+
   // --- Internals ---
 
   // The `rg:{family}:` prefix keeps the three value tiers in disjoint
@@ -966,8 +1498,7 @@ export class VercelCacheStore<
   // cross-family one reads as corrupt. See the class doc for passing a wider
   // hash (sha256) when many keys are live.
   private toStoreKey(key: string, family: CacheFamily): string {
-    const versionPrefix = this.version ? `v/${this.version}/` : "";
-    return `${versionPrefix}rg:${family}:${key}`;
+    return `${versionKeyPrefix(this.explicitVersion, FAMILY_VERSION[family])}rg:${family}:${key}`;
   }
 
   private async write(
@@ -1165,7 +1696,7 @@ export class VercelCacheStore<
 
   private asSegmentEnvelope(raw: unknown): VercelSegmentEnvelope | null {
     if (!isRecord(raw)) return null;
-    const { d, s, e } = raw;
+    const { d, s, e, ta } = raw;
     if (
       !isRecord(d) ||
       !Array.isArray((d as Record<string, unknown>).segments)
@@ -1173,12 +1704,17 @@ export class VercelCacheStore<
       return null;
     }
     if (typeof s !== "number" || typeof e !== "number") return null;
-    return { d: d as unknown as CachedEntryData, s, e };
+    return {
+      d: d as unknown as CachedEntryData,
+      s,
+      e,
+      ta: typeof ta === "number" ? ta : undefined,
+    };
   }
 
   private asItemEnvelope(raw: unknown): VercelItemEnvelope | null {
     if (!isRecord(raw)) return null;
-    const { v, h, s, e, t } = raw;
+    const { v, h, s, e, t, ta } = raw;
     if (typeof v !== "string") return null;
     if (typeof s !== "number" || typeof e !== "number") return null;
     return {
@@ -1186,36 +1722,47 @@ export class VercelCacheStore<
       h: typeof h === "string" ? h : undefined,
       s,
       e,
+      ta: typeof ta === "number" ? ta : undefined,
       t: Array.isArray(t) ? (t as string[]) : undefined,
     };
   }
 
   private asShellEnvelope(raw: unknown): VercelShellEnvelope | null {
     if (!isRecord(raw)) return null;
-    const { p, po, rv, bv, c, s, e, t, i, sn, lh, tw } = raw;
-    if (typeof p !== "string" || typeof rv !== "string") return null;
-    if (po !== null && typeof po !== "string") return null;
+    const { p, po, rv, bv, c, s, e, t, i, sn, dk, pr, no } = raw;
+    if (typeof rv !== "string" || typeof bv !== "string") return null;
+    // Document half: required unless navigationOnly (`no`), which stores
+    // neither field. Tolerate a legacy navigationOnly envelope that still
+    // carries them.
+    if (p === undefined ? no !== true : typeof p !== "string") return null;
+    if (
+      po === undefined ? no !== true : po !== null && typeof po !== "string"
+    ) {
+      return null;
+    }
     if (typeof c !== "number") return null;
     if (typeof s !== "number" || typeof e !== "number") return null;
     return {
-      p,
-      po: po as string | null,
+      ...(typeof p === "string" ? { p } : {}),
+      ...(po !== undefined ? { po: po as string | null } : {}),
       rv,
-      bv: typeof bv === "string" ? bv : undefined,
+      bv,
       c,
       s,
       e,
       t: Array.isArray(t) ? (t as string[]) : undefined,
       i: typeof i === "string" ? i : undefined,
-      sn: Array.isArray(sn) ? (sn as ShellSnapshotRecord[]) : undefined,
-      lh: lh === true ? true : undefined,
-      tw: tw === true ? true : undefined,
+      // A non-array field reads as no records.
+      sn: Array.isArray(sn) ? (sn as ShellSnapshotRecord[]) : [],
+      dk: typeof dk === "string" ? dk : undefined,
+      pr: typeof pr === "string" ? pr : undefined,
+      no: no === true ? true : undefined,
     };
   }
 
   private asResponseEnvelope(raw: unknown): VercelResponseEnvelope | null {
     if (!isRecord(raw)) return null;
-    const { b, st, hd, s, e, t } = raw;
+    const { b, st, hd, s, e, t, ta } = raw;
     if (typeof b !== "string" || typeof st !== "number") return null;
     if (!Array.isArray(hd)) return null;
     if (typeof s !== "number" || typeof e !== "number") return null;
@@ -1226,6 +1773,7 @@ export class VercelCacheStore<
       s,
       e,
       t: Array.isArray(t) ? (t as string[]) : undefined,
+      ta: typeof ta === "number" ? ta : undefined,
     };
   }
 }

@@ -132,6 +132,8 @@ export interface RouterContext<TEnv = any> {
     localRouteName: string,
     pathname: string,
     stale?: boolean,
+    /** The matched route's full chain when `entries` is part of it (ResolveSegmentOptions.chain). */
+    chain?: readonly EntryData[],
   ) => Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }>;
 
   // Generator-based segment resolution (for pipeline)

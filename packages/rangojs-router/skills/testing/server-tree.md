@@ -18,6 +18,8 @@
 | `vars`             | `VarsInit`                | Context variables visible via `ctx.get(...)`, as a prior middleware would have set them. Object form (`{ user }`) or `[key, value]` tuples.                                                                                                                                                                                            |
 | `clientComponents` | `Record<string, unknown>` | The `"use client"` components reachable from the tree, keyed by the boundary name to register each as a client reference (in place) so it serializes as an `I` row. Omit when `rangoUseClientTransform()` auto-discovers them, or for pure server-only trees. First-wins per worker; already-registered references are left untouched. |
 
+It also accepts the rest of `RenderToFlightStringOptions` — `routeMap`, `theme`, `cacheStore`, `cacheProfiles` — with the same meaning as in [`./flight.md`](./flight.md).
+
 ### Context — what your code receives
 
 A server component rendered here runs under a real request context: `getRequestContext()` resolves, `ctx.params`/`ctx.routeName`/`ctx.env` reflect the options, `ctx.get(MyVar)` reads a seeded `var`, and cookies come off the request. Same seeding as the handler-test primitives — you render an **element** you build (`<Page />`); to run a route **handler** `(ctx) => rsc` use `renderHandler` (see `./render-handler.md`).
@@ -64,6 +66,10 @@ Every SERVER/HOST element a server component produced (`<article>`, `<h2>`), in 
 
 Concatenates every string/number leaf of a node's subtree in document order — the clean way to assert rendered text, instead of `JSON.stringify(tree).toContain(...)`.
 
+#### `assertFlightTreeRuntimeAvailable()`
+
+Throws a descriptive error when a `@vitejs/plugin-rsc` subpath the round trip relies on (the vendored client deserializer or `registerClientReference`) no longer exports the expected function — the counterpart of `assertFlightRuntimeAvailable()` in `./flight.md`. Call it in a `beforeAll` to fail fast after a plugin-rsc upgrade.
+
 ## Recipe
 
 ```tsx
@@ -74,7 +80,10 @@ import {
   findElements,
   textContent,
 } from "@rangojs/router/testing/flight";
+import { flightMatchers } from "@rangojs/router/testing/flight-matchers";
 import { PriceTag } from "./PriceTag.js"; // a "use client" component (any filename)
+
+expect.extend(flightMatchers); // for toMatchFlight below
 
 async function ProductPanel({ amount, asOf }: { amount: number; asOf: Date }) {
   await Promise.resolve();
@@ -119,10 +128,10 @@ it("asserts the server-rendered host content", async () => {
 - A client boundary's props come back as REAL JS values after deserialization (a `Date` is a `Date`, not a `$D...` encoding) — but there is NO hydration and NO interaction; boundaries are inert placeholders carrying props.
 - Server COMPONENTS do not survive Flight as identities (they are executed during serialization), so `findElements` matches the host elements they PRODUCED, not the component function. Client islands keep identity — use `findClientBoundaries` for those.
 - `findClientBoundaries` finds islands (`I` rows); `findElements` finds host elements. A `testId` on an island matches with `findClientBoundaries`; a `testId` on a host element matches with `findElements`. Use `textContent(node)` in place of `JSON.stringify(tree).toContain`.
-- A true interactive, clickable DOM `renderServer` is intentionally NOT shipped: in-process happy-dom hydration re-tests React more than your app and misses server/client divergence (the only hydration bug worth a dedicated test, which needs a real browser). Test interaction at e2e.
+- A true interactive, clickable DOM `renderServer` is intentionally NOT shipped: in-process happy-dom hydration of a Flight tree re-tests React more than your app and misses the divergence that needs the real document (streaming order, client-reference identity, the browser's HTML parser). Test interaction at e2e. A CLIENT component's own server/client divergence is unit-reachable: `renderRoute` with `hydrate: true` ([`./client-components.md`](./client-components.md#hydration)).
 
 ## See also
 
 - `/route` — the DSL this tests
 - Siblings: `./flight.md`, `./render-handler.md`, `./setup.md`
-- Long-form prose: [docs/testing.md](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/testing.md) — section "renderServerTree — serialize then deserialize to an inspectable tree" (and the "findElements / textContent" subsection)
+- Long-form prose: [docs/testing.md](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/testing.md) — section "renderServerTree — serialize then deserialize to an inspectable tree" (and the "findElements / textContent" subsection)

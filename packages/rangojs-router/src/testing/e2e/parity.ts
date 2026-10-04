@@ -7,6 +7,7 @@
 import type { Expect, Page, TestType } from "@playwright/test";
 import type { Fixture, FixtureOptions } from "./fixture.js";
 import { DEFAULT_STATE_COOKIE_PREFIX } from "../../browser/cookie-name.js";
+import { blockPrefetch, unblockPrefetch } from "./page-helpers.js";
 
 export interface ParityDescribeOptions extends Partial<
   Omit<FixtureOptions, "mode">
@@ -318,6 +319,15 @@ export function createParity({
     // navigation away from it.
     const originUrl = page.url();
 
+    // Exclude speculative prefetch traffic from the parity window. Links
+    // prefetch by default in production unless the router opts out, and a
+    // prefetched route's middleware/loader side effects
+    // (Set-Cookie, session state) land in the JS jar only — a no-JS context
+    // cannot prefetch, so that traffic would diverge the jars on requests the
+    // intent never caused. Aborted prefetches are benign by design (evicted,
+    // never adopted), so the intent's real navigation always fetches live.
+    await blockPrefetch(page);
+
     // Settle the intent's observable effect before snapshotting. A `navigate`
     // intent already awaited its navigation in applyIntent (page.goto), so only
     // `submit` needs the DOM-driven settle, and only when no `waitFor` override
@@ -380,6 +390,9 @@ export function createParity({
       );
     } finally {
       await noJsContext.close();
+      // Restore the caller's page: the prefetch guard is scoped to the parity
+      // window, not the rest of the test.
+      await unblockPrefetch(page);
     }
   }
 

@@ -1,16 +1,39 @@
-import { createLoader } from "@rangojs/router";
+import { createHandle, createLoader } from "@rangojs/router";
 
-// Physics fixture: a handler-created promise passed as a PROP to a client
-// component that use()s it under its own <Suspense>. Genuinely pending real I/O
-// (~250ms) cannot win the capture's task-quantized quiet window, so the boundary
-// postpones — a HOLE by physics, not by registration. Deterministic value (no
-// drift; the resumed HTML and hydration payload come from the same tail render).
+// Handler-promise fixture: a handler-created promise (~250ms) passed as a
+// PROP to a client component that use()s it under its own <Suspense>. It is
+// handler output: the PPR capture waits for it and bakes the value into the
+// prelude, and every HIT replays it (the "PHYSICS" token is historical: this
+// used to be a hole). Deterministic value.
 const PPR_PHYSICS_DELAY_MS = 250;
 
 export function makePprPhysicsPromise(): Promise<string> {
   return new Promise((resolve) =>
     setTimeout(() => resolve("PHYSICS-HOLE-VALUE"), PPR_PHYSICS_DELAY_MS),
   );
+}
+
+// Nested handle push fixture: PprShellLayout pushes a container whose
+// `value` is a pending promise (~200ms). Handler output: the capture waits for
+// the nested promise and bakes it (a DSL loader's nested push would stay
+// live).
+export interface PprNestedHandleItem {
+  label: string;
+  value: Promise<string>;
+}
+
+export const PprNestedHandle = createHandle<
+  PprNestedHandleItem,
+  PprNestedHandleItem[]
+>((values) => values.flat());
+
+export function makePprNestedHandlePush(): PprNestedHandleItem {
+  return {
+    label: "nested",
+    value: new Promise((resolve) =>
+      setTimeout(() => resolve("NESTED-HANDLE-VALUE"), 200),
+    ),
+  };
 }
 
 // The live hole under the frozen PPR shell (docs/design/ppr-shell-resume.md).
@@ -80,6 +103,56 @@ export const PprShellStreamLoader = createLoader(
   },
 );
 
+const PPR_INLINE_ACTION_WARM_HOLE_DELAY_MS = 2_000;
+const PPR_INLINE_ACTION_HOLE_FAILSAFE_MS = 30_000;
+const PPR_INLINE_ACTION_HOLE_AFTER_ACTION_MS = 2_000;
+
+// Probe-scoped resolvers make the ordering causal: the page hole cannot finish
+// until this page's action result has streamed. The long timer is only a leak
+// failsafe; API warm-up requests opt into the short timer via a test header.
+const pprInlineActionHoleResolvers = new Map<string, Set<() => void>>();
+
+export function resolvePprInlineActionHoleAfterAction(probe: string): void {
+  setTimeout(() => {
+    for (const resolve of [
+      ...(pprInlineActionHoleResolvers.get(probe) ?? []),
+    ]) {
+      resolve();
+    }
+  }, PPR_INLINE_ACTION_HOLE_AFTER_ACTION_MS);
+}
+
+export interface PprInlineActionHoleData {
+  pendingData: Promise<string>;
+}
+
+// Bake-lane container with a nested promise: the form remains shell material,
+// while the nested value is masked during capture and streams fresh per serve.
+export const PprInlineActionHoleLoader = createLoader(
+  async (ctx): Promise<PprInlineActionHoleData> => {
+    const probe = ctx.searchParams.get("probe") ?? "default";
+    const resolvers = pprInlineActionHoleResolvers.get(probe) ?? new Set();
+    pprInlineActionHoleResolvers.set(probe, resolvers);
+    const pendingData = new Promise<string>((resolve) => {
+      let timeout: ReturnType<typeof setTimeout>;
+      const finish = () => {
+        clearTimeout(timeout);
+        resolvers.delete(finish);
+        if (resolvers.size === 0) pprInlineActionHoleResolvers.delete(probe);
+        resolve("CF page hole resolved");
+      };
+      resolvers.add(finish);
+      timeout = setTimeout(
+        finish,
+        ctx.request.headers.has("x-rango-test-short-inline-hole")
+          ? PPR_INLINE_ACTION_WARM_HOLE_DELAY_MS
+          : PPR_INLINE_ACTION_HOLE_FAILSAFE_MS,
+      );
+    });
+    return { pendingData };
+  },
+);
+
 // Layout-loader bake-lane fixture (the storefront shape: an app-wide layout
 // registering session/basket-style loaders, no loading() on the layout).
 // Executes at capture (the gate holds for the 100ms), bakes, and is
@@ -132,6 +205,113 @@ export const PprShellSettledLoader = createLoader(
     };
   },
 );
+
+export interface PprStaleReplayHandleValue {
+  yo?: string;
+  asd?: string;
+}
+
+export const PprStaleReplayHandle = createHandle<PprStaleReplayHandleValue>();
+
+let pprStaleReplayExecutions = 0;
+
+export function makePprStaleReplayData(id: string): Promise<string> {
+  pprStaleReplayExecutions += 1;
+  const execution = pprStaleReplayExecutions;
+  return new Promise((resolve) =>
+    setTimeout(() => resolve(`ppr-stale-${id}-execution-${execution}`), 1_500),
+  );
+}
+
+// Issue #888 fixture: a string handle pushed by an unflagged loader that an
+// ssr:false loader awaits. Both run at capture and neither runs on a HIT (the
+// promise-free ssr:false loader is served from the shell), so the doc record
+// keeps the push and the HIT restores it once. Default (identity) collect: a
+// duplicate push shows up as a second value.
+export const PprWarnings = createHandle<string>();
+
+/**
+ * Body runs of the /ppr-warnings loaders. A HIT runs neither: the
+ * promise-free bake-lane loader is served from the shell, and the loader it
+ * awaits with it.
+ */
+export const pprStorefrontRuns = { storefront: 0, stock: 0 };
+
+export const PprStockLoader = createLoader(async (ctx) => {
+  pprStorefrontRuns.stock += 1;
+  ctx.use(PprWarnings)("Low stock");
+  return { lowStock: true };
+});
+
+export const PprStorefrontLoader = createLoader(async (ctx) => {
+  pprStorefrontRuns.storefront += 1;
+  const stock = await ctx.use(PprStockLoader);
+  return { lowStock: stock.lowStock };
+});
+
+/** Body runs of the /ppr-nav-pin bake-lane loader. */
+export const pprNavPinRuns = { baked: 0 };
+
+/**
+ * A promise-free ssr:false loader on an entry with loading(): served from the
+ * shell, without running, on a document HIT and on a client navigation that
+ * replays the shell.
+ */
+export const PprNavPinLoader = createLoader(async () => {
+  pprNavPinRuns.baked += 1;
+  return { baked: `nav-pin-baked-${pprNavPinRuns.baked}` };
+});
+
+// Issue #929 fixture: the ssr:false loader pushes the string handle itself.
+// The doc record keeps the push (the prelude rendered it) and the HIT, which
+// does not run the promise-free loader, restores it once.
+export const PprRestockLoader = createLoader(async (ctx) => {
+  ctx.use(PprWarnings)("Restock soon");
+  return { restock: true };
+});
+
+// Issue #927: a bake-lane value Flight encodes cleanly on its first pass and
+// with an error row on its second. The capture renders one loader run's value
+// (pass 1), then the snapshot re-encodes it (pass 2); the foreground render
+// encodes its own run once. A Map is a leaf to the capture's mask and elide
+// walks, so both passes iterate this instance. Fails once per ?run=, so a
+// later capture stores.
+const pprFlightErrorRuns = new Set<string>();
+
+/**
+ * Most passes any one PprFlightErrorLoader value took, per ?run=. The
+ * capture's value takes 2; any other count means the pass-2 failure no longer
+ * lands on the snapshot encode.
+ */
+export const pprFlightErrorPasses: Map<string, number> = new Map();
+
+class PprRelatedEntries extends Map<string, unknown> {
+  private passes = 0;
+
+  constructor(private readonly run: string) {
+    super([["related", "related ok"]]);
+  }
+
+  override *[Symbol.iterator](): MapIterator<[string, unknown]> {
+    this.passes += 1;
+    pprFlightErrorPasses.set(
+      this.run,
+      Math.max(pprFlightErrorPasses.get(this.run) ?? 0, this.passes),
+    );
+    if (this.passes === 2 && !pprFlightErrorRuns.has(this.run)) {
+      pprFlightErrorRuns.add(this.run);
+      const failed = Promise.reject(new Error("related upstream down"));
+      failed.catch(() => {});
+      yield ["related", failed];
+      return;
+    }
+    yield* super.entries();
+  }
+}
+
+export const PprFlightErrorLoader = createLoader(async (ctx) => ({
+  entries: new PprRelatedEntries(ctx.url.searchParams.get("run") ?? ""),
+}));
 
 // Shell fast-path EXECUTION MATRIX fixture (docs/design/shell-fast-path.md),
 // the workerd/KV counterpart of test-app's shell-cache exec matrix. Per-layer

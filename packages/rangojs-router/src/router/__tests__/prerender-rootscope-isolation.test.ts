@@ -4,15 +4,19 @@ import { describe, it, expect, vi } from "vitest";
 // top-level body imports Vite virtual modules that do not resolve in plain
 // node/vitest. The bake path under test never renders Flight (the handler
 // halts before encoding), so a stub is sufficient.
-vi.mock("@vitejs/plugin-rsc/rsc", () => ({
-  createFromReadableStream: vi.fn(),
-  renderToReadableStream: vi.fn(),
-  loadServerAction: vi.fn(),
-  decodeReply: vi.fn(),
-  decodeAction: vi.fn(),
-  decodeFormState: vi.fn(),
-  createTemporaryReferenceSet: vi.fn(),
-}));
+function pluginRscMock() {
+  return {
+    createFromReadableStream: vi.fn(),
+    renderToReadableStream: vi.fn(),
+    loadServerAction: vi.fn(),
+    decodeReply: vi.fn(),
+    decodeAction: vi.fn(),
+    decodeFormState: vi.fn(),
+    createTemporaryReferenceSet: vi.fn(),
+  };
+}
+vi.mock("@vitejs/plugin-rsc/rsc/server", pluginRscMock);
+vi.mock("@vitejs/plugin-rsc/rsc/client", pluginRscMock);
 
 import { createRouter } from "../../router.js";
 import type { RangoInternal } from "../../router/router-interfaces.js";

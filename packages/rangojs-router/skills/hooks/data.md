@@ -2,7 +2,7 @@
 
 ### useLoader()
 
-Access loader data (strict - data guaranteed):
+Access loader data (strict — data guaranteed once the read returns):
 
 ```tsx
 "use client";
@@ -13,14 +13,62 @@ function ProductPrice() {
   const { data, isLoading, error } = useLoader(ProductLoader);
 
   // data: T (guaranteed - throws if not in context)
-  // isLoading: boolean
+  // isLoading: boolean (refetch/load() states + a held navigation replacing
+  //   this data — NOT the initial streamed read)
   // error: Error | null
 
   return <span>${data.price}</span>;
 }
 ```
 
+**Loaders stream, and `useLoader` implicitly suspends.** A first read whose
+loader data has not streamed in yet suspends to the nearest `<Suspense>`
+boundary (or the route's `loading()`) — it does NOT render with
+`isLoading: true`. Put a boundary above every read whose loader can be slow;
+`isLoading` covers later refetches (`load()`, key/group refreshes). Once the
+component renders, `data` is present. (On document loads a loader registered
+with `{ ssr: false }` is already settled at first paint, so its
+reads never suspend there — see `/loader`.)
+
+**A held navigation flags the data it keeps on screen.** When a navigation
+keeps the current content visible while the loader re-runs (a `transition()`
+same-route nav, a same-structure search/filter nav), the reader that is still
+showing the OLD data reports `isLoading: true` from
+the moment the new tree is committed until the new data lands — render your
+stale indicator from it. The flag never flashes back to `false` on the old
+data: it flips in the same commit that swaps `data`. The pin is per loader
+family (`loader.$$id`), not per segment: a navigation that re-runs
+`CartLoader` flags every `useLoader(CartLoader)`, including a persisting
+layout reader whose own copy is not replaced. That is "this loader is in
+flight," not "this segment's copy is being replaced." A _different_ layout
+loader the server does not re-execute stays `isLoading: false`. A child can
+already read a layout registration via the context walk; a second
+`loader(Same)` on the child is a second run of the same family, not a
+separate loading flag. It never applies to a
+navigation that remounts the route (that reader is gone; the skeleton shows),
+to a fully-prefetched nav (its data is already settled when it commits, so
+nothing is pending to flag), or to an ephemeral `useFetchLoader` read outside
+route context.
+
+```tsx
+function ProductPrice() {
+  const { data, isLoading } = useLoader(ProductLoader);
+  return <span style={{ opacity: isLoading ? 0.5 : 1 }}>${data.price}</span>; // dims while /products/1 -> /products/2 streams the next price
+}
+```
+
+Unit-test the indicator with `renderRoute` (`/testing`, client-components.md
+"Held navigation"): a `transition` spec plus a pending seed in
+`router.navigate(url, { loaders })`.
+
 **Precondition**: Loader must be registered on route via `loader()` helper.
+
+**`load()` / `refetch` need a fetchable loader.** `load()`, `refetch`, and
+`useRefreshLoaders()` call the loader through the `_rsc_loader` endpoint, which
+only serves loaders created with `createLoader(fn, true)` or
+`createLoader(fn, { middleware })`. A plain `createLoader(fn)` answers 403 there;
+it re-runs only as part of a render (navigation, `router.refresh()`, or the
+revalidation after a server action). See `/loader` → "Fetchable Loaders".
 
 Loaders can also be passed as props from server to client components:
 
@@ -77,6 +125,7 @@ reading the same loader id. Layout, page, and parallel-slot reads
 all converge on the new value:
 
 ```tsx
+// CartLoader = createLoader(fn, true), registered with loader(CartLoader).
 // Layout button calls load() — the page read below sees the update too.
 function Layout() {
   const { data, load } = useLoader(CartLoader);
@@ -231,9 +280,11 @@ server, JSON bodies are available via `ctx.body` and FormData bodies via `ctx.fo
 
 ```tsx
 "use client";
+import { useRef } from "react";
 import { useFetchLoader } from "@rangojs/router/client";
 import { FileUploadLoader } from "../loaders/upload";
 
+// Needs JavaScript: the form action is a client function, not a server action.
 function FileUploader() {
   const { data, load, isLoading } = useFetchLoader(FileUploadLoader);
   const formRef = useRef<HTMLFormElement>(null);
@@ -261,8 +312,6 @@ Server-side loader for the upload:
 import { createLoader } from "@rangojs/router";
 
 export const FileUploadLoader = createLoader(async (ctx) => {
-  "use server";
-
   const file = ctx.formData?.get("file") as File | null;
   if (file && file.size > 0) {
     // Process file (save to R2, D1, etc.)

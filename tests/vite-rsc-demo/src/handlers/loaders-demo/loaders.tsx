@@ -25,8 +25,6 @@ export type { User, Stats, Note, UploadedFile };
  * Use case: Initial page data that should be available immediately
  */
 export const UsersLoader = createLoader(async (_ctx) => {
-  "use server";
-
   // Simulate network latency
   await new Promise((resolve) => setTimeout(resolve, 300));
 
@@ -58,8 +56,6 @@ export type UsersLoaderData = {
  */
 export const StatsLoader = createLoader(
   async (_ctx) => {
-    "use server";
-
     // Simulate network latency
     await new Promise((resolve) => setTimeout(resolve, 500));
 
@@ -91,8 +87,6 @@ export type StatsLoaderData = {
  */
 export const UserSearchLoader = createLoader(
   async (ctx) => {
-    "use server";
-
     // Simulate network latency
     await new Promise((resolve) => setTimeout(resolve, 200));
 
@@ -153,8 +147,6 @@ export type RSCContentLoaderData = {
  */
 export const RSCContentLoader = createLoader<RSCContentLoaderData>(
   async (ctx): Promise<RSCContentLoaderData> => {
-    "use server";
-
     // Simulate server-side data fetching
     await new Promise((resolve) => setTimeout(resolve, 800));
 
@@ -282,8 +274,6 @@ export const RSCContentLoader = createLoader<RSCContentLoaderData>(
  */
 export const NotesLoader = createLoader(
   async (ctx) => {
-    "use server";
-
     // Simulate network latency
     await new Promise((resolve) => setTimeout(resolve, 200));
 
@@ -326,8 +316,6 @@ export type NotesLoaderData = {
  */
 export const FileUploadLoader = createLoader(
   async (ctx) => {
-    "use server";
-
     // Simulate network latency
     await new Promise((resolve) => setTimeout(resolve, 300));
 
@@ -370,8 +358,6 @@ export type FileUploadLoaderData = {
  */
 export const ChatStreamLoader = createLoader(
   async (ctx) => {
-    "use server";
-
     const prompt =
       (ctx.params.prompt as string) || "Hello! How can I help you today?";
 
@@ -445,7 +431,6 @@ export type ReverseUrlsLoaderData = {
  */
 export const ReverseUrlsLoader = createLoader<ReverseUrlsLoaderData>(
   async (ctx) => {
-    "use server";
     return {
       localIndex: ctx.reverse(".index"),
       localStats: ctx.reverse(".stats"),

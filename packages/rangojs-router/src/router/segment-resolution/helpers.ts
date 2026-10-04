@@ -8,13 +8,14 @@
  * - Error boundary segment creation
  */
 
-import { createElement, type ReactNode } from "react";
-import { DataNotFoundError } from "../../errors";
+import type { ReactNode } from "react";
+import { isDataNotFoundError } from "../../errors";
 import {
   createErrorInfo,
   createErrorSegment,
   createNotFoundInfo,
   createNotFoundSegment,
+  resolveNotFoundFallback,
 } from "../error-handling.js";
 import { getRequestContext } from "../../server/request-context.js";
 import { DefaultErrorFallback } from "../../default-error-boundary.js";
@@ -28,7 +29,7 @@ import type {
 import type { SegmentResolutionDeps } from "../types.js";
 import { debugLog } from "../logging.js";
 import { tryStaticLookup } from "./static-store.js";
-import { observeHandler } from "../instrument.js";
+import { observeSegmentHandler } from "../instrument.js";
 import type { TelemetrySink } from "../telemetry.js";
 import { resolveSink, safeEmit, getRequestId } from "../telemetry.js";
 
@@ -174,7 +175,9 @@ export async function resolveLayoutComponent<TEnv>(
   // by track("handler:<id>") at the call site). handleHandlerResult stays OUTSIDE
   // the span so a handler that returns a Response (redirect control flow, which it
   // rethrows) is not recorded as a span error — mirrors the route-handler sites.
-  return handleHandlerResult(await observeHandler(entry.id, handler, context));
+  return handleHandlerResult(
+    await observeSegmentHandler(entry.shortCode, entry.id, handler, context),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -252,15 +255,12 @@ export function catchSegmentError<TEnv>(
     }
   };
 
-  if (error instanceof DataNotFoundError) {
-    const notFoundFallback = deps.findNearestNotFoundBoundary(entry);
-    // Fall back to router's notFound component, then a plain default
-    const notFoundOption = deps.notFoundComponent;
-    const defaultFallback =
-      typeof notFoundOption === "function"
-        ? notFoundOption({ pathname: pathname ?? "" })
-        : (notFoundOption ?? createElement("h1", null, "Not Found"));
-    const effectiveNotFoundFallback = notFoundFallback ?? defaultFallback;
+  if (isDataNotFoundError(error)) {
+    const effectiveNotFoundFallback = resolveNotFoundFallback(
+      deps.findNearestNotFoundBoundary(entry),
+      deps.notFoundComponent,
+      pathname,
+    );
 
     const notFoundInfo = createNotFoundInfo(
       error,

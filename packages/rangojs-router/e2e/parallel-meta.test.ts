@@ -192,11 +192,17 @@ test.describe("parallel-meta-slot", () => {
     // JSON-LD should update to Product B
     jsonLd = page.locator('script[type="application/ld+json"]');
     await expect(jsonLd).toHaveCount(2);
-    scripts = await jsonLd.allTextContents();
-    product = scripts
-      .map((s) => JSON.parse(s))
-      .find((p: any) => p["@type"] === "Product");
-    expect(product.name).toBe("Product B");
+    // A fully-prefetched adoption (production viewport prefetch of pm-link-b)
+    // commits the route content immediately while the @meta slot commit can
+    // trail by a frame — poll for convergence instead of a one-shot read.
+    await expect
+      .poll(async () => {
+        const texts = await jsonLd.allTextContents();
+        return texts
+          .map((s) => JSON.parse(s))
+          .find((p: any) => p["@type"] === "Product")?.name;
+      })
+      .toBe("Product B");
   });
 
   test("SSR should include meta from @meta parallel", async ({ request }) => {
@@ -402,11 +408,17 @@ test.describe("parallel-meta-slot (production)", () => {
 
     jsonLd = page.locator('script[type="application/ld+json"]');
     await expect(jsonLd).toHaveCount(2);
-    scripts = await jsonLd.allTextContents();
-    product = scripts
-      .map((s) => JSON.parse(s))
-      .find((p: any) => p["@type"] === "Product");
-    expect(product.name).toBe("Product B");
+    // A fully-prefetched adoption (production viewport prefetch of pm-link-b)
+    // commits the route content immediately while the @meta slot commit can
+    // trail by a frame — poll for convergence instead of a one-shot read.
+    await expect
+      .poll(async () => {
+        const texts = await jsonLd.allTextContents();
+        return texts
+          .map((s) => JSON.parse(s))
+          .find((p: any) => p["@type"] === "Product")?.name;
+      })
+      .toBe("Product B");
   });
 
   test("SSR should include meta from @meta parallel", async ({ request }) => {

@@ -7,7 +7,10 @@ import {
 } from "../browser/react/filter-segment-order.js";
 import { ThemeProvider } from "../theme/ThemeProvider.js";
 import { NonceContext } from "../browser/react/nonce-context.js";
-import { NavigationStoreContext } from "../browser/react/context.js";
+import {
+  LocationStateContext,
+  NavigationStoreContext,
+} from "../browser/react/context.js";
 import type { NavigationStoreContextValue } from "../browser/react/context.js";
 import type { HandleData } from "../browser/types.js";
 import type { ResolvedSegment } from "../types.js";
@@ -63,11 +66,30 @@ async function consumeAsyncGenerator(
  */
 function createSsrEventController(opts: {
   pathname: string;
+  /**
+   * Query string seeding the store location. Live fizz passes the request's
+   * raw search; ppr capture/resume pass the SHELL KEY's search (sorted,
+   * cache.searchParams filter applied) so the shell renders what its key
+   * names and both passes agree byte-for-byte.
+   */
+  search?: string;
+  /**
+   * Origin seeding the store location. Live fizz passes the request's real
+   * origin so origin-dependent markup (Link's data-external compares link
+   * origins against it) agrees with the browser's window.location; ppr
+   * capture/resume pass their request's origin (shell keys are host-scoped,
+   * so the two agree modulo protocol drift). Absent (build-time bare
+   * captures, tests) falls back to the historical internal host.
+   */
+  origin?: string;
   params?: Record<string, string>;
   handleData?: HandleData;
   matched?: string[];
 }): EventController {
-  const location = new URL(opts.pathname, "http://localhost");
+  const location = new URL(
+    `${opts.pathname}${opts.search ?? ""}`,
+    opts.origin ?? "http://localhost",
+  );
   let params = opts.params ?? {};
   const rawMatched = opts.matched ?? [];
   const handleState = {
@@ -97,13 +119,20 @@ function createSsrEventController(opts: {
     }),
     subscribeToAction: () => () => {},
     subscribeToHandles: () => () => {},
+    flushRouteState: () => {},
     setHandleData: () => {},
     getHandleState: () => handleState,
+    freezeHydrationHandleState: () => {},
+    // The server render is the state the document is rendered with.
+    getHydrationHandleState: () => undefined,
     setRouteSegmentIds: () => {},
     setParams: (nextParams) => {
       params = nextParams;
     },
     getParams: () => params,
+    commitLocationState: () => {},
+    getLocationState: () => undefined,
+    takeTreelessLocationState: () => false,
     setLocation: () => {},
     startNavigation: () => {
       throw new Error("Navigation not supported during SSR");
@@ -120,6 +149,37 @@ function createSsrEventController(opts: {
 }
 
 /**
+ * Deserialize the Flight stream branch into the payload SsrRoot renders,
+ * fragment expansion included. Factored out of SsrRoot so createSSRHandler can
+ * create the promise BEFORE fizz starts and read metadata that must influence
+ * the fizz call itself (the ssr:false progressiveChunkSize auto-raise) —
+ * awaiting it there is latency-neutral because fizz cannot emit even <html>
+ * until this same promise settles.
+ */
+export function deserializeSsrPayload(
+  createFromReadableStream: CreateFromReadableStream,
+  rscStream: ReadableStream<Uint8Array>,
+): Promise<RscPayload> {
+  // Shell-HIT tails carry replayed segments as VERBATIM stored fragments
+  // (segment-fragments.ts, issue #700); expand them through this
+  // environment's deserializer before anything reads the segments. Every
+  // other payload (full render, capture, actions) has no envelopes and
+  // pays one field scan.
+  // Promise.resolve() adoption is load-bearing: some wirings (the build
+  // temp server's vendored Flight client) return a THENABLE Chunk whose
+  // .then returns undefined — chaining on it directly yields undefined.
+  return Promise.resolve(createFromReadableStream<RscPayload>(rscStream)).then(
+    async (resolvedPayload) => {
+      await expandSegmentFragments(
+        resolvedPayload.metadata?.segments,
+        createFromReadableStream,
+      );
+      return resolvedPayload;
+    },
+  );
+}
+
+/**
  * Options for {@link createSsrRootComponent}.
  */
 export interface SsrRootOptions {
@@ -127,20 +187,43 @@ export interface SsrRootOptions {
   createFromReadableStream: CreateFromReadableStream;
   /** The Flight stream branch to deserialize into the SSR VDOM. */
   rscStream: ReadableStream<Uint8Array>;
+  /**
+   * Pre-created payload promise (deserializeSsrPayload over the SAME
+   * rscStream). When present SsrRoot adopts it instead of deserializing
+   * lazily on first render — the stream can only be consumed once, so the
+   * caller that already started deserialization MUST pass the promise in.
+   */
+  payload?: Promise<RscPayload>;
   /** Nonce for CSP; propagated to NonceContext. */
   nonce?: string;
   /**
    * Fires once when the Flight payload root settles (resolve OR reject) — the
-   * signal that every client-module load the payload references completed and
-   * fizz can start emitting the tree. The capture pass gates its abort on
-   * this: a fully REPLAYED (prerendered) route's Flight stream goes
-   * byte-quiet in ~1-3ms, but fizz cannot render even <html> until the
-   * module loads finish (real module-runner I/O in dev; 100ms+ on a cold
-   * graph), so an abort gated on Flight quiet alone fires first and freezes
-   * a zero-byte prelude. Masked-loader holes do NOT block this signal —
-   * they postpone below the root.
+   * signal that fizz can start emitting the tree. A client component used as
+   * an element type resolves lazily, so its module load can still be in
+   * flight (captureShellHTML waits for those separately, issue #949). The
+   * capture pass gates its abort on this: a fully REPLAYED (prerendered)
+   * route's Flight stream goes byte-quiet in ~1-3ms, but fizz cannot render
+   * even <html> until the module loads finish (real module-runner I/O in dev;
+   * 100ms+ on a cold graph), so an abort gated on Flight quiet alone fires
+   * first and freezes a zero-byte prelude. Masked-loader holes do NOT block
+   * this signal — they postpone below the root.
    */
   onPayloadSettled?: () => void;
+  /**
+   * The query string seeding the SSR store location (`?`-prefixed or
+   * empty), so `useSearchParams`/`useNavigation` carry real values during
+   * document renders. Live fizz passes the request's raw search. The shell
+   * capture and resume passes pass the SHELL KEY's search (sorted,
+   * cache.searchParams filter applied — search is part of shell identity):
+   * a HIT shares the capture's key, so both passes seed the SAME string and
+   * the resume tree matches the captured tree above the postponed holes.
+   */
+  search?: string;
+  /**
+   * Origin seeding the SSR store location (see createSsrEventController):
+   * live fizz passes the request's origin; capture/resume pass theirs.
+   */
+  origin?: string;
 }
 
 /**
@@ -161,35 +244,32 @@ export interface SsrRootOptions {
  * re-running the whole segment-tree build unless the promise is memoized.
  */
 export function createSsrRootComponent(opts: SsrRootOptions): React.FC {
-  const { createFromReadableStream, rscStream, nonce, onPayloadSettled } = opts;
+  const {
+    createFromReadableStream,
+    rscStream,
+    nonce,
+    onPayloadSettled,
+    search,
+    origin,
+  } = opts;
 
-  let payload: Promise<RscPayload> | undefined;
+  // onPayloadSettled fires AFTER fragment expansion (inside
+  // deserializeSsrPayload): the capture's fizz-readiness gate must include
+  // fragment module loads.
+  const adoptPayload = (p: Promise<RscPayload>): Promise<RscPayload> => {
+    if (onPayloadSettled) p.then(onPayloadSettled, onPayloadSettled);
+    return p;
+  };
+  let payload: Promise<RscPayload> | undefined =
+    opts.payload && adoptPayload(opts.payload);
   let handlesPromise: Promise<HandleData> | undefined;
   let ssrContextValue: NavigationStoreContextValue | undefined;
   let rootPromise: Promise<React.ReactNode> | undefined;
 
   return function SsrRoot() {
-    if (payload === undefined) {
-      // Shell-HIT tails carry replayed segments as VERBATIM stored fragments
-      // (segment-fragments.ts, issue #700); expand them through this
-      // environment's deserializer before anything reads the segments. Every
-      // other payload (full render, capture, actions) has no envelopes and
-      // pays one field scan. onPayloadSettled fires AFTER expansion: the
-      // capture's fizz-readiness gate must include fragment module loads.
-      // Promise.resolve() adoption is load-bearing: some wirings (the build
-      // temp server's vendored Flight client) return a THENABLE Chunk whose
-      // .then returns undefined — chaining on it directly yields undefined.
-      payload = Promise.resolve(
-        createFromReadableStream<RscPayload>(rscStream),
-      ).then(async (resolvedPayload) => {
-        await expandSegmentFragments(
-          resolvedPayload.metadata?.segments,
-          createFromReadableStream,
-        );
-        return resolvedPayload;
-      });
-      if (onPayloadSettled) payload.then(onPayloadSettled, onPayloadSettled);
-    }
+    payload ??= adoptPayload(
+      deserializeSsrPayload(createFromReadableStream, rscStream),
+    );
     const resolved = React.use(payload);
 
     const themeConfig = resolved.metadata?.themeConfig ?? null;
@@ -210,6 +290,8 @@ export function createSsrRootComponent(opts: SsrRootOptions): React.FC {
       store: null as any,
       eventController: createSsrEventController({
         pathname,
+        search,
+        origin,
         params: resolved.metadata?.params,
         handleData,
         matched: resolved.metadata?.matched,
@@ -221,7 +303,7 @@ export function createSsrRootComponent(opts: SsrRootOptions): React.FC {
     };
 
     // Build content tree from segments.
-    // Order must match NavigationProvider: NavigationStoreContext > NonceContext > ThemeProvider > content
+    // Order must match NavigationProvider: NavigationStoreContext > LocationStateContext > NonceContext > ThemeProvider > content
     // Memoize like payload/handles above: renderSegments is async, so
     // React.use() on a fresh promise suspends and replays SsrRoot, which
     // would re-run the entire segment-tree build on every initial render.
@@ -251,10 +333,13 @@ export function createSsrRootComponent(opts: SsrRootOptions): React.FC {
       <NonceContext.Provider value={nonce}>{content}</NonceContext.Provider>
     );
 
-    // Wrap with NavigationStoreContext for useNavigation hook
+    // Wrap with NavigationStoreContext for useNavigation hook. The server has
+    // no history entry: location state is undefined, as readers hydrate.
     return (
       <NavigationStoreContext.Provider value={ssrContextValue!}>
-        {content}
+        <LocationStateContext.Provider value={undefined}>
+          {content}
+        </LocationStateContext.Provider>
       </NavigationStoreContext.Provider>
     );
   };

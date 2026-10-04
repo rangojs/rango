@@ -31,6 +31,25 @@ the generated function launcher). `srvx` (the Web→Node streaming bridge) and t
 | `pnpm smoke`          | Serves the function from an isolated temp dir and asserts the pages render + a static asset loads. No deploy. |
 | `pnpm test:e2e`       | Playwright dev + production e2e: rendering, cache freeze, navigation, and `rango.*` span emission.            |
 
+## Cache lab
+
+`/cache-lab` combines two independently tagged `"use cache"` values, a tagged
+PPR shell, a nested loader promise consumed under raw Suspense, and promised
+metadata. The route deliberately has no `loading()` DSL boundary: the loader's
+settled container bakes while its nested promise remains a fresh hole. Visible
+generation tokens make selective invalidation observable: invalidate Alpha and
+Alpha plus the PPR shell refresh while Beta remains fixed; invalidate the shell
+tag alone and both function values remain fixed.
+
+The console calls the test app's public `POST /api/cache/invalidate` endpoint
+with a bounded `{ "tags": [...] }` body. The allowlist prevents arbitrary tag
+creation, but the endpoint is intentionally unauthenticated for exploration.
+Add authentication before copying this route into a real application.
+
+The handler awaits `updateTag()` before returning. On Vercel,
+`VercelCacheStore` maps that operation to Runtime Cache `expireTag()`; this is
+separate from Vercel's CDN/ISR tag cache.
+
 ## Local verification (no Vercel account)
 
 ```bash
@@ -78,8 +97,9 @@ pnpm dlx vercel deploy --prebuilt --archive=tgz
 
 On the platform `process.env.VERCEL` is set, so the router switches to
 `VercelCacheStore` backed by `getCache()`; tag invalidation uses `expireTag`
-(global, ~300ms). The deployment id is folded into the cache namespace so a
-redeploy does not serve stale-shaped entries.
+(global, ~300ms). `VercelCacheStore` versions its keys per router from the
+built code, so a redeploy that changes the router reads under new keys and one
+that does not keeps its entries; the namespace carries no deployment id.
 
 ## What needs the real platform to verify
 
@@ -104,7 +124,7 @@ and static serving. These require an actual Vercel deployment to confirm:
 3. Bundles a Node launcher (`index.func/index.mjs`) that wraps the Rango Web
    fetch handler with `srvx`'s `toNodeHandler` (the Node launcher needs a
    `(req, res)` handler) and forwards `process.env` + `waitUntil`.
-4. Writes `.vc-config.json` (`runtime: nodejs22.x`, `supportsResponseStreaming`)
+4. Writes `.vc-config.json` (`runtime: nodejs24.x`, `supportsResponseStreaming`)
    and `config.json` (`{ handle: "filesystem" }` then `/(.*) → /index`).
 
 Tune the function via `rango({ preset: "vercel", vercel: { runtime, maxDuration,

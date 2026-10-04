@@ -8,7 +8,7 @@ import { coldStartPaths } from "./scenarios.js";
 
 const label = process.argv[2] ?? "run";
 const baseUrl = (
-  process.argv[3] ?? "https://cloudflare-stress-demo.devcorner.workers.dev"
+  process.argv[3] ?? "https://cloudflare-stress-demo.example.workers.dev"
 ).replace(/\/$/, "");
 
 console.log(`# ${label} — ${baseUrl}`);

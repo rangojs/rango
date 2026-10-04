@@ -5,77 +5,7 @@
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
 
-// Mock route-map-builder so manifest is always available.
-vi.mock("../../route-map-builder.js", () => ({
-  hasCachedManifest: () => true,
-  waitForManifestReady: () => null,
-  getRouterManifest: () => ({ home: "/" }),
-  getRouterTrie: () => null,
-  getGlobalRouteMap: () => ({ home: "/" }),
-  isRouteRootScoped: () => false,
-}));
-
-// Mock @vitejs/plugin-rsc/rsc with minimal stubs
-vi.mock("@vitejs/plugin-rsc/rsc", () => ({
-  renderToReadableStream: () => new ReadableStream(),
-  decodeReply: vi.fn(),
-  createTemporaryReferenceSet: vi.fn(() => new Set()),
-  loadServerAction: vi.fn(),
-  decodeAction: vi.fn(),
-  decodeFormState: vi.fn(),
-}));
-
-vi.mock("../nonce.js", () => ({
-  generateNonce: () => undefined,
-  nonce: Symbol("nonce"),
-}));
-
-vi.mock("../manifest-init.js", () => ({
-  buildRouterTrieFromUrlpatterns: vi.fn(),
-}));
-
-// Mock dependencies used by classifyRequest → resolveRoute
-vi.mock("../../router/manifest.js", () => ({
-  loadManifest: vi.fn(async () => ({
-    type: "route",
-    shortCode: "R0",
-    parent: null,
-    handler: vi.fn(),
-    responseType: "json",
-  })),
-  clearManifestCache: vi.fn(),
-}));
-
-vi.mock("../../router/middleware.js", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../../router/middleware.js")>();
-  return {
-    ...actual,
-    collectRouteMiddleware: vi.fn(() => []),
-  };
-});
-
-vi.mock("../../cache/cache-scope.js", () => ({
-  createCacheScope: vi.fn(() => null),
-}));
-
-// handleResponseRoute returns a simple response for response-route tests
-vi.mock("../response-route-handler.js", () => ({
-  handleResponseRoute: vi.fn(
-    async () => new Response("response-route", { status: 200 }),
-  ),
-}));
-
-vi.mock("../../router/telemetry.js", () => ({
-  resolveSink: () => null,
-  safeEmit: vi.fn(),
-  getRequestId: () => "test-req-id",
-}));
-
-vi.mock("../../router/router-context.js", () => ({
-  getRouterContext: () => null,
-}));
-
+import "./handler-test-mocks.js";
 import { createRSCHandler } from "../handler.js";
 import { getRequestContext } from "../../server/request-context.js";
 import type { RangoInternal } from "../../router/router-interfaces.js";

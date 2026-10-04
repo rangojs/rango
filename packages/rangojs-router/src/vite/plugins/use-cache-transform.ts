@@ -16,13 +16,18 @@
  * - transformHoistInlineDirective() for function-level hoisting
  */
 
-import type { Plugin } from "vite";
+import type { Plugin, Rollup } from "vite";
+import type { ModuleExportMeta } from "@vitejs/plugin-rsc/transforms";
 import path from "node:path";
-import MagicString from "magic-string";
 import { normalizePath, hashId } from "./expose-id-utils.js";
-import { createRangoDebugger, createCounter, NS } from "../debug.js";
+import type { Counter } from "../debug.js";
 
-const debug = createRangoDebugger(NS.transform);
+// No static import of `magic-string` or `../debug.js` (the `debug` package):
+// `rangoUseCacheTransform()` bundles this module into `dist/testing/vitest.js`,
+// whose static imports are node builtins only, and every package it needs
+// loads lazily, as `rangoUseClientTransform()`'s `vite` and plugin-rsc
+// imports do. src/__tests__/installed-vitest-config.test.ts loads that file
+// from a fixture holding only `package.json` and `dist/`.
 
 const CACHE_RUNTIME_IMPORT = "@rangojs/router/cache-runtime";
 
@@ -32,12 +37,13 @@ const LAYOUT_TEMPLATE_PATTERN = /\/(layout|template)\.(tsx?|jsx?)$/;
 
 export const USE_CACHE_DIRECTIVE_RE: RegExp = /^use cache(:\s*[\w-]+)?$/;
 
-export function useCacheTransform(): Plugin {
+/**
+ * @param counter `rango:transform` timing counter, created by `rango()`
+ *   (`createCounter` in ../debug.js); omitted when debugging is off.
+ */
+export function useCacheTransform(counter?: Counter): Plugin {
   let projectRoot = "";
   let isBuild = false;
-  let rscTransforms: typeof import("@vitejs/plugin-rsc/transforms") | null =
-    null;
-  const counter = createCounter(debug, "use-cache");
 
   return {
     name: "@rangojs/router:use-cache",
@@ -55,67 +61,15 @@ export function useCacheTransform(): Plugin {
     async transform(code, id) {
       // Only process in RSC environment
       if (this.environment?.name !== "rsc") return;
-
-      // Quick bail: no "use cache" in source
-      if (!code.includes("use cache")) return;
-
-      // Skip node_modules and virtual modules
-      if (id.includes("/node_modules/") || id.startsWith("\0")) return;
-
-      // Only JS/TS files
-      if (!/\.(tsx?|jsx?|mjs)$/.test(id)) return;
+      if (!isUseCacheCandidate(code, id)) return;
 
       const start = counter ? performance.now() : 0;
       try {
-        if (!rscTransforms) {
-          try {
-            rscTransforms = await import("@vitejs/plugin-rsc/transforms");
-          } catch {
-            return;
-          }
-        }
-
-        const {
-          hasDirective,
-          transformWrapExport,
-          transformHoistInlineDirective,
-        } = rscTransforms;
-
-        let ast: any;
-        try {
-          const { parseAst } = await import("vite");
-          ast = parseAst(code, { lang: "tsx" });
-        } catch {
-          return;
-        }
-
-        const filePath = normalizePath(path.relative(projectRoot, id));
-        const isLayoutOrTemplate = LAYOUT_TEMPLATE_PATTERN.test(id);
-
-        if (hasDirective(ast.body, "use cache")) {
-          return transformFileLevelUseCache(
-            code,
-            ast,
-            filePath,
-            id,
-            isBuild,
-            isLayoutOrTemplate,
-            transformWrapExport,
-          );
-        }
-
-        const functionResult = transformFunctionLevelUseCache(
-          code,
-          ast,
-          filePath,
-          id,
+        return await transformUseCache(code, id, {
+          root: projectRoot,
           isBuild,
-          transformHoistInlineDirective,
-        );
-
-        warnOnNearMissDirectives(ast, id, this.warn.bind(this));
-
-        if (functionResult) return functionResult;
+          warn: (message) => this.warn(message),
+        });
       } finally {
         counter?.record(id, performance.now() - start);
       }
@@ -123,7 +77,105 @@ export function useCacheTransform(): Plugin {
   };
 }
 
-function transformFileLevelUseCache(
+/** Options for {@link transformUseCache}. */
+export interface UseCacheTransformOptions {
+  /** Root the ids are relative to (Vite's `config.root`). */
+  root: string;
+  /** Build ids hash the path (`hashId`); dev ids are `<path>#<export>`. */
+  isBuild: boolean;
+  /** Sink for the near-miss directive warning. */
+  warn: (message: string) => void;
+  /**
+   * Called when `@vitejs/plugin-rsc/transforms` fails to load; the module is
+   * then left unwrapped. The rango plugin omits it (skip silently).
+   */
+  onTransformsError?: (error: unknown) => void;
+}
+
+/** Whether a module may carry a `"use cache"` directive the transform wraps. */
+export function isUseCacheCandidate(code: string, id: string): boolean {
+  return (
+    // Quick bail: no "use cache" in source
+    code.includes("use cache") &&
+    // Skip node_modules and virtual modules
+    !id.includes("/node_modules/") &&
+    !id.startsWith("\0") &&
+    // Only JS/TS files
+    /\.(tsx?|jsx?|mjs)$/.test(id)
+  );
+}
+
+let rscTransforms: typeof import("@vitejs/plugin-rsc/transforms") | null = null;
+
+/**
+ * Wrap a module's `"use cache"` functions with `registerCachedFunction`. The
+ * rango plugin runs it in the rsc environment; `rangoUseCacheTransform()`
+ * (testing/vitest.ts) runs it in a Vitest project, whose environment is `ssr`.
+ * Call it only for an {@link isUseCacheCandidate} module.
+ */
+export async function transformUseCache(
+  code: string,
+  id: string,
+  options: UseCacheTransformOptions,
+): Promise<{ code: string; map: Rollup.ExistingRawSourceMap } | undefined> {
+  if (!rscTransforms) {
+    try {
+      rscTransforms = await import("@vitejs/plugin-rsc/transforms");
+    } catch (error) {
+      options.onTransformsError?.(error);
+      return;
+    }
+  }
+
+  const { hasDirective, transformWrapExport, transformHoistInlineDirective } =
+    rscTransforms;
+
+  let ast: any;
+  try {
+    const { parseAst } = await import("vite");
+    ast = parseAst(code, { lang: "tsx" });
+  } catch {
+    return;
+  }
+
+  // plugin-rsc 0.5.34 `matchDirective` does `stmt.directive.match(...)`
+  // after `"directive" in node`. Vite/oxc parseAst now emits
+  // `directive: null` on ordinary ExpressionStatements, so a file that
+  // mixes a `"use cache"` function with a sibling handler whose first
+  // statement is an expression throws and the wrap is dropped.
+  stripNullDirectiveFields(ast);
+
+  const filePath = normalizePath(path.relative(options.root, id));
+  const isLayoutOrTemplate = LAYOUT_TEMPLATE_PATTERN.test(id);
+
+  if (hasDirective(ast.body, "use cache")) {
+    return transformFileLevelUseCache(
+      code,
+      ast,
+      filePath,
+      id,
+      options.isBuild,
+      isLayoutOrTemplate,
+      transformWrapExport,
+      hasDirective,
+    );
+  }
+
+  const functionResult = transformFunctionLevelUseCache(
+    code,
+    ast,
+    filePath,
+    id,
+    options.isBuild,
+    transformHoistInlineDirective,
+  );
+
+  warnOnNearMissDirectives(ast, id, options.warn);
+
+  if (functionResult) return functionResult;
+}
+
+async function transformFileLevelUseCache(
   code: string,
   ast: any,
   filePath: string,
@@ -131,6 +183,7 @@ function transformFileLevelUseCache(
   isBuild: boolean,
   isLayoutOrTemplate: boolean,
   transformWrapExport: (typeof import("@vitejs/plugin-rsc/transforms"))["transformWrapExport"],
+  hasDirective: (typeof import("@vitejs/plugin-rsc/transforms"))["hasDirective"],
 ) {
   const unconfirmedExports: string[] = [];
 
@@ -140,8 +193,18 @@ function transformFileLevelUseCache(
       return `__rango_registerCachedFunction(${value}, ${JSON.stringify(funcId)}, "default")`;
     },
     rejectNonAsyncFunction: false,
-    filter: (name: string, meta: { isFunction?: boolean }) => {
+    filter: (name: string, meta: ModuleExportMeta) => {
       if (name === "default" && isLayoutOrTemplate) return false;
+      // plugin-rsc 0.5.34 hoists mixed inline `"use server"` out of a
+      // file-level `"use cache"` module as `$$hoist_*` exports and rebinds the
+      // original name to `registerServerReference($$hoist_*, ...)`. Both are
+      // server references, not cached functions. The directive check covers
+      // the pre-hoist shape (this plugin seeing the source first).
+      if (name.startsWith("$$hoist_")) return false;
+      if (isHoistedServerReferenceRebind(meta.valueNode)) return false;
+      if (functionHasUseServerDirective(meta.valueNode, hasDirective)) {
+        return false;
+      }
       // isFunction is boolean | undefined: true = confirmed function, false =
       // confirmed non-function, undefined = cannot tell statically (e.g. a
       // factory/HOF initializer `const x = makeCached(fn)`). Deliberate policy:
@@ -173,6 +236,7 @@ function transformFileLevelUseCache(
   }
 
   if (exportNames.length === 0) {
+    const { default: MagicString } = await import("magic-string");
     const s = new MagicString(code);
     const directive = findFileLevelDirective(ast);
     if (directive) {
@@ -248,6 +312,50 @@ function transformFunctionLevelUseCache(
     // Transform failed (e.g., syntax not supported), skip
     return;
   }
+}
+
+function stripNullDirectiveFields(node: unknown): void {
+  if (!node || typeof node !== "object") return;
+  const rec = node as Record<string, unknown>;
+  if (rec.type === "ExpressionStatement" && typeof rec.directive !== "string") {
+    delete rec.directive;
+  }
+  for (const value of Object.values(rec)) {
+    if (Array.isArray(value)) {
+      for (const item of value) stripNullDirectiveFields(item);
+    } else if (value && typeof value === "object" && "type" in value) {
+      stripNullDirectiveFields(value);
+    }
+  }
+}
+
+function isHoistedServerReferenceRebind(
+  valueNode: ModuleExportMeta["valueNode"],
+): boolean {
+  if (!valueNode || valueNode.type !== "CallExpression") return false;
+  const first = valueNode.arguments[0];
+  return (
+    first !== undefined &&
+    first.type === "Identifier" &&
+    first.name.startsWith("$$hoist_")
+  );
+}
+
+function functionHasUseServerDirective(
+  valueNode: ModuleExportMeta["valueNode"],
+  hasDirective: (typeof import("@vitejs/plugin-rsc/transforms"))["hasDirective"],
+): boolean {
+  if (!valueNode || !("body" in valueNode)) return false;
+  const { body } = valueNode;
+  if (!body || Array.isArray(body) || body.type !== "BlockStatement") {
+    return false;
+  }
+  // plugin-rsc types valueNode with plain estree nodes but hasDirective with
+  // its oxc-flavored AST; the flavors differ only in position/extra fields.
+  return hasDirective(
+    body.body as Parameters<typeof hasDirective>[0],
+    "use server",
+  );
 }
 
 function findFileLevelDirective(

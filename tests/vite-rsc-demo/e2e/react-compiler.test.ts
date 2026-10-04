@@ -7,12 +7,13 @@ import { useFixture } from "./fixture";
  * React Compiler verification for the vite-rsc-demo app (non-Cloudflare path,
  * where rango() supplies @vitejs/plugin-rsc).
  *
- * The compiler is wired like the @vitejs/plugin-rsc example: a top-level
- * @rolldown/plugin-babel running reactCompilerPreset(), ordered after react()
- * and before rango() (see vite-rsc-demo/vite.config.ts). The whole vite-rsc-demo
- * e2e suite already runs against compiler-transformed client code; this file
- * additionally pins that the compiler is actually on (so it cannot be silently
- * disabled) and that it stays client-only.
+ * The compiler is plugin-react's native `compiler` option, backed by
+ * oxc-transform-react (see vite-rsc-demo/vite.config.ts). The whole
+ * vite-rsc-demo e2e suite already runs against compiler-transformed client
+ * code; this file additionally pins that the compiler is actually on (so it
+ * cannot be silently disabled), that it stays client-only, and that Fast
+ * Refresh still lands in compiled modules (plugin-react hands refresh to the
+ * same native pass and disables Vite's own injection while `compiler` is on).
  *
  * Markers:
  * - Per-module (dev): every compiled module imports the cache allocator from
@@ -75,6 +76,7 @@ test.describe("react compiler (vite-rsc-demo)", () => {
     // the `_c(n)` memo-cache allocation. An un-compiled module has neither.
     expect(source).toContain("compiler-runtime");
     expect(source).toMatch(/_c\(/);
+    expect(source).toContain("$RefreshReg$(");
   });
 });
 
@@ -89,10 +91,10 @@ test.describe("react compiler (vite-rsc-demo) (production)", () => {
     expect(readClientBundle()).toMatch(COMPILED_MARKER);
   });
 
-  test("production: server (rsc/ssr) bundles are NOT compiled (client-only preset)", () => {
-    // reactCompilerPreset() gates on `applyToEnvironmentHook: consumer ===
-    // "client"`, so only the client environment is compiled. The rsc/ssr
-    // bundles carry React core's bare sentinel definition but never the
+  test("production: server (rsc/ssr) bundles are NOT compiled (client-only)", () => {
+    // plugin-react passes `reactCompiler: false` to oxc-transform-react when
+    // `consumer === "server"`, so only the client environment is compiled. The
+    // rsc/ssr bundles carry React core's bare sentinel definition but never the
     // compiled comparison form.
     expect(readServerBundles()).not.toMatch(COMPILED_MARKER);
   });

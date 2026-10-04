@@ -38,14 +38,20 @@ import {
   type RequestContext,
 } from "../server/request-context.js";
 import { createReverseFunction } from "../router/handler-context.js";
+import { NOCACHE_SYMBOL } from "../cache/taint.js";
 import { getFetchableLoader } from "../server/fetchable-loader-store.js";
 import type { LoaderContext, LoaderDefinition } from "../types.js";
 import type { ContextVar } from "../context-var.js";
 import { isHandle, type Handle } from "../handle.js";
+import { withDefer } from "../defer.js";
 import { collectHandle } from "./collect-handle.js";
 import type { ThemeConfig } from "../theme/types.js";
 import type { SegmentCacheStore } from "../cache/types.js";
 import type { CacheProfile } from "../cache/profile-registry.js";
+import type { PartialCacheOptions } from "../types/cache-types.js";
+import type { HandlerContext } from "../types/handler-context.js";
+import { resolveLoaderData } from "../router/segment-resolution/loader-cache.js";
+import { armLoaderTagSets } from "../cache/cache-tag.js";
 import {
   createTestRequestContext,
   buildRunSnapshot,
@@ -74,6 +80,9 @@ export type TestLoaderContext<TEnv = any> = Omit<
   ) => string;
   get: {
     <T>(contextVar: ContextVar<T>): T | undefined;
+    <TData, TAccumulated = TData[]>(
+      handle: Handle<TData, TAccumulated>,
+    ): TAccumulated;
     <T = unknown>(key: string): T | undefined;
   };
 };
@@ -106,9 +115,11 @@ export interface RunLoaderOptions<TEnv = any> {
   basename?: string;
   /**
    * Theme config in the same shape `createRouter({ theme })` takes (e.g. `true`
-   * or `{ themes: [...] }`). Seeds the request's theme config so nested handler
-   * or cache contexts created from this loader observe it. Loaders themselves do
-   * not expose `ctx.theme`/`ctx.setTheme` (those are handler/middleware-only).
+   * or `{ themes: [...] }`). Seeds the request's theme config, so the loader
+   * body reads the visitor's theme (the Cookie on `request`, or the default)
+   * with `getRequestContext().theme`. That read is guarded like `cookies()`: it
+   * throws inside a `"use cache"` function (#971). The loader ctx has no
+   * `theme`/`setTheme` (those are handler/middleware-only).
    */
   theme?: ThemeConfig | true;
   /** Environment bindings surfaced as `ctx.env`. */
@@ -146,6 +157,18 @@ export interface RunLoaderOptions<TEnv = any> {
   cacheStore?: SegmentCacheStore;
   /** Cache profiles (the `createRouter({ cacheProfiles })` shape). */
   cacheProfiles?: Record<string, CacheProfile>;
+  /**
+   * Run the loader through the `cache()` a route binds it with — the options
+   * `loader(Loader, () => [cache({...})])` takes — using the production
+   * read-through against `cache.store`, else `cacheStore`. A HIT returns the
+   * stored value without running the body and records the tags the body
+   * recorded when the entry was written, so `updateTag()` of any of them drops
+   * the entry. The write is a background task the call does not await (spy
+   * on the store's `setItem` to wait for it). A raw loader body is keyed by
+   * its function reference. `handlePushes` lists the body's pushes, so a HIT
+   * reports none: the replay into the page's handle store is not modeled.
+   */
+  cache?: PartialCacheOptions;
   /**
    * Customize the rango state cookie a loader that calls
    * `invalidateClientCache()` rotates (the name is always seeded — default
@@ -248,6 +271,7 @@ function runWithLoaderContext<R>(
   reqCtx: RequestContext<any>,
   opts: RunLoaderOptions,
   fn: (ctx: TestLoaderContext) => R,
+  pushRecorder?: Array<{ handle: Handle<any, any>; value: unknown }>,
 ): R {
   const handleSeeds = new Map<unknown, unknown>(opts.handles ?? []);
   const loaderSeeds = new Map<unknown, unknown>(opts.loaders ?? []);
@@ -263,7 +287,7 @@ function runWithLoaderContext<R>(
           );
         }) as TestLoaderContext["reverse"]);
 
-    const loaderCtx: TestLoaderContext = {
+    const loaderCtx: TestLoaderContext & { _routeName?: string } = {
       params: opts.params ?? {},
       routeParams: (opts.params ?? {}) as Record<string, string>,
       request: reqCtx.request,
@@ -275,17 +299,37 @@ function runWithLoaderContext<R>(
       env: reqCtx.env,
       waitUntil: reqCtx.waitUntil.bind(reqCtx),
       executionContext: reqCtx.executionContext,
-      get: reqCtx.get as TestLoaderContext["get"],
-      use: ((dep: LoaderDefinition<any, any> | Handle<any, any>) => {
-        if (isHandle(dep) && !renderedResolved) {
-          throw new Error(
-            `ctx.use(handle) in a loader requires "await ctx.rendered()" first. ` +
-              `Handle "${(dep as Handle<any, any>).$$id}" cannot be read until ` +
-              `the render tree has settled.`,
-          );
+      get: ((keyOrVar: any) => {
+        // Handle READ (mirrors production's ctx.get(handle)): rendered-gated,
+        // seeded via the `handles` option.
+        if (isHandle(keyOrVar)) {
+          if (!renderedResolved) {
+            throw new Error(
+              `ctx.get(handle) in a loader requires "await ctx.rendered()" first. ` +
+                `Handle "${(keyOrVar as Handle<any, any>).$$id}" cannot be read until ` +
+                `the render tree has settled.`,
+            );
+          }
+          if (handleSeeds.has(keyOrVar)) return handleSeeds.get(keyOrVar);
+          return collectHandle(keyOrVar, []);
         }
-        if (handleSeeds.has(dep)) return handleSeeds.get(dep);
-        if (isHandle(dep)) return collectHandle(dep, []);
+        return (reqCtx.get as any)(keyOrVar);
+      }) as TestLoaderContext["get"],
+      use: ((dep: LoaderDefinition<any, any> | Handle<any, any>) => {
+        // Handle WRITE (mirrors production's ctx.use(Meta)({...}) push): the
+        // same withDefer wrapper shape, recording into the result envelope's
+        // `handlePushes` so tests assert what the loader wrote. Deferred
+        // resolvers record their resolved value when called.
+        if (isHandle(dep)) {
+          const handleDef = dep as Handle<any, any>;
+          return withDefer((dataOrFn: unknown) => {
+            const value =
+              typeof dataOrFn === "function"
+                ? (dataOrFn as () => unknown)()
+                : dataOrFn;
+            pushRecorder?.push({ handle: handleDef, value });
+          });
+        }
         // Production ctx.use(Loader) ALWAYS returns a Promise (the cached loader
         // promise). The seeded path must match, so a consumer composing on the
         // result (ctx.use(Dep).then(...), Promise.race, etc.) works the same as
@@ -299,6 +343,7 @@ function runWithLoaderContext<R>(
       body: opts.body,
       formData: opts.formData,
       reverse: reverse as TestLoaderContext["reverse"],
+      _routeName: reqCtx._routeName,
       rendered:
         opts.rendered !== undefined && opts.rendered !== false
           ? async () => {
@@ -313,14 +358,60 @@ function runWithLoaderContext<R>(
                   "requires the DSL render barrier, which only exists during a " +
                   "full route match. To unit-test a loader's post-barrier logic, " +
                   "pass { rendered: true } to mock the barrier and { handles: " +
-                  "[[SomeHandle, accumulatedData]] } to seed ctx.use(SomeHandle). " +
+                  "[[SomeHandle, accumulatedData]] } to seed ctx.get(SomeHandle). " +
                   "For the real push/accumulate/barrier wiring, use an e2e test.",
               );
             },
     };
 
+    // Request-scoped for "use cache" keys, as production brands it (#940).
+    (loaderCtx as Record<symbol, unknown>)[NOCACHE_SYMBOL] = true;
     return fn(loaderCtx);
   });
+}
+
+const rawLoaderIds = new WeakMap<object, string>();
+let rawLoaderSeq = 0;
+
+function cacheLoaderId(loader: RunnableLoader<unknown>): string {
+  if (typeof loader !== "function") return loader.$$id;
+  let id = rawLoaderIds.get(loader);
+  if (id === undefined) {
+    id = `runLoader#${++rawLoaderSeq}`;
+    rawLoaderIds.set(loader, id);
+  }
+  return id;
+}
+
+/**
+ * Call the loader: directly, or through its `cache()` binding (the funnel a
+ * route's DSL loaders take, loader-cache.ts resolveLoaderData), whose MISS
+ * reads the binding through the handler ctx's use(). A binding arms the
+ * per-execution loader tag sets first, as a match that resolves one does
+ * (match-api.ts, bindsLoaderCache).
+ */
+function invokeLoader<T>(
+  loader: RunnableLoader<T>,
+  loaderFn: (ctx: TestLoaderContext) => Promise<T> | T,
+  opts: RunLoaderOptions,
+  loaderCtx: TestLoaderContext,
+): Promise<T> {
+  const run = () => Promise.resolve(loaderFn(loaderCtx));
+  if (!opts.cache) return run();
+  armLoaderTagSets();
+  const handlerCtx = {
+    params: loaderCtx.params,
+    use: run,
+  } as unknown as HandlerContext<any, any>;
+  return resolveLoaderData(
+    {
+      loader: { __brand: "loader", $$id: cacheLoaderId(loader) },
+      revalidate: [],
+      cache: { options: opts.cache },
+    },
+    handlerCtx,
+    loaderCtx.pathname,
+  );
 }
 
 export async function runLoader<T>(
@@ -330,7 +421,7 @@ export async function runLoader<T>(
   const loaderFn = resolveLoaderFn(loader);
   const { ctx } = createTestRequestContext(buildLoaderCtxOpts(opts));
   return runWithLoaderContext(ctx as RequestContext<any>, opts, (loaderCtx) =>
-    Promise.resolve(loaderFn(loaderCtx)),
+    invokeLoader(loader, loaderFn, opts, loaderCtx),
   );
 }
 
@@ -361,6 +452,11 @@ export interface RunLoaderResult<T> {
   locationState: Record<string, unknown>;
   /** The resolved rango state cookie name seeded for the run (default `rango-state_router_0`). */
   stateCookieName: string;
+  /**
+   * Handle writes the loader made via `ctx.use(SomeHandle)({...})`, in push
+   * order. A `.defer()` resolver's value is recorded when the resolver runs.
+   */
+  handlePushes: Array<{ handle: Handle<any, any>; value: unknown }>;
 }
 
 export async function runLoaderResult<T>(
@@ -372,14 +468,22 @@ export async function runLoaderResult<T>(
     buildLoaderCtxOpts(opts),
   );
   const reqCtx = ctx as RequestContext<any>;
+  const handlePushes: Array<{ handle: Handle<any, any>; value: unknown }> = [];
   let result: T | undefined;
   let thrown: unknown;
   try {
-    result = await runWithLoaderContext(reqCtx, opts, (loaderCtx) =>
-      Promise.resolve(loaderFn(loaderCtx)),
+    result = await runWithLoaderContext(
+      reqCtx,
+      opts,
+      (loaderCtx) => invokeLoader(loader, loaderFn, opts, loaderCtx),
+      handlePushes,
     );
   } catch (error) {
     thrown = error;
   }
-  return { result, ...buildRunSnapshot(reqCtx, thrown, stateCookieName) };
+  return {
+    result,
+    handlePushes,
+    ...buildRunSnapshot(reqCtx, thrown, stateCookieName),
+  };
 }

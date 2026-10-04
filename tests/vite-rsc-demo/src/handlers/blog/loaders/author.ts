@@ -8,7 +8,6 @@ export type BlogAuthorData = {
 };
 
 export const BlogAuthorLoader = createLoader(async (ctx) => {
-  "use server";
   // Small delay for loading state demo
   await new Promise((r) => setTimeout(r, 800));
   const authorSlug = ctx.params.authorSlug as string;

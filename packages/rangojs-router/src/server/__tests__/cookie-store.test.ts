@@ -10,9 +10,34 @@ import {
   runWithRequestContext,
   getRequestContext,
 } from "../request-context.js";
-import { cookies, headers } from "../cookie-store.js";
-import { INSIDE_CACHE_EXEC } from "../../cache/taint.js";
-import { RangoContext, runInsideLoaderScope } from "../context.js";
+import {
+  cookies,
+  headers,
+  invalidateClientCache,
+  keepClientCache,
+  type ThemeReadSurface,
+} from "../cookie-store.js";
+import {
+  runIdentityExempt,
+  runWithCacheExecScope,
+} from "../../cache/cache-exec-scope.js";
+import { createVar } from "../../context-var.js";
+import {
+  RangoContext,
+  latchCachedHeaderScope,
+  loaderCacheIdentityError,
+  runInsideLoaderBodyScope,
+  runInsideLoaderScope,
+} from "../context.js";
+import {
+  captureRecordedTags,
+  recordedIdentityRead,
+} from "../../cache/cache-tag.js";
+import { createHandlerContext } from "../../router/handler-context.js";
+import { requestHeaders } from "../request-headers.js";
+import { createMiddlewareContext } from "../../router/middleware.js";
+import { payloadInitialTheme } from "../../rsc/full-payload.js";
+import { resolveThemeConfig } from "../../theme/constants.js";
 
 /** Helper: create a RequestContext and run `fn` inside it. */
 function withContext(
@@ -401,7 +426,11 @@ describe("headers()", () => {
 });
 
 describe('"use cache" guards', () => {
-  /** Helper: create a RequestContext with INSIDE_CACHE_EXEC flag set. */
+  /**
+   * Helper: run fn on a real request context inside the "use cache" exec
+   * scope — the AsyncLocalStorage frame cache-runtime.ts enters around the
+   * cached body (runWithCacheExecScope), which is what the guard checks.
+   */
   function withCacheExecContext(fn: () => void) {
     const ctx = createRequestContext({
       env: {},
@@ -412,14 +441,7 @@ describe('"use cache" guards', () => {
       variables: {},
     });
 
-    // Simulate what cache-runtime.ts does: stamp the taint flag on ctx
-    (ctx as any)[INSIDE_CACHE_EXEC] = true;
-
-    try {
-      runWithRequestContext(ctx, fn);
-    } finally {
-      delete (ctx as any)[INSIDE_CACHE_EXEC];
-    }
+    runWithRequestContext(ctx, () => runWithCacheExecScope(fn));
   }
 
   it("cookies() throws inside a 'use cache' context", () => {
@@ -440,7 +462,7 @@ describe('"use cache" guards', () => {
     });
   });
 
-  it("cookies() works normally when INSIDE_CACHE_EXEC is not set", () => {
+  it("cookies() works normally outside the exec scope", () => {
     const ctx = createRequestContext({
       env: {},
       request: new Request("https://example.com", {
@@ -455,7 +477,40 @@ describe('"use cache" guards', () => {
     });
   });
 
-  it("headers() works normally when INSIDE_CACHE_EXEC is not set", () => {
+  it("cookies() works in a chain PARALLEL to an active 'use cache' execution", async () => {
+    // The guard follows the cached body's own async chain. A sibling loader
+    // reading cookies() while a slow "use cache" fetch is in flight on the
+    // same request must not throw (scar: the previous stamp on the shared
+    // RequestContext poisoned exactly this read for the fetch's whole window).
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com", {
+        headers: { Cookie: "ok=yes" },
+      }),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    await runWithRequestContext(ctx, async () => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const inFlightCachedBody = runWithCacheExecScope(async () => {
+        await gate;
+        // Still inside the scope after resumption.
+        expect(() => cookies()).toThrow(/cannot be called inside/i);
+      });
+
+      expect(cookies().get("ok")?.value).toBe("yes");
+      expect(headers().get("cookie")).toBe("ok=yes");
+
+      release();
+      await inFlightCachedBody;
+    });
+  });
+
+  it("headers() works normally outside the exec scope", () => {
     const ctx = createRequestContext({
       env: {},
       request: new Request("https://example.com", {
@@ -476,7 +531,7 @@ describe("shell-capture guards", () => {
    * Run `fn` inside a request context with the shell-capture flag armed,
    * mirroring what the shell-cache middleware sets on the background capture
    * re-run. The captured shell is shared per URL, so request-scoped reads
-   * must throw here (see assertNotInsideShellCapture in cookie-store.ts).
+   * must throw here (see guardIdentityRead in server/context.ts).
    */
   function withShellCaptureContext(fn: () => void) {
     const ctx = createRequestContext({
@@ -510,6 +565,16 @@ describe("shell-capture guards", () => {
   it("the error points to loaders as the per-request lane", () => {
     withShellCaptureContext(() => {
       expect(() => cookies()).toThrow(/inside a loader/i);
+    });
+  });
+
+  it("records the read and the refusal warning's fix on the capture context", () => {
+    withShellCaptureContext(() => {
+      expect(() => headers()).toThrow();
+      expect(getRequestContext()._shellCaptureGuardTripped).toEqual({
+        surface: "headers()",
+        fix: expect.stringContaining("a loader without ssr: false"),
+      });
     });
   });
 
@@ -614,11 +679,715 @@ describe("cache() DSL scope guards", () => {
   });
 });
 
-// Integration test with registerCachedFunction is not possible in unit tests
-// because cache-runtime.ts imports @vitejs/plugin-rsc/rsc (virtual modules).
-// The guard contract is tested in two parts:
-//   1. cookies()/headers() check INSIDE_CACHE_EXEC on RequestContext (above)
-//   2. registerCachedFunction stamps INSIDE_CACHE_EXEC on tainted args (cache-runtime.ts:252-257)
+describe("identity read guards: cookies(), headers(), the theme reads, a non-cacheable ctx.get() and the raw request reads (#971, #976)", () => {
+  /** A theme-enabled request whose visitor has theme=dark. */
+  function themedRequestContext(themed = true) {
+    return createRequestContext({
+      env: {},
+      request: new Request("https://example.com", {
+        headers: { Cookie: "theme=dark; session=abc", "x-probe": "probe" },
+      }),
+      url: new URL("https://example.com"),
+      variables: {},
+      themeConfig: themed ? resolveThemeConfig(true) : undefined,
+    });
+  }
+
+  function handlerCtx(request = new Request("https://example.com")) {
+    return createHandlerContext(
+      {},
+      request,
+      new URLSearchParams(),
+      "/",
+      new URL("https://example.com"),
+    );
+  }
+
+  function middlewareCtx(request = new Request("https://example.com")) {
+    return createMiddlewareContext(request, {}, {}, {}, {
+      response: undefined,
+    } as any);
+  }
+
+  /** The public theme reads: [surface, read]. */
+  const READS: Array<[ThemeReadSurface, () => unknown]> = [
+    ["ctx.theme", () => handlerCtx().theme],
+    ["ctx.theme", () => middlewareCtx().theme],
+    ["getRequestContext().theme", () => getRequestContext().theme],
+  ];
+
+  const inCacheScope = (fn: () => void) =>
+    RangoContext.run({ insideCacheScope: true } as any, () => {
+      latchCachedHeaderScope("cache", "r");
+      fn();
+    });
+
+  type Enter = (fn: () => void) => void;
+  type Refusal = "use cache" | "cache()" | "capture";
+
+  const Tenant = createVar<string>({ cache: false });
+
+  /**
+   * Every identity-read surface guardIdentityRead guards: its reads, the
+   * value each returns where it is allowed, and the text each refusal gives
+   * (the surface's own wording, ending in its fix). `fix` is what a capture
+   * trip records for the refusal warning.
+   */
+  const SURFACES: Array<{
+    surface: string;
+    reads: Array<[string, () => unknown]>;
+    value: unknown;
+    text: Record<Refusal, string[]>;
+    fix: string;
+  }> = [
+    {
+      surface: "cookies()",
+      reads: [["cookies()", () => cookies().get("theme")?.value]],
+      value: "dark",
+      text: {
+        "use cache": [
+          'cookies() cannot be called inside a "use cache" function',
+          "pass it as an argument",
+        ],
+        "cache()": [
+          "cookies() cannot be called inside a cache() boundary",
+          "Read it inside a loader instead",
+        ],
+        capture: [
+          "cookies() cannot be called while capturing a shared shell",
+          "leak one user's cookies",
+        ],
+      },
+      fix: "a loader without ssr: false",
+    },
+    {
+      surface: "headers()",
+      reads: [["headers()", () => headers().get("x-probe")]],
+      value: "probe",
+      text: {
+        "use cache": [
+          'headers() cannot be called inside a "use cache" function',
+          "pass it as an argument",
+        ],
+        "cache()": [
+          "headers() cannot be called inside a cache() boundary",
+          "Read it inside a loader instead",
+        ],
+        capture: [
+          "headers() cannot be called while capturing a shared shell",
+          "leak one user's headers",
+        ],
+      },
+      fix: "a loader without ssr: false",
+    },
+    ...(["ctx.theme", "getRequestContext().theme"] as const).map((surface) => ({
+      surface,
+      reads: READS.filter(([s]) => s === surface).map(
+        ([s, read], i): [string, () => unknown] => [`${s} #${i}`, read],
+      ),
+      value: "dark",
+      text: {
+        "use cache": [
+          `${surface} cannot be read inside a "use cache" function`,
+          "pass it in as an argument",
+        ],
+        "cache()": [
+          `${surface} cannot be read inside a cache() boundary`,
+          "useTheme()",
+          "live loader (no ssr: false)",
+        ],
+        capture: [
+          `${surface} cannot be read while capturing a shared shell`,
+          "useTheme()",
+        ],
+      },
+      fix: "useTheme()",
+    })),
+    // #976: the raw reads. The router hands the request context's Request
+    // to every ctx, so each ctx's request.headers is the same guarded getter.
+    {
+      surface: "ctx.request.headers",
+      reads: [
+        [
+          "getRequestContext().request.headers",
+          () => getRequestContext().request.headers.get("x-probe"),
+        ],
+        [
+          "handler ctx.request.headers",
+          () =>
+            handlerCtx(getRequestContext().request).request.headers.get(
+              "x-probe",
+            ),
+        ],
+        [
+          "middleware ctx.request.headers",
+          () =>
+            middlewareCtx(getRequestContext().request).request.headers.get(
+              "x-probe",
+            ),
+        ],
+      ],
+      value: "probe",
+      text: {
+        "use cache": [
+          'ctx.request.headers cannot be read inside a "use cache" function',
+          "pass it as an argument",
+        ],
+        "cache()": [
+          "ctx.request.headers cannot be read inside a cache() boundary",
+          "Read it inside a loader instead",
+        ],
+        capture: [
+          "ctx.request.headers cannot be read while capturing a shared shell",
+          "leak one user's headers",
+        ],
+      },
+      fix: "a loader without ssr: false",
+    },
+    ...(
+      [
+        [
+          "getRequestContext().cookie()",
+          () => getRequestContext().cookie("session"),
+        ],
+        [
+          "getRequestContext().cookies()",
+          () => getRequestContext().cookies().session,
+        ],
+      ] as const
+    ).map(([surface, read]) => ({
+      surface,
+      reads: [[surface, read]] as Array<[string, () => unknown]>,
+      value: "abc",
+      text: {
+        "use cache": [
+          `${surface} cannot be called inside a "use cache" function`,
+          "pass it as an argument",
+        ],
+        "cache()": [
+          `${surface} cannot be called inside a cache() boundary`,
+          "Read it inside a loader instead",
+        ],
+        capture: [
+          `${surface} cannot be called while capturing a shared shell`,
+          "leak one user's cookies",
+        ],
+      },
+      fix: "a loader without ssr: false",
+    })),
+    {
+      surface: "ctx.get() for a non-cacheable variable",
+      reads: [
+        ["getRequestContext().get", () => getRequestContext().get(Tenant)],
+        ["handler ctx.get", () => handlerCtx().get(Tenant)],
+      ],
+      value: "t1",
+      text: {
+        "use cache": [
+          'ctx.get() for a non-cacheable variable cannot be called inside a "use cache" function',
+          "pass the value in as an argument",
+        ],
+        "cache()": [
+          "ctx.get() for a non-cacheable variable cannot be called inside a cache() boundary",
+          "Move the read outside the cached scope",
+        ],
+        capture: [
+          "ctx.get() for a non-cacheable variable cannot be called while capturing a shared shell",
+          "leak one user's per-request variables",
+        ],
+      },
+      fix: "a loader without ssr: false",
+    },
+    {
+      surface: 'ctx.get() for a non-cacheable variable "site"',
+      reads: [
+        ["getRequestContext().get", () => getRequestContext().get("site")],
+      ],
+      value: "s1",
+      text: {
+        "use cache": [
+          'ctx.get() for a non-cacheable variable "site" cannot be called inside a "use cache" function',
+        ],
+        "cache()": [
+          'ctx.get() for a non-cacheable variable "site" cannot be called inside a cache() boundary',
+        ],
+        capture: [
+          'ctx.get() for a non-cacheable variable "site" cannot be called while capturing a shared shell',
+        ],
+      },
+      fix: "a loader without ssr: false",
+    },
+  ];
+
+  /**
+   * Every scope the ladder decides: [label, the refusal or "allowed",
+   * capture render, enter, the loader body a capture trip names].
+   */
+  const SCOPES: Array<[string, Refusal | "allowed", boolean, Enter, string?]> =
+    [
+      ["no shared scope", "allowed", false, (fn) => fn()],
+      [
+        "a loader body outside any cache scope",
+        "allowed",
+        false,
+        (fn) => runInsideLoaderBodyScope(fn, "L"),
+      ],
+      [
+        'a "use cache" body',
+        "use cache",
+        false,
+        (fn) => runWithCacheExecScope(fn),
+      ],
+      // Its value is part of what the function returns, stored in the entry
+      // under a key that does not include what it read. A non-cacheable
+      // ctx.get() was exempt here before, and the entry kept the first
+      // request's value.
+      [
+        'a loader body entered inside a "use cache" function',
+        "use cache",
+        false,
+        (fn) => runWithCacheExecScope(() => runInsideLoaderBodyScope(fn, "L")),
+      ],
+      [
+        'a DSL loader inside a "use cache" function',
+        "use cache",
+        false,
+        (fn) => runWithCacheExecScope(() => runInsideLoaderScope(fn)),
+      ],
+      [
+        'a "use cache" function a loader body calls',
+        "use cache",
+        false,
+        (fn) => runInsideLoaderBodyScope(() => runWithCacheExecScope(fn), "L"),
+      ],
+      ["a cache() boundary", "cache()", false, inCacheScope],
+      [
+        "a DSL loader under cache()",
+        "allowed",
+        false,
+        (fn) => inCacheScope(() => runInsideLoaderScope(fn)),
+      ],
+      [
+        "a handler-invoked loader body under cache()",
+        "allowed",
+        false,
+        (fn) => inCacheScope(() => runInsideLoaderBodyScope(fn, "L")),
+      ],
+      ["a ppr capture render", "capture", true, (fn) => fn()],
+      [
+        "a segment loader body at capture",
+        "capture",
+        true,
+        (fn) => runInsideLoaderBodyScope(fn, "L"),
+        "L",
+      ],
+      // No loader-body exemption at capture (#969): a HIT replays the
+      // capture's copy of a loader a handler awaits.
+      [
+        "a handler-invoked loader body at capture",
+        "capture",
+        true,
+        (fn) => runInsideLoaderBodyScope(fn, "L"),
+        "L",
+      ],
+      // The capture trips first: a caught throw still refuses the capture.
+      [
+        'a "use cache" body at capture',
+        "capture",
+        true,
+        (fn) => runWithCacheExecScope(fn),
+      ],
+      ["a cache() boundary at capture", "capture", true, inCacheScope],
+      // A key(), a store keyGenerator or a condition() (#976): the value
+      // picks the entry, it is not stored in it. A capture resolves its doc
+      // record key under the capture context.
+      [
+        "a cache decision (key(), keyGenerator, condition())",
+        "allowed",
+        false,
+        (fn) => runIdentityExempt(fn),
+      ],
+      [
+        "a cache decision in a cache() boundary",
+        "allowed",
+        false,
+        (fn) => inCacheScope(() => runIdentityExempt(fn)),
+      ],
+      [
+        'a cache decision in a "use cache" body',
+        "allowed",
+        false,
+        (fn) => runWithCacheExecScope(() => runIdentityExempt(fn)),
+      ],
+      [
+        "a cache decision at capture",
+        "allowed",
+        true,
+        (fn) => runIdentityExempt(fn),
+      ],
+    ];
+
+  /** The error `fn` throws, or "allowed". */
+  function readOutcome(fn: () => unknown): Error | "allowed" {
+    try {
+      fn();
+      return "allowed";
+    } catch (error) {
+      return error as Error;
+    }
+  }
+
+  describe.each(SCOPES)(
+    "in %s, every identity read gets the same answer",
+    (_label, expected, capture, enter, loaderId) => {
+      it.each(SURFACES)("$surface", ({ surface, reads, value, text, fix }) => {
+        const reqCtx = themedRequestContext();
+        reqCtx.set(Tenant, "t1");
+        reqCtx.set("site", "s1", { cache: false });
+        if (capture) (reqCtx as any)._shellCaptureRun = true;
+        runWithRequestContext(reqCtx, () =>
+          enter(() => {
+            for (const [, read] of reads) {
+              reqCtx._shellCaptureGuardTripped = undefined;
+              // The ctx is created inside the scope: creating it reads nothing.
+              if (expected === "allowed") {
+                expect(read()).toBe(value);
+                expect(reqCtx._shellCaptureGuardTripped).toBeUndefined();
+                continue;
+              }
+              const outcome = readOutcome(read);
+              expect(outcome).toBeInstanceOf(Error);
+              for (const part of text[expected]) {
+                expect((outcome as Error).message).toContain(part);
+              }
+              if (capture) {
+                expect(reqCtx._shellCaptureGuardTripped).toEqual({
+                  surface,
+                  fix: expect.stringContaining(fix),
+                });
+                expect(reqCtx._shellCaptureGuardTrippedLoaderId).toBe(loaderId);
+              }
+            }
+          }),
+        );
+      });
+    },
+  );
+
+  it("reads the visitor's theme where nothing is shared, and a theme set earlier in the request", () => {
+    runWithRequestContext(themedRequestContext(), () => {
+      const ctx = handlerCtx();
+      expect([ctx.theme, getRequestContext().theme]).toEqual(["dark", "dark"]);
+      ctx.setTheme!("light");
+      expect([ctx.theme, getRequestContext().theme]).toEqual([
+        "light",
+        "light",
+      ]);
+    });
+  });
+
+  it("a handler ctx read with no ambient request context is guarded by the ctx's own", () => {
+    const reqCtx = themedRequestContext();
+    (reqCtx as any)._shellCaptureRun = true;
+    const ctx = runWithRequestContext(reqCtx, () => handlerCtx());
+    expect(() => ctx.theme).toThrow(
+      "ctx.theme cannot be read while capturing a shared shell",
+    );
+    expect(reqCtx._shellCaptureGuardTripped?.surface).toBe("ctx.theme");
+  });
+
+  it("at capture, serializing a ctx does not read the theme; a derived ctx's read does", () => {
+    // React's dev debug info JSON-stringifies server component props and
+    // replayed console.log args; a ctx passed there is not a theme read.
+    const reqCtx = themedRequestContext();
+    (reqCtx as any)._shellCaptureRun = true;
+    runWithRequestContext(reqCtx, () => {
+      const ctx = handlerCtx();
+      for (const serialized of [ctx, reqCtx]) {
+        expect(() => JSON.stringify(serialized)).not.toThrow();
+        expect(Object.keys(serialized)).not.toContain("theme");
+        expect({ ...serialized }).not.toHaveProperty("theme");
+      }
+      expect(reqCtx._shellCaptureGuardTripped).toBeUndefined();
+      // cache-runtime.ts refreshView wraps the ctx with Object.create.
+      expect(() => Object.create(ctx).theme).toThrow(/ctx\.theme/);
+      expect(reqCtx._shellCaptureGuardTripped?.surface).toBe("ctx.theme");
+    });
+  });
+
+  it('the middleware ctx.theme is non-enumerable: spreading the ctx in a "use cache" body does not read it', () => {
+    runWithRequestContext(themedRequestContext(), () => {
+      const ctx = middlewareCtx();
+      expect(Object.getOwnPropertyDescriptor(ctx, "theme")?.enumerable).toBe(
+        false,
+      );
+      runWithCacheExecScope(() => {
+        expect(() => ({ ...ctx })).not.toThrow();
+        expect(() => ctx.theme).toThrow(
+          'ctx.theme cannot be read inside a "use cache" function',
+        );
+      });
+      expect(ctx.theme).toBe("dark");
+    });
+  });
+
+  it("a spread of the request context (the fetchable-loader ctx) carries no unguarded theme read", () => {
+    const reqCtx = themedRequestContext();
+    (reqCtx as any)._shellCaptureRun = true;
+    runWithRequestContext(reqCtx, () => {
+      // loader-fetch.ts builds the fetchable-loader ctx as { ...reqCtx }.
+      const copy = { ...reqCtx } as Record<string, unknown>;
+      expect(copy).not.toHaveProperty("theme");
+      expect(copy).not.toHaveProperty("_readTheme");
+      expect(reqCtx._shellCaptureGuardTripped).toBeUndefined();
+      // The internal read itself still works for the router.
+      expect(reqCtx._readTheme()).toBe("dark");
+    });
+  });
+
+  it("the theme is read-only: assigning it throws", () => {
+    runWithRequestContext(themedRequestContext(), () => {
+      const ctx = handlerCtx();
+      expect(() => {
+        (ctx as { theme?: string }).theme = "light";
+      }).toThrow(TypeError);
+      expect(() => {
+        (getRequestContext() as { theme?: string }).theme = "light";
+      }).toThrow(TypeError);
+      expect(ctx.theme).toBe("dark");
+    });
+  });
+
+  it("the foreground render of a ppr route reads the visitor's theme", () => {
+    const reqCtx = themedRequestContext();
+    (reqCtx as any)._shellCapture = { key: "example.com/:shell", ttl: 300 };
+    runWithRequestContext(reqCtx, () => {
+      expect(READS.map(([, read]) => read())).toEqual(["dark", "dark", "dark"]);
+    });
+  });
+
+  it("without theme config every theme read is undefined and never throws", () => {
+    const reqCtx = themedRequestContext(false);
+    (reqCtx as any)._shellCaptureRun = true;
+    runWithRequestContext(reqCtx, () => {
+      for (const enter of [inCacheScope, runWithCacheExecScope] as Enter[]) {
+        enter(() => {
+          for (const [, read] of READS) expect(read()).toBeUndefined();
+        });
+      }
+      expect(reqCtx._shellCaptureGuardTripped).toBeUndefined();
+    });
+  });
+
+  it("the router's payload read is unguarded; a capture carries the no-cookie default", () => {
+    const reqCtx = themedRequestContext();
+    runWithRequestContext(reqCtx, () => {
+      inCacheScope(() => expect(payloadInitialTheme(reqCtx)).toBe("dark"));
+      runWithCacheExecScope(() =>
+        expect(payloadInitialTheme(reqCtx)).toBe("dark"),
+      );
+    });
+    const derived = Object.create(reqCtx) as typeof reqCtx;
+    derived._shellCaptureRun = true;
+    runWithRequestContext(derived, () => {
+      expect(payloadInitialTheme(derived)).toBe("system");
+      expect(derived._shellCaptureGuardTripped).toBeUndefined();
+    });
+    expect(payloadInitialTheme(themedRequestContext(false))).toBeUndefined();
+  });
+
+  it("a render the document cache stores carries the no-cookie default; any other render marks a visitor theme (#978)", () => {
+    const stored = themedRequestContext();
+    stored._documentCacheRender = true;
+    stored.header("Cache-Control", "s-maxage=60");
+    expect(payloadInitialTheme(stored)).toBe("system");
+    expect(stored._payloadVisitorTheme).toBeUndefined();
+
+    // Not stored: no s-maxage yet, or no document-cache middleware.
+    const unstored = themedRequestContext();
+    unstored._documentCacheRender = true;
+    expect(payloadInitialTheme(unstored)).toBe("dark");
+    expect(unstored._payloadVisitorTheme).toBe(true);
+    const unmarked = themedRequestContext();
+    unmarked.header("Cache-Control", "s-maxage=60");
+    expect(payloadInitialTheme(unmarked)).toBe("dark");
+    expect(unmarked._payloadVisitorTheme).toBe(true);
+
+    // A visitor with no stored theme renders the default: nothing to mark.
+    const anonymous = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+      themeConfig: resolveThemeConfig(true),
+    });
+    expect(payloadInitialTheme(anonymous)).toBe("system");
+    expect(anonymous._payloadVisitorTheme).toBeUndefined();
+  });
+
+  it("ctx.setTheme throws in a cache() boundary like cookies().set, and leaves no cookie", () => {
+    const reqCtx = themedRequestContext();
+    runWithRequestContext(reqCtx, () => {
+      const ctx = handlerCtx();
+      inCacheScope(() => {
+        expect(() => cookies().set("theme", "light")).toThrow();
+        expect(() => ctx.setTheme!("light")).toThrow(
+          /inside a cache\(\) boundary/,
+        );
+      });
+      expect(reqCtx.res.headers.get("Set-Cookie")).toBeNull();
+    });
+  });
+
+  it('ctx.setTheme throws in a "use cache" body like cookies().set', () => {
+    runWithRequestContext(themedRequestContext(), () => {
+      const ctx = handlerCtx();
+      runWithCacheExecScope(() => {
+        expect(() => cookies().set("theme", "light")).toThrow();
+        expect(() => ctx.setTheme!("light")).toThrow(/"use cache"/);
+      });
+    });
+  });
+});
+
+describe("identity reads recorded for a loader cache() fill (#972)", () => {
+  /** Run `fn` in a fill's recorded set; return the read it recorded. */
+  function recordedBy(fn: () => void) {
+    const into = new Set<string>();
+    withContext({ cookieHeader: "session=abc" }, () =>
+      captureRecordedTags(into, fn),
+    );
+    return recordedIdentityRead(into);
+  }
+
+  it("cookies() and headers() record the read, not throw", () => {
+    expect(recordedBy(() => cookies().get("session"))).toEqual({
+      surface: "cookies()",
+      verb: "called",
+      bodyId: undefined,
+    });
+    expect(recordedBy(() => headers().get("cookie"))?.surface).toBe(
+      "headers()",
+    );
+  });
+
+  it("a clone of ctx.request records its header read for a loader cache() fill (#976)", () => {
+    expect(
+      recordedBy(() =>
+        getRequestContext().request.clone().headers.get("cookie"),
+      )?.surface,
+    ).toBe("ctx.request.headers");
+  });
+
+  it("ctx.request.headers and getRequestContext().cookie()/cookies() record at the read (#976)", () => {
+    expect(
+      recordedBy(() => getRequestContext().request.headers.get("cookie")),
+    ).toEqual({
+      surface: "ctx.request.headers",
+      verb: "read",
+      bodyId: undefined,
+    });
+    expect(recordedBy(() => getRequestContext().cookie("session"))).toEqual({
+      surface: "getRequestContext().cookie()",
+      verb: "called",
+      bodyId: undefined,
+    });
+    expect(recordedBy(() => getRequestContext().cookies())?.surface).toBe(
+      "getRequestContext().cookies()",
+    );
+  });
+
+  it("a cache decision (key(), keyGenerator, condition()) records nothing (#976)", () => {
+    expect(
+      recordedBy(() =>
+        runIdentityExempt(() => {
+          cookies().get("session");
+          headers().get("cookie");
+          getRequestContext().request.headers.get("cookie");
+          getRequestContext().cookie("session");
+        }),
+      ),
+    ).toBeUndefined();
+  });
+
+  it("the router's own request reads record nothing (#976)", () => {
+    expect(
+      recordedBy(() => {
+        const ctx = getRequestContext();
+        requestHeaders(ctx.request).get("cookie");
+        ctx._readCookie("session");
+        ctx._readCookies();
+        cookies().set("seen", "1");
+        invalidateClientCache();
+      }),
+    ).toBeUndefined();
+  });
+
+  it("response directives record nothing: a key() cannot replay them on a HIT", () => {
+    expect(
+      recordedBy(() => {
+        invalidateClientCache();
+        keepClientCache();
+      }),
+    ).toBeUndefined();
+  });
+
+  it("headers() records on its read methods, not the call: a view taken outside and read inside counts", () => {
+    expect(recordedBy(() => headers())).toBeUndefined();
+    const into = new Set<string>();
+    withContext({ headers: { "x-user": "u1" } }, () => {
+      const view = headers();
+      captureRecordedTags(into, () => {
+        view.get("x-user");
+      });
+    });
+    expect(recordedIdentityRead(into)?.surface).toBe("headers()");
+    for (const read of [
+      (h: ReturnType<typeof headers>) => h.has("x-user"),
+      (h: ReturnType<typeof headers>) => [...h],
+      (h: ReturnType<typeof headers>) => h.forEach(() => {}),
+    ]) {
+      expect(recordedBy(() => read(headers()))?.surface).toBe("headers()");
+    }
+  });
+
+  it("a cookie write records nothing; its read methods do", () => {
+    expect(recordedBy(() => cookies().set("seen", "1"))).toBeUndefined();
+    for (const read of [
+      (jar: ReturnType<typeof cookies>) => jar.getAll(),
+      (jar: ReturnType<typeof cookies>) => jar.has("session"),
+    ]) {
+      expect(recordedBy(() => read(cookies()))?.surface).toBe("cookies()");
+    }
+  });
+
+  it("a shell-capture run keeps its own guard, which flags the capture", () => {
+    recordedBy(() => {
+      const ctx = getRequestContext() as any;
+      ctx._shellCaptureRun = true;
+      expect(() => cookies()).toThrow(/capturing a shared shell/i);
+      expect(ctx._shellCaptureGuardTripped).toMatchObject({
+        surface: "cookies()",
+      });
+    });
+  });
+
+  it("the fill error names the loader and the fix", () => {
+    const read = recordedBy(() => cookies().get("session"))!;
+    expect(loaderCacheIdentityError(read, "SessionLoader#L").message).toMatch(
+      /^cookies\(\) cannot be called inside loader "SessionLoader#L", whose own cache\(\) has no key\(\)\..*key: \(ctx\) =>/s,
+    );
+  });
+});
+
+// The guard contract is tested in three parts:
+//   1. cookies()/headers() check the cache-exec ALS scope (above) — the scope
+//      cache-runtime.ts enters around the cached body via runWithCacheExecScope
+//   2. registerCachedFunction stamps INSIDE_CACHE_EXEC on tainted ARG objects
+//      for the ctx.set()/ctx.header() guards (cache-runtime.ts)
+//   3. the production registerCachedFunction path (mocked virtual modules) in
+//      src/cache/__tests__/cache-exec-parallel-guard.test.ts — in-body reads
+//      throw, PARALLEL same-request reads don't
 // The full transformed path (Vite transform -> registerCachedFunction -> guard -> throw)
 // is covered by e2e/use-cache.test.ts:
 //   "cookies() throws inside a 'use cache' function"

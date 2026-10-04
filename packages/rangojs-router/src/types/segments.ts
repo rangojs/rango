@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { ErrorInfo, NotFoundInfo } from "./boundaries.js";
-import type { RevalidateParams, HandlerContext } from "./handler-context.js";
+import type { IsActionFn } from "./handler-context.js";
+import type { DefaultRouteName } from "./global-namespace.js";
 
 /**
  * CSS class(es) for a ViewTransition phase.
@@ -10,92 +11,97 @@ import type { RevalidateParams, HandlerContext } from "./handler-context.js";
 export type ViewTransitionClass = Record<string, string> | string;
 
 /**
- * The context a transition({ when }) predicate receives.
- *
- * It mirrors the {@link ShouldRevalidateFn} args a `revalidate()` predicate
- * gets — the same navigation/action metadata — so the two read the same shape,
- * plus `get`/`env` for post-handler reads. There is no full `HandlerContext`
- * here: the gate runs at the RSC-payload layer with the request context, not a
- * handler context, so handler-only sugar (`search`/`build`/`dev`/`headers`) is
- * absent by design. `get` is the way to read what the handler/middleware set
- * via `ctx.set(...)` this request.
- *
- * Field availability (all source fields are optional — never fabricated):
- * - `currentUrl` / `currentParams` / `fromRouteName` (the navigation SOURCE) are
- *   populated on soft navigations and action-success revalidations. They are
- *   undefined on an initial full document load and on action-error / no-JS error
- *   paths that skip the navigation snapshot — there is no prior page to name.
- * - `nextUrl` / `nextParams` / `get` / `env` / `method` are always present;
- *   `toRouteName` is present only when the target route is named (undefined for
- *   unnamed/auto-generated routes, like `fromRouteName`).
- * - `actionId` / `actionUrl` / `actionResult` / `formData` are populated only
- *   when a server action triggered the render; `method` is "POST" then, "GET"
- *   otherwise. On no-JS (progressive-enhancement) action paths `actionId` may be
- *   undefined when React cannot surface the action's stable id: the success
- *   re-render still sets `actionUrl`/`formData` for a recognized action, but the
- *   error-boundary re-render exposes `actionUrl` only when `actionId` resolved.
- *   Malformed form bodies that fail before action detection expose no action
- *   fields. Treat `actionId` as "the action, if known", not as "was this an
- *   action".
- *
- * PREFETCH / CACHE CAVEAT (read this before gating on the source): the gate runs
- * server-side during resolution. A PREFETCHED navigation renders at prefetch
- * time, so `currentUrl`/`currentParams`/`fromRouteName` reflect the page the
- * prefetch fired from, NOT necessarily the page the user actually navigates from
- * — the decision is baked into the stored Flight payload and replayed verbatim.
- * A `cache()`/prerender hit replays the stored transition with the predicate NOT
- * re-run at all. So a source-sensitive predicate can be frozen to prefetch-time
- * or store-time state. This is accepted (~99% of navigations match), but if your
- * gate must reflect the exact click-time source, source-scope the prefetch
- * (`<Link prefetchKey=":source">`) and do not `cache()` that segment.
+ * One side of a navigation as the browser knows it when a
+ * `transition({ when })` predicate runs.
  */
-export type TransitionWhenContext<
-  TParams = Record<string, string>,
-  TEnv = unknown,
-> = Partial<
-  Pick<
-    RevalidateParams<TParams, TEnv>,
-    "currentUrl" | "currentParams" | "fromRouteName"
-  >
-> &
-  Pick<
-    RevalidateParams<TParams, TEnv>,
-    | "nextUrl"
-    | "nextParams"
-    | "toRouteName"
-    | "actionId"
-    | "actionUrl"
-    | "actionResult"
-    | "formData"
-    | "method"
-  > &
-  Pick<HandlerContext<any, TEnv>, "get" | "env">;
+export interface RouteLocation {
+  readonly url: URL;
+  /** Merged route params of the location. */
+  readonly params: Readonly<Record<string, string>>;
+  /**
+   * The matched route's name (include prefixes applied), typed from the
+   * generated route map; undefined for an unnamed route or when unknown.
+   * Internal names never appear here.
+   */
+  readonly routeName: DefaultRouteName | undefined;
+  /**
+   * `history.state` of this entry at decision time. Read a typed slot with
+   * `Def.read(location)` (a `createLocationState()` definition).
+   */
+  readonly state: unknown;
+}
 
 /**
- * Predicate that gates whether a transition() applies for the current request.
+ * A navigation side as the server sees it, for intercept's `when` selector:
+ * a {@link RouteLocation} without `state` (history state never reaches the
+ * server).
+ */
+export type ServerRouteLocation = Omit<RouteLocation, "state">;
+
+/**
+ * How the navigation being decided was started.
  *
- * Evaluated server-side AFTER the route's handler runs (so `get(...)` can read
- * handler/middleware-set state) and outside any cache scope. Return false to
- * drop this segment's transition for the request; return true to apply it. The
- * context ({@link TransitionWhenContext}) carries the same navigation/action
- * metadata a `revalidate()` predicate sees plus `get`/`env`. If it throws, the
- * error is reported to the router's onError (phase "rendering") and the
- * transition is dropped (the navigation does not hold).
+ * - `"push"` / `"replace"`: a Link click, `router.push()` / `router.replace()`
+ *   or `navigate()`.
+ * - `"pop"`: browser back/forward (restored from the history cache or
+ *   refetched).
+ * - `"action"`: the commit that applies a server action's revalidation,
+ *   including the error-boundary commit of a failed action.
+ * - `"revalidate"`: a re-render of the current URL: `router.refresh()`,
+ *   cross-tab invalidation, or the background revalidation of a stale entry.
+ */
+export type TransitionWhenKind =
+  | "push"
+  | "replace"
+  | "pop"
+  | "action"
+  | "revalidate";
+
+/**
+ * The context a `transition({ when })` predicate receives. The predicate runs
+ * in the BROWSER, once per navigation, at the first commit that presents the
+ * destination. The server never calls it.
  *
- * Distinct from intercept()'s `when` config selector, which runs at MATCH time
- * over `{ from, to, params, segments, … }`; a transition `when` runs
- * post-handler over the resolved payload.
+ * - `from`: the committed location being left.
+ * - `to`: the destination. The same object as `from` for `"action"` and
+ *   `"revalidate"`.
+ * - `isAction`: the matcher `revalidate()` predicates get; `false` off an
+ *   action.
+ * - `action`: present only for `kind: "action"`.
+ */
+export interface TransitionWhenContext {
+  readonly kind: TransitionWhenKind;
+  readonly from: RouteLocation;
+  readonly to: RouteLocation;
+  readonly isAction: IsActionFn;
+  /** Present only for `kind: "action"`. */
+  readonly action?: {
+    /** The action's hashed `$$id` in the browser; match with `isAction(fn)` instead. */
+    readonly id: string | undefined;
+    /** The FormData argument the action received (the 2nd argument under `useActionState`). */
+    readonly formData: FormData | undefined;
+    /** The action's return value on success. */
+    readonly result: unknown;
+    /** What a failed action threw (its error-boundary commit); `result` is undefined then. */
+    readonly error: unknown;
+  };
+}
+
+/**
+ * Browser-run predicate that gates whether a navigation holds and animates.
  *
- * Scope: dropping a transition removes only THIS segment's contribution to the
- * navigation's hold. The startTransition hold is navigation-wide — it engages if
- * any matched segment still has a transition — so `when: false` makes the
- * navigation stream its loading fallback only when no other matched segment
- * keeps a transition (the common case: a single transition on the route).
+ * In `urls()` write it inline (`transition({ when: (ctx) => ... })`, which
+ * the build hoists into a client module; it may reference only its own
+ * bindings, globals and client-safe imports) or export it from a
+ * `"use client"` module and import it; in `clientUrls()` it is an inline
+ * function. Anything else (a server function, a non-function) fails route
+ * discovery.
  *
- * Evaluated on every fresh (cache-miss) resolution; it is NOT re-run when a
- * segment is replayed from the runtime cache or a build-time prerender, and a
- * prefetched navigation freezes it to prefetch-time state — see the caveat on
- * {@link TransitionWhenContext}.
+ * `false` makes the navigation an urgent commit: no hold, no view transition,
+ * and a same-route navigation streams its `loading()` fallback. The segment
+ * keeps its key and its `<ViewTransition>` element (every class "none"), so
+ * nothing remounts. One predicate returning false decides for the whole
+ * navigation. A throw is logged with `console.error` and counts as `false`.
  */
 export type TransitionWhenFn = (ctx: TransitionWhenContext) => boolean;
 
@@ -128,12 +134,8 @@ export interface TransitionConfig {
    */
   viewTransition?: "auto" | false;
   /**
-   * Optional server-side predicate that gates this transition per request. When
-   * present and it returns false (evaluated post-handler), the router drops this
-   * segment's transition for the request, so the navigation streams its loading
-   * fallback instead of holding. The predicate is server-only and never
-   * serialized to the client; only its resolved effect (transition kept or
-   * dropped) crosses. See {@link TransitionWhenFn}.
+   * Optional browser-run predicate that gates this transition per
+   * navigation. See {@link TransitionWhenFn}.
    */
   when?: TransitionWhenFn;
 }
@@ -161,16 +163,36 @@ export interface ResolvedSegment {
   loaderId?: string; // For loaders: the loader $$id identifier
   _inherited?: boolean; // For inherited loaders: dedup marker for buildMatchResult
   loaderData?: any; // For loaders: the resolved data from loader execution
+  /**
+   * True when this loader was awaited before first flush
+   * (loader(Def, { ssr: false })). Stamped by resolveLoaders (fresh.ts) on
+   * document AND shell-capture renders — capture bakes flagged loaders and
+   * awaits the same lane. Feeds segment-system's settled-value delivery and
+   * the dev SSR suspension warning (ssr-suspension-warning.ts).
+   */
+  awaitBeforeFlush?: true;
   parallelLoading?: ReactNode; // For parallel-owned loaders: the parallel's loading fallback
   // Intercept loader fields (for streaming loader data in parallel segments)
   loaderDataPromise?: Promise<any[]> | any[]; // Loader data promise or resolved array
   loaderIds?: string[]; // IDs ($$id) of loaders for this segment
+  /**
+   * Per-loader UNDECODED results for a layout/route stream map.
+   * Flagged (ssr:false) entries are settled values; unflagged siblings
+   * stay promises. Parallel slots do not use this channel — they pin
+   * loading() / live-lane holes via use(loaderDataPromise).
+   */
+  loaderStreams?: Record<string, unknown>;
+  /** $$ids of loaders this segment awaited before flush. Dev diagnostic. */
+  awaitedLoaderIds?: string[];
   // Error-specific fields
   error?: ErrorInfo; // For error segments: the error information
   // NotFound-specific fields
   notFoundInfo?: NotFoundInfo; // For notFound segments: the not found information
   // Mount path from include() scope, used for MountContext.Provider wrapping
   mountPath?: string;
+  /** clientUrls() group key (the include mount), shared by every route
+   *  segment of one group; see the group-route branch in segment-system.tsx. */
+  clientGroup?: string;
   /**
    * @internal Server-side marker: true when the segment's handler actually ran
    * this request (not skipped via the revalidate cache path). Used by
@@ -253,6 +275,19 @@ export interface MatchResult {
    * Slots are used for intercepting routes during soft navigation
    */
   slots?: Record<string, SlotState>;
+  /**
+   * Intercept TARGET route names reachable when this location is a navigation
+   * origin (chain walk of the matched entry, when-conditionals included).
+   * Shipped in payload metadata so the browser-local clientUrls matcher can
+   * decline its optimistic presentation for targets an intercept would claim.
+   */
+  interceptTargets?: string[];
+  /**
+   * Set on a partial match when an intercept targets the matched route,
+   * whether or not it applied from this source. The response depends on the
+   * source, so the RSC handler scopes its prefetch entry to it (#1007).
+   */
+  interceptTargeted?: true;
   /**
    * Redirect URL for trailing slash normalization.
    * When set, the RSC handler should return a 308 redirect to this URL

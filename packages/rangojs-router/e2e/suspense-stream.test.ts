@@ -1,6 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { expectNoPageError, testId, waitForHydration } from "./helper";
+import {
+  expectNoPageError,
+  testId,
+  waitForHydration,
+  blockPrefetch,
+} from "./helper";
 
 /**
  * Proves that a raw <Suspense> placed inside a handler's render (NOT the loading()
@@ -90,8 +95,8 @@ function suspenseStreamTests(mode: "dev" | "build") {
 
       // /suspense-stream-meta is identical to /suspense-stream but its handler also
       // does ctx.use(Meta)(promise.then(...)). That async meta descriptor must be
-      // isolated in its own <Suspense> inside MetaTags — otherwise use() suspends
-      // MetaTags (in <head>, above the route's <Suspense>) and holds the whole
+      // isolated in its own <Suspense> inside Html.Meta — otherwise use() suspends
+      // Html.Meta (in <head>, above the route's <Suspense>) and holds the whole
       // document, suppressing the route fallback until the meta promise resolves.
       await testId(page, "suspense-stream-meta-link").click();
 
@@ -187,7 +192,7 @@ function suspenseStreamTests(mode: "dev" | "build") {
       // /plp-meta-tx commits through startTransition (transition() DSL — the same
       // commit path SWR uses on a revisit). Its content resolves at 2s; its Meta is
       // a SEPARATE, slower promise (5s). Without the store resolution the transition
-      // waits for the suspending MetaTags too and the commit is held to ~5s. The
+      // waits for the suspending Html.Meta too and the commit is held to ~5s. The
       // store resolution removes the meta from the transition's wait, so the content
       // must commit well before the meta resolves.
       const titleBefore = await page.title();
@@ -217,6 +222,12 @@ function suspenseStreamTests(mode: "dev" | "build") {
       page,
     }) => {
       using _ = expectNoPageError(page);
+
+      // This pins the COLD same-route nav contract (fallback re-streams). A
+      // completed viewport prefetch of link-b would be adopted as
+      // a fully-prefetched commit, which deliberately skips the fallback
+      // (no-flash, #622) — keep the cache virgin so the nav streams live.
+      await blockPrefetch(page);
 
       // Land on /a and wait for its content so the boundary is resolved first.
       await page.goto(f.url("/suspense-stream/a"));

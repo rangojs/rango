@@ -18,7 +18,8 @@
  *   `@rangojs/router` specifier to its react-server entry (real impls) while
  *   leaving React as the client build — which is exactly what this helper does.
  * - The build-only `@rangojs/router:version` virtual and `@vitejs/plugin-rsc/rsc`
- *   (whose real body imports unresolvable Vite virtuals) are stubbed.
+ *   plus `/rsc/server`, `/rsc/client` (whose real body imports unresolvable
+ *   Vite virtuals) are stubbed.
  * - Cloudflare apps additionally import the `cloudflare:workers` /
  *   `cloudflare:email` runtime virtuals; pass `{ preset: "cloudflare" }` to stub them.
  *
@@ -75,7 +76,12 @@
  *   a focused include, or use e2e.
  */
 
-import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  isUseCacheCandidate,
+  transformUseCache,
+} from "../vite/plugins/use-cache-transform.js";
 
 /** A single Vite/Vitest resolve alias entry. Structurally a Vite `Alias`. */
 export interface TestAlias {
@@ -108,6 +114,32 @@ function here(relativeFromRoot: string): string {
 }
 
 /**
+ * Spec `rangoUseClientTransform` injects into `"use client"` modules. A
+ * consumer app does not depend on `@vitejs/plugin-rsc`, so the bare specifier
+ * is unresolvable from their `"use client"` files (cloudflare-basic
+ * `server-tree.rsc-test.tsx` on plugin-rsc 0.5.34). Resolve it from THIS
+ * module — `@rangojs/router` does depend on plugin-rsc — and alias / inject
+ * the absolute path.
+ */
+const RSD_SERVER_EDGE_SPEC: string =
+  "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge";
+
+const requireFromHere: ReturnType<typeof createRequire> = createRequire(
+  import.meta.url,
+);
+
+function resolveFromRouter(spec: string): string | undefined {
+  try {
+    return requireFromHere.resolve(spec);
+  } catch {
+    return undefined;
+  }
+}
+
+const rsdServerEdgePath: string | undefined =
+  resolveFromRouter(RSD_SERVER_EDGE_SPEC);
+
+/**
  * Build the `resolve.alias` entries a consumer's node/DOM Vitest project needs to
  * import a real @rangojs/router app's router/loaders/middleware. Spread into a
  * Vitest config: `resolve: { alias: rangoTestAliases(...) }` (concat your own
@@ -126,10 +158,16 @@ export function rangoTestAliases(
       replacement: here("src/testing/vitest-stubs/version.ts"),
     },
     {
-      find: /^@vitejs\/plugin-rsc\/rsc$/,
+      find: /^@vitejs\/plugin-rsc\/rsc(\/(server|client))?$/,
       replacement: here("src/testing/vitest-stubs/plugin-rsc.ts"),
     },
   ];
+  if (rsdServerEdgePath) {
+    aliases.push({
+      find: RSD_SERVER_EDGE_SPEC,
+      replacement: rsdServerEdgePath,
+    });
+  }
 
   if (opts.preset === "cloudflare") {
     aliases.push(
@@ -228,6 +266,7 @@ interface FlightTransformPlugin {
  * import { defineConfig } from "vitest/config";
  * import {
  *   rangoUseClientTransform,
+ *   rangoUseCacheTransform,
  *   rangoTestAliases,
  *   rangoInlineDeps,
  * } from "@rangojs/router/testing/vitest";
@@ -237,7 +276,7 @@ interface FlightTransformPlugin {
  * process.env.NODE_ENV = "production";
  *
  * export default defineConfig({
- *   plugins: [rangoUseClientTransform()],
+ *   plugins: [rangoUseClientTransform(), rangoUseCacheTransform()],
  *   resolve: {
  *     conditions: ["react-server"],
  *     // Bare `@rangojs/router` -> its react-server build, so a handler/component
@@ -291,15 +330,74 @@ export function rangoUseClientTransform(): FlightTransformPlugin {
       });
       if (!result) return undefined;
       const { output } = result;
-      // The vendored server serializer is the one renderToFlightString uses;
-      // resolvable here under the react-server condition.
+      // Absolute file URL, not the bare specifier: the consumer's "use client"
+      // module cannot resolve @vitejs/plugin-rsc (it is a router dependency).
+      const rsdHref = rsdServerEdgePath
+        ? pathToFileURL(rsdServerEdgePath).href
+        : RSD_SERVER_EDGE_SPEC;
       output.prepend(
-        `import * as $$RangoRSD from "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge";\n`,
+        `import * as $$RangoRSD from ${JSON.stringify(rsdHref)};\n`,
       );
       return {
         code: output.toString(),
         map: output.generateMap({ hires: true }),
       };
+    },
+  };
+}
+
+/** The Vite plugin shape {@link rangoUseCacheTransform} returns. */
+interface UseCacheTransformPlugin {
+  name: string;
+  enforce: "post";
+  configResolved(config: { root: string }): void;
+  transform(
+    this: { warn(message: string): void },
+    code: string,
+    id: string,
+  ): Promise<{ code: string; map: unknown } | undefined>;
+}
+
+/**
+ * A Vite plugin that applies the rango plugin's `"use cache"` transform in a
+ * Vitest project, so a function written with the directive is wrapped with
+ * `registerCachedFunction` as in dev and a build. `rango()` runs that transform
+ * only in its `rsc` environment and Vitest transforms in `ssr`, so without this
+ * plugin the directive is an inert string and the function runs on every call.
+ *
+ * Add it to the react-server project next to {@link rangoUseClientTransform}
+ * (see that function's config). There, with a seeded `cacheStore`,
+ * `renderHandler` / `runLoader` observe real hits. In the node project the
+ * wrap applies too, but the stubbed Flight serializer cannot write an entry.
+ *
+ * Ids are the ones `vite dev` emits: `<path relative to the Vitest root>#<name>`
+ * (a function-level directive gives `src/data.ts#$$hoist_0_getData`), not the
+ * build's hashed path, so store keys stay readable. `configResolved` sets that
+ * root. If `@vitejs/plugin-rsc/transforms` fails to load, the transform throws
+ * instead of leaving the module unwrapped (which the rango plugin does).
+ */
+export function rangoUseCacheTransform(): UseCacheTransformPlugin {
+  let root = process.cwd();
+  return {
+    name: "rango:testing-use-cache",
+    enforce: "post",
+    configResolved(config) {
+      root = config.root;
+    },
+    async transform(code, id) {
+      if (!isUseCacheCandidate(code, id)) return undefined;
+      return transformUseCache(code, id, {
+        root,
+        isBuild: false,
+        warn: (message) => this.warn(message),
+        onTransformsError: (error) => {
+          throw new Error(
+            `rangoUseCacheTransform: @vitejs/plugin-rsc/transforms failed to ` +
+              `load, so "use cache" functions in ${id} would run unwrapped.`,
+            { cause: error },
+          );
+        },
+      });
     },
   };
 }

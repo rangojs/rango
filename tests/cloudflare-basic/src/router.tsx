@@ -11,6 +11,19 @@ import { Document } from "./document.js";
 import type { AppBindings } from "./env.js";
 import { onErrorLog } from "./error-log.js";
 
+function resolveTagPurge(
+  env: AppBindings,
+): { zoneId: string; apiToken: string } | undefined {
+  if (env.CF_TAG_PURGE_ENABLED !== "1") return undefined;
+  const { CF_ZONE_ID: zoneId, CF_PURGE_TOKEN: apiToken } = env;
+  if (!zoneId || !apiToken) {
+    throw new Error(
+      "CFCacheStore zone purge requires CF_ZONE_ID and CF_PURGE_TOKEN when CF_TAG_PURGE_ENABLED=1.",
+    );
+  }
+  return { zoneId, apiToken };
+}
+
 // Create the router with document component
 // Document is a server component that wraps the HTML shell
 // Navigation is handled by NavLayout in urls.tsx
@@ -33,6 +46,10 @@ export const router = createRouter<AppBindings>({
   // size 100 / concurrency 2).
   prefetchCacheSize: 25,
   prefetchConcurrency: 3,
+  // Manual prefetch mode: this app dogfoods the explicit opt-out seat. In
+  // production this overrides the environment's viewport default; per-Link
+  // strategies still opt in (e2e/default-prefetch-none.test.ts).
+  defaultPrefetch: "none",
   // Render-timeout diagnostics fixture (e2e/render-timeout-stage.test.ts). Gated
   // behind RANGO_E2E_RENDER_TIMEOUT (inlined by vite.config.ts `define`, set on
   // the e2e webServers in playwright.config.ts) so the 15s render-start deadline
@@ -79,8 +96,21 @@ export const router = createRouter<AppBindings>({
     store: new CFCacheStore({
       defaults: { ttl: 60, swr: 300 },
       ctx: ctx!, // Always provided in Cloudflare Workers
-      kv: env.KV, // KV L2 for global persistence
+      // Edge-only cache e2e (playwright.edge-only.config.ts): the flag is
+      // define-inlined by vite.config.ts, and dropping KV makes the store
+      // L1-only — ppr shells then capture/serve purely from the Cache API.
+      kv: process.env.RANGO_E2E_EDGE_ONLY_CACHE ? undefined : env.KV,
+      // Production can opt into Cloudflare's zone-wide purge-by-tag API. The
+      // explicit enable flag prevents local credentials from purging a live
+      // zone; without it, dev/e2e retain the KV-marker fallback.
+      tagPurge: resolveTagPurge(env),
+      // Keep invalidation markers longer than every tagged entry's TTL+SWR,
+      // while still bounding KV growth for long-running deployed cache labs.
+      tagInvalidationTtl: 14 * 24 * 60 * 60,
     }),
+    // Key-only filter: utm_* never keys the cache (search-params-cache-key
+    // e2e via /test/spk-cached). Byte-stable for every URL without utm params.
+    searchParams: { exclude: ["utm_*"] },
   }),
   // On-demand (ISR-style) prerender: a KV-backed writable overlay. A requestless
   // router.prerender() render is stored here and served on the next request as a
@@ -105,6 +135,9 @@ export const router = createRouter<AppBindings>({
   // pages/swr-ctx.tsx). ttl=2 opens the stale window fast; swr=120 keeps the
   // entry in the stale-serve range so the background revalidation path runs.
   cacheProfiles: {
+    // Long-lived product snapshots for the deployable cache lab. Runtime
+    // cacheTag() calls add the catalog and per-product invalidation tags.
+    "cache-lab": { ttl: 3600, swr: 300 },
     // PPR capture-data-snapshot drift fixture (pages/ppr-drift.tsx): a cached
     // shell value that expires fast (ttl 2, swr 0 so it is fully gone after 2s;
     // sub-60s items live only in the L1 Cache API tier). The underlying entry
@@ -117,7 +150,14 @@ export const router = createRouter<AppBindings>({
     "swr-action": { ttl: 2, swr: 120, foregroundOnAction: true },
   },
   onError: (ctx) => {
-    console.error("Router error ctx:", ctx);
+    // Never log ctx.env: Worker bindings may contain API tokens and secrets.
+    console.error("Router error ctx:", {
+      phase: ctx.phase,
+      method: ctx.method,
+      pathname: ctx.pathname,
+      routeKey: ctx.routeKey,
+      metadata: ctx.metadata,
+    });
     console.error("Router error:", ctx.error.stack || ctx.error);
     // Test-only: record { phase, message } so the redirect onError e2e can
     // read it back via /__test/last-error. The console.error above is kept so
@@ -125,6 +165,7 @@ export const router = createRouter<AppBindings>({
     onErrorLog.push({
       phase: ctx.phase,
       message: ctx.error.message,
+      pathname: ctx.pathname,
       metadata: ctx.metadata,
     });
   },

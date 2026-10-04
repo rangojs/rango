@@ -24,6 +24,7 @@ vi.mock("../logging.js", () => ({
 // Import after mocks
 const { withBackgroundRevalidation } =
   await import("../match-middleware/background-revalidation.js");
+const { _getRequestContext } = await import("../../server/request-context.js");
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -207,49 +208,17 @@ describe("withBackgroundRevalidation", () => {
     });
   });
 
-  describe("handleStore save/restore (regression: cross-task contamination)", () => {
-    it("restores original handleStore after successful revalidation", async () => {
+  describe("handle store isolation (regression: cross-task contamination)", () => {
+    it("resolves against a fresh handleStore on a derived context, never swapping the shared field", async () => {
       const ctx = makeCtx();
       const state = makeState();
 
-      mockRouterCtx.resolveAllSegments.mockResolvedValue(
-        [] as ResolvedSegment[],
-      );
-
-      const middleware = withBackgroundRevalidation(ctx, state);
-      await drain(middleware(toAsyncGen([])));
-      await waitUntilFns[0]();
-
-      expect(mockRequestCtx._handleStore).toEqual({
-        id: "original-handle-store",
-      });
-    });
-
-    it("restores original handleStore after failed revalidation", async () => {
-      const ctx = makeCtx();
-      const state = makeState();
-
-      mockRouterCtx.resolveAllSegments.mockRejectedValue(
-        new Error("resolution failed"),
-      );
-
-      const middleware = withBackgroundRevalidation(ctx, state);
-      await drain(middleware(toAsyncGen([])));
-      await waitUntilFns[0]();
-
-      expect(mockRequestCtx._handleStore).toEqual({
-        id: "original-handle-store",
-      });
-    });
-
-    it("uses a fresh handleStore during background resolution", async () => {
-      const ctx = makeCtx();
-      const state = makeState();
-
-      let handleStoreDuringResolution: any;
+      let ambientStoreDuringResolution: any;
+      let sharedStoreDuringResolution: any;
       mockRouterCtx.resolveAllSegments.mockImplementation(
         async (): Promise<ResolvedSegment[]> => {
-          handleStoreDuringResolution = mockRequestCtx._handleStore;
+          ambientStoreDuringResolution = _getRequestContext()?._handleStore;
+          sharedStoreDuringResolution = mockRequestCtx._handleStore;
           return [];
         },
       );
@@ -258,10 +227,15 @@ describe("withBackgroundRevalidation", () => {
       await drain(middleware(toAsyncGen([])));
       await waitUntilFns[0]();
 
-      expect(handleStoreDuringResolution).toMatchObject({
+      // The re-render (and setupLoaderAccess/cacheRoute) see the fresh store...
+      expect(ambientStoreDuringResolution).toMatchObject({
         id: "fresh-handle-store",
       });
-      // And restored after
+      // ...while the request's shared field, which live pushes read, keeps
+      // the original throughout.
+      expect(sharedStoreDuringResolution).toEqual({
+        id: "original-handle-store",
+      });
       expect(mockRequestCtx._handleStore).toEqual({
         id: "original-handle-store",
       });

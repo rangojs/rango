@@ -23,6 +23,11 @@ import { x } from "tinyexec";
  *   - prerender.onError "warn": the build SUCCEEDS and the entry is skipped (not baked);
  *   - both Prerender routes and Static() handlers go through the same policy.
  *
+ * #914 adds PrerenderChildBoom (RANGO_TEST_PRERENDER_CHILD_ERROR): its handler
+ * returns normally and an async child throws while the build encodes the tree, so
+ * the throw reaches the build through Flight onError rather than the handler. It
+ * must take the same policy path.
+ *
  * Build-only by design (explicit gap): #587 is a build-time bug and prerender.onError
  * is build config. The dev `/__rsc_prerender` endpoint tweak (router-discovery.ts) is
  * a cosmetic log refinement (stay quiet on Skip) on a path that serves ONLY non-Node
@@ -74,6 +79,45 @@ test.describe("prerender render error (production)", () => {
     ).toBe(0);
     expect(out).toMatch(/WARN\s+\/prerender-boom.*prerender\.onError: "warn"/);
     // Skipped, not baked.
+    expect(out).toContain("Pre-render complete: 0 done, 1 skipped");
+  });
+
+  test("an async child that throws while the route is encoded fails the build by default", async () => {
+    const res = await x("pnpm", ["build"], {
+      nodeOptions: {
+        cwd,
+        env: buildEnv({ RANGO_TEST_PRERENDER_CHILD_ERROR: "1" }),
+      },
+      throwOnError: false,
+    });
+    const out = `${res.stdout}\n${res.stderr}`;
+    expect(
+      res.exitCode,
+      `build should exit non-zero; output:\n${out}`,
+    ).not.toBe(0);
+    expect(out).toContain("async child build-time render failure");
+    expect(out).toMatch(/FAIL\s+\/prerender-child-boom/);
+  });
+
+  test('an async child that throws under prerender.onError "warn" is skipped, not baked', async () => {
+    const res = await x("pnpm", ["build"], {
+      nodeOptions: {
+        cwd,
+        env: buildEnv({
+          RANGO_TEST_PRERENDER_CHILD_ERROR: "1",
+          RANGO_TEST_PRERENDER_ONERROR: "warn",
+        }),
+      },
+      throwOnError: false,
+    });
+    const out = `${res.stdout}\n${res.stderr}`;
+    expect(
+      res.exitCode,
+      `warn build should succeed (exit 0); output:\n${out}`,
+    ).toBe(0);
+    expect(out).toMatch(
+      /WARN\s+\/prerender-child-boom.*prerender\.onError: "warn"/,
+    );
     expect(out).toContain("Pre-render complete: 0 done, 1 skipped");
   });
 

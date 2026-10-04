@@ -29,6 +29,18 @@ test.describe.serial("intercept-hmr", () => {
 
   test.beforeAll(async () => {
     originalContent = fs.readFileSync(configPath, "utf-8");
+    // A leftover edit from an overlapping run (two workers on this file, or a
+    // killed run that never restored) would otherwise surface as a baffling
+    // modal collapse further down; fail here with the real cause instead.
+    if (
+      !originalContent.includes(
+        'export const interceptIndicatorText = "Intercepted";',
+      )
+    ) {
+      throw new Error(
+        "intercept-hmr-config.ts is not pristine (the indicator text is not the committed default); restore it with git before running this suite",
+      );
+    }
   });
 
   test.afterAll(async () => {

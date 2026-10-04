@@ -57,6 +57,40 @@ function makeTree(dynamicPromise: Promise<unknown>, label: string) {
   );
 }
 
+/**
+ * A document whose first Suspense boundary holds a component that throws
+ * during SSR. `hole`, when given, adds a second boundary suspended on it.
+ */
+function makeBrokenTree(error: Error, hole?: Promise<unknown>) {
+  function Broken(): React.ReactNode {
+    throw error;
+  }
+  function Dynamic() {
+    React.use(hole!);
+    return React.createElement("p", null, "DYNAMIC");
+  }
+  return React.createElement(
+    "html",
+    null,
+    React.createElement(
+      "body",
+      null,
+      React.createElement("h1", null, "SHELL-CONTENT"),
+      React.createElement(
+        React.Suspense,
+        { fallback: React.createElement("span", null, "BROKEN-FALLBACK") },
+        React.createElement(Broken),
+      ),
+      hole &&
+        React.createElement(
+          React.Suspense,
+          { fallback: React.createElement("span", null, "FALLBACK-UI") },
+          React.createElement(Dynamic),
+        ),
+    ),
+  );
+}
+
 /** A tree that suspends at the root, before any `<html>`/`<body>` is emitted. */
 function makeRootPostponeTree(dynamicPromise: Promise<unknown>) {
   function LateRoot() {
@@ -158,6 +192,20 @@ describe("createShellCaptureHandler", () => {
     expect(() =>
       createShellCaptureHandler(makeDeps({ prerender: undefined })),
     ).toThrow(/prerender/);
+  });
+
+  it("throws at creation when neither bootstrap dep is usable", () => {
+    expect(() =>
+      createShellCaptureHandler(
+        makeDeps({ loadBootstrapScriptContent: undefined }),
+      ),
+    ).toThrow(/Missing bootstrap dependency/);
+  });
+
+  it("throws at creation on an unknown headScripts", () => {
+    expect(() =>
+      createShellCaptureHandler(makeDeps({ headScripts: "prenit" as never })),
+    ).toThrow(/headScripts must be "preinit" or "preload", received "prenit"/);
   });
 
   it("(a) returns a prelude with shell + fallback + bootstrap, not the hole; postponed round-trips", async () => {
@@ -300,6 +348,58 @@ describe("createShellCaptureHandler", () => {
     expect(Date.now() - start).toBeLessThan(2000);
   });
 
+  // Issue #941: the capture's own abort was swallowed with the component stack
+  // React passes for it, so a no-shell capture could not say what pinned it.
+  it("reports the component stack of each task pending at the abort", async () => {
+    const never = new Promise<never>(() => {});
+    function PinnedBody(): React.ReactNode {
+      React.use(never);
+      return null;
+    }
+    mockedRenderSegments.mockImplementation(() =>
+      Promise.resolve(
+        React.createElement(
+          "html",
+          null,
+          React.createElement("body", null, React.createElement(PinnedBody)),
+        ),
+      ),
+    );
+    const stacks: (string | undefined)[] = [];
+    const onError = vi.fn();
+    const capture = createShellCaptureHandler(makeDeps());
+    const result = await capture(makeRscStream("PINNED_FLIGHT"), {
+      quiesce: Promise.resolve(),
+      maxWaitMs: 5000,
+      onError,
+      onAbortedTask: (errorInfo) => stacks.push(errorInfo?.componentStack),
+    });
+    expect(result).toBeNull();
+    expect(onError).not.toHaveBeenCalled();
+    expect(stacks.some((stack) => stack?.includes("PinnedBody"))).toBe(true);
+  });
+
+  it("forwards an explicit progressiveChunkSize to prerender", async () => {
+    const spy = vi.fn(prerender);
+    const deps = makeDeps({
+      prerender: spy as any,
+      progressiveChunkSize: 4096,
+    });
+    await captureShell(deps, "pcs-shell");
+    expect(spy).toHaveBeenCalled();
+    expect((spy.mock.calls[0]![1] as any).progressiveChunkSize).toBe(4096);
+  });
+
+  it("omits progressiveChunkSize from prerender options when unset", async () => {
+    const spy = vi.fn(prerender);
+    const deps = makeDeps({ prerender: spy as any });
+    await captureShell(deps, "pcs-default-shell");
+    expect(spy).toHaveBeenCalled();
+    expect("progressiveChunkSize" in (spy.mock.calls[0]![1] as any)).toBe(
+      false,
+    );
+  });
+
   it("propagates a hard prerender rejection instead of returning null", async () => {
     const boom = new Error("prerender exploded");
     const deps = makeDeps({
@@ -438,6 +538,27 @@ describe("createShellCaptureHandler", () => {
     expect(released).toBe(true);
     expect(cancelledWith).toBe(midReadError);
   });
+
+  // Issue #915: the errored boundary is in the prelude; the caller refuses to
+  // store it. The capture's own abort of the pending hole is not reported.
+  it("reports a shell component error to opts.onError, never its own abort (#915)", async () => {
+    const boom = new Error("shell widget threw");
+    mockedRenderSegments.mockImplementation(() =>
+      Promise.resolve(makeBrokenTree(boom, new Promise(() => {}))),
+    );
+    const onError = vi.fn();
+    const result = await createShellCaptureHandler(makeDeps())(
+      makeRscStream("CAPTURE_FLIGHT"),
+      { quiesce: Promise.resolve(), onError },
+    );
+
+    expect(result).not.toBeNull();
+    const prelude = decoder.decode(result!.prelude);
+    expect(prelude).toContain("SHELL-CONTENT");
+    expect(prelude).toContain("BROKEN-FALLBACK");
+    expect(typeof result!.postponed).toBe("string");
+    expect(onError.mock.calls).toEqual([[boom]]);
+  });
 });
 
 describe("createShellResumeHandler", () => {
@@ -548,6 +669,26 @@ describe("createShellResumeHandler", () => {
     });
   });
 
+  it("reports a hole's component error to opts.onError (#915)", async () => {
+    const captured = await captureShell(makeDeps(), "cap");
+    expect(captured).not.toBeNull();
+
+    const boom = new Error("hole threw");
+    const rejected = Promise.reject(boom);
+    rejected.catch(() => {});
+    mockedRenderSegments.mockImplementation(() =>
+      Promise.resolve(makeTree(rejected, "res")),
+    );
+    const onError = vi.fn();
+    const stream = await createShellResumeHandler(makeDeps())(
+      makeRscStream("RESUME_FLIGHT"),
+      { postponed: captured!.postponed, onError },
+    );
+    await readAll(stream);
+
+    expect(onError.mock.calls).toEqual([[boom]]);
+  });
+
   it("throws a descriptive error resuming a postponed shell without the resume dep", async () => {
     const deps = makeDeps({ resume: undefined });
     mockedRenderSegments.mockImplementation(() =>
@@ -584,6 +725,30 @@ describe("createSSRHandler (regression: real tee + inject path)", () => {
     // Injected hydration payload from the teed second branch.
     expect(html).toContain("__FLIGHT_DATA");
     expect(html).toContain("REGRESSION_FLIGHT");
+  });
+
+  // Issue #915: the document still completes with the client-render fallback;
+  // the caller (the document cache) learns the render errored.
+  it("reports a component error inside a Suspense boundary to options.onError and keeps React's log (#915)", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const boom = new Error("widget threw");
+      mockedRenderSegments.mockImplementation(() =>
+        Promise.resolve(makeBrokenTree(boom)),
+      );
+      const onError = vi.fn();
+      const renderHTML = createSSRHandler(makeDeps());
+      const html = await readAll(
+        await renderHTML(makeRscStream("ERRORED_FLIGHT"), { onError }),
+      );
+
+      expect(html).toContain("SHELL-CONTENT");
+      expect(html).toContain("BROKEN-FALLBACK");
+      expect(onError.mock.calls).toEqual([[boom]]);
+      expect(errSpy).toHaveBeenCalledWith(boom);
+    } finally {
+      errSpy.mockRestore();
+    }
   });
 });
 

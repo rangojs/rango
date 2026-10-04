@@ -12,7 +12,7 @@
  * interface PaginationData { current: number; total: number }
  * export const Pagination = createVar<PaginationData>();
  *
- * // Non-cacheable var — ctx.get(User) throws inside a cache() boundary
+ * // Non-cacheable var — ctx.get(User) throws inside cache() or "use cache"
  * export const User = createVar<UserData>({ cache: false });
  *
  * // handler
@@ -26,7 +26,7 @@
 export interface ContextVar<T> {
   readonly __brand: "context-var";
   readonly key: symbol;
-  /** When false, ctx.get(var) throws inside a cache() boundary. */
+  /** When false, ctx.get(var) throws inside cache() or "use cache". */
   readonly cache: boolean;
   /** Phantom field to carry the type parameter. Never set at runtime. */
   readonly __type?: T;
@@ -35,9 +35,10 @@ export interface ContextVar<T> {
 export interface ContextVarOptions {
   /**
    * When false, marks this variable as non-cacheable.
-   * Reading this var with ctx.get() inside a cache() boundary throws. Use for
-   * inherently request-specific data (user sessions, auth tokens, etc.) that
-   * must never be baked into cached segments.
+   * Reading this var with ctx.get() inside a cache() boundary or a "use cache"
+   * function throws. Use for inherently request-specific data (user sessions,
+   * auth tokens, etc.) that must never be baked into cached segments or
+   * entries; pass the value into a "use cache" function as an argument.
    *
    * @default true
    */

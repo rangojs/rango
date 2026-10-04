@@ -4,6 +4,7 @@ import { Link } from "@rangojs/router/client";
 import {
   NonCachedTestLoader,
   CachedTestLoader,
+  DepCrumbProductLoader,
   HandlerConsumedTestLoader,
   InterceptCacheTestLoader,
   ReactNodeTestLoader,
@@ -13,6 +14,7 @@ import {
   CacheTestModal,
   UseLoaderModal,
 } from "../components/CacheTestModal.js";
+import { DepCrumbsView } from "../components/DepCrumbsView.js";
 
 export const CacheNonCachedLoaderHandler: Handler<
   "cacheTest.nonCachedLoader"
@@ -44,6 +46,21 @@ export const CacheCachedLoaderHandler: Handler<
       <p data-testid="loader-count">Loader count: {data.count}</p>
       <p data-testid="loader-message">{data.message}</p>
       <p data-testid="loaded-at">Loaded: {data.loadedAt}</p>
+    </div>
+  );
+};
+
+// The cached loader's dependency pushes a crumb; an uncached sibling loader
+// reads the same dependency. `loaded-at` comes from the cached value, so an
+// unchanged stamp marks a loader-cache HIT.
+export const CacheCachedLoaderDepHandler: Handler<
+  "cacheTest.cachedLoaderDep"
+> = async (ctx) => {
+  const data = await ctx.use(DepCrumbProductLoader);
+  return (
+    <div data-testid="cached-loader-dep-page">
+      <p data-testid="loaded-at">Loaded: {data.loadedAt}</p>
+      <DepCrumbsView />
     </div>
   );
 };

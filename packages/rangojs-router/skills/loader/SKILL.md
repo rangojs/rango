@@ -1,15 +1,21 @@
 ---
 name: loader
-description: Define data loaders for fetching data in routes with createLoader. Use when pages need per-request data that stays fresh, data should stream while the page renders, or client components need reactive server data.
-argument-hint: [loader]
+description: Define data loaders with createLoader and register them on routes with loader(). Use when a route needs per-request data that stays fresh and streams while the page renders, a client component reads server data with useLoader, a loader should re-run after specific actions (revalidate), be cached (cache), be callable from the client (fetchable loaders), throw notFound()/redirect(), write page meta/breadcrumbs handles, or must be settled in the SSR'd document (ssr:false).
+argument-hint: "[loader]"
 ---
 
 # Data Loaders with loader()
 
-Loaders fetch data on the server and stream it to the client. For mutations
-(writes triggered by forms or buttons), use server actions instead — see
-`/server-actions`. Loaders re-resolve after an action runs, so the typical
-flow is _action mutates → loader re-reads → UI updates_.
+A loader is a server function created with `createLoader()` and registered on a
+route segment with `loader()`. It runs fresh on every request (on a `ppr` route,
+one registered with `ssr: false` is baked into the shell instead), streams its
+result to the client, and client components read it with `useLoader()`. This
+skill covers defining, registering, consuming, revalidating, caching, and
+client-fetching loaders.
+
+For mutations (writes triggered by forms or buttons), use server actions
+instead — see `/server-actions`. Loaders re-resolve after an action runs, so
+the typical flow is _action mutates → loader re-reads → UI updates_.
 
 ## Not this skill if…
 
@@ -24,8 +30,6 @@ flow is _action mutates → loader re-reads → UI updates_.
 import { createLoader } from "@rangojs/router";
 
 export const ProductLoader = createLoader(async (ctx) => {
-  "use server";
-
   const product = await ctx.env.DB.prepare(
     "SELECT * FROM products WHERE slug = ?",
   )
@@ -35,6 +39,15 @@ export const ProductLoader = createLoader(async (ctx) => {
   return { product };
 });
 ```
+
+Loader bodies already run only on the server — never add a `"use server"`
+directive inside the callback. `"use server"` means "expose this function to
+the client as a callable server reference", not "server only": the directive
+would hoist the body into a registered server reference that anyone can invoke
+through the action endpoint with caller-supplied arguments. The Vite plugin
+rejects it at transform time (`createLoader() body at <file>:<line> carries a
+"use server" directive`). For a build-time guarantee that a module never
+reaches the client graph, use `import "server-only"` instead.
 
 ### Supported export patterns
 
@@ -109,20 +122,39 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 >   (plain GET only). See the hooks skill ("Scoping refetch with a `key`" and
 >   "Refreshing multiple loaders together").
 > - `cache({ key })` — a **server** cache identity (storage hit/miss/ttl/swr).
+>   On a route `cache()` over a `ppr` route, each key value also gets its own
+>   shell; keep the value set small.
 > - `revalidate()` — which **server** segments/loaders recompute during
 >   navigation and action refreshes.
 
-DSL loaders are the **live data layer** — they resolve fresh on every
-request, even when the route is inside a `cache()` boundary. The router
-excludes them from the segment cache at storage time and re-resolves them
-on retrieval. This means `cache()` gives you cached UI + fresh data by
-default.
+DSL loaders are the **live data layer**: they resolve fresh on every request,
+even when the route is inside a `cache()` boundary, so `cache()` gives you
+cached UI + fresh data by default. See "Loaders: The Live Data Layer" below.
+The exception is a `ppr` route's `ssr: false` loader: it bakes into the shell,
+and a shell HIT runs it only when its return carries promises.
 
 ### Cache safety
 
-DSL loaders can safely read `createVar({ cache: false })` variables
-because they are always resolved fresh. The read guard is bypassed for
-loader functions — they never produce stale data.
+A DSL loader without `ssr: false` can read `createVar({ cache: false })`
+variables: it runs on every request, `cache()` and PPR shell HITs included, so
+the read guard is bypassed for it. On a `ppr` route the capture runs an
+`ssr: false` loader, and a loader a handler awaits, and bakes their values into
+the shell: a `cookies()`, `headers()`, `ctx.request.headers` or
+`{ cache: false }` read there refuses the capture, so the route keeps
+rendering without a shell (warned once per key).
+A loader bound with its own `cache()` is the other exception: its value is
+stored and shared, so a miss whose body read `cookies()`, `headers()`,
+`ctx.request.headers`, a non-cacheable variable or the theme fails unless the
+binding has a `key()` or a
+store `keyGenerator`, which must then include them (see "Cache Key"). A
+`"use cache"` function the loader calls is not a loader body: a non-cacheable
+read inside it throws, also through the loader's `ctx` passed in, so read the
+var in the loader and pass the value in as an argument. Passing the loader's
+`ctx` itself is fine: the call keys by route, params and search, like a handler
+`ctx` (`/use-cache`). A fetchable loader called with a request body
+(`load({ method: "POST", body })` or form data) is the exception: the body is
+not in the key, so the call runs uncached. Pass the body fields the function
+needs as arguments instead.
 
 ### ctx.use(Loader) — escape hatch
 
@@ -130,6 +162,7 @@ For cases where you need loader data in the server handler itself (e.g.,
 to set ctx variables or make routing decisions), use `ctx.use(Loader)`:
 
 ```typescript
+// Product is a context-variable token: export const Product = createVar<ProductData>();
 path("/product/:slug", async (ctx) => {
   const { product } = await ctx.use(ProductLoader);
   ctx.set(Product, product); // make available to children
@@ -139,19 +172,32 @@ path("/product/:slug", async (ctx) => {
 ])
 ```
 
-When you register with `loader()` in the DSL, `ctx.use()` returns the
-same memoized result — loaders never run twice per request.
+`ctx.use(Loader)` is a per-request read on any render that runs the handler,
+memoized for the request (a route `cache()` HIT or a `ppr` shell HIT runs no
+handler, so the handler's output from the read is replayed): however many
+times it is called, and whether or not the loader is also registered with
+`loader()`, it runs once per request. It never reads or writes the loader
+store cache on its own: a loader's `cache()` belongs to its DSL binding
+(`loader(Def, () => [cache()])` on a route, layout or intercept). A handler
+read of a cached binding gets the binding's (possibly cached) result once the
+binding has started (a read from its own entry's handler or from later in
+the tree).
 
 **Limitations of ctx.use(Loader):**
 
 - The handler output depends on the loader data. If the route is inside
   `cache()`, the handler is cached with the loader result baked in —
   defeating the live data guarantee.
-- The same holds under a PPR shell capture (`/ppr`): handler consumption is
-  the BAKED lane — the loader executes at capture (identity reads permitted)
-  and the rendered value is a capture-time copy; `useLoader` client-side is
-  the live lane. One rule across `cache()`, `"use cache"`, and PPR: the
-  consumption-lane rule (`/rango` → Invariants).
+- The same holds under a PPR shell capture (`/ppr`): handler consumption is the
+  BAKED lane — the loader executes at capture and the rendered value is a
+  capture-time copy served on every HIT (a HIT never runs the handler);
+  `useLoader` of a loader without `ssr: false` is the live lane (an `ssr: false`
+  loader is the bake lane however it is read). Unlike `cache()`, an identity
+  read inside that loader (`cookies()`, `headers()`, `ctx.request.headers`, a
+  `{ cache: false }` variable) refuses the capture, so the route stays
+  uncached. One rule across
+  `cache()`, `"use cache"`, and PPR: the consumption-lane rule (`/rango` →
+  Invariants).
 - Non-cacheable variable reads (`createVar({ cache: false })`) inside the
   handler still throw, even if the data came from a loader.
 - Prefer DSL `loader()` + client `useLoader()` for data that depends on
@@ -168,34 +214,39 @@ same memoized result — loaders never run twice per request.
 
 ## Loader Context
 
-Loaders receive the same context shape as route handlers.
+Loaders receive a request-scoped context that shares its read surface with
+route handlers (`params`, `request`, `url`, `env`, `get`, `use`, `reverse`).
+It has no handler-only writers: there is no `ctx.set`, `ctx.headers`, or
+`ctx.setLocationState` (a loader can stream after the response has started,
+so response-shaping belongs in middleware or the handler).
 
 ### Full field surface
 
-| Field          | Type                           | Notes                                                                                                                                                   |
-| -------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `params`       | `TParams`                      | Merged route + explicit loader params; overridable by fetchable `load({ params })`.                                                                     |
-| `routeParams`  | `Record<string, string>`       | Server-trusted route params from URL pattern matching; cannot be overridden.                                                                            |
-| `request`      | `Request`                      | The incoming `Request` (headers, method, body, `signal` for abort).                                                                                     |
-| `url`          | `URL`                          | Parsed request URL.                                                                                                                                     |
-| `pathname`     | `string`                       | URL pathname (shortcut for `ctx.url.pathname`).                                                                                                         |
-| `searchParams` | `URLSearchParams`              | Shortcut for `ctx.url.searchParams`.                                                                                                                    |
-| `search`       | `ResolveSearchSchema<TSearch>` | Typed query params when a search schema is declared on the route; `{}` otherwise.                                                                       |
-| `env`          | `TEnv`                         | Plain bindings from `createRouter<TEnv>()` (DB, KV, secrets, etc.).                                                                                     |
-| `get`          | `(key \| ContextVar) => value` | Reads variables/context-vars set by middleware.                                                                                                         |
-| `use`          | `(loader \| handle) => T`      | Access another loader's data (Promise) or a handle's collected data (after `await ctx.rendered()`).                                                     |
-| `rendered`     | `() => Promise<void>`          | **Experimental.** DSL loaders only — waits for all non-loader segments (including `loading()` streaming handlers) to settle before reading handle data. |
-| `method`       | `string`                       | HTTP method. `"GET"` for SSR loader runs; reflects real method for fetchable loaders.                                                                   |
-| `body`         | `TBody \| undefined`           | Parsed request body for fetchable POST/PUT/PATCH/DELETE calls.                                                                                          |
-| `formData`     | `FormData \| undefined`        | Present when a fetchable loader is invoked via form submission.                                                                                         |
-| `reverse`      | `ScopedReverseFunction`        | Generate type-checked URLs from route names (same scoped semantics as route handlers).                                                                  |
+| Field              | Type                            | Notes                                                                                                                                                                                          |
+| ------------------ | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `params`           | `TParams`                       | Merged route + explicit loader params; overridable by fetchable `load({ params })`.                                                                                                            |
+| `routeParams`      | `Record<string, string>`        | Server-trusted route params from URL pattern matching; cannot be overridden.                                                                                                                   |
+| `request`          | `Request`                       | The incoming `Request` (headers, method, body, `signal` for abort).                                                                                                                            |
+| `url`              | `URL`                           | Request URL with internal `_rsc*` transport params stripped. Use this for application logic.                                                                                                   |
+| `originalUrl`      | `URL`                           | Request URL with every param intact, including `_rsc*`. Only for debugging or custom cache keying.                                                                                             |
+| `pathname`         | `string`                        | URL pathname (shortcut for `ctx.url.pathname`).                                                                                                                                                |
+| `searchParams`     | `URLSearchParams`               | Shortcut for `ctx.url.searchParams`.                                                                                                                                                           |
+| `search`           | `ResolveSearchSchema<TSearch>`  | Typed query params when a search schema is declared on the route; `{}` otherwise.                                                                                                              |
+| `env`              | `any`                           | Bindings from `createRouter<TEnv>()` (DB, KV, secrets, etc.). `createLoader` types it as `any`; annotate or cast at the use site.                                                              |
+| `waitUntil`        | `(fn: () => Promise<void>)`     | Run work after the response is sent. Takes a function, not a promise. Delegates to Cloudflare's `waitUntil`; fire-and-forget with error logging elsewhere.                                     |
+| `executionContext` | `ExecutionContext \| undefined` | Raw Cloudflare `ExecutionContext` for libraries that need it; `undefined` off Cloudflare. Prefer `waitUntil`.                                                                                  |
+| `get`              | `(key \| ContextVar \| handle)` | Reads middleware variables/context-vars — or READS a handle's collected data, after `await ctx.rendered()`.                                                                                    |
+| `use`              | `(loader \| handle) => T`       | Access another loader's data (Promise), or WRITE a handle: `ctx.use(Meta)({ title })` returns the push function — handler parity. Reads moved to `get`.                                        |
+| `rendered`         | `() => Promise<void>`           | **Experimental.** DSL loaders only — waits for all non-loader segments (including `loading()` streaming handlers) to settle before reading handle data. Not with `ssr: false` (cycle; throws). |
+| `method`           | `string`                        | HTTP method. `"GET"` for SSR loader runs; reflects real method for fetchable loaders.                                                                                                          |
+| `body`             | `TBody \| undefined`            | Parsed request body for fetchable POST/PUT/PATCH/DELETE calls.                                                                                                                                 |
+| `formData`         | `FormData \| undefined`         | Present when a fetchable loader is invoked via form submission.                                                                                                                                |
+| `reverse`          | `ScopedReverseFunction`         | Generate type-checked URLs from route names (same scoped semantics as route handlers).                                                                                                         |
 
 ### Example
 
 ```typescript
 export const ProductLoader = createLoader(async (ctx) => {
-  "use server";
-
   // URL params (may include client-provided overrides for fetchable loaders)
   const { slug } = ctx.params;
 
@@ -208,7 +259,8 @@ export const ProductLoader = createLoader(async (ctx) => {
   // Platform bindings (DB, KV, etc.) — plain bindings from createRouter<TEnv>()
   const db = ctx.env.DB;
 
-  // Request headers
+  // Request headers (guarded like headers(): an unkeyed loader cache() fill
+  // or a ppr capture of this loader refuses the read)
   const auth = ctx.request.headers.get("Authorization");
 
   // Variables set by middleware (from Rango.Vars augmentation)
@@ -242,8 +294,6 @@ or resource scoping:
 
 ```typescript
 export const OrderLoader = createLoader(async (ctx) => {
-  "use server";
-
   // Use routeParams for auth checks — client cannot spoof the URL-matched ID
   const { orderId } = ctx.routeParams;
   const user = ctx.get("user");
@@ -272,10 +322,13 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
     revalidate(() => false), // Never revalidate
   ]),
 
-  // Loader that revalidates after cart actions (defer otherwise — keeps the
-  // permissive loader defaults for navigation and other actions intact)
+  // Loader that re-runs only after cart actions. Loaders re-run after every
+  // action by default; on navigation, `undefined` keeps the default
+  // (re-run when params or search change).
   loader(CartLoader, () => [
-    revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+    revalidate((ctx) =>
+      ctx.isAction() ? ctx.isAction(CartActions) : undefined,
+    ),
   ]),
 ]);
 ```
@@ -289,7 +342,7 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 > Caching a loader is a separate, opt-in step (`loader(Fn, () => [cache({...})])`).
 > See `/cache-guide` → "Two axes" and `/rango` → "The shape of rango".
 
-A `revalidate(fn)` callback can return one of four shapes. The chain
+A `revalidate(fn)` callback returns one of three kinds of value. The chain
 processes revalidators in order; each call's return controls how the
 chain continues:
 
@@ -315,8 +368,24 @@ revalidate(() => undefined); // explicit defer
 revalidate(() => null); // explicit defer
 ```
 
-If every revalidator on a segment defers, the segment-type default
-(e.g. params-changed for routes, `false` for parallels) is used.
+If every revalidator on a segment defers, the segment default is used
+(`defaultShouldRevalidate`, see the table below).
+
+The callback must be **synchronous**. A returned Promise is ignored (dev
+warning) and the running suggestion is kept, so move async work into a loader.
+A callback that throws is logged and treated as a defer; a thrown `Response`
+(e.g. `throw redirect(...)`) propagates as control flow.
+
+Segment defaults when no revalidator decides (from
+`src/router/revalidation.ts`). A segment the client does not hold yet always
+renders.
+
+| Segment                                                              | After an action (POST) | Navigation                          |
+| -------------------------------------------------------------------- | ---------------------- | ----------------------------------- |
+| Route (`path()`)                                                     | `true`                 | `true` when params or search change |
+| Owned by the route (loaders, layouts, parallels inside the `path()`) | `true`                 | `true` when params or search change |
+| Loader above the route (e.g. on a parent `layout()`)                 | `true`                 | `false`                             |
+| Layout or parallel above the route                                   | `false`                | `false`                             |
 
 #### `|| undefined` (defer) vs `?? false` (hard) — pick deliberately
 
@@ -332,17 +401,28 @@ revalidate(({ actionId }) => actionId?.includes("Cart") || undefined);
 revalidate(({ actionId }) => actionId?.includes("Cart") ?? false);
 ```
 
-This matters most for loaders, whose defaults are permissive: a loader defaults
-to revalidating on **any** action (`POST`) and on **param/search changes**
-during navigation. So `?? false` on a loader silently suppresses both — the
-loader will not refetch when you navigate to a different `:id`. Use
-`|| undefined` when you want to _add_ a revalidation signal on top of the
-sensible defaults, and reserve `?? false` for the rare case where you genuinely
-want the loader to refetch on nothing but your matched action.
+Pick the idiom by what the segment's default already does (table above). After
+an action, loaders, the route, and segments inside the `path()` already re-run;
+layouts and parallels above the route are skipped:
 
-When **composing multiple revalidators** on one segment (see below), defer is
-mandatory: the first hard `?? false` ends the chain and the later contracts
-never run.
+- **Add a signal where the default skips.** `ctx.isAction(X) || undefined` on a
+  parent layout or a layout-level parallel re-renders it after `X` and defers
+  otherwise. On a loader, the route, or a segment inside the `path()` it
+  changes nothing: they already re-run after every action, and on navigation it
+  defers.
+- **Narrow after actions where the default re-runs.**
+  `ctx.isAction() ? ctx.isAction(X) : undefined` re-runs a loader or route
+  segment only for `X`'s actions and keeps the navigation default (params or
+  search changed). After an action it is a hard decision, so later revalidators
+  on the same segment do not run for actions.
+- **Avoid bare `ctx.isAction(X)` (and `?? false`).** It returns a hard `false`
+  on navigation too, so a loader stops refetching when you navigate to a
+  different `:id`. Reserve it for the rare case where the segment should re-run
+  on nothing but the matched action.
+
+When **composing multiple revalidators** on one segment (see below), prefer the
+defer form: the first hard `false` ends the chain and the later contracts never
+run.
 
 #### Matching actions: `ctx.isAction()`
 
@@ -355,20 +435,31 @@ import { addToCart, removeFromCart } from "../actions/cart";
 import * as CartActions from "../actions/cart";
 
 loader(CartLoader, () => [
-  revalidate((ctx) => ctx.isAction(addToCart) || undefined), // one action
+  // After an action, re-run only for addToCart; on navigation, keep the default.
+  revalidate((ctx) => (ctx.isAction() ? ctx.isAction(addToCart) : undefined)),
 ]);
-revalidate((ctx) => ctx.isAction(addToCart, removeFromCart) || undefined); // several
-revalidate((ctx) => ctx.isAction(CartActions) || undefined); // any action in the module
+
+// Matcher forms (each returns a boolean):
+ctx.isAction(addToCart); // one action
+ctx.isAction(addToCart, removeFromCart); // several
+ctx.isAction(CartActions); // any action in the module
+ctx.isAction({ addToCart, removeFromCart }); // object form
+ctx.isAction({ Cart: CartActions }); // grouped namespaces
+ctx.isAction(); // no args: any action at all
 ```
 
 `isAction()` is a method on the revalidate predicate's **context argument** —
 there is no standalone `isAction` import; you always reach it through the callback
 parameter (`revalidate((ctx) => ctx.isAction(...))`). It returns a raw boolean, so
-pair it with `|| undefined` for the usual "revalidate on match, else defer"
-intent. It returns `false` on plain navigation and on non-matches, and resolves
-the reference the same way the router derives `actionId` (`$id` in production,
-`$$id` in dev), so it matches in both modes. The raw `actionId` string stays
-available on the same context as an escape hatch.
+wrap it by placement (the three cases above): the ternary on a loader or route
+segment, `|| undefined` on a layout or layout-level parallel the default skips.
+It returns `false` on plain navigation and on non-matches; called with no
+arguments it answers "is this request an action?". It resolves the reference with
+the same `$id ?? $$id` precedence the router uses to derive `actionId`, so it
+matches in both dev and production. The raw `actionId` string stays available on
+the same context as an escape hatch, alongside `actionResult`, `formData`,
+`actionUrl`, `currentParams`/`nextParams`, `currentUrl`/`nextUrl`,
+`fromRouteName`/`toRouteName`, and the full handler `context`.
 
 ### Revalidation Contracts for Loader Dependencies
 
@@ -377,18 +468,23 @@ the same named revalidation contract across producer and consumer segments.
 
 ```typescript
 // revalidation-contracts.ts
+import type { Revalidate } from "@rangojs/router";
 import * as AccountActions from "./actions/account";
 
 // Match by reference with ctx.isAction() (rename-safe), and defer (|| undefined)
 // so these contracts compose — a hard `false` would short-circuit the rest.
-export const revalidateAccountScope = (ctx) =>
+export const revalidateAccountScope: Revalidate = (ctx) =>
   ctx.isAction(AccountActions) || undefined;
 
+// urls.tsx
 layout(AccountLayout, () => [
-  revalidate(revalidateAccountScope), // producer reruns
+  // producer: adds the re-render the default skips for a parent layout
+  revalidate(revalidateAccountScope),
   path("/account/orders", OrdersPage, { name: "account.orders" }, () => [
     loader(OrdersLoader, () => [
-      revalidate(revalidateAccountScope), // consumer reruns
+      // consumer: loaders re-run after every action anyway; the shared
+      // contract names the dependency
+      revalidate(revalidateAccountScope),
     ]),
   ]),
 ]);
@@ -414,16 +510,20 @@ layout(AccountLayout, () => [
 
 ## Loaders: The Live Data Layer
 
-Loaders are the live data layer of the router. They resolve fresh on every
-request, even when the route's UI segments are served from cache. This is a
-core design principle — route-level `cache()` caches rendered components but
-never caches loader data. Loaders are excluded at storage time and re-resolved
-on retrieval.
+Loaders resolve fresh on every request, even when the route's UI segments are
+served from cache. Route-level `cache()` caches rendered segments but never
+loader data: loaders are excluded when the segments are stored and re-resolved
+when they are served. Caching a loader's own data is a separate opt-in (see
+"Opting a Loader into Caching"). A `ppr` shell does store some loader data: an
+`ssr: false` loader's settled data bakes into the shell, and a HIT runs that
+loader only when its return carries promises (see "`ssr: false`" below and
+`/ppr`).
 
-This means `cache()` gives you cached UI + fresh data by default. Pre-rendering
-follows the same rule: at build time, loaders are skipped entirely (there is no
-real request context), and at runtime the worker resolves them fresh against
-the live database.
+Pre-rendering follows the same rule: the build-time Flight payload skips
+loaders (there is no real request context), and at runtime the worker resolves
+them fresh against the live database. The exception is a `Prerender` + `ppr`
+route: its build-time shell capture runs `ssr: false` loaders and bakes their
+settled data into the shell, like a runtime capture.
 
 ### Parallel and streaming — latency overlaps first paint
 
@@ -442,7 +542,10 @@ boundary a parallel loader blocks its parent, so add one to keep the overlap.)
 
 If you come from a framework where the loader is a blocking step that runs
 before the response is built, this is the shift to internalize: here the
-response starts streaming first and loader data fills in.
+response starts streaming first and loader data fills in. (The one deliberate
+exception is per-loader: `loader(Def, { ssr: false })` awaits that
+loader before first flush on document renders other than a `ppr` shell HIT,
+where the shell flushes first — see "`ssr: false`" below.)
 
 ### See it: `debugPerformance`
 
@@ -455,16 +558,26 @@ const router = createRouter({ document: Document, debugPerformance: true });
 ```
 
 Or enable it per-request from middleware (e.g. only when `?debug` is present) by
-calling `ctx.debugPerformance()` **before** `await next()`. Each HTML request
-then prints a shared-axis waterfall (and emits a `Server-Timing` header):
+calling `ctx.debugPerformance()` **before** `await next()`:
+
+```typescript
+router.use(async (ctx, next) => {
+  if (ctx.searchParams.has("debug")) ctx.debugPerformance();
+  return next();
+});
+```
+
+Each metered request then prints a shared-axis waterfall to the server console
+(and adds the timings to the `Server-Timing` response header):
 
 ```
 [RSC Perf] GET /product/widget (24.53ms)
 start      dur  span                          timeline
  0.08ms  3.20ms  route-matching               |#####...................................|
- 3.40ms  8.70ms  ssr-render-html              |.....##############.....................|
+ 3.30ms 20.10ms  render:total:product         |....############################........|
+ 3.40ms  8.70ms  ssr:render-html              |.....##############.....................|
  3.42ms 11.90ms  loader:…#ProductLoader       |.....###################................|
- 3.45ms 11.40ms  loader:…#ReviewsLoader        |.....##################.................|
+ 3.45ms 11.40ms  loader:…#ReviewsLoader       |.....##################.................|
  0.00ms 24.53ms  handler:total                |########################################|
 ```
 
@@ -472,12 +585,13 @@ How to read it:
 
 - **Humans:** scan the `#` bars on the shared axis. Bars that start at the same
   offset and run side by side are executing **in parallel** — loaders should
-  overlap `ssr-render-html` / `render:total`, not sit alone to the right of
+  overlap `ssr:render-html` / `render:total`, not sit alone to the right of
   everything. A lone `loader:*` bar past the render bar is serialized latency to
-  chase. `handler:total` is the whole request; `render:total` is the render pass.
+  chase. `handler:total` is the whole request; `render:total` is the render pass
+  (labelled `render:total:<routeName>` when the matched route has a name).
 - **LLMs / programmatic:** read each row as `{ start, dur, label }`. A loader
   overlaps paint when its `[start, start+dur]` interval intersects
-  `render:total` / `ssr-render-html`. Flag a regression when a `loader:*`
+  `render:total` / `ssr:render-html`. Flag a regression when a `loader:*`
   interval is **disjoint from and starts after** `render:total`, or when its
   `dur` approaches `handler:total` — that loader is on the critical path instead
   of overlapping it. Two `loader:*` rows with near-equal `start` confirm
@@ -491,6 +605,18 @@ To cache a specific loader's data, attach a `cache()` child:
 loader(ProductLoader, () => [cache({ ttl: 300 })]),
 ```
 
+This works wherever the DSL binding is declared, an intercept's `use()`
+included. A handler's `ctx.use(Loader)` read never caches by itself (see
+"ctx.use(Loader) — escape hatch"). Once the binding started, every
+`ctx.use(Loader)` in the request, from the handler or from another loader's
+body, gets the binding's value: one value per loader per request, a HIT
+included. A reader that runs before the binding starts (a layout's loader
+reading a route's cached loader) gets the value of its own run, as before.
+This is by design: that loader runs live while the binding serves its entry,
+so its data and its handle push can come from different runs on that request.
+To keep them together, declare the cached loader first or read it from the
+handler.
+
 The loader's data is cached independently from the route's segment cache,
 using the same `SegmentCacheStore` (app-level or per-loader override).
 
@@ -498,13 +624,53 @@ Values are serialized through RSC Flight, so loaders can return ReactNode,
 Promises, null, and any RSC-serializable type — all round-trip correctly
 through the cache.
 
+A value Flight cannot encode cleanly is not cached: a promise in it that
+rejects, an async component that throws, a function or a class instance.
+Storing it would bake the failure into every hit until expiry. Instead the
+write is skipped and reported to `onError` (phase `"cache"`, category
+`cache-write`, or `stale-revalidation` for a background refresh): a miss still
+returns the loader's live result, the next request runs the loader again, and
+a stale entry keeps serving.
+
+Handle pushes the body makes (`ctx.use(Meta)(...)`, breadcrumbs — see
+"Writing Handles from Loaders"), including those of loaders it awaits via
+`ctx.use`, are stored with the value and replayed on every hit, stale hits
+included: appended to the loader's segment in push order, so a cached
+loader's title or crumb stays on the page. Relative to the handler's and
+sibling loaders' pushes, the replay lands when the cache read completes —
+the same race a live loader push has. A loader the cached body awaited can
+still run on a hit, because a sibling loader or the handler also reads it
+(loaders stay live); its pushes still appear once, and they are the live
+ones. If it ran before the replay, the replay skips its recorded pushes; if
+it runs after, its pushes replace the replayed ones in their position (after
+hydration, when it lands after the document's handle snapshot). A pending push
+(a promise, an async callback, a `.defer()` slot) is recorded once it settles,
+as in `"use cache"`: the background write waits up to 5 s, and a push still
+pending at 5 s drops that entry's handle record (the data is still cached; its
+hits replay no pushes). A pushed value Flight cannot encode (a promise that
+rejects) skips the whole entry, as above. Entries written
+before handles were recorded replay none until they are rewritten (expiry or
+SWR revalidation).
+
+On a `ppr` route the shell keeps a copy of an `ssr: false` loader's settled
+pushes too. The two never disagree on the page: where a replay of the shell
+serves the loader's data from the shell, the shell's copy is the one shown
+and the entry only adds the deferred push the shell could not keep; where it
+does not (the loader runs or reads its entry), the entry's pushes take the
+shell copy's place, none if the entry recorded none. See `/ppr` → "On a shell
+HIT".
+
 ### Cache Key
 
-The default cache key is `loader:{loaderId}:{pathname}:{sortedParams}`.
-This can be customized at two levels:
+The default cache key is `loader:{loaderId}:{host}{pathname}:{sortedParams}`
+(the host keeps multi-tenant hosts from sharing entries). This can be customized
+at two levels:
 
 ```typescript
+import { cookies } from "@rangojs/router";
+
 // Full override — key function replaces the default entirely
+// Stored as "loader:{loaderId}:key:product%3Ashoe%3Aen"
 loader(ProductLoader, () => [
   cache({
     ttl: 300,
@@ -516,14 +682,91 @@ loader(ProductLoader, () => [
 // Set in the store configuration, applies to all entries in that store
 ```
 
-Resolution priority (same as route-level `cache()`):
+Resolution priority (same order as route-level `cache()`):
 
-1. `key(ctx)` from cache options — full override
-2. `store.keyGenerator(ctx, defaultKey)` — store-level modification
-3. Default key — `loader:{id}:{pathname}:{params}`
+1. `key(ctx)` from cache options — full override, stored namespaced as
+   `loader:{loaderId}:key:` plus the result's URI encoding
+2. `store.keyGenerator(ctx, defaultKey)` — store-level modification, stored
+   as returned
+3. Default key — `loader:{loaderId}:{host}{pathname}:{sortedParams}`
 
-If a custom key function throws, it falls back to the default key silently
-(logged to console.error).
+Because the `key()` result is namespaced by the loader id, no value it
+returns, request input included, can name another loader's entry or a
+default key: two loaders whose `key()` returns the same value keep separate
+entries. A readable prefix is still good practice. A store `keyGenerator`
+result is stored as returned, so build it on the `defaultKey` it receives
+(which carries the loader id): a generator that returns raw request input
+can still name another entry.
+
+A `key` function (or store `keyGenerator`) that throws is **not** caught: the
+loader fails as if its body threw. There is no silent fallback to the default
+key, because a personalised key collapsing onto the broad default would share
+one user's data with everyone.
+
+**Request-scoped reads in the body must be part of the key.** The default key
+names no user, so one entry serves everyone who requests the same loader, host,
+path and params. A route `cache()` around the route does not partition it
+either: a loader's own `cache()` is an independent layer, keyed only by what it
+declares. On a miss, a body that reads `cookies()`, `headers()`,
+`ctx.request.headers` or a non-cacheable variable (`createVar({ cache: false })`,
+or a value written with `ctx.set(..., { cache: false })`) therefore **fails**,
+and nothing is stored,
+unless the binding declares identity with a `key()` or a store `keyGenerator`.
+The check tests only that one of them is there, not what it contains: any
+`key()` or store `keyGenerator` switches it off, so it must itself include the
+value. That includes a store-wide `keyGenerator` that only adds a region
+prefix, like the one described above.
+
+```typescript
+export const SessionLoader = createLoader(async () =>
+  getAccount(cookies().get("session")?.value),
+);
+
+// The miss fails: cookies() cannot be called inside loader "…SessionLoader",
+// whose own cache() has no key().
+loader(SessionLoader, () => [cache({ ttl: 60 })]),
+
+// One entry per session.
+loader(SessionLoader, () => [
+  cache({
+    ttl: 60,
+    key: (ctx) => `account:${cookies().get("session")?.value ?? "anon"}`,
+  }),
+]),
+```
+
+The same holds in a stale entry's background refresh (the refresh fails and the
+stale entry keeps serving) and for the loaders the body reads with `ctx.use()`,
+because their values land in the entry. That includes a keyed cached loader
+served from its own cache: its entry keeps the read its miss made. It also holds
+when something else ran the loader first, such as a parent layout's handler
+calling `ctx.use(SessionLoader)`: the miss reuses that run and fails the same
+way. A read that settles after the value, in a promise inside it or in a
+handle push that settles within the 5 s handle-encode timeout, can't fail a
+value that was already served: that user gets their own value, nothing is
+stored, and `onError` gets the same error. A push still pending after the
+timeout drops the entry's handles, and the value is stored without them. A loader with no `cache()` of its own
+reads request data freely.
+
+The raw reads count the same: `ctx.request.headers` (the loader's
+`ctx.request` is the request's own `Request`) and `getRequestContext().cookie()`
+/ `.cookies()` fail an unkeyed miss exactly like `cookies()`. A `key()` or a
+store `keyGenerator` reads them freely, since that is how the entry is
+partitioned:
+
+```typescript
+loader(LocaleLoader, () => [
+  cache({
+    ttl: 60,
+    key: (ctx) => `lang:${ctx.request.headers.get("accept-language") ?? "en"}`,
+  }),
+]),
+```
+
+One kind of read is not seen, the same as in `"use cache"`: a value computed
+outside the loader and handed in, such as a per-request memo a handler filled
+from `cookies()` before the loader awaited it. Key what it carries too. If the
+value must stay per request, drop the loader's `cache()` instead.
 
 ### Tags for Invalidation
 
@@ -540,6 +783,34 @@ loader(ProductLoader, () => [
     tags: (ctx) => [`product:${ctx.params.slug}`, "products"],
   }),
 ]),
+```
+
+The tags the loader body records tag the entry too: `cacheTag()` calls, the
+tags of `"use cache"` reads, render-time `cacheTag()` in server components of
+the value or a handle push, and the tags the loaders it reads with `ctx.use`
+record, including one the route, a layout or the handler started first. A
+loader it reads that has its own `cache()` also brings its `cache({ tags })`
+and, on a HIT, its entry's tags. `updateTag()` of any of them drops the entry,
+and a HIT records them again, so a route `cache()`, ppr shell or document built
+over the HIT stays evictable. A stale hit's background refresh stores the
+refreshed body's tags; it runs the loaders it reads again rather than reusing
+the page's (possibly stale) values.
+
+One case keeps a `cache({ tags })` off: a cached loader that reads another
+loader's `cache()` binding before that binding starts (for example a cached
+layout loader reading a route's cached loader), and writes its entry before
+it. That reader's entry has the tags the loader's body records, but not the
+tags only its `cache({ tags })` lists. If the reader must drop with them, record
+them in the loader body with `cacheTag()` too.
+
+```typescript
+export const ProductLoader = createLoader(async (ctx) => {
+  cacheTag(`product:${ctx.params.slug}`);
+  return db.product(ctx.params.slug);
+});
+
+loader(ProductLoader, () => [cache({ ttl: 600 })]),
+// updateTag(`product:${slug}`) drops this entry.
 ```
 
 ### Stale-While-Revalidate
@@ -568,7 +839,8 @@ loader(ProductLoader, () => [
 ```
 
 When `condition` returns false, the loader runs fresh and the cache is bypassed
-entirely (no read, no write).
+entirely (no read, no write). Like `key()`, a `condition()` reads request
+identity freely: it decides whether the entry is used, it is not stored in it.
 
 ### Per-Loader Store Override
 
@@ -582,8 +854,9 @@ loader(PricingLoader, () => [
 ]),
 ```
 
-Without an explicit store, the loader uses the app-level store from the
-handler config (`cache.store`).
+Without an explicit store, the loader uses the app-level store from the router
+config (`createRouter({ cache: { store } })`). Without any store, `cache()` on
+a loader is inert and the loader runs fresh.
 
 ## Multiple Loaders
 
@@ -614,8 +887,9 @@ layout(<ShopLayout />, () => [
 
 ## Passing Loaders as Props
 
-Loaders can be passed as props from server to client components. RSC serialization
-uses `toJSON()` to send only `{ __brand, $$id }` — the loader function is stripped.
+Loaders can be passed as props from server to client components. A loader
+definition is a plain `{ __brand, $$id }` object (the function itself stays in the
+server registry), so it serializes as-is.
 
 ```typescript
 // Server component (route handler)
@@ -660,18 +934,175 @@ function ProductPage() {
 }
 ```
 
+## Loader Authority: notFound() and redirect()
+
+A loader may **throw** `notFound()` and `redirect()` — data-dependent
+authority lives with the data, so every consumer of the loader inherits the
+signal instead of re-checking existence at each read site:
+
+```typescript
+import { createLoader, notFound, redirect } from "@rangojs/router";
+
+export const ProductLoader = createLoader(async (ctx) => {
+  const moved = LEGACY_SLUGS[ctx.params.slug];
+  if (moved) throw redirect(`/shop/product/${moved}`);
+
+  // Existence check BEFORE the expensive fetch: a near-instant rejection
+  // usually wins the race to first flush (see the semantics below).
+  if (!(await exists(ctx.params.slug))) notFound(`No "${ctx.params.slug}"`);
+
+  return getProduct(ctx.params.slug);
+});
+```
+
+Semantics by lane:
+
+| Signal       | Document load                                                                                                                                                                                                                                               | Client navigation                                 |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `notFound()` | Not-found UI resolves server-side (nearest `notFoundBoundary` → router option → default) and rides the envelope; the 404 STATUS is **opportunistic** — real only if the rejection beats Response construction. `ssr: false` (below) makes it deterministic. | 404 UI swaps in, URL preserved, payload stays 200 |
+| `redirect()` | 200 document, then a client-side replace to the target — **no document-lane 302 from loaders**; pre-stream redirect authority belongs to middleware                                                                                                         | Redirect envelope navigates to the target         |
+
+With `loader(Def, { ssr: false })` the result is settled BEFORE the document
+flushes, so both signals are resolved server-side while the tree is built:
+`redirect()` replaces the whole page with the redirect carrier (still a 200
+document, the client replaces to the target on hydration) and `notFound()`
+renders the not-found UI at the owning segment with a real 404. No read site
+runs, so a `useLoader` in a layout above every Suspense boundary is safe. On a
+`ppr` route, a flagged loader that settles with `notFound()` or `redirect()`
+during the shell capture refuses the capture (warned once per key): that URL
+gets no shell, and its renders deliver the signal as above.
+
+Session/auth gates belong in middleware (they are request-shaped, not
+data-shaped, and middleware CAN emit a real pre-stream 302). Data-dependent
+"this slug moved / does not exist" belongs in the loader.
+
+## Writing Handles from Loaders (meta, breadcrumbs)
+
+Loader bodies can WRITE handles with handler parity — `ctx.use(Handle)`
+returns the push function, legal for the whole body, streaming loaders
+included. This is how data-derived page titles and breadcrumb trails live
+where the data lives:
+
+```typescript
+import { Meta, Breadcrumbs } from "./handles";
+
+export const ProductLoader = createLoader(async (ctx) => {
+  const product = await getProduct(ctx.params.slug);
+
+  ctx.use(Meta)({ title: `${product.name} — Shop` });
+  const pushCrumb = ctx.use(Breadcrumbs);
+  pushCrumb({ label: "Shop", href: "/shop" });
+  pushCrumb({ label: product.name, href: `/shop/product/${product.slug}` });
+
+  return product;
+});
+```
+
+Delivery is async **by the race model**: pushes that settle before the handler
+barrier ride the SSR handle snapshot (in the SSR'd document — `<Html.Meta />`,
+`useHandle` reads); later pushes stream to the client and apply post-hydration
+on document loads (`metadata.handlesLate`) or progressively on navigations.
+A push before your slow fetch usually beats the barrier; a push derived from
+the fetched data usually does not. When it MUST be in the document, use
+`ssr: false` below. A loader with its own `cache()` keeps its pushes on a hit —
+they are replayed from the entry (see "Opting a Loader into Caching"). On a
+`ppr` route the race does not apply to a document served from its shell:
+there every push a loader makes on that request applies post-hydration (see
+`/ppr`, "Handles on a shell HIT"). A `useHandle` reader inside this loader's
+`loading()` or `<Suspense>` hydrates with the data its HTML was rendered
+from and shows a later push right after, so a push after an `await` causes
+no hydration mismatch there.
+
+Under `cache()`, loader pushes are not stored with the cached segments: the
+loader re-runs on every hit and its live push is the only copy. (`ppr` keeps
+the settled pushes of an `ssr: false` loader, and of the loaders it awaits, in
+the shell, and a promise-free `ssr: false` loader does not run on a shell HIT —
+see `/ppr`.)
+
+Reads are the other direction and gated: `ctx.get(handle)` throws unless the
+loader first does `await ctx.rendered()` (DSL-registered loaders only —
+handler-invoked loaders cannot use `rendered()`, and a handler already
+awaiting the loader via `ctx.use()` makes it a detected deadlock).
+
+## `ssr: false` — Guarantee a Loader in the Document
+
+Streaming means nothing a slow loader produces is _guaranteed_ in the SSR'd
+HTML: its section SSRs as the fallback, a late handle push applies
+post-hydration, a late `notFound()` loses the status race. When the loader
+feeds something that must exist in the document — `<head>` meta via a handle,
+or a real 404 status — pass delivery options between the definition and the
+use callback:
+
+```typescript
+path("/product/:slug", ProductPage, { name: "product" }, () => [
+  loader(ProductLoader, { ssr: false }, () => [cache({ ttl: 60 })]),
+  loader(RelatedLoader),   // untouched: still streams behind its boundary
+]),
+```
+
+The options object is typed as `LoaderOptions`
+(`import type { LoaderOptions } from "@rangojs/router"`).
+
+The knob mirrors `loading(fallback, { ssr: false })` — SSR delivery is off for
+this loader, so nothing of it is left to stream in the document: document
+renders await this loader before first flush — data is settled (`useLoader`
+reads it synchronously, no fallback paints), handle pushes beat the barrier
+snapshot, and a thrown `notFound()` deterministically precedes Response
+construction (real 404, no warm-up race). Client navigations stream exactly as
+before (on a `ppr` route, a navigation that replays a shell captured by a
+document request serves a promise-free flagged loader from its pin, as a
+document HIT does; a snapshot captured by a navigation alone carries no pins,
+and its replay runs the loader fresh). Scoped per LOADER: the flagged loader
+awaits only itself; siblings keep streaming.
+
+Delivery is in-place, not merely in-document. React's Fizz outlines any
+COMPLETED Suspense boundary over ~500 bytes to an end-of-stream
+`<div hidden>` + `$RC()` reveal once the shell saturates its 12800-byte
+`progressiveChunkSize` budget — the bytes are in the HTML, but not at their
+document position, and a consumer that doesn't execute scripts never sees
+them revealed. When the matched chain has a flagged loader, the document
+render raises the budget to `MAX_SAFE_INTEGER` automatically, so the awaited
+content renders where it belongs. Pin the budget yourself (in either
+direction) with `rango({ progressiveChunkSize })` in the Vite config — an
+explicit value disables the auto-raise. Boundaries hoisting stylesheets
+still outline; their reveal must wait for the CSS.
+
+The costs and constraints:
+
+- Every document render that is not a `ppr` shell HIT pays the flagged
+  loader's latency before first byte. That is the point — but keep flagged
+  loaders fast, and flag loaders, not routes. On a HIT the shell flushes
+  first: a flagged loader whose return has no promises does not run (unless
+  the capture marked it to run: see `/ppr` → On a shell HIT), and one whose
+  return carries promises runs to fill its holes.
+- A flagged loader must not `await ctx.rendered()` / `ctx.get(handle)` — the
+  document render awaits the loader before the render barrier resolves, so
+  that wait is a cycle by construction; it throws a deadlock error naming the
+  fix.
+- Under PPR the flag is also the bake lane: the settled non-promise data
+  (handle pushes included) freezes into the stored shell — see `/ppr` → The
+  loader lane rule. On a HIT, a flagged loader whose return has no promises is
+  served from the shell and does not run (unless the capture marked it to run:
+  see `/ppr` → On a shell HIT); one whose return carries promises
+  runs on every HIT, with its baked parts overlaid. A `cookies()`, `headers()`,
+  `ctx.request.headers` or `{ cache: false }` read in it refuses the capture. The
+  `progressiveChunkSize` auto-raise is live-document only; captured shells
+  outline per the explicit option or React's default.
+
+Also available in `clientUrls()` route groups (`/client-urls`), where the
+loader-heavy shape makes it most useful.
+
 ## Fetchable Loaders
 
-By default, loaders only run during SSR and navigation. Pass `true` as the second
-argument to `createLoader` to make a loader **fetchable** — callable from the client
-via `useFetchLoader()` and `load()`:
+By default, loaders only run as part of a render (document, navigation, or
+post-action revalidation); the `_rsc_loader` endpoint rejects them. Pass `true`
+as the second argument to `createLoader` to make a loader **fetchable** —
+callable from the client via `useFetchLoader()` and `load()`:
 
 ```typescript
 import { createLoader } from "@rangojs/router";
 
 export const SearchLoader = createLoader(async (ctx) => {
-  "use server";
-
   const query = ctx.params.query ?? "";
   const results = await ctx.env.DB.prepare(
     "SELECT * FROM products WHERE name LIKE ?",
@@ -682,6 +1113,13 @@ export const SearchLoader = createLoader(async (ctx) => {
   return { results: results.results ?? [] };
 }, true); // true = fetchable
 ```
+
+`true` attaches an EMPTY middleware list, and the fetch lane never runs route
+`middleware()` (see `/middleware` → "Request flow"). A fetchable loader that
+reads a var set by route middleware (`ctx.get(CurrentUser)`) therefore sees
+`undefined` on `useFetchLoader()` / `load()` / `useRefreshLoaders()` unless it
+passes that middleware itself: `createLoader(fn, { middleware: [loadSession,
+requireAuth] })` (next section).
 
 > **No registration needed — and no worker-entry import.** A fetchable loader
 > does not have to be registered with `loader()` in the route DSL, and it does
@@ -695,9 +1133,10 @@ export const SearchLoader = createLoader(async (ctx) => {
 
 ### Fetchable Loader with Middleware
 
-Pass an options object instead of `true` to attach per-loader middleware.
-This middleware runs only on `_rsc_loader` fetch requests (client-side
-`load()` / `useFetchLoader()` calls), not during SSR `ctx.use()` execution:
+Pass an options object instead of `true` to attach per-loader middleware (any
+options object makes the loader fetchable). This middleware runs only on
+`_rsc_loader` fetch requests (client-side `load()` / `useFetchLoader()` /
+`useRefreshLoaders()` calls), not when the loader runs as part of a render:
 
 ```typescript
 import { createLoader } from "@rangojs/router";
@@ -706,8 +1145,6 @@ import { rateLimitMiddleware } from "../middleware/rate-limit";
 
 export const ProtectedLoader = createLoader(
   async (ctx) => {
-    "use server";
-
     const user = ctx.get("user");
     return { orders: await db.orders.list(user.id) };
   },
@@ -717,6 +1154,12 @@ export const ProtectedLoader = createLoader(
 
 The middleware uses the same `MiddlewareFn` signature as route/app middleware,
 so you can reuse existing middleware functions directly.
+
+A `redirect()` thrown by per-loader middleware becomes a real 3xx on the fetch
+lane, so the browser's `fetch` follows it and `useFetchLoader()` receives the
+login page's HTML instead of loader data. Reserve redirects for document and
+navigation requests; on the fetch lane return a 401 (or a structured error
+payload) and let the caller decide.
 
 Fetchable loaders support both GET and POST (PUT, PATCH, DELETE) from the client.
 The `load()` function auto-detects the body type:
@@ -731,8 +1174,6 @@ includes additional fields depending on the body type:
 
 ```typescript
 export const MutationLoader = createLoader(async (ctx) => {
-  "use server";
-
   // JSON body — available as ctx.body (parsed object)
   const data = ctx.body as { name: string; email: string };
 
@@ -747,6 +1188,13 @@ export const MutationLoader = createLoader(async (ctx) => {
 }, true);
 ```
 
+A fetchable-loader POST is not a server action: the router does not run a
+revalidation render afterwards and the client does not invalidate its caches.
+Other loaders on the page keep their current data until you refresh them
+(`load()`, `useRefreshLoaders()`, `router.refresh()`), and cached history or
+prefetch entries stay valid unless you call `invalidateClientCache()`. For
+writes that should refresh the page, prefer a server action (`/server-actions`).
+
 ### File Upload Example
 
 ```typescript
@@ -754,15 +1202,15 @@ export const MutationLoader = createLoader(async (ctx) => {
 import { createLoader } from "@rangojs/router";
 
 export const FileUploadLoader = createLoader(async (ctx) => {
-  "use server";
-
   const file = ctx.formData?.get("file") as File | null;
   if (file && file.size > 0) {
     // Save to R2, D1, etc.
     await ctx.env.BUCKET.put(file.name, file.stream());
-    return { uploaded: { name: file.name, size: file.size, type: file.type } };
+    return {
+      uploadedFile: { name: file.name, size: file.size, type: file.type },
+    };
   }
-  return { uploaded: null };
+  return { uploadedFile: null };
 }, true);
 ```
 
@@ -779,11 +1227,9 @@ Client usage — see `/hooks useFetchLoader` for the full client-side pattern.
 
 ```typescript
 // loaders/shop.ts
-import { createLoader } from "@rangojs/router";
+import { createLoader, notFound } from "@rangojs/router";
 
 export const ProductLoader = createLoader(async (ctx) => {
-  "use server";
-
   const product = await ctx.env.DB
     .prepare("SELECT * FROM products WHERE slug = ?")
     .bind(ctx.params.slug)
@@ -797,8 +1243,6 @@ export const ProductLoader = createLoader(async (ctx) => {
 });
 
 export const CartLoader = createLoader(async (ctx) => {
-  "use server";
-
   const user = ctx.get("user");
   if (!user) return { cart: null };
 
@@ -807,12 +1251,15 @@ export const CartLoader = createLoader(async (ctx) => {
 });
 
 // urls.tsx — register loaders in the DSL
+import { urls } from "@rangojs/router";
 import * as CartActions from "./actions/cart";
+import { CartLoader, ProductLoader } from "./loaders/shop";
 
 export const urlpatterns = urls(({ path, layout, loader, loading, cache, revalidate }) => [
   layout(<ShopLayout />, () => [
     loader(CartLoader, () => [
-      revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+      // after an action, re-run only for cart actions; on navigation, keep the default
+      revalidate((ctx) => (ctx.isAction() ? ctx.isAction(CartActions) : undefined)),
     ]),
 
     path("/shop/product/:slug", ProductPage, { name: "product" }, () => [

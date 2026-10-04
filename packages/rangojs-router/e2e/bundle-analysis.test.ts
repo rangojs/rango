@@ -335,56 +335,64 @@ test.describe("bundle-analysis", () => {
     });
   });
 
+  // The build writes each router's cache versions into the built
+  // `@rangojs/router:version` module after hashing the server output
+  // (docs/design/per-app-cache-version.md).
   test.describe("version-virtual-module", () => {
-    test("VERSION should be in RSC bundle as hex string", async () => {
-      const rscBundle = getRscBundleContent();
+    /** The table as the built module holds it: router id -> [data, document]. */
+    function builtVersions(): Record<string, [string, string]> {
+      const match = getRscBundleContent().match(
+        /(?:const|let|var) ROUTER_VERSIONS\s*=\s*(\{[^;]*\});/,
+      );
+      expect(match, "ROUTER_VERSIONS in the RSC bundle").toBeTruthy();
+      return JSON.parse(match![1]);
+    }
 
-      // VERSION should be defined as const VERSION = "hexstring"
+    test("the RSC bundle holds the per-router version table", async () => {
+      const versions = builtVersions();
+      // The whole-build pair, and the test-app's one router.
+      expect(Object.keys(versions)).toHaveLength(2);
+      expect(versions["*"]).toBeDefined();
+      for (const [data, document] of Object.values(versions)) {
+        expect(data).toMatch(/^[0-9a-f]{16}$/);
+        expect(document).toMatch(/^[0-9a-f]{16}$/);
+        expect(document).not.toBe(data);
+      }
+      // The placeholder the version module ships before hashing is gone.
+      expect(getRscBundleContent()).not.toContain("__RANGO_ROUTER_VERSIONS__");
+    });
+
+    test("the table is keyed by the id the built router has", async () => {
+      const rscBundle = getRscBundleContent();
+      const routerIds = [
+        ...rscBundle.matchAll(/\$\$id:\s*"([0-9a-f]{8})",\s*\$\$sourceFile/g),
+      ].map((match) => match[1]);
+      expect(routerIds).toHaveLength(1);
+      expect(Object.keys(builtVersions())).toContain(routerIds[0]);
+      // ...which is also the id its lazy route manifest is registered under.
+      expect(rscBundle).toContain(
+        `registerRouterManifestLoader("${routerIds[0]}"`,
+      );
+    });
+
+    test("VERSION is the whole-build document version, not a build timestamp", async () => {
+      const rscBundle = getRscBundleContent();
       expect(rscBundle).toMatch(
+        /(?:const|let|var) VERSION\s*=\s*ROUTER_VERSIONS\["\*"\]\[1\]/,
+      );
+      expect(rscBundle).not.toMatch(
         /(?:const|let|var) VERSION\s*=\s*["'][0-9a-f]+["']/i,
       );
     });
 
-    test("VERSION should be a valid hex timestamp", async () => {
-      const rscBundle = getRscBundleContent();
-
-      // Extract VERSION value from const declaration
-      const versionMatch = rscBundle.match(
-        /(?:const|let|var) VERSION\s*=\s*["']([0-9a-f]+)["']/i,
-      );
-      expect(versionMatch).toBeTruthy();
-
-      const version = versionMatch![1];
-
-      // Should be a valid hex number
-      expect(/^[0-9a-f]+$/i.test(version)).toBe(true);
-
-      // Should be reasonable length (11-12 chars for current timestamps)
-      expect(version.length).toBeGreaterThanOrEqual(10);
-      expect(version.length).toBeLessThanOrEqual(13);
-
-      // Should convert to a reasonable timestamp (after 2020, before 2100)
-      const timestamp = parseInt(version, 16);
-      const minTimestamp = new Date("2020-01-01").getTime();
-      const maxTimestamp = new Date("2100-01-01").getTime();
-      expect(timestamp).toBeGreaterThan(minTimestamp);
-      expect(timestamp).toBeLessThan(maxTimestamp);
-    });
-
-    test("VERSION should NOT be in client bundle", async () => {
+    test("no cache version is in the client bundle", async () => {
       const clientBundle = getClientBundleContent();
-      const rscBundle = getRscBundleContent();
-
-      // Extract the actual VERSION from RSC bundle
-      const versionMatch = rscBundle.match(
-        /(?:const|let|var) VERSION\s*=\s*["']([0-9a-f]+)["']/i,
-      );
-      expect(versionMatch).toBeTruthy();
-
-      const version = versionMatch![1];
-
-      // The specific version string should not appear in client bundle
-      expect(clientBundle).not.toContain(version);
+      expect(clientBundle).not.toContain("ROUTER_VERSIONS");
+      for (const pair of Object.values(builtVersions())) {
+        for (const version of pair) {
+          expect(clientBundle).not.toContain(version);
+        }
+      }
     });
   });
 

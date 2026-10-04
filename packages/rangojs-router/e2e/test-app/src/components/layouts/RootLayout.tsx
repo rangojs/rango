@@ -56,11 +56,60 @@ export function RootLayout(ctx: any) {
           PPR navigation replay
         </Link>
         <Link
+          to="/shell-cache/exec-matrix?transition=drop"
+          data-testid="nav-ppr-exec-drop"
+          prefetch="none"
+        >
+          PPR navigation replay without transition
+        </Link>
+        <Link
+          to="/shell-cache/slot-hole?probe=fragment-prefetch-warm"
+          data-testid="nav-ppr-fragment-prefetch-warm"
+          prefetch="hover"
+        >
+          PPR fragment warm prefetch
+        </Link>
+        <Link
+          to="/shell-cache/slot-hole?probe=fragment-prefetch-inflight"
+          data-testid="nav-ppr-fragment-prefetch-inflight"
+          prefetch="hover"
+        >
+          PPR fragment in-flight prefetch
+        </Link>
+        <Link
+          to="/shell-cache/live-dep?probe=livedep-nav"
+          data-testid="nav-ppr-live-dep"
+          prefetch="none"
+        >
+          PPR live dep
+        </Link>
+        <Link
           to="/inline-bound-action?probe=ppr-nav"
           data-testid="nav-ppr-inline-action"
           prefetch="none"
         >
           PPR inline action
+        </Link>
+        <Link
+          to="/ppp/baked?probe=ppp-action-nav"
+          data-testid="nav-prerender-ppr-action"
+          prefetch="none"
+        >
+          Prerender PPR action
+        </Link>
+        <Link
+          to="/slow-streaming?prefetch-sequence=first"
+          data-testid="nav-prefetch-sequence-first"
+          prefetch="hover"
+        >
+          Prefetch sequence first
+        </Link>
+        <Link
+          to="/suspense-stream?prefetch-sequence=second"
+          data-testid="nav-prefetch-sequence-second"
+          prefetch="hover"
+        >
+          Prefetch sequence second
         </Link>
         <NavigationStatus testId="nav-status" />
       </nav>

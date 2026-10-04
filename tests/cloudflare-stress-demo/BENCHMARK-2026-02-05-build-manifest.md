@@ -150,8 +150,8 @@ pnpm build && pnpm wrangler deploy
 # Measure cold start TTFB
 sleep 60
 curl -w "TTFB: %{time_starttransfer}s\n" -so /dev/null \
-  https://cloudflare-stress-demo.devcorner.workers.dev/bench/first
+  https://cloudflare-stress-demo.example.workers.dev/bench/first
 
 # Verify matchStats unchanged
-curl -s https://cloudflare-stress-demo.devcorner.workers.dev/bench/first | jq .matchStats
+curl -s https://cloudflare-stress-demo.example.workers.dev/bench/first | jq .matchStats
 ```

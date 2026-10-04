@@ -45,11 +45,13 @@ export type {
   RevalidateParams,
   Revalidate,
   ActionRef,
+  IsActionFn,
   RouteKeys,
   // Loader types
   LoaderDefinition,
   LoaderFn,
   LoaderContext,
+  LoaderOptions,
   FetchableLoaderOptions,
   LoadOptions,
   // Error boundary types
@@ -76,6 +78,12 @@ export type {
   RouteParams,
 } from "./search-params.js";
 
+// Universal cache-key filtering config and tracking-param preset.
+export {
+  TRACKING_SEARCH_PARAMS,
+  type CacheSearchParams,
+} from "./cache/search-params-filter.js";
+
 // Client-safe createLoader - only stores the $$id, function is not included
 // Use this when defining loaders that will be imported by client components
 export { createLoader } from "./loader.js";
@@ -86,6 +94,9 @@ export type {
   TransitionConfig,
   TransitionWhenFn,
   TransitionWhenContext,
+  TransitionWhenKind,
+  RouteLocation,
+  ServerRouteLocation,
   ViewTransitionClass,
 } from "./types.js";
 
@@ -326,6 +337,7 @@ export type { BreadcrumbItem } from "./handles/breadcrumbs.js";
 export type {
   ScopedReverseFunction,
   ReverseFunction,
+  GlobalReverseFunction,
   ExtractLocalRoutes,
   ParamsFor,
 } from "./reverse.js";

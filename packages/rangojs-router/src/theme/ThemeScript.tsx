@@ -8,14 +8,14 @@
  *
  * Must be placed in the <head> element of your document, before any stylesheets.
  *
- * Note: when theme is enabled in the router config, `<MetaTags />` ALREADY
+ * Note: when theme is enabled in the router config, `<Html.Meta />` ALREADY
  * renders this FOUC script. Use `<ThemeScript />` only if you do NOT render
- * `<MetaTags />`. Rendering both is safe — the inline script guards the
+ * `<Html.Meta />`. Rendering both is safe — the inline script guards the
  * matchMedia listener registration against double-running — but it is redundant.
  *
  * @example
  * ```tsx
- * // In your document component. Use ThemeScript only when you do not render MetaTags.
+ * // In your document component. Use ThemeScript only when you do not render Html.Meta.
  * import { ThemeScript } from "@rangojs/router/theme";
  *
  * export function Document({ children }) {

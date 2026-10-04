@@ -45,6 +45,10 @@ export function mergeSegmentLoaders(
     }),
     // Keep all loader IDs from cache
     loaderIds: fromCache.loaderIds,
+    // The rebuilt aggregate is the source of truth. Cached per-loader
+    // streams would make LoaderResolver ignore loaderDataPromise.
+    loaderStreams: undefined,
+    awaitedLoaderIds: undefined,
   };
 }
 

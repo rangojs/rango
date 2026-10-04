@@ -77,6 +77,14 @@ function readSourceMemoized(
   return source;
 }
 
+function isUrlsDefinitionCall(node: ts.CallExpression): boolean {
+  const callee = node.expression;
+  return (
+    ts.isIdentifier(callee) &&
+    (callee.text === "urls" || callee.text === "clientUrls")
+  );
+}
+
 // ---------------------------------------------------------------------------
 // AST-based include() parsing
 // ---------------------------------------------------------------------------
@@ -206,10 +214,9 @@ function extractDynamicImportSpecifier(node: ts.Expression): string | null {
 }
 
 /**
- * Resolve a module's `export default` to either a same-file `urls()` variable
- * name (`export default shopPatterns`) or the inline call block
- * (`export default urls(...)`). Used to walk async include modules
- * (`() => import("./mod")`), whose convention is `export default urls(...)`.
+ * Resolve a module's `export default` to either a same-file route variable name
+ * (`export default shopPatterns`) or an inline urls()/clientUrls() call block.
+ * Used for default imports and to walk async include modules.
  */
 function resolveDefaultExportTarget(
   code: string,
@@ -223,11 +230,8 @@ function resolveDefaultExportTarget(
       const expr = node.expression;
       if (ts.isIdentifier(expr)) {
         result = { variableName: expr.text };
-      } else if (ts.isCallExpression(expr)) {
-        const callee = expr.expression;
-        if (ts.isIdentifier(callee) && callee.text === "urls") {
-          result = { inlineBlock: expr.getText(sourceFile) };
-        }
+      } else if (ts.isCallExpression(expr) && isUrlsDefinitionCall(expr)) {
+        result = { inlineBlock: expr.getText(sourceFile) };
       }
       return;
     }
@@ -358,6 +362,16 @@ export function resolveImportedVariable(
   code: string,
   localName: string,
 ): { specifier: string; exportedName: string } | null {
+  const defaultImportRegex =
+    /import\s+([\w$]+)\s*(?:,\s*\{[^}]*\})?\s+from\s*["']([^"']+)["']/g;
+  let defaultMatch;
+
+  while ((defaultMatch = defaultImportRegex.exec(code)) !== null) {
+    if (defaultMatch[1] === localName) {
+      return { specifier: defaultMatch[2], exportedName: "default" };
+    }
+  }
+
   // Allow an optional leading default binding before the named-import brace so
   // a combined `import Foo, { bar } from "..."` is matched (the named members
   // are the only part we resolve; the default binding is skipped). Without the
@@ -453,8 +467,7 @@ function extractUrlsBlockForVariable(
       node.initializer &&
       ts.isCallExpression(node.initializer)
     ) {
-      const callee = node.initializer.expression;
-      if (ts.isIdentifier(callee) && callee.text === "urls") {
+      if (isUrlsDefinitionCall(node.initializer)) {
         result = node.initializer.getText(sourceFile);
         return;
       }
@@ -780,6 +793,48 @@ export function buildCombinedRouteMapWithSearch(
   let block: string;
   if (inlineBlock) {
     block = inlineBlock;
+  } else if (variableName === "default") {
+    const defaultTarget = resolveDefaultExportTarget(
+      source,
+      parseBlock(memo, source),
+    );
+    if (!defaultTarget) {
+      visited.delete(key);
+      return { routes: {}, searchSchemas: {} };
+    }
+    if (defaultTarget.inlineBlock) {
+      block = defaultTarget.inlineBlock;
+    } else {
+      const targetName = defaultTarget.variableName!;
+      const imported = resolveImportedVariable(source, targetName);
+      if (imported) {
+        const targetFile = resolveImportPath(imported.specifier, realPath);
+        if (!targetFile) {
+          visited.delete(key);
+          return { routes: {}, searchSchemas: {} };
+        }
+        const result = buildCombinedRouteMapWithSearch(
+          targetFile,
+          imported.exportedName,
+          visited,
+          diagnosticsOut,
+          undefined,
+          memo,
+        );
+        visited.delete(key);
+        return result;
+      }
+      const extracted = extractUrlsBlockForVariable(
+        source,
+        targetName,
+        parseBlock(memo, source),
+      );
+      if (!extracted) {
+        visited.delete(key);
+        return { routes: {}, searchSchemas: {} };
+      }
+      block = extracted;
+    }
   } else if (variableName) {
     const extracted = extractUrlsBlockForVariable(
       source,

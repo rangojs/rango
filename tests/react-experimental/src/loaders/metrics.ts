@@ -17,7 +17,6 @@ export interface Metric {
 // Shared-key loader: two cards read it with the same key and refresh together.
 let revenueCalls = 0;
 export const RevenueLoader = createLoader(async () => {
-  "use server";
   await delay(450);
   revenueCalls++;
   return {
@@ -30,7 +29,6 @@ export const RevenueLoader = createLoader(async () => {
 // Group loaders: three different loaders tagged into one refreshGroup.
 let usersCalls = 0;
 export const ActiveUsersLoader = createLoader(async () => {
-  "use server";
   await delay(450);
   usersCalls++;
   return {
@@ -42,7 +40,6 @@ export const ActiveUsersLoader = createLoader(async () => {
 
 let ordersCalls = 0;
 export const OpenOrdersLoader = createLoader(async () => {
-  "use server";
   await delay(600);
   ordersCalls++;
   return {
@@ -54,7 +51,6 @@ export const OpenOrdersLoader = createLoader(async () => {
 
 let latencyCalls = 0;
 export const LatencyLoader = createLoader(async () => {
-  "use server";
   await delay(350);
   latencyCalls++;
   return {
@@ -76,7 +72,6 @@ export interface Product {
 
 let productCalls = 0;
 export const ProductLoader = createLoader(async (): Promise<Product> => {
-  "use server";
   await delay(250);
   productCalls++;
   return {

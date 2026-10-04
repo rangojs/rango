@@ -54,12 +54,12 @@ Benchmark of @rangojs/router with 14,000+ routes on Cloudflare Workers.
 
 ```
 # Benchmark routes (raw JSON response, no RSC)
-https://cloudflare-stress-demo.devcorner.workers.dev/en/bench/first
-https://cloudflare-stress-demo.devcorner.workers.dev/en/bench/last
+https://cloudflare-stress-demo.example.workers.dev/en/bench/first
+https://cloudflare-stress-demo.example.workers.dev/en/bench/last
 
 # RSC routes
-https://cloudflare-stress-demo.devcorner.workers.dev/en/user1/test
-https://cloudflare-stress-demo.devcorner.workers.dev/en/l4/1000/type/123
+https://cloudflare-stress-demo.example.workers.dev/en/user1/test
+https://cloudflare-stress-demo.example.workers.dev/en/l4/1000/type/123
 ```
 
 ## Recommendations
@@ -78,8 +78,8 @@ pnpm build && pnpm deploy
 
 # Test TTFB
 curl -w "TTFB: %{time_starttransfer}s\n" -so /dev/null \
-  https://cloudflare-stress-demo.devcorner.workers.dev/en/bench/first
+  https://cloudflare-stress-demo.example.workers.dev/en/bench/first
 
 curl -w "TTFB: %{time_starttransfer}s\n" -so /dev/null \
-  https://cloudflare-stress-demo.devcorner.workers.dev/en/bench/last
+  https://cloudflare-stress-demo.example.workers.dev/en/bench/last
 ```

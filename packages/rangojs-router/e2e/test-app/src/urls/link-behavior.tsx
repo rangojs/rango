@@ -25,8 +25,21 @@ export const linkBehaviorPatterns = urls(({ path }) => [
               </a>
             </li>
             <li>
-              <a href="/blog" data-testid="anchor-intercepted">
+              <a
+                href="/blog"
+                data-prefetch="false"
+                data-testid="anchor-intercepted"
+              >
                 Blog (should SPA navigate)
+              </a>
+            </li>
+            <li>
+              <a
+                href="/blog?cross-tab-delegated=1"
+                data-prefetch="false"
+                data-testid="cross-tab-delegated-navigation"
+              >
+                Blog (cross-tab delegated navigation fixture)
               </a>
             </li>
           </ul>
@@ -85,5 +98,46 @@ export const linkBehaviorPatterns = urls(({ path }) => [
       </div>
     ),
     { name: "index" },
+  ),
+
+  // data-external SSR/browser agreement: the server must classify absolute
+  // URLs against the REQUEST origin, exactly as the browser will against
+  // window.location.origin. Regression fixture for the swallowed-window bug
+  // where SSR never emitted data-external and every absolute-URL Link was a
+  // hydration mismatch (cross-origin ones then hard-navigated only after
+  // the client patched the attribute in).
+  path(
+    "/external-origin",
+    (ctx) => (
+      <div data-testid="link-external-origin-page">
+        <h1>Absolute-URL Link classification</h1>
+        <ul>
+          <li>
+            <Link
+              to="https://external.example.com/promo"
+              data-testid="link-cross-origin"
+            >
+              Cross-origin absolute (data-external in SSR HTML)
+            </Link>
+          </li>
+          <li>
+            {/* Same-site absolute: built from the live request origin, so it
+                is same-origin on whatever host/port serves the test. */}
+            <Link
+              to={`${ctx.url.origin}/blog`}
+              data-testid="link-same-origin-absolute"
+            >
+              Same-origin absolute (soft navigation, no data-external)
+            </Link>
+          </li>
+          <li>
+            <Link to="/blog" data-testid="link-relative-control">
+              Relative control
+            </Link>
+          </li>
+        </ul>
+      </div>
+    ),
+    { name: "externalOrigin" },
   ),
 ]);

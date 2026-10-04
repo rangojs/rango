@@ -31,7 +31,7 @@ import {
   type Middleware,
 } from "@rangojs/router";
 import { MemorySegmentCacheStore } from "@rangojs/router/cache";
-import { Outlet, Link, ScrollRestoration } from "@rangojs/router/client";
+import { Outlet, Link } from "@rangojs/router/client";
 
 import {
   ClockLoader,
@@ -46,6 +46,10 @@ import { productsPatterns } from "./urls/products.js";
 // demonstrate per-route client chunking under `clientChunks: true`.
 import { WidgetA } from "./routes/widgets/WidgetA.js";
 import { ChartB } from "./routes/charts/ChartB.js";
+// app/-rooted layout (app/routes/<id>, app/components) for issue #1022.
+import { Hero } from "./app/routes/hero/Hero.js";
+import { Gallery } from "./app/routes/gallery/Gallery.js";
+import { AppHeader } from "./app/components/AppHeader.js";
 // A "use client" error-boundary fallback: the built-in clientChunks strategy
 // pulls registered error/notFound fallbacks into a dedicated app-fallback chunk.
 import { ClientErrorFallback } from "./ClientErrorFallback.js";
@@ -205,6 +209,10 @@ function FallbackWrap({
 // ---------------------------------------------------------------------------
 
 export const router = createRouter({
+  // Manual prefetch mode: keeps this suite's request assertions free of
+  // automatic production viewport prefetch traffic (the environment default
+  // is dogfooded by the router's e2e test-app).
+  defaultPrefetch: "none",
   cache: { store: cacheStore },
   cacheProfiles: {
     short: { ttl: 60, swr: 120 },
@@ -252,7 +260,6 @@ export const router = createRouter({
               <main data-testid="app-main">
                 <Outlet />
               </main>
-              <ScrollRestoration />
             </div>
           );
         },
@@ -341,6 +348,29 @@ export const router = createRouter({
             },
             { name: "charts" },
           ),
+
+          // app/-rooted layout (issue #1022): app/routes/hero and
+          // app/routes/gallery split into app-hero / app-gallery instead of one
+          // app-routes group, so /app-root/hero does not download Gallery.
+          // Nameless on purpose (keeps the named-routes gen file untouched).
+          path("/app-root/hero", (ctx) => {
+            ctx.use(Meta)({ title: "App root: hero" });
+            return (
+              <div data-testid="app-root-hero-page">
+                <AppHeader />
+                <Hero />
+              </div>
+            );
+          }),
+          path("/app-root/gallery", (ctx) => {
+            ctx.use(Meta)({ title: "App root: gallery" });
+            return (
+              <div data-testid="app-root-gallery-page">
+                <AppHeader />
+                <Gallery />
+              </div>
+            );
+          }),
 
           // Prefetch warming demo: a page that ships NONE of /widgets' client
           // code, with a render-strategy prefetch link to it. The prefetch

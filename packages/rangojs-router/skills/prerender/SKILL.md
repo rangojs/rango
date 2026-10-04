@@ -1,26 +1,35 @@
 ---
 name: prerender
-description: Pre-render route segments at build time with Prerender and Passthrough live fallback. Use when a page's content is mostly static and shouldn't render on every request, speeding up cold responses, or deciding which routes to prerender vs render live.
+description: Pre-render route segments at build time with Prerender (with getParams), Passthrough live fallback, Static segments, and Skip. Use when a page's content is mostly static and shouldn't render on every request, speeding up cold responses, reading build-only data (files, build env), or deciding which routes to prerender vs render live.
 argument-hint: [passthrough]
 ---
 
 # Pre-rendering with Prerender
 
-Pre-rendering is **caching at build time**. Same serialization format, same
-deserialization path, same segment system. The worker handles every request --
-there are NO static .html or .rsc files served from assets. The worker reads
-pre-computed Flight payloads instead of executing handler code.
+Pre-rendering is **caching at build time**. `Prerender()` renders a route's
+segments once per known param set during `vite build`, and `Static()` renders a
+single segment once. Same serialization format, same deserialization path, same
+segment system as the runtime `cache()`. The worker handles every request --
+there are NO static .html or .rsc files served from assets. At runtime the
+worker reads the pre-computed Flight payloads instead of executing handler code,
+exactly like a cache hit; middleware and loaders still run on every request.
+
+Use it when the page content is known at build time (markdown files, a CMS
+snapshot, a fixed list of products) or needs build-only APIs such as `node:fs`.
+The handler code and its imports are removed from the production bundle.
 
 ## Not this skill if…
 
-- You want a cached HTML shell captured at runtime, with holes and loaders
-  staying live per request — see `/ppr`.
+- You want a cached HTML shell captured at runtime, with holes staying live
+  per request (loaders without `ssr: false` run per request; `ssr: false`
+  loaders bake) — see `/ppr`.
 - You want runtime segment caching with TTL/SWR — that is the `cache()` DSL:
   see `/caching`. Prerender is the same cache filled at build time.
+- You are unsure which cache layer you need — start at `/cache-guide`.
 
 ## API: Prerender
 
-### Static Route (no params)
+### Route without params
 
 ```typescript
 import { Prerender } from "@rangojs/router";
@@ -96,7 +105,7 @@ functions — no `ctx.build` branching needed.
 | Unknown params      | Handler evicted, no live fallback       | Live handler runs at request time        |
 | `ctx.passthrough()` | Throws (not on Passthrough route)       | Skips artifact, defers to live handler   |
 | Bundle size         | Build handler code + imports removed    | Build handler evicted, live handler kept |
-| `revalidate()`      | Not allowed (handler gone)              | Allowed (live handler can re-render)     |
+| `revalidate()`      | No effect on prerendered segments       | Allowed (live handler can re-render)     |
 | `loading()`         | Ignored (segments fully resolved)       | Works for live fallback renders          |
 
 ### When to use Passthrough
@@ -138,11 +147,18 @@ interface BuildContext<TParams> {
     search?: Record<string, unknown>,
   ): string; // URL generation
   passthrough(): PrerenderPassthroughResult; // Skip local artifact (Passthrough routes only)
-  dynamic(): void; // No-op in Prerender/Static handlers; use middleware for PPR shell opt-out
   env: DefaultEnv; // Available when buildEnv is configured in rango() (throws otherwise)
-  // NOT available: request, headers, cookies (always throw)
+  // ctx.request, ctx.res, ctx.headers throw: there is no request at build time.
+  // ctx.waitUntil() is a no-op. ctx.dynamic() exists at runtime but is a no-op
+  // here -- opt a URL out of a build shell from middleware instead.
 }
 ```
+
+`getParams` receives a smaller `GetParamsContext` (`build`, `dev`, `env`, `set`,
+`reverse`). Values it stores with `ctx.set()` are copied into every param set's
+handler context and read there with `ctx.get()`. `env` is the `buildEnv` from
+`rango()` — build-time bindings shared by the whole build, not a live request
+env.
 
 Use `createVar<T>()` to share typed data from a Prerender handler to child layouts:
 
@@ -199,6 +215,13 @@ export const BlogPost = cph(getParams, handler);
 All patterns support whole-file stubbing, expression stubbing, and build-time
 module tracking. The same applies to `Static`.
 
+Anything else gets no build-injected id, and the call throws
+`Prerender: missing $$id` when the module loads. Unsupported shapes include
+`export let`/`export var`, and calling `Prerender(...)` inline — for example
+directly inside `path()`. Declare it as an exported `const` and pass the
+binding. (`Passthrough(def, liveHandler)` needs no id and can be written inline
+in `path()`.)
+
 ## Handler Eviction
 
 In production builds, `Prerender` exports are replaced with stubs:
@@ -221,46 +244,81 @@ In client and SSR environments, ALL prerender handlers are always stubbed.
 
 ## Sub-use Semantics
 
-Everything inside the path's use() callback is part of the B segment and gets
-pre-rendered:
+Everything inside the path's use() callback is part of the pre-rendered route
+subtree and gets pre-rendered. Loaders are the exception — they stay live:
 
 ```typescript
 path("/blog/:slug", BlogPost, { name: "blog.post" }, () => [
-  layout(<PostLayout />, () => [        // inside B -> pre-rendered
+  layout(<PostLayout />, () => [        // inside the route -> pre-rendered
     loader(PostMetaLoader),              // live at runtime, bundled normally
   ]),
-  parallel({ "@sidebar": BlogSidebar }), // inside B -> pre-rendered
+  parallel({ "@sidebar": BlogSidebar }), // inside the route -> pre-rendered
 ])
 ```
 
-If a parallel or child layout uses node APIs, wrap it in `Prerender`
-(static, no getParams) so the Vite plugin can stub it:
+Only the route's own `Prerender` handler is evicted from the bundle. If a
+parallel or child layout uses build-only APIs such as `node:fs`, wrap it in
+`Static()` (see "Static segments" below) so the Vite plugin can stub it too.
+`layout()` and `parallel()` accept `Static()` definitions; they do not accept
+`Prerender()` definitions.
 
 ```typescript
-// sidebar.tsx -- uses node:fs, must be a Prerender
-export const BlogSidebar = Prerender(async (ctx) => {
+// sidebar.tsx -- uses node:fs, so it must be stubbed out of the bundle
+import { Static } from "@rangojs/router";
+
+export const BlogSidebar = Static(async () => {
   const files = await fs.readdir("content/blog/");
-  return <Sidebar posts={files.map(f => basename(f, ".md"))} />;
+  return <Sidebar posts={files.map((f) => basename(f, ".md"))} />;
 });
 
 // urls.tsx
 path("/blog/:slug", BlogPost, { name: "blog.post" }, () => [
-  parallel({ "@sidebar": BlogSidebar }),  // stubbable, node:fs excluded
+  parallel({ "@sidebar": BlogSidebar }), // stubbable, node:fs excluded
 ])
 ```
 
+## Static segments
+
+`Static(handler, options?)` renders ONE segment once at build time. It has no
+params and produces no URLs; it works on `layout()`, `parallel()`, and `path()`.
+Use it for build-time chrome such as a docs navigation built from files, or for
+a static route with no params.
+
+```typescript
+import { Static } from "@rangojs/router";
+
+export const DocsNav = Static(async (ctx) => {
+  const docs = await readDocsIndex(); // build-only I/O
+  return <Nav docs={docs} />;
+});
+
+// urls.tsx
+layout(DocsNav, () => [
+  path("/docs/:slug", DocPage, { name: "doc" }),
+]);
+```
+
+- The handler receives `StaticBuildContext`: `build`, `dev`, `env` (with
+  `buildEnv`), `get`/`set`, `use(handle)`, and `reverse`. `params`, `url`,
+  `pathname`, and `request` throw.
+- `Static(handler, { passthrough: true })` skips the build render and keeps the
+  handler in the bundle, rendering live at request time.
+- `Static()` always renders sequentially (no `concurrency` option) and supports
+  `throw new Skip()` (see "Skipping Entries with Skip").
+- The same export rules as `Prerender` apply (`export const X = Static(...)`).
+
 ## Interaction with DSL Items
 
-| DSL item       | Behavior with Prerender                                                                                                                                                                                                                                                  |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `loader()`     | Live at runtime, bundled normally. Use `cache()` for caching.                                                                                                                                                                                                            |
-| `revalidate()` | Not allowed without Passthrough. Allowed with Passthrough.                                                                                                                                                                                                               |
-| `cache()`      | Orthogonal -- use on parent layouts and loaders.                                                                                                                                                                                                                         |
-| `layout()`     | Child layouts inside path are pre-rendered. Parent layouts are live.                                                                                                                                                                                                     |
-| `parallel()`   | Parallel slots inside path are pre-rendered.                                                                                                                                                                                                                             |
-| `middleware()` | Skipped while collecting build-time Flight payloads (no request). For `Prerender` + `ppr`, producer B replays global and route middleware during build-shell capture with `ctx.build === true`; `ctx.dynamic()` skips that shell. Runs at request time for loaders.      |
-| `loading()`    | Ignored without Passthrough. Works for live fallback with Passthrough.                                                                                                                                                                                                   |
-| `intercept()`  | Pre-rendered at build time. Intercept variant stored under `/i` key alongside main segments. At runtime, the correct variant is served based on `ctx.isIntercept`. `when` config conditions are skipped at build time (all intercepts are pre-rendered unconditionally). |
+| DSL item       | Behavior with Prerender                                                                                                                                                                                                                                                     |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loader()`     | Live at runtime, bundled normally. Use `cache()` for caching.                                                                                                                                                                                                               |
+| `revalidate()` | Without Passthrough: no effect on the prerendered segments (re-served from the build artifact); loader revalidation still works. With Passthrough: re-renders through the live handler.                                                                                     |
+| `cache()`      | Orthogonal -- prerendered segments bypass the runtime cache. Use `cache()` on parent layouts and loaders.                                                                                                                                                                   |
+| `layout()`     | Child layouts inside path are pre-rendered. Parent layouts are live.                                                                                                                                                                                                        |
+| `parallel()`   | Parallel slots inside path are pre-rendered.                                                                                                                                                                                                                                |
+| `middleware()` | Skipped while collecting build-time Flight payloads (no request). For `Prerender` + `ppr`, the build-shell step replays global and route middleware with `ctx.build === true`; `ctx.dynamic()` skips that shell. At request time middleware runs normally on every request. |
+| `loading()`    | Ignored without Passthrough. Works for live fallback with Passthrough.                                                                                                                                                                                                      |
+| `intercept()`  | Pre-rendered at build time. Intercept variant stored under `/i` key alongside main segments. At runtime, the correct variant is served based on `ctx.isIntercept`. `when` config conditions are skipped at build time (all intercepts are pre-rendered unconditionally).    |
 
 When Passthrough revalidation is enabled, remember that revalidation is
 still partial: opting a child segment into revalidation does not
@@ -269,9 +327,16 @@ implicitly re-run outer prerender-derived handlers/layouts.
 ## Prerender + PPR Build Shells
 
 A `Prerender` page may also declare `ppr` on the path option. The build still
-stores the Flight payload first. After that, producer B tries to bake the HTML
-shell for each generated URL so the first document request can be an
-`x-rango-shell: HIT`.
+stores the Flight payload first. After that, the build-time shell capture
+tries to bake the HTML shell for each generated URL so the first document
+request can be an `x-rango-shell: HIT`. A route partitioned by
+`cache({ key })` or a store `keyGenerator` never serves that build shell (the
+build captured one partition); each partition captures at runtime, a
+once-per-route warning says so, and a `keyGenerator` that returns the default
+key unchanged keeps it. When the route's `cache()` scope (its own, or one
+inherited from a layout) refuses a request — `cache(false)`, or a
+`condition()` that returns false — that request gets no shell at all, the
+build shell included: it renders like a cache miss.
 
 That shell capture is request-shaped enough to run middleware safely:
 
@@ -284,13 +349,22 @@ Use `ctx.build` inside middleware to avoid runtime-only side effects during
 build shell capture, or call `ctx.dynamic()` to leave that route to runtime
 PPR. Runtime requests still run the normal middleware chain.
 
+Build shells are keyed by pathname and served only for requests without a query
+string (after `cache.searchParams` filtering). A URL with search params has its
+own shell identity and is captured at runtime. The runtime shell store is read
+first, so a runtime capture supersedes the baked entry once it exists.
+
 ### Freshness of a build shell
 
 A build-baked shell is not on a wall clock the way a pure runtime `ppr` shell is.
 It serves from the first request after a deploy and keeps serving until one of:
 
-- **a redeploy** — the `buildVersion` gate retires every build entry (like a
-  React-version bump); the new build re-bakes;
+- **a redeploy** — the new build ships its own build shell manifest and
+  re-bakes. A shell stored at runtime for the route is replaced when the
+  router's document version changes, and a change of the prerendered payload
+  changes it (a Prerender payload is part of its router's document version, not
+  its data version, so cached data is kept); a React-version bump also retires
+  it;
 - **`updateTag`** on a tag the shell carries — drops it, so the next request
   MISSes and a runtime capture takes over.
 
@@ -299,44 +373,53 @@ entry STILL serves and a runtime recapture is scheduled that upgrades it in plac
 (SWR is the upgrade path from build entry → fresher runtime entry). Because the
 `Prerender` handler is evicted from the production bundle, that recapture never
 re-runs the handler — it replays the same build-time segments and only refreshes
-`cache()`-scoped data baked into the shell. **If nothing in the shell is
-`cache()`-backed, `ttl` has nothing to refresh** — reach for `updateTag` (or a
+what the capture reads again: `cache()`-scoped data baked into the shell, and
+the data of `ssr: false` loaders, which run at every capture. **If the shell
+bakes neither, `ttl` has nothing to refresh** — reach for `updateTag` (or a
 redeploy) instead of a shorter `ttl`.
 
-`ctx.dynamic()` opts a request off the shell axis ONLY. A `Prerender` route has
+`ctx.dynamic()` opts a request off the shell ONLY. A `Prerender` route has
 no live handler to fall back to (it was evicted), so a `dynamic()` request still
-serves the build-baked B-segments — fresh loaders in their holes, not a fresh
-handler render. There is no "fully dynamic" render for a prerendered route.
+serves the build-baked segments — fresh loaders, not a fresh handler render.
+There is no "fully dynamic" render for a prerendered route.
 
 ## Dev Mode
 
-In dev mode there is no production-style prerender build pass and no handler
-stubbing.
+In dev there is no build pass and no handler stubbing. Instead, a request to a
+prerendered route is rendered **on demand** through the dev server's
+`/__rsc_prerender` endpoint, which runs the same build-time resolution in
+Node.js (so `node:fs` and `buildEnv` work even when the app itself runs in
+workerd). This applies to both the Node and the Cloudflare presets.
 
-**Node.js dev server** — `Prerender` acts as a normal handler. Routes render
-live on every request with full runtime context (`ctx.build === false`).
-
-**Non-Node runtimes (Cloudflare workerd, Deno workers)** — Handlers that
-depend on Node APIs (e.g. `node:fs`) cannot run in-process. The Vite plugin
-can intercept these requests and resolve them via the `/__rsc_prerender`
-endpoint, which runs `matchForPrerender` in a Node.js temp server. In this
-path the handler receives `BuildContext` (`ctx.build === true`) and segments
-are resolved identically to production prerendering, then served on-demand.
-This only applies when `__PRERENDER_DEV_URL` is set by the plugin.
+- The handler receives `BuildContext` (`ctx.build === true`, `ctx.dev === true`),
+  and segments resolve exactly as in the production prerender.
+- Results are memoized until you edit a file in the router's module graph, so
+  `getParams()` and handler side effects run once per edit, not once per request.
+  The endpoint reports `x-rango-prerender-cache: HIT | MISS`.
+- If the on-demand render has no entry for the URL (unknown param, `Skip`,
+  `ctx.passthrough()`, or a render error, which is logged), the request falls
+  through to a live render — the Passthrough live handler when there is one.
 
 ## Storage Layout
 
-Pre-rendered Flight payloads are stored in the build output:
+Pre-rendered Flight payloads are stored as content-hashed modules behind a lazy
+manifest in the RSC server bundle. They are not public `.rsc` files:
 
 ```
-dist/static/__<hash>/
-  prerender/
-    blog.post/
-      d4e5f6a7.flight    # hash of { slug: "hello-world" }
-      b8c9d0e1.flight    # hash of { slug: "getting-started" }
-    about/
-      _.flight            # static route, no params
+dist/rsc/
+  __prerender-manifest.js
+  assets/
+    __pr-<content-hash>.js
+
+# When a Prerender route also declares ppr:
+  __shell-manifest.js
+  assets/
+    __ps-<content-hash>.js
 ```
+
+The worker/function handles every request and reads these modules as build-time
+cache entries. See `/deployment-caching` for how this differs from a platform
+CDN static or prerender output.
 
 ## Concurrency
 
@@ -371,13 +454,28 @@ export const BlogPost = Prerender(
   },
 );
 
-// Wrap with Passthrough to serve skipped params live at runtime
-export const BlogPost = Passthrough(BlogPostDef, async (ctx) => {
-  if (ctx.params.slug === "draft") {
-    throw new Skip("Draft articles are not pre-rendered");
-  }
-  return <PostPage slug={ctx.params.slug} />;
-});
+```
+
+To serve skipped params live at runtime, give the definition its own name and
+wrap it with `Passthrough()`; the live handler renders them:
+
+```typescript
+import { Prerender, Passthrough, Skip } from "@rangojs/router";
+
+export const BlogPostDef = Prerender(
+  async () => [{ slug: "published" }, { slug: "draft" }],
+  async (ctx) => {
+    if (ctx.params.slug === "draft") {
+      throw new Skip("Draft articles are not pre-rendered");
+    }
+    return <PostPage slug={ctx.params.slug} />;
+  },
+);
+
+// Live handler: runs at request time for "draft" and any unknown slug
+export const BlogPost = Passthrough(BlogPostDef, async (ctx) => (
+  <PostPage slug={ctx.params.slug} />
+));
 ```
 
 Skipped entries are excluded from the build output. With `Passthrough()`,
@@ -409,6 +507,12 @@ rango({ prerender: { onError: "warn" } }); // default is "fail"
 | `return ctx.passthrough()`  | Skip entry, log PASS (Passthrough routes)    | Skip entry, log PASS             |
 | `throw new Skip("reason")`  | Skip entry, log SKIP, continue               | Skip entry, log SKIP, continue   |
 | `throw new Error("reason")` | Log FAIL, stop ALL pre-rendering, fail build | Log WARN, skip the URL, continue |
+| A child component throws    | Log FAIL, stop ALL pre-rendering, fail build | Log WARN, skip the URL, continue |
+
+The last row covers a handler that returns fine but whose tree holds an async
+server component that throws while the page is rendered at build, for example
+because its fetch fails. That error goes through the same policy instead of being
+baked as an error row, and a `Skip` thrown there skips the URL.
 
 With `"warn"` the errored entry is logged and left un-baked (never served as a baked
 200 error page). `"warn"` is a build-unblock, not a runtime contract: the route falls
@@ -420,7 +524,8 @@ fallback) or `throw new Skip()` (an intentional skip — works in the render fn,
 only `getParams()`); otherwise prefer the default `"fail"`.
 
 Both `Skip` and hard errors propagate to the router's `onError` callback with phase
-`"prerender"` or `"static"`.
+`"prerender"` or `"static"`; skipped entries (a `Skip`, or an error under
+`"warn"`) carry `metadata.skipped: true`.
 
 ### Build logs
 
@@ -447,13 +552,9 @@ the build continues.
 
 ### Dev mode behavior
 
-**Node.js dev server** — `Skip` behaves like a regular runtime error because
-the handler runs live with `ctx.build === false`.
-
-**Non-Node runtimes using `/__rsc_prerender`** — `Skip` participates in the
-on-demand prerender path, so build-style skip logic does run for that request.
-The dev prerender endpoint treats it like a prerender miss and the request
-falls back according to normal dev/runtime behavior.
+In dev, `Skip` runs inside the on-demand `/__rsc_prerender` render, so
+build-style skip logic runs for that request. The endpoint treats it as a
+prerender miss and the request falls through to a live render (see "Dev Mode").
 
 ## Per-Param Passthrough with ctx.passthrough()
 
@@ -546,30 +647,64 @@ Passthrough entries are logged distinctly:
 Loaders on pre-rendered routes run at request time. They are bundled normally
 and need `cache()` for caching. Do not use build-only APIs in loaders.
 
-### Handle data is frozen
+The exception is an `ssr: false` loader on a `Prerender` + `ppr` route: the
+build-time shell capture runs it and bakes its settled data into the shell,
+and a shell HIT runs it only when its return carries promises (`/ppr` → "The
+bake lane"). The Flight payload collection itself still skips loaders.
 
-Handle values pushed via `ctx.use()` during pre-rendering are baked into the
-Flight payload. They do not update at request time.
+### Build-time handle data is frozen
+
+Handle values pushed via `ctx.use()` DURING pre-rendering (handler pushes at
+build) are baked into the Flight payload and do not update at request time.
+Loader pushes are the exception by construction: loaders run live at request
+time (previous section), so a loader-pushed handle (a data-derived Meta title,
+say) is request-time data — delivery follows the loader race model, see
+`/loader` → "Writing Handles from Loaders".
 
 ### Server actions work normally
 
-Actions do not re-render the B segment. The pre-rendered handler output stays
-frozen. Loaders are live and can be revalidated by actions. With `Passthrough()`
-and `revalidate()`, the live handler can re-render.
+Actions run normally; what changes is the re-render after them. Loaders are live
+and are revalidated by actions as usual.
+
+- **Plain `Prerender`**: the handler was evicted, so the action re-render serves
+  the stored prerender entry again. The prerendered output stays frozen; the
+  action's return value reaches the client as usual.
+- **`Passthrough()`**: the action re-render runs the live handler, replacing the
+  prerendered output. To keep the frozen tree mounted after actions (for example
+  so a client component's form state survives), suppress action
+  revalidation on the route while keeping navigation defaults:
+  `revalidate((ctx) => (ctx.isAction() ? false : undefined))`.
+
+A handler may also embed an inline `"use server"` action that closes over
+build-time values; the captured values are frozen at build and the action body
+runs live when invoked.
 
 ### Empty getParams
 
 If `getParams` returns an empty array, no Flight payloads are written. No error.
+Every request to the route then behaves like an unknown param.
 
 ### Route name is required
 
 Routes using `Prerender` must have a `name` in path options.
 The name is used as the storage key for Flight payloads.
 
-### No revalidate without Passthrough
+### revalidate() needs Passthrough
 
-Using `revalidate()` without `Passthrough()` produces a build-time warning.
-The handler is evicted -- there is nothing to re-render.
+Without `Passthrough()` the handler is evicted, so there is nothing to
+re-render: a revalidation re-serves the prerendered segments from the build
+artifact. `revalidate()` on the route's loaders still works. No warning is
+emitted — wrap the route in `Passthrough()` when its segments must re-render.
+
+### Tag invalidation does not reach prerendered segments
+
+`updateTag()`/`revalidateTag()` evict runtime cache entries. They do not refresh
+a prerendered route's build-time Flight payload, which is served before the tag
+system is consulted, and a `cacheTag()` inside a `"use cache"` function that runs
+during the build has no runtime effect. A redeploy replaces the payload; because a Prerender payload is part of its router's document version, a deploy whose only change is new prerendered content keeps cached data and replaces stored HTML (shells, document-cache responses) for that router. To make
+a route tag-invalidatable, serve it from the runtime cache instead (`cache()`,
+or a `Passthrough()` live handler). A build-baked **ppr shell** is different: a
+tag it carries does drop it (see "Freshness of a build shell").
 
 ### loading() is ignored without Passthrough
 
@@ -578,11 +713,13 @@ With `Passthrough()`, `loading()` works for live fallback renders.
 
 ## Complete Example
 
+Known guides are pre-rendered; any other slug is rendered live by the
+Passthrough handler.
+
 ```typescript
 // pages/guides-handler.tsx
 import { Prerender, Passthrough } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
-import { href } from "../router.js";
 
 const knownGuides: Record<string, string> = {
   routing: "Routing Guide",
@@ -598,9 +735,9 @@ export const GuidesDetailDef = Prerender<{ slug: string }>(
         <h1>{title}</h1>
         <p>Slug: {ctx.params.slug}</p>
         <nav>
-          <Link to={href("guides.detail", { slug: "routing" })}>Routing</Link>
+          <Link to={ctx.reverse("guides.detail", { slug: "routing" })}>Routing</Link>
           {" | "}
-          <Link to={href("guides.detail", { slug: "dynamic-test" })}>Dynamic</Link>
+          <Link to={ctx.reverse("guides.detail", { slug: "dynamic-test" })}>Dynamic</Link>
         </nav>
       </div>
     );
@@ -614,9 +751,9 @@ export const GuidesDetail = Passthrough(GuidesDetailDef, async (ctx) => {
       <h1>{title}</h1>
       <p>Slug: {ctx.params.slug}</p>
       <nav>
-        <Link to={href("guides.detail", { slug: "routing" })}>Routing</Link>
+        <Link to={ctx.reverse("guides.detail", { slug: "routing" })}>Routing</Link>
         {" | "}
-        <Link to={href("guides.detail", { slug: "dynamic-test" })}>Dynamic</Link>
+        <Link to={ctx.reverse("guides.detail", { slug: "dynamic-test" })}>Dynamic</Link>
       </nav>
     </div>
   );
@@ -662,8 +799,8 @@ At runtime, the cache-lookup middleware checks `ctx.isIntercept`:
   intercept-resolution middleware runs live. This handles `when` config conditions
   that prevented pre-rendering.
 
-The `when` config selector receives an `InterceptSelectorContext` with `from.pathname`
-which is unknown at build time. All intercepts are pre-rendered unconditionally;
+The `when` config selector receives an `InterceptSelectorContext` whose `from`
+location (the page being left) is unknown at build time. All intercepts are pre-rendered unconditionally;
 `when` is evaluated at runtime by the intercept-resolution middleware.
 
 ### Example: Pre-rendered route with intercept
@@ -687,7 +824,7 @@ layout(ShopLayout, () => [
     "@modal",
     ".detail",
     <ProductModal />,
-    { when: ({ from }) => from.pathname === "/shop" },
+    { when: ({ from }) => from.url.pathname === "/shop" },
     () => [loader(ProductLoader)],
   ),
 ])
@@ -700,41 +837,21 @@ Loaders run fresh at request time for both variants.
 
 Pre-rendered routes set flags on the route trie leaf at build time:
 
-- `pr: true` -- route has pre-rendered B segment data
+- `pr: true` -- route has pre-rendered segment data
 - `pt: true` -- route wrapped with `Passthrough()` (live handler available)
 
 At runtime, the cache-lookup middleware uses these flags:
 
 - `pr + hit` -- serve pre-rendered Flight payload
 - `pr + pt + miss` -- fall through to Passthrough live handler
-- `pr + miss` (no pt) -- fall through (handler stubbed, no live render)
+- `pr + miss` (no pt) -- fall through to the stubbed handler, which throws a
+  not-found error ("No prerender data found for this route"); there is no live render
 
-## Contributor Checklist
+## Related
 
-Before changing prerender behavior, run these tests.
-
-### Tests to run
-
-```bash
-# Core prerender e2e (Passthrough, eviction, loaders, sub-use, intercept)
-pnpm --filter @rangojs/router exec playwright test prerender
-
-# Prerender-specific unit test
-pnpm --filter @rangojs/router run test:unit -- prerender-passthrough
-
-# Semantic matrix (prerender rows cover intercept + ctx propagation)
-pnpm --filter @rangojs/router exec playwright test semantic-matrix
-
-# Handler-first (ctx.set/get visibility with prerender handlers)
-pnpm --filter @rangojs/router exec playwright test handler-first
-```
-
-### Dev-only vs build-parity
-
-- Prerender e2e tests run against a real production build by default (the
-  fixture builds the test app). Dev-mode prerender behavior is tested via
-  `/__rsc_prerender` endpoint tests and node.js dev-server fallback.
-- Log-based assertions (build output lines, debug cache logs) are inherently
-  dev/build-only and do not need a production counterpart.
-- Behavioral assertions (rendered content, loader freshness, Passthrough
-  fallback, intercept variant selection) must work in the production build.
+- `/cache-guide` — how prerendering compares with the runtime cache layers
+- `/caching` — runtime `cache()` segments and loader caching
+- `/ppr` — the `ppr` path option; combine with `Prerender` for build-time shells
+- `/shell-manifest` — prerendered shell feeding ids to a live loader
+- `/deployment-caching` — why prerender output is not a CDN static file
+- `/loader` — loaders stay live on prerendered routes

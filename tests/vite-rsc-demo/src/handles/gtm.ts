@@ -6,7 +6,7 @@ import { createHandle, Script, type Handler } from "@rangojs/router";
  * - The inline GTM BOOTSTRAP is pushed into the built-in `Script` handle by the
  *   `GtmBootstrap` slot — a UI-less parallel (`@gtm`) the root layout mounts via
  *   `parallel({ "@gtm": GtmBootstrap })`, which keeps the wiring composable and out
- *   of the layout's render body. `<Scripts/>` in RootLayout's <head> renders it
+ *   of the layout's render body. `<Html.Scripts/>` in RootLayout's <head> renders it
  *   with the request CSP nonce applied automatically. A route may override it by
  *   reusing the "gtm" Script id (see urls/gtm.tsx) to bake per-route tagging
  *   (content_group) into the FIRST page_view server-side.
@@ -136,14 +136,14 @@ export function pageViewTagging(page: GtmPageInfo): GtmDataLayerEvent {
  * Generate the inline GTM bootstrap (Google's canonical snippet, parameterized):
  * initialise window.dataLayer, fire the gtm.js start event, emit the FIRST
  * page_view, then inject the gtm.js loader. Pushed into the built-in Script
- * handle (ctx.use(Script)) and rendered by <Scripts/>.
+ * handle (ctx.use(Script)) and rendered by <Html.Scripts/>.
  *
  * The loader is injected by THIS inline script rather than emitted as a
  * declarative <script async>, on purpose: React 19 hoists a declarative async
  * script to the TOP of <head>, ABOVE this bootstrap, so gtm.js could execute
  * before dataLayer exists. Injecting it here guarantees the dataLayer-before-
  * gtm.js contract; under 'strict-dynamic' the nonced inline script (the nonce is
- * applied by <Scripts/>) vouches for the script it creates.
+ * applied by <Html.Scripts/>) vouches for the script it creates.
  *
  * The page_view's location/title/referrer are RUNTIME expressions (identical for
  * every request). `extras` (e.g. { content_group }) is baked server-side by the
@@ -153,7 +153,7 @@ export function pageViewTagging(page: GtmPageInfo): GtmDataLayerEvent {
  * `extras` (same logic as the soft-nav path) so they cannot override the runtime
  * fields baked into `runtime` below.
  *
- * Returns raw JS; no manual escaping is needed because <Scripts/> escapes the
+ * Returns raw JS; no manual escaping is needed because <Html.Scripts/> escapes the
  * inline body against "</script>" breakout when it renders it.
  */
 export function generateGtmInit(
@@ -184,7 +184,7 @@ window.dataLayer.push(${pageView});
  * the handler. The push associates with the parent (layout) segment, so a route
  * still overrides per-route tagging by reusing the "gtm" Script id (child segment,
  * last-push-wins); see urls/gtm.tsx. The CSP nonce and freeze-after-hydration are
- * still owned by <Scripts/>.
+ * still owned by <Html.Scripts/>.
  */
 export const GtmBootstrap: Handler<"/"> = (ctx) => {
   ctx.use(Script)({ id: "gtm", children: generateGtmInit(DEFAULT_GTM_ID) });

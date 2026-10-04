@@ -81,11 +81,23 @@ export function runWithPreinitNonce<T>(
  *
  * Known trades (deliberate, measured neutral-to-positive on the e2e apps —
  * PR #694 has the Lighthouse/hydration numbers):
- * - Fetch priority: an executing async module script fetches at Chromium's
- *   async-script priority, below a bare modulepreload hint; preinitModule
- *   forwards no fetchPriority (react-dom's public API drops it — only
- *   `preinit` forwards it). Execution-overlap is bought with hint priority,
- *   the same trade Next.js ships via ReactDOM.preinit.
+ * - Fetch priority: Chromium gives a parser-inserted `async` module script
+ *   initial priority High: below the render-blocking stylesheet (Highest),
+ *   and alongside the LCP image once Chromium boosts the in-viewport image to
+ *   High (#1021). Every head chunk gets the same priority: the shared
+ *   dependency chunks (react, router, entry.rsc and the bundler runtime) and
+ *   every client-component chunk. The entry itself is a Fizz bootstrapModules
+ *   hint, not a preinit (Fizz claims its URL, so this hook's call for it is
+ *   inert); the handlers serve that hint at default priority, High as well,
+ *   after these scripts (entry-preload-priority.ts, #1025).
+ *   Lowering the chunks to `fetchpriority="low"` was measured and rejected
+ *   (#1021; Chromium 153, 20 interleaved runs per variant and cell). On pages
+ *   with images above the fold the Low chunks queue behind the boosted
+ *   images: hydration came 206 to 6407 ms later on HTTP/1.1 and 65 to 642 ms
+ *   later on HTTP/2. The one gain, FCP -136 ms, needed an image-free page
+ *   with 35 KB of render-blocking CSS on HTTP/1.1 Slow 4G, and hydration was
+ *   still 98 ms later there. `headScripts: "preload"` is the way to get Low
+ *   chunk fetches.
  * - Build only: plugin-rsc's dev load path reports `js: []` per reference, so
  *   dev documents have no head chunk scripts — a client module whose module
  *   scope assumes body-parsed DOM can break in production only. The

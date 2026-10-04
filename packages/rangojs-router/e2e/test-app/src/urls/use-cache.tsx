@@ -5,8 +5,10 @@ import { getBasicTimestamp, getDataForCategory } from "./use-cache-data.js";
 import {
   getShortCachedData,
   fetchWithBreadcrumbs,
+  getUseCacheDepStamp,
   getSlowCachedData,
   getCachedReactNode,
+  getCachedInlineActionShell,
   CachedWithSlots,
   getCachedActionData,
   cachedReadsCookies,
@@ -22,7 +24,13 @@ import {
 import { InterleaveActionButton } from "../components/InterleaveActionButton.js";
 import { RevalidateButton } from "../components/RevalidateButton.js";
 import { swrActionRevalidate } from "../actions.js";
-import { UseCacheTestLoader, LayoutCountLoader } from "../loaders.js";
+import {
+  UseCacheTestLoader,
+  UseCacheLoaderCtxLoader,
+  LayoutCountLoader,
+  DepCrumbCategoryLoader,
+} from "../loaders.js";
+import { DepCrumbsView } from "../components/DepCrumbsView.js";
 
 // Included routes for loader segment tracking test.
 // Mirrors real setup: handler calls a 'use cache' function internally.
@@ -141,6 +149,24 @@ export const useCachePatterns = urls(
         );
       },
       { name: "useCacheTest.withHandles" },
+    ),
+
+    // A "use cache" function reads a loader that the handler also reads live
+    // after it: on a HIT the loader's crumb renders once, the live run's.
+    // `use-cache-dep-ts` is the cached value, so an unchanged stamp is a HIT.
+    path(
+      "/dep-crumbs",
+      async (ctx) => {
+        const stamp = await getUseCacheDepStamp(ctx);
+        await ctx.use(DepCrumbCategoryLoader);
+        return (
+          <div data-testid="use-cache-dep-page">
+            <span data-testid="use-cache-dep-ts">{stamp}</span>
+            <DepCrumbsView />
+          </div>
+        );
+      },
+      { name: "useCacheTest.depCrumbs" },
     ),
 
     // SWR: stale-while-revalidate test with very short TTL (2s).
@@ -272,6 +298,26 @@ export const useCachePatterns = urls(
       ],
     ),
 
+    // Cached server component that embeds an inline "use server" action which
+    // closes over a render-scope token, then hands it to a client component.
+    // Pins the cache + embedded-inline-action behavior (mechanical round-trip
+    // works; closure-captured scope is frozen at cache-write time).
+    path(
+      "/cached-inline-action",
+      async () => {
+        const node = await getCachedInlineActionShell();
+        return <div data-testid="use-cache-inline-action-page">{node}</div>;
+      },
+      { name: "useCacheTest.cachedInlineAction" },
+      () => [
+        loading(
+          <div data-testid="use-cache-inline-action-fallback">
+            Loading cached inline action...
+          </div>,
+        ),
+      ],
+    ),
+
     // Inline "use cache" in path handler: the handler itself has the directive.
     // ctx is tainted and excluded from cache key. Breadcrumbs are pushed via
     // ctx.use(Breadcrumbs) and should be captured on miss, replayed on hit.
@@ -388,6 +434,24 @@ export const useCachePatterns = urls(
       () => [loader(UseCacheTestLoader)],
     ),
 
+    // A DSL loader passes its own ctx to a "use cache" function that pushes a
+    // crumb through it (#940). `use-cache-loader-ctx-stamp` is the cached
+    // value: a HIT repeats it and replays the crumb once; another id misses.
+    path(
+      "/loader-ctx/:id",
+      async (ctx) => {
+        const stamp = await ctx.use(UseCacheLoaderCtxLoader);
+        return (
+          <div data-testid="use-cache-loader-ctx-page">
+            <span data-testid="use-cache-loader-ctx-stamp">{stamp}</span>
+            <DepCrumbsView />
+          </div>
+        );
+      },
+      { name: "useCacheTest.loaderCtx" },
+      () => [loader(UseCacheLoaderCtxLoader)],
+    ),
+
     // Intercept: inline "use cache" in path handler vs intercept handler.
     // The path and intercept handlers are different functions, so they get
     // different cache keys even though they render the same route.
@@ -450,7 +514,7 @@ export const useCachePatterns = urls(
           },
           {
             when: ({ from }) =>
-              from.pathname.startsWith("/use-cache-test/intercept-"),
+              from.url.pathname.startsWith("/use-cache-test/intercept-"),
           },
         ),
       ],

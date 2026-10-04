@@ -15,6 +15,16 @@ export const testNoJs = test.extend({
   javaScriptEnabled: ({}, use) => use(false),
 });
 
+// Speculative-prefetch test utilities live in the PUBLIC e2e harness
+// (`@rangojs/router/testing/e2e` page-helpers) — consumers hit the same
+// automatic production prefetch traffic in their own suites. Re-exported here
+// so repo tests use one implementation.
+export {
+  isPrefetchRequest,
+  blockPrefetch,
+  unblockPrefetch,
+} from "@rangojs/router/testing/e2e";
+
 /**
  * Wait for React hydration to complete and verify no hydration errors
  */

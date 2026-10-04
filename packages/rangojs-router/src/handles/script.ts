@@ -3,22 +3,23 @@
  * route/layout handlers.
  *
  * Push from a SERVER handler with `ctx.use(Script)(config)`; render with the
- * `<Scripts />` component (from `@rangojs/router/client`) placed in the Document
- * `<head>` (and optionally a second `<Scripts position="body" />` at the top of
- * `<body>`). This mirrors the Meta / <MetaTags> pair.
+ * `<Html.Scripts />` component (from `@rangojs/router/client`) placed in the
+ * Document `<head>` (and optionally a second `<Html.Scripts position="body" />`
+ * at the top of `<body>`). This mirrors the Meta / <Html.Meta> pair.
  *
- * The request CSP nonce is applied AUTOMATICALLY by <Scripts> to document-rendered
- * scripts; consumers never pass a nonce. (An async script first loaded on a soft
- * navigation is injected client-side without a nonce — it relies on
- * 'strict-dynamic' or a host allowance; see the EXECUTION CONTRACT below and the
- * /scripts skill.) A ScriptConfig is fully serializable (it crosses the
- * server -> client handle-collection boundary), so callbacks like onLoad are NOT
- * supported — a consumer needing them renders their own "use client" script.
+ * The request CSP nonce is applied AUTOMATICALLY by <Html.Scripts> to
+ * document-rendered scripts; consumers never pass a nonce. (An async script
+ * first loaded on a soft navigation is injected client-side without a nonce —
+ * it relies on 'strict-dynamic' or a host allowance; see the EXECUTION CONTRACT
+ * below and the /scripts skill.) A ScriptConfig is fully serializable (it
+ * crosses the server -> client handle-collection boundary), so callbacks like
+ * onLoad are NOT supported — a consumer needing them renders their own
+ * "use client" script.
  *
  * EXECUTION CONTRACT (see the /scripts skill for the full story):
  * - Inline (`children`) and ordered external (`src`, optional `defer`) scripts
  *   are DOCUMENT-LOAD scripts: they execute only when present in the initial HTML
- *   response. <Scripts> freezes them after hydration, so a later client (soft)
+ *   response. <Html.Scripts> freezes them after hydration, so a later client (soft)
  *   navigation never inserts an inert copy — React creates client-mounted
  *   <script> elements via innerHTML, which the HTML spec makes non-executing.
  * - Async external scripts (`src` + `async: true`) are React RESOURCES: they load
@@ -78,9 +79,9 @@ export type ScriptAttributes = Omit<
 /** Fields shared by every script shape. */
 interface ScriptConfigBase {
   /**
-   * Where <Scripts> renders this script.
-   * - "head" (default): the `<head>` <Scripts> site.
-   * - "body": the `<Scripts position="body" />` site at the top of <body>.
+   * Where <Html.Scripts> renders this script.
+   * - "head" (default): the `<head>` <Html.Scripts> site.
+   * - "body": the `<Html.Scripts position="body" />` site at the top of <body>.
    * Note: an external `async` script is hoisted into <head> by React regardless.
    */
   position?: "head" | "body";
@@ -96,7 +97,7 @@ interface ScriptConfigBase {
 /**
  * Inline script: a raw JS body rendered in place, escaped against `</script>`
  * breakout. DOCUMENT-LOAD only (executes when present in the initial HTML;
- * <Scripts> freezes it after hydration so navigation never inserts an inert
+ * <Html.Scripts> freezes it after hydration so navigation never inserts an inert
  * copy). `id` is REQUIRED — inline scripts are never deduped by React, so a
  * layout and a child pushing the same bootstrap would inject it twice. It is also
  * rendered as the script's DOM `id`. Forbids `src`/`async`/`defer`. For analytics
@@ -146,7 +147,7 @@ export interface OrderedScriptConfig extends ScriptConfigBase {
  * inline (`id` + `children`), external async (`src` + `async: true`), or external
  * ordered (`src`, optional `defer`). Invalid combinations (both `src`+`children`,
  * `async`+`defer`, inline without `id`) are compile errors. The CSP nonce is
- * applied by <Scripts>, never here.
+ * applied by <Html.Scripts>, never here.
  */
 export type ScriptConfig =
   | InlineScriptConfig

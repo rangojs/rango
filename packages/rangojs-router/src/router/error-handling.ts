@@ -5,8 +5,9 @@
  * Also includes the shared invokeOnError utility for error callback invocation.
  */
 
-import type { ReactNode } from "react";
-import type { EntryData } from "../server/context";
+import { createElement, type ReactNode } from "react";
+import type { EntryData } from "../server/context.js";
+import { runIdentityExempt } from "../cache/cache-exec-scope.js";
 import type {
   ResolvedSegment,
   ErrorInfo,
@@ -92,7 +93,9 @@ export function invokeOnError<TEnv = any>(
   };
 
   try {
-    const result = onError(errorContext);
+    // An observer: a request header it logs is not rendered, so the identity
+    // guards let it read one inside a capture or a cached scope (#976).
+    const result = runIdentityExempt(() => onError(errorContext));
     // If onError returns a promise, catch any rejections
     if (result instanceof Promise) {
       result.catch((callbackError) => {
@@ -106,30 +109,66 @@ export function invokeOnError<TEnv = any>(
 }
 
 /**
+ * First non-undefined `pick(orphan)` over the routeless entries in
+ * `entry.layout` and, recursively, in theirs: depth-first in render order
+ * (resolveOrphanLayout in segment-resolution/fresh.ts). Since #922 a routeless
+ * entry nested in another renders (a layout() after a bare cache() marker, a
+ * layout() in a routeless wrapper); a one-level scan missed the boundaries and
+ * intercepts it declares (#926).
+ *
+ * `skip` is the entry an upward walk came from. Only a bare cache() marker is
+ * both in its layout's layout[] and in the chain, and its subtree was already
+ * scanned at its chain position.
+ */
+export function findInOrphans<T>(
+  entry: EntryData,
+  pick: (orphan: EntryData) => T | undefined,
+  skip?: EntryData | null,
+): T | undefined {
+  for (const orphan of entry.layout ?? []) {
+    if (orphan === skip) continue;
+    const found = pick(orphan) ?? findInOrphans(orphan, pick);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+/** `findInOrphans` pick: the orphan when it declares an errorBoundary(). */
+export const withErrorBoundary = (entry: EntryData): EntryData | undefined =>
+  entry.errorBoundary && entry.errorBoundary.length > 0 ? entry : undefined;
+
+const withNotFoundBoundary = (entry: EntryData): EntryData | undefined =>
+  entry.notFoundBoundary && entry.notFoundBoundary.length > 0
+    ? entry
+    : undefined;
+
+/**
  * Find the nearest error boundary by walking up the entry chain
  * Also checks sibling layouts (orphan layouts) for error boundaries
  * Returns the first fallback found, or the default error boundary if configured
+ *
+ * An orphan's parent is null, so from an orphan the walk continues at its
+ * orphanOwner (EntryData). Without that step, errors from an intercept declared
+ * in a routeless layout, or from that layout's loaders, stopped at the orphan
+ * and skipped every ancestor boundary (#898).
  */
 export function findNearestErrorBoundary(
   entry: EntryData | null,
   defaultErrorBoundary?: ReactNode | ErrorBoundaryHandler,
 ): ReactNode | ErrorBoundaryHandler | null {
   let current: EntryData | null = entry;
+  let prev: EntryData | null = null;
 
   while (current) {
     if (current.errorBoundary && current.errorBoundary.length > 0) {
       return current.errorBoundary[current.errorBoundary.length - 1];
     }
 
-    if (current.layout && current.layout.length > 0) {
-      for (const orphan of current.layout) {
-        if (orphan.errorBoundary && orphan.errorBoundary.length > 0) {
-          return orphan.errorBoundary[orphan.errorBoundary.length - 1];
-        }
-      }
-    }
+    const orphan = findInOrphans(current, withErrorBoundary, prev);
+    if (orphan) return orphan.errorBoundary[orphan.errorBoundary.length - 1];
 
-    current = current.parent;
+    prev = current;
+    current = current.parent ?? current.orphanOwner ?? null;
   }
 
   // Return default error boundary if configured
@@ -145,6 +184,7 @@ export function findNearestNotFoundBoundary(
   defaultNotFoundBoundary?: ReactNode | NotFoundBoundaryHandler,
 ): ReactNode | NotFoundBoundaryHandler | null {
   let current: EntryData | null = entry;
+  let prev: EntryData | null = null;
 
   while (current) {
     if (current.notFoundBoundary && current.notFoundBoundary.length > 0) {
@@ -154,15 +194,14 @@ export function findNearestNotFoundBoundary(
     // Check orphan layouts mirroring findNearestErrorBoundary: notFoundBoundary
     // attaches identically (onto parent.notFoundBoundary), and an orphan layout
     // (parent=null) is reachable only via this scan. First sibling is "outer".
-    if (current.layout && current.layout.length > 0) {
-      for (const orphan of current.layout) {
-        if (orphan.notFoundBoundary && orphan.notFoundBoundary.length > 0) {
-          return orphan.notFoundBoundary[orphan.notFoundBoundary.length - 1];
-        }
-      }
+    const orphan = findInOrphans(current, withNotFoundBoundary, prev);
+    if (orphan) {
+      return orphan.notFoundBoundary[orphan.notFoundBoundary.length - 1];
     }
 
-    current = current.parent;
+    // Orphan: continue at its owner, as findNearestErrorBoundary does.
+    prev = current;
+    current = current.parent ?? current.orphanOwner ?? null;
   }
 
   // Return default notFound boundary if configured
@@ -281,6 +320,69 @@ export function createNotFoundInfo(
   };
 }
 
+/** Router-level `createRouter({ notFound })` option shape. */
+export type NotFoundComponentOption =
+  | ReactNode
+  | ((props: { pathname: string }) => ReactNode);
+
+/**
+ * Pick the effective notFound fallback: nearest `notFoundBoundary`, else the
+ * router-level `notFound` option, else a plain default.
+ *
+ * The router option is resolved ONLY when no nearer boundary won — it may be a
+ * user render function doing arbitrary work, so computing it eagerly (as three
+ * earlier copies of this policy did) burned a full render on every 404 that a
+ * boundary was going to handle anyway.
+ *
+ * Every 404 origin routes through here — segment resolution
+ * (`segment-resolution/helpers.ts`), loader-thrown `notFound()`
+ * (`loader-resolution.ts`), and the unmatched-route path (`rsc/handler.ts`) —
+ * so the default text and the boundary-wins precedence cannot drift apart.
+ */
+export function resolveNotFoundFallback(
+  boundary: ReactNode | NotFoundBoundaryHandler | null | undefined,
+  notFoundComponent: NotFoundComponentOption | undefined,
+  pathname: string | undefined,
+): ReactNode | NotFoundBoundaryHandler {
+  if (boundary !== null && boundary !== undefined) return boundary;
+  return resolveDefaultNotFound(notFoundComponent, pathname);
+}
+
+/**
+ * The router-level default alone: `createRouter({ notFound })` rendered, or the
+ * plain fallback node. Separate from {@link resolveNotFoundFallback} for the
+ * unmatched-route path, which has no entry chain and therefore no boundary to
+ * consult — it gets a `ReactNode` back rather than a possible handler.
+ */
+export function resolveDefaultNotFound(
+  notFoundComponent: NotFoundComponentOption | undefined,
+  pathname: string | undefined,
+): ReactNode {
+  if (typeof notFoundComponent === "function") {
+    return notFoundComponent({ pathname: pathname ?? "" });
+  }
+  return notFoundComponent ?? createElement("h1", null, "Not Found");
+}
+
+/**
+ * Invoke a notFound fallback that may be a boundary handler or a plain node.
+ *
+ * Callers that cannot propagate a throw (the loader envelope) wrap this in
+ * their own try/catch; it deliberately does not swallow, so a throwing boundary
+ * still surfaces where that is the correct behavior.
+ */
+export function renderNotFoundFallback(
+  fallback: ReactNode | NotFoundBoundaryHandler,
+  notFoundInfo: NotFoundInfo,
+): ReactNode {
+  if (typeof fallback === "function") {
+    return fallback({
+      notFound: notFoundInfo,
+    } satisfies NotFoundBoundaryFallbackProps);
+  }
+  return fallback;
+}
+
 /**
  * Create a notFound segment with the fallback component
  * Renders the fallback with not found info
@@ -291,16 +393,7 @@ export function createNotFoundSegment(
   entry: EntryData,
   params: Record<string, string>,
 ): ResolvedSegment {
-  let component: ReactNode;
-
-  if (typeof fallback === "function") {
-    const props: NotFoundBoundaryFallbackProps = {
-      notFound: notFoundInfo,
-    };
-    component = fallback(props);
-  } else {
-    component = fallback;
-  }
+  const component: ReactNode = renderNotFoundFallback(fallback, notFoundInfo);
 
   return {
     id: `${entry.shortCode}.notFound`,

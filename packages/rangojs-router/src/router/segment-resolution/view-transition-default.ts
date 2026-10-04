@@ -8,7 +8,6 @@
  */
 
 import type { EntryData } from "../../server/context";
-import { getRequestContext } from "../../server/request-context.js";
 
 /**
  * Resolve a segment's transition config: stamp the `viewTransition` default and
@@ -22,30 +21,20 @@ import { getRequestContext } from "../../server/request-context.js";
  * (or "auto") value is left untouched because it already means "wrap" at the
  * gate, which also avoids needless object allocation and payload growth.
  *
- * `when`: a server-only predicate. It is STRIPPED from the returned config (a
- * function cannot cross Flight or the segment cache) and recorded on the request
- * context keyed by `segmentId`, so rsc-rendering can evaluate it post-handler —
- * outside any cache scope — and drop this segment's transition when it returns
- * false. Used by both the fresh and revalidation resolution paths.
+ * `when`: a client reference the server never calls. It is STRIPPED here so no
+ * segment record (segment cache, prerender artifact, shell snapshot) carries
+ * it: those stores JSON-serialize the config and would silently drop it on
+ * some stores and keep it on others. rsc/attach-transition-when.ts attaches it
+ * from the route definition right before Flight instead. Used by both fresh
+ * and revalidation resolution.
  */
 export function applyViewTransitionDefault(
   transition: EntryData["transition"],
   viewTransitionDefault: "auto" | false | undefined,
-  segmentId?: string,
 ): EntryData["transition"] {
   if (!transition) return transition;
   let result = transition;
   if (result.when) {
-    if (segmentId !== undefined) {
-      try {
-        const ctx = getRequestContext();
-        (ctx._transitionWhen ??= []).push({ id: segmentId, when: result.when });
-      } catch {
-        // No active request context (e.g. a unit test calling this util
-        // directly). Skip collection; the strip below still applies so the
-        // serialized config never carries the function.
-      }
-    }
     const { when: _when, ...rest } = result;
     result = rest;
   }

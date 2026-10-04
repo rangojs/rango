@@ -8,6 +8,9 @@ import {
   Suspense,
   type ReactNode,
 } from "react";
+// Not `export * as Html`: plugin-rsc's "use client" proxy transform only
+// expands bare `export *` and throws on a named one.
+import * as Html from "./html.js";
 import { OutletContext, type OutletContextValue } from "./outlet-context.js";
 import {
   type ClientErrorBoundaryFallbackProps,
@@ -49,6 +52,8 @@ function renderSlotContent(segment: ResolvedSegment | null): ReactNode {
     <LoaderBoundary
       loaderDataPromise={segment.loaderDataPromise!}
       loaderIds={segment.loaderIds!}
+      loaderStreams={segment.loaderStreams}
+      awaitedLoaderIds={segment.awaitedLoaderIds}
       fallback={segment.loading}
       outletKey={segment.id + "-loader"}
       outletContent={null}
@@ -141,16 +146,40 @@ function useSlotSegment(
  * }
  * ```
  */
-export function Outlet({ name }: { name?: `@${string}` } = {}): ReactNode {
+export function Outlet({
+  name,
+  fallback,
+}: { name?: `@${string}`; fallback?: ReactNode } = {}): ReactNode {
   const context = useContext(OutletContext);
   const namedSegment = useSlotSegment(context, name);
 
   if (name) {
-    return renderSlotContent(namedSegment);
+    const slot = renderSlotContent(namedSegment);
+    // EXPERIMENT (Outlet fallback): layout-declared pending UI for a named
+    // slot — an outer Suspense catching whatever the slot's content leaves
+    // unhandled.
+    return fallback !== undefined ? (
+      <Suspense fallback={fallback}>{slot}</Suspense>
+    ) : (
+      slot
+    );
   }
 
   // Default: render child content
   const content = context?.content ?? null;
+
+  // EXPERIMENT (Outlet fallback): the layout owns the outlet position, so it
+  // may declare the placeholder for pending child content right where it
+  // renders — a plain Suspense boundary, no DSL wiring, no segment-resolution
+  // threading. With read-site useLoader suspension this covers loading()'s
+  // roles by construction: document SSR streams the fallback then the
+  // content; PPR postpones unresolved readers here (the outlet becomes the
+  // hole); same-route re-renders are held before commit so the fallback does
+  // NOT flash; cross-route navs show it as destination feedback. An explicit
+  // prop wins over the child segment's loading().
+  if (fallback !== undefined) {
+    return <Suspense fallback={fallback}>{content}</Suspense>;
+  }
 
   // If this segment defines a loading component, wrap outlet content with Suspense
   // The loading component becomes the Suspense fallback, shown during streaming/navigation
@@ -199,7 +228,7 @@ export function ParallelOutlet({ name }: { name: `@${string}` }): ReactNode {
 // internal component and is intentionally not part of the public ./client API.
 
 /**
- * Hook to access outlet content programmatically
+ * Hook to access outlet content and descendant pending state programmatically.
  *
  * Alternative to using <Outlet /> component. Useful when you need
  * direct access to the outlet content in your logic.
@@ -208,13 +237,21 @@ export function ParallelOutlet({ name }: { name: `@${string}` }): ReactNode {
  * ```tsx
  * function BlogLayout() {
  *   const outlet = useOutlet();
- *   return <div><h1>Blog</h1>{outlet}</div>;
+ *   return <div aria-busy={outlet.pending}><h1>Blog</h1>{outlet.content}</div>;
  * }
  * ```
  */
-export function useOutlet(): ReactNode {
+export interface OutletState {
+  readonly content: ReactNode;
+  readonly pending: boolean;
+}
+
+export function useOutlet(): OutletState {
   const context = useContext(OutletContext);
-  return context?.content ?? null;
+  return {
+    content: context?.content ?? null,
+    pending: context?.pending ?? false,
+  };
 }
 
 export {
@@ -226,6 +263,12 @@ export {
   type UseFetchLoaderResult,
   type UseLoaderOptions,
 } from "./use-loader.js";
+
+export { clientUrls } from "./client-urls/client-urls.js";
+export type {
+  ClientUrlPatterns,
+  ClientUrlRouteRecord,
+} from "./client-urls/client-urls.js";
 
 /**
  * Props for the ErrorBoundary component
@@ -260,7 +303,7 @@ interface ErrorBoundaryState {
  * @example
  * ```tsx
  * "use client";
- * import { ErrorBoundary } from "rsc-router/client";
+ * import { ErrorBoundary } from "@rangojs/router/client";
  *
  * function MyComponent() {
  *   return (
@@ -339,6 +382,11 @@ export { useNavigation } from "./browser/react/use-navigation.js";
 export { useRouter } from "./browser/react/use-router.js";
 export { usePathname } from "./browser/react/use-pathname.js";
 export { useSearchParams } from "./browser/react/use-search-params.js";
+export type {
+  SearchParamsInit,
+  SetSearchParams,
+  SetSearchParamsOptions,
+} from "./browser/react/use-search-params.js";
 export { useParams } from "./browser/react/use-params.js";
 // CSP nonce for the active request, for userland components that inject their
 // own <script>/<style> into the document head (analytics, GTM, inline init).
@@ -348,6 +396,8 @@ export { useNonce } from "./browser/react/nonce-context.js";
 export type {
   RouterInstance,
   RouterNavigateOptions,
+  HistoryState,
+  PlainHistoryState,
   ReadonlyURLSearchParams,
   ActionState,
   ActionLifecycleState,
@@ -382,7 +432,6 @@ export {
 } from "./browser/react/use-link-status.js";
 
 export {
-  ScrollRestoration,
   useScrollRestoration,
   type ScrollRestorationProps,
 } from "./browser/react/ScrollRestoration.js";
@@ -391,14 +440,13 @@ export { type Handle } from "./handle.js";
 export { useHandle } from "./browser/react/use-handle.js";
 
 export { Meta } from "./handles/meta.js";
-export { MetaTags } from "./handles/MetaTags.js";
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
 export {
   Script,
   type ScriptConfig,
   type ScriptAttributes,
 } from "./handles/script.js";
-export { Scripts } from "./handles/Scripts.js";
+export { Html };
 export { Breadcrumbs, type BreadcrumbItem } from "./handles/breadcrumbs.js";
 
 export {
@@ -425,3 +473,8 @@ export { useReverse } from "./browser/react/use-reverse.js";
 export type { ScopedReverseFunction, LocalReverseFunction } from "./reverse.js";
 
 export type { LoaderDefinition } from "./types.js";
+export type { ActionRef, IsActionFn } from "./types.js";
+export type {
+  ClientRevalidateArgs,
+  ClientRevalidateFn,
+} from "./client-urls/types.js";

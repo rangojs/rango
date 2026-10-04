@@ -45,7 +45,7 @@ const collected: string[][] = [];
 const BarrierLoader = (createLoader as Function)(
   async (lctx: any) => {
     await lctx.rendered();
-    const titles = lctx.use(TitleHandle);
+    const titles = lctx.get(TitleHandle);
     collected.push(titles);
     return { titles };
   },
@@ -147,7 +147,14 @@ async function captureMatch(
 }
 
 describe("PPR capture: render-barrier isolation (#684 plan 009)", () => {
-  it("capture-lane rendered() reads the CAPTURE's handle data, not the foreground snapshot", async () => {
+  it("capture never executes a route loader — no capture-lane rendered() read exists", async () => {
+    // CONTRACT CHANGE (streaming useLoader): route loaders are live at
+    // capture unconditionally, loading() or not — masked, never executed.
+    // The former bake-lane scenario this test pinned (a loader running
+    // DURING capture and reading the capture's handle snapshot through its
+    // own barrier) is unreachable by design now. The barrier-isolation
+    // property itself is still covered by the lifecycle test below —
+    // HANDLERS still run at capture and push into the capture's own store.
     const reqCtx = await foregroundMatch("/plain");
 
     // Foreground pass: barrier resolved, loader read the foreground push.
@@ -156,10 +163,10 @@ describe("PPR capture: render-barrier isolation (#684 plan 009)", () => {
 
     await captureMatch(reqCtx, "/plain");
 
-    // The capture's bake-lane loader must read the CAPTURE's push. Before the
-    // derived ctx got its own barrier this read ["render-1"] — the foreground
-    // snapshot, inherited through the prototype chain.
-    expect(collected).toEqual([["render-1"], ["render-2"]]);
+    // The capture's handler pushed render-2 into the CAPTURE's store, but the
+    // masked loader never ran, so no capture-lane read was collected.
+    expect(renderCounter).toBe(2);
+    expect(collected).toEqual([["render-1"]]);
   });
 
   it("capture barrier lifecycle is its own: resolver, segment order, and streaming flag do not alias the foreground's", async () => {
@@ -201,7 +208,32 @@ describe("PPR capture: render-barrier isolation (#684 plan 009)", () => {
     expect(reqCtx._renderBarrierHandleSnapshot).toBe(foregroundSnapshot);
   });
 
-  it("on a streaming tree the capture-lane rendered() waits for the CAPTURE's streamed push", async () => {
+  it("resets _shellFragmentPayload as an own property: a capture render never inherits fragment passthrough", async () => {
+    const reqCtx = await foregroundMatch("/plain");
+    // A foreground that armed passthrough (document tail / partial replay
+    // arming windows) must not leak envelopes into the capture: an envelope
+    // reaching serializeSegments would bake a double-encoded fragment.
+    reqCtx._shellFragmentPayload = true;
+
+    const { derivedCtx } = deriveShellCaptureContext(reqCtx, {
+      ttl: 60,
+      swr: 0,
+    });
+
+    expect(
+      Object.getOwnPropertyDescriptor(derivedCtx, "_shellFragmentPayload"),
+    ).toBeDefined();
+    expect(derivedCtx._shellFragmentPayload).toBe(false);
+    expect(reqCtx._shellFragmentPayload).toBe(true);
+  });
+
+  it("on a streaming tree the capture recomputes _treeHasStreaming; its masked loader never reads", async () => {
+    // CONTRACT CHANGE (streaming useLoader): as above, the capture masks the
+    // route loader unconditionally, so no capture-lane rendered() read
+    // happens on streaming trees either. The capture still recomputes
+    // _treeHasStreaming for its OWN tree (own-property reset — the
+    // isolation this file exists to pin), and the streaming slot's handler
+    // still executes and pushes into the capture's store.
     const reqCtx = await foregroundMatch("/streaming");
 
     // Foreground pass: rendered() waited for the streaming slot to settle.
@@ -210,12 +242,9 @@ describe("PPR capture: render-barrier isolation (#684 plan 009)", () => {
 
     const derivedCtx = await captureMatch(reqCtx, "/streaming");
 
-    // The capture recomputed streaming for its own tree and its loader read
-    // the CAPTURE's streamed push. Before the fix the inherited resolved
-    // barrier let rendered() proceed immediately: it sealed the capture's
-    // fresh store at loader start and served the foreground's snapshot.
     expect(derivedCtx._treeHasStreaming).toBe(true);
-    expect(collected).toEqual([["stream-1"], ["stream-2"]]);
+    expect(renderCounter).toBe(2);
+    expect(collected).toEqual([["stream-1"]]);
   });
 
   it("foreground rendered() semantics are unchanged by the extraction (sanity)", async () => {

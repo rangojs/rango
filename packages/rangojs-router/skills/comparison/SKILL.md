@@ -5,6 +5,11 @@ description: Compare Rango with Next.js App Router, TanStack Start, and Waku. Us
 
 # Compare Rango with other React frameworks
 
+This skill positions Rango against Next.js App Router, TanStack Start, and Waku
+on capabilities and architecture. Use it for "why Rango" questions, adoption
+memos, and fact-checking a comparative claim. For the mechanics of actually
+porting an app, use `/migrate-nextjs` or `/migrate-react-router`.
+
 Use the canonical [framework comparison](references/framework-comparison.md) as
 the factual baseline. Read the sections relevant to the question; read the full
 reference when producing an overall evaluation or editing the comparison itself.

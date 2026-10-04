@@ -8,7 +8,7 @@ type: tutorial
 
 ## The catalog
 
-Brew's catalog is a hardcoded array. That's deliberate — no database means every snippet in this tutorial runs exactly as written. In part 4 this data moves behind loaders without changing shape.
+Brew's catalog is a hardcoded array. That's deliberate: with no database, every snippet in this tutorial runs exactly as written. In part 4, the data that changes between requests (stock levels, search results) moves into loaders; the catalog itself stays as it is.
 
 ```ts
 // src/data.ts
@@ -65,17 +65,19 @@ export const urlpatterns = urls(({ path }) => [
 ]);
 ```
 
-Every route gets a name (`home`, `shop`, `product`). Names are how you refer to routes from now on — for typed handlers and for building URLs.
+Every route gets a name (`home`, `shop`, `product`). Names are how you refer to routes from now on, both for typed handlers and for building URLs.
 
-## Generate route types
+## Route types
 
-Rango generates a route map from your `urls()` modules so that route names carry their param types:
+Route names carry their param types. The Vite plugin reads your route tree and writes `src/router.named-routes.gen.ts`, a map of every route name to its pattern: when the dev server starts, again whenever a route file changes, and on every build. With that map in place, `Handler<"product">` resolves automatically: the compiler knows that route has a `slug` param and types `ctx.params` accordingly.
+
+To write the route types without starting Vite (on a fresh clone, or before a CI typecheck), run the CLI:
 
 ```bash
-npx rango generate src/
+pnpm exec rango generate src/
 ```
 
-This writes `*.gen.ts` files next to your modules — a map of route names to patterns. Commit them, never edit them by hand, and re-run the command whenever a `path()` pattern changes. The easiest way to keep them fresh is a `predev` script:
+Besides the router-level map, the CLI writes a per-module `urls.gen.ts` next to `urls.tsx`, which client components use with `useReverse()`. The Vite plugin never writes per-module files, so re-run the command when a `path()` changes, or let a `predev` script do it before every `pnpm dev`:
 
 ```jsonc
 // package.json (scripts section)
@@ -87,7 +89,7 @@ This writes `*.gen.ts` files next to your modules — a map of route names to pa
 }
 ```
 
-With the map generated, `Handler<"product">` resolves automatically: the compiler knows that route has a `slug` param and types `ctx.params` accordingly.
+Commit the `.gen.ts` files, and never edit them by hand.
 
 ## The shop grid
 
@@ -114,7 +116,7 @@ export const ShopPage: Handler<"shop"> = (ctx) => {
 };
 ```
 
-The interesting line is `ctx.reverse("product", { slug: product.slug })`. Instead of hardcoding `/shop/${product.slug}`, you ask the router to build the URL from the route's name — Django's `reverse()`, if you've used it. If the pattern ever changes in `urls.tsx`, every generated URL follows; nothing to hunt down.
+The interesting line is `ctx.reverse("product", { slug: product.slug })`. Instead of hardcoding `/shop/${product.slug}`, you ask the router to build the URL from the route's name, like Django's `reverse()`. If the pattern ever changes in `urls.tsx`, every generated URL follows, and a misspelled name or a missing param is a type error.
 
 Plain `<a>` tags mean full page loads for now. Part 3 upgrades these to client-side navigation.
 
@@ -142,8 +144,8 @@ export const ProductPage: Handler<"product"> = (ctx) => {
 
 Two things to notice:
 
-- `ctx.params.slug` is a typed `string` — that's `Handler<"product">` doing its job from the generated route map.
-- `notFound()` covers the case where the route _matched_ but the data doesn't exist: `/shop/decaf-pods` fits the `/shop/:slug` pattern, yet there's no such product. Calling `notFound()` stops the handler and responds with HTTP 404 and a built-in not-found page. When no route matches at all (say, `/warehouse`), the router 404s on its own without any code from you. Both fallbacks are customizable — see [Routing](/docs/rango/features/routing) when you want branded 404 pages.
+- `ctx.params.slug` is a typed `string`. That's `Handler<"product">` doing its job from the generated route map.
+- `notFound()` covers the case where the route _matched_ but the data doesn't exist: `/shop/decaf-pods` fits the `/shop/:slug` pattern, yet there's no such product. Calling `notFound()` stops the handler and responds with HTTP 404 and a built-in not-found page. It returns `never`, so TypeScript knows `product` is defined on the lines after it. When no route matches at all (say, `/warehouse`), the router 404s on its own without any code from you. Both fallbacks are customizable. See [Routing](/docs/rango/features/routing) when you want branded 404 pages.
 
 ## Point the home page at the shop
 

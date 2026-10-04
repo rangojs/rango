@@ -413,7 +413,10 @@ describe("route cache condition enforcement", () => {
   it("skips cache read when condition returns false", async () => {
     const store = { get: vi.fn().mockResolvedValue(null), set: vi.fn() };
 
-    mockGetRequestContext.mockReturnValue(makeRequestContext(""));
+    // condition() reads the ambient context through _getRequestContext.
+    const ctx = makeRequestContext("");
+    mockGetRequestContext.mockReturnValue(ctx);
+    mock_getRequestContext.mockReturnValue(ctx);
     const scope = new CacheScope({ store, condition: () => false } as any);
     const result = await scope.lookupRoute("/test", {});
 
@@ -425,7 +428,10 @@ describe("route cache condition enforcement", () => {
   it("proceeds with cache read when condition returns true", async () => {
     const store = { get: vi.fn().mockResolvedValue(null), set: vi.fn() };
 
-    mockGetRequestContext.mockReturnValue(makeRequestContext(""));
+    // condition() reads the ambient context through _getRequestContext.
+    const ctx = makeRequestContext("");
+    mockGetRequestContext.mockReturnValue(ctx);
+    mock_getRequestContext.mockReturnValue(ctx);
     const scope = new CacheScope({ store, condition: () => true } as any);
     await scope.lookupRoute("/test", {});
 
@@ -457,7 +463,10 @@ describe("route cache condition enforcement", () => {
   it("fails open when condition throws", async () => {
     const store = { get: vi.fn().mockResolvedValue(null), set: vi.fn() };
 
-    mockGetRequestContext.mockReturnValue(makeRequestContext(""));
+    // condition() reads the ambient context through _getRequestContext.
+    const ctx = makeRequestContext("");
+    mockGetRequestContext.mockReturnValue(ctx);
+    mock_getRequestContext.mockReturnValue(ctx);
     const scope = new CacheScope({
       store,
       condition: () => {
@@ -518,5 +527,40 @@ describe("segment self-heal (corrupt cached segments via CacheScope)", () => {
     expect(result).toBeNull(); // degrade to a miss
     expect(store.delete).toHaveBeenCalled(); // faulty entry self-healed
     expect(reported.some((r) => r.category === "cache-corrupt")).toBe(true);
+  });
+
+  it("notifies replay when the seeded document record is corrupt", async () => {
+    const onCorrupt = vi.fn();
+    const url = new URL("http://localhost/test");
+    const reqCtx = {
+      url,
+      originalUrl: new URL(url),
+      searchParams: url.searchParams,
+      _cacheStore: null,
+      _handleStore: null,
+      _shellImplicitCache: { onCorrupt },
+    };
+    mockGetRequestContext.mockReturnValue(reqCtx);
+    mock_getRequestContext.mockReturnValue(reqCtx);
+
+    const store = {
+      get: vi.fn().mockResolvedValue({
+        data: { segments: ["truncated"], handles: "" },
+        shouldRevalidate: false,
+      }),
+      set: vi.fn(),
+      delete: vi.fn().mockResolvedValue(true),
+    };
+    const { deserializeSegments } = await import("../segment-codec.js");
+    vi.mocked(deserializeSegments).mockRejectedValueOnce(
+      new Error("truncated segment payload"),
+    );
+
+    const scope = new CacheScope({ store } as any, null, "doc");
+    const result = await scope.lookupRoute("/test", {});
+
+    expect(result).toBeNull();
+    expect(store.delete).toHaveBeenCalledTimes(1);
+    expect(onCorrupt).toHaveBeenCalledTimes(1);
   });
 });

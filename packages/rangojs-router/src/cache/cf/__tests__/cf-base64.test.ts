@@ -8,8 +8,14 @@
  * large, and arbitrary-binary buffers.
  */
 
-import { describe, it, expect } from "vitest";
-import { bufferToBase64, base64ToBuffer } from "../cf-base64.js";
+import { describe, it, expect, vi } from "vitest";
+import {
+  base64ByteLength,
+  bufferToBase64,
+  base64ToBuffer,
+  base64ToBytes,
+} from "../cf-base64.js";
+import { installNativeBase64 } from "./native-base64.js";
 
 // Reference implementation: the original per-byte loop. Parity against this
 // proves the chunked version produces identical output.
@@ -61,5 +67,47 @@ describe("cf-base64 chunked encode", () => {
     const buf = makeBytes(256 * 40, (i) => i % 256);
     const decoded = new Uint8Array(base64ToBuffer(bufferToBase64(buf)));
     expect(decoded).toEqual(new Uint8Array(buf));
+  });
+});
+
+// The TC39 Uint8Array base64 methods (workerd) replace the per-byte loop when
+// present. Node 22/24 have neither, so install Buffer-backed stand-ins; the
+// module looks them up per call.
+describe("cf-base64 native Uint8Array methods", () => {
+  it("uses fromBase64/toBase64 when present, with output identical to the loop", () => {
+    const fromBase64 = vi.fn(
+      (b64: string) => new Uint8Array(Buffer.from(b64, "base64")),
+    );
+    const toBase64 = vi.fn(function (this: Uint8Array) {
+      return Buffer.from(this).toString("base64");
+    });
+    const restore = installNativeBase64(fromBase64, toBase64);
+    try {
+      const buf = makeBytes(100_000, (i) => (i * 31 + 7) ^ (i >> 3));
+      const encoded = bufferToBase64(buf);
+      expect(encoded).toBe(refBufferToBase64(buf));
+      expect(new Uint8Array(base64ToBuffer(encoded))).toEqual(
+        new Uint8Array(buf),
+      );
+      expect(base64ToBytes(encoded)).toEqual(new Uint8Array(buf));
+      expect(toBase64).toHaveBeenCalledTimes(1);
+      expect(fromBase64).toHaveBeenCalledTimes(2);
+    } finally {
+      restore();
+    }
+  });
+
+  it("throws on a character outside the alphabet (the corrupt-entry signal)", () => {
+    expect(() => base64ToBytes("%%%not-base64%%%")).toThrow();
+  });
+});
+
+describe("base64ByteLength", () => {
+  it("is the decoded length, padded or not", () => {
+    for (let n = 0; n <= 9; n++) {
+      const encoded = bufferToBase64(makeBytes(n, (i) => i * 17));
+      expect(base64ByteLength(encoded)).toBe(n);
+      expect(base64ByteLength(encoded.replace(/=+$/, ""))).toBe(n);
+    }
   });
 });

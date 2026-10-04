@@ -37,6 +37,7 @@ import type { LoaderDefinition } from "../types.js";
 import {
   seedVariables,
   resolveSeededStateCookieName,
+  seededVersions,
   type VarsInit,
   type StateCookieSeed,
 } from "./internal/seed-vars.js";
@@ -253,7 +254,7 @@ export async function renderHandler<TEnv = any>(
     variables: seedVariables({}, opts.vars),
     build: opts.build,
     stateCookieName,
-    version: opts.stateCookie?.version,
+    versions: seededVersions(opts.stateCookie),
     cacheStore: opts.cacheStore,
     cacheProfiles: opts.cacheProfiles,
     themeConfig:
@@ -338,7 +339,7 @@ export async function renderHandler<TEnv = any>(
     }
   });
 
-  const cookies = { ...reqCtx.cookies() };
+  const cookies = reqCtx._readCookies();
   const responseSource = didThrow
     ? thrown
     : out instanceof Response

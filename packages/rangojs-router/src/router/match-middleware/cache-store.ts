@@ -103,13 +103,17 @@
 import type { ResolvedSegment } from "../../types.js";
 import {
   getRequestContext,
-  runWithRequestContext,
+  type RequestContext,
 } from "../../server/request-context.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
+import { createShellImplicitDocScope } from "../../cache/cache-scope.js";
+import { recordSegmentTags } from "../../cache/cache-tag.js";
+import { executionStart } from "../../cache/tag-invalidation.js";
 import { getRouterContext } from "../router-context.js";
 import { debugLog, debugWarn, getOrCreateRequestId } from "../logging.js";
 import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
 import type { GeneratorMiddleware } from "./cache-lookup.js";
+import { rerenderAndCacheRoute } from "./background-revalidation.js";
 
 /**
  * Creates cache store middleware
@@ -125,6 +129,9 @@ export function withCacheStore<TEnv>(
     source: AsyncGenerator<ResolvedSegment>,
   ): AsyncGenerator<ResolvedSegment> {
     const ms = ctx.metricsStore;
+    // Before the lookup and the handlers below it run: the record's write
+    // gate (#977, CacheScope.cacheRoute).
+    const renderStart = executionStart();
 
     const allSegments: ResolvedSegment[] = [];
     for await (const segment of source) {
@@ -133,6 +140,14 @@ export function withCacheStore<TEnv>(
     }
 
     const ownStart = performance.now();
+
+    // Shell capture composition (capture side): a route-derived cache() scope
+    // keeps its normal store write below, but the capture's shell entry still
+    // needs the CANONICAL doc segment record for navigation replay. Recorded
+    // before the skip check because it must run on the explicit tier's hit
+    // path too (state.cacheHit skips the normal write, yet the served
+    // segments were collected into allSegments either way).
+    recordShellCaptureDocRecord(ctx, state, allSegments);
 
     if (
       !ctx.cacheScope?.enabled ||
@@ -150,13 +165,9 @@ export function withCacheStore<TEnv>(
       return;
     }
 
-    const {
-      createHandlerContext,
-      setupLoaderAccess,
-      resolveAllSegments,
-      resolveInterceptEntry,
-      createHandleStore,
-    } = getRouterContext<TEnv>();
+    // Read synchronously in the pipeline: the proactive write runs in
+    // waitUntil, where the router-context ALS may be gone.
+    const routerCtx = getRouterContext<TEnv>();
 
     // On a fresh intercept miss the intercept slot segments flow through
     // `source` into allSegments AND are also recorded on state.interceptSegments.
@@ -169,17 +180,20 @@ export function withCacheStore<TEnv>(
       ...state.interceptSegments.filter((s) => !seenSegmentIds.has(s.id)),
     ];
 
+    const cacheScope = ctx.cacheScope;
+
+    // Only the segments the entry stores count: a null layout above the
+    // boundary (the client kept it) is never written, so it needs no re-render.
     const hasNullComponents = allSegmentsToCache.some(
       (s) =>
         s.component === null &&
         s.type !== "loader" &&
-        ctx.clientSegmentSet.has(s.id),
+        ctx.clientSegmentSet.has(s.id) &&
+        cacheScope.covers(s.id, s.namespace),
     );
 
     const requestCtx = getRequestContext();
     if (!requestCtx) return;
-
-    const cacheScope = ctx.cacheScope;
 
     // Record the route's segment-DSL cache tags into the request tag union NOW,
     // synchronously in the pipeline. The actual store write (cacheRoute) runs in
@@ -207,91 +221,21 @@ export function withCacheStore<TEnv>(
 
       if (hasNullComponents) {
         requestCtx.waitUntil(async () => {
-          const savedMetrics = ctx.Store.metrics;
-          ctx.Store.metrics = undefined;
-
           const start = performance.now();
           debugLog("cacheStore", "proactive caching started", {
             pathname: ctx.pathname,
           });
-          const originalHandleStore = requestCtx._handleStore;
-          requestCtx._handleStore = createHandleStore();
           try {
-            const proactiveHandlerContext = createHandlerContext(
-              ctx.matched.params,
-              ctx.request,
-              ctx.url.searchParams,
-              ctx.pathname,
-              ctx.url,
-              ctx.env,
-              ctx.routeMap,
-              ctx.matched.routeKey,
-              ctx.matched.responseType,
-              ctx.matched.pt === true,
-            );
-            const proactiveLoaderPromises = new Map<string, Promise<any>>();
-
-            setupLoaderAccess(proactiveHandlerContext, proactiveLoaderPromises);
-
-            const Store = ctx.Store;
-            // Re-establish the request-context ALS around the re-render. Store
-            // is a different ALS (DSL build context); on workerd a waitUntil
-            // task runs detached from the request's I/O context, so a handler/
-            // component that reads the ambient getRequestContext() during this
-            // background re-render would otherwise throw "called outside of a
-            // request context".
-            const freshSegments = await runWithRequestContext(requestCtx, () =>
-              Store.run(() =>
-                resolveAllSegments(
-                  ctx.entries,
-                  ctx.routeKey,
-                  ctx.matched.params,
-                  proactiveHandlerContext,
-                  proactiveLoaderPromises,
-                  { skipLoaders: true },
-                ),
-              ),
-            );
-
-            let freshInterceptSegments: ResolvedSegment[] = [];
-            if (ctx.interceptResult) {
-              freshInterceptSegments = await runWithRequestContext(
-                requestCtx,
-                () =>
-                  Store.run(() =>
-                    resolveInterceptEntry(
-                      ctx.interceptResult!.intercept,
-                      ctx.interceptResult!.entry,
-                      ctx.matched.params,
-                      proactiveHandlerContext,
-                      true, // belongsToRoute
-                      // No revalidationContext = render fresh
-                      undefined,
-                      // Skip intercept middleware: the foreground already ran it
-                      // before the response was sent. Re-running here (post-
-                      // response, background) would fire side effects twice and a
-                      // short-circuit Response would silently abort this write.
-                      { skipMiddleware: true },
-                    ),
-                  ),
-              );
-            }
-
-            const completeSegments = [
-              ...freshSegments,
-              ...freshInterceptSegments,
-            ];
-            requestCtx._handleStore.seal();
-            await cacheScope.cacheRoute(
-              ctx.pathname,
-              ctx.matched.params,
-              completeSegments,
-              ctx.isIntercept,
+            const count = await rerenderAndCacheRoute<TEnv>(
+              ctx,
+              requestCtx as RequestContext<TEnv>,
+              cacheScope,
+              routerCtx,
             );
             if (INTERNAL_RANGO_DEBUG) {
               const dur = performance.now() - start;
               console.log(
-                `[RSC Background][req:${reqId}] Proactive cache ${ctx.pathname} (${dur.toFixed(2)}ms) segments=${completeSegments.length}`,
+                `[RSC Background][req:${reqId}] Proactive cache ${ctx.pathname} (${dur.toFixed(2)}ms) segments=${count}`,
               );
             }
             debugLog("cacheStore", "proactive caching complete", {
@@ -308,9 +252,6 @@ export function withCacheStore<TEnv>(
               pathname: ctx.pathname,
               error: String(error),
             });
-          } finally {
-            requestCtx._handleStore = originalHandleStore;
-            ctx.Store.metrics = savedMetrics;
           }
         });
       } else {
@@ -326,6 +267,10 @@ export function withCacheStore<TEnv>(
             ctx.matched.params,
             allSegmentsToCache,
             ctx.isIntercept,
+            // A capture's doc record lives only in the shell entry, which
+            // putShell gates by the capture start; skipping it here would
+            // read as a render that produced no record.
+            cacheScope.isShellImplicitDocScope ? undefined : renderStart,
           );
           if (INTERNAL_RANGO_DEBUG) {
             const dur = performance.now() - start;
@@ -347,4 +292,82 @@ export function withCacheStore<TEnv>(
       });
     }
   };
+}
+
+/**
+ * During a SHELL CAPTURE of a route with a route-derived cache() scope, write
+ * the matched non-loader segments as the canonical doc segment record through
+ * the capture marker's SnapshotOnlySegmentStore — IN ADDITION to the explicit
+ * scope's normal real-store write. The record rides only inside the shell
+ * entry (a real doc-keyed write would poison the next capture's lookup; see
+ * RecordingShellStore.recordSegmentWrite), so no real-store behavior changes.
+ * Without it, navigation replay was structurally dead for any ppr route under
+ * a cache() scope (including an app-wide one): the snapshot held only
+ * explicit-tier-keyed records a partial lookup can never resolve.
+ *
+ * Records nothing when:
+ * - not a capture render, or the route derived no scope (the implicit doc
+ *   scope's own cacheRoute below already records the doc record);
+ * - the scope is STATICALLY disabled (cache(false)) — the replay gate
+ *   pre-decides that shape as `cache-disabled` before any shell read, so a
+ *   record would be dead weight;
+ * - the prerender store supplied the match: those partials are served from
+ *   build-time segments and report `prerender-store`.
+ *
+ * A false condition() suppresses the record too — the consumer's write
+ * refusal is absolute. The prelude-already-bakes-it argument does NOT excuse
+ * recording: a NAVIGATION-ONLY capture's prelude is never served as a
+ * document, so for those entries the segment record would be the sole
+ * persisted copy of a render the consumer refused to cache — and a later
+ * request where condition() flips true could consume it through the seeded
+ * fallback. The lookup-time `cache-disabled` report stays reachable without
+ * the record: matchPartialWithPprReplay installs a REPORT-ONLY marker (no
+ * store) on the no-eligible-snapshot path, so the lookup's own refusal is
+ * still surfaced while the fallback has nothing to serve.
+ *
+ * Registered through requestCtx.onResponse, which a capture fires only after
+ * the handler pushes settle (settleCaptureRecord), and wrapped in
+ * requestCtx.waitUntil — during a capture that is the tracked-write override,
+ * so settleWrites awaits the record before the capture reads it.
+ */
+function recordShellCaptureDocRecord<TEnv>(
+  ctx: MatchContext<TEnv>,
+  state: MatchPipelineState,
+  segments: ResolvedSegment[],
+): void {
+  const requestCtx = getRequestContext();
+  if (!requestCtx?._shellCaptureRun) return;
+  const marker = requestCtx._shellImplicitCache;
+  if (!marker?.store) return;
+  const scope = ctx.cacheScope;
+  if (!scope || scope.isShellImplicitDocScope) return;
+  if (ctx.isAction || ctx.isIntercept || ctx.request.method !== "GET") return;
+  if (state.cacheSource === "prerender") return;
+  if (!scope.allowsCache("write")) return;
+
+  const docScope = createShellImplicitDocScope(marker);
+  // The route scope's cache({ tags }), and its enclosing scopes' (#974),
+  // describe these segments too: on its HIT they arrive with the replayed
+  // record (recordSegmentTags in lookupRouteDetailed); on a fresh render they
+  // are recorded here, so the doc record, and the shell taking its tags,
+  // carries them either way.
+  recordSegmentTags(
+    segments.map((s) => s.id),
+    scope.resolveTags(requestCtx),
+    requestCtx,
+  );
+  // Through onResponse, like the implicit scope's own write: the capture
+  // fires these callbacks (settleCaptureRecord) only after the handler
+  // pushes settled, so the record's handle encode never races them.
+  requestCtx.onResponse((response) => {
+    requestCtx.waitUntil(() =>
+      docScope.cacheRoute(
+        ctx.pathname,
+        ctx.matched.params,
+        segments,
+        ctx.isIntercept,
+      ),
+    );
+    return response;
+  });
 }

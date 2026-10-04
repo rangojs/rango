@@ -22,11 +22,11 @@ npx tsx bench/run.ts --mode=dev                 # smoke test only, NOT a benchma
 # Deployed edge: the full harness against the live worker. Run it RIGHT
 # AFTER deploy — the first-hit pass only sees cold isolates once.
 npx wrangler deploy && npx tsx bench/run.ts \
-  --url https://cloudflare-stress-demo.devcorner.workers.dev --runs 3 --duration 3
+  --url https://cloudflare-stress-demo.example.workers.dev --runs 3 --duration 3
 
 # Manual spot check
 curl -w "TTFB: %{time_starttransfer}s\n" -so /dev/null \
-  https://cloudflare-stress-demo.devcorner.workers.dev/api/bench/first
+  https://cloudflare-stress-demo.example.workers.dev/api/bench/first
 
 # Watch worker logs
 pnpm wrangler tail --format json
@@ -50,7 +50,7 @@ npx tsx bench/run.ts                       # defaults: 5 runs x 5s, 5 cold resta
 # 2. Edge run — deploy FIRST, bench IMMEDIATELY (first-hit pass needs cold
 #    isolates; once touched they stay warm until the next deploy):
 npx wrangler deploy
-npx tsx bench/run.ts --url https://cloudflare-stress-demo.devcorner.workers.dev \
+npx tsx bench/run.ts --url https://cloudflare-stress-demo.example.workers.dev \
   --runs 3 --duration 3
 # -> bench/results/bench-<date>-<commit>-edge.{json,md}
 
@@ -310,7 +310,7 @@ npx tsx bench/run.ts
 pnpm build && pnpm wrangler deploy
 for i in {1..10}; do
   curl -w "TTFB: %{time_starttransfer}s\n" -so /dev/null \
-    https://cloudflare-stress-demo.devcorner.workers.dev/api/bench/first
+    https://cloudflare-stress-demo.example.workers.dev/api/bench/first
 done
 ```
 

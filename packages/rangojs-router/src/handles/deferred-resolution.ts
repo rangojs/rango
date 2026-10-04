@@ -88,21 +88,59 @@ async function resolveValues(values: unknown[]): Promise<unknown[]> {
  * A hung handle promise blocks the full render like any unresolved await (no
  * handle-specific timeout). Partial / action payloads keep streaming via
  * `handleStore.stream()`.
+ *
+ * `recordedOnly` is a PPR shell capture's render (full-payload.ts): the
+ * snapshot is cut down to the pushes the capture's record keeps
+ * (getDataForSegment's `excludeLoaderPushes`, the filter captureHandles
+ * writes the record with). A HIT restores that record and hydrates with it,
+ * so a push the record leaves out must not be in the prelude either: it
+ * rendered an element no HIT's hydration data matched (issue #1035). Which
+ * pushes a record keeps is the capture funnel's decision (shell-capture.ts
+ * deriveShellCaptureContext: today it leaves out a deferred loader push and
+ * one holding a masked promise), not this function's.
  */
 export async function* resolvedHandleStream(
   handleStore: HandleStore,
+  recordedOnly?: boolean,
 ): AsyncGenerator<HandleData, void, unknown> {
-  // Drain stream() (NOT getData()) for the converged snapshot: stream() sets the
-  // store's `completed` flag on seal+settle, and that flag is what makes a LATE
-  // push throw LateHandlePushError — an async JSX subtree that suspended and later
-  // calls ctx.use(Handle)(...) after collection. getData() never sets `completed`,
-  // so the late push would silently land. Both wait for the same settle barrier, so
-  // the final yielded value is identical; we just keep the late-push guard.
+  // Drain stream() (NOT getData()) for the converged snapshot: consuming a
+  // stream arms the store's late-push guard (LateHandlePushError for pushes
+  // after FULL settle — an async JSX subtree that suspended and later calls
+  // ctx.use(Handle)(...) after collection). getData() never arms it, so the
+  // late push would silently land.
+  //
+  // Scoped to the HANDLER barrier ("settled"), NOT full settle: both document
+  // consumers (ssr-root.tsx React.use, rsc-router.tsx pre-hydration drain)
+  // block on this generator's COMPLETION, so waiting for the auxiliary
+  // (loader) lane would hold SSR markup and hydration hostage to the slowest
+  // streaming loader. Loader pushes that beat the handler barrier are in this
+  // snapshot (the race); later ones ride metadata.handlesLate
+  // (handleStore.streamLate()), applied client-side post-hydration.
   let snapshot: HandleData = {};
-  for await (const data of handleStore.stream()) {
+  for await (const data of handleStore.stream("settled")) {
     snapshot = data;
   }
+  if (recordedOnly) snapshot = recordedHandleData(handleStore, snapshot);
   yield await resolveDeferredHandleValues(snapshot);
+}
+
+/** `snapshot` without the pushes a record leaves out (resolvedHandleStream). */
+function recordedHandleData(
+  handleStore: HandleStore,
+  snapshot: HandleData,
+): HandleData {
+  const segmentIds = new Set<string>();
+  for (const handleName in snapshot) {
+    for (const segmentId in snapshot[handleName]) segmentIds.add(segmentId);
+  }
+  const recorded: HandleData = {};
+  for (const segmentId of segmentIds) {
+    const kept = handleStore.getDataForSegment(segmentId, true);
+    for (const handleName in kept) {
+      (recorded[handleName] ??= {})[segmentId] = kept[handleName];
+    }
+  }
+  return recorded;
 }
 
 /**

@@ -1,5 +1,6 @@
 import type { ComponentType, ReactNode } from "react";
 import type { SegmentCacheStore } from "../cache/types.js";
+import type { CacheSearchParams } from "../cache/search-params-filter.js";
 import type {
   ErrorBoundaryHandler,
   NotFoundBoundaryHandler,
@@ -11,6 +12,7 @@ import type { ExecutionContext } from "../server/request-context.js";
 import type { UrlPatterns } from "../urls.js";
 import type { UrlBuilder } from "../urls/pattern-types.js";
 import type { NamedRouteEntry } from "./content-negotiation.js";
+import type { PrefetchStrategy } from "./prefetch-default.js";
 import type { TelemetrySink } from "./telemetry.js";
 import type { RouterTracingConfig } from "./tracing.js";
 import type { RouterTimeouts, OnTimeoutCallback } from "./timeout.js";
@@ -162,8 +164,10 @@ export interface RangoOptions<TEnv = any> {
    *
    * Must be a client component ("use client") that accepts { children }.
    *
-   * If not provided, a default document with basic HTML structure is used:
-   * `<html><head><meta charset/viewport></head><body>{children}</body></html>`
+   * If not provided, a default document is used: `Html.Meta` and `Html.Scripts`
+   * in `<head>`, `Html.Scripts position="body"` before `{children}` and
+   * `Html.ScrollRestoration` after it. Pass your own to set `getKey` or to
+   * leave back/forward scrolling to the browser.
    *
    * @example
    * ```typescript
@@ -199,7 +203,8 @@ export interface RangoOptions<TEnv = any> {
 
   /**
    * Default not-found boundary fallback used when no notFoundBoundary is defined in the route tree
-   * If not provided, DataNotFoundError will be treated as a regular error
+   * If not provided, notFound() renders the `notFound` option, else a plain
+   * `<h1>Not Found</h1>` (status 404)
    */
   defaultNotFoundBoundary?: ReactNode | NotFoundBoundaryHandler;
 
@@ -209,7 +214,7 @@ export interface RangoOptions<TEnv = any> {
    * This is rendered within your document/app shell with a 404 status code.
    * Use this for a custom 404 page that maintains your app's look and feel.
    *
-   * If not provided, a default "Page not found" component is rendered.
+   * If not provided, a plain `<h1>Not Found</h1>` is rendered.
    *
    * Can be a static ReactNode or a function receiving the pathname.
    *
@@ -303,15 +308,37 @@ export interface RangoOptions<TEnv = any> {
    *   }),
    * });
    * ```
+   *
+   * `searchParams` controls which query params key the cache (default:
+   * `"all"`). Cache keys only -- handlers still see the full query string.
+   * Excluding a param is a promise that rendered output does not depend on
+   * it; if it does, the first variant is cached and served to everyone.
+   *
+   * @example Ignore tracking params for cache keys
+   * ```typescript
+   * import { TRACKING_SEARCH_PARAMS } from "@rangojs/router";
+   *
+   * const router = createRouter({
+   *   cache: {
+   *     store: cacheStore,
+   *     searchParams: { exclude: TRACKING_SEARCH_PARAMS },
+   *   },
+   * });
+   * ```
    */
   cache?:
-    | { store: SegmentCacheStore; enabled?: boolean }
+    | {
+        store: SegmentCacheStore;
+        enabled?: boolean;
+        searchParams?: CacheSearchParams;
+      }
     | ((
         env: TEnv,
         ctx?: ExecutionContext,
       ) => {
         store: SegmentCacheStore;
         enabled?: boolean;
+        searchParams?: CacheSearchParams;
       });
 
   /**
@@ -375,7 +402,7 @@ export interface RangoOptions<TEnv = any> {
    * When provided, enables:
    * - ctx.theme and ctx.setTheme() in route handlers
    * - useTheme() hook for client components
-   * - FOUC prevention via inline script in MetaTags
+   * - FOUC prevention via inline script in `<Html.Meta />`
    * - Automatic ThemeProvider wrapping in NavigationProvider
    *
    * @example
@@ -506,13 +533,23 @@ export interface RangoOptions<TEnv = any> {
   nonce?: NonceProvider<TEnv>;
 
   /**
-   * RSC version string included in metadata.
-   * The browser sends this back on partial requests to detect version mismatches.
+   * Version override. When set, this exact value is used for both of the
+   * router's versions: it keys the router's cached data (segments, `"use
+   * cache"` values, loader data) and its stored HTML (PPR shells,
+   * document-cache responses), is sent in payload metadata, and is what the
+   * browser's `_rsc_v` is compared with (a mismatch reloads the tab).
    *
-   * Defaults to the auto-generated VERSION from `@rangojs/router:version` virtual module.
-   * Only set this if you need a custom versioning strategy.
+   * Leave it unset for the default: rango computes two versions per router at
+   * build time, a data version from the router's server code and a document
+   * version that also covers the client assets. The same code builds to the
+   * same versions, so a deploy that does not change this router keeps its
+   * cache. In dev both are a stamp bumped on every RSC module edit.
    *
-   * @default VERSION from @rangojs/router:version
+   * Set it to clear this router's cache on demand (change the value), or to
+   * tie the cache to your own release id (a per-deploy value clears the cache
+   * on every deploy).
+   *
+   * @default the router's build versions
    */
   version?: string;
 
@@ -522,7 +559,10 @@ export interface RangoOptions<TEnv = any> {
    *
    * Controls how long prefetch responses are kept in the client-side
    * in-memory cache and sets `Cache-Control: private, max-age=<ttl>`
-   * on server responses for CDN/edge caching.
+   * on prefetch responses, so the browser's HTTP cache may reuse them
+   * (`private`: shared caches such as a CDN do not store them). A route an
+   * intercept targets gets no prefetch `Cache-Control`: whether its
+   * response is the modal or the full page depends on the source page.
    *
    * The cache is automatically invalidated on server actions regardless
    * of TTL, so this is primarily a staleness safety net.
@@ -562,6 +602,40 @@ export interface RangoOptions<TEnv = any> {
    * @default 2
    */
   prefetchConcurrency?: number;
+
+  /**
+   * Default prefetch strategy for every `<Link>` that does not set its own
+   * `prefetch` prop and every eligible intercepted plain anchor. Plain anchors
+   * can opt out with `data-prefetch="false"` or `data-prefetch="none"`. Common
+   * static-resource suffixes are excluded unless `data-prefetch="true"` marks
+   * the URL as an application route. Mark side-effectful GET links such as
+   * `/logout` with an opt-out because the router cannot infer endpoint safety.
+   * A per-Link `prefetch` prop always wins in both directions (a Link can opt
+   * out with `prefetch="none"`, or opt in under `defaultPrefetch: "none"`).
+   *
+   * - `"viewport"` (production default): prefetch when the link enters the viewport —
+   *   idle-gated and queued (see `prefetchConcurrency`), so prefetches never
+   *   compete with hydration or an active navigation.
+   * - `"hover"`: prefetch on mouse enter only. Much lighter on the server —
+   *   only links the pointer approaches are fetched — at the cost of the
+   *   ~100-300ms head start viewport prefetch gives.
+   * - `"adaptive"`: `"hover"` on pointer devices, `"viewport"` on touch
+   *   devices (no hover to wait for).
+   * - `"render"`: prefetch on mount regardless of visibility.
+   * - `"none"`: manual mode — nothing prefetches unless a Link opts in.
+   *
+   * Automatic prefetch defaults to `"none"` in development and `"viewport"`
+   * in production. With the production default, every visible Link triggers an
+   * RSC render (loaders included) on the server. Routes served from cache/PPR
+   * absorb this cheaply; per-user dynamic routes pay full price per viewport
+   * entry. Set `"hover"`, `"adaptive"`, or `"none"` when that cost matters.
+   *
+   * To disable the prefetch subsystem entirely (including per-Link opt-ins
+   * and `useRouter().prefetch()`), set `prefetchCacheTTL: false` instead.
+   *
+   * @default "none" in development; "viewport" in production
+   */
+  defaultPrefetch?: PrefetchStrategy;
 
   /**
    * Prefix for the rango state cookie name. The resolved name is

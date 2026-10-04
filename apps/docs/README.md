@@ -2,8 +2,8 @@
 
 Documentation site built on `@rangojs/router` (RSC + Vite), deployed to
 Cloudflare Workers (`cloudflare` preset + `@cloudflare/vite-plugin`). Started
-from the Vercel Shop docs design; content is still the shop placeholder and
-will be replaced with Rango documentation.
+from the Vercel Shop docs design; the homepage and Rango docs are in place, the
+"Shop Template (review)" docs section is still the placeholder.
 
 ## Development
 

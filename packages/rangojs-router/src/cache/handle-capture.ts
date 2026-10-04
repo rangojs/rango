@@ -6,10 +6,82 @@
  * pulling in @vitejs/plugin-rsc/rsc dependencies.
  */
 
+import { getCurrentLoaderBodyId } from "../server/context.js";
 import type { HandleStore } from "../server/handle-store.js";
 import type { SegmentHandleData } from "./types.js";
 
-export interface HandleCapture {
+/**
+ * Scoping for one capture of a cached unit (a loader's own cache(),
+ * loader-cache.ts; a "use cache" function, cache-runtime.ts) that runs
+ * concurrently with live pushes into the same store.
+ */
+export interface HandleCaptureOptions {
+  /** Push-time predicate; a rejected push is not recorded by this capture. */
+  accept?: () => boolean;
+  /**
+   * Recorded pushes do not reach the store. A stale hit's background
+   * revalidation: the foreground already replayed the entry's pushes, so the
+   * fresh body's pushes belong only to the refreshed entry.
+   */
+  divert?: boolean;
+  /**
+   * Record key for an accepted push, in place of its segment id. A loader's
+   * own cache() (loader-cache.ts recordOwnerKey) and "use cache"
+   * (useCacheRecordKey) group pushes by the loader body that made them.
+   */
+  key?: () => string;
+}
+
+// The loader whose recorded push a "use cache" HIT is replaying
+// (replayLoaderPush), for an enclosing "use cache" MISS's record key.
+let replayingOwner: string | undefined;
+
+/**
+ * HandleStore.pushReplayed, attributed to `loaderId` for the record key of an
+ * enclosing "use cache" MISS: an outer cached function records an inner HIT's
+ * replayed loader pushes under that loader, not as its own.
+ */
+export function replayLoaderPush(
+  handleStore: HandleStore,
+  handleName: string,
+  segmentId: string,
+  value: unknown,
+  loaderId: string,
+): void {
+  const prev = replayingOwner;
+  replayingOwner = loaderId;
+  try {
+    handleStore.pushReplayed(handleName, segmentId, value, loaderId);
+  } finally {
+    replayingOwner = prev;
+  }
+}
+
+/**
+ * Record key for a "use cache" capture: run-length groups `${seq}:${owner}`,
+ * so the HIT (handle-snapshot.ts appendHandles) delivers each loader's pushes
+ * at most once per request. The owner is the loader whose body, entered
+ * inside this execution via ctx.use, made the push; empty for the function's
+ * own pushes and those of cached functions it calls. Groups keep push order
+ * across owners. Create at call time: the caller's loader body is the
+ * function's own scope.
+ */
+export function useCacheRecordKey(): () => string {
+  const callerBody = getCurrentLoaderBodyId();
+  let seq = 0;
+  let last: string | undefined;
+  return () => {
+    const body = replayingOwner ?? getCurrentLoaderBodyId();
+    const owner = body === callerBody ? "" : (body ?? "");
+    if (owner !== last) {
+      last = owner;
+      seq++;
+    }
+    return `${seq}:${owner}`;
+  };
+}
+
+export interface HandleCapture extends HandleCaptureOptions {
   data: Record<string, SegmentHandleData>;
 }
 
@@ -42,33 +114,41 @@ function ensureInterceptorInstalled(handleStore: HandleStore): void {
     segmentId: string,
     value: unknown,
   ) => {
+    let diverted = false;
     for (const capture of captures) {
-      if (!capture.data[segmentId]) {
-        capture.data[segmentId] = {};
+      if (capture.accept && !capture.accept()) continue;
+      if (capture.divert) diverted = true;
+      const key = capture.key ? capture.key() : segmentId;
+      if (!capture.data[key]) {
+        capture.data[key] = {};
       }
-      if (!capture.data[segmentId][handleName]) {
-        capture.data[segmentId][handleName] = [];
+      if (!capture.data[key][handleName]) {
+        capture.data[key][handleName] = [];
       }
-      capture.data[segmentId][handleName].push(value);
+      capture.data[key][handleName].push(value);
     }
-    originalPush(handleName, segmentId, value);
+    if (!diverted) originalPush(handleName, segmentId, value);
   };
 }
 
 /**
- * Start capturing handle pushes for a cached function execution.
+ * Start capturing handle pushes for a cached function or cached loader
+ * execution (`options`: see HandleCaptureOptions).
  *
  * Concurrency-safe: multiple overlapping captures on the same
  * HandleStore are independent. Each capture registers a token in a
  * Set; stopping removes it. No ordering requirement (LIFO not needed).
  */
-export function startHandleCapture(handleStore: HandleStore): {
+export function startHandleCapture(
+  handleStore: HandleStore,
+  options?: HandleCaptureOptions,
+): {
   capture: HandleCapture;
   stop: () => void;
 } {
   ensureInterceptorInstalled(handleStore);
 
-  const capture: HandleCapture = { data: {} };
+  const capture: HandleCapture = { data: {}, ...options };
   const captures = activeCapturesMap.get(handleStore)!;
   captures.add(capture);
 

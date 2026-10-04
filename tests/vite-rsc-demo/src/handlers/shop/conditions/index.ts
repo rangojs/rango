@@ -3,7 +3,7 @@
  */
 
 interface InterceptConditionParams {
-  from: { pathname: string };
+  from: { url: URL };
 }
 
 /**
@@ -14,11 +14,12 @@ interface InterceptConditionParams {
 export function shouldInterceptProductModal({
   from,
 }: InterceptConditionParams): boolean {
+  const { pathname } = from.url;
   const shouldIntercept =
-    !from.pathname.startsWith("/shop/products/") &&
-    !from.pathname.startsWith("/shop/product/");
+    !pathname.startsWith("/shop/products/") &&
+    !pathname.startsWith("/shop/product/");
   console.log(
-    `[Intercept when] from: ${from.pathname}, shouldIntercept: ${shouldIntercept}`,
+    `[Intercept when] from: ${pathname}, shouldIntercept: ${shouldIntercept}`,
   );
   return shouldIntercept;
 }

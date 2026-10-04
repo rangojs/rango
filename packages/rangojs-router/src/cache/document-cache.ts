@@ -1,7 +1,9 @@
 /**
  * Document-Level Cache Middleware
  *
- * Caches full HTTP responses at the edge based on Cache-Control headers.
+ * Caches full HTTP responses in the configured app store based on Cache-Control
+ * headers. A deployment CDN may independently consume the same shared-cache
+ * directives; this middleware itself runs inside the worker/function.
  * Routes opt-in to caching by setting s-maxage or stale-while-revalidate headers.
  *
  * Flow:
@@ -11,6 +13,7 @@
  * 4. If miss → run handler, cache if response has cache headers
  */
 
+import { requestHeaders } from "../server/request-headers.js";
 import type { MiddlewareFn, MiddlewareContext } from "../router/middleware.js";
 import { hasPerClientSignal } from "../browser/cookie-name.js";
 import {
@@ -22,6 +25,12 @@ import { mayNeedSSR } from "../rsc/ssr-setup.js";
 import { cacheKeyBase } from "./cache-key-utils.js";
 import { runBackground } from "./background-task.js";
 import { reportCacheError } from "./cache-error.js";
+import { executionStart, predatesInvalidation } from "./tag-invalidation.js";
+import { observePhase, PHASES } from "../router/instrument.js";
+import {
+  SEGMENT_FRAGMENT_CAPABILITY_HEADER,
+  SEGMENT_FRAGMENT_RECOVERY_HEADER,
+} from "../segment-fragments.js";
 
 const CACHE_STATUS_HEADER = "x-document-cache-status";
 
@@ -58,7 +67,7 @@ function parseCacheControl(header: string | null): CacheDirectives | null {
 
   // RFC 7234: in a SHARED cache, `private` and `no-store` forbid storage and
   // MUST win over `s-maxage` even though `private, s-maxage` is contradictory.
-  // The document cache is a shared edge store, so refuse both regardless of any
+  // The document cache is a shared app store, so refuse both regardless of any
   // s-maxage / stale-while-revalidate also present. Match standalone directive
   // tokens (start/end, whitespace, comma, semicolon, or `=` bounded), not a
   // substring, so a value containing "private" cannot false-veto.
@@ -102,7 +111,10 @@ function parseCacheControl(header: string | null): CacheDirectives | null {
 /**
  * Check if response should be cached based on Cache-Control headers
  */
-function shouldCacheResponse(response: Response): CacheDirectives | null {
+function shouldCacheResponse(
+  response: Response,
+  requestCtx?: Pick<RequestContext, "_payloadVisitorTheme">,
+): CacheDirectives | null {
   // Only cache successful responses
   if (response.status !== 200) {
     return null;
@@ -118,8 +130,45 @@ function shouldCacheResponse(response: Response): CacheDirectives | null {
     return null;
   }
 
+  // The payload carries the visitor's theme (#978): the render ran before the
+  // response opted in (a Cache-Control written after next()), so
+  // payloadInitialTheme could not render the default.
+  if (requestCtx?._payloadVisitorTheme) {
+    return null;
+  }
+
   const cacheControl = response.headers.get("Cache-Control");
   return parseCacheControl(cacheControl);
+}
+
+/**
+ * Whether this cache will store the response the current render produces, as
+ * far as the render can tell: the middleware runs it (a MISS or a stale
+ * refresh) and the response stub already opts in. payloadInitialTheme
+ * (rsc/full-payload.ts) then renders the no-cookie default theme (#978). A
+ * Cache-Control written after next() is not on the stub yet; for that render
+ * shouldCacheResponse refuses a payload marked `_payloadVisitorTheme`.
+ */
+export function documentCacheStoresRender(
+  reqCtx: Pick<RequestContext, "_documentCacheRender" | "res">,
+): boolean {
+  return (
+    reqCtx._documentCacheRender === true &&
+    shouldCacheResponse(reqCtx.res) !== null
+  );
+}
+
+/**
+ * Throw the first error the drained render reported through Flight or Fizz
+ * onError. A component that throws after the 200 committed does not fail the
+ * stream: it completes with an error row or an errored Suspense boundary, and
+ * every hit would serve it (issue #915). The caller's catch reports the skipped
+ * write as cache-write. Read only after the body is fully drained, when both
+ * renders have finished.
+ */
+function throwIfRenderErrored(requestCtx: RequestContext | undefined): void {
+  const errors = requestCtx?._renderErrors;
+  if (errors && errors.length > 0) throw errors[0];
 }
 
 // ============================================================================
@@ -258,6 +307,8 @@ export function createDocumentCacheMiddleware<TEnv = any>(
     // pipeline (stripInternalParams), so _rsc_partial, _rsc_segments, etc.
     // are not visible on ctx.url in production.
     const rawUrl = new URL(ctx.request.url);
+    const isFragmentRecovery =
+      requestHeaders(ctx.request).get(SEGMENT_FRAGMENT_RECOVERY_HEADER) === "1";
 
     // Only cache GET requests — mutations and other methods must not be cached
     if (ctx.request.method !== "GET") {
@@ -296,6 +347,11 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       return next();
     }
 
+    // The write gate's start (#977): the request's, not this middleware's. A
+    // middleware ahead of this one can read tagged data the document bakes,
+    // and a stale refresh re-runs the handler over what they set.
+    const start = requestCtx._requestStart ?? executionStart();
+
     // Determine request type for cache key differentiation.
     // Uses rawUrl for _rsc* param checks and mayNeedSSR for Accept-based
     // detection. Full-document RSC fetches must not share the HTML cache slot.
@@ -315,6 +371,17 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       const clientSegments = rawUrl.searchParams.get("_rsc_segments") || "";
       const segmentHash =
         isPartial && clientSegments ? `:${hashSegmentIds(clientSegments)}` : "";
+      // Fragment envelopes require a capable Rango decoder. Keep that wire
+      // variant out of the context-less/legacy partial slot; this middleware
+      // returns hits before request classification and cannot rely on the
+      // match-time capability gate.
+      const fragmentSuffix =
+        isPartial &&
+        (requestHeaders(ctx.request).get(SEGMENT_FRAGMENT_CAPABILITY_HEADER) ===
+          "1" ||
+          isFragmentRecovery)
+          ? ":fragments"
+          : "";
       const typeSuffix = isRscRequest ? ":rsc" : ":html";
 
       // Default key rides the shared host-namespaced base (cacheKeyBase) so the
@@ -324,12 +391,27 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       // owns its own namespacing (auto-prefixing host would silently change their
       // existing keys and double any host they already include).
       const cacheKey = keyGenerator
-        ? keyGenerator(url) + segmentHash + typeSuffix
-        : cacheKeyBase(url.host, url.pathname, url.searchParams) +
+        ? keyGenerator(url) + segmentHash + fragmentSuffix + typeSuffix
+        : cacheKeyBase(
+            url.host,
+            url.pathname,
+            url.searchParams,
+            undefined,
+            requestCtx?._searchParamsFilter,
+          ) +
           segmentHash +
+          fragmentSuffix +
           typeSuffix;
       // 1. Check cache
-      const cached = await store.getResponse(cacheKey);
+      // Recovery must reach CacheScope's server decoder so it can evict the bad
+      // segment. Treat it as a miss, then let the ordinary write path replace
+      // the corrupt fragment-capable response with the valid fallback bytes.
+      const cached = isFragmentRecovery
+        ? null
+        : await store.getResponse(cacheKey);
+      // Every path past the lookup either returns a fresh HIT, which renders
+      // nothing, or renders a response this cache may store.
+      requestCtx._documentCacheRender = true;
 
       if (cached && cached.response.status === 200) {
         if (!cached.shouldRevalidate) {
@@ -348,29 +430,49 @@ export function createDocumentCacheMiddleware<TEnv = any>(
 
         runBackground(requestCtx, async () => {
           try {
-            // Re-establish the request-context ALS around the background
-            // re-render: next() re-runs the full handler pipeline, and on
-            // workerd a waitUntil task runs detached from the request's I/O
-            // context, so a handler/component reading getRequestContext() would
-            // otherwise throw. Same fix as the route-level/use-cache background
-            // revalidation paths.
-            const fresh = await runWithRequestContext(requestCtx, () => next());
-            const directives = shouldCacheResponse(fresh);
+            // Re-establish the request-context ALS around the whole background
+            // task: next() re-runs the full handler pipeline, and on workerd a
+            // waitUntil task runs detached from the request's I/O context, so a
+            // handler/component reading getRequestContext() would otherwise
+            // throw. Same fix as the route-level/use-cache background
+            // revalidation paths. The rango.background span (kind=
+            // document-revalidation) wraps the re-render AND the store write so
+            // the task's spans — the re-run's own rango.* set and the drain/put
+            // platform spans — nest under one explanatory parent instead of
+            // dangling under the ended foreground phases. Running the put
+            // inside the ALS matches the MISS path, where putResponse already
+            // executes within the foreground request context.
+            await runWithRequestContext(requestCtx, () =>
+              observePhase(
+                PHASES.background("document-revalidation"),
+                async () => {
+                  const fresh = await next();
+                  const directives = shouldCacheResponse(fresh, requestCtx);
 
-            if (directives && fresh.body) {
-              // Background revalidation: nothing streams to a client, so drain
-              // the fresh render fully before snapshotting tags (same
-              // render-complete barrier as the miss path).
-              const body = await new Response(fresh.body).arrayBuffer();
-              await store.putResponse!(
-                cacheKey,
-                new Response(body, fresh),
-                directives.sMaxAge!,
-                directives.staleWhileRevalidate,
-                collectRequestTags(requestCtx),
-              );
-              log(`[DocumentCache] REVALIDATED ${typeLabel}: ${url.pathname}`);
-            }
+                  if (!directives || !fresh.body) return;
+
+                  // Background revalidation: nothing streams to a client, so
+                  // drain the fresh render fully before snapshotting tags
+                  // (same render-complete barrier as the miss path).
+                  const body = await new Response(fresh.body).arrayBuffer();
+                  throwIfRenderErrored(requestCtx);
+                  // Not written when one of its tags was invalidated since
+                  // the render started (#977).
+                  const tags = collectRequestTags(requestCtx);
+                  if (await predatesInvalidation(store, tags, start)) return;
+                  await store.putResponse!(
+                    cacheKey,
+                    new Response(body, fresh),
+                    directives.sMaxAge!,
+                    directives.staleWhileRevalidate,
+                    tags,
+                  );
+                  log(
+                    `[DocumentCache] REVALIDATED ${typeLabel}: ${url.pathname}`,
+                  );
+                },
+              ),
+            );
           } catch (error) {
             // Pass requestCtx explicitly: this runs in a detached waitUntil task
             // where the ALS context is gone, so onError only fires if we hand it
@@ -396,7 +498,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       const originalResponse = await next();
 
       // 3. Cache if response has appropriate headers
-      const directives = shouldCacheResponse(originalResponse);
+      const directives = shouldCacheResponse(originalResponse, requestCtx);
 
       if (directives) {
         log(
@@ -422,12 +524,17 @@ export function createDocumentCacheMiddleware<TEnv = any>(
             // unaffected) is the render-complete barrier that keeps the cached
             // body and its tag set consistent.
             const body = await new Response(cacheStream).arrayBuffer();
+            throwIfRenderErrored(requestCtx);
+            // Not written when one of its tags was invalidated since the
+            // render started (#977).
+            const tags = collectRequestTags(requestCtx);
+            if (await predatesInvalidation(store, tags, start)) return;
             await store.putResponse!(
               cacheKey,
               new Response(body, originalResponse),
               directives.sMaxAge!,
               directives.staleWhileRevalidate,
-              collectRequestTags(requestCtx),
+              tags,
             );
           } catch (error) {
             // Detached waitUntil task — pass the captured requestCtx so onError

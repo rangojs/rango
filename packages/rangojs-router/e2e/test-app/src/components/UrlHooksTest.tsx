@@ -14,7 +14,7 @@ import {
 export function UrlHooksTest() {
   const params = useParams();
   const pathname = usePathname();
-  const searchParams = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const router = useRouter();
 
   return (
@@ -86,6 +86,46 @@ export function UrlHooksTest() {
 
       <button data-testid="go-forward" onClick={() => router.forward()}>
         Forward
+      </button>
+
+      {/* setSearchParams: wholesale replace (RR semantics) — same pathname,
+          new search, push by default. */}
+      <button
+        data-testid="set-search-replace-all"
+        onClick={() => void setSearchParams({ q: "vue", sort: "asc" })}
+      >
+        Set search (replace all)
+      </button>
+
+      {/* Functional form merges against the params read at call time. */}
+      <button
+        data-testid="set-search-merge"
+        onClick={() =>
+          void setSearchParams((prev) => {
+            prev.set("page", "9");
+            return prev;
+          })
+        }
+      >
+        Merge page=9
+      </button>
+
+      {/* replace:true rewrites the current history entry — Back must land on
+          the entry BEFORE the replaced one. */}
+      <button
+        data-testid="set-search-history-replace"
+        onClick={() =>
+          void setSearchParams({ q: "replaced" }, { replace: true })
+        }
+      >
+        Set search (history replace)
+      </button>
+
+      <button
+        data-testid="set-search-clear"
+        onClick={() => void setSearchParams({})}
+      >
+        Clear search
       </button>
     </div>
   );

@@ -4,9 +4,9 @@
  * Runs in the RSC realm of the build's temp server, AFTER all bundles are
  * written (the prelude embeds built client asset URLs — bootstrap module,
  * chunk preloads — that only exist post-client-build). The capture core is
- * producer A's, verbatim: deriveShellCaptureContext (mask funnel, liveness,
- * snapshot recording, implicit doc-cache scope) + captureAndStoreShell (gates,
- * quiesce, tags union, putShell barrier). Build capture first replays global
+ * producer A's, verbatim: deriveShellCaptureContext (push funnel, snapshot
+ * recording, implicit doc-cache scope) + settleCaptureRecord (the record-first
+ * step) + captureAndStoreShell (gates, quiesce, tags union, putShell barrier). Build capture first replays global
  * and route middleware with a synthetic build request context
  * (`ctx.build === true`, inert `ctx.waitUntil()`); middleware can seed vars or
  * call `ctx.dynamic()` to skip this URL. The sink is an entry collector instead
@@ -21,6 +21,8 @@
  */
 
 import type { ShellCacheEntry } from "../cache/types.js";
+import type { RouterVersions } from "../router-versions.js";
+import type { MatchResult } from "../types.js";
 import { MemorySegmentCacheStore } from "../cache/memory-segment-store.js";
 import {
   createRequestContext,
@@ -31,10 +33,13 @@ import {
 import {
   deriveShellCaptureContext,
   captureAndStoreShell,
+  settleCaptureRecord,
   delay,
   SHELL_CAPTURE_RETRY_DELAY_MS,
   type ShellCaptureDescriptor,
 } from "../rsc/shell-capture.js";
+import { SHELL_CAPTURE_MAX_WAIT_MS } from "../rsc/shell-capture-constants.js";
+import { raceDeadline } from "../cache/background-task.js";
 import { buildFullPayload } from "../rsc/full-payload.js";
 import { buildRouteMiddlewareEntries } from "../rsc/helpers.js";
 import type { RscPayload, SSRModule } from "../rsc/types.js";
@@ -44,7 +49,7 @@ import { isRouteNotFoundError } from "../errors.js";
 import { createReverseFunction } from "../router/handler-context.js";
 import { executeMiddleware, matchMiddleware } from "../router/middleware.js";
 import type { MiddlewareEntry } from "../router/middleware.js";
-import { getGlobalRouteMap, isRouteRootScoped } from "../route-map-builder.js";
+import { getGlobalRouteMap } from "../route-map-builder.js";
 import {
   resolvePprConfig,
   type ResolvedPprConfig,
@@ -101,13 +106,14 @@ export interface BuildShellCaptureOptions {
   /** Build-time env bindings (rango plugin buildEnv), if configured. */
   buildEnv?: unknown;
   /**
-   * The MAIN build's version (the version plugin's value folded into the
-   * shipped worker) — NOT the temp server's own version-plugin value. The
-   * serve-side isValidShellHit gate compares entry.buildVersion against the
-   * running worker's ctx.version; stamping the temp server's would make every
-   * build entry an eternal MISS.
+   * The versions the SHIPPED build serves this router with (the build table,
+   * or the router's consumer-set version) — NOT the temp server's own
+   * version-plugin stamp. The serve-side isValidShellHit gate compares
+   * entry.buildVersion against the running worker's ctx.version, which is the
+   * document version; stamping the temp server's would make every build entry
+   * an eternal MISS.
    */
-  buildVersion: string;
+  versions: RouterVersions;
   /**
    * The SSR half, composed by the plugin from the temp server's SSR
    * environment runner (react-dom/static prerender + Flight client), with the
@@ -134,18 +140,25 @@ export interface BuildShellCaptureResult {
   tags?: string[];
   /** On route-mismatch: what this router's match actually landed on. */
   matchedRouteName?: string;
+  /**
+   * On no-shell: the attempt ran out of ppr.captureTimeout. It is not
+   * retried: its match may still be running, and the retry would start the
+   * same work beside it (runtime twin: shell-capture.ts runShellCapture).
+   */
+  timedOut?: true;
 }
 
 /**
  * Capture the PPR shell for one prerendered URL at build time. Retries once
  * in place on `no-shell` (the first attempt warms the temp server's SSR/Flight
- * transform graph, mirroring producer A's cold-start retry — same delay).
+ * transform graph, mirroring producer A's cold-start retry — same delay),
+ * unless the attempt ran out of ppr.captureTimeout (`timedOut`).
  */
 export async function captureShellForBuild(
   opts: BuildShellCaptureOptions,
 ): Promise<BuildShellCaptureResult> {
   const first = await attemptBuildCapture(opts);
-  if (first.outcome !== "no-shell") return first;
+  if (first.outcome !== "no-shell" || first.timedOut) return first;
   if (opts.debug) {
     console.log(
       `[rango] shell capture attempt 1/2 for ${opts.urlPath} produced no shell (cold graph?) — retrying`,
@@ -181,7 +194,7 @@ async function attemptBuildCapture(
     cacheStore: new MemorySegmentCacheStore(),
     themeConfig: router.themeConfig ?? null,
     stateCookieName: router.resolvedStateCookieName,
-    version: opts.buildVersion,
+    versions: opts.versions,
   });
   // Scope registry lookups (root-scope/search-schema) per router during the
   // bake, mirroring rsc/handler.ts on the request path (#762).
@@ -204,87 +217,87 @@ async function attemptBuildCapture(
 
   const descriptor: ShellCaptureDescriptor = {
     key: opts.key,
-    buildVersion: opts.buildVersion,
+    buildVersion: opts.versions.document,
     ttl: opts.ttl,
     swr: opts.swr,
     tags: opts.tags,
     captureTimeout: opts.captureTimeout,
     store: collector as any,
-    debug: opts.debug,
     maxSnapshotBytes: opts.maxSnapshotBytes,
   };
 
-  let mismatchedRouteName: string | undefined;
-  const result = await runWithRequestContext(baseCtx, async () => {
-    const preview =
-      typeof router.previewMatch === "function"
-        ? await router.previewMatch(request, { env })
-        : undefined;
-    // These preview-based mismatches exit before any middleware/envelope runs,
-    // so nothing consumes a response — only result.outcome is read below.
-    if (preview === null) {
-      return { outcome: "route-mismatch" } as const;
-    }
-    if (preview?.routeKey && preview.routeKey !== opts.routeName) {
-      mismatchedRouteName = preview.routeKey;
-      return { outcome: "route-mismatch" } as const;
-    }
+  const result = await runWithRequestContext(
+    baseCtx,
+    async (): Promise<
+      | BuildCaptureRunResult
+      | { outcome: "route-mismatch"; matchedRouteName?: string }
+    > => {
+      const preview =
+        typeof router.previewMatch === "function"
+          ? await router.previewMatch(request, { env })
+          : undefined;
+      // These preview-based mismatches exit before any middleware/envelope runs,
+      // so nothing consumes a response.
+      if (preview === null) {
+        return { outcome: "route-mismatch" };
+      }
+      if (preview?.routeKey && preview.routeKey !== opts.routeName) {
+        return {
+          outcome: "route-mismatch",
+          matchedRouteName: preview.routeKey,
+        };
+      }
 
-    if (preview?.routeKey) {
-      setRequestContextParams(preview.params ?? {}, preview.routeKey);
-    }
+      if (preview?.routeKey) {
+        setRequestContextParams(preview.params ?? {}, preview.routeKey);
+      }
 
-    const routeReverse = createReverseFunction(
-      getGlobalRouteMap(),
-      preview?.routeKey,
-      preview?.params ?? {},
-      preview?.routeKey
-        ? isRouteRootScoped(preview.routeKey, router.id)
-        : undefined,
-    );
+      // Global-only, like the live request's middleware reverse
+      // (rsc/handler.ts: createReverseFunction(getRequiredRouteMap())): no
+      // include() scope, no param auto-fill. A scoped reverse here resolved
+      // `.name` at build while the live request threw `Unknown route`.
+      const middlewareReverse = createReverseFunction(getGlobalRouteMap());
 
-    const runCapture = () =>
-      runBuildCaptureFinal({
-        baseCtx,
-        descriptor,
-        env,
-        opts,
-        request,
-        router,
-        url,
-        setMismatchedRouteName: (routeName) => {
-          mismatchedRouteName = routeName;
-        },
-      });
+      const runCapture = () =>
+        runBuildCaptureFinal({
+          baseCtx,
+          descriptor,
+          env,
+          opts,
+          request,
+          router,
+          url,
+        });
 
-    const routeMiddleware =
-      preview?.routeMiddleware && preview.routeMiddleware.length > 0
-        ? buildRouteMiddlewareEntries(preview.routeMiddleware)
+      const routeMiddleware =
+        preview?.routeMiddleware && preview.routeMiddleware.length > 0
+          ? buildRouteMiddlewareEntries(preview.routeMiddleware)
+          : [];
+      const runRouteMiddleware = () =>
+        runBuildMiddlewareEnvelope(
+          routeMiddleware,
+          request,
+          env,
+          variables,
+          runCapture,
+          middlewareReverse,
+          baseCtx,
+        );
+
+      const globalMiddleware = Array.isArray(router.middleware)
+        ? matchMiddleware(url.pathname, router.middleware)
         : [];
-    const runRouteMiddleware = () =>
-      runBuildMiddlewareEnvelope(
-        routeMiddleware,
+      return runBuildMiddlewareEnvelope(
+        globalMiddleware,
         request,
         env,
         variables,
-        runCapture,
-        routeReverse,
+        runRouteMiddleware,
+        middlewareReverse,
         baseCtx,
       );
-
-    const globalMiddleware = Array.isArray(router.middleware)
-      ? matchMiddleware(url.pathname, router.middleware)
-      : [];
-    return runBuildMiddlewareEnvelope(
-      globalMiddleware,
-      request,
-      env,
-      variables,
-      runRouteMiddleware,
-      routeReverse,
-      baseCtx,
-    );
-  });
+    },
+  );
 
   const outcome = result.outcome;
   if (outcome === "stored" && collected !== null) {
@@ -292,7 +305,10 @@ async function attemptBuildCapture(
     return { outcome, entry: hit.entry, tags: hit.tags };
   }
   if (outcome === "route-mismatch") {
-    return { outcome, matchedRouteName: mismatchedRouteName };
+    return { outcome, matchedRouteName: result.matchedRouteName };
+  }
+  if (outcome === "no-shell" && "timedOut" in result && result.timedOut) {
+    return { outcome, timedOut: true };
   }
   return { outcome };
 }
@@ -302,6 +318,10 @@ type BuildShellCaptureOutcome = BuildShellCaptureResult["outcome"];
 interface BuildCaptureRunResult {
   outcome: BuildShellCaptureOutcome;
   response: Response;
+  /** On route-mismatch: what this router's match landed on. */
+  matchedRouteName?: string;
+  /** On no-shell: the attempt ran out of ppr.captureTimeout. */
+  timedOut?: true;
 }
 
 interface BuildCaptureFinalOptions {
@@ -312,7 +332,6 @@ interface BuildCaptureFinalOptions {
   request: Request;
   router: any;
   url: URL;
-  setMismatchedRouteName(routeName: string | undefined): void;
 }
 
 async function runBuildMiddlewareEnvelope<TEnv>(
@@ -372,61 +391,104 @@ async function runBuildCaptureFinal(
   // invoking this when baseCtx._dynamic is set. A loader/handler opting out
   // DURING the capture render is caught by the derivedCtx._dynamic check below.
 
-  const { derivedCtx, freshHandleStore } = deriveShellCaptureContext(baseCtx, {
+  const derivation = deriveShellCaptureContext(baseCtx, {
     ttl: opts.ttl,
     swr: opts.swr,
   });
+  const { derivedCtx, freshHandleStore } = derivation;
+  // The capture generation starts before the match, as at runtime
+  // (ShellCacheEntry.createdAt; the build-shell read-through compares tag
+  // invalidations against it).
+  const captureStartedAt = Date.now();
 
-  const outcome = await runWithRequestContext(derivedCtx, async () => {
-    let match;
-    try {
-      match = await router.match(request, { env });
-    } catch (error) {
-      if (isPlainPathMiss(error, opts.urlPath)) {
-        return "route-mismatch" as const;
-      }
-      throw error;
-    }
-    if (match.routeName !== opts.routeName) {
-      options.setMismatchedRouteName(match.routeName);
-      return "route-mismatch" as const;
-    }
-    if (match.redirect) return "redirect" as const;
-
-    setRequestContextParams(match.params, match.routeName);
-
-    const payload = buildFullPayload(
-      match,
-      // buildFullPayload reads only ctx.router.* and ctx.version.
-      { router, version: opts.buildVersion } as unknown as HandlerContext<any>,
-      url,
-      derivedCtx,
-      freshHandleStore,
-    );
-    const rscStream = renderToReadableStream<RscPayload>(payload, {
-      onError: (error: unknown) => {
-        if (opts.debug) {
-          console.warn(
-            `[rango] shell capture render error for ${opts.urlPath}:`,
-            error,
-          );
+  const result = await runWithRequestContext(
+    derivedCtx,
+    async (): Promise<Omit<BuildCaptureRunResult, "response">> => {
+      // Same one deadline as the runtime capture: the match, the record-first
+      // step, then the prerender with what is left.
+      const deadline =
+        Date.now() + (opts.captureTimeout ?? SHELL_CAPTURE_MAX_WAIT_MS);
+      let match: MatchResult;
+      try {
+        const matched = await raceDeadline<MatchResult>(
+          router.match(request, { env }),
+          deadline,
+        );
+        if (!matched.done) return { outcome: "no-shell", timedOut: true };
+        match = matched.value;
+      } catch (error) {
+        if (isPlainPathMiss(error, opts.urlPath)) {
+          return { outcome: "route-mismatch" };
         }
-      },
-    });
+        throw error;
+      }
+      if (match.routeName !== opts.routeName) {
+        return { outcome: "route-mismatch", matchedRouteName: match.routeName };
+      }
+      if (match.redirect) return { outcome: "redirect" };
 
-    const captureOutcome = await captureAndStoreShell(
-      { captureShellHTML: opts.captureShellHTML } as SSRModule,
-      rscStream,
-      freshHandleStore,
-      derivedCtx,
-      descriptor,
-    );
-    return derivedCtx._dynamic ? "dynamic" : captureOutcome;
-  });
+      setRequestContextParams(match.params, match.routeName);
+
+      // Same record-first step as the runtime capture. A prerendered URL's
+      // match comes from the prerender store (no handler runs, no doc record),
+      // which settleCaptureRecord reports as `prerender`.
+      const settled = await settleCaptureRecord(
+        match,
+        derivation,
+        descriptor,
+        deadline,
+      );
+      if (settled.kind === "refused") {
+        return { outcome: derivedCtx._dynamic ? "dynamic" : "refused" };
+      }
+      if (settled.kind === "timeout") {
+        return { outcome: "no-shell", timedOut: true };
+      }
+
+      const payload = buildFullPayload(
+        settled.match,
+        // buildFullPayload reads only ctx.router.* and ctx.version.
+        {
+          router,
+          version: opts.versions.document,
+        } as unknown as HandlerContext<any>,
+        url,
+        derivedCtx,
+        freshHandleStore,
+      );
+      const rscStream = renderToReadableStream<RscPayload>(payload, {
+        onError: (error: unknown) => {
+          if (opts.debug) {
+            console.warn(
+              `[rango] shell capture render error for ${opts.urlPath}:`,
+              error,
+            );
+          }
+        },
+      });
+
+      const captureOutcome = await captureAndStoreShell(
+        { captureShellHTML: opts.captureShellHTML } as SSRModule,
+        rscStream,
+        derivedCtx,
+        { ...descriptor, captureTimeout: Math.max(1, deadline - Date.now()) },
+        captureStartedAt,
+      );
+      if (derivedCtx._dynamic) return { outcome: "dynamic" };
+      if (captureOutcome === "no-shell" && Date.now() >= deadline) {
+        return { outcome: "no-shell", timedOut: true };
+      }
+      // A route cache() record that ran out mid-capture: the in-place retry
+      // (captureShellForBuild) reads or renders a newer one.
+      return {
+        outcome: captureOutcome === "expired" ? "no-shell" : captureOutcome,
+      };
+    },
+  );
 
   return {
-    outcome,
-    response: responseForBuildCaptureOutcome(outcome),
+    ...result,
+    response: responseForBuildCaptureOutcome(result.outcome),
   };
 }
 

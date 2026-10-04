@@ -1,5 +1,6 @@
-import { createLoader, cookies, redirect } from "@rangojs/router";
+import { createLoader, cookies, redirect, cacheTag } from "@rangojs/router";
 import { getCartQuantitySync } from "./cart-store.js";
+import { DepCrumbs } from "./urls/dep-crumbs.handle.js";
 
 // ============================================================================
 // Fetchable-loader thrown-Response + error-name fixtures (D4, D5)
@@ -30,7 +31,6 @@ export const NamedErrorLoader = createLoader(async () => {
 
 // Layout-level loader for segment tracking tests
 export const LayoutCountLoader = createLoader(async () => {
-  "use server";
   return { count: Date.now() };
 });
 
@@ -155,6 +155,14 @@ export const SwrProductLoader = createLoader(async (ctx) => {
   const id = ctx.params.id!;
   await new Promise((resolve) => setTimeout(resolve, 600));
   return { id, name: `Product ${id}`, loadedAt: new Date().toISOString() };
+});
+
+// Layout loader on TxShellLayout (persists across /tx-group-a/:id navs). A
+// same-route nav inside the block does NOT re-run it, so its useLoader reader
+// must stay isLoading:false while SwrProductLoader streams for the new param
+// (loader-nav-stale.test.ts). loadedAt pins that it really did not re-run.
+export const TxShellLoader = createLoader(async () => {
+  return { label: "shell", loadedAt: new Date().toISOString() };
 });
 
 // Counter to track fetchable loader invocations
@@ -467,6 +475,47 @@ export const CachedTestLoader = createLoader(async () => {
   };
 });
 
+/**
+ * /cache-tag-test/loader-body (urls/cache-tag.tsx, #964). `stamp` is per run:
+ * an unchanged value is a loader-cache HIT.
+ */
+export const LoaderBodyTagDepLoader = createLoader(async () => {
+  cacheTag("loader-dep-tag");
+  return { dep: crypto.randomUUID().slice(0, 8) };
+});
+
+export const LoaderBodyTagLoader = createLoader(async (ctx) => {
+  cacheTag("loader-body-tag");
+  const { dep } = await ctx.use(LoaderBodyTagDepLoader);
+  return { stamp: `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`, dep };
+});
+
+/**
+ * /cache-test/cached-loader-dep: the dependency of a loader with its own
+ * cache(), also read by an uncached sibling loader. Each run pushes one crumb
+ * with a per-run id, so a live run's crumb differs from the cached one.
+ * /use-cache-test/dep-crumbs reads it inside a "use cache" function too.
+ */
+export const DepCrumbCategoryLoader = createLoader(async (ctx) => {
+  ctx.use(DepCrumbs)(`Category ${crypto.randomUUID().slice(0, 8)}`);
+  return { slug: "category" };
+});
+
+/** Cached (the route binds it with cache()); awaits the dependency. */
+export const DepCrumbProductLoader = createLoader(async (ctx) => {
+  const { slug } = await ctx.use(DepCrumbCategoryLoader);
+  return { slug, loadedAt: new Date().toISOString() };
+});
+
+/**
+ * Uncached sibling: reads the dependency after the cached body reached it on
+ * the MISS, and after a HIT replayed the cached entry.
+ */
+export const DepCrumbSiblingLoader = createLoader(async (ctx) => {
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  return ctx.use(DepCrumbCategoryLoader);
+});
+
 // Counter for the handler-consumed cache() route loader
 let handlerConsumedLoaderCount = 0;
 
@@ -520,6 +569,13 @@ export type InterceptCacheTestLoaderData = {
 export const UseCacheTestLoader = createLoader(async () => {
   const { getCachedLoaderData } = await import("./urls/use-cache-fn.js");
   return getCachedLoaderData();
+});
+
+// /use-cache-test/loader-ctx/:id: passes its own ctx to a "use cache"
+// function (#940).
+export const UseCacheLoaderCtxLoader = createLoader(async (ctx) => {
+  const { getLoaderCtxStamp } = await import("./urls/use-cache-fn.js");
+  return getLoaderCtxStamp(ctx);
 });
 
 // ============================================================================
@@ -817,7 +873,6 @@ export const ParallelRevalLoader = createLoader(async () => {
 // the loader re-ran. Gated by revalidate(({ isAction }) => isAction(target)).
 let isActionProbeRuns = 0;
 export const IsActionProbeLoader = createLoader(async () => {
-  "use server";
   isActionProbeRuns += 1;
   return { runs: isActionProbeRuns };
 });
@@ -827,7 +882,6 @@ export const IsActionProbeLoader = createLoader(async () => {
 // does NOT match the target. Its own run counter lets the test tell it apart.
 let isActionAnyRuns = 0;
 export const IsActionAnyLoader = createLoader(async () => {
-  "use server";
   isActionAnyRuns += 1;
   return { runs: isActionAnyRuns };
 });
@@ -841,7 +895,6 @@ export const IsActionAnyLoader = createLoader(async () => {
 // and no-JS (PE) transports.
 let revalFormDataRuns = 0;
 export const RevalFormDataLoader = createLoader(async () => {
-  "use server";
   revalFormDataRuns += 1;
   return { runs: revalFormDataRuns };
 });

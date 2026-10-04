@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
+import { waitForShellHydration } from "@shared/e2e";
 import { useFixture } from "./fixture";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -161,5 +162,53 @@ export const HMRAnotherLoader = createLoader(
       200,
     );
     expect(text2).toContain("Fetched via GET!");
+  });
+
+  // #994: location state is recorded under the app version its document
+  // loaded with. An RSC edit bumps the dev version inside the running page
+  // (rsc-router.tsx HMR handler -> bridge.updateVersion); the page must keep
+  // its location state, and the next document load, now under the new
+  // version, drops it.
+  test("an RSC edit keeps the page's location state; the next document load drops it", async ({
+    page,
+  }) => {
+    const grid = page.getByTestId("grid-value");
+    const step = page.getByTestId("grid-step");
+
+    await page.goto(f.url("/location-state/app-version"));
+    await waitForShellHydration(page);
+    await page.getByTestId("grid-write").click();
+    await expect(grid).toHaveText("desc:3");
+
+    const versionBumped = page.waitForEvent("console", {
+      predicate: (message) => message.text().includes("HMR: version changed"),
+      timeout: 15_000,
+    });
+    const refetched = page.waitForEvent("console", {
+      predicate: (message) =>
+        message.text().includes("HMR: RSC stream complete"),
+      timeout: 15_000,
+    });
+    await fs.writeFile(
+      loadersPath,
+      `${originalContent}\n// location-state HMR probe\n`,
+    );
+    await versionBumped;
+    await refetched;
+
+    // The same document under a bumped version: the mounted reader keeps the
+    // state, and a back/forward onto the entry reads it again.
+    await expect(grid).toHaveText("desc:3");
+    await page.getByTestId("grid-next").click();
+    await expect(step).toHaveText("next");
+    await expect(grid).toHaveText("none");
+    await page.goBack();
+    await expect(step).toHaveText("typed");
+    await expect(grid).toHaveText("desc:3");
+
+    await page.reload();
+    await waitForShellHydration(page);
+    await expect(page.getByTestId("grid-mounted")).toHaveText("yes");
+    await expect(grid).toHaveText("none");
   });
 });

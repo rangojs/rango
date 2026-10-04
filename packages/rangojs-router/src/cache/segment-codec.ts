@@ -15,8 +15,14 @@ import { segmentFragment } from "../segment-fragments.js";
 import {
   renderToReadableStream,
   createTemporaryReferenceSet,
-} from "@vitejs/plugin-rsc/rsc";
-import { createFromReadableStream } from "@vitejs/plugin-rsc/rsc";
+} from "../deps/rsc.js";
+import { createFromReadableStream } from "../deps/rsc-client.js";
+
+// Preserve embedded server references on a cache/prerender HIT so they
+// re-serialize to the client instead of resolving to a raw function React
+// refuses to pass to a Client Component. Shared across the deserialize sites so
+// the decode policy has a single owner.
+const PRESERVE_SERVER_REFS = { preserveServerReferences: true } as const;
 
 /**
  * Convert a ReadableStream to a string.
@@ -63,14 +69,14 @@ export function stringToStream(str: string): ReadableStream<Uint8Array> {
  */
 export async function rscSerialize(
   value: unknown,
-  options?: { onError?: (error: unknown) => void },
+  onError?: (error: unknown) => void,
 ): Promise<string | undefined> {
   if (value === undefined || value === null) return undefined;
 
   const temporaryReferences = createTemporaryReferenceSet();
   const stream = renderToReadableStream(value, {
     temporaryReferences,
-    onError: options?.onError,
+    onError,
   });
   return streamToString(stream);
 }
@@ -85,7 +91,11 @@ export async function rscDeserialize<T>(
 
   const temporaryReferences = createTemporaryReferenceSet();
   const stream = stringToStream(encoded);
-  return createFromReadableStream<T>(stream, { temporaryReferences });
+  return createFromReadableStream<T>(
+    stream,
+    { temporaryReferences },
+    PRESERVE_SERVER_REFS,
+  );
 }
 
 /**
@@ -96,10 +106,16 @@ export async function rscDeserialize<T>(
  *
  * Returns null only on serialization failure.
  */
-export async function serializeResult(value: unknown): Promise<string | null> {
+export async function serializeResult(
+  value: unknown,
+  onError?: (error: unknown) => void,
+): Promise<string | null> {
   try {
     const temporaryReferences = createTemporaryReferenceSet();
-    const stream = renderToReadableStream(value, { temporaryReferences });
+    const stream = renderToReadableStream(value, {
+      temporaryReferences,
+      onError,
+    });
     return await streamToString(stream);
   } catch (error) {
     // Returning null silently turns a non-serializable cache value into a
@@ -120,7 +136,11 @@ export async function serializeResult(value: unknown): Promise<string | null> {
 export async function deserializeResult<T>(encoded: string): Promise<T> {
   const temporaryReferences = createTemporaryReferenceSet();
   const stream = stringToStream(encoded);
-  return createFromReadableStream<T>(stream, { temporaryReferences });
+  return createFromReadableStream<T>(
+    stream,
+    { temporaryReferences },
+    PRESERVE_SERVER_REFS,
+  );
 }
 
 /**
@@ -135,18 +155,18 @@ export const deserializeComponent: (encoded: string) => Promise<unknown> =
  * Serialize segments for storage.
  * Each segment's component, layout, loading, and loaderData are RSC-serialized.
  * Metadata is preserved as-is.
+ *
+ * `onError` goes to every Flight encode. A component that throws while
+ * encoding (e.g. an async server component in the tree) does not reject the
+ * encode: Flight reports it through onError and writes an error row
+ * (`1:E{...}`) that throws when the decoded tree renders. cacheRoute and the
+ * prerender producers (prerender-match.ts) pass it to refuse such an entry;
+ * without it the encode is unchanged.
  */
 export async function serializeSegments(
   segments: ResolvedSegment[],
-  // onError observes errors thrown while Flight-encoding a component/layout —
-  // e.g. a deep async child calling cookies(). React embeds such an error as a
-  // Flight error row and completes the stream, so the caller can't see it
-  // otherwise. The on-demand prerender producer uses this to avoid baking a
-  // personalized/failed render into a shared payload; default undefined keeps
-  // build/dev/runtime-cache serialization exactly as-is.
-  options?: { onError?: (error: unknown) => void },
+  onError?: (error: unknown) => void,
 ): Promise<SerializedSegmentData[]> {
-  const onError = options?.onError;
   return Promise.all(
     segments.map(async (segment): Promise<SerializedSegmentData> => {
       const temporaryReferences = createTemporaryReferenceSet();
@@ -168,7 +188,7 @@ export async function serializeSegments(
         segment.loading !== undefined
           ? segment.loading === null
             ? "null"
-            : await rscSerialize(segment.loading, { onError })
+            : await rscSerialize(segment.loading, onError)
           : undefined;
 
       // Await loaderData / loaderDataPromise if they're Promises
@@ -189,9 +209,9 @@ export async function serializeSegments(
         encodedLoaderDataPromise,
       ] = await Promise.all([
         streamToString(stream),
-        segment.layout ? rscSerialize(segment.layout, { onError }) : undefined,
-        rscSerialize(loaderDataResolved, { onError }),
-        rscSerialize(loaderDataPromiseResolved, { onError }),
+        segment.layout ? rscSerialize(segment.layout, onError) : undefined,
+        rscSerialize(loaderDataResolved, onError),
+        rscSerialize(loaderDataPromiseResolved, onError),
       ]);
 
       return {
@@ -214,6 +234,7 @@ export async function serializeSegments(
           loaderIds: segment.loaderIds,
           transition: segment.transition,
           mountPath: segment.mountPath,
+          clientGroup: segment.clientGroup,
         },
       };
     }),
@@ -284,9 +305,11 @@ export async function deserializeSegments(
 
       const [component, layout, loaderData, loaderDataPromise, loadingData] =
         await Promise.all([
-          createFromReadableStream(stringToStream(item.encoded), {
-            temporaryReferences,
-          }),
+          createFromReadableStream(
+            stringToStream(item.encoded),
+            { temporaryReferences },
+            PRESERVE_SERVER_REFS,
+          ),
           rscDeserialize(item.encodedLayout),
           rscDeserialize(item.encodedLoaderData),
           rscDeserialize(item.encodedLoaderDataPromise),

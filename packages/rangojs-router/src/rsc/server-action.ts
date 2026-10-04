@@ -15,13 +15,16 @@
  * wraps revalidation inside route middleware — identical to a normal render.
  */
 
+import { requestHeaders } from "../server/request-headers.js";
 import {
   getRequestContext,
   setRequestContextParams,
 } from "../server/request-context.js";
 import { observePhase, PHASES } from "../router/instrument.js";
+import { resolveActionRefId } from "../router/is-action.js";
 import type { TraceSpan } from "../router/tracing.js";
-import { gateTransitions } from "./transition-gate.js";
+import { attachTransitionWhen } from "./attach-transition-when.js";
+import { publicRouteName } from "../route-name.js";
 import type { RscPayload } from "./types.js";
 import {
   hasBodyContent,
@@ -29,11 +32,22 @@ import {
   createSimpleRedirectResponse,
   interceptRedirectForPartial,
   attachLocationStateIfPresent,
+  matchAndRecordParams,
 } from "./helpers.js";
-import { renderRscResponse } from "./render-pipeline.js";
+import {
+  createRenderStageTraceBridge,
+  renderRscResponse,
+} from "./render-pipeline.js";
+import {
+  createRoutineTrace,
+  runRoutine,
+  step,
+  type RoutinePlan,
+} from "./routine-plan.js";
 import { warnNonRedirectActionResponse } from "./runtime-warnings.js";
 import type { HandlerContext } from "./handler-context.js";
 import type { MatchResult } from "../types.js";
+import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 
 /**
  * Data flowing from action execution to the revalidation phase.
@@ -81,7 +95,7 @@ export async function executeServerAction<TEnv>(
   const temporaryReferences = ctx.createTemporaryReferenceSet();
 
   // Decode action arguments from request body
-  const contentType = request.headers.get("content-type") || "";
+  const contentType = requestHeaders(request).get("content-type") || "";
   let args: unknown[] = [];
   let actionFormData: FormData | undefined;
 
@@ -291,10 +305,7 @@ export async function executeServerAction<TEnv>(
   }
 
   // Build continuation for the revalidation phase
-  const actionMeta = loadedAction as
-    | { $id?: string; $$id?: string }
-    | undefined;
-  const resolvedActionId = actionMeta?.$id ?? actionMeta?.$$id ?? actionId;
+  const resolvedActionId = resolveActionRefId(loadedAction) ?? actionId;
 
   return {
     returnValue,
@@ -350,6 +361,17 @@ export function revalidateAfterAction<TEnv>(
   );
 }
 
+interface ActionRevalidationInput<TEnv> {
+  ctx: HandlerContext<TEnv>;
+  request: Request;
+  env: TEnv;
+  url: URL;
+  handleStore: ReturnType<typeof getRequestContext>["_handleStore"];
+  continuation: ActionContinuation;
+  renderSpan: TraceSpan;
+  reqCtx: ReturnType<typeof getRequestContext>;
+}
+
 async function revalidateAfterActionInner<TEnv>(
   ctx: HandlerContext<TEnv>,
   request: Request,
@@ -359,98 +381,71 @@ async function revalidateAfterActionInner<TEnv>(
   continuation: ActionContinuation,
   renderSpan: TraceSpan,
 ): Promise<Response> {
-  const {
-    returnValue,
-    actionStatus,
-    temporaryReferences,
-    actionContext,
-    errorBoundary,
-  } = continuation;
   const reqCtx = getRequestContext();
-  // Expose the action that triggered this revalidation to the transition({ when })
-  // gate (covers both the error-boundary and success gate calls below). Mirrors
-  // the action fields a revalidate() predicate sees.
-  reqCtx._gateActionId = actionContext?.actionId;
-  reqCtx._gateActionUrl = actionContext?.actionUrl;
-  reqCtx._gateActionResult = actionContext?.actionResult;
-  reqCtx._gateFormData = actionContext?.formData;
-
+  const { actionContext } = continuation;
   // Mark the rest of this request as an action revalidation render. The "use
   // cache" runtime reads this to re-execute a stale entry in the foreground
   // (fresh data in the action response) rather than serving stale + revalidating
   // in the background. See registerCachedFunction in cache/cache-runtime.ts.
   reqCtx._inActionRevalidation = true;
 
+  const trace = INTERNAL_RANGO_DEBUG
+    ? createRoutineTrace("action-revalidation")
+    : undefined;
+  const input: ActionRevalidationInput<TEnv> = {
+    ctx,
+    request,
+    env,
+    url,
+    handleStore,
+    continuation,
+    renderSpan,
+    reqCtx,
+  };
+  try {
+    return await runRoutine(actionRevalidationPlan(input), {
+      trace,
+      owner: reqCtx,
+    });
+  } finally {
+    if (trace) {
+      console.log(
+        `[routine] ${request.method} ${url.pathname} (${trace.name})\n${trace.format()}`,
+      );
+    }
+  }
+}
+
+/**
+ * The action-revalidation plan: render the deferred error boundary if the
+ * action threw and one matched, otherwise match affected segments (falling
+ * back to a full match for redirects) and render the partial payload.
+ */
+function* actionRevalidationPlan<TEnv>(
+  input: ActionRevalidationInput<TEnv>,
+): RoutinePlan<Response> {
+  const { ctx, request, env, url, continuation } = input;
+  const { actionContext, errorBoundary } = continuation;
+
   // Action threw and a boundary matched: render the (already-matched) error
   // boundary here so it runs inside the route-middleware wrapper, exactly like
-  // the success branch below. setRequestContextParams + the payload mirror the
-  // pre-deferral render that executeServerAction used to do inline.
+  // the success branch below.
   if (errorBoundary) {
-    setRequestContextParams(errorBoundary.params, errorBoundary.routeName);
-
-    const errorPayload: RscPayload = {
-      metadata: {
-        pathname: url.pathname,
-        // routerId exposed for the frontend (current app identity); see
-        // rsc-rendering.ts partial branch.
-        routerId: ctx.router.id,
-        segments: gateTransitions(
-          errorBoundary.segments,
-          reqCtx,
-          ctx.router.onError,
-        ),
-        isPartial: true,
-        matched: errorBoundary.matched,
-        diff: errorBoundary.diff,
-        resolvedIds: errorBoundary.resolvedIds,
-        params: errorBoundary.params,
-        isError: true,
-        handles: handleStore.stream(),
-        version: ctx.version,
-      },
-      returnValue,
-    };
-
-    // Intentionally omit attachLocationState for error payloads: location state
-    // is a success-only semantic. Error boundary responses update the error UI
-    // but should not mutate browser history state.
-
-    return renderRscResponse({
-      ctx,
-      request,
-      env,
-      url,
-      payload: errorPayload,
-      temporaryReferences,
-      init: {
-        status: actionStatus,
-        headers: {
-          "content-type": "text/x-component;charset=utf-8",
-          // Router identity for the client's pre-decode integrity check (the
-          // action apply path has no post-decode guard). See response-adapter.
-          "X-RSC-Router-Id": ctx.router.id,
-        },
-      },
-      tracking: {
-        mode: "action-revalidation",
-        routeKey: reqCtx._routeName,
-        actionId: actionContext?.actionId,
-        span: renderSpan,
-      },
-    });
+    return yield* step("render", () =>
+      renderActionBoundaryResponse(input, errorBoundary),
+    );
   }
 
-  const matchResult = await ctx.router.matchPartial(
-    request,
-    { env },
-    actionContext,
+  const matchResult = yield* step("match:partial", () =>
+    matchPartialAndRecord(ctx, request, env, actionContext),
   );
 
   if (!matchResult) {
     // matchPartial returns null when the route is a redirect or no previous-URL
     // context could be resolved. Check for redirect first.
-    const fullMatch = await ctx.router.match(request, { env });
-    setRequestContextParams(fullMatch.params, fullMatch.routeName);
+    const fullMatch = yield* step("match:fallback", () =>
+      matchAndRecordParams(ctx, request, env),
+    );
 
     if (fullMatch.redirect) {
       // Action context is always partial — use X-RSC-Redirect header so
@@ -476,8 +471,108 @@ async function revalidateAfterActionInner<TEnv>(
     );
   }
 
-  // Return updated segments
-  setRequestContextParams(matchResult.params, matchResult.routeName);
+  return yield* step("render", () =>
+    renderRevalidationResponse(input, matchResult),
+  );
+}
+
+/** matchPartial that stamps params/routeName when a result exists. */
+async function matchPartialAndRecord<TEnv>(
+  ctx: HandlerContext<TEnv>,
+  request: Request,
+  env: TEnv,
+  actionContext: ActionContinuation["actionContext"],
+): Promise<
+  Awaited<ReturnType<HandlerContext<TEnv>["router"]["matchPartial"]>>
+> {
+  const matchResult = await ctx.router.matchPartial(
+    request,
+    { env },
+    actionContext,
+  );
+  if (matchResult) {
+    setRequestContextParams(matchResult.params, matchResult.routeName);
+  }
+  return matchResult;
+}
+
+/**
+ * Render the deferred action error boundary. setRequestContextParams + the
+ * payload mirror the pre-deferral render that executeServerAction used to do
+ * inline.
+ */
+function renderActionBoundaryResponse<TEnv>(
+  input: ActionRevalidationInput<TEnv>,
+  errorBoundary: MatchResult,
+): Promise<Response> {
+  const { ctx, request, env, url, handleStore, continuation, reqCtx } = input;
+  const { returnValue, actionStatus, temporaryReferences, actionContext } =
+    continuation;
+
+  setRequestContextParams(errorBoundary.params, errorBoundary.routeName);
+
+  const errorPayload: RscPayload = {
+    metadata: {
+      pathname: url.pathname,
+      // routerId exposed for the frontend (current app identity); see
+      // rsc-rendering.ts partial branch.
+      routerId: ctx.router.id,
+      segments: attachTransitionWhen(errorBoundary.segments, reqCtx),
+      isPartial: true,
+      matched: errorBoundary.matched,
+      diff: errorBoundary.diff,
+      resolvedIds: errorBoundary.resolvedIds,
+      params: errorBoundary.params,
+      routeName: publicRouteName(errorBoundary.routeName),
+      isError: true,
+      handles: handleStore.stream(),
+      version: ctx.version,
+    },
+    returnValue,
+  };
+
+  // Intentionally omit attachLocationState for error payloads: location state
+  // is a success-only semantic. Error boundary responses update the error UI
+  // but should not mutate browser history state.
+
+  return renderRscResponse({
+    ctx,
+    request,
+    env,
+    url,
+    payload: errorPayload,
+    temporaryReferences,
+    init: {
+      status: actionStatus,
+      headers: {
+        "content-type": "text/x-component;charset=utf-8",
+        // Router identity for the client's pre-decode integrity check (the
+        // action apply path has no post-decode guard). See response-adapter.
+        "X-RSC-Router-Id": ctx.router.id,
+      },
+    },
+    tracking: {
+      mode: "action-revalidation",
+      routeKey: input.reqCtx._routeName,
+      actionId: actionContext?.actionId,
+      span: input.renderSpan,
+      onEvent:
+        reqCtx._activeRoutine &&
+        createRenderStageTraceBridge(reqCtx._activeRoutine),
+    },
+  });
+}
+
+/** Render the updated segments after a successful action. */
+function renderRevalidationResponse<TEnv>(
+  input: ActionRevalidationInput<TEnv>,
+  matchResult: NonNullable<
+    Awaited<ReturnType<HandlerContext<TEnv>["router"]["matchPartial"]>>
+  >,
+): Promise<Response> {
+  const { ctx, request, env, url, handleStore, continuation, reqCtx } = input;
+  const { returnValue, actionStatus, temporaryReferences, actionContext } =
+    continuation;
 
   const payload: RscPayload = {
     metadata: {
@@ -485,16 +580,13 @@ async function revalidateAfterActionInner<TEnv>(
       // routerId exposed for the frontend (current app identity); see
       // rsc-rendering.ts partial branch.
       routerId: ctx.router.id,
-      segments: gateTransitions(
-        matchResult.segments,
-        reqCtx,
-        ctx.router.onError,
-      ),
+      segments: attachTransitionWhen(matchResult.segments, reqCtx),
       isPartial: true,
       matched: matchResult.matched,
       diff: matchResult.diff,
       resolvedIds: matchResult.resolvedIds,
       params: matchResult.params,
+      routeName: publicRouteName(matchResult.routeName),
       slots: matchResult.slots,
       handles: handleStore.stream(),
       version: ctx.version,
@@ -524,7 +616,10 @@ async function revalidateAfterActionInner<TEnv>(
       mode: "action-revalidation",
       routeKey: reqCtx._routeName,
       actionId: actionContext?.actionId,
-      span: renderSpan,
+      span: input.renderSpan,
+      onEvent:
+        reqCtx._activeRoutine &&
+        createRenderStageTraceBridge(reqCtx._activeRoutine),
     },
   });
 }

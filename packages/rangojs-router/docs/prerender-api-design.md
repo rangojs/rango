@@ -17,7 +17,7 @@ route was pre-rendered.
 
 ### Completed
 
-- **Prerender handler** - `Prerender(getParams, handler, opts)` API
+- **Prerender handler** - `Prerender(handler, opts?)` (static) and `Prerender(getParams, handler, opts?)` (dynamic); `opts.concurrency` (default 1) renders param sets in parallel
 - **Build-time segment resolution** - `matchForPrerender()` resolves segments with BuildContext
 - **Flight payload storage** - Serialized segments stored in lazily-loaded prerender manifest
 - **Runtime cache-lookup** - Prerender store checked before segment resolution
@@ -30,8 +30,9 @@ route was pre-rendered.
 - **Dev mode** - On-demand rendering via `/__rsc_prerender` endpoint
 - **Intercept pre-rendering** - Intercept variants stored under `/i` key
 - **Render-error handling** - a build-time render throw surfaces to the build (fail
-  by default, or `prerender.onError: "warn"` to skip the URL); `throw new Skip()`
-  in a render fn skips one URL. See [Render Errors](#render-errors).
+  by default, or `prerender.onError: "warn"` to skip the URL), including a
+  component that throws while the tree is encoded; `throw new Skip()` in a render
+  fn skips one URL. See [Render Errors](#render-errors).
 - **Build-time PPR shells (producer B, #699)** - a `Prerender` route that also
   declares the `ppr` path option gets its complete PPR shell entry (HTML prelude +
   postponed state) produced at `vite build` and served from the very first
@@ -55,7 +56,8 @@ route was pre-rendered.
 ### Build Time
 
 ```
-  Vite closeBundle
+  Vite buildStart: discoverRouters() -> expandPrerenderRoutes()
+  (in-process, through the RSC module runner of a temp Vite server)
        |
        v
   For each Prerender route:
@@ -66,7 +68,11 @@ route was pre-rendered.
        c. Serialize segments via RSC Flight protocol
        d. Walk manifest for intercepts targeting this route
        e. If found: resolve intercept handler, serialize intercept segments
-       f. Store entries in prerender manifest (lazy-loaded module):
+       f. Keep the entries in memory
+       |
+       v
+  Vite closeBundle (rsc environment): evict handlers, stage assets, and write
+  the prerender manifest (lazy-loaded module):
           - "routeName/paramHash"     -> asset specifier (main segments + handles)
           - "routeName/paramHash/i"   -> asset specifier (main + intercept segments + handles)
 ```
@@ -201,8 +207,8 @@ type advertises a `meta` contract only the dev implementation honors.
 
 ### Dev Mode (`__PRERENDER_DEV_URL`)
 
-Set by the Vite plugin for non-Node.js RSC runtimes (workerd, Deno). The
-prerender store fetches on-demand from the Vite dev server:
+Set by the Vite plugin in dev (the route-manifest virtual module injects it).
+The prerender store fetches on-demand from the Vite dev server:
 
 ```
 GET /__rsc_prerender?pathname=/blog/hello-world&routeName=blog.post
@@ -248,18 +254,29 @@ Handlers receive `BuildContext` at build time. It is a subset of `HandlerContext
 with request-dependent fields replaced by descriptive error throwers:
 
 ```typescript
+// Public type: `BuildContext` from "@rangojs/router" (src/prerender.ts)
 interface BuildContext<TParams> {
   params: TParams;
   build: true; // Always true at build time
   dev: boolean; // true in Vite dev mode, false during production build
-  use: <T>(handle: Handle<T>) => (data: T) => void;
+  env: DefaultEnv; // Available when buildEnv is configured in rango() (throws otherwise)
+  get(varOrKey): unknown; // variables set by getParams or a parent handler
+  set(varOrKey, value): void; // readable by child layouts and parallels
+  use: <T>(handle: Handle<T>) => HandlePush<T>; // handle push, incl. .defer()
   url: URL; // Synthetic: pattern + params
   pathname: string;
-  env: DefaultEnv; // Available when buildEnv is configured in rango() (throws otherwise)
-  // These always throw descriptive errors:
-  // request, headers, cookies, ctx.redirect, etc.
+  searchParams: URLSearchParams; // always empty
+  search: {}; // always {}
+  reverse: ReverseFunction; // URL generation by route name
+  passthrough: () => PrerenderPassthroughResult; // Passthrough() routes only
 }
+// At runtime the object also carries request-only members (request, headers,
+// res, ...) whose getters throw a descriptive error during pre-rendering.
 ```
+
+`getParams()` receives the smaller `GetParamsContext` (`build`, `dev`, `env`,
+`set`, `reverse`), and `Static()` handlers receive `StaticBuildContext`
+(`build`, `dev`, `env`, `get`, `set`, `use`).
 
 When `buildEnv` is configured in the rango() Vite plugin options, `ctx.env`
 provides the build-time bindings (e.g., KV, D1). This is NOT the live request
@@ -284,11 +301,24 @@ instead of converted into an error segment, so it reaches the build loop
 (`expandPrerenderRoutes`). The live request path leaves the flag unset, so runtime
 error boundaries are unchanged.
 
+`throwOnError` only sees what the handler itself throws. A component in the tree
+it returns can still throw later, while the tree is encoded: say an async server
+component whose fetch fails at build. Flight doesn't reject there. It reports the
+error through `onError` and finishes normally, writing an error row
+(`1:E{"digest":""}`) that throws wherever the decoded tree renders. Until #914 the
+build logged `OK` for that too, and the route served its error boundary until the
+next build. So `matchForPrerender` and `renderStaticSegment` pass an `onError` to
+every encode (segments, intercept segments, handles) and re-throw the first error
+collected. A main-route error is thrown before any intercept handler runs, as a
+handler throw would be. From there it takes the handler-throw path: the policy
+below applies, and a `Skip` thrown by such a component skips the URL.
+
 What the build then does is `prerender.onError` (a rango() plugin option):
 
 | build handler outcome             | `"fail"` (default)                      | `"warn"`                  |
 | --------------------------------- | --------------------------------------- | ------------------------- |
 | render throws                     | build fails, names the URL + the error  | warn, skip baking the URL |
+| a component throws while encoding | build fails, names the URL + the error  | warn, skip baking the URL |
 | `throw new Skip()` in the render  | URL skipped (logged `SKIP`)             | URL skipped               |
 | `ctx.passthrough()` (Passthrough) | defer to the live handler (no artifact) | defer to the live handler |
 
@@ -324,7 +354,8 @@ produces the route's complete PPR shell entry (`ShellCacheEntry`: HTML prelude,
 postponed resume state, snapshot, tag union), so the FIRST request after a
 deploy serves `x-rango-shell: HIT` with zero runtime capture. One entry format,
 two producers (runtime capture / build), one consumer — the worker cannot tell
-where an entry came from. Design: `docs/design/shell-fast-path.md`.
+where an entry came from. Design:
+[shell-fast-path.md](../../../docs/design/shell-fast-path.md).
 
 ### Build flow
 
@@ -335,7 +366,10 @@ where an entry came from. Design: `docs/design/shell-fast-path.md`.
    `buildApp` post hook) runs AFTER every environment bundle is written — the
    prelude embeds the BUILT client bootstrap URL, which does not exist at
    buildStart. It reuses the buildStart temp server (kept alive on discovery
-   state), seeds an in-realm prerender store from the retained payloads, then
+   state, and created without a file watcher: the build's own
+   `named-routes.gen.ts` rewrite can otherwise full-reload the realm and
+   drop the route tries discovery installed, #947), seeds an in-realm
+   prerender store from the retained payloads, then
    runs global and route middleware before producer A's capture core
    (`prerender/build-shell-capture.ts`, built on `deriveShellCaptureContext` +
    `captureAndStoreShell`) per URL. Middleware sees `ctx.build === true`;
@@ -584,6 +618,58 @@ Actions do not re-render pre-rendered segments. The frozen handler output
 stays. Loaders can be revalidated by actions. With `Passthrough()` routes and
 `revalidate()`, the live handler can re-render.
 
+A client component can directly import and invoke a module-level action from a
+`Passthrough(Prerender(...), liveHandler) + ppr` page. If actions should leave
+the frozen build-time tree mounted, attach
+`revalidate(({ actionId }) => (actionId ? false : undefined))`: action
+revalidation is suppressed while ordinary navigations retain their default
+params-changed behavior. The action result, including a nested pending value,
+then streams into `useActionState` without replacing the client boundary with
+the Passthrough live handler. This opt-out is part of the streaming guarantee:
+default Passthrough action revalidation replaces the prerendered client boundary
+with the live handler, so local `useActionState` state from that boundary does
+not survive. The dev + production fixtures therefore pin the retained-tree path
+for both a producer-B document HIT and prerender-store partial navigation; they
+do not claim that a streamed action result survives default tree replacement.
+
+#### Embedded closure-bound actions
+
+A `Static` or `Prerender` handler may create an inline `"use server"` action,
+close over build-time scope such as an article id, and pass it to a client
+component. Because prerendering is a build-time cache, that reference must
+survive serialize -> store -> deserialize -> re-serialize -> invoke:
+
+1. `hashServerRefs` rewrites the build-discovery server's dev-style reference id
+   to the production hash.
+2. Export-only loader modules are replaced with non-RSC scan stubs before
+   plugin-rsc performs import-only analysis, keeping their server implementation
+   imports out of the SSR graph and the production reference manifest intact.
+3. `segment-codec` deserializes with plugin-rsc's
+   `preserveServerReferences` option so a cache hit re-emits the opaque
+   reference instead of resolving it to a raw function.
+4. Build discovery and the runtime share the key `configureEncryptionKey`
+   (`src/vite/encryption-key.ts`) sets up, allowing the runtime to decrypt bound
+   arguments captured while prerendering.
+   `rango({ encryptionKey: process.env.RANGO_ENCRYPTION_KEY })` (base64-encoded
+   32 bytes, validated when `rango()` is called; `undefined` falls back to the
+   `RANGO_ENCRYPTION_KEY` environment variable) pins a stable key across builds;
+   otherwise each build mints a random one. Prerender entries are rewritten every
+   build, so the per-build default is safe here -- the cross-deploy hazard
+   applies to runtime cache stores; see the encryption-key note in
+   `use-cache-api-design.md`. A handler that renders an inline action with bound
+   arguments encrypts with a random IV, so its payload differs on every build and
+   gives its router a new cache version on every build
+   (`docs/design/per-app-cache-version.md`).
+
+A pure `Prerender` route has no live handler after build. Its action re-render
+therefore falls back to the stored prerender entry; the action has already run
+and `useActionState` applies its result client-side. `Passthrough` routes retain
+their live handler and continue to re-render fresh.
+
+The captured scope is frozen at build, while the action body and request context
+remain live at invocation. Dev and production coverage lives in
+`e2e/prerender-inline-action.test.ts` and the Cloudflare inline-action suite.
+
 ### Handle Data
 
 Values pushed via `ctx.use()` during pre-rendering are baked into the Flight
@@ -615,7 +701,7 @@ At runtime, the cache-lookup middleware uses these flags:
 | `src/router/match-middleware/cache-lookup.ts`                                                                                                                        | Runtime prerender store lookup                                                                                                                           |
 | `src/prerender/store.ts`                                                                                                                                             | PrerenderStore interface + dev/prod implementations                                                                                                      |
 | `src/prerender/param-hash.ts`                                                                                                                                        | Deterministic param hashing for store keys                                                                                                               |
-| `src/cache/cache-scope.ts`                                                                                                                                           | RSC serialize/deserialize for segments                                                                                                                   |
+| `src/cache/segment-codec.ts` (`serializeSegments`, `deserializeSegments`)                                                                                            | RSC serialize/deserialize for segments                                                                                                                   |
 | `src/vite/router-discovery.ts` (`closeBundle`) + `src/vite/discovery/prerender-collection.ts` (`expandPrerenderRoutes`) + `src/vite/discovery/bundle-postprocess.ts` | Collects prerender data, stages assets, writes manifest + injects `__loadPrerenderManifestModule` (`src/vite/index.ts` is only the public-API barrel)    |
 | `src/router/match-middleware/intercept-resolution.ts`                                                                                                                | Runtime intercept handling (`handleCacheHitIntercept`)                                                                                                   |
 | `src/vite/discovery/shell-prerender-phase.ts` (buildApp post) + `src/prerender/build-shell-capture.ts` (`captureShellForBuild`)                                      | Producer B: build-time PPR shell capture + `__ps` asset/manifest staging (#699); replays middleware with `ctx.build === true` and honors `ctx.dynamic()` |

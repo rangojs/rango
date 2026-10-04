@@ -1,6 +1,11 @@
 import { Meta, Prerender, Passthrough, createVar } from "@rangojs/router";
 import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
+import {
+  InlineLikeButton,
+  type InlineActionState,
+} from "../components/InlineLikeButton.js";
+import { buildInlineActionState } from "../inline-action-helpers.js";
 
 interface PaginationData {
   current: number;
@@ -375,6 +380,20 @@ export const ArticleDetail = Prerender(
       href: ctx.reverse("articles.detail", { slug: article.slug }),
     });
 
+    // Inline "use server" like action embedded in this build-time-prerendered
+    // article. It closes over the article slug (frozen at build, per article);
+    // the body runs live on click (fresh value + live cookie). On a prerender
+    // hit the handler is not re-run, so the action must resolve from the stored
+    // Flight -- exercising the embedded-action path on a build-time cache hit.
+    const articleSlug = article.slug;
+    async function likeArticle(
+      _prev: InlineActionState,
+      _formData: FormData,
+    ): Promise<InlineActionState> {
+      "use server";
+      return buildInlineActionState(articleSlug);
+    }
+
     return (
       <article data-testid="article-detail">
         <nav
@@ -404,6 +423,7 @@ export const ArticleDetail = Prerender(
         >
           {article.content}
         </div>
+        <InlineLikeButton capturedId={articleSlug} action={likeArticle} />
         <footer
           data-testid="prerender-info"
           style={{

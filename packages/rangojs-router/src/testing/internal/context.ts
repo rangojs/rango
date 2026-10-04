@@ -19,6 +19,7 @@ import { normalizeBasename } from "../../router/basename.js";
 import {
   seedVariables,
   resolveSeededStateCookieName,
+  seededVersions,
   type VarsInit,
   type StateCookieSeed,
 } from "./seed-vars.js";
@@ -164,7 +165,7 @@ export function createTestRequestContext<TEnv>(
     cacheStore: opts.cacheStore,
     cacheProfiles: opts.cacheProfiles,
     stateCookieName,
-    version: opts.stateCookie?.version,
+    versions: seededVersions(opts.stateCookie),
   });
   if (opts.basename !== undefined)
     ctx._basename = normalizeBasename(opts.basename);
@@ -250,7 +251,7 @@ export function snapshotRunEffects<TEnv>(ctx: RequestContext<TEnv>): {
   locationState: Record<string, unknown>;
 } {
   return {
-    cookies: { ...ctx.cookies() },
+    cookies: ctx._readCookies(),
     locationState: resolveLocationStateEntries(ctx._locationState ?? []),
   };
 }
@@ -347,7 +348,7 @@ export function buildRunSnapshot<TEnv>(
  *
  * @example
  * ```ts
- * const { result, cookies, response, thrown } = await runInRequestContext(
+ * const { cookies, headers, response, thrown } = await runInRequestContext(
  *   () => loginAction(input), // sets a session cookie, then `throw redirect("/app")`
  *   {
  *     env,

@@ -220,6 +220,69 @@ describe("createSSRHandler", () => {
     });
   });
 
+  describe("progressiveChunkSize", () => {
+    const fizzOptions = (deps: SSRDependencies) =>
+      vi.mocked(deps.renderToReadableStream).mock.calls[0]![1]!;
+
+    it("forwards an explicit value to renderToReadableStream", async () => {
+      const deps = createMockDeps({ progressiveChunkSize: 4096 });
+      const renderHTML = createSSRHandler(deps);
+
+      await renderHTML(createMockRscStream());
+
+      expect(fizzOptions(deps).progressiveChunkSize).toBe(4096);
+    });
+
+    it("auto-raises to MAX_SAFE_INTEGER when a payload segment carries awaitBeforeFlush", async () => {
+      const deps = createMockDeps({
+        createFromReadableStream: vi.fn().mockResolvedValue({
+          metadata: {
+            pathname: "/",
+            matched: ["/"],
+            segments: [
+              { id: "layout" },
+              { id: "loader-products", awaitBeforeFlush: true },
+            ],
+          },
+        }),
+      });
+      const renderHTML = createSSRHandler(deps);
+
+      await renderHTML(createMockRscStream());
+
+      expect(fizzOptions(deps).progressiveChunkSize).toBe(
+        Number.MAX_SAFE_INTEGER,
+      );
+    });
+
+    it("stays unset when no segment carries the flag", async () => {
+      const deps = createMockDeps();
+      const renderHTML = createSSRHandler(deps);
+
+      await renderHTML(createMockRscStream());
+
+      expect("progressiveChunkSize" in fizzOptions(deps)).toBe(false);
+    });
+
+    it("explicit value disables the auto-raise", async () => {
+      const deps = createMockDeps({
+        progressiveChunkSize: 4096,
+        createFromReadableStream: vi.fn().mockResolvedValue({
+          metadata: {
+            pathname: "/",
+            matched: ["/"],
+            segments: [{ id: "loader-products", awaitBeforeFlush: true }],
+          },
+        }),
+      });
+      const renderHTML = createSSRHandler(deps);
+
+      await renderHTML(createMockRscStream());
+
+      expect(fizzOptions(deps).progressiveChunkSize).toBe(4096);
+    });
+  });
+
   // These tests use the real renderToReadableStream so that SsrRoot actually
   // renders. This exercises createSsrEventController, consumeAsyncGenerator,
   // and NavigationStoreContext wiring — code paths that the mocked renderer

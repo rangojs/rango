@@ -2,12 +2,18 @@
 // Tag-marker memo
 // ============================================================================
 //
-// Per-request memoization of tag-invalidation marker reads, plus the prefix and
-// sentinel used by the optional per-colo L1 marker cache. Extracted from
-// cf-cache-store.ts; the WeakMaps stay MODULE SINGLETONS here (the module is
-// evaluated once), so binding-keyed memo semantics are unchanged: the maps are
-// keyed by the request-context object then the store INSTANCE, identical to
-// before the move.
+// CFCacheStore's per-request tag-marker state: the data families' marker memo
+// and in-flight reads, the PPR shell read's own marker record, and the prefix
+// and sentinel of the optional per-colo L1 marker cache. The maps are module
+// singletons keyed by the request-context object, then the store INSTANCE.
+// The request's own invalidations are not here: they are the per-request
+// mask (request-tag-mask.ts), which every marker check consults first.
+
+import type { MarkerMemoOutcome } from "../isolate-tag-memo.js";
+import {
+  perRequestStoreValue,
+  type PerRequestStoreMap,
+} from "../request-tag-mask.js";
 
 /**
  * Cache-API path prefix for the optional per-colo L1 cache of tag-invalidation
@@ -42,38 +48,28 @@ export const TAG_MARKER_ABSENT = "none";
  * short-circuits when a store has no KV — and, in purge mode, through
  * isL1Invalidated(), which consults ONLY this memo on an L1 hit (no KV read),
  * so a purge-mode store allocates the memo even without KV for same-request
- * read-your-own-writes after updateTag().
+ * read-your-own-writes after updateTag()/revalidateTag().
  *
  * Without the memo, isGloballyInvalidated() issues a KV read per tag on every
  * tagged cache read, so a page composed of many segments/items sharing a tag
  * pays that cost N times. The memo collapses it to one KV read per distinct tag
- * per (request, store). invalidateTags() writes through so a same-request
- * updateTag() stays read-your-own-writes consistent (the action's own re-render
- * sees its own invalidation from the memo, without a re-read).
+ * per (request, store). It holds only values read from L1 or KV: the request's
+ * own invalidations are the mask (request-tag-mask.ts), checked before any
+ * marker read, so a value in the memo is always safe to publish.
  *
  * It does NOT span requests, so a hot single-entry route still pays one KV read
  * per request; that read hits Cloudflare KV's own edge read cache for hot keys.
+ * A context derived from the request (Object.create(reqCtx): a PPR HIT tail, a
+ * shell capture) keeps a memo of its own, so its marker reads stay its own.
  */
-const tagMarkerMemo = new WeakMap<
-  object,
-  WeakMap<object, Map<string, number | null>>
->();
+const tagMarkerMemo: PerRequestStoreMap<Map<string, number | null>> =
+  new WeakMap();
 
 export function getTagMarkerMemo(
   ctx: object,
   store: object,
 ): Map<string, number | null> {
-  let byStore = tagMarkerMemo.get(ctx);
-  if (!byStore) {
-    byStore = new WeakMap();
-    tagMarkerMemo.set(ctx, byStore);
-  }
-  let memo = byStore.get(store);
-  if (!memo) {
-    memo = new Map();
-    byStore.set(store, memo);
-  }
-  return memo;
+  return perRequestStoreValue(tagMarkerMemo, ctx, store, () => new Map());
 }
 
 /**
@@ -85,24 +81,43 @@ export function getTagMarkerMemo(
  * collapses those to a single KV read. Entries are dropped once resolved (the
  * value is then in the memo), so this only spans the concurrent read window.
  */
-const tagMarkerInflight = new WeakMap<
-  object,
-  WeakMap<object, Map<string, Promise<number | null>>>
->();
+const tagMarkerInflight: PerRequestStoreMap<
+  Map<string, Promise<number | null>>
+> = new WeakMap();
+
+/**
+ * A request's PPR shell-read marker reads (issue #941), kept apart from the
+ * per-request memo above, HIT or MISS. A shell read may answer a marker from
+ * the isolate marker memo (isolate-tag-memo.ts), up to `markerMaxStaleMs`
+ * old; the data families must never see that value. Scar tissue: first the
+ * shell read wrote into the per-request memo, so a MISS request rendered and
+ * stored its `"use cache"` data under a stale marker; then a HIT copied its
+ * entry's tags across, which a partial navigation's matchPartial (on the same
+ * context as its replay gate's getShell) read, and a `cache()` segment it
+ * wrote kept the stale item past `markerMaxStaleMs` under a fresh taggedAt.
+ */
+export interface ShellMarkerReads {
+  /** The read of each tag, settled or in flight (collapses concurrent reads). */
+  reads: Map<string, Promise<number | null>>;
+  /** How the isolate memo answered each tag (the marker row's `memo=`). */
+  outcomes: Map<string, MarkerMemoOutcome>;
+}
+
+const shellMarkerReads: PerRequestStoreMap<ShellMarkerReads> = new WeakMap();
+
+export function getShellMarkerReads(
+  ctx: object,
+  store: object,
+): ShellMarkerReads {
+  return perRequestStoreValue(shellMarkerReads, ctx, store, () => ({
+    reads: new Map(),
+    outcomes: new Map(),
+  }));
+}
 
 export function getTagMarkerInflight(
   ctx: object,
   store: object,
 ): Map<string, Promise<number | null>> {
-  let byStore = tagMarkerInflight.get(ctx);
-  if (!byStore) {
-    byStore = new WeakMap();
-    tagMarkerInflight.set(ctx, byStore);
-  }
-  let inflight = byStore.get(store);
-  if (!inflight) {
-    inflight = new Map();
-    byStore.set(store, inflight);
-  }
-  return inflight;
+  return perRequestStoreValue(tagMarkerInflight, ctx, store, () => new Map());
 }

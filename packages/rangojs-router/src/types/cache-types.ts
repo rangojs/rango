@@ -1,12 +1,13 @@
 /**
- * Context passed to cache condition/key/tags functions.
+ * Context passed to cache condition/key/tags functions (the full
+ * RequestContext).
  *
- * This is a subset of RequestContext that's guaranteed to be available
- * during cache key generation (before middleware runs).
- *
- * Note: While the full RequestContext is passed, middleware-set variables
- * read via `ctx.get()` may not be populated yet since cache lookup happens
- * before middleware execution.
+ * Ordering: global middleware wraps the whole request, and on RSC routes route
+ * middleware wraps the match/render pipeline (rsc/handler.ts executeRender), so
+ * variables they set before `next()` are readable via `ctx.get()`. On response
+ * routes the cache lookup runs BEFORE route middleware, which wraps only the
+ * handler run on a miss (rsc/response-route-handler.ts); only global-middleware
+ * variables are populated there.
  */
 export type { RequestContext as CacheContext } from "../server/request-context.js";
 
@@ -71,7 +72,13 @@ export interface CacheOptions<TEnv = unknown> {
   /**
    * Override the cache store for this boundary.
    * When specified, this boundary and its children use this store
-   * instead of the app-level store from handler config.
+   * instead of the app-level store from handler config. The records of a
+   * boundary with a store here are partitioned by the `keyGenerator` of each
+   * enclosing cache() without a `key` whose store differs, the app-level
+   * store included: under `cache(() => [...])` on an app store with a
+   * `keyGenerator`, `cache({ store })` records are split by its result too.
+   * Likewise, without a `key` of its own, this store's `keyGenerator`
+   * partitions a nested cache() on another store.
    *
    * Useful for:
    * - Different backends per route section (memory vs KV vs Redis)
@@ -107,9 +114,12 @@ export interface CacheOptions<TEnv = unknown> {
   /**
    * Conditional cache read function.
    * Return false to skip cache for this request (always fetch fresh).
+   * It gates every cache() nested under this one too: a nested boundary
+   * caches only when every enclosing condition allows it.
    *
    * Has access to full RequestContext including env, request, params, cookies, etc.
-   * Note: Middleware-set variables read via `ctx.get()` may not be populated yet.
+   * Runs after global and route middleware on RSC routes; on response routes,
+   * before route middleware (see CacheContext).
    *
    * @example
    * ```typescript
@@ -128,10 +138,14 @@ export interface CacheOptions<TEnv = unknown> {
 
   /**
    * Custom cache key function - FULL OVERRIDE.
-   * Bypasses default key generation AND store's keyGenerator.
+   * Bypasses default key generation AND store's keyGenerator. The result is
+   * stored namespaced (`key:` plus its URI encoding), so no value it returns
+   * names another route's record; a nested cache() keys its records within
+   * this partition.
    *
    * Has access to full RequestContext including env, request, params, cookies, etc.
-   * Note: Middleware-set variables read via `ctx.get()` may not be populated yet.
+   * Runs after global and route middleware on RSC routes; on response routes,
+   * before route middleware (see CacheContext).
    *
    * @example
    * ```typescript
@@ -151,9 +165,11 @@ export interface CacheOptions<TEnv = unknown> {
 
   /**
    * Tags for cache invalidation.
-   * Can be a static array or a function that returns tags.
+   * Can be a static array or a function that returns tags. They tag the
+   * records of every cache() nested under this one too.
    *
-   * The built-in `MemorySegmentCacheStore` and `CFCacheStore` index by tag.
+   * The built-in `MemorySegmentCacheStore`, `CFCacheStore`, and
+   * `VercelCacheStore` index by tag.
    * Invalidate on demand with `updateTag(...tags)` (awaitable, read-your-own-writes;
    * for server actions) or `revalidateTag(...tags)` (background hard-purge, not
    * awaited; for route handlers / webhooks). For `CFCacheStore`, distributed

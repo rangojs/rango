@@ -8,6 +8,7 @@
 export interface OnErrorRecord {
   phase: string;
   message: string;
+  pathname?: string;
   actionId?: string;
   metadata?: Record<string, unknown>;
 }

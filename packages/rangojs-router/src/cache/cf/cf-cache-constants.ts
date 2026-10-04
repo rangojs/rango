@@ -85,8 +85,15 @@ export const MAX_REVALIDATION_INTERVAL = 30;
  *
  * This is the default; override per store via
  * `CFCacheStoreOptions.edgeLookupTimeoutMs` (<= 0 disables the budget).
+ *
+ * 25ms, raised from 10: Workers logs (production pilot) showed the
+ * 10ms budget firing frequently on cold colos where the first Cache API touch
+ * is slow but healthy — each false positive downgrades a warm L1 HIT to an
+ * L2/render round trip that costs far more than the 15ms of extra patience.
+ * A genuinely degraded colo still gets cut off; tune per store for
+ * shell-critical routes.
  */
-export const EDGE_LOOKUP_TIMEOUT_MS = 10;
+export const EDGE_LOOKUP_TIMEOUT_MS = 25;
 
 /**
  * Maximum time (ms) to wait for the BODY of a matched L1 entry to be read
@@ -125,3 +132,15 @@ export const EDGE_READ_TIMEOUT_MS = 20;
  * Override per store via `CFCacheStoreOptions.kvReadTimeoutMs` (<= 0 disables).
  */
 export const KV_READ_TIMEOUT_MS = 170;
+
+/**
+ * Floor (ms) on the budget for reading a PPR shell's snapshot, the rest of a
+ * frame whose head and prelude were already read. A document HIT has sent
+ * its prelude by then and cannot render the rest without the snapshot's doc
+ * record, so a timed-out read degrades the HIT (the entry is replaced, the
+ * page reloads once into a MISS; rsc-rendering.ts degradeUnreplayableShell).
+ * That costs far more than waiting, so a slow body read gets at least this
+ * long; `kvReadTimeoutMs` above it wins, and `kvReadTimeoutMs <= 0` still
+ * disables the bound.
+ */
+export const SHELL_SNAPSHOT_READ_MIN_TIMEOUT_MS = 1000;

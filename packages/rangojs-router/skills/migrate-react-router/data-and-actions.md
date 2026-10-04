@@ -20,6 +20,8 @@ function ProductPage() {
 }
 
 // Rango: handler fetches and renders directly
+import type { Handler } from "@rangojs/router";
+
 const ProductPage: Handler<"product"> = async (ctx) => {
   const product = await getProduct(ctx.params.slug);
   return <div>{product.name}</div>;
@@ -40,9 +42,22 @@ Use it only when you need capabilities beyond what the handler provides:
   to all child routes via `ctx.use(Loader)` or `useLoader(Loader)`
 - **Independent revalidation** — `revalidate()` on a specific loader after actions
 - **Per-loader caching** — `loader(L, () => [cache({ ttl: 60 })])`
+- **RR-loader-shaped authority** — a loader that `throw redirect(...)`s or
+  throws a 404 keeps that shape: Rango loaders throw `redirect()`/`notFound()`
+  too (one caveat: a Rango loader redirect is a client-side navigate on
+  document loads, never an HTTP 302 — pre-stream 302s move to middleware)
+- **`meta({ data })` / `handle` exports** — data-derived page metadata becomes
+  a handle push from the loader body (`ctx.use(Meta)({ title: data.name })`),
+  with `loader(L, { ssr: false })` when it must be in the SSR'd head (not
+  RR7's `ssr: false` SPA mode, which has no route-wide Rango equivalent: the
+  loader flag makes the server settle that loader before the first flush)
 
-If the React Router loader just fetches data for its page component, merge it
-into the handler. See `/loader` for when the live data layer is useful.
+If the React Router loader just fetches data for its page component AND the
+component can become a server component, merge it into the handler. If the
+component stays a client component, port the whole group with `clientUrls()`
+instead — loader, `useLoader` read, and browser-run `revalidate()` keep the RR
+route-module shape (see the "Two target shapes" section in the main skill and
+`/client-urls`). See `/loader` for when the live data layer is useful.
 
 ### Actions
 
@@ -65,6 +80,7 @@ function EditProfile() {
 }
 
 // Rango: "use server" action + native form or useActionState
+// actions/profile.ts
 "use server";
 import { redirect } from "@rangojs/router";
 
@@ -73,7 +89,10 @@ export async function updateProfile(formData: FormData): Promise<void> {
   throw redirect("/profile");
 }
 
-// Client component:
+// EditProfile.tsx — a server or client component; passing the action itself
+// (not a wrapper function) keeps the form working with JavaScript disabled.
+import { updateProfile } from "./actions/profile";
+
 function EditProfile() {
   return (
     <form action={updateProfile}>
@@ -111,9 +130,12 @@ function ProductPrice() {
 }
 ```
 
-`useLoader()` provides live data that stays fresh — it re-fetches on navigation
-and after actions (controlled by `revalidate()`). This is different from
-`useLoaderData()` which just reads a snapshot.
+`useLoader()` provides live data that stays fresh — the loader re-runs on
+navigation and after actions (controlled by `revalidate()`), and the result also
+exposes `isLoading`, `error`, `load`, and `refetch`. Register the loader on the
+route (`loader(PriceLoader)`) so its data is in the tree the component reads;
+the read suspends until it arrives, so keep a `<Suspense>` or `loading()` above
+it. See `/loader` and `/hooks`.
 
 ### useActionData
 
@@ -144,8 +166,12 @@ function EditForm() {
 // Rango: useActionState (standard React hook)
 "use client";
 import { useActionState } from "react";
-import { saveForm } from "../actions"; // "use server" function
+// "use server" function with the useActionState shape:
+//   export async function saveForm(prev: State, formData: FormData): Promise<State>
+import { saveForm } from "../actions";
 
+// Pass the imported action straight to useActionState — not an inline closure —
+// so the form still posts and re-renders with JavaScript disabled.
 function EditForm() {
   const [state, action, pending] = useActionState(saveForm, null);
   return (

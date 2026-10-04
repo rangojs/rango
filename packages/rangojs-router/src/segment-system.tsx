@@ -1,13 +1,21 @@
 import * as React from "react";
-import { createElement, type ReactNode, type ComponentType } from "react";
+import {
+  createElement,
+  type ReactNode,
+  type ComponentType,
+  isValidElement,
+} from "react";
 import { OutletProvider } from "./outlet-provider.js";
+import { withOptimisticCommitNone } from "./browser/optimistic-commit.js";
 import { MountContextProvider } from "./browser/react/mount-context.js";
 import type { ResolvedSegment, RootLayoutProps } from "./types.js";
 import { decodeLoaderResults } from "./decode-loader-results.js";
+import { LoaderRedirect } from "./loader-redirect.js";
 import { invariant } from "./errors.js";
 import {
   RouteContentWrapper,
   LoaderBoundary,
+  StreamedLoaderErrorBoundary,
 } from "./route-content-wrapper.js";
 import { RootErrorBoundary } from "./root-error-boundary.js";
 import { INTERNAL_RANGO_DEBUG } from "./internal-debug.js";
@@ -39,8 +47,9 @@ function segDebugLog(msg: string, details?: Record<string, unknown>): void {
   console.log(prefix);
 }
 
-// ViewTransition is only available in React experimental.
-// Access via namespace import to avoid compile-time errors on stable React.
+// ViewTransition ships in React 19.3+ (and experimental builds); older stable
+// releases lack it. Feature-detect via the namespace import so the router
+// compiles against any supported React and degrades to a no-op boundary.
 const ReactViewTransition: any =
   "ViewTransition" in React ? (React as any).ViewTransition : null;
 
@@ -113,6 +122,17 @@ export interface RenderSegmentsOptions {
    */
   forceAwait?: boolean;
 
+  /** Seeded descendant client-route pending state for testing. */
+  outletPending?: boolean;
+
+  /**
+   * This commit's transition({ when }) decision was false
+   * (browser/transition-when.ts): the navigation is urgent, so no segment
+   * animates. Every router <ViewTransition> stays in the tree with each class
+   * "none", so the element type never changes; keys never read this (#995).
+   */
+  transitionGatedOff?: boolean;
+
   /**
    * Intercept segments to inject into the tree.
    * These are parallel segments from intercept routes that need to be
@@ -131,15 +151,47 @@ export interface RenderSegmentsOptions {
   rootLayout?: ComponentType<RootLayoutProps>;
 }
 
+/**
+ * On a gated-off commit every segment keeps its <ViewTransition> so the
+ * element type never changes with a per-navigation `transition({ when })`
+ * decision (#995), but animates nothing: "none" for every class, whatever the
+ * transition type.
+ */
+const GATED_OFF_CLASSES = {
+  enter: "none",
+  exit: "none",
+  update: "none",
+  share: "none",
+  default: "none",
+} as const;
+
 function createViewTransitionBoundary(
   transition: NonNullable<ResolvedSegment["transition"]>,
   children: ReactNode,
 ): ReactNode {
-  // `viewTransition` is a router-specific flag (boundary opt-out), not a React
-  // <ViewTransition> prop — strip it so it never reaches React.
-  const { viewTransition: _viewTransition, ...vtProps } = transition;
+  // `viewTransition` (boundary opt-out) and `when` (the browser-run gate) are
+  // router fields, not React <ViewTransition> props — strip them.
+  const {
+    viewTransition: _viewTransition,
+    when: _when,
+    ...vtProps
+  } = transition;
   return createElement(ReactViewTransition, {
     ...vtProps,
+    // The commit after an optimistic clientUrls() presentation repaints the
+    // same pixels; it must not animate a second time (browser/optimistic-commit.ts).
+    // `default` always carries the mapping; an unset direction already falls
+    // through to it, so only set directions need their own merge.
+    ...(vtProps.enter !== undefined && {
+      enter: withOptimisticCommitNone(vtProps.enter),
+    }),
+    ...(vtProps.exit !== undefined && {
+      exit: withOptimisticCommitNone(vtProps.exit),
+    }),
+    ...(vtProps.update !== undefined && {
+      update: withOptimisticCommitNone(vtProps.update),
+    }),
+    default: withOptimisticCommitNone(vtProps.default),
     children,
   });
 }
@@ -173,6 +225,53 @@ function wrapDefaultOutletContent(
   }
 
   return createViewTransitionBoundary(transition, content);
+}
+
+/**
+ * Per-loader stream map for read-site suspension. { ssr: false } loaders were
+ * awaited before flush (fresh.ts), so deliver the SETTLED result, not the
+ * settled promise: the read site decodes synchronously instead of use()ing a
+ * Flight chunk whose fulfilled-at-read-time status is a scheduling race the
+ * SSR-completeness contract must not depend on. Unflagged siblings keep the
+ * promise (deliberate streaming). Flagged ids are collected as input for the
+ * dev SSR-suspension diagnostic (ssr-suspension-warning.ts).
+ *
+ * The settled results also go through decodeLoaderResults here: a settled
+ * redirect()/notFound() (or an error with an errorBoundary() fallback) must
+ * be resolved to its node while the tree is built, exactly as the
+ * forceAwait/action lanes do, because the read-site throw has no boundary on
+ * the document lane — flagged content renders without Suspense and a layout
+ * reader sits above every boundary, so the throw is a Fizz shell error (500).
+ * `settledFallback` is that node; the caller plants it and, for a redirect,
+ * replaces the whole page (an ancestor reading the loader would still throw).
+ */
+async function buildLoaderStreams(loaders: ResolvedSegment[]): Promise<{
+  streams: Record<string, unknown>;
+  awaitedIds: string[] | undefined;
+  settledFallback: ReactNode | undefined;
+}> {
+  const streams: Record<string, unknown> = {};
+  let awaitedIds: string[] | undefined;
+  let awaitedValues: unknown[] | undefined;
+  for (const l of loaders) {
+    if (l.awaitBeforeFlush) {
+      const value = await l.loaderData;
+      streams[l.loaderId!] = value;
+      (awaitedIds ??= []).push(l.loaderId!);
+      (awaitedValues ??= []).push(value);
+    } else {
+      streams[l.loaderId!] = l.loaderData;
+    }
+  }
+  const settledFallback = awaitedIds
+    ? (decodeLoaderResults(awaitedValues!, awaitedIds).errorFallback ??
+      undefined)
+    : undefined;
+  return { streams, awaitedIds, settledFallback };
+}
+
+function isLoaderRedirectNode(node: ReactNode): boolean {
+  return isValidElement(node) && node.type === LoaderRedirect;
 }
 
 /**
@@ -231,7 +330,9 @@ export async function renderSegments(
     isAction,
     interceptSegments,
     forceAwait,
+    outletPending = false,
     rootLayout: RootLayout,
+    transitionGatedOff,
   } = options || {};
 
   const segDebug = INTERNAL_RANGO_DEBUG;
@@ -284,8 +385,11 @@ export async function renderSegments(
   // same-route navigation reconciles (holds content) instead of remounting. The
   // value is a static property of the route's position in the tree, so it is the
   // same on every render of that route (SSR, navigation, action) — the keys
-  // never drift. Cross-route navigation still remounts: different routes have
-  // different segment ids regardless of transition scope.
+  // never drift. It reads the static `transition` config only, never the
+  // per-navigation `when` decision (transitionGatedOff): a server-side `when`
+  // used to delete `transition`, which flipped this value and remounted the
+  // route twice (#995). Cross-route navigation still remounts: different routes
+  // have different segment ids regardless of transition scope.
   const inTransitionScope = normalizedSegments.some(
     (s) =>
       s.transition != null &&
@@ -305,6 +409,13 @@ export async function renderSegments(
       `Expected layout, route, error, or notFound segment, got ${node.segment.type}`,
     );
     const { component, id, params, loading } = node.segment;
+    // clientUrls() group routes: ONE React key and ONE wrapper shape per group
+    // mount (no LoaderBoundary/RouteContentWrapper — ClientUrlsRoot renders
+    // loading() itself), so an in-group navigation reconciles the mounted
+    // ClientUrlsRoot: the optimistic destination keeps its instance across the
+    // commit and same-route param navs hold instead of remounting. The
+    // server-side loading value still drives PPR masking and SSR.
+    const clientGroup = node.segment.clientGroup;
     const segNodeStart = segDebug ? performance.now() : 0;
 
     // Param-agnostic keys are opt-in via the transition() DSL (see
@@ -340,7 +451,10 @@ export async function renderSegments(
             .map(([k, v]) => `${k}=${v}`)
             .join(",")
         : "";
-    const key = paramStr ? `${id}-${paramStr}` : id;
+    // Route identity the per-route remount used to provide; group routes key
+    // by the group instead and pass it to the error boundary as its resetKey.
+    const idParamsKey = paramStr ? `${id}-${paramStr}` : id;
+    const key = clientGroup ? `cg:${clientGroup}` : idParamsKey;
 
     const loaderEntries = node.loaders.filter(
       (loader) => loader.loaderId && loader.loaderData !== undefined,
@@ -358,7 +472,7 @@ export async function renderSegments(
     }
 
     let nodeContent: ReactNode = null;
-    if (isRenderableLoading(loading)) {
+    if (!clientGroup && isRenderableLoading(loading)) {
       // forceAwait (popstate, stale-revalidation, fully-prefetched nav) renders a
       // loading() route with the route content ALREADY resolved, so its
       // RouteContentWrapper Suspender does not suspend for a microtask and flash
@@ -406,7 +520,7 @@ export async function renderSegments(
       nodeContent = registerLazyRef(resolvedComponent);
     }
 
-    // Wrap with <ViewTransition> if transition config exists (React experimental only).
+    // Wrap with <ViewTransition> if transition config exists (React 19.3+ / experimental).
     // An empty config ({}) creates a bare <ViewTransition> boundary that participates
     // in transitions without adding custom animation classes. Named element-level
     // <ViewTransition> components inside (with name/share props) morph independently
@@ -438,19 +552,45 @@ export async function renderSegments(
       transition &&
       transition.viewTransition !== false
     ) {
+      const boundary = transitionGatedOff
+        ? { ...transition, ...GATED_OFF_CLASSES }
+        : transition;
       if (node.segment.type === "layout") {
-        outletContent = wrapDefaultOutletContent(outletContent, transition);
+        outletContent = wrapDefaultOutletContent(outletContent, boundary);
       } else {
-        nodeContent = createViewTransitionBoundary(transition, nodeContent);
+        nodeContent = createViewTransitionBoundary(boundary, nodeContent);
       }
     }
 
     // Prepare loader data if there are loaders
     const loaderIds = loaderEntries.map((loader) => loader.loaderId!);
 
-    if (loading !== undefined && loading !== null) {
+    // Loader-bearing segments get the router-owned error boundary around
+    // their children so a read-site loader error renders its errorBoundary()
+    // fallback (LOADER_ERROR_FALLBACK marker on the thrown error) instead of
+    // escaping to app boundaries. Wrapped UNCONDITIONALLY on loader presence
+    // — streams and forceAwait lanes must produce the same tree shape or
+    // lane changes remount the subtree (docs/tree-structure.md).
+    if (loaderEntries.length > 0 || clientGroup) {
+      nodeContent = createElement(StreamedLoaderErrorBoundary, {
+        resetKey: idParamsKey,
+        children: nodeContent,
+      });
+    }
+
+    if (!clientGroup && loading !== undefined && loading !== null) {
       const loaderDataPromise = getMemoizedLoaderPromise(loaderEntries);
       let boundaryLoaderData: Promise<any[]> | any[] = loaderDataPromise;
+      // SPIKE (streaming useLoader): per-loader streams for the boundary's
+      // readers. MUST come from the individual loader refs — splitting the
+      // aggregate client-side is wrong (Promise.all resolves at the slowest
+      // loader, erasing per-loader timing; measured 400ms data held to a
+      // 2000ms sibling). Zero-loader boundaries pass NO streams so the
+      // resolver keeps the fresh-promise resolve-above suspension — that
+      // microtask suspension is what makes SSR emit the loading() fallback
+      // for content-suspending routes (segment-loader-promise.ts).
+      let boundaryLoaderStreams: Record<string, unknown> | undefined;
+      let boundaryAwaitedLoaderIds: string[] | undefined;
       if (forceAwait || isAction) {
         const awaitStart = segDebug ? performance.now() : 0;
         boundaryLoaderData = await loaderDataPromise;
@@ -460,16 +600,33 @@ export async function renderSegments(
             ms: Math.round(performance.now() - awaitStart),
           });
         }
-      } else if (segDebug) {
-        segDebugLog(
-          `segment ${id}: streaming loaders via LoaderBoundary (suspense)`,
-          { loaderIds },
-        );
+      } else if (loaderEntries.length > 0) {
+        let settledFallback: ReactNode | undefined;
+        ({
+          streams: boundaryLoaderStreams,
+          awaitedIds: boundaryAwaitedLoaderIds,
+          settledFallback,
+        } = await buildLoaderStreams(loaderEntries));
+        if (settledFallback !== undefined) {
+          if (isLoaderRedirectNode(settledFallback)) {
+            content = settledFallback;
+            break;
+          }
+          nodeContent = settledFallback;
+        }
+        if (segDebug) {
+          segDebugLog(
+            `segment ${id}: per-loader streams via LoaderBoundary (read-site suspense)`,
+            { loaderIds },
+          );
+        }
       }
       content = createElement(LoaderBoundary, {
         key: `loader-boundary-${key}`,
         loaderDataPromise: boundaryLoaderData,
         loaderIds,
+        loaderStreams: boundaryLoaderStreams,
+        awaitedLoaderIds: boundaryAwaitedLoaderIds,
         fallback: loading,
         outletKey: key,
         outletContent,
@@ -483,6 +640,7 @@ export async function renderSegments(
         content: outletContent,
         segment: node.segment,
         parallel: node.parallel,
+        pending: outletPending,
         children: nodeContent,
       });
     } else {
@@ -492,28 +650,59 @@ export async function renderSegments(
       );
 
       const layoutLoaderIds = layoutLoaders.map((l) => l.loaderId!);
-      // No loading() on this segment, so its loader data cannot stream behind
-      // a Suspense fallback — the tree build BLOCKS here until the data
-      // arrives. On the initial document this await runs before hydrateRoot.
-      const layoutAwaitStart = segDebug ? performance.now() : 0;
-      const resolvedData = await buildLoaderPromise(layoutLoaders);
-      if (segDebug) {
-        segDebugLog(`segment ${id}: layout loaders awaited (blocking)`, {
-          loaderIds: layoutLoaderIds,
-          ms: Math.round(performance.now() - layoutAwaitStart),
-        });
-      }
-      const decodeStart = segDebug ? performance.now() : 0;
-      const { loaderData, errorFallback } = decodeLoaderResults(
-        resolvedData,
-        layoutLoaderIds,
-      );
-      if (segDebug) {
-        const decodeMs = Math.round(performance.now() - decodeStart);
-        if (decodeMs > 0) {
-          segDebugLog(`segment ${id}: loader results decoded`, {
-            ms: decodeMs,
+      // SPIKE (streaming useLoader): a segment without loading() used to BLOCK
+      // the tree build here (await buildLoaderPromise) so its data was always
+      // resolved before render. Streaming lanes now skip the await and pass
+      // per-loader UNDECODED results (possibly pending promises) through
+      // OutletProvider.loaderStreams — useLoader suspends at the read site to
+      // the nearest CONSUMER Suspense boundary. forceAwait (popstate, stale
+      // revalidation, fully-prefetched) and action lanes keep the blocking
+      // await so those commits stay whole with no fallback flash.
+      let loaderData: Record<string, any> = {};
+      let errorFallback: ReactNode = null;
+      let loaderStreams: Record<string, unknown> | undefined;
+      let awaitedLoaderIds: string[] | undefined;
+      if (forceAwait || isAction) {
+        const layoutAwaitStart = segDebug ? performance.now() : 0;
+        const resolvedData = await buildLoaderPromise(layoutLoaders);
+        if (segDebug) {
+          segDebugLog(`segment ${id}: layout loaders awaited (blocking)`, {
+            loaderIds: layoutLoaderIds,
+            ms: Math.round(performance.now() - layoutAwaitStart),
           });
+        }
+        const decodeStart = segDebug ? performance.now() : 0;
+        ({ loaderData, errorFallback } = decodeLoaderResults(
+          resolvedData,
+          layoutLoaderIds,
+        ));
+        if (segDebug) {
+          const decodeMs = Math.round(performance.now() - decodeStart);
+          if (decodeMs > 0) {
+            segDebugLog(`segment ${id}: loader results decoded`, {
+              ms: decodeMs,
+            });
+          }
+        }
+      } else if (layoutLoaders.length > 0) {
+        let settledFallback: ReactNode | undefined;
+        ({
+          streams: loaderStreams,
+          awaitedIds: awaitedLoaderIds,
+          settledFallback,
+        } = await buildLoaderStreams(layoutLoaders));
+        if (settledFallback !== undefined) {
+          if (isLoaderRedirectNode(settledFallback)) {
+            content = settledFallback;
+            break;
+          }
+          errorFallback = settledFallback;
+        }
+        if (segDebug) {
+          segDebugLog(
+            `segment ${id}: layout loaders streaming to read sites (no loading())`,
+            { loaderIds: layoutLoaderIds },
+          );
         }
       }
 
@@ -544,12 +733,29 @@ export async function renderSegments(
 
           p.loaderIds = ownedLoaders.map((l) => l.loaderId!);
           const aggregated = getMemoizedLoaderPromise(ownedLoaders);
-          if ((forceAwait || isAction) && aggregated instanceof Promise) {
+          // Parallel slots must NOT take the loaderStreams path.
+          // LoaderResolver skips use(aggregate) when streams are set, so
+          // the already-rendered slot handler commits immediately. That
+          // bakes a live-lane hole into the shell (semantic-matrix PPR3 /
+          // shell-cache slot-use: masked loaderData is what pins
+          // "srv badge pending...") and, on reuse, leaves a stale stream
+          // map that ignores the post-action aggregate (mini @cart).
+          // Flagged (ssr:false) delivery still holds: when every owned
+          // loader paid the pre-flush await, settle the aggregate so
+          // LoaderResolver decodes the array without a Flight-chunk use().
+          const settleParallelAggregate =
+            forceAwait ||
+            isAction ||
+            ownedLoaders.every((l) => l.awaitBeforeFlush === true);
+          if (settleParallelAggregate) {
             const parallelAwaitStart = segDebug ? performance.now() : 0;
-            p.loaderDataPromise = await aggregated;
+            p.loaderDataPromise =
+              aggregated instanceof Promise ? await aggregated : aggregated;
+            p.loaderStreams = undefined;
+            p.awaitedLoaderIds = undefined;
             if (segDebug) {
               segDebugLog(
-                `segment ${id}: parallel ${p.id} loaders awaited (forceAwait/action)`,
+                `segment ${id}: parallel ${p.id} loaders awaited (forceAwait/action/ssr:false)`,
                 {
                   loaderIds: p.loaderIds,
                   ms: Math.round(performance.now() - parallelAwaitStart),
@@ -558,9 +764,11 @@ export async function renderSegments(
             }
           } else {
             p.loaderDataPromise = aggregated;
+            p.loaderStreams = undefined;
+            p.awaitedLoaderIds = undefined;
             if (segDebug) {
               segDebugLog(
-                `segment ${id}: parallel ${p.id} loaders streaming (suspense)`,
+                `segment ${id}: parallel ${p.id} loaders via aggregate (suspense)`,
                 { loaderIds: p.loaderIds },
               );
             }
@@ -574,6 +782,9 @@ export async function renderSegments(
         segment: node.segment,
         parallel: node.parallel,
         loaderData: Object.keys(loaderData).length > 0 ? loaderData : undefined,
+        loaderStreams,
+        awaitedLoaderIds,
+        pending: outletPending,
         children: errorFallback ?? nodeContent,
       });
     }

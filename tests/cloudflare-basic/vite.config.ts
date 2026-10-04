@@ -1,6 +1,5 @@
 import { cloudflare } from "@cloudflare/vite-plugin";
-import react, { reactCompilerPreset } from "@vitejs/plugin-react";
-import babel from "@rolldown/plugin-babel";
+import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +7,15 @@ import { rango } from "@rangojs/router/vite";
 import { analyze } from "../../tools/bundle-analyze";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+function testHeadScripts(): "preload" | undefined {
+  const value = process.env.RANGO_E2E_HEAD_SCRIPTS;
+  if (!value) return;
+  if (value === "preload") return value;
+  throw new Error(`Invalid RANGO_E2E_HEAD_SCRIPTS value: ${value}`);
+}
+
+const headScripts = testHeadScripts();
 
 // A third-party-style resolver: maps "@parity/*" to ./src/parity/* via a
 // resolveId hook, deliberately WITHOUT a matching resolve.alias entry. Mirrors
@@ -33,6 +41,7 @@ function parityAliasPlugin(): Plugin {
 }
 
 export default defineConfig({
+  cacheDir: process.env.RANGO_E2E_VITE_CACHE_DIR ?? "node_modules/.vite",
   // Inline the render-timeout e2e flag at build/transform time. The worker runs
   // in workerd, whose `process.env` is populated from wrangler vars/bindings —
   // NOT the host process — so a runtime `process.env.RANGO_E2E_RENDER_TIMEOUT`
@@ -43,6 +52,13 @@ export default defineConfig({
   define: {
     "process.env.RANGO_E2E_RENDER_TIMEOUT": JSON.stringify(
       process.env.RANGO_E2E_RENDER_TIMEOUT ?? "",
+    ),
+    // Edge-only cache e2e (playwright.edge-only.config.ts): drops the KV
+    // binding from the app-level CFCacheStore so ppr shells run L1-only
+    // (Cache API). Same inlining rationale as the flag above. Empty string
+    // on a normal build → the store keeps its KV L2.
+    "process.env.RANGO_E2E_EDGE_ONLY_CACHE": JSON.stringify(
+      process.env.RANGO_E2E_EDGE_ONLY_CACHE ?? "",
     ),
   },
   server: {
@@ -59,16 +75,13 @@ export default defineConfig({
   },
   plugins: [
     parityAliasPlugin(),
-    react(),
-    // React Compiler per the @vitejs/plugin-rsc example. plugin-react v6 runs
-    // oxc (no internal Babel), so the compiler is a separate top-level
-    // @rolldown/plugin-babel ordered after react() and before the plugin that
-    // supplies @vitejs/plugin-rsc (here the cloudflare plugin).
-    // reactCompilerPreset() gates itself via applyToEnvironmentHook
-    // (consumer === "client"), so it compiles client components only; ssr/rsc
-    // are left untouched (matches the upstream example).
-    babel({ presets: [reactCompilerPreset()] }),
-    rango({ preset: "cloudflare", buildEnv: "auto" }),
+    // React Compiler via plugin-react's native option; compiles client components only.
+    react({ compiler: true }),
+    rango({
+      preset: "cloudflare",
+      buildEnv: "auto",
+      ...(headScripts ? { headScripts } : {}),
+    }),
     cloudflare({
       configPath: "./wrangler.json",
       viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },

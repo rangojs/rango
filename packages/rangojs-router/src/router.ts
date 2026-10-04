@@ -1,8 +1,11 @@
+import { requestHeaders } from "./server/request-headers.js";
 import { type ReactNode } from "react";
 import { createCacheScope } from "./cache/cache-scope.js";
 import { resolveCacheProfiles } from "./cache/profile-registry.js";
 import { isCachedFunction } from "./cache/taint.js";
 import { assertClientComponent } from "./component-utils.js";
+import { isClientUrlSource } from "./client-urls/server-projection.js";
+import type { ClientUrlPatterns } from "./client-urls/types.js";
 import { DefaultDocument } from "./components/DefaultDocument.js";
 import type { SerializedManifest } from "./debug.js";
 import {
@@ -11,7 +14,7 @@ import {
   isValidDevDiscoveryEpoch,
 } from "./dev-discovery-protocol.js";
 import { createReverse, type ReverseFunction } from "./reverse.js";
-import { VERSION } from "@rangojs/router:version";
+import { resolveRouterVersions } from "./server/build-version-table.js";
 import { createPrerenderTrigger } from "./prerender/create-prerender-trigger.js";
 import { createMemoryPrerenderStore } from "./prerender/memory-prerender-store.js";
 import {
@@ -103,6 +106,7 @@ import type {
   Rango,
   RangoInternal,
   RouterRequestInput,
+  UrlPatternMount,
 } from "./router/router-interfaces.js";
 
 // Extracted closure functions
@@ -118,6 +122,7 @@ import {
 } from "./router/prerender-match.js";
 import { resolveStateCookieName } from "./router/state-cookie-name.js";
 import { resolvePrefetchCacheTTL } from "./router/prefetch-cache-ttl.js";
+import { resolveDefaultPrefetch } from "./router/prefetch-default.js";
 import {
   resolvePrefetchCacheSize,
   resolvePrefetchConcurrency,
@@ -164,6 +169,7 @@ export function createRouter<TEnv = any>(
     prefetchCacheTTL: prefetchCacheTTLOption,
     prefetchCacheSize: prefetchCacheSizeOption,
     prefetchConcurrency: prefetchConcurrencyOption,
+    defaultPrefetch: defaultPrefetchOption,
     stateCookiePrefix: stateCookiePrefixOption,
     warmup: warmupOption,
     telemetry: telemetrySink,
@@ -283,6 +289,10 @@ export function createRouter<TEnv = any>(
     prefetchConcurrencyOption,
   );
 
+  // Resolve the router-wide default Link prefetch strategy ("none" in dev,
+  // "viewport" in production). Links without an explicit prop fall back to it.
+  const defaultPrefetch = resolveDefaultPrefetch(defaultPrefetchOption);
+
   // Resolve warmup enabled flag (default: true)
   const warmupEnabled = warmupOption !== false;
 
@@ -339,6 +349,7 @@ export function createRouter<TEnv = any>(
 
   // Store reference to urlpatterns for runtime manifest generation
   let storedUrlPatterns: UrlPatterns<TEnv, any> | null = null;
+  const urlpatternMounts: UrlPatternMount<TEnv>[] = [];
 
   // Global middleware storage
   const globalMiddleware: MiddlewareEntry<TEnv>[] = [];
@@ -581,6 +592,13 @@ export function createRouter<TEnv = any>(
             }
           }
         : undefined,
+      // notFound() resolution deps: the streamed envelope carries the
+      // server-rendered not-found UI, mirroring the consumption lane's
+      // boundary resolution (segment-resolution/helpers.ts).
+      {
+        findNearestNotFoundBoundary,
+        notFoundComponent: notFound,
+      },
     );
 
     // Emit loader.end after the promise settles (fire-and-forget)
@@ -751,11 +769,11 @@ export function createRouter<TEnv = any>(
   // On-demand prerender trigger (router.prerender / .many / .invalidateTags).
   // Requestless: runProducer runs matchForPrerender with onDemand=true (arming
   // the personalization guard); the store/config resolve per call from {env,ctx}.
-  // buildId mirrors the handler's `version ?? VERSION` so write and serve keys
-  // agree.
+  // buildId is this router's document version (the handler's `versions.document`,
+  // same resolution) so write and serve keys agree and rotate together.
   const prerenderTrigger = createPrerenderTrigger<TEnv, {}>({
     routerId,
-    buildId: version ?? VERSION,
+    buildId: resolveRouterVersions(routerId, version).document,
     isDev: () => typeof globalThis.__PRERENDER_DEV_URL === "string",
     ensureManifest: () => ensureRouterManifest(routerId),
     resolveConfig: (env, ctx) => {
@@ -817,7 +835,27 @@ export function createRouter<TEnv = any>(
     id: routerId,
     basename,
 
-    routes(patternsOrBuilder: UrlPatterns<TEnv> | UrlBuilder<TEnv>): any {
+    routes(
+      patternsOrBuilder:
+        | UrlPatterns<TEnv>
+        | UrlBuilder<TEnv>
+        | ClientUrlPatterns,
+    ): any {
+      // Pure-client mounting shorthand: a clientUrls() definition passed
+      // directly NORMALIZES to a root include in the canonical urls() tree —
+      // exactly `include("/", definition, { name: "" })`, keeping local route
+      // names bare and local patterns app-absolute. This is sugar over the
+      // ONE composition model, not a second registration path: it rides the
+      // same lazy include materialization, so no ordering, one-definition, or
+      // deferral rules exist. Prefixing, wrapping RSC layouts, and middleware
+      // scope still come from mounting through include() in urls() yourself.
+      if (isClientUrlSource(patternsOrBuilder)) {
+        const clientSource = patternsOrBuilder as ClientUrlPatterns;
+        patternsOrBuilder = urls(({ include }) => [
+          include("/", clientSource, { name: "" }),
+        ]) as UrlPatterns<TEnv>;
+      }
+
       // Wrap builder functions in urls() automatically
       const urlPatterns: UrlPatterns<TEnv> =
         typeof patternsOrBuilder === "function"
@@ -827,6 +865,10 @@ export function createRouter<TEnv = any>(
       // Store reference for runtime manifest generation
       storedUrlPatterns = urlPatterns;
       const currentMountIndex = mountIndex++;
+      urlpatternMounts.push({
+        patterns: urlPatterns,
+        mountIndex: currentMountIndex,
+      });
 
       // Create manifest and patterns maps for route registration
       const manifest = new Map<string, EntryData>();
@@ -1092,6 +1134,7 @@ export function createRouter<TEnv = any>(
     prefetchCacheTTL,
     prefetchCacheSize,
     prefetchConcurrency,
+    defaultPrefetch,
 
     // Expose the resolved rango state cookie name for the server-side writer
     // (invalidateClientCache) and for shipping to the client in metadata.
@@ -1171,6 +1214,10 @@ export function createRouter<TEnv = any>(
       return storedUrlPatterns ?? undefined;
     },
 
+    get __urlpatternMounts() {
+      return urlpatternMounts;
+    },
+
     // Expose source file for per-router type generation
     __sourceFile,
 
@@ -1198,11 +1245,16 @@ export function createRouter<TEnv = any>(
         | null = null;
 
       return async (request: Request, input: RouterRequestInput<TEnv> = {}) => {
+        const requestedDiscoveryEpoch = requestHeaders(request).get(
+          DEV_DISCOVERY_PROBE_HEADER,
+        );
         if (
           devDiscoveryEpoch !== undefined &&
-          request.headers.get(DEV_DISCOVERY_PROBE_HEADER) ===
-            String(devDiscoveryEpoch)
+          requestedDiscoveryEpoch !== null
         ) {
+          // A stale generation must still answer as a probe. Rendering the app
+          // on an epoch mismatch makes the readiness loop overlap full renders
+          // with workerd reloads and can exhaust the dev server heap.
           return new Response(null, {
             headers: {
               [DEV_DISCOVERY_EPOCH_HEADER]: String(devDiscoveryEpoch),

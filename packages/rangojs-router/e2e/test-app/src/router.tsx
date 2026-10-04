@@ -5,11 +5,15 @@ import {
   redirect,
   type Middleware,
 } from "@rangojs/router";
-import { MemorySegmentCacheStore } from "@rangojs/router/cache";
+import {
+  createDocumentCacheMiddleware,
+  MemorySegmentCacheStore,
+} from "@rangojs/router/cache";
 import { createMemoryPrerenderStore } from "@rangojs/router/prerender";
 import { urlpatterns } from "./urls.js";
 import { shellSecureAuthMiddleware } from "./urls/shell-secure.js";
 import { onErrorLog } from "./error-log.js";
+import { recordShellCaptureEvent } from "./shell-capture-events.js";
 import { swrLog } from "./swr-log.js";
 
 // App-level cache store with defaults
@@ -43,6 +47,7 @@ export interface AppVariables {
   // Response route middleware test variables
   outerMw?: string;
   innerMw?: string;
+  cuVarsUserStr?: string;
   role?: string;
   // Include + layout middleware test variable
   includeLayoutMw?: string;
@@ -183,7 +188,18 @@ export const router = createRouter<AppEnv>({
   strictMode:
     (globalThis as { process?: { env?: Record<string, string | undefined> } })
       .process?.env?.RANGO_STRICT !== "off",
-  cache: { store: cacheStore },
+  // searchParams: key-only filter -- utm_*/x_e2e_excluded never key the cache
+  // (exercised by search-params-cache-key.test.ts via /spk/cached). Byte-stable
+  // for every URL that carries none of these params, so other suites see the
+  // exact same keys as before.
+  cache: {
+    store: cacheStore,
+    searchParams: { exclude: ["utm_*", "x_e2e_excluded"] },
+  },
+  // PPR capture outcomes, read back by /shell-cache/__capture-events so a
+  // suite waits for the capture's outcome instead of a timing gap. A function
+  // sink logs nothing.
+  debugShellCapture: recordShellCaptureEvent,
   // swr + onRevalidate: a STALE overlay hit still serves but schedules
   // onRevalidate (scheduling-only — no built-in re-render). The e2e observes
   // the scheduling through swrLog via /od-swr-log.
@@ -248,6 +264,7 @@ export const router = createRouter<AppEnv>({
     onErrorLog.push({
       phase: context.phase,
       message: context.error.message,
+      pathname: context.pathname,
       actionId: context.actionId,
       metadata: context.metadata,
     });
@@ -318,6 +335,8 @@ export const router = createRouter<AppEnv>({
   .use("/middleware-test/cookies", cookieMiddleware)
   // Pattern-based middleware with params
   .use("/middleware-test/params/:id", paramsMiddleware)
+  // Document cache for the #978 theme routes only (e2e/theme-doc-cache.test.ts).
+  .use("/theme/doc-cache/*", createDocumentCacheMiddleware())
   // Middleware chain integration test: global layer sets var, header, cookie
   .use("/mw-chain/*", async (ctx, next) => {
     ctx.set("chainGlobal", "from-global");

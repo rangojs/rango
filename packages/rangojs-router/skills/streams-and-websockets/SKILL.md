@@ -38,11 +38,12 @@ export const urlpatterns = urls(({ path }) => [
     "/events/ticks",
     (ctx) => {
       const encoder = new TextEncoder();
+      let interval: ReturnType<typeof setInterval> | undefined;
 
       const stream = new ReadableStream({
-        async start(controller) {
+        start(controller) {
           let count = 0;
-          const interval = setInterval(() => {
+          interval = setInterval(() => {
             controller.enqueue(
               encoder.encode(`event: tick\ndata: ${++count}\n\n`),
             );
@@ -51,8 +52,16 @@ export const urlpatterns = urls(({ path }) => [
           // Honor client disconnect — signal comes from ctx.request.signal
           ctx.request.signal.addEventListener("abort", () => {
             clearInterval(interval);
-            controller.close();
+            try {
+              controller.close();
+            } catch {
+              // already closed or cancelled
+            }
           });
+        },
+        // The runtime cancels the stream when the reader goes away
+        cancel() {
+          clearInterval(interval);
         },
       });
 
@@ -80,18 +89,21 @@ source.addEventListener("tick", (e) => console.log("tick", e.data));
 
 ### SSE caveats
 
-- **Never wrap SSE routes in `cache()`** — a cached `ReadableStream` is read
-  once and would replay an empty body on the next hit. `path.stream` is
-  already excluded from response-route caching, but don't layer a custom
-  cache() middleware on top.
+- **Never put an SSE route inside a `cache()` scope.** Response-route
+  `cache()` does not special-case `path.stream`: an SSE response is a `200`
+  like any other, so a `cache()` above it would try to store the stream. Keep
+  SSE routes outside every `cache()` boundary, and don't layer a custom
+  caching middleware on top either.
 - **Middleware is fine.** Global/route middleware rewraps the SSE `Response`
   as `new Response(response.body, { status, headers })` to merge stub headers.
   The `ReadableStream` body is passed by reference, not consumed, so the
   client sees the stream unchanged. (WebSocket upgrades are the exception —
   those bypass rewrap entirely; see below.)
-- **Honor `ctx.request.signal`.** Without wiring abort to your source
-  (timer, DB cursor, upstream fetch), the stream leaks when the client
-  disconnects.
+- **Honor `ctx.request.signal` and `cancel()`.** Without wiring disconnect to
+  your source (timer, DB cursor, upstream fetch), the stream leaks when the
+  client goes away. Clean up in both places: depending on the runtime, a
+  disconnect surfaces as the request signal aborting, the stream being
+  cancelled, or both.
 - **Disable Nginx/CDN buffering** via `x-accel-buffering: no` and ensure
   no intermediate proxy rebuffers. On Cloudflare Workers this is a non-issue.
 
@@ -210,6 +222,8 @@ HTTP request instead (e.g. during login), then read them at upgrade time
 via `ctx.request.headers.get("cookie")`.
 
 ```typescript
+import { cookies } from "@rangojs/router";
+
 // Avoid: this cookie may not land on the upgrade response, and the client
 // never reads it during the handshake regardless.
 router.use(async (ctx, next) => {
@@ -219,7 +233,7 @@ router.use(async (ctx, next) => {
 
 // Prefer: authenticate by reading a cookie set on a prior HTTP request.
 path.any("/ws", (ctx) => {
-  const session = parseCookie(ctx.request.headers.get("cookie"))?.session;
+  const session = cookies().get("session")?.value;
   if (!verify(session)) return new Response("unauthorized", { status: 401 });
   // ...upgrade
 });
@@ -240,7 +254,8 @@ router.use(async (ctx, next) => {
 
 ## Caching
 
-- **SSE** — do not combine with `cache()` (streams can't be replayed).
+- **SSE** — do not place under `cache()`: it is a cacheable `200`, and an
+  endless stream cannot be stored or replayed.
 - **WebSocket** — `cache()` is inert because only `status === 200` is cacheable.
 
 ## Runtime caveats
@@ -279,5 +294,8 @@ Object.defineProperty(upgrade, "webSocket", {
 
 ## See also
 
-- `response-routes` — the parent skill for `path.json/text/html/stream/any`.
-- `middleware` — how global and route-level middleware compose with handlers.
+- `/response-routes` — the parent skill for `path.json/text/html/stream/any`
+  and `ResponseHandlerContext` (`ctx.header()`, `ctx.waitUntil()`,
+  `ctx.executionContext`).
+- `/middleware` — how global and route-level middleware compose with handlers.
+- `/cloudflare` — Workers bindings and Durable Object setup.

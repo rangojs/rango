@@ -72,11 +72,20 @@ export function getPackageAliases(): Record<string, string> {
   return aliases;
 }
 
+/**
+ * @vitejs/plugin-rsc puts these vendor specifiers in `optimizeDeps.include`,
+ * and Vite resolves them from the app root, where pnpm's strict layout does
+ * not link the plugin unless the app lists it (#1050). Aliased to the copy
+ * the router resolves, which therefore also wins over an app's own
+ * @vitejs/plugin-rsc. Must hold every vendor entry the plugin includes:
+ * optimize-deps-vendor-resolution.test.ts checks the resolved config.
+ */
 export function getVendorAliases(): Record<string, string> {
   const specs = [
     "@vitejs/plugin-rsc/vendor/react-server-dom/client.browser",
     "@vitejs/plugin-rsc/vendor/react-server-dom/client.edge",
     "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge",
+    "@vitejs/plugin-rsc/vendor/react-server-dom/static.edge",
   ];
   const aliases: Record<string, string> = {};
   for (const spec of specs) {

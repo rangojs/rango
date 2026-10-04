@@ -88,7 +88,7 @@ describe("react peer dependency contract", () => {
     // floor is held at a current security-patched release: React 18 and older
     // React 19 patches are unsupported, future 19.x patch/minor releases are
     // allowed, React 20 is excluded.
-    const RANGE = ">=19.2.6 <20";
+    const RANGE = ">=19.2.8 <20";
     expect(pkg.peerDependencies.react).toBe(RANGE);
     expect(pkg.peerDependencies.react).not.toContain("18");
 

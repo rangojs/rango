@@ -15,6 +15,7 @@ import type { ExecutionContext } from "../../types/request-scope.js";
 import type { CacheDefaults } from "../types.js";
 import type { RequestContext } from "../../server/request-context.js";
 import type { CloudflareZonePurgeOptions } from "./cf-zone-purge.js";
+import type { StoreMemoOptions } from "../shell-memo.js";
 
 /**
  * Minimal Cloudflare KV Namespace interface.
@@ -228,8 +229,10 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
    *   per-request memo is consulted (synchronously, no KV read), so a request
    *   that ran `updateTag()` still masks its own not-yet-purged entries
    *   (read-your-own-writes).
-   * - The KV tier and PPR shells still use the KV markers — those are written
-   *   regardless, and purge cannot reach KV — so keep `kv` configured for L2.
+   * - The KV tier and PPR shell reads still use the KV markers. Runtime shell
+   *   L1 entries are purgeable, but their taggedAt is the capture-start time: a
+   *   capture can finish after an invalidation purge, so eviction alone cannot
+   *   reject that older generation. Keep `kv` configured for shell L2 + markers.
    *   Without `kv`, purge mode is the ONLY tag invalidation and the store is
    *   L1-only: a supported configuration (previously tag invalidation without
    *   KV had no read-side effect at all). One KV-less caveat: an entry whose
@@ -317,11 +320,19 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
   tagCacheTtl?: number;
 
   /**
-   * Cache version string override. When this changes, all cached entries are
-   * effectively invalidated (new keys won't match old entries).
+   * Cache version string override. When set, this exact value prefixes every
+   * versioned key the store writes (`v/{version}/...`), for cached data and
+   * stored HTML alike; changing it makes every earlier entry unreachable.
    *
-   * Defaults to the auto-generated VERSION from the `@rangojs/router:version` virtual module.
-   * Only set this if you need a custom versioning strategy.
+   * Leave it unset for the default: the store keys with the versions of the
+   * router serving the request. Segment entries and `"use cache"` items use
+   * the router's data version; document responses and PPR shells use its
+   * document version (see `createRouter({ version })`). Those are computed
+   * from the router's built code, so a deploy that does not change the router
+   * keeps its entries.
+   *
+   * Tag invalidation markers are never versioned: an invalidation applies to
+   * the entries of every version, including one that comes back in a rollback.
    */
   version?: string;
 
@@ -331,16 +342,19 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
    * cannot stall the request; the read then falls through to its normal miss
    * path (L2/KV or render).
    *
-   * Defaults to {@link EDGE_LOOKUP_TIMEOUT_MS} (10). Set to 0 (or any value
+   * Defaults to {@link EDGE_LOOKUP_TIMEOUT_MS} (25). Set to 0 (or any value
    * <= 0) to disable the budget and always await `match`.
    */
   edgeLookupTimeoutMs?: number;
 
   /**
    * Latency budget (ms) for reading the BODY of a matched L1 entry
-   * (response.json()). CF streams the cache body lazily, so the multi-second
-   * tail can appear after `match` already resolved; this bounds it. On timeout
-   * the read is treated as a miss and falls through to L2/KV or render.
+   * (response.json(); for a PPR shell, only its head and prelude — the
+   * snapshot behind them is read after the HIT commits, under
+   * {@link kvReadTimeoutMs}). CF streams the cache body lazily, so the
+   * multi-second tail can appear after `match` already resolved; this bounds
+   * it. On timeout the read is treated as a miss and falls through to L2/KV or
+   * render.
    *
    * Separate from {@link edgeLookupTimeoutMs} because a healthy body read
    * (fetch + JSON parse of a potentially large Flight payload) takes a little
@@ -354,7 +368,11 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
    * Latency budget (ms) for an L2 (KV) read. KV is the last cache tier before a
    * full render and is a global store (~50ms healthy, seconds when degraded);
    * this bounds it so a slow namespace cannot pin the request. On timeout the
-   * read is treated as a miss (no L1 promote) and falls through to render.
+   * read is treated as a miss (no L1 promote) and falls through to render. For
+   * a PPR shell it covers opening the KV value and reading its head and
+   * prelude; separately, it bounds the shell's snapshot read (either tier),
+   * which runs off the commit path: a timeout there lets the tail run without
+   * the snapshot's pins.
    *
    * Defaults to {@link KV_READ_TIMEOUT_MS} (170) -- a few multiples above the
    * ~50ms healthy read, with headroom for legitimate tails (large payloads / far
@@ -364,6 +382,26 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
    * <= 0) to disable and always await KV.
    */
   kvReadTimeoutMs?: number;
+
+  /**
+   * Per-isolate memos ({@link StoreMemoOptions}), one set per isolate and
+   * shared by every CFCacheStore in it. `shellMs` (default 2000) and
+   * `shellMaxBytes` (default 16 MiB) size the PPR shell memo;
+   * `markerFreshMs` (default 1000) and `markerMaxStaleMs` (default 10000)
+   * the tag-marker memo PPR shell reads use with KV bound (served
+   * stale-while-revalidate). A memo HIT still runs the tag-marker check; the
+   * isolate that invalidates drops its own shell copies (and keeps reads in
+   * flight from memoizing them again) and writes the new marker into its
+   * marker memo, and its own `putShell` replaces its copy. Another isolate
+   * rejects a memoized shell once its marker memo sees the invalidation (up
+   * to `markerMaxStaleMs`). Without KV, in purge mode, the purge does not
+   * reach other isolates' memos: they serve the purged shell until their
+   * window passes. The response of a request that ran `updateTag()` /
+   * `revalidateTag()` sets the fresh-reads cookie, and the same user's
+   * requests carrying it skip both memos. `{ shellMs: 0 }` turns the shell
+   * memo off, `{ markerFreshMs: 0 }` the marker memo.
+   */
+  memo?: StoreMemoOptions;
 
   /**
    * Emit a {@link CFCacheReadDebugEvent} per L1 read. `true` logs to console

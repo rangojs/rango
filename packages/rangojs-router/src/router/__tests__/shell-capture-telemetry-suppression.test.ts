@@ -22,6 +22,7 @@ const mockCtx = {
   prevUrl: new URL("http://localhost/prev"),
   routeKey: "blog.route",
   stale: false,
+  manifestEntry: { type: "route", ppr: false },
 };
 
 const OK_RESULT = {

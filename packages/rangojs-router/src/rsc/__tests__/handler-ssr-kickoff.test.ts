@@ -17,39 +17,24 @@ vi.mock("../ssr-setup.js", async (importOriginal) => {
   };
 });
 
-// Mock route-map-builder so manifest is always available.
-// Also provides getGlobalRouteMap/isRouteRootScoped used by request-context.
-vi.mock("../../route-map-builder.js", () => ({
-  hasCachedManifest: () => true,
-  waitForManifestReady: () => null,
-  getRouterManifest: () => ({ home: "/" }),
-  getRouterTrie: () => null,
-  getGlobalRouteMap: () => ({ home: "/" }),
-  isRouteRootScoped: () => false,
-}));
+vi.mock("../../route-map-builder.js", async () =>
+  (await import("./handler-mock-factories.js")).routeMapBuilderMock(),
+);
+vi.mock("@vitejs/plugin-rsc/rsc/server", async () =>
+  (await import("./handler-mock-factories.js")).pluginRscMock(),
+);
+vi.mock("@vitejs/plugin-rsc/rsc/client", async () =>
+  (await import("./handler-mock-factories.js")).pluginRscMock(),
+);
+vi.mock("../nonce.js", async () =>
+  (await import("./handler-mock-factories.js")).nonceMock(),
+);
+vi.mock("../manifest-init.js", async () =>
+  (await import("./handler-mock-factories.js")).manifestInitMock(),
+);
 
-// Mock @vitejs/plugin-rsc/rsc with minimal stubs
-vi.mock("@vitejs/plugin-rsc/rsc", () => ({
-  renderToReadableStream: () => new ReadableStream(),
-  decodeReply: vi.fn(),
-  createTemporaryReferenceSet: vi.fn(() => new Set()),
-  loadServerAction: vi.fn(),
-  decodeAction: vi.fn(),
-  decodeFormState: vi.fn(),
-}));
-
-// Mock the nonce module
-vi.mock("../nonce.js", () => ({
-  generateNonce: () => undefined,
-  nonce: Symbol("nonce"),
-}));
-
-// Mock manifest-init to avoid Vite-specific imports
-vi.mock("../manifest-init.js", () => ({
-  buildRouterTrieFromUrlpatterns: vi.fn(),
-}));
-
-// Mock manifest loading used by resolveRoute (inside classifyRequest)
+// Unlike the shared manifestMock, no responseType: routes default to render so
+// per-test loadManifest overrides pick response vs render classification.
 vi.mock("../../router/manifest.js", () => ({
   loadManifest: vi.fn(async () => ({
     type: "route",
@@ -60,38 +45,21 @@ vi.mock("../../router/manifest.js", () => ({
   clearManifestCache: vi.fn(),
 }));
 
-// Mock middleware collection used by resolveRoute
-vi.mock("../../router/middleware.js", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../../router/middleware.js")>();
-  return {
-    ...actual,
-    collectRouteMiddleware: vi.fn(() => []),
-  };
-});
-
-// Mock cache-scope used by resolveRoute
-vi.mock("../../cache/cache-scope.js", () => ({
-  createCacheScope: vi.fn(() => null),
-}));
-
-// Mock response-route-handler to return a simple response
-vi.mock("../response-route-handler.js", () => ({
-  handleResponseRoute: vi.fn(
-    async () => new Response("response-route", { status: 200 }),
-  ),
-}));
-
-// Mock telemetry to avoid ALS dependency
-vi.mock("../../router/telemetry.js", () => ({
-  resolveSink: () => null,
-  safeEmit: vi.fn(),
-}));
-
-// Mock router-context
-vi.mock("../../router/router-context.js", () => ({
-  getRouterContext: () => null,
-}));
+vi.mock("../../router/middleware.js", async (importOriginal) =>
+  (await import("./handler-mock-factories.js")).middlewareMock(importOriginal),
+);
+vi.mock("../../cache/cache-scope.js", async () =>
+  (await import("./handler-mock-factories.js")).cacheScopeMock(),
+);
+vi.mock("../response-route-handler.js", async () =>
+  (await import("./handler-mock-factories.js")).responseRouteMock(),
+);
+vi.mock("../../router/telemetry.js", async () =>
+  (await import("./handler-mock-factories.js")).telemetryMock(),
+);
+vi.mock("../../router/router-context.js", async () =>
+  (await import("./handler-mock-factories.js")).routerContextMock(),
+);
 
 import { createRSCHandler } from "../handler.js";
 import type { RangoInternal } from "../../router/router-interfaces.js";

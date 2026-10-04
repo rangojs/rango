@@ -10,6 +10,8 @@ vi.mock("../revalidation.js", () => ({
 }));
 vi.mock("../../server/request-context.js", () => ({
   getRequestContext: vi.fn(() => null),
+  // resolveLoaderData (intercept loaders' funnel) reads it for the PPR lane.
+  _getRequestContext: vi.fn(() => undefined),
 }));
 vi.mock("../middleware.js", () => ({
   executeInterceptMiddleware: vi.fn(() => null),
@@ -75,9 +77,6 @@ function makeInterceptEntry(
     routeName: "test",
     handler: null as any,
     middleware: [],
-    revalidate: [],
-    errorBoundary: [],
-    notFoundBoundary: [],
     loader: [
       {
         loader: { $$id: "test-loader" } as any,

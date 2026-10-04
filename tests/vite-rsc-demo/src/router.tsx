@@ -11,6 +11,7 @@ const cacheStore = new MemorySegmentCacheStore({
 
 // Django-style URL patterns (composed from separate modules)
 import { urlpatterns } from "./urls/index.js";
+import { ensureCartCookie } from "./handlers/shop/middleware/cart-cookie.js";
 
 /**
  * Platform bindings (Cloudflare Workers, environment variables, etc.)
@@ -135,13 +136,37 @@ const cspMiddleware: Middleware = async (ctx, next) => {
 const router = createRouter<AppEnv>({
   debugPerformance: true,
   document: RootLayout,
+  // Manual prefetch mode: keeps this suite's request-count/timing assertions
+  // free of automatic production viewport prefetch traffic. The environment
+  // default is dogfooded by test-app; this opt-out by cloudflare-basic too.
+  defaultPrefetch: "none",
   cache: { store: cacheStore },
+  // App-level 404 UI. Renders for unmatched URLs AND for loader-thrown
+  // notFound() (the client-shop product loader throws it for unknown slugs —
+  // the streamed envelope carries this node pre-rendered).
+  notFound: ({ pathname }) => (
+    <div data-testid="app-not-found">
+      <h1>Page not found</h1>
+      <p>
+        Nothing lives at{" "}
+        <code data-testid="not-found-pathname">{pathname}</code>.
+      </p>
+    </div>
+  ),
   // Auto-generate a per-request CSP nonce, applied to React's bootstrap scripts
   // and consumable by userland head scripts (GTM) via useNonce().
-  nonce: () => true,
+  // Scoped OFF (false -> no nonce for the request) for the ppr shell fixture
+  // routes: a shell is shared per host+URL, so the router refuses to capture
+  // one while a per-request nonce is active (baking one visitor's nonce would
+  // break CSP for every other visitor). Those routes trade the CSP header for
+  // shell caching — cspMiddleware already no-ops when no nonce is set. Every
+  // other route keeps the nonce and the enforcing CSP.
+  nonce: (request) =>
+    !new URL(request.url).pathname.startsWith("/client-shop/ppr/"),
 })
   .use(appTimer)
   .use(cspMiddleware)
+  .use(ensureCartCookie)
   .routes(urlpatterns);
 
 /**

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import {
+  getNavigationContextHeader,
   resolveNavigation,
   createNavigationSnapshot,
 } from "../navigation-snapshot.js";
@@ -74,6 +75,129 @@ describe("resolveNavigation", () => {
 
     expect(result).not.toBeNull();
     expect(result!.prevUrl.pathname).toBe("/referer-page");
+  });
+
+  it("treats a cross-origin Referer as no navigation context", async () => {
+    // #1005: only the pathname would be matched, as a route on this app.
+    const findMatch = vi.fn((pathname: string) =>
+      pathname === "/product/42" ? makeMatch({ routeKey: "product" }) : null,
+    );
+    const { request, url } = makeRequest("http://localhost/new", {
+      Referer: "https://other.example/product/42",
+    });
+
+    expect(getNavigationContextHeader(request, url.origin)).toBeNull();
+
+    const result = await resolveNavigation(request, url, "new", {
+      findMatch,
+    });
+
+    expect(result).toBeNull();
+    expect(findMatch).not.toHaveBeenCalled();
+  });
+
+  it("prefers X-RSC-Router-Client-Path over a cross-origin Referer", async () => {
+    const { request, url } = makeRequest("http://localhost/new", {
+      "X-RSC-Router-Client-Path": "/from-client",
+      Referer: "https://other.example/product/42",
+    });
+
+    expect(getNavigationContextHeader(request, url.origin)).toBe(
+      "/from-client",
+    );
+
+    const result = await resolveNavigation(request, url, "new", {
+      findMatch: () => null,
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.prevUrl.pathname).toBe("/from-client");
+  });
+
+  it("keeps a relative Referer that resolves on the match origin", async () => {
+    const { request, url } = makeRequest("http://localhost/new", {
+      Referer: "/referer-page",
+    });
+
+    expect(getNavigationContextHeader(request, url.origin)).toBe(
+      "/referer-page",
+    );
+
+    const result = await resolveNavigation(request, url, "new", {
+      findMatch: () => null,
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.prevUrl.pathname).toBe("/referer-page");
+  });
+
+  it("drops a Referer whose port differs from the match origin", async () => {
+    const findMatch = vi.fn(() => makeMatch({ routeKey: "product" }));
+    const { request, url } = makeRequest("http://localhost/new", {
+      Referer: "http://localhost:8080/product/42",
+    });
+
+    expect(getNavigationContextHeader(request, url.origin)).toBeNull();
+
+    const result = await resolveNavigation(request, url, "new", {
+      findMatch,
+    });
+
+    expect(result).toBeNull();
+    expect(findMatch).not.toHaveBeenCalled();
+  });
+
+  it("drops a Referer whose scheme differs from the match origin", async () => {
+    const findMatch = vi.fn(() => makeMatch({ routeKey: "product" }));
+    const { request, url } = makeRequest("http://localhost/new", {
+      Referer: "https://localhost/product/42",
+    });
+
+    expect(getNavigationContextHeader(request, url.origin)).toBeNull();
+
+    const result = await resolveNavigation(request, url, "new", {
+      findMatch,
+    });
+
+    expect(result).toBeNull();
+    expect(findMatch).not.toHaveBeenCalled();
+  });
+
+  it("drops a Referer that cannot be parsed", async () => {
+    const findMatch = vi.fn(() => makeMatch({ routeKey: "product" }));
+    const { request, url } = makeRequest("http://localhost/new", {
+      Referer: "http://[",
+    });
+
+    expect(getNavigationContextHeader(request, url.origin)).toBeNull();
+
+    const result = await resolveNavigation(request, url, "new", {
+      findMatch,
+    });
+
+    expect(result).toBeNull();
+    expect(findMatch).not.toHaveBeenCalled();
+  });
+
+  it("compares Referer to the origin argument, not request.url", async () => {
+    const request = new Request("http://localhost/new", {
+      headers: { Referer: "https://app.example/product/42" },
+    });
+    const url = new URL("https://app.example/new");
+    const findMatch = vi.fn(() => makeMatch({ routeKey: "product" }));
+
+    expect(getNavigationContextHeader(request, "http://localhost")).toBeNull();
+    expect(getNavigationContextHeader(request, url.origin)).toBe(
+      "https://app.example/product/42",
+    );
+
+    const result = await resolveNavigation(request, url, "new", {
+      findMatch,
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.prevUrl.pathname).toBe("/product/42");
+    expect(findMatch).toHaveBeenCalledWith("/product/42");
   });
 
   it("matches previous route", async () => {

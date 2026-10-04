@@ -45,11 +45,13 @@ export type {
   RevalidateParams,
   Revalidate,
   ActionRef,
+  IsActionFn,
   RouteKeys,
   // Loader types
   LoaderDefinition,
   LoaderFn,
   LoaderContext,
+  LoaderOptions,
   FetchableLoaderOptions,
   LoadOptions,
   // Error boundary types
@@ -70,6 +72,9 @@ export type {
   TransitionConfig,
   TransitionWhenFn,
   TransitionWhenContext,
+  TransitionWhenKind,
+  RouteLocation,
+  ServerRouteLocation,
   ViewTransitionClass,
 } from "./types.js";
 
@@ -187,8 +192,15 @@ export {
   type RouterRequestInput,
 } from "./router.js";
 
+// Route manifest snapshot returned by router.debugManifest()
+export type { SerializedManifest } from "./debug.js";
+
 // RSC handler types (server-side)
 export type { HandlerCacheConfig } from "./rsc/types.js";
+export {
+  TRACKING_SEARCH_PARAMS,
+  type CacheSearchParams,
+} from "./cache/search-params-filter.js";
 
 // Built-in handles (server-side)
 export { Meta } from "./handles/meta.js";
@@ -249,6 +261,7 @@ export type {
 export type {
   ScopedReverseFunction,
   ReverseFunction,
+  GlobalReverseFunction,
   ExtractLocalRoutes,
   ParamsFor,
 } from "./reverse.js";

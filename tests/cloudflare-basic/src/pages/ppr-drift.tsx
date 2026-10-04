@@ -1,8 +1,12 @@
-import { Meta } from "@rangojs/router";
+import { Meta, createLoader } from "@rangojs/router";
 import type { HandlerContext } from "@rangojs/router";
 import { Outlet } from "@rangojs/router/client";
 import { PprShellPriceLoader } from "../loaders/ppr-shell.js";
 import { PprShellPrice } from "../components/PprShellPrice.js";
+import {
+  PprSharedStamp,
+  type PprSharedStampData,
+} from "../components/PprSharedStamp.js";
 
 // Capture-data-snapshot DRIFT fixture (docs/design/ppr-shell-resume.md), on the
 // REAL KV-backed CFCacheStore that this app uses. A value baked into the PPR
@@ -48,4 +52,56 @@ export function PprDriftLayout(ctx: HandlerContext) {
 
 export function PprDriftPricePage() {
   return <PprShellPrice loader={PprShellPriceLoader} />;
+}
+
+// Shared-key fixture (issue #941): the shell layout, an ssr: false loader and
+// a live hole read the SAME "drift" item (ttl 2s). The capture bakes the
+// layout's read and pins the ssr: false loader's value. The hole's loader runs
+// on every HIT and reads the store, so once the item expires the hole shows a
+// newer stamp than the frozen shell. It did not while the bake-lane loader's
+// read of the key was pinned for every reader on a HIT. The probe keys the
+// item per URL.
+let sharedExecutions = 0;
+
+export async function getPprSharedStamp(probe: string): Promise<string> {
+  "use cache: drift";
+  void probe;
+  sharedExecutions += 1;
+  return `ppr-shared-${sharedExecutions}`;
+}
+
+export const PprSharedStampLoader = createLoader(
+  async (ctx): Promise<PprSharedStampData> => ({
+    stamp: await getPprSharedStamp(ctx.searchParams.get("probe") ?? ""),
+  }),
+);
+
+/** The same read, bound with ssr: false: shell material, pinned on a HIT. */
+export const PprSharedBakedStampLoader = createLoader(
+  async (ctx): Promise<PprSharedStampData> => ({
+    stamp: await getPprSharedStamp(ctx.searchParams.get("probe") ?? ""),
+  }),
+);
+
+export async function PprSharedLayout(ctx: HandlerContext) {
+  ctx.use(Meta)({ title: "PPR Shared Key - RSC Router Cloudflare" });
+  const stamp = await getPprSharedStamp(ctx.searchParams.get("probe") ?? "");
+  return (
+    <main data-testid="ppr-shared-page">
+      <p data-testid="ppr-shared-shell">{stamp}</p>
+      <Outlet />
+    </main>
+  );
+}
+
+export function PprSharedPage() {
+  return (
+    <>
+      <PprSharedStamp
+        loader={PprSharedBakedStampLoader}
+        testId="ppr-shared-baked"
+      />
+      <PprSharedStamp loader={PprSharedStampLoader} />
+    </>
+  );
 }

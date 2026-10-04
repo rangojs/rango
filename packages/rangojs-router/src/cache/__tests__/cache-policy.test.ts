@@ -8,6 +8,8 @@ import {
   resolveTagsOption,
   DEFAULT_ROUTE_TTL,
   DEFAULT_FUNCTION_TTL,
+  SHELL_MIN_RECAPTURE_INTERVAL_MS,
+  staleShellRecaptureDue,
 } from "../cache-policy.js";
 import {
   getRequestContext,
@@ -151,7 +153,7 @@ describe("resolveCacheKey", () => {
     const store = {
       keyGenerator: vi.fn().mockResolvedValue("modified:key"),
     } as any;
-    const result = await resolveCacheKey(keyFn, store, "default:key", "Test");
+    const result = await resolveCacheKey(keyFn, store, "default:key");
     expect(result).toBe("custom:key");
     expect(store.keyGenerator).not.toHaveBeenCalled();
   });
@@ -161,23 +163,13 @@ describe("resolveCacheKey", () => {
     const store = {
       keyGenerator: vi.fn(async (_ctx: any, dk: string) => `modified:${dk}`),
     } as any;
-    const result = await resolveCacheKey(
-      undefined,
-      store,
-      "default:key",
-      "Test",
-    );
+    const result = await resolveCacheKey(undefined, store, "default:key");
     expect(result).toBe("modified:default:key");
   });
 
   it("returns defaultKey when no keyFn and no keyGenerator (priority 3)", async () => {
     setMockCtx({ url: new URL("http://localhost/") });
-    const result = await resolveCacheKey(
-      undefined,
-      null,
-      "default:key",
-      "Test",
-    );
+    const result = await resolveCacheKey(undefined, null, "default:key");
     expect(result).toBe("default:key");
   });
 
@@ -187,9 +179,9 @@ describe("resolveCacheKey", () => {
     const store = {
       keyGenerator: vi.fn(async (_ctx: any, dk: string) => `modified:${dk}`),
     } as any;
-    await expect(
-      resolveCacheKey(keyFn, store, "default:key", "Test"),
-    ).rejects.toThrow("boom");
+    await expect(resolveCacheKey(keyFn, store, "default:key")).rejects.toThrow(
+      "boom",
+    );
     // keyGenerator must not be called as a fallback
     expect(store.keyGenerator).not.toHaveBeenCalled();
   });
@@ -200,7 +192,7 @@ describe("resolveCacheKey", () => {
       keyGenerator: vi.fn().mockRejectedValue(new Error("gen error")),
     } as any;
     await expect(
-      resolveCacheKey(undefined, store, "default:key", "Test"),
+      resolveCacheKey(undefined, store, "default:key"),
     ).rejects.toThrow("gen error");
   });
 
@@ -208,7 +200,7 @@ describe("resolveCacheKey", () => {
     // _getRequestContext returns undefined outside ALS — keyFn/keyGenerator are skipped
     const keyFn = vi.fn().mockResolvedValue("custom:key");
     const store = { keyGenerator: vi.fn().mockResolvedValue("mod:key") } as any;
-    const result = await resolveCacheKey(keyFn, store, "default:key", "Test");
+    const result = await resolveCacheKey(keyFn, store, "default:key");
     expect(result).toBe("default:key");
     expect(keyFn).not.toHaveBeenCalled();
     expect(store.keyGenerator).not.toHaveBeenCalled();
@@ -272,5 +264,23 @@ describe("resolveTagsOption tag normalization (N3)", () => {
 
   it("returns undefined for an undefined tags option", () => {
     expect(resolveTagsOption(undefined, undefined, "T")).toBeUndefined();
+  });
+});
+
+describe("staleShellRecaptureDue", () => {
+  const now = 1_000_000;
+
+  it("is due once the shell is SHELL_MIN_RECAPTURE_INTERVAL_MS old", () => {
+    const due = (age: number) =>
+      staleShellRecaptureDue({ createdAt: now - age }, now);
+    expect(due(SHELL_MIN_RECAPTURE_INTERVAL_MS - 1)).toBe(false);
+    expect(due(SHELL_MIN_RECAPTURE_INTERVAL_MS)).toBe(true);
+  });
+
+  it("fails open: an entry without a numeric createdAt recaptures", () => {
+    expect(staleShellRecaptureDue({}, now)).toBe(true);
+    expect(
+      staleShellRecaptureDue({ createdAt: "x" as unknown as number }, now),
+    ).toBe(true);
   });
 });

@@ -1,14 +1,36 @@
-import { Meta, Prerender } from "@rangojs/router";
-import type { HandlerContext } from "@rangojs/router";
+import { Suspense } from "react";
+import {
+  createVar,
+  getRequestContext,
+  Meta,
+  Prerender,
+  Passthrough,
+} from "@rangojs/router";
+import type { HandlerContext, Middleware } from "@rangojs/router";
 import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
 import { PprShellPriceLoader } from "../loaders/ppr-shell.js";
 import { PprShellStreamLoader } from "../loaders/ppr-shell.js";
 import { PprShellSettledLoader } from "../loaders/ppr-shell.js";
 import { PprShellExecLoader, pprExecCounters } from "../loaders/ppr-shell.js";
-import { PprPrerenderSeqLoader } from "../loaders/ppr-shell.js";
+import {
+  PprPrerenderSeqLoader,
+  resolvePprInlineActionHoleAfterAction,
+} from "../loaders/ppr-shell.js";
+import { PprInlineActionHoleLoader } from "../loaders/ppr-shell.js";
 import { PprBakeSlowLoader, PprBakeHoleLoader } from "../loaders/ppr-shell.js";
-import { makePprPhysicsPromise } from "../loaders/ppr-shell.js";
+import {
+  makePprNestedHandlePush,
+  makePprPhysicsPromise,
+  PprNestedHandle,
+} from "../loaders/ppr-shell.js";
+import { PprNestedHandleView } from "../components/PprNestedHandleView.js";
+import { PprMarkerProbe } from "../components/PprMarkerProbe.js";
+import { PprNavPinView } from "../components/PprNavPinView.js";
+import {
+  makePprStaleReplayData,
+  PprStaleReplayHandle,
+} from "../loaders/ppr-shell.js";
 import { PprShellPrice } from "../components/PprShellPrice.js";
 import { PprShellStream } from "../components/PprShellStream.js";
 import { PprShellSettled } from "../components/PprShellSettled.js";
@@ -17,12 +39,20 @@ import { PprShellCounter } from "../components/PprShellCounter.js";
 import { PprShellPhysicsValue } from "../components/PprShellPhysicsValue.js";
 import {
   PprInlineActionForm,
+  PprPrerenderActionForm,
   PprShellExecMatrix,
   type PprInlineActionState,
 } from "../components/PprShellExecMatrix.js";
 import { PprPrerenderSeq } from "../components/PprPrerenderSeq.js";
+import { PprStaleReplay } from "../components/PprStaleReplay.js";
+import { PprWarningsView } from "../components/PprWarningsView.js";
 
 // PPR shell caching demo (docs/design/ppr-shell-resume.md).
+//
+// Everything this layout's handler produces is baked, however long it takes
+// (bounded by ppr.captureTimeout): the handler promise under
+// PprShellPhysicsValue's Suspense and the nested promise in the
+// PprNestedHandle push included. A HIT replays them and runs no handler.
 //
 // The hole/shell split follows the router's PPR eligibility contract: a hole
 // exists only where a Suspense boundary separates loader consumption from the
@@ -50,6 +80,7 @@ export function PprShellLayout(ctx: HandlerContext) {
   const breadcrumb = ctx.use(Breadcrumbs);
   breadcrumb({ label: "Home", href: "/" });
   breadcrumb({ label: "PPR Shell", href: "/ppr-shell" });
+  ctx.use(PprNestedHandle)(makePprNestedHandlePush());
   return (
     <main data-testid="ppr-shell-page">
       <h1 data-testid="ppr-shell-header">PPR Shell Demo</h1>
@@ -58,6 +89,7 @@ export function PprShellLayout(ctx: HandlerContext) {
       </p>
       <PprShellCounter />
       <PprShellPhysicsValue promise={makePprPhysicsPromise()} />
+      <PprNestedHandleView />
       <Outlet />
       <nav>
         <Link to="/counter" data-testid="ppr-nav-counter">
@@ -68,8 +100,17 @@ export function PprShellLayout(ctx: HandlerContext) {
   );
 }
 
-export function PprShellPricePage() {
-  return <PprShellPrice loader={PprShellPriceLoader} />;
+// The request URL's search as the handler reads it, and the rendered search
+// params (PprMarkerProbe): the forced-MISS e2e asserts the reload marker
+// reaches neither.
+export function PprShellPricePage(ctx: { request: Request }) {
+  return (
+    <>
+      <p data-testid="ppr-request-search">{new URL(ctx.request.url).search}</p>
+      <PprMarkerProbe />
+      <PprShellPrice loader={PprShellPriceLoader} />
+    </>
+  );
 }
 
 // Loader-carried-promise page, reused by BOTH /ppr-shell/stream (WITH loading(),
@@ -81,11 +122,65 @@ export function PprShellStreamPage() {
   return <PprShellStream loader={PprShellStreamLoader} />;
 }
 
+// Issue #888 page: a plain handler page; every HIT replays its doc record.
+export function PprWarningsPage() {
+  return (
+    <main data-testid="ppr-warnings-page">
+      <p>Warnings static shell</p>
+      <PprWarningsView />
+    </main>
+  );
+}
+
+export function PprNavPinPage() {
+  return (
+    <main data-testid="ppr-nav-pin-page">
+      <PprNavPinView />
+    </main>
+  );
+}
+
+let pprShortRecordRenders = 0;
+
+/** Its render count: a HIT shows the capture's, a MISS a new one. */
+export function PprShortRecordPage() {
+  pprShortRecordRenders += 1;
+  return (
+    <p data-testid="ppr-short-record">
+      {`short-record-render-${pprShortRecordRenders}`}
+    </p>
+  );
+}
+
 // Settled-marker regression page (storefront PDP #438): bake-lane loader whose
 // nested promise is already resolved at container return — the snapshot pins
 // its value; the HIT overlay must rehydrate a Promise for use().
 export function PprShellSettledPage() {
   return <PprShellSettled loader={PprShellSettledLoader} />;
+}
+
+export function PprStaleReplayPage(ctx: HandlerContext<{ id: string }>) {
+  const id = ctx.params.id;
+  const data = makePprStaleReplayData(id);
+  const push = ctx.use(PprStaleReplayHandle);
+  push({ yo: `yo-${id}` });
+  push(data.then((value) => ({ asd: value })));
+  ctx.use(Meta)(
+    data.then(async (value) => {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      return { title: `Stale replay ${id}: ${value}` };
+    }),
+  );
+
+  return (
+    <Suspense fallback={<div>Loading stale replay {id}...</div>}>
+      <PprStaleReplay
+        data={data}
+        handle={PprStaleReplayHandle}
+        search={ctx.url.search}
+      />
+    </Suspense>
+  );
 }
 
 // LAYOUT-LOADER bake-lane layout (the storefront shape): registers
@@ -150,6 +245,83 @@ export function PprSlotHomePage() {
   return <p data-testid="ppr-slot-home">Slot home static content</p>;
 }
 
+// Storefront shape (PPR navigation replay composed with an explicit cache()):
+// static layout chrome; the page embeds a per-execution stamp so a replayed
+// serve (frozen stamp) is distinguishable from a fresh handler run.
+export function PprScopedChromeLayout() {
+  return (
+    <main data-testid="ppr-scoped-page">
+      <p data-testid="ppr-scoped-chrome">Scoped chrome static content</p>
+      <Outlet />
+    </main>
+  );
+}
+
+let pprScopedExecution = 0;
+
+export function PprScopedHomePage() {
+  pprScopedExecution += 1;
+  return (
+    <p data-testid="ppr-scoped-home">
+      scoped-home-execution-{pprScopedExecution}
+    </p>
+  );
+}
+
+/**
+ * A request-partitioned ppr route (urls.tsx): its cache() key() reads the
+ * visitor's tier header, so its record and its shell are per tier. The pages
+ * render middleware's copy of the header (copyPprTier): a handler read of
+ * ctx.request.headers refuses the capture (issue #976), and the partition
+ * key is what keeps a tier's content in that tier's shell.
+ */
+export function pprTier(ctx: { request: Request }): string {
+  return ctx.request.headers.get("x-ppr-tier") ?? "none";
+}
+
+const PprTier = createVar<string>();
+
+export const copyPprTier: Middleware = async (ctx, next) => {
+  ctx.set(PprTier, pprTier(ctx));
+  return next();
+};
+
+export function PprTieredPage(ctx: HandlerContext) {
+  return <p data-testid="ppr-tiered">{`tier-${ctx.get(PprTier)}`}</p>;
+}
+
+export function PprTieredNestedPage(ctx: HandlerContext) {
+  return (
+    <>
+      <p data-testid="ppr-tiered">{`tier-${ctx.get(PprTier)}`}</p>
+      <p>ppr-tiered-nested-route</p>
+    </>
+  );
+}
+
+/**
+ * The layout between the keyed cache() and the cache() nested in it on
+ * /ppr-tiered-nested (issue #970); it reads the tier too.
+ */
+export function PprTieredLayout(ctx: HandlerContext) {
+  return (
+    <div data-testid="ppr-tiered-layout">
+      <p>{`layout-tier-${ctx.get(PprTier)}`}</p>
+      <Outlet />
+    </div>
+  );
+}
+
+export function PprScopedOptOutPage() {
+  return <p data-testid="ppr-scoped-optout">Scoped opt-out static content</p>;
+}
+
+export function PprScopedConditionPage() {
+  return (
+    <p data-testid="ppr-scoped-condition">Scoped condition static content</p>
+  );
+}
+
 // Shell fast-path execution matrix (docs/design/shell-fast-path.md): each
 // layer increments its module counter; the DSL loader (live lane) reports the
 // snapshot per serve. On a fast-path HIT, ONLY middleware + the loader may
@@ -178,18 +350,33 @@ export function PprExecPage() {
 
 export function PprInlineActionPage() {
   const captured = `cf-server-token-${crypto.randomUUID()}`;
+  const probe = getRequestContext()?.searchParams.get("probe") ?? "default";
   async function submit(
     _previous: PprInlineActionState,
     formData: FormData,
   ): Promise<PprInlineActionState> {
     "use server";
+    const submitted = String(formData.get("value"));
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
     return {
       captured,
-      submitted: String(formData.get("value")),
+      submitted,
+      streamed: new Promise((resolve) =>
+        setTimeout(() => {
+          resolve(`completed:${captured}:${submitted}`);
+          resolvePprInlineActionHoleAfterAction(probe);
+        }, 1_200),
+      ),
     };
   }
 
-  return <PprInlineActionForm action={submit} renderedCaptured={captured} />;
+  return (
+    <PprInlineActionForm
+      action={submit}
+      renderedCaptured={captured}
+      pageHoleLoader={PprInlineActionHoleLoader}
+    />
+  );
 }
 
 // Prerender + ppr composition (docs/design/shell-fast-path.md): build-time
@@ -211,6 +398,43 @@ export const PprPrerenderedArticle = Prerender(
           {`Prerendered shell content for ${ctx.params.slug}`}
         </p>
         <ParallelOutlet name="@ppSeq" />
+      </div>
+    );
+  },
+);
+
+/**
+ * Passthrough + Prerender + ppr fixture for the replay gate's existence
+ * probe on the real CFCacheStore/KV path: only "baked" bakes at build time;
+ * every other slug misses the prerender store and renders LIVE through the
+ * Passthrough handler. The trie still marks the route pr:true, so the gate
+ * must probe the store instead of trusting the flag — live params keep
+ * navigation replay (their captures record the doc segment record), baked
+ * params keep the prerender-store bypass.
+ */
+let pprPpPassthroughExec = 0;
+
+export const PprPrerenderedPassthroughDef = Prerender<{ slug: string }>(
+  async () => [{ slug: "baked" }],
+  async (ctx) => (
+    <div data-testid="ppr-ppp-article">
+      <p data-testid="ppr-ppp-source">baked</p>
+      <p data-testid="ppr-ppp-content">{`PPR-PPP content for ${ctx.params.slug}`}</p>
+      <PprPrerenderActionForm />
+    </div>
+  ),
+);
+
+export const PprPrerenderedPassthroughArticle = Passthrough(
+  PprPrerenderedPassthroughDef,
+  async (ctx) => {
+    pprPpPassthroughExec += 1;
+    return (
+      <div data-testid="ppr-ppp-article">
+        <p data-testid="ppr-ppp-source">live</p>
+        <p data-testid="ppr-ppp-content">{`PPR-PPP content for ${ctx.params.slug}`}</p>
+        <p data-testid="ppr-ppp-exec">{`ppr-ppp-exec-${pprPpPassthroughExec}`}</p>
+        <PprPrerenderActionForm />
       </div>
     );
   },

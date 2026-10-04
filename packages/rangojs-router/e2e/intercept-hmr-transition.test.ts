@@ -22,6 +22,14 @@ test.describe.serial("intercept-hmr-transition", () => {
 
   test.beforeAll(async () => {
     originalContent = fs.readFileSync(configPath, "utf-8");
+    // A leftover edit from an overlapping run (two workers on this file, or a
+    // killed run that never restored) would otherwise surface as a baffling
+    // modal collapse further down; fail here with the real cause instead.
+    if (!originalContent.includes('return fromPathname === "/";')) {
+      throw new Error(
+        "intercept-hmr-config.ts is not pristine (the guard is not the committed default); restore it with git before running this suite",
+      );
+    }
   });
 
   test.afterAll(async () => {

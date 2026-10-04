@@ -11,13 +11,14 @@ import React, {
   type ReactNode,
 } from "react";
 import {
+  LocationStateContext,
   NavigationStoreContext,
   type NavigationStoreContextValue,
 } from "./context.js";
 import type {
   NavigationStore,
   NavigationUpdate,
-  NavigateOptions,
+  NavigateOptionsInternal,
   NavigationBridge,
 } from "../types.js";
 import type { EventController } from "../event-controller.js";
@@ -315,12 +316,17 @@ export function NavigationProvider({
 }: NavigationProviderProps): ReactNode {
   // Track current payload for rendering (this triggers re-renders)
   const [payload, setPayload] = useState(initialPayload);
+  // The location state of the entry `payload` renders (LocationStateContext).
+  // Only ever set next to setPayload, or for a commit that has no payload.
+  const [locationState, setLocationState] = useState(
+    eventController.getLocationState,
+  );
 
   /**
    * Navigate to a URL (delegates to bridge)
    */
   const navigate = useCallback(
-    async (url: string, options?: NavigateOptions): Promise<void> => {
+    async (url: string, options?: NavigateOptionsInternal): Promise<void> => {
       await bridge.navigate(url, options);
     },
     [],
@@ -349,6 +355,7 @@ export function NavigationProvider({
       eventController,
       navigate,
       refresh,
+      defaultPrefetch: initialPayload.metadata.defaultPrefetch,
     } as NavigationStoreContextValue;
     Object.defineProperty(value, "basename", {
       configurable: true,
@@ -371,6 +378,19 @@ export function NavigationProvider({
     if (!warmupEnabled) return;
     return startConnectionWarmup();
   }, [warmupEnabled]);
+
+  // A commit no payload follows (a shallow navigation, a commit that keeps
+  // every segment, merged server-set state): the tree on screen is already
+  // the entry's, so its state is taken with the commit's notification.
+  useEffect(
+    () =>
+      eventController.subscribe(() => {
+        if (eventController.takeTreelessLocationState()) {
+          setLocationState(eventController.getLocationState());
+        }
+      }),
+    [eventController],
+  );
 
   // Cancel non-matching prefetches when navigation starts.
   // Frees connections so the navigation fetch isn't competing with
@@ -420,6 +440,9 @@ export function NavigationProvider({
         root: update.root,
         metadata: update.metadata,
       });
+      // The state of the entry this payload renders, as its commit recorded
+      // it: one update, so one lane, so one React commit with the tree.
+      setLocationState(eventController.getLocationState());
 
       // Update route params. Only reset when the server actually sends a params
       // map — an absent `params` field means "no change" (e.g., legacy action
@@ -455,6 +478,13 @@ export function NavigationProvider({
           cached === undefined ? update.metadata.resolvedIds : undefined,
         );
       }
+
+      // tx.commit() and the metadata updates above mutate the controller
+      // synchronously, but its ordinary notifications are task-debounced. Flush
+      // them here so hook setState calls inherit this payload update's lane. In
+      // a transition that suspends, the source tree therefore keeps its source
+      // pathname/params until the destination payload commits with them.
+      eventController.flushRouteState();
     });
 
     return unsubscribe;
@@ -498,7 +528,9 @@ export function NavigationProvider({
 
   return (
     <NavigationStoreContext.Provider value={contextValue}>
-      {content}
+      <LocationStateContext.Provider value={locationState}>
+        {content}
+      </LocationStateContext.Provider>
     </NavigationStoreContext.Provider>
   );
 }

@@ -5,7 +5,8 @@
  * vendored react-server-dom serializer, which requires the `react-server`
  * export condition. That condition flips React to its server build (no client
  * hooks), so it MUST live in its own project — the main vitest.config.ts must
- * NOT set it, or the ~50 tests that mock @vitejs/plugin-rsc/rsc would break.
+ * NOT set it, or the ~50 tests that mock @vitejs/plugin-rsc/rsc/server
+ * (and /rsc/client) would break.
  *
  * Run with:
  *   pnpm exec vitest run --config vitest.rsc.config.ts
@@ -33,7 +34,10 @@
 
 import { defineConfig } from "vitest/config";
 import { resolve } from "path";
-import { rangoUseClientTransform } from "./src/testing/vitest.js";
+import {
+  rangoUseCacheTransform,
+  rangoUseClientTransform,
+} from "./src/testing/vitest.js";
 
 // Force production React in this process and any forked worker (forks inherit
 // process.env). See header for why dev mode is not viable here.
@@ -44,7 +48,7 @@ export default defineConfig({
   // islands from the server tree's own imports (no clientComponents needed).
   // Server components (no directive) are untouched, so renderToFlightString of
   // pure leaf trees is unaffected.
-  plugins: [rangoUseClientTransform()],
+  plugins: [rangoUseClientTransform(), rangoUseCacheTransform()],
   resolve: {
     conditions: ["react-server"],
     alias: {

@@ -17,21 +17,27 @@
     },
     {
       "name": "bundle-analysis",
-      "description": "Audit a Rango app's production bundle for server-side code leaking into the client, dev/prod React duplication, oversized chunks, and inefficient client-reference grouping. Use when investigating bundle size growth, before a production deploy, or when the client/SSR/RSC output suddenly balloons.",
+      "description": "Audit a Rango app's production bundle for server-side code leaking into the client, dev/prod React duplication, oversized chunks, and poor client-chunk grouping. Use when investigating bundle size growth, before a production deploy, or when the client/SSR/RSC output suddenly balloons.",
       "argumentHint": "<app-dir>",
       "path": "skills/bundle-analysis/SKILL.md"
     },
     {
       "name": "cache-guide",
-      "description": "When to use cache() DSL vs \"use cache\" directive — key differences and decision guide. Use when unsure which caching mechanism fits a given problem, comparing route/segment caching, function-level caching, and document-level caching, or asking \"which cache API should I use\".",
+      "description": "Decision guide for Rango's cache layers — \"use cache\", loader cache(), segment cache(), Prerender/Static, the ppr HTML shell, and document/CDN caching — with the cache() vs \"use cache\" comparison (keys, guards, SWR, nesting). Use when unsure which caching mechanism fits a problem, comparing layers, or asking \"which cache API should I use\".",
       "argumentHint": "",
       "path": "skills/cache-guide/SKILL.md"
     },
     {
       "name": "caching",
-      "description": "Configure route/segment-subtree caching with memory, Cloudflare KV, or Vercel cache stores in @rangojs/router. Use when responses should be cached or revalidated, data is stale or not updating after code changes, or you are wiring up a cache store.",
+      "description": "Configure segment caching with the cache() DSL in @rangojs/router — TTL/SWR, tags and updateTag/revalidateTag, loader-level caching, and the Memory, Cloudflare (Cache API + optional KV), and Vercel Runtime Cache stores. Use when responses should be cached or revalidated, data is stale or not updating after changes, or you are wiring up a cache store.",
       "argumentHint": "[setup]",
       "path": "skills/caching/SKILL.md"
+    },
+    {
+      "name": "client-urls",
+      "description": "Define client-component route groups with clientUrls() in a \"use client\" module — no handlers, useLoader at read sites, client-run revalidate predicates, loader-thrown notFound/redirect, loader handle writes, and the ssr:false SSR-completeness opt-in. Use when a route group's pages are client components, when building high-navigation-speed UIs (dashboards, admin panels, settings) where transitions must feel instant, when moving data reads from handler ctx.use() to useLoader at consumption sites, or when asking how routes defined in a \"use client\" file work.",
+      "argumentHint": "[setup]",
+      "path": "skills/client-urls/SKILL.md"
     },
     {
       "name": "cloudflare",
@@ -47,7 +53,7 @@
     },
     {
       "name": "composability",
-      "description": "Reusable composition patterns with globally importable route helpers in @rangojs/router. Use when sharing loaders, middleware, or handler logic across multiple route files, or avoiding copy-pasting the same route setup everywhere.",
+      "description": "Reusable composition patterns with globally importable route helpers and include() modules in @rangojs/router. Use when sharing loaders, middleware, or caching config across multiple route files, splitting routes into eager or code-split include() groups, or avoiding copy-pasting the same route setup everywhere.",
       "argumentHint": "pattern-name",
       "path": "skills/composability/SKILL.md"
     },
@@ -59,7 +65,7 @@
     },
     {
       "name": "debug-manifest",
-      "description": "Debug and inspect route manifest structure. Use when routes aren't matching as expected, you need to see the generated route tree, or a path resolves to the wrong handler.",
+      "description": "Inspect the router's route manifest (route/layout tree, shortCodes, parent links, loader/middleware flags) and diff it between versions. Use when routes aren't matching as expected, you need to see the generated route tree, or a path resolves to the wrong handler.",
       "argumentHint": "",
       "path": "skills/debug-manifest/SKILL.md"
     },
@@ -70,8 +76,14 @@
       "path": "skills/defer-hydration/SKILL.md"
     },
     {
+      "name": "deployment-caching",
+      "description": "Choose the deployment cache boundary for a Rango app: in-function segment/prerender/PPR caches, store-backed whole-response caching, or an external CDN cache. Use when comparing Cloudflare, Vercel, and Node deployments; deciding whether Cache-Control can reduce origin work; or reasoning about middleware, live loaders, PPR, and CDN behavior.",
+      "argumentHint": "[cloudflare|vercel|node]",
+      "path": "skills/deployment-caching/SKILL.md"
+    },
+    {
       "name": "document-cache",
-      "description": "Cache the whole HTTP response at the edge with Cache-Control headers. Use when caching an entire page or response at a CDN edge, setting Cache-Control headers, or cutting origin hits for public pages — not for caching a single segment or function.",
+      "description": "Cache complete HTTP responses in Rango's configured app store with createDocumentCacheMiddleware, using Cache-Control s-maxage as policy. Use when reusing a whole HTML/RSC response, comparing the store-backed middleware with a platform CDN cache, or deciding whether full-response caching is safe.",
       "argumentHint": "[setup]",
       "path": "skills/document-cache/SKILL.md"
     },
@@ -125,13 +137,13 @@
     },
     {
       "name": "loader",
-      "description": "Define data loaders for fetching data in routes with createLoader. Use when pages need per-request data that stays fresh, data should stream while the page renders, or client components need reactive server data.",
+      "description": "Define data loaders with createLoader and register them on routes with loader(). Use when a route needs per-request data that stays fresh and streams while the page renders, a client component reads server data with useLoader, a loader should re-run after specific actions (revalidate), be cached (cache), be callable from the client (fetchable loaders), throw notFound()/redirect(), write page meta/breadcrumbs handles, or must be settled in the SSR'd document (ssr:false).",
       "argumentHint": "[loader]",
       "path": "skills/loader/SKILL.md"
     },
     {
       "name": "middleware",
-      "description": "Define middleware for authentication, logging, and request processing in @rangojs/router. Use when gating routes behind auth checks, logging requests, or running shared logic before a handler runs.",
+      "description": "Define global (router.use) and route (middleware()) middleware in @rangojs/router — auth gates, logging, response headers, context variables, redirects. Use when gating routes behind auth checks, logging requests, setting headers or ctx variables before a handler runs, or deciding whether middleware wraps server actions.",
       "argumentHint": "[middleware-name]",
       "path": "skills/middleware/SKILL.md"
     },
@@ -161,7 +173,7 @@
     },
     {
       "name": "parallel",
-      "description": "Define parallel routes for multi-column layouts, sidebars, and modal slots in @rangojs/router. Use when a layout needs multiple independently-loading regions (e.g. a sidebar and main panel), or rendering more than one route segment at the same URL.",
+      "description": "Define parallel routes (named slots) for multi-column layouts, sidebars, and UI-less metadata slots in @rangojs/router. Use when a layout needs multiple independently-loading regions (e.g. a sidebar and main panel), or rendering more than one route segment at the same URL.",
       "argumentHint": "[@slot-name]",
       "path": "skills/parallel/SKILL.md"
     },
@@ -173,7 +185,7 @@
     },
     {
       "name": "prerender",
-      "description": "Pre-render route segments at build time with Prerender and Passthrough live fallback. Use when a page's content is mostly static and shouldn't render on every request, speeding up cold responses, or deciding which routes to prerender vs render live.",
+      "description": "Pre-render route segments at build time with Prerender (with getParams), Passthrough live fallback, Static segments, and Skip. Use when a page's content is mostly static and shouldn't render on every request, speeding up cold responses, reading build-only data (files, build env), or deciding which routes to prerender vs render live.",
       "argumentHint": "[passthrough]",
       "path": "skills/prerender/SKILL.md"
     },
@@ -185,25 +197,25 @@
     },
     {
       "name": "react-compiler",
-      "description": "Enable the React Compiler in a Rango app the @vitejs/plugin-rsc way — a separate @rolldown/plugin-babel running reactCompilerPreset(), ordered after react() and before the plugin that supplies @vitejs/plugin-rsc. Use when a consumer wants to turn React Compiler on, hits the dead plugin-react v6 `react({ babel })` path, or is unsure why server components aren't being compiled.",
+      "description": "Enable the React Compiler in a Rango app with @vitejs/plugin-react 6.1's native `compiler` option (oxc-transform-react) — one flag, client components only, no Babel. Use when a consumer wants to turn React Compiler on, hits the dead plugin-react v6 `react({ babel })` path, sees an unmet-peer / ERESOLVE on oxc-transform-react, or is unsure why server components aren't being compiled.",
       "argumentHint": "",
       "path": "skills/react-compiler/SKILL.md"
     },
     {
       "name": "response-routes",
-      "description": "Response routes (path.json, path.text, etc.) for non-RSC endpoints with typed responses. Use when building a JSON/text API endpoint alongside your pages, or asking how to return raw JSON instead of RSC from a route.",
+      "description": "Response routes (path.json, path.text, etc.) for non-RSC endpoints with typed responses. Use when building a JSON/text API endpoint alongside your pages, asking how to return raw JSON instead of RSC from a route, or protecting a state-changing endpoint from CSRF.",
       "argumentHint": "[json|text|html|xml|md|image|stream]",
       "path": "skills/response-routes/SKILL.md"
     },
     {
       "name": "route",
-      "description": "Define routes with path() in @rangojs/router. Use when creating a new page or route, or asking how to define a URL path and its handler.",
+      "description": "Define routes with path() in @rangojs/router — URL params, catch-alls, typed search params, the handler context, handler-to-child data, and redirects. Use when creating a new page or route, or asking how to define a URL path and its handler.",
       "argumentHint": "[pattern]",
       "path": "skills/route/SKILL.md"
     },
     {
       "name": "router-setup",
-      "description": "Create and configure the RSC router with createRouter. Use when bootstrapping a new Rango app, or configuring top-level router options like base path, cache store, or environment.",
+      "description": "Create and configure a Rango app with createRouter() and the rango() Vite plugin. Use when bootstrapping a new app, wiring vite.config, writing the Document or worker entry, or setting top-level router options (basename, cache store, prefetch, timeouts, origin check, telemetry, SSR streaming).",
       "argumentHint": "[option]",
       "path": "skills/router-setup/SKILL.md"
     },
@@ -215,7 +227,7 @@
     },
     {
       "name": "server-actions",
-      "description": "Define and call server actions (`\"use server\"`) — forms, useActionState, useOptimistic, validation, error handling, redirects, revalidation. Use when handling a form submission on the server, calling a server function from a client component, or needing optimistic UI after a mutation.",
+      "description": "Define and call server actions (`\"use server\"`) — forms, useActionState, useOptimistic, validation, error handling, redirects, post-action revalidation, client-cache control (keepClientCache), and the default CSRF origin check. Use when handling a form submission on the server, calling a server function from a client component, choosing what re-renders after a mutation, needing optimistic UI after a mutation, or asking how actions are protected from CSRF.",
       "argumentHint": "[action]",
       "path": "skills/server-actions/SKILL.md"
     },
@@ -239,19 +251,19 @@
     },
     {
       "name": "testing",
-      "description": "Test @rangojs/router apps — unit (loaders/middleware/reverse/components), integration (dispatch/Flight), and e2e (dev+prod parity, progressive enhancement). Use when writing a unit test for a loader or middleware, or asking how to test a route end-to-end in dev and production.",
+      "description": "Test @rangojs/router apps — unit (loaders, middleware, server actions, handles, transition/clientUrls predicates), client components (renderRoute), RSC/Flight (renderServerTree, renderHandler, serveShellRequest for PPR shells), integration (dispatch), and e2e (dev+prod parity, progressive enhancement). Use when writing a unit test for a loader, middleware, action, or handler, setting up vitest for a Rango app, or testing a route end-to-end in dev and production.",
       "argumentHint": "[layer]",
       "path": "skills/testing/SKILL.md"
     },
     {
       "name": "theme",
-      "description": "Opt-in theme system with FOUC prevention for light/dark mode. Use when adding a light/dark mode toggle, or the page flashes the wrong theme on load (FOUC).",
+      "description": "Opt-in light/dark theme system with FOUC prevention, server-side theme access, and a useTheme() hook. Use when adding a light/dark mode toggle, reading or setting the theme in handlers or middleware, or when the page flashes the wrong theme on load (FOUC).",
       "argumentHint": "[setup]",
       "path": "skills/theme/SKILL.md"
     },
     {
       "name": "typesafety",
-      "description": "Set up type-safe routes, params, and environment types in @rangojs/router. Use when route or search params aren't typed, TypeScript can't infer a loader's return type, or wiring up typed environment bindings.",
+      "description": "Set up type-safe route names, params, search params, response payloads, and environment types in @rangojs/router. Use when route or search params aren't typed, ctx.env or ctx.get() is untyped, TypeScript can't infer a loader's return type, or wiring RegisteredRoutes / the generated route map.",
       "argumentHint": "[setup]",
       "path": "skills/typesafety/SKILL.md"
     },

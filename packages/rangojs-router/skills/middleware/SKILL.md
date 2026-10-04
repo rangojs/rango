@@ -1,12 +1,17 @@
 ---
 name: middleware
-description: Define middleware for authentication, logging, and request processing in @rangojs/router. Use when gating routes behind auth checks, logging requests, or running shared logic before a handler runs.
+description: Define global (router.use) and route (middleware()) middleware in @rangojs/router — auth gates, logging, response headers, context variables, redirects. Use when gating routes behind auth checks, logging requests, setting headers or ctx variables before a handler runs, or deciding whether middleware wraps server actions.
 argument-hint: [middleware-name]
 ---
 
 # Middleware
 
-Middleware runs before/after route handlers using the onion model.
+Middleware runs before and after route handlers using the onion model: code
+before `await next()` runs on the way in, code after it runs on the way out
+with the downstream `Response` available. This skill covers the two
+registration levels (global `router.use()` and route `middleware()`), what each
+wraps (actions, renders, fetchable loaders), the middleware context, and
+common patterns.
 
 ## Execution Model
 
@@ -23,13 +28,15 @@ const router = createRouter<AppEnv>({})
   .routes(urlpatterns);
 ```
 
-When the router has a `basename`, pattern-scoped `.use()` patterns are automatically prefixed. For example, with `basename: "/app"`, `.use("/admin/*", mw)` matches `/app/admin/*`.
+Scope patterns use the route pattern syntax: `:param` (typed on `ctx.params`), optional `:param?`, constrained `:locale(en|gb)`, and a trailing `*` wildcard. When the router has a `basename`, pattern-scoped `.use()` patterns are automatically prefixed. For example, with `basename: "/app"`, `.use("/admin/*", mw)` matches `/app/admin/*`.
+
+A pattern matches the request URL. Server actions are posted to the current page's URL, but an action can be invoked through any URL that matches a route, so a pattern-scoped guard is not an authorization boundary for actions. Authorize sensitive actions inside the action body (see `/server-actions` → "Authorization in actions").
 
 ### Route middleware (`middleware()` in `urls()`)
 
 Registered inside `urls()` callback. Wraps **rendering only** -- it does NOT wrap server action execution. Actions run before route middleware, so when route middleware executes during post-action revalidation, it can observe state that the action set (cookies, context variables, headers).
 
-> **Implication for auth:** route middleware cannot guard server actions. Use `router.use("/admin/*", requireAuth)` (global, scoped) for action protection, or check inside the action body. See `/server-actions` for action-side auth patterns.
+> **Implication for auth:** route middleware cannot guard server actions. Load identity in global `router.use()` middleware (it wraps actions) and check authorization inside the action body. See `/server-actions` for action-side auth patterns.
 
 ```
 Request flow (with action):
@@ -37,6 +44,9 @@ Request flow (with action):
 
 Request flow (no action):
   global mw -> route mw -> render pass
+
+Fetchable loader request (_rsc_loader: useFetchLoader / load / useRefreshLoaders):
+  global mw -> per-loader { middleware } list -> loader   (route mw does NOT run)
 
 Progressive enhancement (no-JS form POST):
   global mw -> action executes -> route mw -> full page re-render
@@ -65,15 +75,19 @@ render pass — normal renders, post-action revalidation, PE re-renders — its
 variables are never stale: middleware is the safest `ctx.set` rung on the
 data-passing ladder (`/rango` → "Passing data down the tree"). But it does
 not change partial revalidation boundaries between handler/layout/parallel
-segments.
+segments. On a PPR shell HIT no handler or layout runs; on a route `cache()`
+HIT the segments inside the `cache()` boundary don't run, and those above it
+do. Output that didn't run shows the values read when the shell was captured
+or the entry written.
 
 For shared segment data, use named revalidation contracts on both the producer
 and consumer segments, even when middleware is present in the chain.
 
 ```typescript
+import type { Revalidate } from "@rangojs/router";
 import * as CartActions from "./actions/cart";
 
-export const revalidateCartData = (ctx) =>
+export const revalidateCartData: Revalidate = (ctx) =>
   ctx.isAction(CartActions) || undefined;
 
 layout(CartLayout, () => [
@@ -101,7 +115,7 @@ layout(CartLayout, () => [
 ]);
 ```
 
-Route middleware is the right place for per-route concerns that affect rendering (setting context variables for handlers, adding response headers, reading cookies set by actions). It is NOT the right place for action guards -- use global middleware for that.
+Route middleware is the right place for per-route concerns that affect rendering (setting context variables for handlers, adding response headers, reading cookies set by actions). It is NOT the right place for action guards -- use global middleware to load identity and check authorization in the action body.
 
 ## Basic Middleware
 
@@ -122,6 +136,13 @@ export const authMiddleware: Middleware = async (ctx, next) => {
 };
 ```
 
+Every middleware must either call `next()` or return (or throw) a `Response`.
+Returning or throwing a `Response` short-circuits the chain; downstream
+middleware and the handler do not run, and headers/cookies already set on the
+context are merged into it. A middleware that does neither throws an error; any
+other return value is ignored with a warning. `await next()` resolves to the
+downstream `Response`, so `return next()` and `await next()` are both fine.
+
 ## Using Middleware in Routes
 
 ```typescript
@@ -129,7 +150,7 @@ import { urls } from "@rangojs/router";
 import { authMiddleware, loggerMiddleware } from "./middleware";
 
 export const urlpatterns = urls(({ path, layout, middleware }) => [
-  // Global middleware for all routes in this file
+  // Route middleware for every route in this urls() tree (wraps renders, not actions)
   middleware(loggerMiddleware),
 
   // Layout with scoped middleware
@@ -189,31 +210,108 @@ middleware([authMw, loggingMw], () => [
 This creates a transparent layout (`<Outlet />`) that carries the middleware.
 The middleware does not affect sibling routes outside the callback.
 
+That scope comes from the routes inside the callback. With no routes inside,
+the wrapper scopes nothing: its middleware runs for every route of the
+enclosing path or layout. Such a wrapper cannot contain `layout()`;
+`router.routes()` throws and points to the flat form:
+
+```typescript
+// throws at definition time
+path("/account", AccountPage, { name: "account" }, () => [
+  middleware(requireAuth, () => [layout(<AccountNav />)]),
+]);
+// same behavior, written flat
+path("/account", AccountPage, { name: "account" }, () => [
+  middleware(requireAuth),
+  layout(<AccountNav />),
+]);
+```
+
 ## Middleware Context
 
 ```typescript
+import { cookies, headers } from "@rangojs/router";
+import type { Middleware } from "@rangojs/router";
+import { FlashMessage } from "./location-states";
+
 export const myMiddleware: Middleware = async (ctx, next) => {
-  // Access request
-  ctx.request; // Request object
-  ctx.url; // Parsed URL
-  ctx.params; // Route parameters
-  ctx.build; // in middleware: true only during Prerender + ppr build-shell capture (plain Prerender does not run middleware)
+  // Request
+  ctx.request; // incoming Request (raw URL, method, body)
+  ctx.url; // URL with internal _rsc* params stripped (also ctx.pathname, ctx.searchParams)
+  ctx.params; // params from the router.use() pattern or the matched route
+  ctx.routeName; // matched route name (reliable after await next() in global middleware)
+  ctx.build; // true only during Prerender + ppr build-shell capture (plain Prerender does not run middleware)
+  headers().get("accept-language"); // read-only request headers (free function)
+  cookies().get("session")?.value; // request cookies (free function; also .set/.delete)
 
-  // Access platform bindings (plain bindings from createRouter<TEnv>())
+  // Platform bindings (plain bindings from createRouter<TEnv>())
   ctx.env.DB; // D1Database
-  ctx.env.KV; // KVNamespace
+  ctx.waitUntil(async () => {}); // work after the response is sent
 
-  // Set variables for downstream handlers (typed via Rango.Vars)
+  // Variables for downstream middleware, handlers, and loaders (typed via Rango.Vars)
   ctx.set("user", { id: "123", name: "John" });
+  ctx.get("user");
+
+  // Response shaping
+  ctx.header("X-Frame-Options", "DENY"); // set one response header
+  ctx.headers; // response Headers (stub before next(), the real response after)
+  ctx.setLocationState(FlashMessage({ text: "Saved" })); // history state for the client
+  ctx.reverse("home"); // URL for a global route name (no ".name", no param auto-fill)
 
   // Opt the current request out of PPR shell lookup/capture.
   ctx.dynamic();
+  // Print the per-request performance timeline (see /loader → "debugPerformance").
+  ctx.debugPerformance();
 
-  // Continue to next middleware/handler
+  // Continue to the next middleware / the handler
+  const response = await next();
+
+  // After the handler: the real Response is available
+  console.log(response.status);
+};
+```
+
+Cookies and request headers are not `ctx` members; use the free functions
+`cookies()` and `headers()` from `@rangojs/router`.
+
+Middleware reads request identity freely: `cookies()`, `headers()` and
+`ctx.request.headers` alike. The same `Request` reaches handlers and loaders
+as `ctx.request`, and there `ctx.request.headers` answers like `headers()`: it
+throws inside a `cache()` boundary or a `"use cache"` function and refuses a
+`ppr` shell capture (#976). To render a header on a cached or `ppr` route,
+copy it here with `ctx.set()` (a cacheable variable) and include it in the
+route's `cache()` `key()`, so each value gets its own record and shell:
+
+```typescript
+const Tier = createVar<string>();
+
+export const tierMiddleware: Middleware = async (ctx, next) => {
+  ctx.set(Tier, ctx.request.headers.get("x-tier") ?? "free");
+  return next();
+};
+// cache({ key: (ctx) => `tier:${ctx.request.headers.get("x-tier") ?? "free"}` }, ...)
+```
+
+### Changing the response after `next()`
+
+After `await next()`, `ctx.header()` and `ctx.headers` write to the real
+downstream response. Returning a different `Response` replaces it.
+
+```typescript
+export const securityHeaders: Middleware = async (ctx, next) => {
   await next();
+  ctx.header("Strict-Transport-Security", "max-age=63072000");
+  ctx.headers.set("X-Content-Type-Options", "nosniff");
+};
 
-  // After handler (response intercepting)
-  console.log("Handler completed");
+export const timing: Middleware = async (ctx, next) => {
+  const start = performance.now();
+  try {
+    await next();
+  } finally {
+    // try/catch around next() also sees downstream errors
+    console.log(`${ctx.pathname} ${(performance.now() - start).toFixed(1)}ms`);
+  }
 };
 ```
 
@@ -226,7 +324,8 @@ import { createVar } from "@rangojs/router";
 import type { Middleware } from "@rangojs/router";
 
 interface AuthUser { id: string; email: string; role: string }
-export const CurrentUser = createVar<AuthUser>();
+// cache: false — per-user data must never bake into a cache() segment
+export const CurrentUser = createVar<AuthUser>({ cache: false });
 
 export const authMiddleware: Middleware = async (ctx, next) => {
   const token = ctx.request.headers.get("Authorization");
@@ -238,6 +337,7 @@ export const authMiddleware: Middleware = async (ctx, next) => {
 };
 
 // In a handler -- typed read
+import type { Handler } from "@rangojs/router";
 import { CurrentUser } from "./middleware";
 
 const Dashboard: Handler<"dashboard"> = (ctx) => {
@@ -250,12 +350,28 @@ This works alongside `ctx.get("key")` / `ctx.set("key", value)` (global typing
 via Rango.Vars augmentation). Use `createVar` for route-local or feature-scoped
 data; use Rango.Vars for app-wide middleware state.
 
+Mark request-specific data (sessions, users, tokens) non-cacheable: either on
+the token (`createVar<T>({ cache: false })`) or per write
+(`ctx.set("user", user, { cache: false })`). Reading it with `ctx.get()` inside
+a `cache()` boundary or a `"use cache"` function then throws instead of baking
+one user's data into a shared entry (inside `"use cache"`, also through a
+middleware `ctx` passed in); under `cache()` loaders can still read it because a
+DSL loader re-runs on every hit (a `"use cache"` function a loader calls cannot,
+and a loader bound with its own `cache()` only with a `key()`, which switches
+the check off, so the key must include the value). On a `ppr` route only a
+loader without `ssr: false` that no handler awaits may read it: a read the shell
+capture waits for refuses the capture. A middleware `ctx` passed to a
+`"use cache"` function keys the call by host, pathname, params and search, plus
+the route name once the route is matched (a global middleware before `next()`
+has none yet), and its `set()`, `header()` and `headers` writes throw inside the
+function (`/use-cache`).
+
 ## Build-Time PPR Middleware
 
 Normal `Prerender` Flight payload collection does not run middleware: there is
 no request to wrap. The exception is `Prerender` + `ppr` build-shell capture.
-After the Flight payload exists, the shell producer replays global and route
-middleware for each generated URL before it captures HTML.
+After the Flight payload exists, the build replays global and route middleware
+for each generated URL before capturing the shell.
 
 In that build-shell pass:
 
@@ -282,12 +398,20 @@ export const commerceMiddleware: Middleware = async (ctx, next) => {
 ## Redirect with State in Middleware
 
 ```typescript
-import { redirect, createLocationState } from "@rangojs/router";
-import type { Middleware } from "@rangojs/router";
+// location-states.ts — shared module; the client component that reads the
+// state must import the same definition
+import { createLocationState } from "@rangojs/router";
 
 export const FlashMessage = createLocationState<{ text: string }>({
   flash: true,
 });
+```
+
+```typescript
+// middleware/auth.ts
+import { redirect } from "@rangojs/router";
+import type { Middleware } from "@rangojs/router";
+import { FlashMessage } from "../location-states";
 
 export const requireAuthMiddleware: Middleware = async (ctx, next) => {
   const token = ctx.request.headers.get("Authorization");
@@ -301,6 +425,8 @@ export const requireAuthMiddleware: Middleware = async (ctx, next) => {
 ```
 
 Read the flash on the target page with `useLocationState(FlashMessage)`. The `{ flash: true }` option makes it auto-clear after first render. See `/hooks`.
+
+A redirect is followed on a link click, `router.push()`, and Back/Forward to an entry the client has to fetch. On Back/Forward the redirect replaces the history entry it was triggered from: Back from the target lands on the entry before the redirecting one, not on the redirecting one again.
 
 ## Authentication Middleware
 
@@ -397,7 +523,7 @@ import {
 } from "./middleware";
 
 export const urlpatterns = urls(({ path, layout, middleware }) => [
-  // Global middleware
+  // Route middleware for every route in this tree (use router.use() to also wrap actions)
   middleware(loggerMiddleware),
   middleware(mockAuthMiddleware),
 

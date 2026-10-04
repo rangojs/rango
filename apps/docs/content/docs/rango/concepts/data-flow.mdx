@@ -16,12 +16,14 @@ The ladder is ordered by how it handles this. Rungs 1–3 make the desync _unrep
 
 ## Rung 1: a loader
 
-If the data can be a loader, make it a loader. Loaders resolve fresh on **every** pass — full renders, action revalidations, even cache hits (they stay live inside a cached render). There is nothing to keep in sync, because there is no stored producer state to go stale. They also run concurrently and stream, so their latency overlaps rendering instead of blocking it.
+If the data can be a loader, make it a loader. A loader resolves fresh every time it runs — full renders and cache hits alike (it stays live inside a cached render) — and every loader re-runs after an action by default, including loaders on outer layouts. There is nothing to keep in sync, because there is no stored producer state to go stale. Loaders also run concurrently and stream, so their latency overlaps rendering instead of blocking it.
 
 ```tsx
+import { urls } from "@rangojs/router";
+
 export const urlpatterns = urls(({ path, layout, loader }) => [
   layout(<ShopLayout />, () => [
-    loader(CartLoader), // fresh on every render pass, no contract needed
+    loader(CartLoader), // re-runs after every action by default, no contract needed
     path("/shop", ShopIndex, { name: "shop" }),
     path("/shop/cart", CartPage, { name: "cart" }),
   ]),
@@ -43,7 +45,8 @@ interface AuthUser {
   email: string;
   role: string;
 }
-export const CurrentUser = createVar<AuthUser>();
+// cache: false: per-user data must never bake into a cache() segment
+export const CurrentUser = createVar<AuthUser>({ cache: false });
 
 export const authMiddleware: Middleware = async (ctx, next) => {
   const token = ctx.request.headers.get("Authorization");
@@ -54,7 +57,7 @@ export const authMiddleware: Middleware = async (ctx, next) => {
 };
 ```
 
-Any handler, layout, or parallel slot in the render pass reads it back with `ctx.get(CurrentUser)`, typed. One boundary to keep in mind: middleware guarantees the freshness of _its own_ writes — it does not change the partial-revalidation boundaries between handler, layout, and parallel segments. See [Middleware](/docs/rango/features/middleware).
+Any handler, layout, parallel slot, or loader in the render pass reads it back with `ctx.get(CurrentUser)`, typed. One boundary to keep in mind: middleware guarantees the freshness of _its own_ writes — it does not change the partial-revalidation boundaries between handler, layout, and parallel segments. See [Middleware](/docs/rango/features/middleware).
 
 ## Rung 3: handler `ctx.set()` to its own children
 
@@ -63,6 +66,7 @@ A handler can set context for the segments nested inside its own `path()` — or
 This is the rung for data the page must compute anyway. Pagination is the canonical case: the handler's search params decide how many pages exist, and the layout chrome renders that count.
 
 ```tsx
+import { urls } from "@rangojs/router";
 import { Outlet, ParallelOutlet } from "@rangojs/router/client";
 
 urls(({ path, layout, parallel }) => [
@@ -110,12 +114,15 @@ Before writing one, check whether the producer can move down a rung — into the
 
 ```ts
 // revalidation-contracts.ts
+import type { Revalidate } from "@rangojs/router";
 import { addToCart } from "./actions/cart";
 
-export const revalidateCartData = (ctx) => ctx.isAction(addToCart) || undefined;
+export const revalidateCartData: Revalidate = (ctx) =>
+  ctx.isAction(addToCart) || undefined;
 ```
 
 ```tsx
+// inside urls(({ path, layout, revalidate }) => [ ... ])
 layout(<CartLayout />, () => [
   revalidate(revalidateCartData), // producer reruns
   path("/cart", CartPage, { name: "cart" }, () => [
@@ -124,16 +131,17 @@ layout(<CartLayout />, () => [
 ]);
 ```
 
-Two details carry weight here. `ctx.isAction(addToCart)` matches the action **by reference**, so the contract survives renames. And the `|| undefined` turns the boolean into "mine, else let the default decide" — a bare `false` would suppress revalidation for unrelated actions too, which is rarely what a shared contract should do.
+Two details carry weight here. `ctx.isAction(addToCart)` matches the action **by reference**, so a rename or a moved file becomes a compile error at the import instead of a silent miss. And the `|| undefined` makes the contract add a signal without taking one away: on the layout, which the default skips after actions, it adds a re-render after `addToCart` and defers otherwise. The route segment already re-runs after every action, so there it changes nothing by default; the shared name documents the dependency. A bare `ctx.isAction(addToCart)` would return a hard `false` for unrelated actions and on navigation too, which is rarely what a shared contract should do.
 
 Because the contract is one named function used at every site, the dependency is greppable: search for `revalidateCartData` and you see the producer and every consumer. To avoid repeating `revalidate(...)` at each callsite, package contracts as handoff helpers that spread into any segment:
 
 ```ts
 // revalidation-contracts.ts
 import { revalidate } from "@rangojs/router";
+import type { Revalidate } from "@rangojs/router";
 import * as AuthActions from "./actions/auth";
 
-export const revalidateAuthData = (ctx) =>
+export const revalidateAuthData: Revalidate = (ctx) =>
   ctx.isAction(AuthActions) || undefined;
 export const revalidateAuth = () => [revalidate(revalidateAuthData)];
 ```
@@ -145,7 +153,7 @@ layout(<ShellLayout />, () => [
 ]);
 ```
 
-A segment that depends on multiple upstream domains composes multiple contracts — `revalidateAuth()` and `revalidateCart()` side by side on the same segment.
+A segment that depends on multiple upstream domains composes multiple contracts — `revalidateAuth()` and `revalidateCart()` side by side on the same segment. That composition is why the defer form matters: revalidators on a segment run in order, and a hard `false` from the first one ends the chain before the second runs.
 
 ## Picking a rung
 

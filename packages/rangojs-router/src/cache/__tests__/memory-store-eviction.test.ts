@@ -99,6 +99,8 @@ describe("MemorySegmentCacheStore maxEntries FIFO cap (C4)", () => {
       prelude: btoa("SHELL"),
       postponed: null,
       reactVersion: "19.2.6",
+      buildVersion: "test-build",
+      snapshot: [],
       createdAt: Date.now(),
     };
     await store.putShell("s1", shell, 60);

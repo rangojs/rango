@@ -1,6 +1,6 @@
 ---
 name: response-routes
-description: Response routes (path.json, path.text, etc.) for non-RSC endpoints with typed responses. Use when building a JSON/text API endpoint alongside your pages, or asking how to return raw JSON instead of RSC from a route.
+description: Response routes (path.json, path.text, etc.) for non-RSC endpoints with typed responses. Use when building a JSON/text API endpoint alongside your pages, asking how to return raw JSON instead of RSC from a route, or protecting a state-changing endpoint from CSRF.
 argument-hint: [json|text|html|xml|md|image|stream]
 ---
 
@@ -8,13 +8,15 @@ argument-hint: [json|text|html|xml|md|image|stream]
 
 Response routes skip the RSC pipeline entirely. Use them for JSON APIs, plain text endpoints,
 XML feeds, image proxies, and any route that returns a `Response` instead of React components.
+Serving several representations from one URL is `/mime-routes`; a typed client for
+calling your JSON routes is `/api-client`.
 
 ## Route-Level Tags: path.json(), path.text(), etc.
 
-Inside any `urls()` callback, use `path.json()`, `path.text()`, or other tags alongside regular RSC routes:
+Inside any `urls()` callback, use `path.json()`, `path.text()`, or other tags alongside regular RSC routes. Each takes `(pattern, handler, options?, use?)` like `path()`:
 
 ```typescript
-import { urls, RouterError } from "@rangojs/router";
+import { urls } from "@rangojs/router";
 
 export const urlpatterns = urls(({ path, layout, include }) => [
   // RSC routes (normal)
@@ -81,18 +83,27 @@ export const urlpatterns = urls(({ path, layout, include }) => [
 
 ## ResponseHandlerContext
 
-Response route handlers receive a lighter context (no `ctx.use()`, no `ctx.res`):
+Response route handlers receive a lighter context (no `ctx.use()`, no `ctx.set()`, no `ctx.res`):
 
 ```typescript
 interface ResponseHandlerContext<TParams, TEnv> {
-  request: Request;
-  params: TParams; // Typed from URL pattern
-  env: TEnv; // Plain bindings (DB, KV, etc.)
-  searchParams: URLSearchParams;
-  url: URL;
+  // Shared request scope (same as every Rango context)
+  request: Request; // raw request: headers, method, body
+  url: URL; // internal _rsc* params stripped
+  originalUrl: URL; // transport URL, unmodified
   pathname: string;
-  reverse: (name: string, params?: Record<string, string>) => string;
-  get: GetVariableFn; // Read middleware variables
+  searchParams: URLSearchParams;
+  env: TEnv; // Plain bindings (DB, KV, etc.)
+  waitUntil(fn: () => Promise<void>): void; // work after the response
+  executionContext?: ExecutionContext; // Cloudflare only
+  // Response-route specific
+  params: TParams; // Typed from URL pattern
+  reverse: (
+    name: string,
+    params?: Record<string, string>,
+    search?: Record<string, unknown>,
+  ) => string; // GlobalReverseFunction: global names only, ".name" is a type error
+  get: GetVariableFn; // Read middleware variables (string key or createVar token)
   header: (name: string, value: string) => void;
   // Use cookies().set(name, value, opts) for cookie mutations (standalone API)
 }
@@ -104,6 +115,8 @@ String-returning handlers (json, text, html, xml, md) can set custom headers and
 without constructing a full Response:
 
 ```typescript
+import { cookies } from "@rangojs/router";
+
 path.md(
   "/docs/:slug.md",
   (ctx) => {
@@ -127,10 +140,12 @@ merge, and router `onError` is not invoked. Throw ordinary errors (including
 
 ### Environment Access
 
-`ctx.env` is always the plain bindings passed as TEnv to `createRouter<TEnv>()`:
+`ctx.env` is the plain bindings object the router received for the request. Its
+type comes from the global `Rango.Env` registration (`/typesafety`), not from
+the `createRouter<TEnv>()` generic, which `urls()` modules cannot see:
 
 ```typescript
-// createRouter<{ DB: D1Database; KV: KVNamespace }>({ ... })
+// Rango.Env registered as { DB: D1Database; KV: KVNamespace }
 
 // In a response handler:
 path.json(
@@ -192,6 +207,13 @@ path.json(
 );
 ```
 
+`RouterError` defaults to status 500 when `status` is omitted. Any other thrown
+error becomes a 500 with `code: "INTERNAL"`, and its message is hidden in
+production (`RouterError` messages are always sent). Only `path.json()` produces
+`problem+json`: the other response types answer errors with `text/plain` — the
+`RouterError` message, or for other errors the message in development and
+`Internal Server Error` in production.
+
 ### Returning Response Directly
 
 JSON handlers can return `Response` to bypass auto-wrap (custom status, headers, streaming):
@@ -223,6 +245,8 @@ For an OAuth, SSO, or payment callback, validate the registered target and
 return an explicitly external redirect:
 
 ```typescript
+import { redirect } from "@rangojs/router";
+
 path.any("/oauth/decision", async (ctx) => {
   const redirectUri = await readAndValidateRedirectUri(ctx.request);
   return redirect(redirectUri, { status: 303, external: true });
@@ -289,9 +313,11 @@ has no response payload metadata, so response routes resolve to `never`:
 // router.tsx
 export const router = createRouter({ document: Document }).routes(urlpatterns);
 
+type AppRoutes = typeof router.routeMap;
+
 declare global {
   namespace Rango {
-    interface RegisteredRoutes extends typeof router.routeMap {}
+    interface RegisteredRoutes extends AppRoutes {}
   }
 }
 ```
@@ -339,15 +365,18 @@ For local/scoped response typing without global augmentation, prefer
 the response payload straight from the `urls()` patterns and needs no
 `RegisteredRoutes` wiring.
 
-### ParamsFor with Response Routes
+### RouteParams with Response Routes
 
 ```typescript
-import type { ParamsFor } from "@rangojs/router";
+import type { RouteParams } from "@rangojs/router";
 
-// Works for both RSC and response routes
-type ProductParams = ParamsFor<"api.productDetail">;
+// Works for both RSC and response routes (reads the global route map)
+type ProductParams = RouteParams<"api.productDetail">;
 // = { id: string }
 ```
+
+`ParamsFor<TRoutes, "name">` is the lower-level form that takes an explicit
+route map first (e.g. `ParamsFor<typeof router.routeMap, "api.productDetail">`).
 
 ## Links to Response Routes
 
@@ -398,6 +427,80 @@ Response-route `cache()` stores whole `Response`s. The serve leaf
 | **GET/HEAD only**      | Non-GET/HEAD methods skip the cache (handler runs uncached).                                                                                                                            |
 | **Per-client signals** | A response with `Set-Cookie` or `x-rango-keep-cache` is returned live but **not** stored (MISS + SWR revalidation also skip put).                                                       |
 | **Default key**        | `response:{type}:{cacheKeyBase(host, path, searchParams)}` — sorted search, reserved `_rsc*` / allowlisted `__*` params excluded. Custom `key()` / store `keyGenerator` still override. |
+
+## CSRF
+
+The router's built-in `originCheck` guards server actions, fetchable loaders,
+and progressive-enhancement form posts (`/server-actions` → "CSRF
+Protection"). Response routes are **outside** that gate: the check is never
+consulted for them, not even a custom `originCheck` function.
+
+That matters for a response route that changes state **and** authenticates
+with cookies. Another site can make the victim's browser send a POST to it —
+an HTML form (`urlencoded`, `multipart`, or `text/plain`) or a `no-cors`
+`fetch()` — and the browser attaches the session cookie. Being a "JSON API" is
+no protection: `path.json()` does not parse the request body, and
+`await ctx.request.json()` parses a `text/plain` body just as happily. Routes
+authenticated only by an `Authorization` header are not exposed, because a
+cross-site request cannot set it.
+
+Guard state-changing response routes with middleware that applies the same
+rule as `originCheck`:
+
+```typescript
+import type { Middleware } from "@rangojs/router";
+
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+// Mirrors the built-in originCheck: Origin (or Referer) must equal the request
+// protocol + Host; no Origin/Referer means a non-browser client; "null" and a
+// missing Host fail closed.
+export const requireSameOrigin: Middleware = async (ctx, next) => {
+  if (SAFE_METHODS.has(ctx.request.method)) return next();
+
+  const headers = ctx.request.headers;
+  let origin = headers.get("origin");
+  if (!origin) {
+    const referer = headers.get("referer");
+    if (referer) {
+      try {
+        origin = new URL(referer).origin;
+      } catch {
+        // Malformed Referer: treat as absent
+      }
+    }
+  }
+  if (!origin) return next();
+
+  const host = headers.get("host");
+  const expected = host ? `${ctx.url.protocol}//${host}` : null;
+  if (!expected || origin.toLowerCase() !== expected.toLowerCase()) {
+    throw new Response("Forbidden", { status: 403 });
+  }
+  return next();
+};
+```
+
+Attach it with a pattern-scoped `router.use()` to cover a whole API prefix, or
+as a `middleware()` use item on a single route:
+
+```typescript
+// router.tsx — every response route under the API prefix
+const router = createRouter()
+  .use("/api/*", requireSameOrigin)
+  .routes(urlpatterns);
+
+// urls.tsx — one route
+path.json("/api/cart", updateCart, { name: "cart" }, () => [
+  middleware(requireSameOrigin),
+]);
+```
+
+Server-to-server callers (signed webhooks, cron, other backends) send no
+`Origin`, so they pass this check; verify their signature or credentials in the
+handler. Behind a proxy that rewrites `Host`, derive `expected` from the header
+your proxy sets, as with a custom `originCheck` (`/router-setup` → "Origin
+check").
 
 ## Mountable Module Pattern
 
@@ -472,35 +575,38 @@ the `_responses` phantom are inferred from the resolved `urls()` value, so
 ### Type safety after mounting
 
 ```typescript
-import type { RouteResponse } from "@rangojs/router";
-import type { ParamsFor } from "@rangojs/router";
+import type { RouteResponse, RouteParams } from "@rangojs/router";
 
 // Scoped (before mount) -- use the module directly, no global wiring needed
 type Stats = RouteResponse<typeof blogApiPatterns, "stats">;
 // = { views: number; visitors: number }
 
 // After mounting -- names get prefixed.
-// Rango.PathResponse needs `RegisteredRoutes extends typeof router.routeMap` (see above),
+// Rango.PathResponse needs the RegisteredRoutes augmentation (see above),
 // otherwise it resolves to never.
 type BlogStats = Rango.PathResponse<"/blog/api/stats">;
 // = { views: number; visitors: number }
 
 // Params work through nested includes
-type LikesParams = ParamsFor<"blog.api.likes">;
+type LikesParams = RouteParams<"blog.api.likes">;
 // = { slug: string }
 ```
 
 ### ctx.reverse inside mounted modules
 
-Response route handlers inside a mounted module can reference local names:
+A response handler's `ctx.reverse` resolves **global** names only: it has no
+`include()` scope and does not auto-fill params from the current request. Use
+the fully qualified name and pass every param:
 
 ```typescript
-// Inside blogApiPatterns handler
-path(
+// Inside blogApiPatterns (mounted via include("/api", ..., { name: "api" })
+// inside blogPatterns, mounted via include("/blog", ..., { name: "blog" }))
+path.json(
   "/:slug/likes",
   (ctx) => {
-    // ctx.reverse resolves names relative to the mount point
-    const commentsUrl = ctx.reverse("comments", { slug: ctx.params.slug });
+    const commentsUrl = ctx.reverse("blog.api.comments", {
+      slug: ctx.params.slug,
+    });
     // -> "/blog/api/my-post/comments"
 
     return { slug: ctx.params.slug, count: 42, commentsUrl };
@@ -508,6 +614,10 @@ path(
   { name: "likes" },
 );
 ```
+
+A dot-local name (`ctx.reverse(".comments")`) is a type error here. The
+runtime reverse has no scope to resolve it against, so untyped (JS) code that
+calls it throws `Unknown route` and the route answers 500.
 
 ## Content Negotiation
 

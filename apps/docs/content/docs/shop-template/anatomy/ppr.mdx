@@ -4,7 +4,7 @@ description: Public pages serve instantly from a cached HTML shell while per-use
 type: guide
 ---
 
-Public storefront pages are served from a cached HTML **shell**: the router flushes the prerendered page bytes before any render work happens, then resumes rendering for just the live regions ("holes"). The browser sees one ordinary streamed document; per-user data stays fresh on every request.
+Public storefront pages are served from a cached HTML **shell**: after route classification and the complete middleware chain, the router flushes the prerendered page bytes before downstream tail rendering, then resumes just the live regions ("holes"). The browser sees one ordinary streamed document; per-user data stays fresh on every request.
 
 The response header `x-rango-shell: HIT | MISS` shows whether a request was served from a shell. A `MISS` renders normally and schedules a background capture, so the second visit to a page is typically a `HIT`.
 
@@ -17,15 +17,15 @@ path("/", HomePage, { name: "home", ppr: true }),
 path("/products/:handle", ProductPage, { name: "product", ppr: true }),
 ```
 
-Home, about, the collection pages, and the product page serve from shells. Cart, search, and the account pages render per-request content and stay on the default render path — a route without `ppr` is completely untouched.
+Home, about, and the product page serve from shells. Collection pages, cart, search, and the account pages render per request and stay on the default render path — a route without `ppr` is completely untouched. Collection pages stay off `ppr` because they paginate with cursors: each cursor URL would get its own shell, captured at a different time, so page one's `endCursor` could be resolved against a later product ordering (see [Product listing](/docs/shop-template/anatomy/pages/plp#rendering-strategy)).
 
 ## What bakes, what stays live
 
-Everything the page renders from shared data — layout chrome, product data fetched through the cached Shopify data layer, static copy — is baked into the shell. Two kinds of regions stay live:
+Everything the page renders from shared data — layout chrome, product data fetched through the cached Shopify data layer, static copy — is baked into the shell. One kind of region stays live, and one that used to be live now bakes:
 
 **The nav widgets (cart, account).** Both read request identity (the cart cookie, session headers), which must never end up in a shell shared by every visitor. They live on parallel slots whose loaders are registered behind `loading()` — the "live lane": masked during shell capture, run fresh on every request, and streamed into a widget-sized hole. See [Navigation](/docs/shop-template/anatomy/navigation).
 
-**Suspense regions over pending data.** A promise that is still pending at capture time postpones its boundary and becomes a hole — the product page's variant stream works this way with no extra configuration.
+**Suspense regions over pending handler data are not holes.** Everything a page handler produces is shell material, as it is under `cache()`: a promise it hands to a component under `<Suspense>` — such as the product page's variant query — is awaited at capture (bounded by `ppr.captureTimeout`) and baked into that URL's shell, frozen for the shell's lifetime. A region that must be fresh on every request belongs in a live-lane loader behind `loading()` or an inline `<Suspense>`, like the nav widgets.
 
 The router enforces the identity rule: `cookies()` or `headers()` read anywhere that would bake refuses the capture, and the route simply stays on the normal render path (with a one-time console warning naming the offender).
 

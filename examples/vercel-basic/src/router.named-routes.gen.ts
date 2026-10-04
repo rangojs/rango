@@ -2,6 +2,8 @@
 export const NamedRoutes = {
   about: "/about",
   cached: "/cached",
+  cacheInvalidate: "/api/cache/invalidate",
+  cacheLab: "/cache-lab",
   home: "/",
   pprInlineAction: "/ppr-inline-action",
 } as const;

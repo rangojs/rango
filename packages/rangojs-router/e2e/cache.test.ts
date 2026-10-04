@@ -1,6 +1,6 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { waitForHydration, expectNoPageError } from "./helper";
+import { waitForHydration, expectNoPageError, blockPrefetch } from "./helper";
 
 // This file intentionally exercises shared runtime cache behavior and several
 // sections rely on cache state established earlier in the same describe/file.
@@ -75,6 +75,46 @@ function getCacheLogs(stdout: string): {
     cached: lines.filter((line) => line.includes("[CacheScope] Cached:")),
     stale: lines.filter((line) => line.includes("[CacheScope] STALE:")),
   };
+}
+
+/**
+ * /cache-test/cached-loader-dep: a loader with its own cache() awaits a
+ * dependency that an uncached sibling loader also reads. The dependency's
+ * crumb (a per-run id) appears once on the MISS and once on each HIT, and on
+ * a HIT it is the sibling's live run's crumb, replacing the replayed one.
+ */
+async function expectDepCrumbOnceAcrossLoaderCacheHit(
+  page: Page,
+  url: (path: string) => string,
+) {
+  const oneCrumb = /^Category [0-9a-f]{8}$/;
+  const load = async () => {
+    await page.goto(url("/cache-test/cached-loader-dep"));
+    await waitForHydration(page);
+    return {
+      stamp: await page.getByTestId("loaded-at").textContent(),
+      crumbs: await page.getByTestId("dep-crumbs").textContent(),
+    };
+  };
+
+  const first = await load();
+  expect(first.crumbs).toMatch(oneCrumb);
+
+  // An unchanged stamp is the cached loader value: a loader-cache HIT.
+  let hit = first;
+  await expect
+    .poll(async () => (hit = await load()).stamp, {
+      timeout: 8000,
+      message: "Expected a loader-cache HIT (unchanged loaded-at stamp)",
+    })
+    .toBe(first.stamp);
+  expect(hit.crumbs).toMatch(oneCrumb);
+
+  // Each HIT shows the live run's crumb, not the replayed copy.
+  const next = await load();
+  expect(next.stamp).toBe(first.stamp);
+  expect(next.crumbs).toMatch(oneCrumb);
+  expect(next.crumbs).not.toBe(hit.crumbs);
 }
 
 /**
@@ -207,6 +247,11 @@ test.describe("cache-server-logs", () => {
 
   test("__no_cache query param should bypass cache", async ({ page }) => {
     using _ = expectNoPageError(page);
+
+    // The pages this test walks render bare Links whose default-on viewport
+    // prefetches produce server cache logs of their own; ones draining into
+    // the bypass log window would fail the zero-logs assertions below.
+    await blockPrefetch(page);
 
     // Populate the cache (likely already cached by previous tests in this block)
     await page.goto(f.url("/blog"));
@@ -347,6 +392,13 @@ test.describe("cache-loader-behavior", () => {
       });
   });
 
+  test("loader cache(): a dependency also read by a sibling loader shows its live crumb once on a HIT", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectDepCrumbOnceAcrossLoaderCacheHit(page, (p) => f.url(p));
+  });
+
   // Consumption-lane rule, cache() tier (docs/internal/execution-model.md;
   // the PPR twin is semantic matrix row PPR3): a route-level cache() scope
   // whose HANDLER consumes an UNCACHED loader via `await ctx.use(...)` serves
@@ -453,6 +505,13 @@ test.describe("cache-loader-behavior (production)", () => {
         count: firstCount,
         loadedAt: firstLoadedAt,
       });
+  });
+
+  test("loader cache(): a dependency also read by a sibling loader shows its live crumb once on a HIT", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectDepCrumbOnceAcrossLoaderCacheHit(page, (p) => f.url(p));
   });
 
   // Consumption-lane rule, cache() tier — production counterpart of the dev
@@ -955,6 +1014,12 @@ test.describe("proactive-caching", () => {
   test("proactive caching populates cache for future partial navigations", async ({
     page,
   }) => {
+    // The bare proactive-nav-b Link viewport-prefetches item-b right after
+    // hydration (before the log window below opens); the click would then
+    // adopt the warmed entry, no live partial request would reach the server,
+    // and the proactive cache write this test polls for would never fire.
+    await blockPrefetch(page);
+
     // Step 1: Document request to item-a (MISS - first visit)
     const beforeFirstVisit = f.proc().stdout();
     await page.goto(f.url("/proactive-cache/item-a"));
@@ -995,6 +1060,11 @@ test.describe("proactive-caching", () => {
   });
 
   test("layout renders correctly after proactive caching", async ({ page }) => {
+    // Same shape as the test above: the bare proactive-nav-a Link would
+    // viewport-prefetch item-a before the log window opens and the click
+    // would adopt it — no live partial, no cache write inside the window.
+    await blockPrefetch(page);
+
     // Step 1: Document request to index (populates cache)
     await page.goto(f.url("/proactive-cache"));
     await waitForHydration(page);
@@ -2027,6 +2097,33 @@ test.describe("cache-tag invalidation", () => {
       )
       .not.toBe(initialTs);
   });
+
+  // #973: revalidateTag() does not wait for the store's write; the action's
+  // own read after it must still miss the entry the tag covers.
+  test("server action revalidateTag() then a read in the same request is fresh", async ({
+    page,
+    request,
+  }) => {
+    using _ = expectNoPageError(page);
+    const id = `ryow-dev-${Date.now()}`;
+    const cached = await pollTs(request, `/cache-tag-test/item/${id}`);
+    await expect
+      .poll(() => pollTs(request, `/cache-tag-test/item/${id}`), {
+        timeout: 5000,
+      })
+      .toBe(cached);
+
+    await page.goto(f.url("/cache-tag-test/action-page"));
+    await waitForHydration(page);
+    await page.getByTestId("ryow-id").fill(id);
+    await page.getByTestId("ryow-btn").click();
+    await expect(page.getByTestId("ryow-ts")).toBeVisible();
+
+    const readInAction = Number(
+      await page.getByTestId("ryow-ts").textContent(),
+    );
+    expect(readInAction).not.toBe(cached);
+  });
 });
 
 // ============================================================================
@@ -2181,5 +2278,30 @@ test.describe("cache-tag invalidation (production)", () => {
         { timeout: 10000 },
       )
       .not.toBe(initialTs);
+  });
+
+  test("server action revalidateTag() then a read in the same request is fresh", async ({
+    page,
+    request,
+  }) => {
+    using _ = expectNoPageError(page);
+    const id = `ryow-prod-${Date.now()}`;
+    const cached = await pollTs(request, `/cache-tag-test/item/${id}`);
+    await expect
+      .poll(() => pollTs(request, `/cache-tag-test/item/${id}`), {
+        timeout: 5000,
+      })
+      .toBe(cached);
+
+    await page.goto(f.url("/cache-tag-test/action-page"));
+    await waitForHydration(page);
+    await page.getByTestId("ryow-id").fill(id);
+    await page.getByTestId("ryow-btn").click();
+    await expect(page.getByTestId("ryow-ts")).toBeVisible();
+
+    const readInAction = Number(
+      await page.getByTestId("ryow-ts").textContent(),
+    );
+    expect(readInAction).not.toBe(cached);
   });
 });

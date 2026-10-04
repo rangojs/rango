@@ -11,6 +11,7 @@ import {
   getParallelEntries,
   getParallelSlotEntries,
   type EntryData,
+  type LoaderEntry,
 } from "../../server/context";
 import type {
   HandlerContext,
@@ -33,9 +34,10 @@ import {
   buildLoaderErrorContext,
 } from "./helpers.js";
 import { applyViewTransitionDefault } from "./view-transition-default.js";
+import { _getRequestContext } from "../../server/request-context.js";
 import { getRouterContext } from "../router-context.js";
 import { observeStreamedHandler } from "./streamed-handler-telemetry.js";
-import { observeHandler } from "../instrument.js";
+import { observeSegmentHandler } from "../instrument.js";
 import {
   track,
   RangoContext,
@@ -43,6 +45,37 @@ import {
   latchCachedHeaderScope,
   latchPprHeaderScopeForEntries,
 } from "../../server/context.js";
+
+/**
+ * Register flagged loader $$ids on the request context and return their
+ * indices. Must run BEFORE kickoff: rendered() checks the set to fail
+ * fast on the barrier cycle (resolution awaits the loader, the barrier
+ * awaits resolution).
+ */
+function registerAwaitBeforeFlushIds(loaderEntries: LoaderEntry[]): number[] {
+  const awaitedIndices: number[] = [];
+  for (let i = 0; i < loaderEntries.length; i++) {
+    if (loaderEntries[i]!.awaitBeforeFlush) awaitedIndices.push(i);
+  }
+  if (awaitedIndices.length > 0) {
+    const reqCtx = _getRequestContext();
+    if (reqCtx) {
+      reqCtx._awaitBeforeFlushLoaderIds ??= new Set();
+      for (const i of awaitedIndices) {
+        reqCtx._awaitBeforeFlushLoaderIds.add(loaderEntries[i]!.loader.$$id);
+      }
+    }
+  }
+  return awaitedIndices;
+}
+
+function stampAwaitBeforeFlush(
+  loaderEntry: LoaderEntry,
+): { awaitBeforeFlush: true } | Record<string, never> {
+  return loaderEntry.awaitBeforeFlush === true
+    ? { awaitBeforeFlush: true as const }
+    : {};
+}
 
 // ---------------------------------------------------------------------------
 // Fresh path (full match, no revalidation)
@@ -63,6 +96,17 @@ export async function resolveLoaders<TEnv>(
   if (loaderEntries.length === 0) return [];
 
   const shortCode = shortCodeOverride ?? entry.shortCode;
+
+  // Pin `_currentSegmentId` to the OWNING entry BEFORE the loader kickoffs:
+  // createLoaderExecutor captures it synchronously at kickoff for
+  // ctx.use(Handle) push attribution (loader writes land in the same bucket
+  // as the entry's handler pushes — shortCode is in matched/segmentOrder, so
+  // collectHandleData keeps them; an id outside the order is silently
+  // dropped). resolveLoaders runs BEFORE the handler-resolution sites assign
+  // this (fresh.ts handler-first ordering), so without the pin the captured
+  // value is a stale sibling's id (document lane) or undefined (navigation
+  // lane — pushes silently vanished).
+  (ctx as InternalHandlerContext<any, TEnv>)._currentSegmentId = shortCode;
   const hasLoading = "loading" in entry && entry.loading !== undefined;
   const loadingDisabled = hasLoading && entry.loading === false;
 
@@ -76,12 +120,8 @@ export async function resolveLoaders<TEnv>(
   // loading-disabled entries consult it), so normal requests are unchanged.
   const emitStreaming = !loadingDisabled || isShellCaptureActive();
 
-  // PPR lane decision for this entry's loaders (loader-container-bake): an
-  // entry WITHOUT renderable loading() puts its loaders on the BAKE lane —
-  // executed at capture (container bakes, nested pending promises hole at the
-  // consumer's Suspense) and overlay-pinned from the shell snapshot on a HIT.
-  // Renderable loading() keeps the LIVE lane (masked at capture, always
-  // fresh). Computed per entry; resolveLoaderData applies the policy.
+  // PPR bake/seed key input only; lane rule: see resolveLoaderData
+  // (loader-cache.ts). Unflagged loaders mask at capture regardless of the key.
   const bakeLane = !entryLoadingMasksLoaders(entry.loading);
 
   // Error context for wrapLoaderPromise: without it, a throwing DSL loader never
@@ -92,6 +132,21 @@ export async function resolveLoaders<TEnv>(
   const errorContext = buildLoaderErrorContext(ctx);
 
   if (emitStreaming) {
+    // awaitBeforeFlush (loader(Def, { ssr: false })): document
+    // renders await these loaders before returning, so their data is settled,
+    // their handle pushes beat the barrier snapshot, and a thrown notFound()'s
+    // status write deterministically precedes Response construction. The ids
+    // must register on the request context BEFORE kickoff — rendered() checks
+    // the set to fail fast on the barrier cycle (segment resolution awaits the
+    // loader, the barrier awaits segment resolution, rendered() awaits the
+    // barrier), and the loader body can call rendered() before the await below
+    // is reached.
+    //
+    // Shell-capture renders await too: flagged loaders execute at capture
+    // (lane rule: see resolveLoaderData, loader-cache.ts), so their handle
+    // pushes must land in the prelude.
+    const awaitedIndices = registerAwaitBeforeFlushIds(loaderEntries);
+
     // Streaming loaders: promises kick off now, settle during RSC serialization.
     const segments = loaderEntries.map((loaderEntry, i) => {
       const { loader } = loaderEntry;
@@ -104,13 +159,21 @@ export async function resolveLoaders<TEnv>(
         component: null,
         params: ctx.params,
         loaderId: loader.$$id,
+        // Stamped on document AND capture renders: segment-system's
+        // value-delivery await and the dev SSR-suspension diagnostic both
+        // key off it.
+        ...stampAwaitBeforeFlush(loaderEntry),
         loaderData: deps.wrapLoaderPromise(
           runInsideLoaderScope(() =>
             resolveLoaderData(
               loaderEntry,
               ctx,
               ctx.pathname,
-              bakeLane ? segmentId : null,
+              // The bake key rides for flagged loaders too: ssr:false
+              // bakes at capture regardless of the entry's loading() lane
+              // (loader-cache.ts capture branch) and its HIT-tail seed
+              // overlay needs the same key.
+              bakeLane || loaderEntry.bake === true ? segmentId : null,
             ),
           ),
           entry,
@@ -121,6 +184,15 @@ export async function resolveLoaders<TEnv>(
         belongsToRoute,
       };
     });
+
+    // Await only the flagged loaders; unflagged siblings keep streaming (their
+    // promises were kicked off above and stay pending in the emitted segments).
+    // The wrapped promise is contracted to never reject (wrapLoaderPromise), so
+    // a flagged loader failure resolves with its error envelope and cannot
+    // collapse resolution — same contract the loading-disabled path relies on.
+    if (awaitedIndices.length > 0) {
+      await Promise.all(awaitedIndices.map((i) => segments[i]!.loaderData));
+    }
 
     return segments;
   }
@@ -135,6 +207,11 @@ export async function resolveLoaders<TEnv>(
   // collapsing the whole entry and discarding successful sibling data, and
   // (2) leave the other in-flight raw promises without a .catch, producing
   // unhandled rejections. Mirrors the loading path and intercept-resolution.
+  //
+  // Flagged loaders still get awaitBeforeFlush stamped: auto-raise and
+  // settled-value delivery key off the field, and this path already paid
+  // the pre-flush await.
+  registerAwaitBeforeFlushIds(loaderEntries);
   const pendingLoaderData = loaderEntries.map((loaderEntry, i) => {
     const { loader } = loaderEntry;
     const segmentId = `${shortCode}D${i}.${loader.$$id}`;
@@ -144,7 +221,7 @@ export async function resolveLoaders<TEnv>(
           loaderEntry,
           ctx,
           ctx.pathname,
-          bakeLane ? segmentId : null,
+          bakeLane || loaderEntry.bake === true ? segmentId : null,
         ),
       ),
       entry,
@@ -171,6 +248,7 @@ export async function resolveLoaders<TEnv>(
       component: null,
       params: ctx.params,
       loaderId: loader.$$id,
+      ...stampAwaitBeforeFlush(loaderEntry),
       loaderData: pending.wrapped,
       belongsToRoute,
     };
@@ -192,6 +270,16 @@ export interface ResolveSegmentOptions {
    * so error boundaries keep catching at request time.
    */
   throwOnError?: boolean;
+  /**
+   * The matched route's full entry chain. resolveAllSegments defaults it to
+   * its `entries`; withCacheLookup passes it when it resolves only the entries
+   * above a cache() boundary. An orphan list can hold an entry of the chain: a
+   * bare cache() marker sits in its layout's layout[] (it wraps that layout's
+   * routes) and is the parent of the routes after it. For those routes it
+   * resolves once, as a chain entry, below the cache() header latch (issue
+   * #918: resolved twice on a MISS, once and discarded on a HIT).
+   */
+  chain?: readonly EntryData[];
 }
 
 /**
@@ -236,7 +324,6 @@ export async function resolveSegment<TEnv>(
       transition: applyViewTransitionDefault(
         entry.transition,
         deps.viewTransitionDefault,
-        entry.shortCode,
       ),
       params,
       belongsToRoute: false,
@@ -265,6 +352,7 @@ export async function resolveSegment<TEnv>(
     }
 
     for (const orphan of entry.layout) {
+      if (options?.chain?.includes(orphan)) continue;
       const orphanSegments = await resolveOrphanLayout(
         orphan,
         params,
@@ -305,7 +393,7 @@ export async function resolveSegment<TEnv>(
       const doneRouteHandler = track(`handler:${entry.id}`, 2);
       if (entry.loading) {
         const result = handleHandlerResult(
-          observeHandler(entry.id, handler, context),
+          observeSegmentHandler(entry.shortCode, entry.id, handler, context),
         );
         if (result instanceof Promise) {
           warnOnStreamedResponse(result, entry.id);
@@ -329,7 +417,12 @@ export async function resolveSegment<TEnv>(
         }
       } else {
         component = handleHandlerResult(
-          await observeHandler(entry.id, handler, context),
+          await observeSegmentHandler(
+            entry.shortCode,
+            entry.id,
+            handler,
+            context,
+          ),
         );
         doneRouteHandler();
       }
@@ -380,10 +473,10 @@ export async function resolveSegment<TEnv>(
       transition: applyViewTransitionDefault(
         entry.transition,
         deps.viewTransitionDefault,
-        entry.shortCode,
       ),
       params,
       belongsToRoute: true,
+      ...(entry.clientGroup ? { clientGroup: entry.clientGroup } : {}),
       ...(entry.mountPath ? { mountPath: entry.mountPath } : {}),
     });
   } else {
@@ -468,7 +561,6 @@ export async function resolveOrphanLayout<TEnv>(
     transition: applyViewTransitionDefault(
       orphan.transition,
       deps.viewTransitionDefault,
-      orphan.shortCode,
     ),
     ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
   });
@@ -491,6 +583,26 @@ export async function resolveOrphanLayout<TEnv>(
     );
     segments.push(...parallelSegments);
     resolvedParallelEntries.add(parallelEntry.id);
+  }
+
+  // Routeless entries nested in this one (a layout() after a bare cache()
+  // marker, a wrapper inside a routeless wrapper) wrap the same content one
+  // level deeper. Issue #918: they were never rendered. None is in the
+  // matched chain: that would put this orphan in it, and resolveSegment
+  // skips those.
+  for (const nested of orphan.layout) {
+    segments.push(
+      ...(await resolveOrphanLayout(
+        nested,
+        params,
+        context,
+        loaderPromises,
+        belongsToRoute,
+        deps,
+        options,
+        routeKey,
+      )),
+    );
   }
 
   return segments;
@@ -558,7 +670,12 @@ export async function resolveParallelEntry<TEnv>(
       if (hasLoadingFallback) {
         const result =
           typeof handler === "function"
-            ? observeHandler(`${parallelEntry.id}.${slot}`, handler, context)
+            ? observeSegmentHandler(
+                `${parentShortCode}.${slot}`,
+                `${parallelEntry.id}.${slot}`,
+                handler,
+                context,
+              )
             : handler;
         if (result instanceof Promise) {
           result.finally(doneParallelHandler).catch(() => {});
@@ -582,7 +699,8 @@ export async function resolveParallelEntry<TEnv>(
       } else {
         component =
           typeof handler === "function"
-            ? await observeHandler(
+            ? await observeSegmentHandler(
+                `${parentShortCode}.${slot}`,
                 `${parallelEntry.id}.${slot}`,
                 handler,
                 context,
@@ -602,7 +720,6 @@ export async function resolveParallelEntry<TEnv>(
       transition: applyViewTransitionDefault(
         parallelEntry.transition,
         deps.viewTransitionDefault,
-        `${parentShortCode}.${slot}`,
       ),
       params,
       slot,
@@ -651,6 +768,10 @@ export async function resolveAllSegments<TEnv>(
 ): Promise<ResolvedSegment[]> {
   const allSegments: ResolvedSegment[] = [];
   const seenIds = new Set<string>();
+  const segmentOptions: ResolveSegmentOptions = {
+    ...options,
+    chain: options?.chain ?? entries,
+  };
 
   // ppr routes are document-scoped cached territory: the whole chain (root
   // layout down to the page) bakes into the shared shell, so the header-write
@@ -675,8 +796,9 @@ export async function resolveAllSegments<TEnv>(
     // Set ALS flag when entering a cache() boundary so that ctx.get()
     // can guard non-cacheable variable reads. Also latch the header-write
     // scope (response-level side effects — headers/cookies/status).
-    // Persists for all descendant entries.
-    if (entry.type === "cache") {
+    // Persists for all descendant entries. A route entry carries `cache` when
+    // cache() is among its own children (dsl-helpers.ts cache()).
+    if (entry.cache) {
       const store = RangoContext.getStore();
       if (store) store.insideCacheScope = true;
       latchCachedHeaderScope("cache", routeKey);
@@ -694,7 +816,7 @@ export async function resolveAllSegments<TEnv>(
           loaderPromises,
           deps,
           false,
-          options,
+          segmentOptions,
         ),
       (seg) => [seg],
       deps,

@@ -14,6 +14,8 @@ import { KEEP_CACHE_HEADER } from "../../browser/cookie-name.js";
 import { Counter } from "./fixtures/Counter.js";
 import { getRequestContext } from "../../server/request-context.js";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
+import { createLocationState } from "../../browser/react/location-state-shared.js";
+import { withLocationStateKey } from "../location-state-key.js";
 import type { HandlerContext } from "../../types/handler-context.js";
 
 const Tenant = createVar<{ name: string }>();
@@ -179,6 +181,29 @@ describe("renderHandler", () => {
     expect(headers.location).toBe("/app");
     expect(headers["x-auth"]).toBe("ok");
     expect(locationState).toEqual({ flash: { text: "Welcome" } });
+  });
+
+  // #994: the option is in the key, the value is what the handler passed.
+  test("locationState of a definition with clearOnReload is keyed by Def.__rsc_ls_key", async () => {
+    const Flash = withLocationStateKey(
+      createLocationState<{ text: string }>({ flash: true }),
+      "RenderHandlerFlash",
+    );
+    const Carried = withLocationStateKey(
+      createLocationState<string[]>({ clearOnReload: true }),
+      "RenderHandlerCarried",
+    );
+    function Page(ctx: HandlerContext) {
+      ctx.setLocationState([Flash({ text: "Welcome" }), Carried(["p1"])]);
+      return <main>page</main>;
+    }
+    const { locationState } = await renderHandler(Page);
+
+    expect(locationState).toStrictEqual({
+      __rsc_ls_RenderHandlerFlash: { text: "Welcome" },
+      "__rsc_ls_RenderHandlerCarried~r": ["p1"],
+    });
+    expect(Carried.__rsc_ls_key).toBe("__rsc_ls_RenderHandlerCarried~r");
   });
 
   test("an unseeded ctx.use(loader) throws a helpful error", async () => {

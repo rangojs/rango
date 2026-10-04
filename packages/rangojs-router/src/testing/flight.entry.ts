@@ -18,6 +18,11 @@
  * element tree, so you can assert typed prop fidelity across the client boundary
  * (a `Date` comes back a `Date`) and detect inlined-vs-island. Serialize +
  * deserialize only — no hydration/interaction (that is the e2e tier).
+ *
+ * `serveShellRequest` serves one request through the router's production
+ * handler, so a `ppr` route's MISS runs the real shell capture and a later
+ * request is a real HIT; only the HTML step is stubbed. `resetShellTestState`
+ * clears the per-isolate PPR state between tests.
  */
 
 export {
@@ -50,3 +55,13 @@ export type {
   RenderHandlerResult,
   StateCookieSeed,
 } from "./render-handler.js";
+
+export {
+  serveShellRequest,
+  resetShellTestState,
+} from "./serve-shell-request.js";
+export type {
+  ServeShellRequestOptions,
+  ServeShellRequestResult,
+  ShellRequestHandles,
+} from "./serve-shell-request.js";

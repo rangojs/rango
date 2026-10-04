@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { waitForHydration } from "./helper";
+import { waitForHydration, blockPrefetch, isPrefetchRequest } from "./helper";
 
 /**
  * A client soft navigation must survive a response that carries a body AND a
@@ -42,6 +42,12 @@ function describeNullBodyStatusNav(mode: "dev" | "build") {
           }
         });
 
+        // The blog index's bare post links viewport-prefetch by default. A
+        // completed prefetch of /blog/post-1 would be adopted by the click
+        // below and the overridden-status fetch this test exists to exercise
+        // would never happen — block prefetch before load.
+        await blockPrefetch(page);
+
         await page.goto(f.url("/blog"));
         await waitForHydration(page);
         await expect(
@@ -56,6 +62,12 @@ function describeNullBodyStatusNav(mode: "dev" | "build") {
             url.pathname.endsWith("/blog/post-1") &&
             url.searchParams.has("_rsc_partial"),
           async (route) => {
+            // This later-registered handler shadows blockPrefetch for this
+            // URL; keep prefetches dead so only the click's real fetch gets
+            // the overridden status.
+            if (isPrefetchRequest(route.request())) {
+              return route.abort("aborted");
+            }
             const real = await route.fetch();
             await route.fulfill({ response: real, status });
           },

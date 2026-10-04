@@ -5,27 +5,70 @@ import {
   Meta,
   nonce,
   cookies,
+  getRequestContext,
   redirect,
+  createVar,
   type Handler,
+  type HandlerContext,
+  type Middleware,
 } from "@rangojs/router";
 import type { PrerenderResult } from "@rangojs/router/prerender";
-import { Suspense } from "react";
+import { CFCacheStore, MemorySegmentCacheStore } from "@rangojs/router/cache";
+import { Suspense, type ReactNode } from "react";
 import { Link, Outlet } from "@rangojs/router/client";
+import {
+  LateSuspenseReader,
+  LateSuspenseWriter,
+} from "./components/LateSuspenseReader.js";
+import {
+  AppVersionPanel,
+  LoadMoreList,
+  SharedCarriedCount,
+} from "./components/LocationStateOptions.js";
 import { StreamTest } from "./components/StreamTest.js";
 import { NavLayout } from "./components/NavLayout.js";
 import { RootLayout } from "./components/SlowRootLayout.js";
 import { FeatureLoading } from "./components/FeatureLoading.js";
 import { BlogSidebarLoader } from "./loaders/blog.js";
 import { CookieOverlayLoader } from "./loaders/cookie-overlay.js";
+import { FeatureLoader, FeatureShellLoader } from "./loaders/feature.js";
+import { LoadMoreLoader } from "./loaders/location-state.js";
+import {
+  DepCrumbProductLoader,
+  DepCrumbSiblingLoader,
+  LoaderCtxItemLoader,
+} from "./loaders/loader-cache-dep.js";
+import {
+  BodyTaggedDepLoader,
+  BodyTaggedLoader,
+} from "./loaders/loader-cache-tag.js";
+import { CachedSessionLoader } from "./loaders/loader-cache-identity.js";
+import {
+  LoaderKeyCraftedLoader,
+  LoaderKeyVictimLoader,
+} from "./loaders/loader-cache-key.js";
 import { setOverlayCookie } from "./middleware/cookie-overlay.js";
 import { apiPatterns } from "./api/urls.js";
 import { purgeModeStore, purgeLog, clearPurgeLog } from "./purge-store.js";
+import { slowMarkerStore } from "./slow-marker-store.js";
+import { RyowLoader } from "./loaders/ryow.js";
+import type { AppBindings } from "./env.js";
 
 // Page handlers
 import { HomePage } from "./pages/home.js";
+import { CacheLabPage } from "./pages/cache-lab.js";
+import { CACHE_LAB_TAGS } from "./cache-lab-contract.js";
+import { CacheLabPulseLoader } from "./cache-lab-data.js";
 import { AboutPage } from "./pages/about.js";
+import { LinkExternalOriginPage } from "./pages/link-external-origin.js";
 import { ScriptsDemoPage } from "./pages/scripts-demo.js";
 import { CounterPage } from "./pages/counter.js";
+import { SplitHero } from "./app/routes/split-hero/SplitHero.js";
+import { SplitGallery } from "./app/routes/split-gallery/SplitGallery.js";
+import {
+  ClientPackageResolutionLayout,
+  ClientPackageResolutionPage,
+} from "./pages/client-package-resolution.js";
 import {
   PprShellLayout,
   PprShellPricePage,
@@ -40,12 +83,28 @@ import {
   PprExecLayout,
   PprExecBadgeSlot,
   PprExecPage,
+  PprStaleReplayPage,
+  PprWarningsPage,
+  PprNavPinPage,
+  PprShortRecordPage,
+  PprScopedChromeLayout,
+  PprScopedHomePage,
+  PprScopedOptOutPage,
+  PprTieredPage,
+  PprTieredLayout,
+  PprTieredNestedPage,
+  pprTier,
+  copyPprTier,
+  PprScopedConditionPage,
   PprInlineActionPage,
   PprPrerenderedArticle,
+  PprPrerenderedPassthroughArticle,
   PprPrerenderedEvictArticle,
   PprPrerenderSeqSlot,
 } from "./pages/ppr-shell.js";
 import { PprShellBadge } from "./components/PprShellBadge.js";
+import { pprExecWhen } from "./components/transition-when.js";
+import { PprExecMark, ServerPageStamp } from "./location-states.js";
 import {
   CfPhgDynamicPage,
   CfPhgHandlerPage,
@@ -60,6 +119,7 @@ import {
 import {
   PprShellPriceLoader,
   PprShellStreamLoader,
+  PprInlineActionHoleLoader,
   PprShellSettledLoader,
   PprShellExecLoader,
   pprExecCounters,
@@ -68,15 +128,51 @@ import {
   PprBadgeLoader,
   PprBakeSlowLoader,
   PprBakeHoleLoader,
+  PprStorefrontLoader,
+  pprStorefrontRuns,
+  PprNavPinLoader,
+  pprNavPinRuns,
+  PprRestockLoader,
+  PprFlightErrorLoader,
+  pprFlightErrorPasses,
 } from "./loaders/ppr-shell.js";
-import { PprDriftLayout, PprDriftPricePage } from "./pages/ppr-drift.js";
+import { PprJsxPage } from "./pages/ppr-jsx.js";
+import {
+  PprPushDeferredPage,
+  PprPushLivePage,
+  PprPushPinnedPage,
+} from "./pages/ppr-push-ownership.js";
+import {
+  PprPushDeferredLoader,
+  PprPushLiveLoader,
+  PprPushPinnedLoader,
+  bumpPprPushGeneration,
+} from "./loaders/ppr-push-ownership.js";
+import { PprLoadMorePage } from "./pages/ppr-load-more.js";
+import { PprLoadMorePageLoader } from "./loaders/ppr-load-more.js";
+import { PprJsxLoader } from "./loaders/ppr-jsx.js";
+import {
+  PprDriftLayout,
+  PprDriftPricePage,
+  PprSharedBakedStampLoader,
+  PprSharedLayout,
+  PprSharedPage,
+  PprSharedStampLoader,
+} from "./pages/ppr-drift.js";
+import {
+  PprLargeLayout,
+  PprLargePage,
+  PprLargeHolesPage,
+  PprLargeHoleLoader,
+} from "./pages/ppr-large.js";
+import { PprFreshReadsPage } from "./pages/ppr-fresh-reads.js";
 import {
   PprSlowMetaLayout,
   PprShortMetaLayout,
 } from "./pages/ppr-slow-meta.js";
 import { OrphanFetchTest } from "./components/OrphanFetchTest.js";
 import { RenderStabilityRoute } from "./pages/render-stability.js";
-import { FeatureDetailPage } from "./pages/features.js";
+import { FeatureDetailPage, FeaturesShell } from "./pages/features.js";
 import {
   BlogLayout,
   BlogSidebarHandler,
@@ -92,13 +188,62 @@ import {
 } from "./pages/proactive-cache.js";
 import { DocumentCachePage } from "./pages/document-cache.js";
 import { DocumentCacheNoCachePage } from "./pages/document-cache-no-cache.js";
+import {
+  DocumentCacheThemeLivePage,
+  DocumentCacheThemePage,
+} from "./pages/document-cache-theme.js";
+import {
+  DocumentCacheRenderErrorPage,
+  PprRenderErrorPage,
+  RouteCacheRenderErrorPage,
+} from "./pages/capture-render-error.js";
+import {
+  UseCacheNonCacheablePage,
+  requestTenantMiddleware,
+} from "./pages/use-cache-non-cacheable.js";
 import { TaggedDocumentPage } from "./pages/tagged-document.js";
 import { StreamedDocumentPage } from "./pages/streamed-document.js";
 import { DslTaggedDocumentPage } from "./pages/dsl-tagged-document.js";
 import { CachedHandlesPage } from "./pages/cached-handles.js";
+import { LoaderCacheDepPage } from "./pages/loader-cache-dep.js";
+import { LoaderCacheTagPage } from "./pages/loader-cache-tag.js";
+import { RyowActionPage } from "./pages/ryow-action.js";
+import { NestedUseCachePage } from "./pages/nested-use-cache.js";
+import { controlHeldValue, getHeldValue } from "./use-cache-tags-data.js";
+import {
+  LoaderCacheIdentityLayout,
+  LoaderCacheIdentityPage,
+} from "./pages/loader-cache-identity.js";
+import { UseCacheDepPage } from "./pages/use-cache-dep.js";
+import { LoaderCtxPage } from "./pages/loader-ctx.js";
 import { SlowCachePage } from "./pages/slow-cache.js";
 import { SwrCtxPage, SwrActionPage } from "./pages/swr-ctx.js";
 import { ThemePage } from "./pages/theme.js";
+import {
+  CfPprThemeClientPage,
+  CfPprThemePage,
+  CfPprThemeRequestContextPage,
+} from "./pages/ppr-theme.js";
+import {
+  IdentityRawCachedPage,
+  IdentityRawCopiesPage,
+  IdentityRawError,
+  IdentityRawKeyedPage,
+  IdentityRawPprControlPage,
+  IdentityRawPprPage,
+  IdentityRawUseCacheArgPage,
+  IdentityRawUseCachePage,
+  answerForwarded,
+  visitorOf,
+} from "./pages/identity-raw.js";
+import {
+  UcmBindingPage,
+  UcmError,
+  UcmHandlerFirstPage,
+  UcmPlainPage,
+  UcmRequestContextPage,
+  UcmVisitorLoader,
+} from "./pages/use-cache-memo.js";
 import { SlowPage1, SlowPage2, FastPage } from "./pages/slow.js";
 import {
   InlineIndexPage,
@@ -109,6 +254,7 @@ import { clientReversePatterns } from "./pages/client-reverse.js";
 import { guidesPatterns } from "./pages/guides.js";
 import { GuidePlainDef, GuideSwrDef } from "./pages/guide-plain.js";
 import { GuidePlainLoader } from "./loaders/guide-plain.js";
+import { suspenseDemoPatterns } from "./pages/suspense-demo.js";
 import { releasesPatterns } from "./pages/releases.js";
 import { staticContentPatterns } from "./pages/static-content-urls.js";
 import { ApiDemoPage } from "./pages/api-demo.js";
@@ -118,6 +264,7 @@ import { compositionPatterns } from "./pages/composition.js";
 import { buildSkipPatterns } from "./pages/build-skip.js";
 import { prerenderCtxPatterns } from "./pages/prerender-ctx.js";
 import { handlerFirstPatterns } from "./pages/handler-first.js";
+import { parallelNewSlotRevalPatterns } from "./pages/parallel-new-slot-reval.js";
 import { createDocsPatterns } from "@shared/docs";
 import { docsArticles } from "./docs-content.js";
 import {
@@ -139,8 +286,21 @@ import { ActionLocationStatePage } from "./pages/action-location-state.js";
 import { renderedBarrierPatterns } from "./pages/rendered-barrier.js";
 import { prefetchTransitionPatterns } from "./pages/prefetch-transition.js";
 import { txWhenPatterns } from "./pages/tx-when.js";
+import { interceptWhenShapePatterns } from "./pages/intercept-when-shape.js";
+import { authRedirectPatterns } from "./pages/auth-redirect.js";
 import { deferredHandleNavPatterns } from "./pages/deferred-handle-nav.js";
 import { onErrorLog, clearOnErrorLog } from "./error-log.js";
+import mixedClientUrls from "./mixed-client/urls.js";
+import pureClientUrls from "./client-urls/urls.js";
+import slowClientUrls, { SlowChrome } from "./client-urls/slow.js";
+import clientUrlsVarsPatterns from "./client-urls-vars/urls.js";
+import clientUrlsSsrSignalsPatterns from "./client-urls-ssr-signals/urls.js";
+import { clientUrlsVarsMiddleware } from "./client-urls-vars/shared.js";
+import {
+  MirrorSessionLoader,
+  MirrorBasketLoader,
+  MirrorVehicleLoader,
+} from "./loaders/chrome-mirror.js";
 
 const docsPatterns = createDocsPatterns({ articles: docsArticles });
 
@@ -226,6 +386,152 @@ const PersonalizedGuideTrigger: Handler<{ slug: string }> = async (ctx) => {
   return prerenderResultJson(result);
 };
 
+/** Consumer-mirror template layout: server component between the chrome-loader
+ *  layout and the clientUrls include, reading params from getRequestContext —
+ *  the CategoryTemplate shape from the consumer app. */
+function MirrorTemplateLayout(): ReactNode {
+  const params: Record<string, string | undefined> = getRequestContext().params;
+  if (params.slug === undefined) return <Outlet />;
+  return (
+    <>
+      <Outlet />
+    </>
+  );
+}
+
+// Server Component layout for the mixed clientUrls() example — stays RSC while
+// its included pages are client components with local matching.
+function ClientUrlsSlowParent(): ReactNode {
+  return (
+    <section data-testid="cus-parent">
+      <SlowChrome />
+      <Outlet />
+    </section>
+  );
+}
+
+function LocationStateOptionsShell(): ReactNode {
+  return (
+    <div>
+      <SharedCarriedCount />
+      <Outlet />
+    </div>
+  );
+}
+
+function MixedRscLayout(): ReactNode {
+  return (
+    <section data-testid="mixed-rsc-layout">
+      <header>
+        <h1>RSC layout with client pages</h1>
+        <p>
+          The route layout is a Server Component; its pages are client
+          components.
+        </p>
+      </header>
+      <Outlet />
+    </section>
+  );
+}
+
+// /nested-key* (issue #970): the tier the page served and a token a HIT
+// replays unchanged.
+function nestedKeyTier(ctx: { request: Request }): string {
+  return ctx.request.headers.get("x-cache-tier") ?? "none";
+}
+
+// The pages under the keyed cache() render middleware's copy of the request
+// headers (issue #976: a handler read of ctx.request.headers under cache()
+// throws); the key() and the keyGenerator read the headers themselves.
+const CacheTier = createVar<string>();
+const CacheLocale = createVar<string>();
+
+const copyCacheHeaders: Middleware = async (ctx, next) => {
+  ctx.set(CacheTier, nestedKeyTier(ctx));
+  ctx.set(CacheLocale, crossStoreLocale(ctx));
+  return next();
+};
+
+function NestedKeyPage(ctx: HandlerContext): ReactNode {
+  return (
+    <p data-testid="nested-key-render">
+      {`${ctx.get(CacheTier)}:${crypto.randomUUID()}`}
+    </p>
+  );
+}
+
+function NestedKeySiblingPage(ctx: HandlerContext): ReactNode {
+  return (
+    <p data-testid="nested-key-render">
+      {`sibling-${ctx.get(CacheTier)}:${crypto.randomUUID()}`}
+    </p>
+  );
+}
+
+// /nested-condition and /nested-tags (issue #974): a token a HIT replays
+// unchanged.
+function NestedScopePage(): ReactNode {
+  return <p data-testid="nested-scope-render">{crypto.randomUUID()}</p>;
+}
+
+// /cross-store (issue #974): the outer cache()'s store partitions by locale;
+// the inner cache() writes to the app's CFCacheStore.
+function crossStoreLocale(ctx: { request: Request }): string {
+  return ctx.request.headers.get("x-cache-locale") ?? "none";
+}
+
+const crossStoreLocaleStore = new MemorySegmentCacheStore({
+  keyGenerator: (ctx, defaultKey) => `${defaultKey}|${crossStoreLocale(ctx)}`,
+});
+
+function CrossStorePage(ctx: HandlerContext): ReactNode {
+  return (
+    <p data-testid="nested-scope-render">
+      {`${ctx.get(CacheLocale)}:${crypto.randomUUID()}`}
+    </p>
+  );
+}
+
+// /test/loader-key-* (issue #1009): the loader's value, and the victim
+// loader's id, which its default key carries.
+async function LoaderKeyVictimPage(
+  ctx: HandlerContext<{ probe: string }>,
+): Promise<ReactNode> {
+  const { from, stamp } = await ctx.use(LoaderKeyVictimLoader);
+  return (
+    <div>
+      <p data-testid="nested-scope-render">{`${from}:${stamp}`}</p>
+      <p data-testid="loader-key-victim-id">{LoaderKeyVictimLoader.$$id}</p>
+    </div>
+  );
+}
+
+async function LoaderKeyCraftedPage(ctx: HandlerContext): Promise<ReactNode> {
+  const { from, stamp } = await ctx.use(LoaderKeyCraftedLoader);
+  return <p data-testid="nested-scope-render">{`${from}:${stamp}`}</p>;
+}
+
+// #992 fixture. The boundary's server content is held until the e2e releases
+// its :gate (GET <page>/release), which it does after seeing the root hydrate.
+// The held render polls instead of awaiting a promise the release request
+// resolves, so only this Map crosses requests. It counts releases, and a
+// render waits for one made after it started: the test loads the page twice
+// under one gate.
+const lateSuspenseReleases = new Map<string, number>();
+
+async function LateSuspenseContent({ gate }: { gate: string }) {
+  const releasesAtStart = lateSuspenseReleases.get(gate) ?? 0;
+  // Safety timeout: a failed test must not hold the render.
+  const deadline = Date.now() + 15_000;
+  while (
+    (lateSuspenseReleases.get(gate) ?? 0) === releasesAtStart &&
+    Date.now() < deadline
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return <LateSuspenseReader />;
+}
+
 /**
  * Main URL patterns - Django-style routing API
  */
@@ -240,6 +546,7 @@ export const urlpatterns = urls(
     include,
     middleware,
     transition,
+    revalidate,
     errorBoundary,
   }) => [
     // API routes (response routes - skip RSC pipeline)
@@ -252,6 +559,22 @@ export const urlpatterns = urls(
       "/__test/last-error",
       () => (onErrorLog.length > 0 ? [...onErrorLog] : null),
       { name: "testLastError" },
+    ),
+    // Test utils: body runs of the /ppr-warnings loaders.
+    path.json("/__test/ppr-storefront-runs", () => ({ ...pprStorefrontRuns }), {
+      name: "testPprStorefrontRuns",
+    }),
+    // Test utils: body runs of the /ppr-nav-pin loader.
+    path.json("/__test/ppr-nav-pin-runs", () => ({ ...pprNavPinRuns }), {
+      name: "testPprNavPinRuns",
+    }),
+    // Test utils: moves the /ppr-push fixture's generation for one ?probe= on.
+    path.json(
+      "/__test/ppr-push-bump",
+      (ctx): { generation: number } => ({
+        generation: bumpPprPushGeneration(ctx.searchParams.get("probe") ?? ""),
+      }),
+      { name: "testPprPushBump" },
     ),
     // Test utils: clear the onError log.
     path.json(
@@ -306,6 +629,66 @@ export const urlpatterns = urls(
         name: "testTaggedJsonB",
       }),
     ]),
+    // Global cache.searchParams key filter (router.tsx excludes utm_*):
+    // dedicated route so the collapsed bare-path slot never collides with
+    // another suite's cache state. Exercised by search-params-cache-key.test.ts.
+    cache({ ttl: 600 }, () => [
+      path.json(
+        "/test/spk-cached",
+        (ctx) => ({
+          source: "spk-cached",
+          utm: ctx.url.searchParams.get("utm_source") ?? "",
+          page: ctx.url.searchParams.get("page") ?? "",
+          ts: Date.now(),
+        }),
+        { name: "testSpkCached" },
+      ),
+    ]),
+    // A key() returning request input as is (issue #975): its result is
+    // namespaced, so a header value spelling the victim route's default key
+    // (`json:<host>/test/raw-key-victim?probe=...`) can no longer write this
+    // route's body under the victim's entry.
+    cache(
+      { ttl: 600, key: (ctx) => ctx.request.headers.get("x-raw-key") ?? "" },
+      () => [
+        path.json(
+          "/test/raw-key",
+          () => ({ from: "raw-key", token: crypto.randomUUID() }),
+          { name: "testRawKey" },
+        ),
+      ],
+    ),
+    cache({ ttl: 600 }, () => [
+      path.json(
+        "/test/raw-key-victim",
+        () => ({ from: "victim", token: crypto.randomUUID() }),
+        { name: "testRawKeyVictim" },
+      ),
+    ]),
+    // A loader's own cache() with a key() returning request input as is
+    // (issue #1009): its result is namespaced by the loader, so a header
+    // value spelling the victim loader's default key
+    // (`loader:<id>:<host>/test/loader-key-victim/<probe>:probe=<probe>`)
+    // neither reads nor overwrites the victim's entry.
+    path(
+      "/test/loader-key-crafted",
+      LoaderKeyCraftedPage,
+      { name: "testLoaderKeyCrafted" },
+      () => [
+        loader(LoaderKeyCraftedLoader, () => [
+          cache({
+            ttl: 600,
+            key: (ctx) => ctx.request.headers.get("x-loader-key") ?? "",
+          }),
+        ]),
+      ],
+    ),
+    path(
+      "/test/loader-key-victim/:probe",
+      LoaderKeyVictimPage,
+      { name: "testLoaderKeyVictim" },
+      () => [loader(LoaderKeyVictimLoader, () => [cache({ ttl: 600 })])],
+    ),
     // Test fixture only: the tag comes from the URL param so the e2e can
     // exercise arbitrary tags. Never do this in production code - deriving
     // invalidation tags from untrusted input lets an attacker grow the
@@ -332,6 +715,23 @@ export const urlpatterns = urls(
         return { ok: true, tag: ctx.params.tag };
       },
       { name: "testRevalidateTag" },
+    ),
+    // A "use cache" body held after it read its data, and its controls
+    // (use-cache-tags-data.ts): another request changes the data and runs
+    // updateTag() while it is held, and its write must not land (#977).
+    path.json(
+      "/held-use-cache/:probe",
+      (ctx) => getHeldValue(ctx.params.probe),
+      { name: "heldUseCache" },
+    ),
+    path.json(
+      "/held-use-cache/:probe/:op",
+      async (ctx) => {
+        const result = await controlHeldValue(ctx.params.probe, ctx.params.op);
+        if (result.tag) await updateTag(result.tag);
+        return result;
+      },
+      { name: "heldUseCacheControl" },
     ),
 
     // Purge mode (tagPurge) against the real CFCacheStore in workerd, on a
@@ -437,6 +837,10 @@ export const urlpatterns = urls(
       }),
       { name: "testNegotiateJson" },
     ),
+    // data-external SSR/browser agreement (pages/link-external-origin.tsx).
+    path("/test/link-external-origin", LinkExternalOriginPage, {
+      name: "testLinkExternalOrigin",
+    }),
     path("/test/negotiate", () => <div>HTML version</div>, {
       name: "testNegotiate",
     }),
@@ -546,6 +950,37 @@ export const urlpatterns = urls(
     path("/files/*", FilesWildcardPage, { name: "filesWildcard" }),
     path("/*", CatchAllPage, { name: "catchAll" }),
 
+    path.json(
+      "/__test/age-ppr-shell",
+      async (
+        ctx,
+      ): Promise<{
+        ok: boolean;
+        found: boolean;
+        segmentKeys?: string[];
+      }> => {
+        const target = ctx.searchParams.get("target") ?? "";
+        const targetUrl = new URL(target, ctx.url);
+        const key = `${targetUrl.host}${targetUrl.pathname}${targetUrl.search}:shell`;
+        const requestContext = getRequestContext<AppBindings>();
+        const store = new CFCacheStore({
+          ctx: requestContext.executionContext!,
+          kv: requestContext.env.KV,
+        });
+        const hit = await store.getShell(key);
+        if (!hit) return { ok: false, found: false };
+        await store.putShell(key, hit.entry, 1, 120);
+        return {
+          ok: true,
+          found: true,
+          segmentKeys: hit.entry.snapshot
+            ?.filter((record) => record.family === "segment")
+            .map((record) => record.key),
+        };
+      },
+      { name: "testAgePprShell" },
+    ),
+
     layout(<RootLayout />, () => [
       // Global navigation layout
       layout(<NavLayout />, () => [
@@ -553,17 +988,97 @@ export const urlpatterns = urls(
         path("/", HomePage, { name: "home" }),
         path("/about", AboutPage, { name: "about" }),
         path("/counter", CounterPage, { name: "counter" }),
+        // app/-rooted client components (issue #1022): app/routes/<id> splits
+        // per route. Nameless so the named-routes gen files stay unchanged.
+        path("/app-root/hero", () => <SplitHero />),
+        path("/app-root/gallery", () => <SplitGallery />),
+        layout(ClientPackageResolutionLayout, () => [
+          path("/client-package-resolution", ClientPackageResolutionPage, {
+            name: "clientPackageResolution",
+          }),
+        ]),
+        // Mixed example: an ordinary RSC layout wrapping a clientUrls()
+        // group mounted through include() — the layout is a Server Component;
+        // the pages keep browser-local matching and optimistic presentation.
+        layout(<MixedRscLayout />, () => [
+          include("/mixed-client-routes", mixedClientUrls, {
+            name: "mixedClient",
+          }),
+        ]),
+        // Group behind a 5s middleware: pins optimistic presentation vs the
+        // gated canonical request (e2e/client-urls-slow.test.ts). The landing
+        // route sits OUTSIDE the middleware so the loader redirect is not
+        // gated twice.
+        path(
+          "/client-urls-slow-landing",
+          () => <div data-testid="cus-landing">landed</div>,
+          { name: "clientSlowLanding" },
+        ),
+        layout(<ClientUrlsSlowParent />, () => [
+          middleware(async (_ctx, next) => {
+            await new Promise((resolve) => setTimeout(resolve, 5000));
+            await next();
+          }),
+          include("/client-urls-slow", slowClientUrls, { name: "clientSlow" }),
+        ]),
+        // The SAME clientUrls() module mounted through an async include with
+        // no server urls() wrapper: `() => import()` resolves to the module's
+        // client reference, adapted like the eager mount above.
+        include("/mixed-client-async", () => import("./mixed-client/urls.js"), {
+          name: "mixedClientAsync",
+        }),
+        // Pure client group: the whole subtree is clientUrls(), mounted in the
+        // SAME canonical urls() tree (no separate router, no worker dispatch).
+        layout(<MirrorTemplateLayout />, () => [
+          // Consumer-mirror chrome loaders: unflagged, streaming above the
+          // group while a route's { ssr: false } loader is awaited.
+          loader(MirrorSessionLoader),
+          loader(MirrorBasketLoader),
+          loader(MirrorVehicleLoader),
+          include("/__client-urls", pureClientUrls),
+        ]),
+        // Route middleware vars (createVar token + string key) reach a group
+        // loader on the document and partial lanes; the fetch lane is pinned
+        // separately (e2e/client-urls-vars.test.ts).
+        middleware(clientUrlsVarsMiddleware, () => [
+          include("/client-urls-vars", clientUrlsVarsPatterns),
+        ]),
+        // { ssr: false } loaders settling with redirect()/notFound() before the
+        // document flush (e2e/client-urls-ssr-signals.test.ts).
+        include("/client-urls-ssr-signals", clientUrlsSsrSignalsPatterns),
+        // Streaming useLoader demo: no-loading() route streams per-loader;
+        // /gated contrasts the loading() boundary; /ppr pins live holes.
+        include("/suspense-demo", suspenseDemoPatterns, {
+          name: "suspenseDemo",
+        }),
+        // Deployable cache lab: two independently tagged "use cache" values
+        // rendered inside a tagged PPR shell with promised Meta. The paired e2e
+        // drives its authenticated /api/cache/invalidate endpoint and proves
+        // selective item refresh, shell-only recapture, and re-caching.
+        path(
+          "/cache-lab",
+          CacheLabPage,
+          {
+            name: "cacheLab",
+            ppr: {
+              ttl: 3600,
+              swr: 300,
+              tags: [CACHE_LAB_TAGS.shell],
+            },
+          },
+          () => [loader(CacheLabPulseLoader)],
+        ),
         // PPR shell caching (docs/design/ppr-shell-resume.md). Opt-in per PAGE
         // ROUTE via the `ppr` path option — serving is integral to the router
         // (no middleware); the shell store is the app CFCacheStore (KV-backed
         // getShell/putShell) from createRouter({ cache }).
-        // Shell = PprShellLayout (static text + counter + handle reads + the
-        // physics fallback); STRUCTURAL hole = the price route behind loading()
-        // (LoaderBoundary is the Suspense boundary capture postpones at);
-        // PHYSICS hole = the pending handler promise under PprShellPhysicsValue's
-        // own Suspense. A loader route without loading() awaits its loader at
-        // tree-build and can never produce a shell — the /ppr-shell/no-hole
-        // negative below. See pages/ppr-shell.tsx.
+        // Shell = PprShellLayout (static text + counter + handle reads, and
+        // its handler promise + nested handle push, both baked); STRUCTURAL
+        // hole = the price route behind loading() (LoaderBoundary is the
+        // Suspense boundary capture postpones at). A loader route without
+        // loading() awaits its loader at tree-build and can never produce a
+        // shell — the /ppr-shell/no-hole negative below. See
+        // pages/ppr-shell.tsx.
         layout(PprShellLayout, () => [
           path(
             "/ppr-shell",
@@ -653,6 +1168,170 @@ export const urlpatterns = urls(
               ),
             ],
           ),
+        ]),
+        path("/ppr-stale-replay/:id", PprStaleReplayPage, {
+          name: "pprStaleReplay",
+          ppr: { ttl: 4, swr: 120 },
+        }),
+        // Issue #986: client-managed paging on a route with
+        // transition({ when }). revalidate() false keeps the client's
+        // accumulated list on a ?page navigation, whether the live path or a
+        // replay HIT serves it, whatever the predicate returns.
+        path(
+          "/ppr-load-more",
+          PprLoadMorePage,
+          { name: "pprLoadMore", ppr: { ttl: 300, swr: 120 } },
+          () => [
+            transition({
+              when: ({ from, to }) => from.url.pathname === to.url.pathname,
+            }),
+            revalidate(({ currentUrl, nextUrl }) =>
+              currentUrl.pathname === nextUrl.pathname &&
+              nextUrl.searchParams.has("page")
+                ? false
+                : undefined,
+            ),
+            loader(PprLoadMorePageLoader, { ssr: false }),
+          ],
+        ),
+        // Issue #888: the ssr:false loader awaits an unflagged loader that
+        // pushes a string handle. A fast-path HIT replays the doc record,
+        // which must not carry the push (see pages/ppr-shell.tsx).
+        path(
+          "/ppr-warnings",
+          PprWarningsPage,
+          { name: "pprWarnings", ppr: { ttl: 300, swr: 120 } },
+          () => [loader(PprStorefrontLoader, { ssr: false })],
+        ),
+        // A promise-free ssr:false loader on an entry with loading(): a
+        // client navigation that replays the shell pins it like the
+        // document HIT, without running it.
+        path(
+          "/ppr-nav-pin",
+          PprNavPinPage,
+          { name: "pprNavPin", ppr: { ttl: 300, swr: 120 } },
+          () => [
+            loader(PprNavPinLoader, { ssr: false }),
+            loading(<div data-testid="ppr-nav-pin-loading">Loading...</div>),
+          ],
+        ),
+        // A shell never outlives its route cache() entry: it expires with
+        // this 5 s entry, well inside ppr's own ttl.
+        cache({ ttl: 5, swr: 0 }, () => [
+          path("/ppr-short-record", PprShortRecordPage, {
+            name: "pprShortRecord",
+            ppr: true,
+          }),
+        ]),
+        // Issue #941: a tagged shell whose server action runs updateTag(); the
+        // action's fresh-reads cookie sends the same user's next requests past
+        // the stores' isolate memos (e2e/ppr-fresh-reads.test.ts).
+        path("/ppr-fresh-reads", PprFreshReadsPage, {
+          name: "pprFreshReads",
+          ppr: { ttl: 300, swr: 120 },
+        }),
+        // Issue #929: the ssr:false loader pushes the string handle itself;
+        // the replayed record keeps it and the HIT restores it once.
+        path(
+          "/ppr-restock",
+          PprWarningsPage,
+          { name: "pprRestock", ppr: { ttl: 300, swr: 120 } },
+          () => [loader(PprRestockLoader, { ssr: false })],
+        ),
+        // Push ownership (issues #1001, #1003; e2e/ppr-push-ownership.test.ts).
+        // #1003: the loader runs on every replay; its pin serves the data, so
+        // the shell record's copy of its push stands, on a navigation too.
+        path(
+          "/ppr-push/pinned",
+          PprPushPinnedPage,
+          { name: "pprPushPinned", ppr: { ttl: 300, swr: 120 } },
+          () => [loader(PprPushPinnedLoader, { ssr: false })],
+        ),
+        // The same loader on an entry whose pins maxSnapshotBytes drops: the
+        // loader runs fresh on a HIT, so its run's push replaces the record's.
+        path(
+          "/ppr-push/capped",
+          PprPushPinnedPage,
+          {
+            name: "pprPushCapped",
+            ppr: { ttl: 300, swr: 120, maxSnapshotBytes: 1 },
+          },
+          () => [loader(PprPushPinnedLoader, { ssr: false })],
+        ),
+        // #1001: the deferred push reaches a replay from the loader's own
+        // cache() entry.
+        path(
+          "/ppr-push/deferred",
+          PprPushDeferredPage,
+          { name: "pprPushDeferred", ppr: { ttl: 300, swr: 120 } },
+          () => [
+            loader(PprPushDeferredLoader, { ssr: false }, () => [
+              cache({ ttl: 300 }),
+            ]),
+          ],
+        ),
+        // #1035: a live loader that pushes after an await, read (data and
+        // handle) inside its loading() boundary, which hydrates after the
+        // root.
+        path(
+          "/ppr-push/live",
+          PprPushLivePage,
+          { name: "pprPushLive", ppr: { ttl: 300, swr: 120 } },
+          () => [
+            loader(PprPushLiveLoader),
+            loading(<p data-testid="push-loading">Loading note...</p>),
+          ],
+        ),
+        // Storefront shape: ppr routes under an ancestor cache() scope (the
+        // real store-app shape — an app-wide cache() wrapping the tree).
+        // Navigation replay COMPOSES with the explicit tier on CFCacheStore:
+        // the tier's own hit reports `explicit-cache-hit`; on its miss the
+        // shell snapshot's doc record supplies the match (`HIT`). Short ttl
+        // keeps the tier's warm window test-controllable.
+        cache({ ttl: 30, swr: 604_800 }, () => [
+          layout(PprScopedChromeLayout, () => [
+            path("/ppr-scoped", PprScopedHomePage, {
+              name: "pprScoped",
+              ppr: { ttl: 300, swr: 120 },
+            }),
+          ]),
+          // Consumer opt-outs stay absolute on the replay path: cache(false)
+          // and a false condition() report `cache-disabled` pre-read.
+          cache(false, () => [
+            path("/ppr-scoped-optout", PprScopedOptOutPage, {
+              name: "pprScopedOptOut",
+              ppr: { ttl: 300, swr: 120 },
+            }),
+          ]),
+          cache({ ttl: 30, condition: () => false }, () => [
+            path("/ppr-scoped-condition", PprScopedConditionPage, {
+              name: "pprScopedCondition",
+              ppr: { ttl: 300, swr: 120 },
+            }),
+          ]),
+          // Request-partitioned: the cache() key() partitions the record
+          // and the shell by the visitor's tier header; the pages render
+          // middleware's copy of it (issue #976).
+          middleware(copyPprTier, () => [
+            cache({ ttl: 300, key: (ctx) => `tier:${pprTier(ctx)}` }, () => [
+              path("/ppr-tiered", PprTieredPage, {
+                name: "pprTiered",
+                ppr: { ttl: 300, swr: 120 },
+              }),
+              // The same partition through a cache() nested in the keyed
+              // one, without a key() of its own (issue #970): its record,
+              // keyed by the tier and its own default key, never names
+              // /ppr-tiered's.
+              layout(PprTieredLayout, () => [
+                cache({ ttl: 300 }, () => [
+                  path("/ppr-tiered-nested", PprTieredNestedPage, {
+                    name: "pprTieredNested",
+                    ppr: { ttl: 300, swr: 120 },
+                  }),
+                ]),
+              ]),
+            ]),
+          ]),
         ]),
         // Refusal semantics under a too-short budget (issue #715 negative):
         // ~3.5s material against an explicit 1500ms budget — the capture
@@ -769,8 +1448,13 @@ export const urlpatterns = urls(
         // layer-by-layer across consecutive HITs on workerd/KV. The middleware
         // is scoped to this subtree so its counter isolates the fixture.
         middleware(
-          async (_ctx, next) => {
+          async (ctx, next) => {
             pprExecCounters.middleware += 1;
+            // Rides a partial navigation (a replay HIT included) to the
+            // browser, where pprExecWhen reads it from `to.state`.
+            ctx.setLocationState([
+              PprExecMark({ middleware: pprExecCounters.middleware }),
+            ]);
             return next();
           },
           () => [
@@ -785,6 +1469,7 @@ export const urlpatterns = urls(
                 PprExecPage,
                 { name: "pprShellExecMatrix", ppr: { ttl: 300, swr: 120 } },
                 () => [
+                  transition({ when: pprExecWhen }),
                   loader(PprShellExecLoader),
                   loading(
                     <div data-testid="ppr-exec-fallback">
@@ -796,10 +1481,28 @@ export const urlpatterns = urls(
             ]),
           ],
         ),
-        path("/ppr-shell/inline-action", PprInlineActionPage, {
-          name: "pprShellInlineAction",
-          ppr: { ttl: 300, swr: 120 },
-        }),
+        path(
+          "/ppr-shell/inline-action",
+          PprInlineActionPage,
+          {
+            name: "pprShellInlineAction",
+            ppr: { ttl: 300, swr: 120 },
+          },
+          () => [
+            loader(PprInlineActionHoleLoader),
+            // CONTRACT CHANGE (streaming useLoader): value-slot loaders are
+            // live at capture unconditionally — the old bake lane (no
+            // loading(); the loader executed at capture and its container
+            // baked around the nested hole) can no longer produce this
+            // fixture's shell. The route-level loading() is now the page
+            // hole the bound action streams through.
+            loading(
+              <div data-testid="ppr-inline-action-fallback">
+                Loading inline action…
+              </div>,
+            ),
+          ],
+        ),
         // Prerender + ppr composition (docs/design/shell-fast-path.md):
         // build-time segments are the frozen prelude; the slot-owned loader
         // is the badge-sized streaming hole. See pages/ppr-shell.tsx.
@@ -822,6 +1525,21 @@ export const urlpatterns = urls(
               },
             }),
           ],
+        ),
+        // Passthrough + Prerender + ppr (replay gate existence probe): only
+        // "baked" bakes; other slugs render live and must keep navigation
+        // replay on the real CFCacheStore/KV path.
+        path(
+          "/ppr-shell/passthrough/:slug",
+          PprPrerenderedPassthroughArticle,
+          {
+            name: "pprShellPassthrough",
+            ppr: { ttl: 300, swr: 120 },
+          },
+          // Retaining the prerendered client boundary is part of this streaming
+          // contract. Default Passthrough revalidation replaces it with the live
+          // handler and discards its local useActionState result.
+          () => [revalidate(({ actionId }) => (actionId ? false : undefined))],
         ),
         // Build-shell eviction fixture (#699): its own route + tag so the
         // eviction e2e's updateTag cannot blast the sibling prerendered
@@ -910,7 +1628,19 @@ export const urlpatterns = urls(
         layout(PprSlotChromeLayout, () => [
           parallel({
             "@badge": {
-              handler: () => <PprShellBadge loader={PprBadgeLoader} />,
+              // The slot handler's own awaited copy (frozen, replayed on every
+              // HIT) next to the useLoader read of the same loader (live).
+              handler: async (ctx: HandlerContext) => {
+                const copy = await ctx.use(PprBadgeLoader);
+                return (
+                  <>
+                    <span data-testid="ppr-badge-copy">
+                      {copy.replace("badge-", "slotcopy-")}
+                    </span>
+                    <PprShellBadge loader={PprBadgeLoader} />
+                  </>
+                );
+              },
               use: () => [
                 loader(PprBadgeLoader),
                 loading(
@@ -932,6 +1662,21 @@ export const urlpatterns = urls(
         // show the CAPTURE-time stamp (seeded from the snapshot) — byte parity
         // with the frozen prelude — while the price loader hole stays live. See
         // docs/design/ppr-shell-resume.md ("the capture data snapshot").
+        // Large-shell fixture (issue #941): a ~650 KB prelude and a multi-MB
+        // capture snapshot. /ppr-large settles with no holes (postponed null);
+        // /ppr-large/holes adds a live loader under an inline <Suspense>.
+        layout(PprLargeLayout, () => [
+          path("/ppr-large", PprLargePage, {
+            name: "pprLarge",
+            ppr: { ttl: 300, swr: 120 },
+          }),
+          path(
+            "/ppr-large/holes",
+            PprLargeHolesPage,
+            { name: "pprLargeHoles", ppr: { ttl: 300, swr: 120 } },
+            () => [loader(PprLargeHoleLoader)],
+          ),
+        ]),
         layout(PprDriftLayout, () => [
           path(
             "/ppr-drift",
@@ -943,6 +1688,24 @@ export const urlpatterns = urls(
                 <div data-testid="ppr-drift-price-fallback">
                   Loading price...
                 </div>,
+              ),
+            ],
+          ),
+        ]),
+        // Shared-key route (issue #941): the shell layout, an ssr: false
+        // loader and the live hole read the same "drift" item. The snapshot
+        // records no cache read, so after the item expires the hole shows a
+        // newer stamp than the shell and the ssr: false loader's pin.
+        layout(PprSharedLayout, () => [
+          path(
+            "/ppr-shared-key",
+            PprSharedPage,
+            { name: "pprSharedKey", ppr: { ttl: 300, swr: 120 } },
+            () => [
+              loader(PprSharedBakedStampLoader, { ssr: false }),
+              loader(PprSharedStampLoader),
+              loading(
+                <p data-testid="ppr-shared-hole-fallback">Loading stamp...</p>,
               ),
             ],
           ),
@@ -1013,16 +1776,25 @@ export const urlpatterns = urls(
           name: "search",
           search: { q: "string", page: "number?", sort: "string?" },
         }),
-        path(
-          "/features/:slug",
-          FeatureDetailPage,
-          { name: "featuresDetail" },
-          // transition() opts this route into same-route stale-while-revalidate:
-          // navigating between /features/:slug values holds the current content
-          // instead of flashing FeatureLoading. Cross-route navs (home ->
-          // feature) still remount and may show the skeleton.
-          () => [loading(<FeatureLoading />), transition()],
-        ),
+        layout(FeaturesShell, () => [
+          loader(FeatureShellLoader),
+          path(
+            "/features/:slug",
+            FeatureDetailPage,
+            { name: "featuresDetail" },
+            // transition() opts this route into same-route stale-while-revalidate:
+            // navigating between /features/:slug values holds the current content
+            // instead of flashing FeatureLoading. Cross-route navs (home ->
+            // feature) still remount and may show the skeleton. FeatureLoader
+            // (800ms) streams during that hold so FeatureStatus can report
+            // isLoading:true for the held data (e2e/loader-nav-stale.test.ts).
+            () => [
+              loader(FeatureLoader),
+              loading(<FeatureLoading />),
+              transition(),
+            ],
+          ),
+        ]),
 
         // #642 regression guard: a NAME-LESS 3-arg children-fn route
         // (path(pattern, component, () => [...]) with no { name } options).
@@ -1069,6 +1841,151 @@ export const urlpatterns = urls(
             }),
           ]),
         ]),
+
+        // A layout ABOVE a cache() boundary is live: it renders and writes its
+        // header on every request, cache HITs included. Only the route inside
+        // the boundary replays from the store (issue #906).
+        layout(
+          (ctx) => {
+            const token = crypto.randomUUID();
+            ctx.headers.set("x-outer-live-layout", token);
+            return (
+              <div data-testid="outer-live-layout">
+                <p data-testid="outer-live-layout-token">{token}</p>
+                <Outlet />
+              </div>
+            );
+          },
+          () => [
+            cache({ ttl: 60 }, () => [
+              path(
+                "/outer-live",
+                () => (
+                  <p data-testid="outer-live-route-token">
+                    {crypto.randomUUID()}
+                  </p>
+                ),
+                { name: "outerLive" },
+              ),
+            ]),
+          ],
+        ),
+
+        // A cache() nested in a keyed cache() keys its records within the
+        // outer key() partition (issue #970): without a key() of its own it
+        // composes the tier partition with its own default key, so its two
+        // routes keep their own records though the outer key() names no
+        // route; with one, the key() results compose. The page renders the
+        // tier it served and a token a HIT replays unchanged. The probe gives
+        // each test its own entries.
+        middleware(copyCacheHeaders, () => [
+          cache(
+            {
+              ttl: 60,
+              key: (ctx) =>
+                `nested-key:${nestedKeyTier(ctx)}?${ctx.url.searchParams.get("probe") ?? ""}`,
+            },
+            () => [
+              cache({ ttl: 60 }, () => [
+                path("/nested-key", NestedKeyPage, { name: "nestedKey" }),
+                path("/nested-key-sibling", NestedKeySiblingPage, {
+                  name: "nestedKeySibling",
+                }),
+              ]),
+              cache(
+                {
+                  ttl: 60,
+                  key: (ctx) =>
+                    `variant:${ctx.url.searchParams.get("variant") ?? "none"}`,
+                },
+                () => [
+                  path("/nested-key-composed", NestedKeyPage, {
+                    name: "nestedKeyComposed",
+                  }),
+                ],
+              ),
+            ],
+          ),
+        ]),
+
+        // An outer condition() gates the cache() nested in it (issue #974):
+        // a request it refuses (x-cache-bypass: 1) renders live, and neither
+        // reads nor writes the inner record.
+        cache(
+          {
+            condition: (ctx) =>
+              ctx.request.headers.get("x-cache-bypass") !== "1",
+          },
+          () => [
+            cache({ ttl: 60 }, () => [
+              path("/nested-condition", NestedScopePage, {
+                name: "nestedCondition",
+              }),
+            ]),
+          ],
+        ),
+
+        // The outer cache()'s tags tag the record of the cache() nested in
+        // it (issue #974): updateTag() of the outer tag evicts it. The probe
+        // gives each test its own tag and record.
+        cache(
+          {
+            tags: (ctx) => [
+              `nested-outer:${ctx.url.searchParams.get("probe") ?? ""}`,
+            ],
+          },
+          () => [
+            cache({ ttl: 60, tags: ["nested-inner"] }, () => [
+              path("/nested-tags", NestedScopePage, { name: "nestedTags" }),
+            ]),
+          ],
+        ),
+
+        // An outer cache({ store }) whose keyGenerator partitions by locale
+        // partitions the cache() nested in it on the app store (issue #974):
+        // a locale never reads another locale's inner record.
+        middleware(copyCacheHeaders, () => [
+          cache({ store: crossStoreLocaleStore }, () => [
+            cache({ ttl: 60 }, () => [
+              path("/cross-store", CrossStorePage, { name: "crossStore" }),
+            ]),
+          ]),
+        ]),
+
+        // A layout after a bare cache() wraps every route of the enclosing
+        // layout: live on the route before the cache(), stored in the cache
+        // with the route after it (issue #918).
+        layout(
+          () => (
+            <div data-testid="marker-shell">
+              <p data-testid="marker-shell-token">{crypto.randomUUID()}</p>
+              <Outlet />
+            </div>
+          ),
+          () => [
+            path(
+              "/marker-before",
+              () => (
+                <p data-testid="marker-route-token">{crypto.randomUUID()}</p>
+              ),
+              { name: "markerBefore" },
+            ),
+            cache({ ttl: 60 }),
+            layout(() => (
+              <div data-testid="marker-promo">
+                <p data-testid="marker-promo-token">{crypto.randomUUID()}</p>
+                <Outlet />
+              </div>
+            )),
+            path(
+              "/marker-after",
+              () => (
+                <p data-testid="marker-route-token">{crypto.randomUUID()}</p>
+              ),
+              { name: "markerAfter" },
+            ),
+          ],
+        ),
 
         // PPR'd DUPLICATE of the blog: the realistic PPR shape (sidebar
         // parallel, ring-3 cache() segment with a rendered timestamp) under the
@@ -1119,6 +2036,53 @@ export const urlpatterns = urls(
         path("/document-cache-no-cache", DocumentCacheNoCachePage, {
           name: "documentCacheNoCache",
         }),
+
+        // #978: a document-cache entry carries the no-cookie default as
+        // initialTheme, whoever stored it; /live sends no s-maxage and keeps
+        // each visitor's theme. Unnamed: document-cache-theme.test.ts fetches
+        // them by URL, no gen-file entry.
+        path("/document-cache-theme", DocumentCacheThemePage),
+        path("/document-cache-theme/live", DocumentCacheThemeLivePage),
+
+        // Issue #915: a 200 whose async server component threw after the
+        // commit must not be stored by the document cache or the PPR shell
+        // capture (pages/capture-render-error.tsx). Unnamed: the e2e navigates
+        // by URL, no gen-file entry.
+        path("/document-cache-render-error", DocumentCacheRenderErrorPage),
+        path("/ppr-render-error", PprRenderErrorPage, {
+          ppr: { ttl: 300, swr: 120 },
+        }),
+        // Issue #909: the route cache must not store a write whose async child
+        // threw.
+        cache({ ttl: 300 }, () => [
+          path("/route-cache-render-error", RouteCacheRenderErrorPage),
+        ]),
+        // Issue #927: the capture must not store a shell whose bake-lane value
+        // failed on the snapshot encode (loaders/ppr-shell.ts).
+        path(
+          "/ppr-flight-error",
+          PprWarningsPage,
+          { ppr: { ttl: 300, swr: 120 } },
+          () => [loader(PprFlightErrorLoader, { ssr: false })],
+        ),
+        // Its per-?run= encode pass count (pprFlightErrorPasses).
+        path.json("/ppr-flight-error-passes", (ctx) => ({
+          passes: pprFlightErrorPasses.get(ctx.searchParams.get("run") ?? ""),
+        })),
+        // Issue #942 fixture (loaders/ppr-jsx.tsx).
+        path("/ppr-jsx", PprJsxPage, { ppr: { ttl: 300, swr: 120 } }, () => [
+          loader(PprJsxLoader, { ssr: false }),
+        ]),
+        // Issue #925: a { cache: false } var read inside "use cache" throws.
+        middleware(requestTenantMiddleware, () => [
+          path("/use-cache-non-cacheable", UseCacheNonCacheablePage, () => [
+            errorBoundary((props) => (
+              <p data-testid="use-cache-non-cacheable-error">
+                {props.error.message}
+              </p>
+            )),
+          ]),
+        ]),
 
         // Tagged document cache route: the full-page response is document-cached
         // AND tagged (via a "use cache" + cacheTag), so updateTag("doc-page")
@@ -1179,8 +2143,205 @@ export const urlpatterns = urls(
           path("/cached-handles", CachedHandlesPage, { name: "cachedHandles" }),
         ]),
 
+        // A cached loader's ctx.use dependency, also read by an uncached
+        // sibling loader: its crumb appears once on the MISS and on the HIT,
+        // where the sibling's live run replaces the replayed crumb. ssr: false
+        // puts every push in the document.
+        path(
+          "/loader-cache-dep",
+          LoaderCacheDepPage,
+          { name: "loaderCacheDep" },
+          () => [
+            loader(DepCrumbProductLoader, { ssr: false }, () => [
+              cache({ ttl: 600 }),
+            ]),
+            loader(DepCrumbSiblingLoader, { ssr: false }),
+          ],
+        ),
+
+        // A loader with its own cache() and no cache({ tags }) whose body
+        // calls cacheTag() and reads a tagging dependency, bound after it so
+        // the DSL starts the dependency: the entry stores both tags, so
+        // updateTag() of either refreshes the loader's value (#964).
+        path(
+          "/loader-cache-tag",
+          LoaderCacheTagPage,
+          { name: "loaderCacheTag" },
+          () => [
+            loader(BodyTaggedLoader, () => [cache({ ttl: 600 })]),
+            loader(BodyTaggedDepLoader),
+          ],
+        ),
+
+        // A "use cache" function whose only tag comes from the "use cache"
+        // function it calls, and a server action that runs updateTag() on
+        // that tag: the action's own re-render must miss the outer entry
+        // (#980).
+        path("/nested-use-cache/:probe", NestedUseCachePage, {
+          name: "nestedUseCache",
+        }),
+
+        // A cached loader on a store whose KV marker writes land late, and a
+        // server action that runs revalidateTag() on its tag: the action's
+        // own re-render must re-run the loader (#973).
+        path(
+          "/ryow-action/:probe",
+          RyowActionPage,
+          { name: "ryowAction" },
+          () => [
+            loader(RyowLoader, () => [
+              cache({ ttl: 600, store: slowMarkerStore }),
+            ]),
+          ],
+        ),
+
+        // A loader with its own cache() whose body reads cookies() (#972).
+        // Without a key() the entry would be shared across users, so the fill
+        // fails, also when a parent layout handler ran the loader first
+        // (reader-first); with a key() that includes the cookie, one entry per
+        // session.
+        path(
+          "/loader-cache-identity/unkeyed",
+          LoaderCacheIdentityPage,
+          { name: "loaderCacheIdentityUnkeyed" },
+          () => [
+            loader(CachedSessionLoader, () => [cache({ ttl: 600 })]),
+            errorBoundary((props) => (
+              <p data-testid="lci-error">{props.error.message}</p>
+            )),
+          ],
+        ),
+        layout(LoaderCacheIdentityLayout, () => [
+          path(
+            "/loader-cache-identity/reader-first",
+            LoaderCacheIdentityPage,
+            { name: "loaderCacheIdentityReaderFirst" },
+            () => [
+              loader(CachedSessionLoader, () => [cache({ ttl: 600 })]),
+              errorBoundary((props) => (
+                <p data-testid="lci-error">{props.error.message}</p>
+              )),
+            ],
+          ),
+        ]),
+        path(
+          "/loader-cache-identity/keyed",
+          LoaderCacheIdentityPage,
+          { name: "loaderCacheIdentityKeyed" },
+          () => [
+            loader(CachedSessionLoader, () => [
+              cache({
+                ttl: 600,
+                key: () =>
+                  `lci-session:${cookies().get("lci-session")?.value ?? ""}`,
+              }),
+            ]),
+          ],
+        ),
+
+        // A "use cache" function reads the same dependency loader, and the
+        // handler reads it live after the call: its crumb appears once on the
+        // MISS and on the HIT, where the live run replaces the replayed crumb.
+        path("/use-cache-dep", UseCacheDepPage, { name: "useCacheDep" }),
+
+        // A DSL loader passes its own ctx to a "use cache" function that
+        // pushes a crumb through it: a HIT replays the crumb once, and another
+        // id misses (#940).
+        path(
+          "/loader-ctx/:id",
+          LoaderCtxPage,
+          { name: "loaderCtxItem" },
+          () => [loader(LoaderCtxItemLoader)],
+        ),
+
         // Theme route
         path("/theme", ThemePage, { name: "theme" }),
+        // ctx.theme / getRequestContext().theme on a ppr route refuse the
+        // capture (#971); the useTheme() route is the HIT control. Fetched only
+        // by ppr-theme.test.ts.
+        path("/ppr-theme", CfPprThemePage, { name: "pprTheme", ppr: true }),
+        path("/ppr-theme/rc", CfPprThemeRequestContextPage, {
+          name: "pprThemeRc",
+          ppr: true,
+        }),
+        path("/ppr-theme/client", CfPprThemeClientPage, {
+          name: "pprThemeClient",
+          ppr: true,
+        }),
+
+        // Raw request-identity reads refuse like cookies() (#976); fetched
+        // only by identity-raw-reads.test.ts.
+        path("/identity-raw/ppr", IdentityRawPprPage, {
+          name: "identityRawPpr",
+          ppr: true,
+        }),
+        path("/identity-raw/ppr-control", IdentityRawPprControlPage, {
+          name: "identityRawPprControl",
+          ppr: true,
+        }),
+        cache({ ttl: 300 }, () => [
+          path(
+            "/identity-raw/cached",
+            IdentityRawCachedPage,
+            { name: "identityRawCached" },
+            () => [errorBoundary(IdentityRawError)],
+          ),
+        ]),
+        middleware(answerForwarded, () => [
+          cache({ ttl: 300 }, () => [
+            path("/identity-raw/copies", IdentityRawCopiesPage, {
+              name: "identityRawCopies",
+            }),
+          ]),
+        ]),
+        path(
+          "/identity-raw/use-cache",
+          IdentityRawUseCachePage,
+          { name: "identityRawUseCache" },
+          () => [errorBoundary(IdentityRawError)],
+        ),
+        path("/identity-raw/use-cache-arg", IdentityRawUseCacheArgPage, {
+          name: "identityRawUseCacheArg",
+        }),
+        cache(
+          {
+            ttl: 300,
+            key: (ctx) =>
+              `visitor:${visitorOf(ctx)}:${ctx.url.searchParams.get("probe") ?? ""}`,
+          },
+          () => [
+            path("/identity-raw/keyed", IdentityRawKeyedPage, {
+              name: "identityRawKeyed",
+            }),
+          ],
+        ),
+
+        // "use cache" refuses a memoized loader value that read cookies()
+        // (#1011); fetched only by use-cache-memoized-loader.test.ts.
+        path(
+          "/use-cache-memo/handler-first",
+          UcmHandlerFirstPage,
+          { name: "useCacheMemoHandlerFirst" },
+          () => [errorBoundary(UcmError)],
+        ),
+        path(
+          "/use-cache-memo/binding",
+          UcmBindingPage,
+          { name: "useCacheMemoBinding" },
+          () => [loader(UcmVisitorLoader), errorBoundary(UcmError)],
+        ),
+        path(
+          "/use-cache-memo/request-context",
+          UcmRequestContextPage,
+          { name: "useCacheMemoRequestContext" },
+          () => [errorBoundary(UcmError)],
+        ),
+        path(
+          "/use-cache-memo/plain",
+          UcmPlainPage,
+          { name: "useCacheMemoPlain" },
+          () => [errorBoundary(UcmError)],
+        ),
 
         // Cookie overlay test route
         path(
@@ -1189,6 +2350,65 @@ export const urlpatterns = urls(
           { name: "cookieOverlay" },
           () => [middleware(setOverlayCookie), loader(CookieOverlayLoader)],
         ),
+
+        // #992: a persistent useLocationState reader inside a Suspense
+        // boundary that the e2e holds until the root has hydrated, then
+        // releases.
+        path(
+          "/location-state-late-suspense/:gate",
+          (ctx) => (
+            <div>
+              <LateSuspenseWriter />
+              <Suspense
+                fallback={<div data-testid="late-ls-fallback">loading</div>}
+              >
+                <LateSuspenseContent gate={ctx.params.gate} />
+              </Suspense>
+            </div>
+          ),
+          { name: "locationStateLateSuspense" },
+        ),
+        path.json(
+          "/location-state-late-suspense/:gate/release",
+          (ctx) => {
+            const releases =
+              (lateSuspenseReleases.get(ctx.params.gate) ?? 0) + 1;
+            lateSuspenseReleases.set(ctx.params.gate, releases);
+            return { releases };
+          },
+          { name: "locationStateLateSuspenseRelease" },
+        ),
+
+        // The two fixtures below share a layout whose reader stays mounted
+        // across a navigation between them (#1029).
+        layout(<LocationStateOptionsShell />, () => [
+          // #994 clearOnReload, #1029: a "load more" list. LoadMoreLoader
+          // loads the page the URL names; the earlier pages ride along as
+          // location state on the Link. The handler sets state of its own on
+          // every request, document loads included.
+          path(
+            "/location-state-load-more",
+            (ctx) => {
+              const page = Number(ctx.searchParams.get("page") ?? "1");
+              ctx.setLocationState(ServerPageStamp({ page }));
+              return <LoadMoreList basePath="/location-state-load-more" />;
+            },
+            { name: "locationStateLoadMore" },
+            () => [loader(LoadMoreLoader)],
+          ),
+
+          // #994 app version: readers of a typed slot and of plain state.
+          path(
+            "/location-state-app-version",
+            (ctx) => (
+              <AppVersionPanel
+                basePath="/location-state-app-version"
+                step={ctx.searchParams.get("step") ?? "start"}
+              />
+            ),
+            { name: "locationStateAppVersion" },
+          ),
+        ]),
 
         // Action location state test route (non-redirect flow)
         path("/action-location-state", ActionLocationStatePage, {
@@ -1342,17 +2562,33 @@ export const urlpatterns = urls(
           name: "handlerFirst",
         }),
 
+        // Regression: revalidate(() => false) on a route-scoped parallel slot
+        // must not blank the slot on the soft nav that first introduces it
+        include("/parallel-new-slot-reval", parallelNewSlotRevalPatterns, {
+          name: "parallelNewSlotReval",
+        }),
+
         // Rendered barrier: loader reads handle data after ctx.rendered()
         include("/rendered-barrier", renderedBarrierPatterns, {
           name: "renderedBarrier",
         }),
 
-        // #622 follow-up: fully-prefetched no-flash + client-mount-suspense
-        // layout-hold regression (mirrors the router e2e app).
+        // Fully-prefetched commit mode: no-flash + client-mount-suspense
+        // layout-hold contract (mirrors the router e2e app).
         include("/", prefetchTransitionPatterns, { name: "" }),
         // transition({ when }) conditional-gate coverage (mirrors the router
         // e2e app's /tx-when/:hold/:n).
         include("/", txWhenPatterns, { name: "" }),
+        // intercept({ when }) from/to locations (mirrors the router e2e app's
+        // intercept-when-shape).
+        include("/intercept-when-shape", interceptWhenShapePatterns, {
+          name: "interceptWhenShape",
+        }),
+
+        // Cookie-gated route-middleware redirect (#1047).
+        include("/auth-redirect", authRedirectPatterns, {
+          name: "authRedirect",
+        }),
 
         // Deferred-handle navigation contract + history-cache fixes
         // (#622 follow-ups), exercised through client (soft) navigation under

@@ -126,9 +126,11 @@ import {
 } from "@rangojs/router";
 import type {
   ActionRef,
+  IsActionFn,
   OTelTracer,
   OTelActiveSpanTracer,
   OTelTracingOptions,
+  SerializedManifest,
 } from "@rangojs/router";
 
 void createLoader;
@@ -137,6 +139,12 @@ void redirect;
 void urls;
 void createConsoleSink;
 type _ActionRef = ActionRef;
+type _IsActionFn = IsActionFn;
+
+// debugManifest() is on the public router type (no cast) and its result type
+// is nameable from the root entry.
+const manifest: Promise<SerializedManifest> = createRouter().debugManifest();
+void manifest;
 
 // Pin the server-only observability export surface the docs/JSDoc promise:
 // the tracing slot (createOTelTracing) and the event sink (createOTelSink)
@@ -159,6 +167,28 @@ export function Example() {
       <Link to={href("/")}>Home</Link>
       <Outlet />
     </>
+  );
+}
+`,
+      "html-consumer.tsx": `
+import type { ReactNode } from "react";
+import { Html, type ScrollRestorationProps } from "@rangojs/router/client";
+
+const byPathname: ScrollRestorationProps["getKey"] = (location) => location.pathname;
+
+export function Document({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en">
+      <head>
+        <Html.Meta />
+        <Html.Scripts />
+      </head>
+      <body>
+        <Html.Scripts position="body" />
+        <Html.ScrollRestoration getKey={byPathname} />
+        {children}
+      </body>
+    </html>
   );
 }
 `,
@@ -248,6 +278,7 @@ import {
   runLoader,
   runLoaderResult,
   runTransitionWhen,
+  runClientRevalidate,
   dispatch,
   assertCacheStatus,
   assertCacheDecision,
@@ -263,24 +294,37 @@ import type {
   RunLoaderResult,
   RunTransitionWhenOptions,
   RunTransitionWhenResult,
+  RunClientRevalidateOptions,
   CacheDecisionEvent,
   CacheSegmentSignal,
   CacheSegmentStatus,
   TelemetryEvent as TestTelemetryEvent,
 } from "@rangojs/router/testing";
 import type { TelemetryEvent, RequestStartEvent } from "@rangojs/router";
+import { createRouter } from "@rangojs/router";
 import { rangoTestConfig, rangoTestAliases, rangoInlineDeps } from "@rangojs/router/testing/vitest";
 import { renderRoute } from "@rangojs/router/testing/dom";
 import { createRangoE2E } from "@rangojs/router/testing/e2e";
-import { renderToFlightString } from "@rangojs/router/testing/flight";
+import {
+  renderToFlightString,
+  serveShellRequest,
+  resetShellTestState,
+} from "@rangojs/router/testing/flight";
+import type {
+  ServeShellRequestOptions,
+  ServeShellRequestResult,
+} from "@rangojs/router/testing/flight";
 import { flightMatchers } from "@rangojs/router/testing/flight-matchers";
 
 // Telemetry event member types (T5) + the runLoaderResult envelope (T2) must be
 // nameable at a consumer call site, not just structurally reachable.
 type _TelemetryTypesReachable = [
+  ServeShellRequestOptions,
+  ServeShellRequestResult,
   RunLoaderResult<unknown>,
   RunTransitionWhenOptions,
   RunTransitionWhenResult,
+  RunClientRevalidateOptions,
   CacheDecisionEvent,
   CacheSegmentSignal,
   CacheSegmentStatus,
@@ -293,6 +337,7 @@ void runMiddleware;
 void runLoader;
 void runLoaderResult;
 void runTransitionWhen;
+void runClientRevalidate;
 void dispatch;
 void rangoTestConfig;
 void rangoTestAliases;
@@ -309,6 +354,15 @@ void filterCacheDecisions;
 void collectHandle;
 void createRangoE2E;
 void renderToFlightString;
+// A public router, no cast.
+const _servedShell: Promise<ServeShellRequestResult> = serveShellRequest(
+  createRouter(),
+  "/product/1",
+  { partial: { from: "/" } },
+);
+void _servedShell;
+const _reset: Promise<void> = resetShellTestState();
+void _reset;
 void flightMatchers;
 `,
     });
@@ -328,6 +382,26 @@ void Outlet;
     expect(result.status).not.toBe(0);
     expect(result.output).toContain("@rangojs/router");
     expect(result.output).toContain("Outlet");
+  }, 20_000);
+
+  it("rejects the pre-Html document component names from the client entry", () => {
+    const result = runConsumerTypecheck({
+      "invalid-client-document-names.ts": `
+import { MetaTags, Scripts, ScrollRestoration } from "@rangojs/router/client";
+
+void MetaTags;
+void Scripts;
+void ScrollRestoration;
+`,
+    });
+
+    expect(result.status).not.toBe(0);
+    for (const name of ["MetaTags", "Scripts", "ScrollRestoration"]) {
+      // TS2305 ("member 'X'") or TS2724 ("member named 'X'. Did you mean").
+      expect(result.output).toMatch(
+        new RegExp(`has no exported member (named )?'${name}'`),
+      );
+    }
   }, 20_000);
 
   it("rejects non-exported deep cache subpaths", () => {

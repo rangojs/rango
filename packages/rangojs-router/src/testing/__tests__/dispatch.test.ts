@@ -4,15 +4,19 @@ import type { Mock } from "vitest";
 // createRouter's match path transitively imports @vitejs/plugin-rsc/rsc, whose
 // top-level body imports Vite virtual modules that do not resolve in plain
 // node/vitest. dispatch() itself never renders RSC, so a stub is sufficient.
-vi.mock("@vitejs/plugin-rsc/rsc", () => ({
-  createFromReadableStream: vi.fn(),
-  renderToReadableStream: vi.fn(),
-  loadServerAction: vi.fn(),
-  decodeReply: vi.fn(),
-  decodeAction: vi.fn(),
-  decodeFormState: vi.fn(),
-  createTemporaryReferenceSet: vi.fn(),
-}));
+function pluginRscMock() {
+  return {
+    createFromReadableStream: vi.fn(),
+    renderToReadableStream: vi.fn(),
+    loadServerAction: vi.fn(),
+    decodeReply: vi.fn(),
+    decodeAction: vi.fn(),
+    decodeFormState: vi.fn(),
+    createTemporaryReferenceSet: vi.fn(),
+  };
+}
+vi.mock("@vitejs/plugin-rsc/rsc/server", pluginRscMock);
+vi.mock("@vitejs/plugin-rsc/rsc/client", pluginRscMock);
 
 import { dispatch } from "../dispatch.js";
 import { createRouter } from "../../router.js";
@@ -347,6 +351,25 @@ describe("dispatch", () => {
   // I2: dispatch wires the production response-route cache path (resolved from
   // the matched entry tree), so a cached path.json/path.text route hits/writes
   // through dispatch the way it does in production — not a fresh run every call.
+  describe("middleware() wrapper with no routes inside (#918)", () => {
+    const requireAuth: MiddlewareFn = async () =>
+      new Response("unauthorized", { status: 401 });
+
+    it("router.routes() throws when it contains a layout(), pointing to the flat form", () => {
+      expect(() =>
+        createRouter<{}>({}).routes(
+          urls(({ path, layout, middleware }) => [
+            path("/account", Home, { name: "account" }, () => [
+              middleware(requireAuth, () => [layout(Home)]),
+            ]),
+          ]),
+        ),
+      ).toThrow(
+        /cannot contain layout\(\).*middleware\(fn\), layout\(\.\.\.\)/,
+      );
+    });
+  });
+
   describe("cached response routes (cache() boundary)", () => {
     // The cache WRITE is scheduled via ctx.waitUntil (a microtask without an
     // executionContext); flush the queue so the second dispatch can observe it.
@@ -396,6 +419,58 @@ describe("dispatch", () => {
       const cached = await store.getResponse("response:json:localhost/cached2");
       expect(cached).not.toBeNull();
       expect(cached?.response.status).toBe(200);
+    });
+
+    it("caches a response route whose cache() is among its own children (#912)", async () => {
+      const store = new MemorySegmentCacheStore();
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          path.json(
+            "/cached-child",
+            () => ({ ts: Date.now() + Math.random() }),
+            { name: "cachedChild.json" },
+            () => [cache({ ttl: 600 })],
+          ),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      const first = await (
+        await dispatch(router, { request: "/cached-child" })
+      ).json();
+      await flushWrites();
+      const second = await (
+        await dispatch(router, { request: "/cached-child" })
+      ).json();
+
+      expect(second).toEqual(first);
+      expect(
+        await store.getResponse("response:json:localhost/cached-child"),
+      ).not.toBeNull();
+    });
+
+    it("caches a response route whose cache() is inside a routeless middleware() wrapper (#918)", async () => {
+      const store = new MemorySegmentCacheStore();
+      const passThrough: MiddlewareFn = async (_ctx, next) => next();
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache, middleware }) => [
+          path.json(
+            "/cached-wrapped",
+            () => ({ ts: Date.now() + Math.random() }),
+            { name: "cachedWrapped.json" },
+            () => [middleware(passThrough, () => [cache({ ttl: 600 })])],
+          ),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      const first = await (
+        await dispatch(router, { request: "/cached-wrapped" })
+      ).json();
+      await flushWrites();
+      const second = await (
+        await dispatch(router, { request: "/cached-wrapped" })
+      ).json();
+
+      expect(second).toEqual(first);
     });
 
     it("does not cache a non-GET/HEAD method (POST miss, no store write)", async () => {
@@ -573,6 +648,133 @@ describe("dispatch", () => {
       expect(cached).not.toBeNull();
     });
 
+    // #970: a cache() nested in a keyed cache() keys its entries within the
+    // enclosing key() partition: without its own key() it composes it with
+    // its own default key, with one the key() results compose. Another tier
+    // never reads a tier's entry, and routes under the inner cache() keep
+    // their own entries though the outer key() names no route.
+    it("keys a response route under a nested cache() within the enclosing key() partition", async () => {
+      const store = new MemorySegmentCacheStore();
+      const putSpy = vi.spyOn(store, "putResponse");
+      let runs = 0;
+      const echo = (ctx: { request: Request; url: URL }) => ({
+        path: ctx.url.pathname,
+        tier: ctx.request.headers.get("x-tier"),
+        run: ++runs,
+      });
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache(
+            {
+              ttl: 600,
+              key: (ctx) => `tier:${ctx.request.headers.get("x-tier")}`,
+            },
+            () => [
+              cache({ ttl: 60 }, () => [
+                path.json("/nested/inherit", echo, { name: "nested.inherit" }),
+                path.json("/nested/sibling", echo, { name: "nested.sibling" }),
+              ]),
+              cache(
+                {
+                  ttl: 60,
+                  key: (ctx) => `v:${ctx.request.headers.get("x-variant")}`,
+                },
+                () => [
+                  path.json("/nested/composed", echo, {
+                    name: "nested.composed",
+                  }),
+                ],
+              ),
+            ],
+          ),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+      const get = async (path: string, headers: Record<string, string>) => {
+        const res = await dispatch(router, {
+          request: new Request(`http://localhost${path}`, { headers }),
+        });
+        await flushWrites();
+        return res.json();
+      };
+
+      const gold = await get("/nested/inherit", { "x-tier": "gold" });
+      expect(await get("/nested/inherit", { "x-tier": "gold" })).toEqual(gold);
+      expect(await get("/nested/inherit", { "x-tier": "silver" })).toEqual({
+        path: "/nested/inherit",
+        tier: "silver",
+        run: gold.run + 1,
+      });
+      expect(await get("/nested/sibling", { "x-tier": "gold" })).toEqual({
+        path: "/nested/sibling",
+        tier: "gold",
+        run: gold.run + 2,
+      });
+
+      const composed = { "x-tier": "gold", "x-variant": "a" };
+      await get("/nested/composed", composed);
+      await get("/nested/composed", { ...composed, "x-tier": "silver" });
+      expect(putSpy.mock.calls.map(([key]) => key)).toEqual([
+        "response:key:tier%3Agold|response%3Ajson%3Alocalhost%2Fnested%2Finherit",
+        "response:key:tier%3Asilver|response%3Ajson%3Alocalhost%2Fnested%2Finherit",
+        "response:key:tier%3Agold|response%3Ajson%3Alocalhost%2Fnested%2Fsibling",
+        "response:key:tier%3Agold|key:v%3Aa",
+        "response:key:tier%3Asilver|key:v%3Aa",
+      ]);
+      putSpy.mockRestore();
+    });
+
+    it("keys a response route under an inner cache() without key() by the enclosing partition and its store's keyGenerator result", async () => {
+      const store = new MemorySegmentCacheStore({
+        keyGenerator: (ctx, defaultKey) =>
+          `${defaultKey}|lang=${ctx.request.headers.get("x-lang")}`,
+      });
+      const putSpy = vi.spyOn(store, "putResponse");
+      let runs = 0;
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache(
+            {
+              ttl: 600,
+              key: (ctx) => `tier:${ctx.request.headers.get("x-tier")}`,
+            },
+            () => [
+              cache({ ttl: 60 }, () => [
+                path.json(
+                  "/nested/lang",
+                  (ctx: { request: Request }) => ({
+                    tier: ctx.request.headers.get("x-tier"),
+                    lang: ctx.request.headers.get("x-lang"),
+                    run: ++runs,
+                  }),
+                  { name: "nested.lang" },
+                ),
+              ]),
+            ],
+          ),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+      const get = async (tier: string, lang: string) => {
+        const res = await dispatch(router, {
+          request: new Request("http://localhost/nested/lang", {
+            headers: { "x-tier": tier, "x-lang": lang },
+          }),
+        });
+        await flushWrites();
+        return res.json();
+      };
+
+      const goldEn = await get("gold", "en");
+      expect(await get("gold", "en")).toEqual(goldEn);
+      expect(await get("gold", "de")).toMatchObject({ lang: "de" });
+      expect(await get("silver", "en")).toMatchObject({ tier: "silver" });
+      expect(putSpy.mock.calls.map(([key]) => key)).toEqual([
+        "response:key:tier%3Agold|response%3Ajson%3Alocalhost%2Fnested%2Flang%7Clang%3Den",
+        "response:key:tier%3Agold|response%3Ajson%3Alocalhost%2Fnested%2Flang%7Clang%3Dde",
+        "response:key:tier%3Asilver|response%3Ajson%3Alocalhost%2Fnested%2Flang%7Clang%3Den",
+      ]);
+      putSpy.mockRestore();
+    });
+
     it("re-runs an UNcached response route every call (different body)", async () => {
       // Non-vacuity: without a cache() boundary the handler re-executes, so the
       // body changes — proving the equality above is caused by caching.
@@ -662,10 +864,12 @@ describe("dispatch", () => {
       ).json();
 
       // A HIT returns the byte-identical cached body, and the entry was written
-      // under the custom key (response:tenant-a/cached-keyok).
+      // under the custom key, namespaced (response:key:tenant-a%2Fcached-keyok).
       expect(second).toEqual(first);
       expect(putSpy).toHaveBeenCalled();
-      expect(putSpy.mock.calls[0]?.[0]).toBe("response:tenant-a/cached-keyok");
+      expect(putSpy.mock.calls[0]?.[0]).toBe(
+        "response:key:tenant-a%2Fcached-keyok",
+      );
       putSpy.mockRestore();
     });
   });

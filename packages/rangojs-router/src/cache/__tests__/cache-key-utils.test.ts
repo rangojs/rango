@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { sortedSearchString, sortedRouteParams } from "../cache-key-utils.js";
+import {
+  sortedSearchString,
+  sortedRouteParams,
+  cacheKeyBase,
+} from "../cache-key-utils.js";
+import { compileSearchParamsFilter } from "../search-params-filter.js";
 
 describe("sortedSearchString", () => {
   it("returns empty string for no params", () => {
@@ -53,6 +58,90 @@ describe("sortedSearchString", () => {
   it("handles duplicate keys (preserves all values)", () => {
     const params = new URLSearchParams("a=1&a=2");
     expect(sortedSearchString(params)).toBe("a=1&a=2");
+  });
+});
+
+describe("sortedSearchString with cache.searchParams filter", () => {
+  it("drops excluded params from the key", () => {
+    const filter = compileSearchParamsFilter({ exclude: ["utm_*", "fbclid"] });
+    const params = new URLSearchParams("utm_source=tw&page=2&fbclid=abc&q=x");
+    expect(sortedSearchString(params, filter)).toBe("page=2&q=x");
+  });
+
+  it("include mode keeps only the allowlisted params", () => {
+    const filter = compileSearchParamsFilter({ include: ["q", "page"] });
+    const params = new URLSearchParams("utm_source=tw&page=2&q=x&sort=asc");
+    expect(sortedSearchString(params, filter)).toBe("page=2&q=x");
+  });
+
+  it("'none' produces an empty search key regardless of params", () => {
+    const filter = compileSearchParamsFilter("none");
+    const params = new URLSearchParams("a=1&b=2");
+    expect(sortedSearchString(params, filter)).toBe("");
+  });
+
+  it("cannot re-include reserved router params (reserved exclusion applies first)", () => {
+    const filter = compileSearchParamsFilter({
+      include: ["__no_cache", "_rsc_partial", "q"],
+    });
+    const params = new URLSearchParams("__no_cache=1&_rsc_partial=1&q=x");
+    expect(sortedSearchString(params, filter)).toBe("q=x");
+  });
+
+  it("filtering happens before the sort (surviving params stay order-insensitive)", () => {
+    const filter = compileSearchParamsFilter({ exclude: ["utm_*"] });
+    const a = sortedSearchString(
+      new URLSearchParams("z=1&utm_source=x&a=2"),
+      filter,
+    );
+    const b = sortedSearchString(
+      new URLSearchParams("a=2&z=1&utm_medium=y"),
+      filter,
+    );
+    expect(a).toBe("a=2&z=1");
+    expect(b).toBe(a);
+  });
+
+  it("a URL with no filtered params produces the same key as the unfiltered path (byte-stability)", () => {
+    const filter = compileSearchParamsFilter({ exclude: ["utm_*"] });
+    const params = new URLSearchParams("page=2&q=x");
+    expect(sortedSearchString(params, filter)).toBe(sortedSearchString(params));
+  });
+});
+
+describe("cacheKeyBase with cache.searchParams filter", () => {
+  it("collapses excluded-param variants onto one key", () => {
+    const filter = compileSearchParamsFilter({ exclude: ["utm_*"] });
+    const a = cacheKeyBase(
+      "example.com",
+      "/products",
+      new URLSearchParams("utm_source=tw"),
+      undefined,
+      filter,
+    );
+    const b = cacheKeyBase(
+      "example.com",
+      "/products",
+      new URLSearchParams("utm_source=ig"),
+      undefined,
+      filter,
+    );
+    expect(a).toBe("example.com/products");
+    expect(b).toBe(a);
+  });
+
+  it("without a filter, variants stay distinct (default behavior unchanged)", () => {
+    const a = cacheKeyBase(
+      "example.com",
+      "/products",
+      new URLSearchParams("utm_source=tw"),
+    );
+    const b = cacheKeyBase(
+      "example.com",
+      "/products",
+      new URLSearchParams("utm_source=ig"),
+    );
+    expect(a).not.toBe(b);
   });
 });
 

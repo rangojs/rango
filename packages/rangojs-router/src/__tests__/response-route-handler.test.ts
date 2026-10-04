@@ -3,11 +3,6 @@ import { describe, expect, it, vi } from "vitest";
 // Mock cache-scope to avoid virtual module chain
 vi.mock("../cache/cache-scope.js", () => ({
   createCacheScope: vi.fn(() => null),
-  resolveCacheTags: vi.fn((config: any) =>
-    config && config !== false && Array.isArray(config.tags)
-      ? config.tags
-      : undefined,
-  ),
 }));
 
 import {
@@ -16,6 +11,8 @@ import {
 } from "../server/request-context.js";
 import { handleResponseRoute } from "../rsc/response-route-handler.js";
 import { createCacheScope } from "../cache/cache-scope.js";
+import { runWithCacheExecScope } from "../cache/cache-exec-scope.js";
+import { createVar } from "../context-var.js";
 import type { HandlerContext } from "../rsc/handler-context.js";
 import type { ResponseRouteMatch } from "../rsc/response-route-handler.js";
 
@@ -83,6 +80,47 @@ describe("response-route-handler", () => {
       );
       // href should NOT exist
       expect(capturedCtx.href).toBeUndefined();
+    });
+  });
+
+  describe("ctx.get() of a non-cacheable variable (#925)", () => {
+    it('throws inside a "use cache" body and reads normally outside it', async () => {
+      const Tenant = createVar<string>({ cache: false });
+      const Locale = createVar<string>();
+      const handlerCtx = createMockHandlerCtx();
+      const testEnv = createTestEnv();
+      const ctx = createRequestContext(testEnv);
+      ctx.set(Tenant, "a");
+      ctx.set(Locale, "en");
+
+      let capturedCtx: any;
+      const preview: ResponseRouteMatch = {
+        responseType: "json",
+        handler: (handlerContext: any) => {
+          capturedCtx = handlerContext;
+          return { ok: true };
+        },
+        params: {},
+      };
+
+      await runWithRequestContext(ctx, () =>
+        handleResponseRoute(
+          handlerCtx,
+          preview,
+          testEnv.request,
+          testEnv.env,
+          testEnv.url,
+          ctx._variables,
+        ),
+      );
+
+      expect(capturedCtx.get(Tenant)).toBe("a");
+      runWithCacheExecScope(() => {
+        expect(() => capturedCtx.get(Tenant)).toThrow(
+          /inside a "use cache" function/,
+        );
+        expect(capturedCtx.get(Locale)).toBe("en");
+      });
     });
   });
 
@@ -389,6 +427,9 @@ describe("response-route-handler", () => {
           ttl: 60,
           condition,
         },
+        allowsCache: () => (condition ? condition(undefined) : true),
+        resolveKeyFrom: async (defaultKey: string) => defaultKey,
+        resolveTags: () => undefined,
         ttl: 60,
         swr: 0,
         getStore: () => store,
@@ -538,6 +579,9 @@ describe("response-route-handler", () => {
       const scope = {
         enabled: true,
         config: { ttl: 60 },
+        allowsCache: () => true,
+        resolveKeyFrom: async (defaultKey: string) => defaultKey,
+        resolveTags: () => undefined,
         ttl: 60,
         swr: 0,
         getStore: () => store,

@@ -3,6 +3,11 @@ import { RouteNotFoundError } from "../../errors.js";
 import type { BuildShellCaptureOptions } from "../build-shell-capture.js";
 import type { MiddlewareEntry, MiddlewareFn } from "../../router/middleware.js";
 import { getRequestContext } from "../../server/request-context.js";
+import {
+  clearCachedManifest,
+  setCachedManifest,
+} from "../../route-map-builder.js";
+import { runMiddleware } from "../../testing/run-middleware.js";
 
 vi.mock("../../deps/rsc.js", () => ({
   renderToReadableStream: vi.fn(),
@@ -28,7 +33,20 @@ vi.mock("../../rsc/shell-capture.js", async (importOriginal) => {
 
 const { captureShellForBuild } = await import("../build-shell-capture.js");
 
-/** The 5th arg captureAndStoreShell receives — the shell descriptor + sink. */
+/**
+ * A build capture's match is served from the prerender store (no handler
+ * runs, no doc record); cache-lookup.ts tryPrerenderLookup marks that on the
+ * capture context, which settleCaptureRecord reads.
+ */
+function prerenderServed(): {
+  routeName: string;
+  params: Record<string, string>;
+} {
+  getRequestContext()._pprReplayPostMatchReason = "prerender-store";
+  return { routeName: "shop.category", params: { category: "power-set" } };
+}
+
+/** The 4th arg captureAndStoreShell receives — the shell descriptor + sink. */
 interface CaptureDescriptorStub {
   store: {
     putShell: (
@@ -38,6 +56,7 @@ interface CaptureDescriptorStub {
     ) => Promise<void>;
   };
   key: string;
+  buildVersion: string;
   ttl?: number;
   swr?: number;
   tags?: string[];
@@ -49,7 +68,7 @@ function makeOptions(router: unknown): BuildShellCaptureOptions {
     urlPath: "/shop/power-set",
     routeName: "shop.category",
     key: "/shop/power-set:shell",
-    buildVersion: "test-version",
+    versions: { data: "test-data-version", document: "test-version" },
     captureShellHTML: vi.fn() as BuildShellCaptureOptions["captureShellHTML"],
   };
 }
@@ -79,6 +98,25 @@ describe("captureShellForBuild", () => {
       outcome: "route-mismatch",
       matchedRouteName: "shop.catchall",
     });
+  });
+
+  // The build capture shares the runtime capture's one deadline, the match
+  // included: a match that never returns ends the URL's capture as no-shell
+  // at ppr.captureTimeout instead of holding the build.
+  it("ends a match that outlives ppr.captureTimeout as no-shell, without the in-place retry", async () => {
+    const router = { match: vi.fn(() => new Promise<never>(() => {})) };
+    const started = Date.now();
+
+    const result = await captureShellForBuild({
+      ...makeOptions(router),
+      captureTimeout: 50,
+    });
+
+    expect(result.outcome).toBe("no-shell");
+    expect(result.timedOut).toBe(true);
+    // Not retried: the first match is still running.
+    expect(router.match).toHaveBeenCalledTimes(1);
+    expect(Date.now() - started).toBeLessThan(2_000);
   });
 
   it("does not swallow route-load failures encoded as RouteNotFoundError", async () => {
@@ -150,11 +188,14 @@ describe("captureShellForBuild", () => {
 
   it("runs global + route middleware to completion (no opt-out) and stores the shell", async () => {
     captureAndStoreShellMock.mockReset();
+    let versionsDuringCapture: unknown;
     captureAndStoreShellMock.mockImplementation(async (..._args: unknown[]) => {
-      const descriptor = _args[4] as CaptureDescriptorStub;
+      const descriptor = _args[3] as CaptureDescriptorStub;
+      versionsDuringCapture = getRequestContext()._versions;
+      // As captureAndStoreShell does: the entry carries the descriptor's stamp.
       await descriptor.store.putShell(
         descriptor.key,
-        { buildVersion: "test-version" },
+        { buildVersion: descriptor.buildVersion },
         descriptor.ttl,
         descriptor.swr,
         descriptor.tags,
@@ -189,15 +230,19 @@ describe("captureShellForBuild", () => {
           { handler: routeMiddleware, params: { category: "power-set" } },
         ],
       })),
-      match: vi.fn(async () => ({
-        routeName: "shop.category",
-        params: { category: "power-set" },
-      })),
+      match: vi.fn(async () => prerenderServed()),
     };
 
     const result = await captureShellForBuild(makeOptions(router));
     expect(result.outcome).toBe("stored");
+    // Stamped with the router's DOCUMENT version: the serve-side gate compares
+    // the stamp with the handler's version, which is the document version.
     expect(result.entry).toEqual({ buildVersion: "test-version" });
+    // The capture's stores key with the full pair, like a served request.
+    expect(versionsDuringCapture).toEqual({
+      data: "test-data-version",
+      document: "test-version",
+    });
     expect(captureAndStoreShellMock).toHaveBeenCalledTimes(1);
     // Both layers wrapped the capture: global outermost, route innermost.
     expect(events).toEqual([
@@ -208,13 +253,93 @@ describe("captureShellForBuild", () => {
     ]);
   });
 
+  it("gives build middleware the same global-only ctx.reverse as a live request", async () => {
+    // Records what ctx.reverse returns (or the error it throws) for a dot-local
+    // name, a global name relying on param auto-fill, and a fully specified
+    // global name. The cast models untyped (JS) code: MiddlewareContext rejects
+    // ".name" at compile time.
+    const reverseProbe =
+      (results: string[]): MiddlewareFn =>
+      async (ctx, next) => {
+        const reverse = ctx.reverse as (
+          name: string,
+          params?: Record<string, string>,
+        ) => string;
+        for (const call of [
+          () => reverse(".index"),
+          () => reverse("shop.category"),
+          () => reverse("shop.category", { category: "tools" }),
+        ]) {
+          try {
+            results.push(call());
+          } catch (error) {
+            results.push((error as Error).message);
+          }
+        }
+        return next();
+      };
+    const routeMap = {
+      "shop.index": "/shop",
+      "shop.category": "/shop/:category",
+    };
+
+    // Live request: middleware reverse is map-only (rsc/handler.ts), mirrored
+    // by runMiddleware.
+    const live: string[] = [];
+    await runMiddleware(reverseProbe(live), {
+      request: "/shop/power-set",
+      params: { category: "power-set" },
+      routeName: "shop.category",
+      routeMap,
+    });
+    expect(live[0]).toBe('Unknown route: ".index"');
+    expect(live[2]).toBe("/shop/tools");
+
+    captureAndStoreShellMock.mockReset();
+    captureAndStoreShellMock.mockResolvedValue("refused");
+    const buildGlobal: string[] = [];
+    const buildRoute: string[] = [];
+    const router = {
+      middleware: [
+        {
+          pattern: null,
+          regex: null,
+          paramNames: [],
+          handler: reverseProbe(buildGlobal),
+        } satisfies MiddlewareEntry,
+      ],
+      previewMatch: vi.fn(async () => ({
+        routeKey: "shop.category",
+        params: { category: "power-set" },
+        routeMiddleware: [
+          {
+            handler: reverseProbe(buildRoute),
+            params: { category: "power-set" },
+          },
+        ],
+      })),
+      match: vi.fn(async () => prerenderServed()),
+    };
+
+    setCachedManifest(routeMap);
+    try {
+      await expect(captureShellForBuild(makeOptions(router))).resolves.toEqual({
+        outcome: "refused",
+      });
+    } finally {
+      clearCachedManifest();
+    }
+    expect(buildGlobal).toEqual(live);
+    expect(buildRoute).toEqual(live);
+  });
+
   it("a bake-lane opt-out DURING the capture render discards the shell (outcome 'dynamic')", async () => {
     captureAndStoreShellMock.mockReset();
     // A loader/handler calling ctx.dynamic() while the shell renders: the
     // captured shell is collected but then discarded because the request opted
     // onto the dynamic axis (build-shell-capture reads derivedCtx._dynamic).
     captureAndStoreShellMock.mockImplementation(async (..._args: unknown[]) => {
-      const descriptor = _args[4] as CaptureDescriptorStub;
+      const descriptor = _args[3] as CaptureDescriptorStub;
       getRequestContext()!.dynamic();
       await descriptor.store.putShell(descriptor.key, {});
       return "stored";
@@ -225,10 +350,7 @@ describe("captureShellForBuild", () => {
         routeKey: "shop.category",
         params: { category: "power-set" },
       })),
-      match: vi.fn(async () => ({
-        routeName: "shop.category",
-        params: { category: "power-set" },
-      })),
+      match: vi.fn(async () => prerenderServed()),
     };
 
     const result = await captureShellForBuild(makeOptions(router));

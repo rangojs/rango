@@ -1,4 +1,4 @@
-import { createRouter } from "@rangojs/router";
+import { createRouter, updateTag } from "@rangojs/router";
 import {
   MemorySegmentCacheStore,
   VercelCacheStore,
@@ -12,6 +12,12 @@ import {
   PprInlineActionPage,
 } from "./components/pages/AboutPage.js";
 import { CachedTimePage } from "./components/pages/CachedTimePage.js";
+import { CacheLabPage } from "./components/pages/CacheLabPage.js";
+import { CacheLabPulseLoader } from "./cache-lab-data.js";
+import {
+  CACHE_LAB_ALLOWED_TAGS,
+  CACHE_LAB_TAGS,
+} from "./cache-lab-contract.js";
 import { buildTracing, buildTelemetry } from "./instrumentation.js";
 import { getLastTrace } from "./trace-debug.js";
 
@@ -26,11 +32,16 @@ const defaults = { ttl: 60, swr: 300 };
 
 // Local dev/preview has no Vercel Runtime Cache, so fall back to the in-memory
 // store there. On Vercel (process.env.VERCEL is set by the platform) use the
-// Runtime Cache store, namespaced by the deployment id so a redeploy does not
-// serve stale-shaped entries (Vercel does not reconcile TTL/tags across deploys).
+// Runtime Cache store. The store puts a per-router version in front of every
+// key (data version for segments and items, document version for HTML), so the
+// namespace carries no deployment id: a redeploy that does not change the
+// router keeps its entries.
 const memoryStore = new MemorySegmentCacheStore({ defaults });
 
 let e2eRuntimeCache: VercelRuntimeCache | undefined;
+// One handle per process: getCache() resolves the platform cache per call, and
+// VercelCacheStore keeps its PPR shell and tag-marker memos per handle.
+let vercelRuntimeCache: VercelRuntimeCache | undefined;
 
 function getE2eRuntimeCache(): VercelRuntimeCache {
   if (e2eRuntimeCache) return e2eRuntimeCache;
@@ -87,7 +98,7 @@ function resolveCache() {
   if (process.env.VERCEL) {
     return {
       store: new VercelCacheStore({
-        cache: getCache({ namespace: process.env.VERCEL_DEPLOYMENT_ID }),
+        cache: (vercelRuntimeCache ??= getCache()),
         waitUntil,
         defaults,
       }),
@@ -107,6 +118,9 @@ declare global {
 const base = createRouter({
   document: Document,
   cache: resolveCache,
+  cacheProfiles: {
+    "cache-lab": { ttl: 3600, swr: 300 },
+  },
   // Vercel custom spans: emit "rango.*" spans for the request/middleware/
   // loader/render/ssr phases via OpenTelemetry. The hybrid setup in
   // instrumentation.ts wires @vercel/otel in the real path and an in-memory
@@ -124,18 +138,97 @@ const base = createRouter({
 // production deploy never exposes it. (A `.use()` middleware, not a route, so it
 // stays out of the route manifest either way.)
 const withDebug = TRACE_DEBUG
-  ? base.use(
-      "/__debug/trace",
-      () =>
-        new Response(JSON.stringify(getLastTrace()), {
-          headers: { "content-type": "application/json" },
-        }),
-    )
+  ? base
+      .use(
+        "/__debug/trace",
+        () =>
+          new Response(JSON.stringify(getLastTrace()), {
+            headers: { "content-type": "application/json" },
+          }),
+      )
+      // Test-only per-request perf-debug opt-in (?__perf_debug=1): turns on
+      // the metrics store for this request, so the e2e reads the PPR shell
+      // read rows from Server-Timing. Runs before next() so downstream phases
+      // record into the store.
+      .use(async (ctx, next) => {
+        if (ctx.url.searchParams.has("__perf_debug")) ctx.debugPerformance();
+        await next();
+      })
   : base;
 
-export const router = withDebug.routes(({ path, cache }) => [
+export const router = withDebug.routes(({ path, cache, loader }) => [
   path("/", HomePage, { name: "home" }),
   path("/about", AboutPage, { name: "about" }),
+  path(
+    "/cache-lab",
+    CacheLabPage,
+    {
+      name: "cacheLab",
+      ppr: {
+        ttl: 3600,
+        swr: 300,
+        tags: [CACHE_LAB_TAGS.shell],
+      },
+    },
+    () => [loader(CacheLabPulseLoader)],
+  ),
+  path.json(
+    "/api/cache/invalidate",
+    async (ctx) => {
+      ctx.header("Cache-Control", "no-store");
+
+      if (ctx.request.method !== "POST") {
+        return Response.json(
+          { error: "Use POST to invalidate cache tags." },
+          { status: 405, headers: { Allow: "POST" } },
+        );
+      }
+
+      let payload: unknown;
+      try {
+        payload = await ctx.request.json();
+      } catch {
+        return Response.json(
+          { error: "The request body must be valid JSON." },
+          { status: 400 },
+        );
+      }
+
+      const candidateTags =
+        typeof payload === "object" &&
+        payload !== null &&
+        "tags" in payload &&
+        Array.isArray(payload.tags)
+          ? payload.tags
+          : null;
+      if (
+        !candidateTags ||
+        candidateTags.length === 0 ||
+        candidateTags.length > CACHE_LAB_ALLOWED_TAGS.length ||
+        !candidateTags.every((tag): tag is string => typeof tag === "string")
+      ) {
+        return Response.json(
+          { error: "tags must be a non-empty array of known cache tags." },
+          { status: 400 },
+        );
+      }
+
+      const tags = [...new Set(candidateTags)];
+      const unknownTags = tags.filter(
+        (tag) => !CACHE_LAB_ALLOWED_TAGS.includes(tag),
+      );
+      if (unknownTags.length > 0) {
+        return Response.json(
+          { error: `Unknown cache tag: ${unknownTags.join(", ")}` },
+          { status: 400 },
+        );
+      }
+
+      await updateTag(...tags);
+      return { invalidated: tags };
+    },
+    { name: "cacheInvalidate" },
+  ),
   path("/ppr-inline-action", PprInlineActionPage, {
     name: "pprInlineAction",
     ppr: { ttl: 300, swr: 120 },

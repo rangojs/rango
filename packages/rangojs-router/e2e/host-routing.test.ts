@@ -1,6 +1,6 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Request } from "@playwright/test";
 import { checkoutPortOffset } from "@shared/e2e";
-import { waitForHydration } from "./helper";
+import { isPrefetchRequest, waitForHydration } from "./helper";
 
 // Proves a node/vercel host-router app renders AND hydrates through rango's
 // generated host RSC entry (hostRouter.match()), in BOTH dev and production. The
@@ -19,6 +19,15 @@ import { waitForHydration } from "./helper";
 const PORT_OFFSET = checkoutPortOffset();
 const HOST_DEV_PORT = 5296 + PORT_OFFSET;
 const HOST_PREVIEW_PORT = 5297 + PORT_OFFSET;
+
+function isInvalidationTarget(request: Request): boolean {
+  const url = new URL(request.url());
+  return (
+    isPrefetchRequest(request) &&
+    url.pathname === "/" &&
+    url.searchParams.get("delegated-prefetch") === "1"
+  );
+}
 
 function hostRoutingTests(port: number) {
   const visit = async (page: import("@playwright/test").Page, host: string) => {
@@ -49,6 +58,65 @@ function hostRoutingTests(port: number) {
   }) => {
     const res = await visit(page, "c.localhost");
     expect(res?.status()).toBe(404);
+  });
+
+  test("cache invalidation re-warms a persistent plain anchor", async ({
+    page,
+  }) => {
+    const targetRequests: Request[] = [];
+    page.on("request", (request) => {
+      if (isInvalidationTarget(request)) targetRequests.push(request);
+    });
+
+    await visit(page, "a.localhost");
+    await waitForHydration(page);
+    await expect.poll(() => targetRequests.length).toBeGreaterThan(0);
+    const initialState = targetRequests[0]!.headers()["x-rango-state"];
+    expect(initialState).toBeTruthy();
+    const anchor = await page
+      .getByTestId("prefetch-invalidation-target")
+      .elementHandle();
+
+    const rewarmed = page.waitForRequest(
+      (request) =>
+        isInvalidationTarget(request) &&
+        request.headers()["x-rango-state"] !== initialState,
+    );
+    await page.getByTestId("prefetch-invalidation-button").click();
+    const request = await rewarmed;
+
+    expect(request.headers()["x-rango-state"]).toBeTruthy();
+    expect(request.headers()["x-rango-state"]).not.toBe(initialState);
+    expect(await anchor!.evaluate((element) => element.isConnected)).toBe(true);
+  });
+
+  test("server-action invalidation re-warms after the action fence", async ({
+    page,
+  }) => {
+    const targetRequests: Request[] = [];
+    page.on("request", (request) => {
+      if (isInvalidationTarget(request)) targetRequests.push(request);
+    });
+
+    await visit(page, "a.localhost");
+    await waitForHydration(page);
+    await expect.poll(() => targetRequests.length).toBeGreaterThan(0);
+    const initialState = targetRequests[0]!.headers()["x-rango-state"];
+    const anchor = await page
+      .getByTestId("prefetch-invalidation-target")
+      .elementHandle();
+
+    const rewarmed = page.waitForRequest(
+      (request) =>
+        isInvalidationTarget(request) &&
+        request.headers()["x-rango-state"] !== initialState,
+    );
+    await page.getByTestId("prefetch-action-invalidation-button").click();
+    const request = await rewarmed;
+
+    expect(request.headers()["x-rango-state"]).toBeTruthy();
+    expect(request.headers()["x-rango-state"]).not.toBe(initialState);
+    expect(await anchor!.evaluate((element) => element.isConnected)).toBe(true);
   });
 }
 

@@ -26,7 +26,7 @@
  *   condition and would throw if pulled into this barrel.
  *
  * Layers:
- * - Unit:        runMiddleware, runLoader
+ * - Unit:        runMiddleware, runLoader, runClientRevalidate
  * - Integration: dispatch (request -> Response)
  * - Cross-cut:   assertCacheStatus, assertShellStatus, assertGeneratedRoutesMatch
  * - Component:   see @rangojs/router/testing/dom (renderRoute)
@@ -49,9 +49,14 @@ export type {
 
 export { runTransitionWhen } from "./run-transition-when.js";
 export type {
+  RunTransitionWhenAction,
+  RunTransitionWhenLocation,
   RunTransitionWhenOptions,
   RunTransitionWhenResult,
 } from "./run-transition-when.js";
+
+export { runClientRevalidate } from "./run-client-revalidate.js";
+export type { RunClientRevalidateOptions } from "./run-client-revalidate.js";
 
 export { dispatch } from "./dispatch.js";
 export type { DispatchOptions } from "./dispatch.js";
@@ -95,14 +100,28 @@ export type {
 } from "../router/telemetry.js";
 
 export {
+  assertPprReplayStatus,
   assertShellStatus,
+  parsePprReplayStatus,
   parseShellStatus,
+  PPR_REPLAY_STATUS_HEADER,
   shellCacheKey,
   SHELL_STATUS_HEADER,
 } from "./shell-status.js";
-export type { ShellStatus, ShellStatusTarget } from "./shell-status.js";
+export type {
+  PprReplayBypassReason,
+  PprReplayStatus,
+  ShellCachePartition,
+  ShellStatus,
+  ShellStatusTarget,
+} from "./shell-status.js";
+
+export { setBuildVersions } from "./build-versions.js";
+export type { BuildVersions, RouterVersions } from "./build-versions.js";
 
 export { collectHandle } from "./collect-handle.js";
+
+export { withLocationStateKey } from "./location-state-key.js";
 
 export {
   diffGeneratedRoutes,

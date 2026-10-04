@@ -7,8 +7,14 @@ argument-hint: "[setup]"
 # Breadcrumbs
 
 Built-in handle for accumulating breadcrumb items across route segments.
-Each layout/route pushes items via `ctx.use(Breadcrumbs)`, and they are
-collected in parent-to-child order with automatic deduplication by `href`.
+Route, layout, and parallel-slot handlers and loader bodies push items via
+`ctx.use(Breadcrumbs)`; client components read the collected trail with
+`useHandle(Breadcrumbs)`. Items are collected in parent-to-child order with
+automatic deduplication by `href`.
+
+`Breadcrumbs` is exported from both `@rangojs/router` (server, for pushing) and
+`@rangojs/router/client` (for `useHandle`). For page titles and meta tags, use
+the `Meta` handle the same way.
 
 ## BreadcrumbItem Type
 
@@ -58,6 +64,56 @@ export const urlpatterns = urls(({ path, layout }) => [
 
 On `/blog/my-post`, breadcrumbs accumulate: `Home > Blog > my-post`.
 
+The push function also accepts a `Promise` of an item, or an async function
+(called immediately) that returns one:
+
+```typescript
+const breadcrumb = ctx.use(Breadcrumbs);
+breadcrumb(async () => {
+  const post = await getPost(ctx.params.slug);
+  return { label: post.title, href: `/blog/${post.slug}` };
+});
+```
+
+Either way the item is resolved before any consumer reads it — `useHandle`
+never sees a pending crumb.
+
+## Pushing from Loaders
+
+A data-derived crumb belongs where the data lives — the loader body pushes
+with the same API (handler parity), so routes without handlers (`useLoader`
+consumption, `clientUrls()` groups) still build trails:
+
+```typescript
+import { Breadcrumbs, createLoader } from "@rangojs/router";
+
+export const ProductLoader = createLoader(async (ctx) => {
+  const product = await getProduct(ctx.params.slug);
+
+  const pushCrumb = ctx.use(Breadcrumbs);
+  pushCrumb({ label: "Shop", href: "/shop" });
+  pushCrumb({ label: product.name, href: `/shop/product/${product.slug}` });
+
+  return product;
+});
+```
+
+Two pushes from one segment accumulate in push order (`Shop › product`).
+Delivery follows the loader race model: a push that beats the handler barrier
+is in the SSR'd document; a push after a slow fetch streams and applies
+client-side (`useHandle` re-renders when it lands). To guarantee document
+delivery, register the loader as `loader(Def, { ssr: false })` —
+see `/loader` → "Writing Handles from Loaders". On a `ppr` route the race is
+decided at capture: a loader without `ssr: false` never runs there, so its
+crumb is not in the shell and applies client-side on every HIT; with
+`ssr: false` the crumb bakes into the shell (`/ppr` → "On a shell HIT").
+Under `cache()` loader crumbs are not stored with the cached segments; the
+loader re-pushes them on every hit, so they appear once even without an `href`.
+A loader with its own `cache()` keeps its crumbs on its own hits too: they are
+replayed from the loader's cache entry. A crumb from a loader it awaits appears
+once even when a sibling loader or the handler reads that loader too; that live
+run's crumb replaces the cached one in the trail.
+
 ## Async Content
 
 The `content` field supports `Promise<ReactNode>` for streaming:
@@ -81,11 +137,19 @@ path("/product/:id", async (ctx) => {
 Async content is a `Promise<ReactNode>`. Resolve it in your component
 with React's `use()` hook wrapped in `<Suspense>`.
 
+A crumb the HANDLER pushes is handler output. In a route `cache()` entry and
+in a `ppr` shell it is stored resolved: the cache write, or the shell capture
+(within `ppr.captureTimeout`), waits for a `content` promise and for a
+`.defer()` slot (below), and every HIT replays the crumb as it was resolved
+then, without running the handler. For per-request crumb content, push it
+from a loader without `ssr: false` (see "Pushing from Loaders").
+
 ### Deferred content (decide now, resolve from a deep component)
 
-When the handler should DECIDE to push a crumb (it holds `ctx`, so the decision
-must land before the handles stream seals) but the value is produced far away — by
-a deep async component, not the handler — call `.defer()` on the push function.
+When the handler should DECIDE to push a crumb early but the value is produced
+far away — by a deep async component, not the handler — call `.defer()` on the
+push function. (If the value comes from a LOADER, skip `.defer()` entirely and
+push from the loader body — see "Pushing from Loaders" above.)
 `ctx.use(Handle)` returns the push function; `.defer(options)` reserves the crumb's
 slot synchronously and returns a **resolver that is push-equal** — you call it
 later, anywhere in the render, with the same argument you'd have passed to the
@@ -140,10 +204,12 @@ On a full/SSR load the value is resolved server-side; on a soft navigation the
 breadcrumbs HOLD the previous resolved value until the deferred value lands, then
 swap in — no blank, no pending entry. If the slot times out to `else: null`/
 undefined, the entry is simply dropped. Use `.defer()` only when even
-`label`/`href` are unknown at handler time — if you know them and only the
-`content` is async, push a concrete item with a `Promise` `content` field instead
-(the `content` field is a nested promise you resolve with `use()` in your
-component; no `.defer()` needed).
+`label`/`href` are unknown at handler time AND the producer is a component,
+not a loader — a loader-produced crumb pushes directly from the loader body
+(add `{ ssr: false }` if it must be in the SSR'd document), and if
+you know `label`/`href` and only the `content` is async, push a concrete item
+with a `Promise` `content` field instead (the `content` field is a nested
+promise you resolve with `use()` in your component; no `.defer()` needed).
 
 ## Consuming Breadcrumbs (Client)
 
@@ -190,9 +256,11 @@ const count = useHandle(Breadcrumbs, (data) => data.length);
 
 ## Deduplication
 
-The built-in collect function deduplicates by `href`. If multiple segments
-push the same `href`, the last one wins. This prevents duplicates when
-navigating between sibling routes that share a common breadcrumb.
+The built-in collect function deduplicates by `href`: each `href` appears once,
+at the position of its **first** push, with the value of its **last** push. A
+child that re-pushes a parent's `href` therefore updates that crumb's label in
+place without reordering the trail. Items without a string `href` are kept
+as-is and skip deduplication.
 
 ## Passing as Props
 
@@ -217,7 +285,9 @@ function DashboardNav({ handle }: { handle: typeof Breadcrumbs }) {
   return (
     <nav>
       {crumbs.map((c) => (
-        <a href={c.href}>{c.label}</a>
+        <a key={c.href} href={c.href}>
+          {c.label}
+        </a>
       ))}
     </nav>
   );
@@ -227,20 +297,31 @@ function DashboardNav({ handle }: { handle: typeof Breadcrumbs }) {
 ## Complete Example
 
 ```typescript
+// document.tsx — passed to createRouter({ document: Document, ... })
+"use client";
+import type { ReactNode } from "react";
+import { Html } from "@rangojs/router/client";
+
+export function Document({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en">
+      <head><Html.Meta /></head>
+      <body>{children}</body>
+    </html>
+  );
+}
+
 // urls.tsx
 import { urls, Breadcrumbs, Meta } from "@rangojs/router";
-import { Outlet, MetaTags } from "@rangojs/router/client";
-import { BreadcrumbNav } from "./components/BreadcrumbNav";
+import { Outlet } from "@rangojs/router/client";
+import { BreadcrumbNav } from "./components/BreadcrumbNav"; // the client component above
 
 function RootLayout() {
   return (
-    <html lang="en">
-      <head><MetaTags /></head>
-      <body>
-        <BreadcrumbNav />
-        <main><Outlet /></main>
-      </body>
-    </html>
+    <>
+      <BreadcrumbNav />
+      <main><Outlet /></main>
+    </>
   );
 }
 
@@ -313,9 +394,9 @@ second argument to `createHandle()`:
 import { createHandle } from "@rangojs/router";
 
 // With a collect function (reducer): collect is first arg, tag is second
-export const Breadcrumbs = createHandle<BreadcrumbItem, BreadcrumbItem[]>(
-  collectBreadcrumbs,
-  "__my_package_breadcrumbs__",
+export const PackageCrumbs = createHandle<CrumbItem, CrumbItem[]>(
+  collectCrumbs,
+  "__my_package_crumbs__",
 );
 
 // Without a collect function: pass undefined, then the tag
@@ -325,5 +406,6 @@ export const Warnings = createHandle<string>(
 );
 ```
 
-The tag must be globally unique and stable across builds. Without it,
-`createHandle` throws in development mode.
+The tag must be globally unique and stable across builds. Without it (and
+without a plugin-injected id), `createHandle` throws — in dev and in production
+builds. Only test runners fall back to a synthetic id.

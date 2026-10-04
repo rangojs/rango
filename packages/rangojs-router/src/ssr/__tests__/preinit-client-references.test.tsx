@@ -150,6 +150,78 @@ describe("bootstrapModules conversion (resolveBootstrapOptions)", () => {
     );
     expect(opts.bootstrapModules).toBeUndefined();
   });
+
+  it("prefers getClientEntryUrl over loadBootstrapScriptContent on preinit", async () => {
+    const { deps, renderToReadableStream } = renderSpyDeps(
+      'import("/assets/index-abc123.js")',
+    );
+    deps.headScripts = "preinit";
+    deps.getClientEntryUrl = () => "/assets/from-url.js";
+    await createSSRHandler(deps)(createMockRscStream());
+    const opts = renderToReadableStream.mock.calls[0]![1] as {
+      bootstrapModules?: string[];
+      bootstrapScriptContent?: string;
+    };
+    expect(opts.bootstrapModules).toEqual(["/assets/from-url.js"]);
+    expect(opts.bootstrapScriptContent).toBeUndefined();
+    expect(deps.loadBootstrapScriptContent).not.toHaveBeenCalled();
+  });
+
+  it("preinit + getClientEntryUrl alone renders without loadBootstrapScriptContent", async () => {
+    const { deps, renderToReadableStream } = renderSpyDeps("");
+    delete deps.loadBootstrapScriptContent;
+    deps.headScripts = "preinit";
+    deps.getClientEntryUrl = () => "/assets/from-url.js";
+    await createSSRHandler(deps)(createMockRscStream());
+    const opts = renderToReadableStream.mock.calls[0]![1] as {
+      bootstrapModules?: string[];
+    };
+    expect(opts.bootstrapModules).toEqual(["/assets/from-url.js"]);
+  });
+
+  it("an empty getClientEntryUrl() falls through to the inline bootstrap", async () => {
+    const { deps, renderToReadableStream } = renderSpyDeps(
+      'import("/assets/index-abc123.js")',
+    );
+    deps.headScripts = "preinit";
+    deps.getClientEntryUrl = () => "";
+    await createSSRHandler(deps)(createMockRscStream());
+    const opts = renderToReadableStream.mock.calls[0]![1] as {
+      bootstrapModules?: string[];
+      bootstrapScriptContent?: string;
+    };
+    expect(opts.bootstrapModules).toEqual(["/assets/index-abc123.js"]);
+    expect(deps.loadBootstrapScriptContent).toHaveBeenCalled();
+  });
+
+  it("throws at construction when neither bootstrap dep is usable", () => {
+    const { deps } = renderSpyDeps("");
+    delete deps.loadBootstrapScriptContent;
+    expect(() => createSSRHandler(deps)).toThrow(
+      /Missing bootstrap dependency/,
+    );
+    // getClientEntryUrl without preinit cannot substitute for the inline dep;
+    // its presence is warned about, not silently ignored.
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    deps.getClientEntryUrl = () => "/assets/from-url.js";
+    expect(() => createSSRHandler(deps)).toThrow(
+      /Missing bootstrap dependency/,
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("getClientEntryUrl is ignored"),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it("throws at construction on an unknown headScripts instead of running it as preload", () => {
+    for (const value of ["prenit", null, { mode: "preinit" }]) {
+      const { deps } = renderSpyDeps('import("/assets/index-abc123.js")');
+      deps.headScripts = value as never;
+      expect(() => createSSRHandler(deps)).toThrow(
+        /headScripts must be "preinit" or "preload", received/,
+      );
+    }
+  });
 });
 
 describe("installClientReferencePreinit (real fizz render)", () => {
@@ -172,6 +244,8 @@ describe("installClientReferencePreinit (real fizz render)", () => {
     href: string;
     nonce?: string;
     preloadFirst?: boolean;
+    /** Client-reference accesses of the same chunk within one render. */
+    uses?: number;
   }) => {
     let onRef: OnClientReference | undefined;
     installClientReferencePreinit((cb) => {
@@ -179,13 +253,23 @@ describe("installClientReferencePreinit (real fizz render)", () => {
     });
     function ChunkUser() {
       if (opts.preloadFirst) {
-        preloadModule(opts.href, { as: "script", crossOrigin: "" });
+        // plugin-rsc's preloadDeps shape for a non-entry chunk (a variable:
+        // PreloadModuleOptions does not declare fetchPriority).
+        const hint = {
+          as: "script",
+          crossOrigin: "",
+          fetchPriority: "low",
+        } as const;
+        preloadModule(opts.href, hint);
       }
       onRef!({ id: "src/Widget.tsx", deps: { js: [opts.href], css: [] } });
       return React.createElement("div", null, "ok");
     }
+    const users = Array.from({ length: opts.uses ?? 1 }, (_, i) =>
+      React.createElement(ChunkUser, { key: i }),
+    );
     mockedRenderSegments.mockImplementation(() =>
-      Promise.resolve(React.createElement(ChunkUser)),
+      Promise.resolve(React.createElement(React.Fragment, null, users)),
     );
     const renderHTML = createSSRHandler(realDeps());
     return consumeStream(
@@ -223,5 +307,39 @@ describe("installClientReferencePreinit (real fizz render)", () => {
     )?.[0];
     expect(tag).toBeTruthy();
     expect(tag).toContain('nonce="test-nonce-123"');
+  });
+
+  const chunkTags = (html: string, href: string): string[] =>
+    html.match(
+      new RegExp(
+        `<script[^>]*src="${href.replace(/[./]/g, "\\$&")}"[^>]*>`,
+        "g",
+      ),
+    ) ?? [];
+
+  // Lowering the head chunks was measured and rejected (#1021): the upgrade
+  // must not inherit the `low` of the plugin-rsc hint it replaces.
+  it("leaves fetchpriority off the head chunk script, even after plugin-rsc's low preload", async () => {
+    const html = await installAndRender({
+      href: "/assets/chunk-d.js",
+      preloadFirst: true,
+    });
+    const tags = chunkTags(html, "/assets/chunk-d.js");
+    expect(tags).toHaveLength(1);
+    expect(tags[0]).not.toMatch(/fetchpriority/i);
+    expect(tags[0]).toContain('type="module"');
+  });
+
+  it("a chunk referenced twice after plugin-rsc's low preload emits one tag", async () => {
+    const html = await installAndRender({
+      href: "/assets/chunk-f.js",
+      preloadFirst: true,
+      uses: 2,
+    });
+    const tags = chunkTags(html, "/assets/chunk-f.js");
+    expect(tags).toHaveLength(1);
+    expect(html).not.toContain('rel="modulepreload"');
+    // Hoisted ahead of the body content.
+    expect(html.indexOf(tags[0]!)).toBeLessThan(html.indexOf(">ok<"));
   });
 });

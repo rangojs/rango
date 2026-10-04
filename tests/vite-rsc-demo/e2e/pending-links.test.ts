@@ -145,7 +145,7 @@ test.describe("pending-links", () => {
 
     // Navigate to a different route (shop) — blog link pending should NOT fire
     await resetPendingDetected(page);
-    await page.locator('nav a:has-text("Shop")').click();
+    await page.locator('nav a:text-is("Shop")').click();
     await expect(page.locator("text=Featured Products")).toBeVisible({
       timeout: 10000,
     });
@@ -281,7 +281,7 @@ test.describe("pending-links (production)", () => {
 
     // Navigate to shop — blog pending should NOT fire
     await resetPendingDetected(page);
-    await page.locator('nav a:has-text("Shop")').click();
+    await page.locator('nav a:text-is("Shop")').click();
     await expect(page.locator("text=Featured Products")).toBeVisible({
       timeout: 10000,
     });

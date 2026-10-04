@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import React from "react";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
+import { compileSearchParamsFilter } from "../../cache/search-params-filter.js";
 import type { ShellCacheEntry } from "../../cache/types.js";
-import { buildShellKey } from "../../rsc/shell-serve.js";
+import { buildShellKey, partitionShellKey } from "../../rsc/shell-serve.js";
 import {
+  assertPprReplayStatus,
   assertShellStatus,
+  parsePprReplayStatus,
   parseShellStatus,
+  PPR_REPLAY_STATUS_HEADER,
   shellCacheKey,
   SHELL_STATUS_HEADER,
 } from "../shell-status.js";
@@ -17,11 +21,80 @@ function entry(overrides: Partial<ShellCacheEntry> = {}): ShellCacheEntry {
     reactVersion: React.version,
     buildVersion: "test-build",
     createdAt: Date.now(),
+    snapshot: [],
     ...overrides,
   };
 }
 
 describe("shellCacheKey (production key identity)", () => {
+  it("appends a key() result's partition exactly as the serve path does: namespaced (#975)", () => {
+    const url = new URL("http://shop.test/p?b=2&a=1");
+    expect(shellCacheKey(url, undefined, "tier:gold")).toBe(
+      partitionShellKey(buildShellKey(url), "key:tier%3Agold"),
+    );
+    expect(shellCacheKey(url, undefined, "tier:gold")).not.toBe(
+      shellCacheKey(url, undefined, "tier:silver"),
+    );
+  });
+
+  it("encodes the partition, so no partition can end in another key's suffix", () => {
+    const url = new URL("http://shop.test/p");
+    const key = shellCacheKey(url, undefined, "tier:gold:navigation");
+    expect(key).toBe("shop.test/p:shell|key%3Atier%253Agold%253Anavigation");
+    expect(key).not.toBe(
+      `${shellCacheKey(url, undefined, "tier:gold")}:navigation`,
+    );
+    expect(shellCacheKey(url, undefined, "a|b")).toBe(
+      "shop.test/p:shell|key%3Aa%257Cb",
+    );
+  });
+
+  it("composes nested cache() key() results, outermost first, as the record key does (#970)", () => {
+    const url = new URL("http://shop.test/p");
+    expect(shellCacheKey(url, undefined, ["tier:gold", "v:a"])).toBe(
+      partitionShellKey(buildShellKey(url), "key:tier%3Agold|key:v%3Aa"),
+    );
+    // One key() result is the plain partition.
+    expect(shellCacheKey(url, undefined, ["tier:gold"])).toBe(
+      shellCacheKey(url, undefined, "tier:gold"),
+    );
+    expect(shellCacheKey(url, undefined, ["a|b", "c"])).not.toBe(
+      shellCacheKey(url, undefined, ["a", "b|c"]),
+    );
+  });
+
+  it("takes store keyGenerator results as `generated`: a lone one raw, with key() results encoded after them", () => {
+    const url = new URL("http://shop.test/p");
+    const generated = "doc:shop.test/p|de";
+    expect(shellCacheKey(url, undefined, { generated: [generated] })).toBe(
+      partitionShellKey(buildShellKey(url), generated),
+    );
+    expect(
+      shellCacheKey(url, undefined, {
+        keys: ["tier:gold"],
+        generated: [generated],
+      }),
+    ).toBe(
+      partitionShellKey(
+        buildShellKey(url),
+        "key:tier%3Agold|doc%3Ashop.test%2Fp%7Cde",
+      ),
+    );
+    expect(shellCacheKey(url, undefined, { keys: ["tier:gold"] })).toBe(
+      shellCacheKey(url, undefined, "tier:gold"),
+    );
+    // A store whose result is the default key keeps its position as "".
+    expect(shellCacheKey(url, undefined, { generated: ["", generated] })).toBe(
+      partitionShellKey(buildShellKey(url), "|doc%3Ashop.test%2Fp%7Cde"),
+    );
+  });
+
+  it("no key() or keyGenerator result is no partition", () => {
+    const url = new URL("http://shop.test/p");
+    expect(shellCacheKey(url, undefined, [])).toBe(buildShellKey(url));
+    expect(shellCacheKey(url, undefined, {})).toBe(buildShellKey(url));
+  });
+
   it("matches rsc/shell-serve buildShellKey for host+path+search", () => {
     const cases = [
       "http://localhost/products/1",
@@ -41,6 +114,19 @@ describe("shellCacheKey (production key identity)", () => {
     const bare = new URL("http://localhost/p?page=1");
     expect(shellCacheKey(withRsc)).toBe(shellCacheKey(bare));
     expect(shellCacheKey(withRsc)).toBe(buildShellKey(withRsc));
+  });
+
+  it("applies cache.searchParams the same way production buildShellKey does", () => {
+    const searchParams = { exclude: ["utm_*", "fbclid"] } as const;
+    const filter = compileSearchParamsFilter(searchParams);
+    const tracked = new URL("http://localhost/p?utm_source=tw&fbclid=1&q=x");
+    const bare = new URL("http://localhost/p?q=x");
+    expect(shellCacheKey(tracked, searchParams)).toBe(
+      buildShellKey(tracked, filter),
+    );
+    expect(shellCacheKey(tracked, searchParams)).toBe(shellCacheKey(bare));
+    // Without the config, tracked params stay in the key.
+    expect(shellCacheKey(tracked)).not.toBe(shellCacheKey(bare));
   });
 });
 
@@ -81,10 +167,72 @@ describe("assertShellStatus / parseShellStatus", () => {
   });
 });
 
+describe("assertPprReplayStatus / parsePprReplayStatus", () => {
+  function responseWith(status: string | null): Response {
+    if (status === null) return new Response(null);
+    return new Response(null, {
+      headers: { [PPR_REPLAY_STATUS_HEADER]: status },
+    });
+  }
+
+  it.each([
+    ["HIT; freshness=fresh", { outcome: "HIT", freshness: "fresh" } as const],
+    ["HIT; freshness=stale", { outcome: "HIT", freshness: "stale" } as const],
+    [
+      "BYPASS; reason=no-entry",
+      { outcome: "BYPASS", reason: "no-entry" } as const,
+    ],
+    [
+      "BYPASS; reason=no-segment-snapshot",
+      { outcome: "BYPASS", reason: "no-segment-snapshot" } as const,
+    ],
+  ])("parses and asserts %s", (raw, expected) => {
+    const response = responseWith(raw);
+    expect(parsePprReplayStatus(response)).toEqual(expected);
+    expect(() => assertPprReplayStatus(response, expected)).not.toThrow();
+  });
+
+  it.each([
+    null,
+    "HIT",
+    "HIT; freshness=expired",
+    "BYPASS; reason=unbounded-detail",
+    "BYPASS; reason=no-entry; extra=true",
+    // Removed with the handler-live fast-path decline: a HIT never runs
+    // handlers, so no entry is ineligible for these reasons.
+    "BYPASS; reason=handler-live-holes",
+    "BYPASS; reason=transition-when",
+  ])("rejects absent or malformed value %s", (raw) => {
+    expect(parsePprReplayStatus(responseWith(raw))).toBeNull();
+  });
+
+  it("throws for missing, malformed, and mismatched statuses", () => {
+    expect(() =>
+      assertPprReplayStatus(responseWith(null), {
+        outcome: "HIT",
+        freshness: "fresh",
+      }),
+    ).toThrow(/no x-rango-ppr-replay/);
+    expect(() =>
+      assertPprReplayStatus(responseWith("BYPASS; reason=unknown"), {
+        outcome: "BYPASS",
+        reason: "no-entry",
+      }),
+    ).toThrow(/unrecognized/);
+    expect(() =>
+      assertPprReplayStatus(responseWith("HIT; freshness=stale"), {
+        outcome: "HIT",
+        freshness: "fresh",
+      }),
+    ).toThrow(/expected .*fresh.* got .*stale/);
+  });
+});
+
 describe("MemorySegmentCacheStore + shellCacheKey (public store dogfood)", () => {
-  // Live MISS→capture→HIT needs the RSC/SSR capture pipeline (e2e). Unit layer
-  // dogfoods the consumer-touchable half: production key identity + real
-  // getShell/putShell on MemorySegmentCacheStore — no faked HIT Response.
+  // A live MISS→capture→HIT runs through serveShellRequest
+  // (serve-shell-request.rsc-test.tsx). This covers the store half: production
+  // key identity + real getShell/putShell on MemorySegmentCacheStore — no
+  // faked HIT Response.
   it("stores and retrieves a shell under the production key after putShell", async () => {
     const store = new MemorySegmentCacheStore();
     const url = new URL("http://localhost/products/42?utm=x&sort=price");

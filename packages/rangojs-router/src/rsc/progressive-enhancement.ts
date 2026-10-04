@@ -6,6 +6,7 @@
  * reference. We detect these and return HTML instead of RSC stream.
  */
 
+import { requestHeaders } from "../server/request-headers.js";
 import {
   getRequestContext,
   setRequestContextParams,
@@ -14,7 +15,8 @@ import { createSsrHtmlStage } from "./ssr-setup.js";
 import type { MiddlewareFn } from "../router/middleware.js";
 import { executeMiddleware } from "../router/middleware.js";
 import { observePhase, PHASES } from "../router/instrument.js";
-import { gateTransitions } from "./transition-gate.js";
+import { attachTransitionWhen } from "./attach-transition-when.js";
+import { payloadInitialTheme } from "./full-payload.js";
 import { resolvedHandleStream } from "../handles/deferred-resolution.js";
 import type { RscPayload, ReactFormState } from "./types.js";
 import {
@@ -22,12 +24,23 @@ import {
   finalizeResponse,
   buildRouteMiddlewareEntries,
 } from "./helpers.js";
-import { renderRscResponse } from "./render-pipeline.js";
+import {
+  createRenderStageTraceBridge,
+  renderRscResponse,
+} from "./render-pipeline.js";
+import {
+  createRoutineTrace,
+  runRoutine,
+  step,
+  type RoutinePlan,
+  type RoutineTrace,
+} from "./routine-plan.js";
 import type { HandlerContext } from "./handler-context.js";
 import {
   extractRedirectResponse,
   warnNonRedirectPeResponse,
 } from "./runtime-warnings.js";
+import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 
 export interface PeRouteMiddlewareInfo {
   routeMiddleware?: Array<{
@@ -52,7 +65,7 @@ export async function handleProgressiveEnhancement<TEnv>(
   nonce: string | undefined,
   routeMwInfo?: PeRouteMiddlewareInfo,
 ): Promise<Response | null> {
-  const contentType = request.headers.get("content-type") || "";
+  const contentType = requestHeaders(request).get("content-type") || "";
   const isFormSubmission =
     contentType.includes("multipart/form-data") ||
     contentType.includes("application/x-www-form-urlencoded");
@@ -61,6 +74,40 @@ export async function handleProgressiveEnhancement<TEnv>(
     return null;
   }
 
+  // Flow trace: shared by every plan this request drives (error-boundary
+  // renders and the re-render), so a PE request prints ONE tree. A non-PE form
+  // POST (no $ACTION fields) drives no plan and stays silent.
+  const trace = INTERNAL_RANGO_DEBUG ? createRoutineTrace("pe") : undefined;
+  try {
+    return await handleProgressiveEnhancementInner(
+      ctx,
+      request,
+      env,
+      url,
+      handleStore,
+      nonce,
+      routeMwInfo,
+      trace,
+    );
+  } finally {
+    if (trace && trace.entries.length > 0) {
+      console.log(
+        `[routine] ${request.method} ${url.pathname} (${trace.name})\n${trace.format()}`,
+      );
+    }
+  }
+}
+
+async function handleProgressiveEnhancementInner<TEnv>(
+  ctx: HandlerContext<TEnv>,
+  request: Request,
+  env: TEnv,
+  url: URL,
+  handleStore: ReturnType<typeof getRequestContext>["_handleStore"],
+  nonce: string | undefined,
+  routeMwInfo: PeRouteMiddlewareInfo | undefined,
+  trace: RoutineTrace | undefined,
+): Promise<Response | null> {
   // Clone the request to read FormData without consuming it.
   // Wrap in try-catch so malformed POST bodies are reported as action
   // errors, not routing errors from the outer catch in handler.ts.
@@ -77,6 +124,7 @@ export async function handleProgressiveEnhancement<TEnv>(
       error,
       handleStore,
       nonce,
+      trace,
     );
     if (errorHtml) {
       ctx.callOnError(error, "action", {
@@ -154,6 +202,7 @@ export async function handleProgressiveEnhancement<TEnv>(
         error,
         handleStore,
         nonce,
+        trace,
         useActionStateId,
         true, // an action ran and threw
       );
@@ -208,6 +257,7 @@ export async function handleProgressiveEnhancement<TEnv>(
         error,
         handleStore,
         nonce,
+        trace,
         directActionId,
         true, // an action ran and threw
       );
@@ -263,7 +313,7 @@ export async function handleProgressiveEnhancement<TEnv>(
     // custom headers) so loaders that read request headers/cookies behave
     // identically under PE and the JS action path. Drop body-framing headers
     // from the bodyless GET and force the HTML accept.
-    const headers = new Headers(request.headers);
+    const headers = new Headers(requestHeaders(request));
     headers.delete("content-type");
     headers.delete("content-length");
     headers.delete("content-encoding");
@@ -277,94 +327,24 @@ export async function handleProgressiveEnhancement<TEnv>(
     // JS/PE parity: this is an action's revalidation render, so mark it BEFORE
     // matching — a stale `foregroundOnAction` cache entry must re-execute in the
     // foreground during the re-render, exactly as the JS path's
-    // revalidateAfterAction does. The transition({ when }) gate fields below are
-    // set post-match (the gate reads them after rendering); foregroundOnAction
-    // reads _inActionRevalidation during the match, so it must be set here.
-    getRequestContext()._inActionRevalidation = true;
-
-    const match = await ctx.router.match(renderRequest, { env });
-
-    if (match.redirect) {
-      return createResponseWithMergedHeaders(null, {
-        status: 308,
-        headers: { Location: match.redirect },
-      });
-    }
-
-    // Expose the no-JS action to the transition({ when }) gate. currentUrl/Params
-    // are absent on this full-render path (no navigation snapshot); useActionState
-    // ids are block-scoped, so only a direct action id is available here.
-    // actionUrl is the page the action was submitted from (this request's url).
+    // revalidateAfterAction does.
     const peReqCtx = getRequestContext();
-    peReqCtx._gateActionId = directActionId ?? undefined;
-    peReqCtx._gateActionUrl = new URL(url);
-    peReqCtx._gateActionResult = actionResult;
-    peReqCtx._gateFormData = formData;
+    peReqCtx._inActionRevalidation = true;
 
-    const payload: RscPayload = {
-      metadata: {
-        pathname: url.pathname,
-        routerId: ctx.router.id,
-        basename: ctx.router.basename,
-        segments: gateTransitions(
-          match.segments,
-          getRequestContext(),
-          ctx.router.onError,
-        ),
-        matched: match.matched,
-        diff: match.diff,
-        resolvedIds: match.resolvedIds,
-        params: match.params,
-        isPartial: false,
-        rootLayout: ctx.router.rootLayout,
-        // PE full render: resolve deferred handle values server-side.
-        handles: resolvedHandleStream(handleStore),
-        version: ctx.version,
-        stateCookieName: ctx.router.resolvedStateCookieName,
-        themeConfig: ctx.router.themeConfig,
-        warmupEnabled: ctx.router.warmupEnabled,
-        strictMode: ctx.router.strictMode,
-        initialTheme: getRequestContext().theme,
-      },
-    };
-
-    const stageTracking = {
-      mode: "progressive-enhancement" as const,
-      routeKey: getRequestContext()._routeName,
-      actionId: directActionId ?? undefined,
-    };
-    return renderRscResponse(
-      {
+    return runRoutine(
+      peRenderPlan({
         ctx,
         request,
         env,
         url,
-        payload,
-        init: {
-          // boundarylessErrorStatus is set only when the action threw and no error
-          // boundary matched; it makes the re-render carry 500 like the JS path.
-          // The redirect branch above returns before this, so a redirect re-render
-          // keeps its 308 and is never overridden.
-          ...(boundarylessErrorStatus !== undefined
-            ? { status: boundarylessErrorStatus }
-            : {}),
-          headers: { "content-type": "text/html;charset=utf-8" },
-        },
-        tracking: stageTracking,
-      },
-      {
-        // metricsStore=undefined is safe: the handler already stashed the early
-        // SSR setup promise, so this reuses it instead of starting setup again.
-        // reactFormState travels through the SSR option, not RscPayload.
-        html: createSsrHtmlStage({
-          ctx,
-          request,
-          env,
-          url,
-          metricsStore: undefined,
-          render: { formState: reactFormState, nonce },
-        }),
-      },
+        renderRequest,
+        handleStore,
+        nonce,
+        reactFormState,
+        boundarylessErrorStatus,
+        directActionId,
+      }),
+      { trace, owner: getRequestContext() },
     );
   };
 
@@ -387,6 +367,138 @@ export async function handleProgressiveEnhancement<TEnv>(
   return renderPage();
 }
 
+interface PeRenderInput<TEnv> {
+  ctx: HandlerContext<TEnv>;
+  request: Request;
+  env: TEnv;
+  url: URL;
+  renderRequest: Request;
+  handleStore: ReturnType<typeof getRequestContext>["_handleStore"];
+  nonce: string | undefined;
+  reactFormState: ReactFormState | null;
+  boundarylessErrorStatus: number | undefined;
+  directActionId: string | null;
+}
+
+/** PE re-render: match the bodyless GET mirror, then render full HTML. */
+function* peRenderPlan<TEnv>(
+  input: PeRenderInput<TEnv>,
+): RoutinePlan<Response> {
+  const { ctx, env, renderRequest } = input;
+
+  const match = yield* step("match", () =>
+    ctx.router.match(renderRequest, { env }),
+  );
+
+  if (match.redirect) {
+    return createResponseWithMergedHeaders(null, {
+      status: 308,
+      headers: { Location: match.redirect },
+    });
+  }
+
+  return yield* step("render", () => renderPeResponse(input, match));
+}
+
+/** Build the PE full-document payload and render it through the stage driver. */
+function renderPeResponse<TEnv>(
+  input: PeRenderInput<TEnv>,
+  match: Awaited<ReturnType<HandlerContext<TEnv>["router"]["match"]>>,
+): Promise<Response> {
+  const {
+    ctx,
+    request,
+    env,
+    url,
+    handleStore,
+    nonce,
+    reactFormState,
+    boundarylessErrorStatus,
+    directActionId,
+  } = input;
+
+  const payload: RscPayload = {
+    metadata: {
+      pathname: url.pathname,
+      routerId: ctx.router.id,
+      basename: ctx.router.basename,
+      segments: attachTransitionWhen(match.segments, getRequestContext()),
+      matched: match.matched,
+      diff: match.diff,
+      resolvedIds: match.resolvedIds,
+      params: match.params,
+      isPartial: false,
+      rootLayout: ctx.router.rootLayout,
+      // PE full render: resolve deferred handle values server-side.
+      handles: resolvedHandleStream(handleStore),
+      version: ctx.version,
+      stateCookieName: ctx.router.resolvedStateCookieName,
+      themeConfig: ctx.router.themeConfig,
+      warmupEnabled: ctx.router.warmupEnabled,
+      strictMode: ctx.router.strictMode,
+      initialTheme: payloadInitialTheme(getRequestContext()),
+    },
+  };
+
+  const trace = getRequestContext()._activeRoutine;
+
+  const stageTracking = {
+    mode: "progressive-enhancement" as const,
+    routeKey: getRequestContext()._routeName,
+    actionId: directActionId ?? undefined,
+    onEvent: trace && createRenderStageTraceBridge(trace),
+  };
+  return renderRscResponse(
+    {
+      ctx,
+      request,
+      env,
+      url,
+      payload,
+      init: {
+        // boundarylessErrorStatus is set only when the action threw and no error
+        // boundary matched; it makes the re-render carry 500 like the JS path.
+        // The redirect branch in peRenderPlan returns before this, so a redirect
+        // re-render keeps its 308 and is never overridden.
+        ...(boundarylessErrorStatus !== undefined
+          ? { status: boundarylessErrorStatus }
+          : {}),
+        headers: { "content-type": "text/html;charset=utf-8" },
+      },
+      tracking: stageTracking,
+    },
+    {
+      // metricsStore=undefined is safe: the handler already stashed the early
+      // SSR setup promise, so this reuses it instead of starting setup again.
+      // reactFormState travels through the SSR option, not RscPayload.
+      html: createSsrHtmlStage({
+        ctx,
+        request,
+        env,
+        url,
+        metricsStore: undefined,
+        render: { formState: reactFormState, nonce },
+      }),
+    },
+  );
+}
+
+interface PeErrorBoundaryInput<TEnv> {
+  ctx: HandlerContext<TEnv>;
+  request: Request;
+  env: TEnv;
+  url: URL;
+  error: unknown;
+  handleStore: ReturnType<typeof getRequestContext>["_handleStore"];
+  nonce: string | undefined;
+  actionId: string | null | undefined;
+  actionRan: boolean;
+}
+
+type PeErrorMatch<TEnv> = NonNullable<
+  Awaited<ReturnType<HandlerContext<TEnv>["router"]["matchError"]>>
+>;
+
 /**
  * Attempt to render an error boundary as full HTML for the PE path.
  * Returns null if no error boundary is found (caller falls through to
@@ -400,6 +512,7 @@ async function renderPeErrorBoundary<TEnv>(
   error: unknown,
   handleStore: ReturnType<typeof getRequestContext>["_handleStore"],
   nonce: string | undefined,
+  trace: RoutineTrace | undefined,
   actionId?: string | null,
   // True when an action actually ran and threw (vs a malformed form body, where
   // no action executed). Drives _inActionRevalidation for JS/PE parity — it must
@@ -407,6 +520,44 @@ async function renderPeErrorBoundary<TEnv>(
   // and throw with no $$id (actionId === undefined) yet still be an action error.
   actionRan = false,
 ): Promise<Response | null> {
+  return runRoutine(
+    peErrorBoundaryPlan({
+      ctx,
+      request,
+      env,
+      url,
+      error,
+      handleStore,
+      nonce,
+      actionId,
+      actionRan,
+    }),
+    { trace, owner: getRequestContext() },
+  );
+}
+
+/** PE error boundary: match a boundary for the thrown error, then render it. */
+function* peErrorBoundaryPlan<TEnv>(
+  input: PeErrorBoundaryInput<TEnv>,
+): RoutinePlan<Response | null> {
+  const boundary = yield* step("match:error", () =>
+    matchPeErrorBoundary(input),
+  );
+  if (!boundary) return null;
+  return yield* step("render", () => renderPeErrorResponse(input, boundary));
+}
+
+/**
+ * Match an error boundary for the PE path, owning the reporting protocol:
+ * a matchError failure reports the ORIGINAL error as unhandled and rethrows
+ * the match failure; a miss returns null; a hit reports handled and stamps
+ * params + action gate context before the render.
+ */
+async function matchPeErrorBoundary<TEnv>(
+  input: PeErrorBoundaryInput<TEnv>,
+): Promise<PeErrorMatch<TEnv> | null> {
+  const { ctx, request, env, url, error, actionId, actionRan } = input;
+
   // JS/PE parity for an action-triggered error re-render: a stale
   // `foregroundOnAction` cache entry inside the error boundary must foreground
   // too, exactly as the JS path (revalidateAfterAction sets this unconditionally
@@ -443,26 +594,22 @@ async function renderPeErrorBoundary<TEnv>(
 
   setRequestContextParams(errorResult.params, errorResult.routeName);
 
-  // Only the failing action id + URL are in scope here (no formData/actionResult
-  // thread into this helper). Expose the URL only when the action id is known:
-  // this helper also handles malformed form bodies before action detection, and
-  // those should not look like action-triggered renders to transition({ when }).
-  if (actionId != null) {
-    const peErrCtx = getRequestContext();
-    peErrCtx._gateActionId = actionId;
-    peErrCtx._gateActionUrl = new URL(url);
-  }
+  return errorResult;
+}
+
+/** Render the matched PE error boundary as a full HTML document. */
+function renderPeErrorResponse<TEnv>(
+  input: PeErrorBoundaryInput<TEnv>,
+  errorResult: PeErrorMatch<TEnv>,
+): Promise<Response> {
+  const { ctx, request, env, url, handleStore, nonce, actionId } = input;
 
   const payload: RscPayload = {
     metadata: {
       pathname: url.pathname,
       routerId: ctx.router.id,
       basename: ctx.router.basename,
-      segments: gateTransitions(
-        errorResult.segments,
-        getRequestContext(),
-        ctx.router.onError,
-      ),
+      segments: attachTransitionWhen(errorResult.segments, getRequestContext()),
       matched: errorResult.matched,
       diff: errorResult.diff,
       resolvedIds: errorResult.resolvedIds,
@@ -477,14 +624,17 @@ async function renderPeErrorBoundary<TEnv>(
       themeConfig: ctx.router.themeConfig,
       warmupEnabled: ctx.router.warmupEnabled,
       strictMode: ctx.router.strictMode,
-      initialTheme: getRequestContext().theme,
+      initialTheme: payloadInitialTheme(getRequestContext()),
     },
   };
+
+  const trace = getRequestContext()._activeRoutine;
 
   const stageTracking = {
     mode: "progressive-enhancement-error" as const,
     routeKey: getRequestContext()._routeName,
     actionId: actionId ?? undefined,
+    onEvent: trace && createRenderStageTraceBridge(trace),
   };
   return renderRscResponse(
     {

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { useFixture } from "./fixture";
+import { useFixture, type Fixture } from "./fixture";
 import { waitForHydration, expectNoPageError } from "./helper";
 
 /**
@@ -11,7 +11,191 @@ import { waitForHydration, expectNoPageError } from "./helper";
  * - ctx.set(var, val, { cache: false }) inside cache() — allowed; ctx.get() throws
  * - ctx.get(nonCacheableVar) inside cache() — throws (read guard)
  * - ctx.headers.set() inside cache() — throws (response-level)
+ * - getRequestContext().get(nonCacheableVar) inside "use cache" — throws
  */
+
+/**
+ * "use cache" and a { cache: false } var set by middleware from ?tenant=
+ * (issue #925). Reading it in the cached body throws the guard's error: the
+ * server-side onError log carries its message in both modes, the page only in
+ * dev (production redacts it). Passed in as an argument, it keys the entry per
+ * value.
+ */
+const USE_CACHE_GUARD_MESSAGE = '"use cache" function';
+
+function defineUseCacheNonCacheableVarTests(
+  f: Fixture,
+  production: boolean,
+): void {
+  test('getRequestContext().get(nonCacheable) inside "use cache" should render error boundary', async ({
+    page,
+    request,
+  }) => {
+    for (const tenant of ["a", "b"]) {
+      await page.goto(
+        f.url(`/cache-scope-guard/use-cache-read-blocked?tenant=${tenant}`),
+      );
+      await waitForHydration(page);
+      await expect(page.getByTestId("csg-error-page")).toBeVisible();
+      await expect(page.getByTestId("csg-use-cache-value")).toHaveCount(0);
+      if (!production) {
+        await expect(page.getByTestId("csg-error-message")).toContainText(
+          USE_CACHE_GUARD_MESSAGE,
+        );
+      }
+    }
+
+    // Non-destructive read of the router's onError log.
+    const log: Array<{ phase: string; message: string }> | null = await (
+      await request.get(f.url("/__test/last-error"))
+    ).json();
+    expect(
+      log?.some(
+        (e) =>
+          e.phase === "handler" && e.message.includes(USE_CACHE_GUARD_MESSAGE),
+      ),
+      "onError got the guard's error",
+    ).toBe(true);
+  });
+
+  test('nonCacheable value passed into "use cache" as an argument keys the entry per value', async ({
+    request,
+  }) => {
+    const run = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const read = async (tenant: string) => {
+      const res = await request.get(
+        f.url(`/cache-scope-guard/use-cache-arg-keyed?tenant=${tenant}`),
+        { headers: { Accept: "text/html" } },
+      );
+      const html = await res.text();
+      return {
+        tenant: html.match(/csg-use-cache-arg-tenant">([^<]*)</)?.[1],
+        stamp: html.match(/csg-use-cache-arg-stamp">([^<]*)</)?.[1],
+      };
+    };
+
+    // A repeated stamp is a HIT: the background write has landed.
+    let a = await read(`a-${run}`);
+    await expect
+      .poll(async () => {
+        const next = await read(`a-${run}`);
+        const hit = next.stamp === a.stamp;
+        a = next;
+        return hit;
+      })
+      .toBe(true);
+    expect(a.tenant).toBe(`a-${run}`);
+
+    const b = await read(`b-${run}`);
+    expect(b.tenant).toBe(`b-${run}`);
+    expect(b.stamp).not.toBe(a.stamp);
+    expect((await read(`a-${run}`)).stamp).toBe(a.stamp);
+  });
+}
+
+/**
+ * A loader bound with its own cache() whose body reads cookies() (#972).
+ * Without a key() the entry is shared across users, so the fill fails: the
+ * error boundary renders and onError gets the guard's message (the page shows
+ * it only in dev; production redacts it). The same holds when a parent layout
+ * handler runs the loader first and the route's MISS reuses that run. With a
+ * key() that includes the cookie, each session gets its own entry.
+ */
+const LOADER_CACHE_GUARD_MESSAGE = "whose own cache() has no key()";
+
+function defineLoaderCacheIdentityTests(f: Fixture, production: boolean): void {
+  test("cookies() in a loader with its own cache() and no key() renders the error boundary", async ({
+    page,
+    request,
+  }) => {
+    for (const session of ["user-a", "user-b"]) {
+      await page
+        .context()
+        .addCookies([{ name: "csg-session", value: session, url: f.url("/") }]);
+      await page.goto(f.url("/cache-scope-guard/loader-cache-unkeyed"));
+      await waitForHydration(page);
+      await expect(page.getByTestId("csg-error-page")).toBeVisible();
+      await expect(page.getByTestId("csg-loader-cache-session")).toHaveCount(0);
+      if (!production) {
+        await expect(page.getByTestId("csg-error-message")).toContainText(
+          LOADER_CACHE_GUARD_MESSAGE,
+        );
+      }
+    }
+
+    // By pathname: the reader-first route reports the same message.
+    const log: Array<{ message: string; pathname?: string }> | null = await (
+      await request.get(f.url("/__test/last-error"))
+    ).json();
+    expect(
+      log?.some(
+        (e) =>
+          e.pathname === "/cache-scope-guard/loader-cache-unkeyed" &&
+          e.message.includes(LOADER_CACHE_GUARD_MESSAGE),
+      ),
+      "onError got this route's guard error",
+    ).toBe(true);
+  });
+
+  test("the same when a parent layout handler reads the loader before its binding", async ({
+    page,
+  }) => {
+    const run = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    for (const session of [`a-${run}`, `b-${run}`]) {
+      await page
+        .context()
+        .addCookies([{ name: "csg-session", value: session, url: f.url("/") }]);
+      await page.goto(f.url("/cache-scope-guard/loader-cache-reader-first"));
+      await waitForHydration(page);
+      // The layout's own read is live; the route's fill fails.
+      await expect(page.getByTestId("csg-layout-session")).toHaveText(session);
+      await expect(page.getByTestId("csg-error-page")).toBeVisible();
+      await expect(page.getByTestId("csg-loader-cache-session")).toHaveCount(0);
+      if (!production) {
+        await expect(page.getByTestId("csg-error-message")).toContainText(
+          LOADER_CACHE_GUARD_MESSAGE,
+        );
+      }
+    }
+  });
+
+  test("a loader with its own cache() and a key() that includes the cookie gives each user their own value", async ({
+    request,
+  }) => {
+    const run = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const read = async (session: string) => {
+      const res = await request.get(
+        f.url("/cache-scope-guard/loader-cache-keyed"),
+        {
+          headers: { Accept: "text/html", Cookie: `csg-session=${session}` },
+        },
+      );
+      expect(res.status()).toBe(200);
+      const html = await res.text();
+      return {
+        session: html.match(/csg-loader-cache-session">([^<]*)</)?.[1],
+        stamp: html.match(/csg-loader-cache-stamp">([^<]*)</)?.[1],
+      };
+    };
+
+    // A repeated stamp is a HIT: the background write has landed.
+    let a = await read(`a-${run}`);
+    await expect
+      .poll(async () => {
+        const next = await read(`a-${run}`);
+        const hit = next.stamp === a.stamp;
+        a = next;
+        return hit;
+      })
+      .toBe(true);
+    expect(a.session).toBe(`a-${run}`);
+
+    const b = await read(`b-${run}`);
+    expect(b.session).toBe(`b-${run}`);
+    expect(b.stamp).not.toBe(a.stamp);
+    expect(await read(`a-${run}`)).toEqual(a);
+  });
+}
 
 // ============================================================================
 // Dev
@@ -22,6 +206,9 @@ test.describe("cache-scope-guard", () => {
     root: "./e2e/test-app",
     mode: "dev",
   });
+
+  defineUseCacheNonCacheableVarTests(f, false);
+  defineLoaderCacheIdentityTests(f, false);
 
   test("ctx.set(cacheable var) inside cache() should be allowed", async ({
     page,
@@ -265,6 +452,9 @@ test.describe("cache-scope-guard (production)", () => {
     root: "./e2e/test-app",
     mode: "build",
   });
+
+  defineUseCacheNonCacheableVarTests(f, true);
+  defineLoaderCacheIdentityTests(f, true);
 
   test("ctx.set(cacheable var) inside cache() should be allowed", async ({
     page,

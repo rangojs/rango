@@ -2,6 +2,7 @@ import type { ComponentType, ReactNode } from "react";
 import type { SerializedManifest } from "../debug.js";
 import type { ReverseFunction } from "../reverse.js";
 import type { UrlPatterns } from "../urls.js";
+import type { ClientUrlPatterns } from "../client-urls/types.js";
 import type { UrlBuilder, EnvCompatible } from "../urls/pattern-types.js";
 import type { EntryData } from "../server/context";
 import type { ErrorInfo, MatchResult } from "../types";
@@ -27,6 +28,12 @@ export interface RouterRequestInput<TEnv, TVars = DefaultVars> {
   env?: TEnv;
   vars?: Partial<TVars>;
   ctx?: ExecutionContext;
+}
+
+/** One materialized UrlPatterns registration and its live router mount index. */
+export interface UrlPatternMount<TEnv = any> {
+  readonly patterns: UrlPatterns<TEnv, any>;
+  readonly mountIndex: number;
 }
 
 /**
@@ -100,6 +107,20 @@ export interface Rango<
         ? MergeRoutesWithResponses<NonNullable<T["_routes"]>, T["_responses"]>
         : Record<string, string>)
   >;
+  /**
+   * Pure-client mounting shorthand: normalizes to a root include in the
+   * canonical urls() tree (`include("/", definition, { name: "" })`) — same
+   * lazy materialization as mounting through include() yourself.
+   */
+  routes<T extends ClientUrlPatterns<any>>(
+    patterns: T,
+  ): Rango<
+    TEnv,
+    TRoutes &
+      (NonNullable<T["_routes"]> extends Record<string, unknown>
+        ? NonNullable<T["_routes"]>
+        : Record<string, string>)
+  >;
   routes(builder: UrlBuilder<TEnv>): Rango<TEnv, TRoutes>;
 
   /**
@@ -157,6 +178,23 @@ export interface Rango<
   readonly routeMap: TRoutes;
 
   /**
+   * Serialize the route manifest for inspection: every route and layout the
+   * router's `.routes()` / `urls` mounts register, with shortCodes, parent
+   * links, and loader/middleware/error-boundary/parallel/intercept flags.
+   *
+   * Server-only development aid. It re-evaluates each mount's `urls()` tree.
+   * Groups mounted with `include()` are lazy and are not expanded: their
+   * routes are absent from the result.
+   *
+   * @example
+   * ```typescript
+   * const manifest = await router.debugManifest();
+   * console.log(manifest.totalRoutes, Object.keys(manifest.routes));
+   * ```
+   */
+  debugManifest(): Promise<SerializedManifest>;
+
+  /**
    * Handle an RSC request.
    *
    * Uses the router's configuration (nonce, version, cache) automatically.
@@ -166,7 +204,13 @@ export interface Rango<
    * ```tsx
    * import { router } from "./router";
    *
-   * export default { fetch: router.fetch };
+   * // Workers call fetch(request, env, ctx); `{ fetch: router.fetch }` would
+   * // drop env and ctx.
+   * export default {
+   *   fetch(request, env, ctx) {
+   *     return router.fetch(request, { env, ctx });
+   *   },
+   * } satisfies ExportedHandler;
    * ```
    *
    * @example Direct export
@@ -252,7 +296,24 @@ export interface RangoInternal<
         ? MergeRoutesWithResponses<NonNullable<T["_routes"]>, T["_responses"]>
         : Record<string, string>)
   >;
+  /**
+   * Pure-client mounting shorthand: normalizes to a root include in the
+   * canonical urls() tree (`include("/", definition, { name: "" })`) — same
+   * lazy materialization as mounting through include() yourself.
+   */
+  routes<T extends ClientUrlPatterns<any>>(
+    patterns: T,
+  ): Rango<
+    TEnv,
+    TRoutes &
+      (NonNullable<T["_routes"]> extends Record<string, unknown>
+        ? NonNullable<T["_routes"]>
+        : Record<string, string>)
+  >;
   routes(builder: UrlBuilder<TEnv>): Rango<TEnv, TRoutes>;
+
+  /** Materialized UrlPatterns registrations in registration order. */
+  readonly __urlpatternMounts: readonly UrlPatternMount<TEnv>[];
 
   /**
    * Add global middleware that runs on all routes
@@ -307,7 +368,7 @@ export interface RangoInternal<
 
   /**
    * Resolved theme configuration (null if theme not enabled)
-   * Used by NavigationProvider to include ThemeProvider and by MetaTags to render theme script
+   * Used by NavigationProvider to include ThemeProvider and by `Html.Meta` to render theme script
    */
   readonly themeConfig: import("../theme/types.js").ResolvedThemeConfig | null;
 
@@ -346,6 +407,14 @@ export interface RangoInternal<
    * prefetchConcurrency.
    */
   readonly prefetchConcurrency: number;
+
+  /**
+   * Router-wide default Link prefetch strategy for Links without an explicit
+   * `prefetch` prop. Shipped to the client in payload metadata. Derived from
+   * the `defaultPrefetch` option (default "none" in development and
+   * "viewport" in production).
+   */
+  readonly defaultPrefetch: import("./prefetch-default.js").PrefetchStrategy;
 
   /**
    * Resolved rango state cookie name (`{prefix}_{routerId}`), composed once at
@@ -417,7 +486,8 @@ export interface RangoInternal<
   readonly nonce?: NonceProvider<TEnv>;
 
   /**
-   * RSC version string
+   * The consumer-set version (createRouter({ version })), used for both of the
+   * router's versions. Undefined when the router uses its build versions.
    */
   readonly version?: string;
 

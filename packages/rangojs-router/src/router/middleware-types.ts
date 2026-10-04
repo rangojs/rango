@@ -4,7 +4,7 @@ import type {
   DefaultRouteName,
   DefaultVars,
 } from "../types/global-namespace.js";
-import type { ScopedReverseFunction } from "../reverse.js";
+import type { GlobalReverseFunction } from "../reverse.js";
 import type { Theme } from "../theme/types.js";
 import type { LocationStateEntry } from "../browser/react/location-state-shared.js";
 import type { RequestScope } from "../types/request-scope.js";
@@ -68,16 +68,19 @@ export interface MiddlewareContext<
 
   debugPerformance(): void;
 
-  theme?: Theme;
+  /**
+   * The visitor's theme (cookie or default); undefined without theme config.
+   * Guarded like `cookies()`: a read inside a `"use cache"` function throws
+   * (#971).
+   */
+  readonly theme?: Theme;
 
   setTheme?: (theme: Theme) => void;
 
   setLocationState(entries: LocationStateEntry | LocationStateEntry[]): void;
 
-  reverse: ScopedReverseFunction<
-    Record<string, string>,
-    DefaultReverseRouteMap
-  >;
+  /** Global route names only; see {@link GlobalReverseFunction}. */
+  reverse: GlobalReverseFunction<DefaultReverseRouteMap>;
 }
 
 export type MiddlewareFn<

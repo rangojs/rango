@@ -5,13 +5,15 @@ import {
   createRequestContext,
   runWithRequestContext,
 } from "../../../server/request-context";
+import { revalidateTag, updateTag } from "../../tag-invalidation.js";
 
-function makeReqCtx() {
+function makeReqCtx(cacheStore?: CFCacheStore) {
   return createRequestContext({
     env: {},
     request: new Request("https://test.internal/"),
     url: new URL("https://test.internal/"),
     variables: {},
+    cacheStore,
   });
 }
 
@@ -446,7 +448,7 @@ describe("CFCacheStore purge mode (tagPurge)", () => {
       );
       // The durable marker landed regardless: KV/shell reads are protected
       // even while L1 stays stale until the retried purge.
-      expect(kv.store.get(`v/v1/${TAG_MARKER_PREFIX}products`)).toBeDefined();
+      expect(kv.store.get(`${TAG_MARKER_PREFIX}products`)).toBeDefined();
     });
   });
 
@@ -562,5 +564,107 @@ describe("CFCacheStore purge mode (tagPurge)", () => {
       expect(warned).not.toMatch(/had no effect/);
       expect(warned).not.toMatch(/without a KV/);
     });
+  });
+
+  // Issue #973: an L1 hit in purge mode consults only the per-request memo,
+  // so the request that ran revalidateTag() must see its tags there before
+  // the KV marker write and the purge land.
+  describe("revalidateTag: the invalidating request reads its own writes (#973)", () => {
+    function gate(): { held: Promise<void>; release: () => void } {
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      return { held, release };
+    }
+
+    it.each([
+      ["with no prior read", false],
+      ["after a prior read", true],
+    ])(
+      "with KV: an L1 hit misses while the marker write and the purge are in flight (%s)",
+      async (_label, priorRead) => {
+        const purge = gate();
+        const markers = gate();
+        const tagPurge = vi.fn(() => purge.held);
+        const store = makeStore({ tagPurge });
+        await store.set("k", createTestData(["products"]), 300);
+        await ctx.flush();
+        const put = kv.put.bind(kv);
+        vi.spyOn(kv, "put").mockImplementation(async (key, value, options) => {
+          if (key.includes(TAG_MARKER_PREFIX)) await markers.held;
+          return put(key, value, options);
+        });
+
+        await runWithRequestContext(makeReqCtx(store), async () => {
+          if (priorRead) expect(await store.get("k")).not.toBeNull();
+          vi.advanceTimersByTime(10);
+          revalidateTag("products");
+          expect(await store.get("k")).toBeNull();
+        });
+        markers.release();
+        purge.release();
+      },
+    );
+
+    it("KV-less: an L1 hit misses while the purge is in flight", async () => {
+      const purge = gate();
+      const store = new CFCacheStore({
+        ctx: ctx as any,
+        baseUrl: "https://test.internal/",
+        version: "v1",
+        tagPurge: () => purge.held,
+      });
+      await store.set("k", createTestData(["products"]), 300);
+      await ctx.flush();
+
+      await runWithRequestContext(makeReqCtx(store), async () => {
+        expect(await store.get("k")).not.toBeNull();
+        vi.advanceTimersByTime(10);
+        revalidateTag("products");
+        expect(await store.get("k")).toBeNull();
+      });
+      purge.release();
+    });
+
+    // An entry without this store's entry Cache-Tags (written before the
+    // store stamped them) is out of a purge's reach, so its L1 hit keeps the
+    // marker check; KV-less there is no marker, only this request's memo.
+    it.each(["updateTag", "revalidateTag"] as const)(
+      "KV-less: %s masks an L1 hit that carries no entry Cache-Tags",
+      async (verb) => {
+        const store = new CFCacheStore({
+          ctx: ctx as any,
+          baseUrl: "https://test.internal/",
+          version: "v1",
+          tagPurge: vi.fn(async () => {}),
+        });
+        await store.set("k", createTestData(["products"]), 300);
+        await ctx.flush();
+        const l1 = (
+          mockCaches._default as unknown as {
+            store: Map<string, { response: Response; expiresAt: number }>;
+          }
+        ).store;
+        for (const [url, entry] of l1) {
+          const headers = new Headers(entry.response.headers);
+          headers.delete("Cache-Tag");
+          const body = await entry.response.clone().arrayBuffer();
+          l1.set(url, {
+            ...entry,
+            response: new Response(body, {
+              status: entry.response.status,
+              headers,
+            }),
+          });
+        }
+
+        await runWithRequestContext(makeReqCtx(store), async () => {
+          expect(await store.get("k")).not.toBeNull();
+          vi.advanceTimersByTime(10);
+          if (verb === "updateTag") await updateTag("products");
+          else revalidateTag("products");
+          expect(await store.get("k")).toBeNull();
+        });
+      },
+    );
   });
 });

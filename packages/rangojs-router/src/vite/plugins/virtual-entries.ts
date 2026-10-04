@@ -1,4 +1,5 @@
 import type { HeadScriptsOption } from "../plugin-types.js";
+import { DEFAULT_ROUTER_VERSIONS_KEY } from "../../router-versions.js";
 
 export const VIRTUAL_ENTRY_BROWSER: string = `
 import {
@@ -48,20 +49,42 @@ async function initializeApp() {
 initializeApp().catch(console.error);
 `.trim();
 
+function emitProgressiveChunkSize(value: number): string {
+  if (value === Number.POSITIVE_INFINITY) {
+    return "Number.POSITIVE_INFINITY";
+  }
+  if (!Number.isFinite(value)) {
+    throw new Error(
+      `rango({ progressiveChunkSize }) must be a finite number or Infinity, received ${String(value)}`,
+    );
+  }
+  return JSON.stringify(value);
+}
+
 /**
  * Generate the virtual SSR entry. `headScripts` mirrors the rango() plugin
  * option: "preinit" (default) installs the client-reference preinit hook and
- * lets the SSR handlers convert the bootstrap to `bootstrapModules`;
- * "preload" omits the hook and pins the handlers to the hint-only strategy.
+ * threads `getClientEntryUrl` so Fizz emits `bootstrapModules`;
+ * "preload" omits the hook and uses the deprecated inline
+ * `loadBootstrapScriptContent` bootstrap. Any other value throws: an unknown
+ * string such as "prenit" used to run as "preinit" silently
+ * (`headScripts !== "preload"` since #694).
  */
 export function getVirtualEntrySSR(
   headScripts: HeadScriptsOption = "preinit",
+  progressiveChunkSize?: number,
 ): string {
-  const preinit = headScripts !== "preload";
-  // The preload variant drops exactly three preinit-only lines, all built
-  // here so the template below stays a single unconditional shape.
+  if (headScripts !== "preinit" && headScripts !== "preload") {
+    throw new Error(
+      `rango({ headScripts }) must be "preinit" or "preload", received ${JSON.stringify(headScripts)}`,
+    );
+  }
+  const preinit = headScripts === "preinit";
+  // The preload variant drops the preinit-only imports/install and swaps the
+  // bootstrap dep, all built here so the template below stays a single
+  // unconditional shape.
   const depsImportNames = preinit
-    ? "createFromReadableStream,\n  setOnClientReference,"
+    ? "createFromReadableStream,\n  setOnClientReference,\n  getClientEntryUrl,"
     : "createFromReadableStream,";
   const ssrImportNames = preinit ? "\n  installClientReferencePreinit," : "";
   const install = preinit
@@ -72,7 +95,21 @@ export function getVirtualEntrySSR(
 installClientReferencePreinit(setOnClientReference);
 `
     : "";
+  const bootstrapDep = preinit
+    ? "getClientEntryUrl,"
+    : `loadBootstrapScriptContent: () =>
+    import.meta.viteRsc.loadBootstrapScriptContent("index"),`;
   const hs = JSON.stringify(headScripts);
+  // Emitted into all three handlers: live SSR and shell capture consume it
+  // directly; the resume handler receives it for dep-shape uniformity (resume()
+  // itself inherits the capture value from the postponed state). Finite numbers
+  // stringify exactly (incl. MAX_SAFE_INTEGER). Infinity is emitted as
+  // Number.POSITIVE_INFINITY — JSON.stringify(Infinity) is null, which React
+  // would treat as "no budget" rather than "never outline".
+  const pcs =
+    progressiveChunkSize !== undefined
+      ? `\n  progressiveChunkSize: ${emitProgressiveChunkSize(progressiveChunkSize)},`
+      : "";
   return `
 import {
   ${depsImportNames}
@@ -90,9 +127,8 @@ export const renderHTML = createSSRHandler({
   createFromReadableStream,
   renderToReadableStream,
   injectRSCPayload,
-  headScripts: ${hs},
-  loadBootstrapScriptContent: () =>
-    import.meta.viteRsc.loadBootstrapScriptContent("index"),
+  headScripts: ${hs},${pcs}
+  ${bootstrapDep}
 });
 
 export const captureShellHTML = createShellCaptureHandler({
@@ -101,9 +137,8 @@ export const captureShellHTML = createShellCaptureHandler({
   injectRSCPayload,
   prerender,
   resume,
-  headScripts: ${hs},
-  loadBootstrapScriptContent: () =>
-    import.meta.viteRsc.loadBootstrapScriptContent("index"),
+  headScripts: ${hs},${pcs}
+  ${bootstrapDep}
 });
 
 export const resumeShellHTML = createShellResumeHandler({
@@ -112,9 +147,8 @@ export const resumeShellHTML = createShellResumeHandler({
   injectRSCPayload,
   prerender,
   resume,
-  headScripts: ${hs},
-  loadBootstrapScriptContent: () =>
-    import.meta.viteRsc.loadBootstrapScriptContent("index"),
+  headScripts: ${hs},${pcs}
+  ${bootstrapDep}
 });
 `.trim();
 }
@@ -131,7 +165,7 @@ export const resumeShellHTML = createShellResumeHandler({
  *   registered for the _rsc_loader endpoint and fail in production.
  *
  * Single source of truth: both the generated virtual RSC entry below and the
- * custom-entry injector (version-injector) consume this list, so a new
+ * custom-entry injector (entry-bootstrap-injector) consume this list, so a new
  * bootstrap manifest cannot be added to one path and forgotten on the other.
  * That exact drift (loader-manifest present here but missing from the injector)
  * is what left fetchable loaders unresolved on custom worker entries.
@@ -154,13 +188,21 @@ import {
   decodeAction,
   decodeFormState,
 } from "@rangojs/router/internal/deps/rsc";
-import { router } from "${routerPath}";
-import { createRSCHandler } from "@rangojs/router/internal/rsc-handler";
-import { VERSION } from "@rangojs/router:version";
 
 // Startup bootstrap imports (routes + loader manifests). See
 // RSC_ENTRY_BOOTSTRAP_IMPORTS — the same list the custom-entry injector uses.
+//
+// ORDER IS LOAD-BEARING: the bootstrap imports MUST precede the router import.
+// The routes-manifest module installs client URL projections
+// (setClientUrlProjection), and createRouter().routes(clientUrlsReference)
+// consults them at router-module evaluation. Router-first would silently push
+// every clientUrls() app onto the deferred-subscription path and change mount
+// registration order with no error. The custom-entry injector keeps the same
+// guarantee by PREPENDING this list at file top (entry-bootstrap-injector.ts).
 ${bootstrapImports}
+
+import { router } from "${routerPath}";
+import { createRSCHandler } from "@rangojs/router/internal/rsc-handler";
 
 // Lazily create the handler on first request so that ESM live bindings
 // have resolved by the time we read \`router\`. During HMR the module may
@@ -170,12 +212,6 @@ export default function handler(request, env) {
   if (!_handler) {
     _handler = createRSCHandler({
       router,
-      // Forward the router's version (createRouter({ version })), not the raw
-      // VERSION default: the on-demand prerender overlay keys off buildId =
-      // version ?? VERSION on both the trigger and serve sides, so a custom
-      // version that isn't forwarded here makes every overlay read miss. Same
-      // forwarding gap the nonce comment below documents.
-      version: router.version ?? VERSION,
       // Forward the router's CSP nonce provider. createRSCHandler reads the
       // provider only from options.nonce; without this, createRouter({ nonce })
       // is silently dropped on the Node preset (the Cloudflare path wires it via
@@ -277,6 +313,33 @@ export const VIRTUAL_IDS = {
   version: "@rangojs/router:version",
 } as const;
 
+/** Dev: one stamp for both versions of every router, bumped on RSC edits. */
 export function getVirtualVersionContent(version: string): string {
-  return `export const VERSION = ${JSON.stringify(version)};`;
+  return [
+    `export const VERSION = ${JSON.stringify(version)};`,
+    `export const ROUTER_VERSIONS = undefined;`,
+  ].join("\n");
+}
+
+/**
+ * Free identifier the production version module ships in place of the table.
+ * The versions are hashes of the built server code, so they cannot be part of
+ * it: the buildApp post hook (router-discovery.ts) replaces this token in the
+ * written chunk once the hashes are final (runRouterVersionsPhase,
+ * discovery/router-versions-phase.ts). An unreplaced token throws a ReferenceError
+ * when the module evaluates, so a build that skipped the step cannot serve
+ * with a constant version.
+ */
+export const ROUTER_VERSIONS_PLACEHOLDER = "__RANGO_ROUTER_VERSIONS__";
+
+/**
+ * Production: byte-identical in every build, so it never moves the hashes it
+ * is later filled with. VERSION is the whole-build document version (the
+ * table's "*" entry).
+ */
+export function getVirtualBuildVersionContent(): string {
+  return [
+    `export const ROUTER_VERSIONS = ${ROUTER_VERSIONS_PLACEHOLDER};`,
+    `export const VERSION = ROUTER_VERSIONS[${JSON.stringify(DEFAULT_ROUTER_VERSIONS_KEY)}][1];`,
+  ].join("\n");
 }

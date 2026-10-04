@@ -1,17 +1,12 @@
 "use client";
 
 import type { ReactNode } from "react";
-import {
-  Link,
-  ScrollRestoration,
-  href,
-  MetaTags,
-  Scripts,
-} from "@rangojs/router/client";
+import { Link, Html, href } from "@rangojs/router/client";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 import { BreadcrumbNav } from "../components/BreadcrumbNav.js";
 import { LinkStatusIndicator } from "../components/LinkStatusIndicator.js";
 import { GtmPageViews } from "../components/GtmPageViews.js";
+import { TitleUpdater } from "../components/TitleUpdater.js";
 import { DEFAULT_GTM_ID, gtmNoScriptSrc } from "../handles/gtm.js";
 
 export function RootLayout({ children }: { children: ReactNode }) {
@@ -25,9 +20,9 @@ export function RootLayout({ children }: { children: ReactNode }) {
           parse time, so the inline GTM bootstrap would read the wrong page_title
           before React reconciles the managed title.
         */}
-        <MetaTags />
+        <Html.Meta />
         {/* Renders scripts pushed via ctx.use(Script) (the GTM bootstrap is one). */}
-        <Scripts />
+        <Html.Scripts />
         <style>{`
           body {
             font-family: system-ui, -apple-system, sans-serif;
@@ -67,7 +62,7 @@ export function RootLayout({ children }: { children: ReactNode }) {
       </head>
       <body className="full-width">
         {/* Body-positioned scripts pushed via ctx.use(Script)({ position: "body" }). */}
-        <Scripts position="body" />
+        <Html.Scripts position="body" />
         {/* GTM <noscript> fallback (not a <script>, so the consumer Document owns it). */}
         <noscript>
           <iframe
@@ -79,7 +74,8 @@ export function RootLayout({ children }: { children: ReactNode }) {
           />
         </noscript>
         <GtmPageViews />
-        <ScrollRestoration />
+        <TitleUpdater />
+        <Html.ScrollRestoration />
         <nav>
           <Link to={href("/")} prefetch="hover">
             Home
@@ -96,6 +92,9 @@ export function RootLayout({ children }: { children: ReactNode }) {
           </Link>
           <Link to={href("/shop")} prefetch="hover">
             Shop
+          </Link>
+          <Link to="/client-shop" prefetch="hover">
+            Client Shop
           </Link>
           <Link to={href("/magazine")} prefetch="hover">
             Magazine

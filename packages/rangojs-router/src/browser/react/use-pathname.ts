@@ -2,12 +2,15 @@
 
 import { useContext, useState, useEffect, useRef } from "react";
 import { NavigationStoreContext } from "./context.js";
+import { OptimisticLocationContext } from "../../client-urls/optimistic-location.js";
 
 /**
  * Hook to access the current pathname.
  *
  * Returns the committed pathname string (excludes search params and hash).
- * Updates when navigation completes, not during pending navigation.
+ * Updates when navigation completes, not during pending navigation — except
+ * inside an optimistically rendered clientUrls() destination, where it
+ * reports THAT route's pathname (see OptimisticLocationContext).
  *
  * @example
  * ```tsx
@@ -17,6 +20,7 @@ import { NavigationStoreContext } from "./context.js";
  */
 export function usePathname(): string {
   const ctx = useContext(NavigationStoreContext);
+  const optimistic = useContext(OptimisticLocationContext);
 
   const [pathname, setPathname] = useState<string>(() => {
     if (!ctx) {
@@ -43,5 +47,5 @@ export function usePathname(): string {
     return ctx.eventController.subscribe(update);
   }, []);
 
-  return pathname;
+  return optimistic ? optimistic.pathname : pathname;
 }

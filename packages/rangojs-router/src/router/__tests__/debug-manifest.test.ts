@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildDebugManifest } from "../debug-manifest.js";
+import { urls } from "../../urls.js";
 import type { RouteEntry } from "../../types/route-entry.js";
 
 const handler = () => null;
@@ -71,5 +72,35 @@ describe("buildDebugManifest async handler shapes", () => {
     await expect(buildDebugManifest([entry])).rejects.toThrow(
       /Unsupported async handler result/,
     );
+  });
+});
+
+describe("buildDebugManifest lazy include placeholders", () => {
+  // A lazy placeholder carries the parent urls() handler; it must not re-run
+  // into the shared manifest.
+  it("lists the mount's routes once and does not expand include() children", async () => {
+    const blog = urls<any>(({ path }) => [
+      path("/", handler, { name: "index" }),
+    ]);
+    const root = urls<any>(({ path, include }) => [
+      path("/", handler, { name: "home" }),
+      include("/blog", blog, { name: "blog" }),
+    ]);
+    const placeholder: RouteEntry = {
+      ...makeEntry(root.handler, 1),
+      staticPrefix: "/blog",
+      lazy: true,
+      lazyPatterns: blog,
+      lazyEvaluated: false,
+    };
+
+    const manifest = await buildDebugManifest([
+      placeholder,
+      makeEntry(root.handler, 0),
+    ]);
+
+    expect(Object.keys(manifest.routes)).toEqual(["home"]);
+    expect(manifest.routes.home?.shortCode).toBe("M0L0R0");
+    expect(Object.keys(manifest.layouts)).toEqual(["debug.M0.$root"]);
   });
 });

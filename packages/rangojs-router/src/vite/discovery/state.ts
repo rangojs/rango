@@ -7,8 +7,10 @@
  */
 
 import type { ScanFilter } from "../../build/generate-route-types.js";
+import type { ClientUrlProjection } from "../../client-urls/server-projection.js";
 
 export const VIRTUAL_ROUTES_MANIFEST_ID = "virtual:rsc-router/routes-manifest";
+export const VIRTUAL_LOADER_MANIFEST_ID = "virtual:rsc-router/loader-manifest";
 
 export interface PluginOptions {
   enableBuildPrerender?: boolean;
@@ -44,6 +46,12 @@ export interface PluginOptions {
    * capture endpoint with the app's configured head-script strategy.
    */
   headScripts?: import("../plugin-types.js").HeadScriptsOption;
+  /**
+   * rango({ progressiveChunkSize }) — threaded alongside headScripts so the
+   * temp server's virtual SSR entry bakes the app's configured Fizz outlining
+   * budget into its capture/render handlers.
+   */
+  progressiveChunkSize?: number;
 }
 
 export interface PrecomputedEntry {
@@ -84,6 +92,11 @@ export interface ShellPrerenderCandidate {
     | { ttl?: number; swr?: number; tags?: string[]; captureTimeout?: number };
 }
 
+export interface ClientUrlDiscoveryState {
+  clientUrlSourceByReferenceId: Map<string, string>;
+  clientUrlProjectionMap: Map<string, ClientUrlProjection>;
+}
+
 export interface DiscoveryState {
   resolvedEntryPath: string | undefined;
   projectRoot: string;
@@ -114,6 +127,8 @@ export interface DiscoveryState {
   perRouterTrieMap: Map<string, any>;
   perRouterPrecomputedMap: Map<string, PrecomputedEntry[]>;
   perRouterManifestDataMap: Map<string, Record<string, string>>;
+  clientUrlSourceByReferenceId?: Map<string, string>;
+  clientUrlProjectionMap?: Map<string, ClientUrlProjection>;
 
   prerenderManifestEntries: Record<string, string> | null;
   staticManifestEntries: Record<string, string> | null;
@@ -138,6 +153,19 @@ export interface DiscoveryState {
    * buildEnd (aborted build).
    */
   shellPhaseTempServer: import("vite").ViteDevServer | null;
+  /**
+   * Inputs of the per-router cache versions (build-versions.ts), recorded by
+   * generateBundle. plugin-rsc builds the RSC and SSR environments twice (a
+   * scan pass, then the real pass); each pass overwrites its slot, so the
+   * buildApp post hook reads the real pass.
+   */
+  serverBuildGraph: import("./build-versions.js").ServerBuildGraph | null;
+  clientBuildGraph: import("./build-versions.js").ClientBuildGraph | null;
+  ssrBundle: import("./build-versions.js").BundleFiles | null;
+  /** Per environment, the chunk files holding the version module. */
+  versionModuleFiles: Map<string, string[]>;
+  /** Prerender and Static payloads the build rendered, by content digest. */
+  buildData: import("./build-versions.js").BuildDataRecord[];
   handlerChunkInfoMap: Map<string, ChunkInfo>;
   staticHandlerChunkInfoMap: Map<string, ChunkInfo>;
   /**
@@ -179,7 +207,7 @@ export interface DiscoveryState {
 export function createDiscoveryState(
   entryPath: string | undefined,
   opts: PluginOptions | undefined,
-): DiscoveryState {
+): DiscoveryState & ClientUrlDiscoveryState {
   return {
     resolvedEntryPath: entryPath,
     projectRoot: "",
@@ -197,12 +225,19 @@ export function createDiscoveryState(
     perRouterTrieMap: new Map(),
     perRouterPrecomputedMap: new Map(),
     perRouterManifestDataMap: new Map(),
+    clientUrlSourceByReferenceId: new Map(),
+    clientUrlProjectionMap: new Map(),
 
     prerenderManifestEntries: null,
     staticManifestEntries: null,
     shellCandidates: null,
     prerenderPayloadValues: null,
     shellPhaseTempServer: null,
+    serverBuildGraph: null,
+    clientBuildGraph: null,
+    ssrBundle: null,
+    versionModuleFiles: new Map(),
+    buildData: [],
     handlerChunkInfoMap: new Map(),
     staticHandlerChunkInfoMap: new Map(),
     onDemandHandlerIds: new Map(),

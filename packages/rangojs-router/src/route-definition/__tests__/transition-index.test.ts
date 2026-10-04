@@ -11,42 +11,9 @@
  * indices.
  */
 import { describe, it, expect } from "vitest";
-import { RangoContext, type EntryData } from "../../server/context.js";
+import { RangoContext } from "../../server/context.js";
+import { parentEntry, withDslStore } from "./dsl-test-helpers.js";
 import { transition } from "../dsl-helpers.js";
-
-/** A parent entry shaped enough for transition() to attach to. */
-function parentEntry(): EntryData {
-  return {
-    id: "test",
-    shortCode: "L0",
-    type: "layout",
-    parent: null,
-    handler: null,
-    loading: undefined,
-    middleware: [],
-    revalidate: [],
-    errorBoundary: [],
-    notFoundBoundary: [],
-    layout: [],
-    parallel: {},
-    intercept: [],
-    loader: [],
-  } as unknown as EntryData;
-}
-
-/** Run `fn` inside a fresh DSL build context with the given parent. */
-function withDslStore<T>(parent: EntryData, fn: () => T): T {
-  return RangoContext.run(
-    {
-      manifest: new Map(),
-      namespace: "test",
-      parent,
-      counters: {},
-      patterns: new Map(),
-    } as never,
-    fn,
-  );
-}
 
 /** Read the transition counter (number of indices consumed so far). */
 function transitionCount(): number {

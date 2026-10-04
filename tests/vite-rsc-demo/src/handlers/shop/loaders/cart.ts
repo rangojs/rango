@@ -28,7 +28,6 @@ const productPrices: Record<string, number> = {
  * cart contents in cart page, and order summary in checkout.
  */
 export const CartLoader = createLoader(async (_ctx) => {
-  "use server";
   await new Promise((resolve) => setTimeout(resolve, 75));
 
   const cart = await getCart();

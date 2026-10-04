@@ -1,6 +1,11 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { waitForHydration, expectNoPageError, goBack } from "./helper";
+import {
+  waitForHydration,
+  expectNoPageError,
+  goBack,
+  blockPrefetch,
+} from "./helper";
 
 /**
  * Tests that validate revalidation behavior and data precision.
@@ -95,6 +100,11 @@ test.describe("revalidation-precision", () => {
   }) => {
     using _ = expectNoPageError(page);
 
+    // Keep the click's navigation fetch live: the bare product link viewport-
+    // prefetches by default and the click would adopt the warmed entry,
+    // leaving nothing for the post-clear request assertions below.
+    await blockPrefetch(page);
+
     const requests: RscRequest[] = [];
 
     // Intercept RSC requests
@@ -138,6 +148,10 @@ test.describe("revalidation-precision", () => {
 
   test("partial navigation should fetch RSC content", async ({ page }) => {
     using _ = expectNoPageError(page);
+
+    // See "navigation should send current segment IDs": keep the click's
+    // navigation fetch live when automatic prefetch is enabled.
+    await blockPrefetch(page);
 
     const rscRequests: string[] = [];
 
@@ -230,6 +244,11 @@ test.describe("revalidation-precision", () => {
     page,
   }) => {
     using _ = expectNoPageError(page);
+
+    // This test times the back-navigation cache restore. Every page it walks
+    // can trigger viewport prefetches whose renders contend with the timed
+    // restore — keep the measurement about the cache, not background traffic.
+    await blockPrefetch(page);
 
     // Navigate to index
     await page.goto(f.url("/"));
@@ -328,6 +347,10 @@ test.describe("revalidation-headers", () => {
     page,
   }) => {
     using _ = expectNoPageError(page);
+
+    // See "navigation should send current segment IDs": keep the click's
+    // navigation fetch live when automatic prefetch is enabled.
+    await blockPrefetch(page);
 
     const headers: Record<string, string>[] = [];
 

@@ -27,6 +27,44 @@ export function kvKeyByteLength(key: string): number {
 }
 
 /**
+ * Bytes of a composed key preserved verbatim when an over-limit key is
+ * normalized (toKVKey). 400 leaves room for the `~` separator and the 32-hex
+ * digest inside KV_MAX_KEY_BYTES while keeping the version prefix and most of
+ * the logical key readable (and prefix-listable) in the KV dashboard.
+ */
+export const KV_KEY_PRESERVED_PREFIX_BYTES = 400;
+
+/**
+ * Truncate to at most `maxBytes` of UTF-8. A multibyte sequence split at the
+ * boundary decodes to U+FFFD, which is stripped — the result is deterministic
+ * for a given input, which is all key normalization needs.
+ */
+export function truncateToBytes(value: string, maxBytes: number): string {
+  const bytes = kvKeyEncoder.encode(value);
+  if (bytes.length <= maxBytes) return value;
+  return new TextDecoder()
+    .decode(bytes.subarray(0, maxBytes))
+    .replace(/�+$/, "");
+}
+
+/**
+ * 128-bit hex digest (SHA-256 truncated) of a composed KV key. WebCrypto is
+ * available on workerd and Node alike; SHA-256 (not a fast non-crypto hash)
+ * because cache keys embed user-influenced serialized args — an engineered
+ * collision between two normalized keys would serve one entry's payload for
+ * the other's.
+ */
+export async function kvKeyDigest(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    kvKeyEncoder.encode(value),
+  );
+  return Array.from(new Uint8Array(digest, 0, 16), (b) =>
+    b.toString(16).padStart(2, "0"),
+  ).join("");
+}
+
+/**
  * Compute the Cache-Control directive for a stale-path REVALIDATING re-put from
  * the entry's stored hard-expiry deadline (CACHE_EXPIRES_AT_HEADER). Returns the
  * REMAINING ttl so the re-put preserves the original retention deadline instead

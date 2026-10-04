@@ -319,7 +319,7 @@ describe("route tree inspection", () => {
   });
 
   it("detects intercept with when() condition", () => {
-    const whenFn = (ctx: any) => ctx.from.pathname.startsWith("/products");
+    const whenFn = (ctx: any) => ctx.from.url.pathname.startsWith("/products");
 
     const tree = buildRouteTree(
       urls(({ path, layout, intercept }) => [
@@ -903,6 +903,126 @@ describe("route tree inspection", () => {
     ).toThrow("orphan layout cannot contain other layouts as children");
   });
 
+  it("a middleware() wrapper with no routes that contains a layout() throws in a path (#918)", () => {
+    const AccountNav = (<div>nav</div>) as React.ReactNode;
+    expect(() =>
+      buildRouteTree(
+        urls(({ path, layout, middleware }) => [
+          path("/account", Dashboard, { name: "account" }, () => [
+            middleware(authMiddleware, () => [layout(AccountNav)]),
+          ]),
+        ]),
+      ),
+    ).toThrow(
+      /middleware\(fn, \(\) => \[\.\.\.\]\) with no routes inside cannot contain layout\(\).*middleware\(fn\), layout\(\.\.\.\)/,
+    );
+  });
+
+  it("a middleware() wrapper with no routes that contains a layout() throws in a layout's children (#918)", () => {
+    const Nav = (<div>nav</div>) as React.ReactNode;
+    expect(() =>
+      buildRouteTree(
+        urls(({ path, layout, middleware }) => [
+          layout(RootLayout, () => [
+            middleware(authMiddleware, () => [layout(Nav)]),
+            path("/", HomePage, { name: "home" }),
+          ]),
+        ]),
+      ),
+    ).toThrow(/with no routes inside cannot contain layout\(\)/);
+  });
+
+  it("a middleware() wrapper may contain a layout() when it has routes, or loaders without a layout()", () => {
+    const Nav = (<div>nav</div>) as React.ReactNode;
+    const tree = buildRouteTree(
+      urls(({ path, layout, middleware, loader }) => [
+        layout(RootLayout, () => [
+          middleware(authMiddleware, () => [
+            layout(Nav),
+            path("/", HomePage, { name: "home" }),
+          ]),
+          middleware(logMiddleware, () => [loader(UserLoader)]),
+          path("/about", AboutPage, { name: "about" }),
+        ]),
+      ]),
+    );
+    const wrapper = tree.entry("home")!.parent!;
+    expect(wrapper.middleware).toEqual([authMiddleware]);
+    expect(wrapper.layout.map((l) => l.handler)).toEqual([Nav]);
+  });
+
+  it("a middleware() wrapper may contain a layout() whose own children hold the routes", () => {
+    const AdminNav = (<div>admin nav</div>) as React.ReactNode;
+    const tree = buildRouteTree(
+      urls(({ path, layout, middleware }) => [
+        layout(RootLayout, () => [
+          middleware(authMiddleware, () => [
+            layout(AdminNav, () => [
+              path("/about", AboutPage, { name: "about" }),
+            ]),
+          ]),
+        ]),
+      ]),
+    );
+    const navLayout = tree.entry("about")!.parent!;
+    expect(navLayout.handler).toBe(AdminNav);
+    expect(navLayout.parent!.middleware).toEqual([authMiddleware]);
+  });
+
+  it("the flat form puts the middleware and the layout on the path", () => {
+    const AccountNav = (<div>nav</div>) as React.ReactNode;
+    const tree = buildRouteTree(
+      urls(({ path, layout, middleware }) => [
+        path("/account", Dashboard, { name: "account" }, () => [
+          middleware(authMiddleware),
+          layout(AccountNav),
+        ]),
+      ]),
+    );
+    const account = tree.entry("account")!;
+    expect(account.middleware).toEqual([authMiddleware]);
+    expect(account.layout.map((l) => l.handler)).toEqual([AccountNav]);
+  });
+
+  it("a cache() inside a routeless layout in a path configures the path (#918)", () => {
+    const ProductChrome = (<div>chrome</div>) as React.ReactNode;
+    const tree = buildRouteTree(
+      urls(({ path, layout, cache, middleware }) => [
+        path("/products/:id", ProductDetail, { name: "product" }, () => [
+          layout(ProductChrome, () => [cache({ ttl: 300 })]),
+        ]),
+        path("/list", ProductList, { name: "list" }, () => [
+          middleware(authMiddleware, () => [cache({ ttl: 60 })]),
+        ]),
+      ]),
+    );
+    const product = tree.entry("product")!;
+    expect(product.cache).toEqual({ options: { ttl: 300 } });
+    expect(product.layout).toHaveLength(1);
+    expect(product.layout[0]!.layout).toHaveLength(0);
+    expect(tree.entry("list")!.cache).toEqual({ options: { ttl: 60 } });
+  });
+
+  it("cache() in the use() of an intercept declared in a routeless layout in a path still throws", () => {
+    expect(() =>
+      buildRouteTree(
+        urls((h) => [
+          h.path("/detail", AboutPage, { name: "detail" }),
+          h.path("/list", ProductList, { name: "list" }, () => [
+            h.layout(Sidebar, () => [
+              h.intercept("@modal", ".detail", ProductModal, () => {
+                h.cache();
+                return [h.loader(PostLoader)];
+              }),
+            ]),
+          ]),
+        ]),
+      ),
+    ).toThrow(
+      /cache\(\) is not valid inside intercept\("@modal", "\.detail"\) use\(\)/,
+    );
+  });
+
   it("sibling orphan layouts stack as composable wrappers", () => {
     const Wrapper1 = (<div>w1</div>) as React.ReactNode;
     const Wrapper2 = (<div>w2</div>) as React.ReactNode;
@@ -1052,6 +1172,183 @@ describe("route tree inspection", () => {
         ]),
       );
     }).toThrow(/intercept\(\) cannot be used inside parallel/);
+  });
+
+  it("revalidate directly inside intercept throws", () => {
+    // Intercepts only evaluate their loaders' revalidate(); an intercept-level
+    // one was stored and never read. Kept on one line so the directive covers
+    // the whole overloaded call.
+    const skip = () => false;
+    const patterns = urls(({ path, intercept, revalidate }) => [
+      path("/detail", AboutPage, { name: "detail" }),
+      // @ts-expect-error revalidate is not a valid intercept use item
+      intercept("@modal", ".detail", ProductModal, () => [revalidate(skip)]),
+    ]);
+
+    expect(() => buildRouteTree(patterns)).toThrow(
+      /revalidate\(\) is not valid inside intercept\("@modal", "\.detail"\) use\(\).*loader\(YourLoader, \(\) => \[revalidate\(\.\.\.\)\]\)/,
+    );
+  });
+
+  // Why intercept() rejects these items: see intercept() in
+  // route-definition/dsl-helpers.ts.
+  it("errorBoundary directly inside intercept throws", () => {
+    const F = ErrorFallback;
+    const patterns = urls(({ path, intercept, errorBoundary }) => [
+      path("/detail", AboutPage, { name: "detail" }),
+      // @ts-expect-error errorBoundary is not a valid intercept use item
+      intercept("@modal", ".detail", ProductModal, () => [errorBoundary(F)]),
+    ]);
+
+    expect(() => buildRouteTree(patterns)).toThrow(
+      /errorBoundary\(\) is not valid inside intercept\("@modal", "\.detail"\) use\(\).*put it on the enclosing layout or path/,
+    );
+  });
+
+  it("notFoundBoundary directly inside intercept throws", () => {
+    const F = NotFoundFallback;
+    const patterns = urls(({ path, intercept, notFoundBoundary }) => [
+      path("/detail", AboutPage, { name: "detail" }),
+      // @ts-expect-error notFoundBoundary is not a valid intercept use item
+      intercept("@modal", ".detail", ProductModal, () => [notFoundBoundary(F)]),
+    ]);
+
+    expect(() => buildRouteTree(patterns)).toThrow(
+      /notFoundBoundary\(\) is not valid inside intercept\("@modal", "\.detail"\) use\(\).*put it on the enclosing layout or path/,
+    );
+  });
+
+  it("cache directly inside intercept throws", () => {
+    const patterns = urls(({ path, intercept, cache }) => [
+      path("/detail", AboutPage, { name: "detail" }),
+      // @ts-expect-error cache is not a valid intercept use item
+      intercept("@modal", ".detail", ProductModal, () => [cache()]),
+    ]);
+
+    expect(() => buildRouteTree(patterns)).toThrow(
+      /cache\(\) is not valid inside intercept\("@modal", "\.detail"\) use\(\).*put cache\(\) on the target route/,
+    );
+  });
+
+  it("layout() with its own use() items inside intercept throws", () => {
+    // Only the nested layout's component becomes the modal chrome; its use()
+    // items used to be dropped silently.
+    const patterns = urls(({ path, layout, intercept, loader }) => [
+      path("/detail", AboutPage, { name: "detail" }),
+      intercept("@modal", ".detail", ProductModal, () => [
+        layout(ShopLayout, () => [loader(PostLoader)]),
+      ]),
+    ]);
+
+    expect(() => buildRouteTree(patterns)).toThrow(
+      /layout\(\) with its own use\(\) items is not valid inside intercept\("@modal", "\.detail"\) use\(\).*put the modal chrome in the layout component/,
+    );
+  });
+
+  // tempParent is a shallow spread of the enclosing entry: a rejected helper
+  // called without being returned lands in a throwaway field and still throws.
+  it.each([
+    ["revalidate()", (h: any) => h.revalidate(() => false)],
+    ["errorBoundary()", (h: any) => h.errorBoundary(ErrorFallback)],
+    ["notFoundBoundary()", (h: any) => h.notFoundBoundary(NotFoundFallback)],
+    ["parallel()", (h: any) => h.parallel({ "@side": Sidebar })],
+    [
+      "intercept()",
+      (h: any) => h.intercept("@other", ".products", ProductModal),
+    ],
+  ])("%s called but not returned from intercept use() throws", (name, call) => {
+    expect(() =>
+      buildRouteTree(
+        urls((h) => [
+          h.layout(ShopLayout, () => [
+            h.path("/products", ProductList, { name: "products" }),
+            h.path("/products/:id", ProductDetail, { name: "product.detail" }),
+            h.intercept("@modal", ".product.detail", ProductModal, () => {
+              call(h);
+              return [h.loader(PostLoader)];
+            }),
+          ]),
+        ]),
+      ),
+    ).toThrow(
+      `${name} is not valid inside intercept("@modal", ".product.detail") use()`,
+    );
+  });
+
+  it("an unreturned layout() inside intercept use() neither leaks nor displaces the chrome", () => {
+    const tree = buildRouteTree(
+      urls((h) => [
+        h.layout(ShopLayout, () => [
+          h.path("/products", ProductList, { name: "products" }),
+          h.path("/products/:id", ProductDetail, { name: "product.detail" }),
+          h.intercept("@modal", ".product.detail", ProductModal, () => {
+            h.layout(BlogLayout);
+            return [h.layout(RootLayout), h.loader(PostLoader)];
+          }),
+        ]),
+      ]),
+    );
+
+    const layoutEntry = tree.entry("products")!.parent!;
+    expect(layoutEntry.intercept).toHaveLength(1);
+    expect(layoutEntry.intercept[0].layout).toBe(RootLayout);
+    expect(layoutEntry.intercept[0].loader).toHaveLength(1);
+  });
+
+  it("cache() called but not returned from intercept use() still throws", () => {
+    // Its orphan form would re-parent the following siblings onto the cache
+    // entry, silently dropping them from the intercept.
+    const patterns = urls((h) => [
+      h.path("/detail", AboutPage, { name: "detail" }),
+      h.intercept("@modal", ".detail", ProductModal, () => {
+        h.cache();
+        return [h.loader(PostLoader)];
+      }),
+    ]);
+
+    expect(() => buildRouteTree(patterns)).toThrow(
+      /cache\(\) is not valid inside intercept\("@modal", "\.detail"\) use\(\)/,
+    );
+  });
+
+  it("cache() called but not returned from the use() of an intercept declared in a path still throws", () => {
+    // Inside a path, cache() writes the route's cache config instead of
+    // pushing an orphan entry; the intercept's temporary parent catches it.
+    const patterns = urls((h) => [
+      h.path("/detail", AboutPage, { name: "detail" }),
+      h.path("/list", ProductList, { name: "list" }, () => [
+        h.intercept("@modal", ".detail", ProductModal, () => {
+          h.cache();
+          return [h.loader(PostLoader)];
+        }),
+      ]),
+    ]);
+
+    expect(() => buildRouteTree(patterns)).toThrow(
+      /cache\(\) is not valid inside intercept\("@modal", "\.detail"\) use\(\)/,
+    );
+  });
+
+  it("revalidate on an intercept's loader is accepted and stays on the loader", () => {
+    const revalidateFn = () => false;
+    const tree = buildRouteTree(
+      urls(({ path, layout, intercept, loader, revalidate }) => [
+        layout(ShopLayout, () => [
+          path("/products", ProductList, { name: "products" }),
+          path("/products/:id", ProductDetail, { name: "product.detail" }),
+          intercept("@modal", ".product.detail", ProductModal, () => [
+            loader(PostLoader, () => [revalidate(revalidateFn)]),
+          ]),
+        ]),
+      ]),
+    );
+
+    const layoutEntry = tree.entry("products")!.parent!;
+    expect(layoutEntry.intercept[0].loader[0].revalidate).toEqual([
+      revalidateFn,
+    ]);
+    // Nothing leaks onto the enclosing layout's revalidate chain.
+    expect(layoutEntry.revalidate).toHaveLength(0);
   });
 
   it("path inside parallel throws", () => {
@@ -1320,7 +1617,8 @@ describe("route tree inspection", () => {
                   ".item.detail",
                   ModalView,
                   {
-                    when: (ctx: any) => ctx.from.pathname.startsWith("/items"),
+                    when: (ctx: any) =>
+                      ctx.from.url.pathname.startsWith("/items"),
                   },
                   () => [loader(DetailLoader)],
                 ),

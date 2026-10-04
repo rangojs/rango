@@ -1,12 +1,18 @@
 import type { ReactNode } from "react";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 import { sanitizeError } from "../errors";
-import type { ErrorInfo, ErrorPhase, MatchResult } from "../types";
 import type {
-  EntryData,
-  InterceptEntry,
-  InterceptSelectorContext,
-} from "../server/context";
+  ErrorBoundaryHandler,
+  ErrorInfo,
+  ErrorPhase,
+  MatchResult,
+  NotFoundBoundaryHandler,
+} from "../types";
+import {
+  type EntryData,
+  type InterceptEntry,
+  type InterceptSelectorContext,
+} from "../server/context.js";
 import type { MatchApiDeps } from "./types.js";
 import type { RouterContext } from "./router-context.js";
 import { runWithRouterContext } from "./router-context.js";
@@ -30,7 +36,6 @@ import {
   startRevalidationTrace,
   flushRevalidationTrace,
 } from "./logging.js";
-import type { ErrorBoundaryHandler, NotFoundBoundaryHandler } from "../types";
 import type { MiddlewareFn } from "./middleware.js";
 import {
   type TelemetrySink,
@@ -41,6 +46,8 @@ import {
   buildCacheSignalSegments,
 } from "./telemetry.js";
 import { _getRequestContext } from "../server/request-context.js";
+import { ShellRecordUnavailableError } from "../cache/shell-snapshot.js";
+import { recordTransitionWhenRefs } from "./transition-when.js";
 
 /**
  * Per-call telemetry lifecycle emitter for match()/matchPartial(). Each method
@@ -227,6 +234,16 @@ export function createMatchHandlers<TEnv = any>(
     if (reqCtx) reqCtx._cacheSignal = segments;
   };
 
+  const recordTransitionWhenRefsForMatch = (ctx: MatchContext<TEnv>): void => {
+    const reqCtx = _getRequestContext();
+    if (!reqCtx) return;
+    const entry = ctx.manifestEntry;
+    recordTransitionWhenRefs(ctx.entries, reqCtx, {
+      routeName: ctx.routeKey,
+      pattern: entry?.type === "route" ? entry.pattern : undefined,
+    });
+  };
+
   async function createMatchContextForFull(
     request: Request,
     env: TEnv,
@@ -313,6 +330,7 @@ export function createMatchHandlers<TEnv = any>(
           }
 
           const ctx = result as MatchContext<TEnv>;
+          recordTransitionWhenRefsForMatch(ctx);
 
           try {
             const state = createPipelineState();
@@ -343,6 +361,10 @@ export function createMatchHandlers<TEnv = any>(
               emitter.end(0, false, error.status);
               throw error;
             }
+            // A document shell HIT tail's doc record could not supply the
+            // handler layer: a serve-path signal serveShellHit degrades, not a
+            // routing error (the record's decode failure was already reported).
+            if (error instanceof ShellRecordUnavailableError) throw error;
             emitter.error(
               error instanceof Error ? error : new Error(String(error)),
               "routing",
@@ -424,6 +446,7 @@ export function createMatchHandlers<TEnv = any>(
               emitter.end(0, false);
               return null;
             }
+            recordTransitionWhenRefsForMatch(ctx);
 
             if (isRouterDebugEnabled()) {
               startRevalidationTrace({

@@ -1,5 +1,5 @@
 import type {
-  NavigateOptions,
+  NavigateOptionsInternal,
   NavigationStore,
   ResolvedSegment,
   StreamingToken,
@@ -11,18 +11,13 @@ import {
 } from "./scroll-restoration.js";
 import type { EventController, NavigationHandle } from "./event-controller.js";
 import { debugLog } from "./logging.js";
-import { buildHistoryState, pushHistoryWithIdx } from "./history-state.js";
+import {
+  buildHistoryState,
+  mergeLocationState,
+  pushHistoryWithIdx,
+} from "./history-state.js";
 
 export { resolveNavigationState } from "./history-state.js";
-
-/** Check if a history state object contains location state keys. */
-function hasLocationState(state: unknown): boolean {
-  if (!state || typeof state !== "object") return false;
-  return (
-    "state" in state ||
-    Object.keys(state).some((k) => k.startsWith("__rsc_ls_"))
-  );
-}
 
 if (typeof Symbol.dispose === "undefined") {
   (Symbol as any).dispose = Symbol("Symbol.dispose");
@@ -49,6 +44,25 @@ interface CommitOptions {
   cacheOnly?: boolean;
   /** Server-set location state to merge into history.pushState */
   serverState?: Record<string, unknown>;
+  /**
+   * Back/forward: history is already at this entry. Its state (scroll key,
+   * location state, idx) stays as the browser restored it; serverState is
+   * merged in. The page left was saved by handleTraversalStart.
+   */
+  traversal?: boolean;
+  /** The committed route's name (payload metadata), remembered per history entry. */
+  routeName?: string;
+  /**
+   * transition({ when }) decision already made at this navigation's first
+   * presentation (the optimistic clientUrls() swap). Not a commit input: the
+   * partial updater reuses it instead of deciding again.
+   */
+  transitionGatedOff?: boolean;
+  /**
+   * No payload follows this commit: every segment is kept and the tree on
+   * screen stays (EventController.commitLocationState).
+   */
+  treeless?: boolean;
 }
 
 /**
@@ -69,6 +83,10 @@ interface BoundCommitOverrides {
   cacheOnly?: boolean;
   /** Server-set location state to merge into history.pushState */
   serverState?: Record<string, unknown>;
+  /** The committed route's name (payload metadata), remembered per history entry. */
+  routeName?: string;
+  /** No payload follows this commit (CommitOptions.treeless). */
+  treeless?: boolean;
 }
 
 /**
@@ -76,6 +94,14 @@ interface BoundCommitOverrides {
  */
 export interface BoundTransaction {
   readonly currentUrl: string;
+  /** Bound `replace` option (history replace instead of push). */
+  readonly replace?: boolean;
+  /** Bound `traversal` option: a back/forward navigation. */
+  readonly traversal?: boolean;
+  /** Bound user state (resolved), pushed with the entry at commit. */
+  readonly state?: unknown;
+  /** Bound `transitionGatedOff`: the decision made at first presentation. */
+  readonly transitionGatedOff?: boolean;
   /** Start streaming and get a token to end it when the stream completes */
   startStreaming(): StreamingToken;
   /** Commit the navigation. Returns the effective scroll option for the caller to handle. */
@@ -107,7 +133,7 @@ export function createNavigationTransaction(
   store: NavigationStore,
   eventController: EventController,
   url: string,
-  options?: NavigateOptions & { skipLoadingState?: boolean },
+  options?: NavigateOptionsInternal & { skipLoadingState?: boolean },
 ): NavigationTransaction {
   let committed = false;
   const currentUrl = window.location.href;
@@ -131,6 +157,7 @@ export function createNavigationTransaction(
       interceptSourceUrl,
       cacheOnly,
       serverState,
+      traversal,
     } = opts;
 
     const parsedUrl = new URL(url, window.location.origin);
@@ -145,7 +172,7 @@ export function createNavigationTransaction(
       return { scroll: false };
     }
 
-    handleNavigationStart();
+    if (!traversal) handleNavigationStart();
 
     store.setSegmentIds(segmentIds);
     store.setCurrentUrl(url);
@@ -157,9 +184,25 @@ export function createNavigationTransaction(
     store.cacheSegmentsForHistory(historyKey, segments, currentHandleData);
 
     if (storeOnly) {
+      // Same entry (an action refetch): refresh its state, keep its name
+      // unless the payload names it.
+      store.rememberDisplayedEntry(opts.routeName);
       debugLog("[Browser] Store updated (action)");
       handle.complete(parsedUrl);
       return { scroll: false };
+    }
+
+    if (traversal) {
+      // The entry as history restored it, plus what the server adds.
+      const entryState: unknown =
+        serverState && Object.keys(serverState).length > 0
+          ? mergeLocationState(serverState)
+          : window.history.state;
+      store.rememberDisplayedEntry(opts.routeName);
+      eventController.commitLocationState(entryState, opts.treeless);
+      handle.complete(parsedUrl);
+      debugLog("[Browser] Traversal committed, historyKey:", historyKey);
+      return { scroll };
     }
 
     const historyState = buildHistoryState(
@@ -168,14 +211,10 @@ export function createNavigationTransaction(
       serverState,
     );
 
-    const oldState = window.history.state;
-
     pushHistoryWithIdx(historyState, url, replace ?? false);
     ensureHistoryKey();
-
-    if (hasLocationState(oldState) || hasLocationState(historyState)) {
-      window.dispatchEvent(new Event("__rsc_locationstate"));
-    }
+    store.rememberDisplayedEntry(opts.routeName);
+    eventController.commitLocationState(historyState, opts.treeless);
 
     handle.complete(parsedUrl);
 
@@ -199,6 +238,10 @@ export function createNavigationTransaction(
         get currentUrl() {
           return currentUrl;
         },
+        replace: opts.replace,
+        traversal: opts.traversal,
+        state: opts.state,
+        transitionGatedOff: opts.transitionGatedOff,
         startStreaming() {
           return handle.startStreaming();
         },
@@ -229,6 +272,8 @@ export function createNavigationTransaction(
             interceptSourceUrl,
             cacheOnly,
             serverState,
+            routeName: overrides?.routeName ?? opts.routeName,
+            treeless: overrides?.treeless,
           });
         },
       };

@@ -93,15 +93,6 @@ function timeoutTests(f: ReturnType<typeof useFixture>) {
     await expect(page.locator('[data-testid="index-page"]')).toBeVisible();
   });
 
-  test("slow render returns 504 with timeout phase header", async ({
-    request,
-  }) => {
-    const response = await request.get(f.url("/timeout/slow-render"));
-    expect(response.status()).toBe(504);
-    expect(response.headers()["x-rango-timeout-phase"]).toBe("render-start");
-    expect(await response.text()).toBe("Request timed out");
-  });
-
   test("fast render succeeds with 200", async ({ request }) => {
     const response = await request.get(f.url("/timeout/fast-render"));
     expect(response.status()).toBe(200);
@@ -120,14 +111,19 @@ function timeoutTests(f: ReturnType<typeof useFixture>) {
     expect(body.ok).toBe(true);
   });
 
-  test("onError records timeout with metadata", async ({ page }) => {
+  test("slow render returns 504 and records the active routine", async ({
+    page,
+  }) => {
     // Clear any previous error (last-error reads and resets)
     await page.request.get(f.url("/__test/last-error"));
 
     // Trigger a slow render (will timeout at 10s).
     // On CI under load, server processing delays can push the actual
     // timeout beyond 10s, so allow 30s for polling.
-    await page.request.get(f.url("/timeout/slow-render"));
+    const response = await page.request.get(f.url("/timeout/slow-render"));
+    expect(response.status()).toBe(504);
+    expect(response.headers()["x-rango-timeout-phase"]).toBe("render-start");
+    expect(await response.text()).toBe("Request timed out");
 
     const error = await waitForOnError(
       page,
@@ -141,6 +137,13 @@ function timeoutTests(f: ReturnType<typeof useFixture>) {
     expect(error.metadata).toBeDefined();
     expect(error.metadata!.timeout).toBe(true);
     expect(error.metadata!.phase).toBe("render-start");
+    expect(error.metadata!.routine).toMatchObject({
+      name: "document",
+      path: ["prepare:full", "match"],
+    });
+    expect(
+      (error.metadata!.routine as { durationMs: number }).durationMs,
+    ).toBeGreaterThan(0);
   });
 
   test("HTML setup timeout reports the foreground render stage", async ({
@@ -163,6 +166,10 @@ function timeoutTests(f: ReturnType<typeof useFixture>) {
       state: "running",
       completed: 1,
       total: 3,
+    });
+    expect(error.metadata?.routine).toMatchObject({
+      name: "document",
+      path: ["render", "html"],
     });
   });
 
@@ -215,6 +222,7 @@ test.describe("timeout", () => {
     root: "./e2e/e2e-timeout",
     mode: "dev",
     isolatedServer: true,
+    cliOptions: { env: { INTERNAL_RANGO_DEBUG: "1" } },
   });
 
   timeoutTests(f);
@@ -224,6 +232,7 @@ test.describe("timeout (production)", () => {
   const f = useFixture({
     root: "./e2e/e2e-timeout",
     mode: "build",
+    cliOptions: { env: { INTERNAL_RANGO_DEBUG: "1" } },
   });
 
   test.setTimeout(120000);

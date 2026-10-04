@@ -11,7 +11,7 @@ const isUIMode = process.argv.includes("--ui");
 export default defineConfig({
   testDir: "e2e",
   fullyParallel: true,
-  globalTimeout: 600000, // 10 minutes max
+  globalTimeout: process.env.CI ? 10 * 60 * 1000 : undefined,
   timeout: process.env.CI ? 60000 : 30000, // 60s on CI, 30s locally
   use: {
     screenshot: "only-on-failure",

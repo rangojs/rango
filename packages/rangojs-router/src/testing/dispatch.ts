@@ -106,6 +106,7 @@ import {
   runWithRequestContext,
   setRequestContextParams,
 } from "../server/request-context.js";
+import { resolveRouterVersions } from "../server/build-version-table.js";
 import { executeMiddleware, matchMiddleware } from "../router/middleware.js";
 import type {
   MiddlewareEntry,
@@ -116,6 +117,11 @@ import {
   stripInternalParams,
 } from "../router/handler-context.js";
 import { NOCACHE_SYMBOL } from "../cache/taint.js";
+import {
+  compileSearchParamsFilter,
+  type CacheSearchParams,
+  type SearchParamsFilter,
+} from "../cache/search-params-filter.js";
 import type { SegmentCacheStore } from "../cache/types.js";
 import type { CacheProfile } from "../cache/profile-registry.js";
 // cache-scope is loaded LAZILY inside the response-route cache path (below):
@@ -146,9 +152,11 @@ import type { TelemetrySink } from "../router/telemetry.js";
 import {
   RouterTimeoutError,
   createDefaultTimeoutResponse,
+  isTimeoutEnabled,
   withTimeout,
 } from "../router/timeout.js";
 import type { OnTimeoutCallback, ResolvedTimeouts } from "../router/timeout.js";
+import { applyStreamIdleTimeout } from "../rsc/stream-idle.js";
 
 /**
  * The internal subset of the router surface dispatch depends on. The public
@@ -159,6 +167,8 @@ import type { OnTimeoutCallback, ResolvedTimeouts } from "../router/timeout.js";
 interface DispatchableRouter<TEnv> {
   id?: string;
   routerId?: string;
+  /** createRouter({ version }), the consumer-set version. */
+  version?: string;
   routeMap: Record<string, unknown>;
   middleware: MiddlewareEntry<TEnv>[];
   onError?: OnErrorCallback<TEnv>;
@@ -193,11 +203,19 @@ interface DispatchableRouter<TEnv> {
   } | null>;
   basename?: string;
   cache?:
-    | { enabled?: boolean; store?: SegmentCacheStore }
+    | {
+        enabled?: boolean;
+        store?: SegmentCacheStore;
+        searchParams?: CacheSearchParams;
+      }
     | ((
         env: TEnv,
         executionContext: unknown,
-      ) => { enabled?: boolean; store?: SegmentCacheStore });
+      ) => {
+        enabled?: boolean;
+        store?: SegmentCacheStore;
+        searchParams?: CacheSearchParams;
+      });
   cacheProfiles?: Record<string, CacheProfile>;
 }
 
@@ -375,13 +393,17 @@ export async function dispatch<TEnv = any>(
   // "use cache" inside a response-route handler reaches the request-scope
   // (NOCACHE) detection below instead of bypassing on a missing store.
   let cacheStore: SegmentCacheStore | undefined;
+  let searchParamsFilter: SearchParamsFilter | undefined;
   const cacheOption = router.cache;
   if (cacheOption && !url.searchParams.has("__no_cache")) {
     const cacheConfig =
       typeof cacheOption === "function"
         ? cacheOption(env, undefined)
         : cacheOption;
-    if (cacheConfig.enabled !== false) cacheStore = cacheConfig.store;
+    if (cacheConfig.enabled !== false) {
+      cacheStore = cacheConfig.store;
+      searchParamsFilter = compileSearchParamsFilter(cacheConfig.searchParams);
+    }
   }
 
   const requestContext = createRequestContext<TEnv>({
@@ -390,7 +412,11 @@ export async function dispatch<TEnv = any>(
     url,
     variables,
     cacheStore,
+    searchParamsFilter,
     cacheProfiles: router.cacheProfiles,
+    // The store keys with the router's versions, resolved as the production
+    // handler resolves them (rsc/handler.ts).
+    versions: resolveRouterVersions(routerId, router.version),
   });
   // Wire background error reporting so cache degradation (reportCacheError ->
   // _reportBackgroundError) reaches the router's onError, mirroring the production
@@ -607,9 +633,9 @@ export async function dispatch<TEnv = any>(
       const manifestEntry = preview?.manifestEntry;
       if (manifestEntry) {
         // Lazy so the testing barrel's eager graph stays plugin-rsc-free (see the
-        // import note above): the leaf takes createCacheScope/resolveCacheTags as
-        // INJECTED deps so it never imports plugin-rsc; we hand it the lazily
-        // imported pair here, only once a response route actually matched.
+        // import note above): the leaf takes createCacheScope as an INJECTED
+        // dep so it never imports plugin-rsc; we hand it the lazily imported
+        // builder here, only once a response route actually matched.
         const cacheScopeMod = await import("../cache/cache-scope.js");
         const { serveResponseRouteWithCache } =
           await import("../rsc/response-cache-serve.js");
@@ -625,10 +651,7 @@ export async function dispatch<TEnv = any>(
           responseType: responseType as string,
           url,
           executeHandler,
-          deps: {
-            createCacheScope: cacheScopeMod.createCacheScope,
-            resolveCacheTags: cacheScopeMod.resolveCacheTags,
-          },
+          deps: { createCacheScope: cacheScopeMod.createCacheScope },
         });
         if (cached !== undefined) return cached;
       }
@@ -836,7 +859,59 @@ export async function dispatch<TEnv = any>(
       // it leaves -- a cross-origin Location is rewritten to the basename root
       // unless redirect(url, { external: true }) opted out. Soft partial/action
       // redirects are already resolved at createSimpleRedirectResponse time.
-      return guardOutgoingRedirect(finalResponse, url.origin, router.basename);
+      const guardedResponse = guardOutgoingRedirect(
+        finalResponse,
+        url.origin,
+        router.basename,
+      );
+
+      // Mirror production's stream-idle watchdog (handler.ts response tail),
+      // same gating and reporting — dispatch is the userland dogfood surface
+      // for timeouts.streamIdleMs, so the primitive carries the real wiring,
+      // not a stub. Websocket check FIRST (an upgrade response's body getter
+      // must never be poked); onTimeout does not apply mid-stream.
+      const streamIdleMs = router.timeouts?.streamIdleMs;
+      if (
+        isTimeoutEnabled(streamIdleMs) &&
+        !isWebSocketUpgradeResponse(guardedResponse) &&
+        guardedResponse.body
+      ) {
+        return applyStreamIdleTimeout(
+          guardedResponse,
+          streamIdleMs!,
+          (trip) => {
+            invokeOnError(
+              router.onError,
+              trip.error,
+              "handler",
+              {
+                request: req,
+                url,
+                env,
+                handledByBoundary: false,
+                metadata: {
+                  timeout: true,
+                  phase: "stream-idle",
+                  durationMs: trip.totalMs,
+                },
+              },
+              "RSC",
+            );
+            if (sink) {
+              safeEmit(resolveSink(sink), {
+                type: "request.timeout",
+                timestamp: performance.now(),
+                requestId: telemetryRequestId,
+                phase: "stream-idle",
+                pathname: url.pathname,
+                durationMs: trip.totalMs,
+                customHandler: false,
+              });
+            }
+          },
+        );
+      }
+      return guardedResponse;
     } catch (error) {
       if (sink) {
         if (error instanceof Response) {

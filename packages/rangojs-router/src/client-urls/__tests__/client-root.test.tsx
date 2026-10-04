@@ -1,0 +1,1024 @@
+// @vitest-environment happy-dom
+
+import { afterEach, describe, expect, it } from "vitest";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
+import { useEffect, useState, type ReactNode } from "react";
+import {
+  createLocationState,
+  Outlet,
+  useLocationState,
+  useOutlet,
+} from "../../client.js";
+import { buildHistoryState } from "../../browser/history-state.js";
+import { LocationStateContext } from "../../browser/react/context.js";
+import {
+  locationStateSnapshot,
+  resolveLocationStateEntries,
+} from "../../browser/react/location-state-shared.js";
+import { withLocationStateKey } from "../../testing/index.js";
+import { MountContextProvider } from "../../browser/react/mount-context.js";
+import { OutletProvider } from "../../outlet-provider.js";
+import type { LoaderDefinition } from "../../types.js";
+import { useLoader } from "../../use-loader.js";
+import { useParams } from "../../browser/react/use-params.js";
+import { usePathname } from "../../browser/react/use-pathname.js";
+import { useSearchParams } from "../../browser/react/use-search-params.js";
+import {
+  ClientUrlsGroupLayout,
+  ClientUrlsInterceptLoading,
+  ClientUrlsInterceptSlot,
+  ClientUrlsLoading,
+  ClientUrlsRoot,
+} from "../client-root.js";
+import { clientUrls } from "../client-urls.js";
+import {
+  beginClientUrlNavigation,
+  clearClientUrlNavigationRegistry,
+  collectClientRevalidationDecisions,
+  registerClientUrlGroup,
+  setActiveInterceptTargets,
+} from "../navigation.js";
+import { decodeClientRevalidationDecisions } from "../revalidation-protocol.js";
+
+afterEach(() => {
+  cleanup();
+  clearClientUrlNavigationRegistry();
+});
+
+describe("ClientUrlsRoot", () => {
+  // Shared by the optimistic-destination tests below.
+  const AccountLoader = {
+    __brand: "loader",
+    $$id: "loaders/account#AccountLoader",
+  } as LoaderDefinition<{ name: string }>;
+  function AppLayout(): ReactNode {
+    const outlet = useOutlet();
+    return <main data-pending={String(outlet.pending)}>{outlet.content}</main>;
+  }
+  function HomePage(): ReactNode {
+    return <p>Home</p>;
+  }
+
+  it("renders nested layout outlets while retaining outer loader context", () => {
+    const AccountLoader = {
+      __brand: "loader",
+      $$id: "loaders/account#AccountLoader",
+    } as LoaderDefinition<{ name: string }>;
+
+    function AppLayout(): ReactNode {
+      return (
+        <main data-testid="app-layout">
+          <Outlet />
+        </main>
+      );
+    }
+
+    function AccountLayout(): ReactNode {
+      return (
+        <section data-testid="account-layout">
+          <Outlet />
+        </section>
+      );
+    }
+
+    function AccountPage(): ReactNode {
+      const { data } = useLoader(AccountLoader);
+      return <p data-testid="account-page">{data.name}</p>;
+    }
+
+    const definition = clientUrls(({ layout, path }) => [
+      layout(AppLayout, () => [
+        layout(AccountLayout, () => [path("/account", AccountPage)]),
+      ]),
+    ]);
+
+    const result = render(
+      <OutletProvider
+        content={null}
+        loaderData={{ [AccountLoader.$$id]: { name: "Ada" } }}
+      >
+        <ClientUrlsRoot definition={definition} routeId="client-route-0" />
+      </OutletProvider>,
+    );
+
+    const app = result.getByTestId("app-layout");
+    const account = result.getByTestId("account-layout");
+    const page = result.getByTestId("account-page");
+    expect(app.contains(account)).toBe(true);
+    expect(account.contains(page)).toBe(true);
+    expect(page.textContent).toBe("Ada");
+  });
+
+  it("renders a route directly when it has no layouts", () => {
+    function HomePage(): ReactNode {
+      return <p data-testid="home">Home</p>;
+    }
+
+    const definition = clientUrls(({ path }) => [path("/", HomePage)]);
+    const result = render(
+      <ClientUrlsRoot definition={definition} routeId="client-route-0" />,
+    );
+
+    expect(result.getByTestId("home").textContent).toBe("Home");
+  });
+
+  it("throws a clear error when the route id and definition do not match", () => {
+    function HomePage(): null {
+      return null;
+    }
+
+    const definition = clientUrls(({ path }) => [path("/", HomePage)]);
+
+    expect(() =>
+      render(
+        <ClientUrlsRoot definition={definition} routeId="client-route-9" />,
+      ),
+    ).toThrow(
+      'Client URL route mismatch: route id "client-route-9" was not found in the provided definition',
+    );
+  });
+
+  it("renders destination loading and scopes pending to its layouts", async () => {
+    // Reads a destination loader: no data exists before the canonical
+    // response, so the read suspends into the route's loading() boundary.
+    function AccountPage(): ReactNode {
+      const { data } = useLoader(AccountLoader);
+      return <p>Account {data.name}</p>;
+    }
+
+    const definition = clientUrls(({ layout, path, loader, loading }) => [
+      layout(AppLayout, () => [
+        path("/", HomePage),
+        path("/account", AccountPage, () => [
+          loader(AccountLoader),
+          loading(<p>Loading account</p>),
+        ]),
+      ]),
+    ]);
+    const result = render(
+      <ClientUrlsRoot definition={definition} routeId="client-route-0" />,
+    );
+    const abort = new AbortController();
+
+    const presentation: {
+      current: ReturnType<typeof beginClientUrlNavigation>;
+    } = { current: null };
+    await act(async () => {
+      presentation.current = beginClientUrlNavigation(
+        new URL("http://localhost/account"),
+        abort.signal,
+      );
+    });
+
+    expect(presentation.current?.routeId).toBe("client-route-1");
+    expect(result.getByText("Loading account")).toBeDefined();
+    expect(result.container.querySelector("main")?.dataset.pending).toBe(
+      "true",
+    );
+
+    await act(async () => presentation.current?.clear());
+    expect(result.getByText("Home")).toBeDefined();
+    expect(result.container.querySelector("main")?.dataset.pending).toBe(
+      "false",
+    );
+  });
+
+  it("renders the destination component immediately when nothing suspends", async () => {
+    function AccountPage(): ReactNode {
+      return <p>Account</p>;
+    }
+
+    // No loading(), no loader read: the destination component IS the
+    // immediate presentation. Home is gone before any response.
+    const definition = clientUrls(({ layout, path }) => [
+      layout(AppLayout, () => [
+        path("/", HomePage),
+        path("/account", AccountPage),
+      ]),
+    ]);
+    const result = render(
+      <ClientUrlsRoot definition={definition} routeId="client-route-0" />,
+    );
+    const abort = new AbortController();
+    let presentation: ReturnType<typeof beginClientUrlNavigation> = null;
+    await act(async () => {
+      presentation = beginClientUrlNavigation(
+        new URL("http://localhost/account"),
+        abort.signal,
+      );
+    });
+
+    expect(result.getByText("Account")).toBeDefined();
+    expect(result.queryByText("Home")).toBeNull();
+    expect(result.container.querySelector("main")?.dataset.pending).toBe(
+      "true",
+    );
+
+    await act(async () => presentation?.clear());
+    expect(result.getByText("Home")).toBeDefined();
+  });
+
+  it("holds the current content when the destination suspends with no boundary", async () => {
+    function AccountPage(): ReactNode {
+      const { data } = useLoader(AccountLoader);
+      return <p>Account {data.name}</p>;
+    }
+
+    // The optimistic swap renders in a transition lane: a suspended
+    // destination with no loading() and no inline boundary keeps the current
+    // content visible (the pre-existing contract), pending still flips.
+    const definition = clientUrls(({ layout, path, loader }) => [
+      layout(AppLayout, () => [
+        path("/", HomePage),
+        path("/account", AccountPage, () => [loader(AccountLoader)]),
+      ]),
+    ]);
+    const result = render(
+      <ClientUrlsRoot definition={definition} routeId="client-route-0" />,
+    );
+    const abort = new AbortController();
+    await act(async () => {
+      beginClientUrlNavigation(
+        new URL("http://localhost/account"),
+        abort.signal,
+      );
+    });
+
+    expect(result.getByText("Home")).toBeDefined();
+    expect(result.queryByText(/Account/)).toBeNull();
+    expect(result.container.querySelector("main")?.dataset.pending).toBe(
+      "true",
+    );
+  });
+
+  it("keeps the optimistic instance across the canonical commit", async () => {
+    let accountMounts = 0;
+    function AccountPage(): ReactNode {
+      const [text, setText] = useState("");
+      useEffect(() => {
+        accountMounts += 1;
+      }, []);
+      return (
+        <input
+          data-testid="account-input"
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+        />
+      );
+    }
+    const definition = clientUrls(({ layout, path }) => [
+      layout(AppLayout, () => [
+        path("/", HomePage),
+        path("/account", AccountPage),
+      ]),
+    ]);
+    const result = render(
+      <ClientUrlsRoot definition={definition} routeId="client-route-0" />,
+    );
+    const abort = new AbortController();
+    let presentation: ReturnType<typeof beginClientUrlNavigation> = null;
+    await act(async () => {
+      presentation = beginClientUrlNavigation(
+        new URL("http://localhost/account"),
+        abort.signal,
+      );
+    });
+    const input = result.getByTestId("account-input") as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "typed while pending" } });
+    });
+    expect(input.value).toBe("typed while pending");
+
+    // Canonical commit: the group-keyed segment reconciles the same
+    // ClientUrlsRoot with the destination's routeId; the presentation clears.
+    // The wrapper chain is identical in both states, so the instance — and
+    // the state typed during the window — survives.
+    await act(async () => {
+      result.rerender(
+        <ClientUrlsRoot definition={definition} routeId="client-route-1" />,
+      );
+      presentation?.clear();
+    });
+    expect(
+      (result.getByTestId("account-input") as HTMLInputElement).value,
+    ).toBe("typed while pending");
+    expect(accountMounts).toBe(1);
+  });
+
+  it("scopes route hooks to the optimistic branch", async () => {
+    function ItemPage(): ReactNode {
+      const params = useParams<{ itemId: string }>();
+      const pathname = usePathname();
+      const [search] = useSearchParams();
+      return (
+        <p data-testid="item">
+          {params.itemId}|{pathname}|{search.get("tab")}
+        </p>
+      );
+    }
+
+    // Inside the optimistically rendered destination the route hooks
+    // describe THAT route (local match params, absolute pathname, search);
+    // outside it they keep the committed location (no store here: defaults).
+    const definition = clientUrls(({ path }) => [
+      path("/", HomePage),
+      path("/items/:itemId", ItemPage),
+    ]);
+    const result = render(
+      <MountContextProvider value="/shop">
+        <ClientUrlsRoot definition={definition} routeId="client-route-0" />
+      </MountContextProvider>,
+    );
+    const abort = new AbortController();
+    await act(async () => {
+      beginClientUrlNavigation(
+        new URL("http://localhost/shop/items/42?tab=specs"),
+        abort.signal,
+      );
+    });
+
+    expect(result.getByTestId("item").textContent).toBe(
+      "42|/shop/items/42|specs",
+    );
+  });
+
+  // #1029: the provider still holds the entry being left while the
+  // destination is presented optimistically. Inside the branch a reader gets
+  // the entry the navigation will push; outside it, the committed entry's.
+  describe("location state in the optimistic branch", () => {
+    const Note = withLocationStateKey(
+      createLocationState<{ text: string }>(),
+      "OptimisticNote",
+    );
+    const Flash = withLocationStateKey(
+      createLocationState<{ text: string }>({ flash: true }),
+      "OptimisticFlash",
+    );
+    const read = (where: string) =>
+      function Reader(): ReactNode {
+        const note = useLocationState(Note);
+        const flash = useLocationState(Flash);
+        return (
+          <p data-testid={where}>
+            {`${where}: ${note?.text ?? "none"}/${flash?.text ?? "none"}`}
+          </p>
+        );
+      };
+    const Chrome = read("chrome");
+    const LayoutReader = read("layout");
+    const HomeReader = read("home");
+    const ItemReader = read("item");
+    function GroupLayout(): ReactNode {
+      return (
+        <main>
+          <LayoutReader />
+          {useOutlet().content}
+        </main>
+      );
+    }
+    const definition = clientUrls(({ layout, path }) => [
+      layout(GroupLayout, () => [
+        path("/", HomeReader),
+        path("/items/:itemId", ItemReader),
+      ]),
+    ]);
+    const entry = (
+      ...entries: Parameters<typeof resolveLocationStateEntries>[0]
+    ) => buildHistoryState(resolveLocationStateEntries(entries));
+    const source = entry(Note({ text: "source" }));
+    // What NavigationProvider provides: the committed entry's state.
+    const tree = (routeId: string, committed: unknown): ReactNode => (
+      <LocationStateContext.Provider value={locationStateSnapshot(committed)}>
+        <Chrome />
+        <ClientUrlsRoot definition={definition} routeId={routeId} />
+      </LocationStateContext.Provider>
+    );
+    const mount = () => {
+      window.history.replaceState(source, "");
+      return render(tree("client-route-0", source));
+    };
+    const text = (result: ReturnType<typeof render>, where: string) =>
+      result.queryByTestId(where)?.textContent ?? null;
+
+    afterEach(() => window.history.replaceState(null, ""));
+
+    it("the destination and the group layout read the navigation's state on the first optimistic render; chrome keeps the committed entry's", async () => {
+      const result = mount();
+      expect(text(result, "home")).toBe("home: source/none");
+      const abort = new AbortController();
+      let presentation: ReturnType<typeof beginClientUrlNavigation> = null;
+      await act(async () => {
+        presentation = beginClientUrlNavigation(
+          new URL("http://localhost/items/42"),
+          abort.signal,
+          () => entry(Note({ text: "destination" }), Flash({ text: "saved" })),
+        );
+      });
+
+      expect(text(result, "item")).toBe("item: destination/saved");
+      expect(text(result, "layout")).toBe("layout: destination/saved");
+      expect(text(result, "chrome")).toBe("chrome: source/none");
+      expect(text(result, "home")).toBeNull();
+      // Presentation only: the entry being left is untouched, and a flash
+      // reader has not consumed a slot history does not hold yet.
+      expect(window.history.state).toEqual(source);
+
+      // Cancelled or superseded before the commit: the branch and its state
+      // are discarded.
+      await act(async () => presentation?.clear());
+      expect(text(result, "home")).toBe("home: source/none");
+      expect(text(result, "layout")).toBe("layout: source/none");
+      expect(text(result, "item")).toBeNull();
+    });
+
+    it("the canonical commit hands every reader the pushed entry, and a flash slot read in the branch is cleared only then", async () => {
+      const result = mount();
+      const pushed = entry(
+        Note({ text: "destination" }),
+        Flash({ text: "saved" }),
+      );
+      let presentation: ReturnType<typeof beginClientUrlNavigation> = null;
+      await act(async () => {
+        presentation = beginClientUrlNavigation(
+          new URL("http://localhost/items/42"),
+          new AbortController().signal,
+          () => pushed,
+        );
+      });
+      expect(text(result, "item")).toBe("item: destination/saved");
+      expect(text(result, "chrome")).toBe("chrome: source/none");
+      expect(window.history.state).toEqual(source);
+
+      // What the canonical commit does: the entry is pushed, the payload
+      // re-renders the group on the destination's route with the entry's
+      // state, and the presentation clears.
+      await act(async () => {
+        window.history.replaceState(pushed, "");
+        result.rerender(tree("client-route-1", pushed));
+        presentation?.clear();
+      });
+      for (const where of ["item", "layout", "chrome"]) {
+        expect(text(result, where)).toBe(`${where}: destination/saved`);
+      }
+      expect(Note.read()).toEqual({ text: "destination" });
+      expect(window.history.state).not.toHaveProperty(Flash.__rsc_ls_key);
+    });
+
+    it("a navigation without state presents a destination with none, not the leaving entry's", async () => {
+      const result = mount();
+      await act(async () => {
+        beginClientUrlNavigation(
+          new URL("http://localhost/items/42"),
+          new AbortController().signal,
+          () => entry(),
+        );
+      });
+      expect(text(result, "item")).toBe("item: none/none");
+      expect(text(result, "layout")).toBe("layout: none/none");
+      expect(text(result, "chrome")).toBe("chrome: source/none");
+    });
+
+    it("a same-route intent swaps nothing: every reader keeps the committed entry's state", async () => {
+      const result = mount();
+      await act(async () => {
+        beginClientUrlNavigation(
+          new URL("http://localhost/?tab=2"),
+          new AbortController().signal,
+          () => entry(Note({ text: "destination" })),
+        );
+      });
+      expect(text(result, "home")).toBe("home: source/none");
+      expect(text(result, "layout")).toBe("layout: source/none");
+      expect(text(result, "chrome")).toBe("chrome: source/none");
+    });
+  });
+
+  it("signals pending on a same-route intent without presenting loading", async () => {
+    function AppLayout(): ReactNode {
+      const outlet = useOutlet();
+      return (
+        <main data-pending={String(outlet.pending)}>{outlet.content}</main>
+      );
+    }
+
+    function HomePage(): ReactNode {
+      return <p>Home</p>;
+    }
+
+    // The route HAS a loading() node — the stronger pin: a same-route intent
+    // (filter/search nav) must keep the current content, never swap to the
+    // route's own loading, while still reporting pending to the layouts.
+    const definition = clientUrls(({ layout, path, loading }) => [
+      layout(AppLayout, () => [
+        path("/", HomePage, () => [loading(<p>Loading home</p>)]),
+      ]),
+    ]);
+    const result = render(
+      <ClientUrlsRoot definition={definition} routeId="client-route-0" />,
+    );
+    const abort = new AbortController();
+
+    const presentation: {
+      current: ReturnType<typeof beginClientUrlNavigation>;
+    } = { current: null };
+    await act(async () => {
+      presentation.current = beginClientUrlNavigation(
+        new URL("http://localhost/?category=electronics"),
+        abort.signal,
+      );
+    });
+
+    expect(presentation.current?.routeId).toBe("client-route-0");
+    expect(result.getByText("Home")).toBeDefined();
+    expect(result.queryByText("Loading home")).toBeNull();
+    expect(result.container.querySelector("main")?.dataset.pending).toBe(
+      "true",
+    );
+
+    await act(async () => presentation.current?.clear());
+    expect(result.getByText("Home")).toBeDefined();
+    expect(result.container.querySelector("main")?.dataset.pending).toBe(
+      "false",
+    );
+  });
+
+  it("matches mount-relative patterns under the include() prefix and ignores outside paths", async () => {
+    function AppLayout(): ReactNode {
+      const outlet = useOutlet();
+      return (
+        <main data-pending={String(outlet.pending)}>{outlet.content}</main>
+      );
+    }
+
+    function IndexPage(): ReactNode {
+      return <p>Index</p>;
+    }
+
+    function DetailPage(): ReactNode {
+      return <p>Detail</p>;
+    }
+
+    // Patterns are definition-LOCAL; the include() mount ("/catalog", read via
+    // useMount) is stripped from the navigated pathname before matching.
+    const definition = clientUrls(({ layout, path, loading }) => [
+      layout(AppLayout, () => [
+        path("/", IndexPage),
+        path("/:productId", DetailPage, () => [loading(<p>Loading detail</p>)]),
+      ]),
+    ]);
+    const result = render(
+      <MountContextProvider value="/catalog">
+        <ClientUrlsRoot definition={definition} routeId="client-route-0" />
+      </MountContextProvider>,
+    );
+    const abort = new AbortController();
+
+    // A navigation OUTSIDE the mount gets no optimistic presentation.
+    let outside: ReturnType<typeof beginClientUrlNavigation> = null;
+    await act(async () => {
+      outside = beginClientUrlNavigation(
+        new URL("http://localhost/elsewhere/espresso"),
+        abort.signal,
+      );
+    });
+    expect(outside).toBeNull();
+    expect(result.container.querySelector("main")?.dataset.pending).toBe(
+      "false",
+    );
+
+    // Inside the mount, the local pathname "/espresso" matches the detail
+    // route and presents it.
+    const presentation: {
+      current: ReturnType<typeof beginClientUrlNavigation>;
+    } = { current: null };
+    await act(async () => {
+      presentation.current = beginClientUrlNavigation(
+        new URL("http://localhost/catalog/espresso"),
+        abort.signal,
+      );
+    });
+    expect(presentation.current?.routeId).toBe("client-route-1");
+    // Nothing in DetailPage suspends, so the component itself presents.
+    expect(result.getByText("Detail")).toBeDefined();
+    expect(result.container.querySelector("main")?.dataset.pending).toBe(
+      "true",
+    );
+
+    // The bare mount is the module index.
+    await act(async () => presentation.current?.clear());
+    let bare: ReturnType<typeof beginClientUrlNavigation> = null;
+    await act(async () => {
+      bare = beginClientUrlNavigation(
+        new URL("http://localhost/catalog"),
+        abort.signal,
+      );
+    });
+    expect((bare as ReturnType<typeof beginClientUrlNavigation>)?.routeId).toBe(
+      "client-route-0",
+    );
+  });
+
+  it("treats a falsy loading node as configured destination loading", async () => {
+    function AppLayout(): ReactNode {
+      const outlet = useOutlet();
+      return (
+        <main data-pending={String(outlet.pending)}>{outlet.content}</main>
+      );
+    }
+
+    function HomePage(): ReactNode {
+      return <p>Home</p>;
+    }
+
+    function AccountPage(): ReactNode {
+      return <p>Account</p>;
+    }
+
+    // Presence must follow the projection's hasLoading (`!== undefined`), not
+    // truthiness: loading("") is a configured empty loading state, so the
+    // current branch must be replaced, not retained.
+    const definition = clientUrls(({ layout, path, loading }) => [
+      layout(AppLayout, () => [
+        path("/", HomePage),
+        path("/account", AccountPage, () => [loading("")]),
+      ]),
+    ]);
+    const result = render(
+      <ClientUrlsRoot definition={definition} routeId="client-route-0" />,
+    );
+    const abort = new AbortController();
+
+    await act(async () => {
+      beginClientUrlNavigation(
+        new URL("http://localhost/account"),
+        abort.signal,
+      );
+    });
+
+    expect(result.queryByText("Home")).toBeNull();
+    expect(result.container.querySelector("main")?.dataset.pending).toBe(
+      "true",
+    );
+  });
+});
+
+describe("intercept coordination", () => {
+  function Page(): null {
+    return null;
+  }
+
+  it("declines the optimistic presentation for intercept-claimed targets", () => {
+    const definition = clientUrls(({ path }) => [
+      path("/", Page, { name: "index" }),
+      path("/items/:itemId", Page, { name: "item" }),
+    ]);
+    const intents: Array<unknown> = [];
+    registerClientUrlGroup(
+      definition,
+      "/client-urls-intercept",
+      "clientIntercept",
+      (intent) => intents.push(intent),
+    );
+    setActiveInterceptTargets(["clientIntercept.item"]);
+    const abort = new AbortController();
+
+    // The canonical name (namePrefix + local name) is claimed: no intent, no
+    // presentation — the canonical response will commit the modal instead.
+    const claimed = beginClientUrlNavigation(
+      new URL("http://localhost/client-urls-intercept/items/alpha"),
+      abort.signal,
+    );
+    expect(claimed).toBeNull();
+    expect(intents).toEqual([]);
+
+    // A non-claimed sibling route in the same group still presents.
+    const allowed = beginClientUrlNavigation(
+      new URL("http://localhost/client-urls-intercept"),
+      abort.signal,
+    );
+    expect(allowed?.routeId).toBe("client-route-0");
+  });
+
+  it("clears the target set with the registry and treats missing metadata as empty", () => {
+    const definition = clientUrls(({ path }) => [
+      path("/items/:itemId", Page, { name: "item" }),
+    ]);
+    registerClientUrlGroup(definition, "/", "", () => {});
+    setActiveInterceptTargets(["item"]);
+    clearClientUrlNavigationRegistry();
+
+    registerClientUrlGroup(definition, "/", "", () => {});
+    setActiveInterceptTargets(undefined);
+    const abort = new AbortController();
+    const presentation = beginClientUrlNavigation(
+      new URL("http://localhost/items/alpha"),
+      abort.signal,
+    );
+    expect(presentation?.routeId).toBe("client-route-0");
+  });
+});
+
+describe("client-declared intercept rendering", () => {
+  function DetailPage(): null {
+    return null;
+  }
+
+  function DetailModal(): ReactNode {
+    return <p data-testid="detail-modal">Modal</p>;
+  }
+
+  const definition = clientUrls(({ path, intercept, loading }) => [
+    path("/detail/:id", DetailPage, { name: "detail" }),
+    intercept("@modal", ".detail", DetailModal, () => [
+      loading(<p data-testid="modal-loading">Loading modal</p>),
+    ]),
+  ]);
+
+  it("renders the intercept component and loading node by index", () => {
+    const result = render(
+      <ClientUrlsInterceptSlot definition={definition} interceptIndex={0} />,
+    );
+    expect(result.getByTestId("detail-modal").textContent).toBe("Modal");
+
+    const loadingNode = ClientUrlsInterceptLoading({
+      definition,
+      interceptIndex: 0,
+    });
+    const loadingResult = render(<>{loadingNode}</>);
+    expect(loadingResult.getByTestId("modal-loading")).toBeDefined();
+  });
+
+  it("throws a clear mismatch error for an unknown intercept index", () => {
+    expect(() =>
+      render(
+        <ClientUrlsInterceptSlot definition={definition} interceptIndex={3} />,
+      ),
+    ).toThrow(
+      "Client URL intercept mismatch: intercept index 3 was not found in the provided definition",
+    );
+    expect(() =>
+      ClientUrlsInterceptLoading({ definition, interceptIndex: 3 }),
+    ).toThrow(
+      "Client URL intercept mismatch: intercept index 3 was not found in the provided definition",
+    );
+  });
+
+  it("renders child and slot outlets from the group layout", () => {
+    const slotSegment = {
+      id: "test.slot",
+      slot: "@modal",
+      component: <p data-testid="group-slot">Slot</p>,
+    } as unknown as import("../../types.js").ResolvedSegment;
+    const result = render(
+      <OutletProvider
+        content={<p data-testid="group-child">Child</p>}
+        parallel={[slotSegment]}
+      >
+        <ClientUrlsGroupLayout slotNames={["@modal"]} />
+      </OutletProvider>,
+    );
+    expect(result.getByTestId("group-child")).toBeDefined();
+    expect(result.getByTestId("group-slot")).toBeDefined();
+  });
+});
+
+describe("client revalidation decisions", () => {
+  function Page(): null {
+    return null;
+  }
+
+  const SessionLoader = {
+    __brand: "loader",
+    $$id: "loaders#session",
+  } as LoaderDefinition<unknown>;
+  const ItemLoader = {
+    __brand: "loader",
+    $$id: "loaders#item",
+  } as LoaderDefinition<unknown>;
+
+  it("runs per-loader predicates on the held route and encodes only non-default verdicts", () => {
+    // Session skips action revalidation; item follows defaults (no predicate).
+    const definition = clientUrls(({ path, loader, revalidate }) => [
+      path("/items/:itemId", Page, { name: "item" }, () => [
+        loader(SessionLoader, () => [
+          revalidate(({ isAction, defaultShouldRevalidate }) =>
+            isAction() ? false : defaultShouldRevalidate,
+          ),
+        ]),
+        loader(ItemLoader),
+      ]),
+    ]);
+    registerClientUrlGroup(definition, "/shop", "shop", () => {});
+
+    // Action on the held route: default true, session predicate says false.
+    const action = collectClientRevalidationDecisions({
+      currentUrl: new URL("http://localhost/shop/items/a"),
+      nextUrl: new URL("http://localhost/shop/items/a"),
+      actionRequest: true,
+      isAction: true,
+      actionId: "actions#bump",
+      stale: false,
+    });
+    expect(decodeClientRevalidationDecisions(action)).toEqual({
+      skip: ["loaders#session"],
+      force: [],
+    });
+
+    // Same-route param nav: default true (params changed), predicate returns
+    // the default — every verdict matches, so no header at all.
+    const paramNav = collectClientRevalidationDecisions({
+      currentUrl: new URL("http://localhost/shop/items/a"),
+      nextUrl: new URL("http://localhost/shop/items/b"),
+      actionRequest: false,
+      isAction: false,
+      stale: false,
+    });
+    expect(paramNav).toBeNull();
+  });
+
+  it("supports forcing revalidation against a false default (stale restores)", () => {
+    const definition = clientUrls(({ path, loader, revalidate }) => [
+      path("/", Page, { name: "index" }, () => [
+        loader(SessionLoader, () => [
+          revalidate(({ stale, defaultShouldRevalidate }) =>
+            stale ? true : defaultShouldRevalidate,
+          ),
+        ]),
+      ]),
+    ]);
+    registerClientUrlGroup(definition, "/", "", () => {});
+
+    const decisions = collectClientRevalidationDecisions({
+      currentUrl: new URL("http://localhost/"),
+      nextUrl: new URL("http://localhost/"),
+      actionRequest: false,
+      isAction: false,
+      stale: true,
+    });
+    expect(decodeClientRevalidationDecisions(decisions)).toEqual({
+      skip: [],
+      force: ["loaders#session"],
+    });
+  });
+
+  it("returns null without an active group or off-mount current location", () => {
+    expect(
+      collectClientRevalidationDecisions({
+        currentUrl: new URL("http://localhost/anywhere"),
+        nextUrl: new URL("http://localhost/anywhere"),
+        actionRequest: true,
+        isAction: true,
+        stale: false,
+      }),
+    ).toBeNull();
+
+    const definition = clientUrls(({ path, loader, revalidate }) => [
+      path("/", Page, { name: "index" }, () => [
+        loader(SessionLoader, () => [revalidate(() => false)]),
+      ]),
+    ]);
+    registerClientUrlGroup(definition, "/shop", "shop", () => {});
+    expect(
+      collectClientRevalidationDecisions({
+        currentUrl: new URL("http://localhost/elsewhere"),
+        nextUrl: new URL("http://localhost/shop"),
+        actionRequest: false,
+        isAction: false,
+        stale: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("fails open to the default when a predicate throws", () => {
+    const definition = clientUrls(({ path, loader, revalidate }) => [
+      path("/", Page, { name: "index" }, () => [
+        loader(SessionLoader, () => [
+          revalidate(() => {
+            throw new Error("boom");
+          }),
+        ]),
+      ]),
+    ]);
+    registerClientUrlGroup(definition, "/", "", () => {});
+
+    // Action default is true; the throwing predicate keeps it — no header.
+    expect(
+      collectClientRevalidationDecisions({
+        currentUrl: new URL("http://localhost/"),
+        nextUrl: new URL("http://localhost/"),
+        actionRequest: true,
+        isAction: true,
+        stale: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("wires makeIsAction into predicates so a matching ref can skip", () => {
+    const ACTION_ID = "src/actions/cart.ts#addToCart";
+    const addToCart = Object.assign(() => {}, { $id: ACTION_ID });
+    const definition = clientUrls(({ path, loader, revalidate }) => [
+      path("/", Page, { name: "index" }, () => [
+        loader(SessionLoader, () => [
+          revalidate(({ isAction }) => !isAction(addToCart)),
+        ]),
+      ]),
+    ]);
+    registerClientUrlGroup(definition, "/", "", () => {});
+
+    expect(
+      decodeClientRevalidationDecisions(
+        collectClientRevalidationDecisions({
+          currentUrl: new URL("http://localhost/"),
+          nextUrl: new URL("http://localhost/"),
+          actionRequest: true,
+          isAction: true,
+          actionId: ACTION_ID,
+          stale: false,
+        }),
+      ),
+    ).toEqual({ skip: ["loaders#session"], force: [] });
+    expect(
+      collectClientRevalidationDecisions({
+        currentUrl: new URL("http://localhost/"),
+        nextUrl: new URL("http://localhost/"),
+        actionRequest: true,
+        isAction: true,
+        actionId: "src/actions/other.ts#x",
+        stale: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("action-triggered refetch GET: nav-default baseline, isAction() still true", () => {
+    // The refetch after an action is a GET the server evaluates WITHOUT
+    // actionContext (default false on a same-URL request). A predicate
+    // forcing on the matching action must therefore be ENCODED as force —
+    // with an action-default baseline (true) it would compare equal to the
+    // default and be silently dropped (server-action-bridge consolidation
+    // terminal, partial-update.ts).
+    const ACTION_ID = "src/actions/cart.ts#addToCart";
+    const addToCart = Object.assign(() => {}, { $id: ACTION_ID });
+    const definition = clientUrls(({ path, loader, revalidate }) => [
+      path("/", Page, { name: "index" }, () => [
+        loader(SessionLoader, () => [
+          revalidate(({ isAction }) =>
+            isAction(addToCart) ? true : undefined,
+          ),
+        ]),
+      ]),
+    ]);
+    registerClientUrlGroup(definition, "/", "", () => {});
+
+    expect(
+      decodeClientRevalidationDecisions(
+        collectClientRevalidationDecisions({
+          currentUrl: new URL("http://localhost/"),
+          nextUrl: new URL("http://localhost/"),
+          actionRequest: false,
+          isAction: true,
+          actionId: ACTION_ID,
+          stale: false,
+        }),
+      ),
+    ).toEqual({ skip: [], force: ["loaders#session"] });
+  });
+});
+
+describe("ClientUrlsLoading", () => {
+  it("returns the route loading node or null", () => {
+    function HomePage(): null {
+      return null;
+    }
+
+    function AboutPage(): null {
+      return null;
+    }
+
+    const loading = <span>Loading home</span>;
+    const definition = clientUrls(({ path, loading: useLoading }) => [
+      path("/", HomePage, () => [useLoading(loading)]),
+      path("/about", AboutPage),
+    ]);
+
+    expect(ClientUrlsLoading({ definition, routeId: "client-route-0" })).toBe(
+      loading,
+    );
+    expect(
+      ClientUrlsLoading({ definition, routeId: "client-route-1" }),
+    ).toBeNull();
+  });
+
+  it("throws the same mismatch error for an unknown route id", () => {
+    function HomePage(): null {
+      return null;
+    }
+
+    const definition = clientUrls(({ path }) => [path("/", HomePage)]);
+
+    expect(() =>
+      ClientUrlsLoading({ definition, routeId: "missing-route" }),
+    ).toThrow(
+      'Client URL route mismatch: route id "missing-route" was not found in the provided definition',
+    );
+  });
+});

@@ -13,9 +13,14 @@ import { createLoader } from "@rangojs/router";
 // (and into the runtime loader manifest used by the _rsc_loader endpoint) is the
 // build-time loader pre-scan. If that pre-scan misses it, the production
 // endpoint cannot find the loader even though dev resolves it via path parsing.
+// Its implementation imports an RSC-only boundary to verify non-RSC analysis
+// receives the loader stub rather than scanning the server callback.
 let orphanCount = 0;
 
 export const OrphanFetchableLoader = createLoader(async (ctx) => {
+  // plugin-rsc provides this virtual boundary module during Vite builds.
+  // @ts-expect-error "server-only" has no standalone type declaration.
+  await import("server-only");
   orphanCount++;
   const id = ctx.params.id ?? "orphan-default";
   return {

@@ -6,10 +6,10 @@
  * generation, virtual module codegen, and bundle post-processing.
  */
 
-import type { Plugin } from "vite";
+import type { Plugin, ViteDevServer } from "vite";
 import { createServer as createViteServer } from "vite";
-import { resolve } from "node:path";
-import { readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire, register } from "node:module";
 import { pathToFileURL } from "node:url";
 import {
@@ -34,6 +34,7 @@ import {
   internalDebugNoCacheMiddleware,
 } from "./inject-client-debug.js";
 import { createVersionPlugin } from "./plugins/version-plugin.js";
+import { uniformVersions } from "../router-versions.js";
 import { getVirtualEntrySSR, VIRTUAL_IDS } from "./plugins/virtual-entries.js";
 import { createVirtualStubPlugin } from "./plugins/virtual-stub-plugin.js";
 import {
@@ -45,6 +46,8 @@ import {
   exposeRouterId,
 } from "./plugins/expose-internal-ids.js";
 import { hashClientRefs } from "./plugins/client-ref-hashing.js";
+import { hashServerRefs } from "./plugins/server-ref-hashing.js";
+import { defineEncryptionKeyExpr } from "./encryption-key.js";
 import { extractHandlerExportsFromChunk } from "./utils/bundle-analysis.js";
 import {
   createDiscoveryState,
@@ -57,8 +60,21 @@ import {
   peekSelfGenWrite,
 } from "./discovery/self-gen-tracking.js";
 import { discoverRouters } from "./discovery/discover-routers.js";
+import {
+  recordClientUrlsModule,
+  refreshRecordedClientUrlProjections,
+} from "./discovery/client-urls-projection.js";
 import { runShellPrerenderPhase } from "./discovery/shell-prerender-phase.js";
+import { runRouterVersionsPhase } from "./discovery/router-versions-phase.js";
+import {
+  recordBundleFiles,
+  recordClientGraph,
+  recordServerGraph,
+  recordVersionModuleFiles,
+} from "./discovery/build-versions.js";
 import { describeDiscoveryFailure } from "./discovery/discovery-errors.js";
+import { findTransitionWhenError } from "../transition-when-ref.js";
+import { transitionWhenHoistPlugin } from "./plugins/transition-when-hoist.js";
 import {
   createDevPrerenderCache,
   devPrerenderCacheKey,
@@ -171,8 +187,9 @@ const injectedShellNotReadyPaths = new Set<string>();
  * - Build: hashed IDs (forceBuild), hashClientRefs for production bundles
  *
  * Returns the ViteDevServer instance. Callers access .environments.rsc as needed.
+ * @internal Exported for tests.
  */
-async function createTempRscServer(
+export async function createTempRscServer(
   state: DiscoveryState,
   options: {
     forceBuild?: boolean;
@@ -189,7 +206,7 @@ async function createTempRscServer(
      */
     realSsrEntry?: boolean;
   } = {},
-) {
+): Promise<ViteDevServer> {
   // Install the Node ESM loader hook before any module evaluation so
   // `cloudflare:*` specifiers in externalized/loader-delegated modules
   // (e.g. packages plugin-rsc marks as external) resolve to stubs
@@ -210,7 +227,16 @@ async function createTempRscServer(
   return createViteServer({
     root: state.projectRoot,
     configFile: false,
-    server: { middlewareMode: true },
+    server: {
+      middlewareMode: true,
+      // Build mode: no file watching. buildStart installs the per-router tries
+      // into this realm and runShellPrerenderPhase reuses it after the bundles
+      // are written. A watched write in between (writeRouteTypesFiles' own
+      // <router>.named-routes.gen.ts, which every router file imports) can
+      // make Vite full-reload the RSC runner; the shell phase then matches in
+      // a fresh realm with no tries and a root path("/*") wins (#947).
+      ...(options.forceBuild ? { watch: null } : {}),
+    },
     appType: "custom",
     logLevel: "silent",
     resolve: resolveConfig,
@@ -224,9 +250,26 @@ async function createTempRscServer(
           ssr: "virtual:entry-ssr",
           rsc: state.resolvedEntryPath!,
         },
+        // The temp server renders Static/Prerender output and encrypts inline-
+        // action bound args. Give it the SAME key as the main build/dev runtime
+        // (defineEncryptionKeyExpr is process-cached) so those args decrypt at
+        // invocation. Unconditional, NOT build-only: under Cloudflare/workerd dev
+        // the RSC env has no module runner, so prerender is rendered by THIS temp
+        // server (via /__rsc_prerender), and the action decrypts in the main
+        // runtime with the rango.ts key -- gating on forceBuild left dev encrypting
+        // with the temp server's own random key, failing decryptActionBoundArgs.
+        // (hashServerRefs stays build-only: dev keeps dev-style ids the dev runtime
+        // resolves directly.)
+        defineEncryptionKey: defineEncryptionKeyExpr(),
       }),
-      // hashClientRefs only in build mode — production bundles need hashed refs
-      ...(options.forceBuild ? [hashClientRefs(state.projectRoot)] : []),
+      // hashClientRefs/hashServerRefs only in build mode — production bundles
+      // need hashed refs. hashServerRefs is the server-side analog: it rewrites
+      // registerServerReference dev-style ids to production hashes so a
+      // server-created action embedded in prerendered/static Flight resolves
+      // against the production manifest on a build-time-cache hit.
+      ...(options.forceBuild
+        ? [hashClientRefs(state.projectRoot), hashServerRefs(state.projectRoot)]
+        : []),
       createVersionPlugin(),
       // Before the stub plugin, so "virtual:entry-ssr" resolves to the real
       // SSR entry when the shell endpoint needs it (see the option doc).
@@ -242,7 +285,10 @@ async function createTempRscServer(
               },
               load(id: string) {
                 return id === "\0rango-temp-real-ssr-entry"
-                  ? getVirtualEntrySSR(state.opts?.headScripts)
+                  ? getVirtualEntrySSR(
+                      state.opts?.headScripts,
+                      state.opts?.progressiveChunkSize,
+                    )
                   : null;
               },
             } satisfies import("vite").Plugin,
@@ -250,10 +296,20 @@ async function createTempRscServer(
         : []),
       createVirtualStubPlugin(),
       createCloudflareProtocolStubPlugin(),
+      // Inline transition({ when }) literals become client references here
+      // too, or discovery would see (and reject) the plain function.
+      transitionWhenHoistPlugin(),
       // Dev prerender must use dev-mode IDs (path-based) to match the workerd
       // runtime. forceBuild produces hashed IDs for production bundle consistency.
       exposeInternalIds(options.forceBuild ? { forceBuild: true } : undefined),
       exposeRouterId(),
+      {
+        name: "@rangojs/router:client-urls-source-tracking",
+        enforce: "pre",
+        transform(code, id) {
+          recordClientUrlsModule(state, code, id);
+        },
+      },
       // Forwarded user resolution plugins (e.g. vite-tsconfig-paths). Stripped
       // to resolveId/load and placed last so framework resolution runs first;
       // Vite re-sorts by `enforce`, so `enforce: "pre"` resolvers still lead.
@@ -272,11 +328,44 @@ import type {
   BuildEnvResult,
 } from "./plugin-types.js";
 
+const WRANGLER_CONFIG_NAMES: readonly string[] = [
+  "wrangler.json",
+  "wrangler.jsonc",
+  "wrangler.toml",
+];
+
+/**
+ * getPlatformProxy() looks for the wrangler config from process.cwd() and
+ * resolves its default persist path against cwd, so building from another
+ * directory dropped the app's bindings (#1037). Search upward from the Vite
+ * root with wrangler's own file names and order. Persisted state goes under
+ * the Vite root, where @cloudflare/vite-plugin reads it in dev and preview
+ * (its getPersistenceRoot), also when the config sits above the root. No
+ * config found: no options, wrangler's own lookup.
+ */
+function wranglerProxyOptions(
+  root: string,
+): Record<string, unknown> | undefined {
+  const viteRoot = resolve(root);
+  for (let dir = viteRoot; ; dir = dirname(dir)) {
+    for (const name of WRANGLER_CONFIG_NAMES) {
+      const configPath = join(dir, name);
+      if (existsSync(configPath)) {
+        return {
+          configPath,
+          persist: { path: join(viteRoot, ".wrangler", "state", "v3") },
+        };
+      }
+    }
+    if (dirname(dir) === dir) return undefined;
+  }
+}
+
 /**
  * Resolve the buildEnv option into a concrete { env, dispose? } result.
  * Handles all four input shapes: false, "auto", factory, plain object.
  */
-async function resolveBuildEnv(
+export async function resolveBuildEnv(
   option: BuildEnvOption | undefined,
   factoryCtx: BuildEnvFactoryContext,
 ): Promise<BuildEnvResult | null> {
@@ -300,7 +389,9 @@ async function resolveBuildEnv(
       )) as {
         getPlatformProxy: (opts?: any) => Promise<any>;
       };
-      const proxy = await getPlatformProxy();
+      const proxy = await getPlatformProxy(
+        wranglerProxyOptions(factoryCtx.root),
+      );
       return {
         env: proxy.env as Record<string, unknown>,
         dispose: proxy.dispose,
@@ -362,6 +453,7 @@ function resetPrerenderCollection(s: DiscoveryState): void {
   s.staticManifestEntries = null;
   s.shellCandidates = null;
   s.prerenderPayloadValues = null;
+  s.buildData = [];
 }
 
 /**
@@ -400,6 +492,37 @@ export function createRouterDiscoveryPlugin(
   let viteCommand: "serve" | "build" = "build";
   let viteMode = "production";
 
+  // Dev: an invalid transition({ when }) is a definition error the user must
+  // see in the browser too, as the Vite error overlay. The overlay does not
+  // survive on its own: a reload clears it, and plugin-rsc closes every
+  // overlay on each "rsc:update" (the edit's own, the gen-file write's), each
+  // followed by the client's RSC refetch. So until a discovery succeeds the
+  // pending error is re-sent to every client that connects and after every
+  // request the dev server answers (configureServer).
+  let transitionWhenOverlay: {
+    message: string;
+    stack: string;
+    plugin: string;
+  } | null = null;
+  const sendTransitionWhenOverlay = (): void => {
+    if (!transitionWhenOverlay) return;
+    (s.devServer?.environments as any)?.client?.hot?.send({
+      type: "error",
+      err: transitionWhenOverlay,
+    });
+  };
+  const showTransitionWhenError = (err: unknown): Error | undefined => {
+    const whenError = findTransitionWhenError(err);
+    if (!whenError) return undefined;
+    transitionWhenOverlay = {
+      message: whenError.message,
+      stack: whenError.stack ?? "",
+      plugin: "@rangojs/router",
+    };
+    sendTransitionWhenOverlay();
+    return whenError;
+  };
+
   return {
     name: "@rangojs/router:discovery",
 
@@ -408,8 +531,12 @@ export function createRouterDiscoveryPlugin(
     // internal-debug module so FE debug no longer depends on Vite delivering the
     // `__RANGO_DEBUG__` define to the client (which it does only as an injected
     // global whose presence varies across consumer setups). Runs in dev and build.
-    transform(_code, id) {
-      return injectClientDebugFlag(id);
+    transform: {
+      order: "pre",
+      handler(code, id) {
+        recordClientUrlsModule(s, code, id);
+        return injectClientDebugFlag(id);
+      },
     },
 
     configResolved(config) {
@@ -477,6 +604,32 @@ export function createRouterDiscoveryPlugin(
       // Skip if this is a temp server created by buildStart
       if ((globalThis as any).__rscRouterDiscoveryActive) return;
       s.devServer = server;
+
+      (server.environments as any)?.client?.hot?.on?.(
+        "vite:client:connect",
+        (_payload: unknown, client: any) => {
+          if (transitionWhenOverlay) {
+            client?.send?.({ type: "error", err: transitionWhenOverlay });
+          }
+        },
+      );
+      // The http server's "request" event, not a middleware: plugin-rsc
+      // answers page and RSC requests before a middleware added here runs.
+      let overlayResendQueued = false;
+      server.httpServer?.on("request", (req, res) => {
+        // Documents and RSC fetches only (the refetch that follows each
+        // "rsc:update"), one send per burst.
+        const isPage =
+          req.url?.includes("_rsc") === true ||
+          req.headers.accept?.includes("text/html") === true;
+        if (transitionWhenOverlay && isPage && !overlayResendQueued) {
+          overlayResendQueued = true;
+          res.once("close", () => {
+            overlayResendQueued = false;
+            sendTransitionWhenOverlay();
+          });
+        }
+      });
 
       let workerReadyEpoch: number | undefined;
       const publishDevDiscoveryReady = (epoch: number) => {
@@ -823,6 +976,7 @@ export function createRouterDiscoveryPlugin(
         } else {
           console.error(report.message);
         }
+        showTransitionWhenError(err);
       };
 
       const discover = async () => {
@@ -861,7 +1015,11 @@ export function createRouterDiscoveryPlugin(
               optimizerHashBefore =
                 tempRscEnv.depsOptimizer?.metadata?.browserHash;
               await timed(debugDiscovery, "discoverRouters (cloudflare)", () =>
-                discoverRouters(s, tempRscEnv),
+                discoverRouters(
+                  s,
+                  tempRscEnv,
+                  (prerenderTempServer?.environments as any)?.ssr,
+                ),
               );
               timedSync(debugDiscovery, "writeRouteTypesFiles", () =>
                 writeRouteTypesFiles(s),
@@ -916,7 +1074,7 @@ export function createRouterDiscoveryPlugin(
           // requests during discovery on the Node path, so arming
           // manifestReadyPromise after discovery is sufficient here.
           const serverMod = await timed(debugDiscovery, "discoverRouters", () =>
-            discoverRouters(s, rscEnv),
+            discoverRouters(s, rscEnv, (server.environments as any)?.ssr),
           );
           if (serverMod?.setManifestReadyPromise) {
             serverMod.setManifestReadyPromise(discoveryPromise);
@@ -1419,7 +1577,7 @@ export function createRouterDiscoveryPlugin(
               maxSnapshotBytes,
               captureTimeout,
               buildEnv: s.resolvedBuildEnv,
-              buildVersion: version,
+              versions: uniformVersions(version),
               captureShellHTML: ssrModule.captureShellHTML,
               debug: !!debugDiscovery,
             });
@@ -1432,9 +1590,7 @@ export function createRouterDiscoveryPlugin(
             const body = JSON.stringify({
               entry: result.entry,
               ttl,
-              swr,
               tags: result.tags,
-              routeName,
             });
             devPrerenderCache.set(routerInstance, cacheKey, body);
             res.setHeader("content-type", "application/json");
@@ -1533,7 +1689,7 @@ export function createRouterDiscoveryPlugin(
             try {
               if (hasMainRunner) {
                 await timed(debugDiscovery, "hmr discoverRouters", () =>
-                  discoverRouters(s, rscEnv),
+                  discoverRouters(s, rscEnv, (server.environments as any)?.ssr),
                 );
                 timedSync(debugDiscovery, "hmr writeRouteTypesFiles", () =>
                   writeRouteTypesFiles(s),
@@ -1560,7 +1716,12 @@ export function createRouterDiscoveryPlugin(
                 await timed(
                   debugDiscovery,
                   "hmr discoverRouters (cloudflare)",
-                  () => discoverRouters(s, tempRscEnv),
+                  () =>
+                    discoverRouters(
+                      s,
+                      tempRscEnv,
+                      (prerenderTempServer?.environments as any)?.ssr,
+                    ),
                 );
                 timedSync(debugDiscovery, "hmr writeRouteTypesFiles", () =>
                   writeRouteTypesFiles(s),
@@ -1573,6 +1734,7 @@ export function createRouterDiscoveryPlugin(
                 );
                 s.lastDiscoveryError = null;
               }
+              transitionWhenOverlay = null;
               // Cloudflare dev: on a successful cycle drop the workerd runner's
               // cached worker-entry chain so the next request re-evaluates
               // createRouter() with the new routes. Fired here in the work path
@@ -1600,9 +1762,17 @@ export function createRouterDiscoveryPlugin(
                 message: err?.message ?? String(err),
                 at: Date.now(),
               };
-              console.warn(
-                `[rango] Runtime re-discovery failed: ${err.message}`,
-              );
+              // An invalid transition({ when }) is a definition error the
+              // user must see: terminal error plus the browser's Vite overlay,
+              // not a warning while the last-good route tree keeps serving.
+              const whenError = showTransitionWhenError(err);
+              if (whenError) {
+                console.error(whenError.message);
+              } else {
+                console.warn(
+                  `[rango] Runtime re-discovery failed: ${err.message}`,
+                );
+              }
               debugDiscovery?.(
                 "hmr: lastDiscoveryError set (%s) — manifest preserved at last-good; recovery mode active (any in-scan source change will trigger rediscovery)",
                 err?.message,
@@ -1664,6 +1834,8 @@ export function createRouterDiscoveryPlugin(
           if (expectedEpoch === undefined) return;
           void (async () => {
             const deadline = Date.now() + 15_000;
+            let reloadBackoffMs = 100;
+            let nextReloadAt = Date.now() + reloadBackoffMs;
             do {
               if (devServerClosed || expectedEpoch !== s.devDiscoveryEpoch) {
                 return;
@@ -1689,10 +1861,18 @@ export function createRouterDiscoveryPlugin(
                   publishDevDiscoveryReady(expectedEpoch);
                   return;
                 }
+                await response.body?.cancel().catch(() => {});
                 // A response without the expected epoch proves an older worker
                 // evaluation won the race after the initial invalidation. Clear
-                // that completed evaluation and retry the reload.
-                reloadWorkerd();
+                // that completed evaluation and retry the reload. Back off the
+                // retries: reloading faster than workerd can evaluate prevents
+                // convergence and retains overlapping module generations.
+                const now = Date.now();
+                if (now >= nextReloadAt) {
+                  reloadWorkerd();
+                  reloadBackoffMs = Math.min(reloadBackoffMs * 2, 1_000);
+                  nextReloadAt = now + reloadBackoffMs;
+                }
               } catch {}
             } while (Date.now() < deadline);
 
@@ -1705,12 +1885,54 @@ export function createRouterDiscoveryPlugin(
 
         const scheduleRouteRegeneration = () => {
           clearTimeout(routeChangeTimer);
-          routeChangeTimer = setTimeout(() => {
+          routeChangeTimer = setTimeout(async () => {
             routeChangeTimer = undefined;
             const regenStart = debugDiscovery ? performance.now() : 0;
             const rscEnv = (server.environments as any)?.rsc;
             const skipStaticWrite =
               !rscEnv?.runner && s.perRouterManifests.length > 0;
+            // Refresh clientUrls projections + state BEFORE any gen-file
+            // write below: the write invalidates the routes-manifest virtual
+            // module, whose regenerated code replays state.clientUrlProjectionMap
+            // (clear + set). A stale map at that moment bakes stale literals
+            // that clobber the runtime registry before the re-discovery entry
+            // import materializes the client mount (node HMR served old
+            // client-urls patterns until restart). Lenient: import failures
+            // keep last-known state; discoverRouters' strict pass reports.
+            if (rscEnv?.runner && s.clientUrlSourceByReferenceId?.size) {
+              try {
+                const serverMod = await rscEnv.runner.import(
+                  "@rangojs/router/server",
+                );
+                await refreshRecordedClientUrlProjections(
+                  s,
+                  (server.environments as any)?.ssr,
+                  serverMod,
+                );
+                // Force the routes-manifest virtual module to re-transform:
+                // its generated code REPLAYS projections (clear + set) on
+                // every rsc program reload, and self-gen-write suppression
+                // keeps its cached transform alive through this cycle — a
+                // stale replay after propagateDiscoveryState would clobber
+                // the refreshed registry as the realm's last write and the
+                // next router evaluation would materialize the old mount.
+                for (const virtualId of [
+                  VIRTUAL_ROUTES_MANIFEST_ID,
+                  `\0${VIRTUAL_ROUTES_MANIFEST_ID}`,
+                ]) {
+                  const virtualMod =
+                    rscEnv.moduleGraph?.getModuleById?.(virtualId);
+                  if (virtualMod) {
+                    rscEnv.moduleGraph.invalidateModule(virtualMod);
+                  }
+                }
+              } catch (err: any) {
+                debugDiscovery?.(
+                  "watcher: clientUrls projection pre-refresh failed: %s",
+                  err?.message,
+                );
+              }
+            }
             try {
               // In cloudflare dev with a populated runtime manifest, the
               // static parser produces a strictly smaller (and actively
@@ -1799,7 +2021,19 @@ export function createRouterDiscoveryPlugin(
             const isUseClient =
               trimmed.startsWith('"use client"') ||
               trimmed.startsWith("'use client'");
-            if (!inRecoveryMode && isUseClient) return;
+            // clientUrls() modules are "use client" by contract yet define
+            // routes: their edits must re-run discovery (server projection +
+            // generated types), so only bail on use-client files WITHOUT a
+            // clientUrls() definition. Scar: before this carve-out, editing a
+            // clientUrls module's route shape in dev left the serving router on
+            // the stale projection — the old pattern kept matching and the new
+            // one 404ed until a full restart.
+            let hasClientUrls = source.includes("clientUrls(");
+            if (hasClientUrls) {
+              hasClientUrls =
+                firstCodeMatchIndex(source, /\bclientUrls\(/g) >= 0;
+            }
+            if (!inRecoveryMode && isUseClient && !hasClientUrls) return;
             // Cheap raw pre-check first; only when a candidate token is present
             // do we confirm it occurs in real code (not a comment/string) via a
             // single allocation-free code-region scan. Most saved files contain
@@ -1813,23 +2047,95 @@ export function createRouterDiscoveryPlugin(
               hasCreateRouter =
                 firstCodeMatchIndex(source, /\bcreateRouter\s*[<(]/g) >= 0;
             }
-            if (!inRecoveryMode && !hasUrls && !hasCreateRouter) return;
+            // hasClientUrls counts here too: in a clientUrls() module the only
+            // `urls(` token sits INSIDE the `clientUrls(` identifier, which the
+            // code scan correctly rejects as a sub-identifier match — so
+            // without this the file would silently fail the sniff.
+            if (
+              !inRecoveryMode &&
+              !hasUrls &&
+              !hasCreateRouter &&
+              !hasClientUrls
+            ) {
+              return;
+            }
             if (inRecoveryMode) {
               debugDiscovery?.(
-                "watcher: recovery rediscovery for %s (urls=%s, router=%s, useClient=%s) [LASTERR %s]",
+                "watcher: recovery rediscovery for %s (urls=%s, router=%s, clientUrls=%s, useClient=%s) [LASTERR %s]",
                 filePath,
                 hasUrls,
                 hasCreateRouter,
+                hasClientUrls,
                 isUseClient,
                 s.lastDiscoveryError!.message,
               );
             } else {
               debugDiscovery?.(
-                "watcher: %s matches (urls=%s, router=%s)",
+                "watcher: %s matches (urls=%s, router=%s, clientUrls=%s)",
                 filePath,
                 hasUrls,
                 hasCreateRouter,
+                hasClientUrls,
               );
+            }
+            // A "use client" clientUrls module is an HMR-accepted client
+            // boundary in the rsc graph: its edit never invalidates the router
+            // module that materialized its projection, so the re-discovery
+            // entry import would cache-hit and keep serving the stale mount
+            // (old patterns 200, new patterns 404 until restart). Invalidate
+            // the entry + router sources so the import re-creates the routers
+            // against the refreshed projection (installed by the pre-entry
+            // refresh in discover-routers.ts).
+            const mainRscEnv = (server.environments as any)?.rsc;
+            if (isUseClient && hasClientUrls && mainRscEnv?.runner) {
+              const rscGraph = mainRscEnv.moduleGraph;
+              if (rscGraph?.getModulesByFile) {
+                // Importers must be invalidated too: the virtual RSC entry
+                // holds a live `import { router }` binding, and re-evaluating
+                // router.tsx alone leaves that binding on the OLD instance —
+                // the request pipeline would keep serving the stale mount.
+                // Vite's invalidateModule already walks importers. Share its
+                // seen set across roots instead of recursively starting a new
+                // traversal at every importer (quadratic on a large graph).
+                // Vite's walk skips HMR-accepting importers and soft-invalidates
+                // static ones (vs the old unconditional hard walk) — safe here:
+                // the entry and every router source are invalidated directly as
+                // roots, and ancestors get the exact treatment Vite's own
+                // file-change propagation applies on a server urls edit.
+                // Cloudflare has no local runner and skips this block: its temp
+                // discovery graph and workerd graph are invalidated wholesale
+                // by refreshRuntimeDiscovery() after this watcher event.
+                const routerSourceFiles = new Set<string>();
+                if (s.resolvedEntryPath) {
+                  routerSourceFiles.add(resolve(s.resolvedEntryPath));
+                }
+                for (const entry of s.perRouterManifests) {
+                  if (entry.sourceFile) {
+                    routerSourceFiles.add(resolve(entry.sourceFile));
+                  }
+                }
+                const seen = new Set<any>();
+                for (const file of routerSourceFiles) {
+                  const mods = rscGraph.getModulesByFile(
+                    file.replaceAll("\\", "/"),
+                  );
+                  if (!mods) {
+                    debugDiscovery?.(
+                      "watcher: clientUrls invalidation found no rsc modules for %s",
+                      file,
+                    );
+                    continue;
+                  }
+                  for (const mod of mods) {
+                    rscGraph.invalidateModule(mod, seen);
+                  }
+                }
+                debugDiscovery?.(
+                  "watcher: clientUrls edit invalidated %d rsc module(s) for %d router file(s)",
+                  seen.size,
+                  routerSourceFiles.size,
+                );
+              }
             }
             // Invalidate cache when a router file changes (new router added/removed)
             if (hasCreateRouter) {
@@ -1943,7 +2249,7 @@ export function createRouterDiscoveryPlugin(
         }
 
         await timed(debugDiscovery, "build discoverRouters", () =>
-          discoverRouters(s, rscEnv),
+          discoverRouters(s, rscEnv, (tempServer.environments as any)?.ssr),
         );
         // Update named-routes.gen.ts from runtime discovery.
         // The runtime manifest includes dynamically generated routes
@@ -1999,18 +2305,27 @@ export function createRouterDiscoveryPlugin(
       }
     },
 
-    // Post-build PPR shell capture (producer B, #699): runs after EVERY
-    // environment bundle is written — the shell prelude embeds built client
-    // asset URLs (bootstrap entry), which do not exist at buildStart. The
-    // kept temp server and the buildEnv were deferred AS A PAIR in
-    // buildStart's finally; this finally is the pair's success-path owner
-    // (buildEnd below owns the aborted-build path) — the phase itself is a
-    // pure producer and tears down only the globals it installs.
+    // Post-build phases, after EVERY environment bundle is written.
+    //
+    // 1. Cache versions (discovery/router-versions-phase.ts): hashes the
+    //    server output as postprocessBundle left it and writes the per-router
+    //    table into the built version module. First, because phase 2 stamps
+    //    its entries with these versions and reads the same RSC out dir.
+    // 2. PPR shell capture (producer B, #699): the shell prelude embeds built
+    //    client asset URLs (bootstrap entry), which do not exist at
+    //    buildStart. The kept temp server and the buildEnv were deferred AS A
+    //    PAIR in buildStart's finally; this finally is the pair's success-path
+    //    owner (buildEnd below owns the aborted-build path) — the phase itself
+    //    is a pure producer and tears down only the globals it installs.
     buildApp: {
       order: "post",
       async handler(builder) {
         try {
-          await runShellPrerenderPhase(s, builder as any);
+          await runShellPrerenderPhase(
+            s,
+            builder as any,
+            runRouterVersionsPhase(s, builder as any),
+          );
         } finally {
           if (s.isBuildMode) {
             const tempServer = s.shellPhaseTempServer;
@@ -2125,6 +2440,22 @@ export function createRouterDiscoveryPlugin(
     // Record handler chunk metadata and RSC entry filename during RSC build.
     // Used by closeBundle for handler code eviction and prerender data injection.
     generateBundle(_options: any, bundle: any) {
+      // Inputs of the per-router cache versions (discovery/build-versions.ts).
+      // Each pass overwrites its slot: plugin-rsc runs the RSC and SSR builds
+      // twice, and the real pass comes last.
+      if (s.isBuildMode) {
+        const envName = this.environment?.name;
+        if (envName) {
+          s.versionModuleFiles.set(envName, recordVersionModuleFiles(bundle));
+        }
+        if (envName === "rsc") {
+          s.serverBuildGraph = recordServerGraph(this, bundle);
+        } else if (envName === "client") {
+          s.clientBuildGraph = recordClientGraph(this, bundle);
+        } else if (envName === "ssr") {
+          s.ssrBundle = recordBundleFiles(bundle);
+        }
+      }
       if (this.environment?.name !== "rsc") return;
       const genStart = debugBuild ? performance.now() : 0;
 

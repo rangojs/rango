@@ -26,6 +26,22 @@ import { createVar } from "../context-var.js";
 export const nonce: ContextVar<string> = createVar<string>();
 
 /**
+ * Normalize a NonceProvider return value to the nonce the request runs with.
+ * `true` auto-generates; `false` and the empty string are the per-request
+ * opt-out and normalize to undefined — without this, a falsy string would be
+ * threaded as-is into the render: never written to the token (`if (nonce)`)
+ * yet still `!== undefined` for the ppr shell gate (rsc-rendering.ts
+ * activeNonce), pinning a ppr route to axis 1 with no way to opt a request
+ * out while keeping the provider for the rest of the app.
+ */
+export function resolveProviderNonce(
+  result: string | boolean,
+): string | undefined {
+  if (result === true) return generateNonce();
+  return result === false || result === "" ? undefined : result;
+}
+
+/**
  * Generate a cryptographic nonce for CSP.
  * Returns a 16-byte random value encoded as base64.
  */

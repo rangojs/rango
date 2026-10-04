@@ -1,5 +1,4 @@
 /// <reference types="@vitejs/plugin-rsc/types" />
-/// <reference path="../vite/plugins/version.d.ts" />
 /**
  * RSC Request Handler
  *
@@ -7,7 +6,7 @@
  * and progressive enhancement (no-JS form submissions).
  */
 
-import { createElement } from "react";
+import { requestHeaders } from "../server/request-headers.js";
 import { isRouteNotFoundError } from "../errors.js";
 import { matchMiddleware, executeMiddleware } from "../router/middleware.js";
 import {
@@ -17,7 +16,7 @@ import {
   _getRequestContext,
   createRequestContext,
 } from "../server/request-context.js";
-import * as rscDeps from "@vitejs/plugin-rsc/rsc";
+import * as rscDeps from "@vitejs/plugin-rsc/rsc/server";
 import type {
   RscPayload,
   CreateRSCHandlerOptions,
@@ -46,11 +45,14 @@ import {
   handleResponseRoute,
   type ResponseRouteMatch,
 } from "./response-route-handler.js";
-import { generateNonce, nonce as nonceToken } from "./nonce.js";
-import { VERSION } from "@rangojs/router:version";
+import { nonce as nonceToken, resolveProviderNonce } from "./nonce.js";
+import { resolveRouterVersions } from "../server/build-version-table.js";
 import type { ErrorPhase } from "../types.js";
 import type { RouterRequestInput } from "../router/router-interfaces.js";
-import { invokeOnError } from "../router/error-handling.js";
+import {
+  invokeOnError,
+  resolveDefaultNotFound,
+} from "../router/error-handling.js";
 import {
   createReverseFunction,
   stripInternalParams,
@@ -64,6 +66,10 @@ import {
 } from "../route-map-builder.js";
 import type { HandlerContext } from "./handler-context.js";
 import type { CacheErrorCategory } from "../cache/cache-error.js";
+import {
+  compileSearchParamsFilter,
+  type SearchParamsFilter,
+} from "../cache/search-params-filter.js";
 import type { SegmentCacheStore } from "../cache/types.js";
 import { buildRouterTrieFromUrlpatterns } from "./manifest-init.js";
 import { handleProgressiveEnhancement } from "./progressive-enhancement.js";
@@ -73,11 +79,13 @@ import {
   type ActionContinuation,
 } from "./server-action.js";
 import { handleLoaderFetch } from "./loader-fetch.js";
+import { applyStreamIdleTimeout } from "./stream-idle.js";
 import {
   checkRequestOrigin,
   ORIGIN_CHECK_PHASE_BY_MODE,
 } from "./origin-guard.js";
 import { handleRscRendering } from "./rsc-rendering.js";
+import { withoutShellMissMarker } from "./shell-serve.js";
 import {
   withTimeout,
   isTimeoutEnabled,
@@ -105,6 +113,7 @@ import {
   type RequestPlan,
   type ExecutableRequestPlan,
 } from "../router/request-classification.js";
+import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 
 /**
  * Create an RSC request handler.
@@ -129,7 +138,7 @@ import {
  * @example With custom deps (advanced)
  * ```tsx
  * import { createRSCHandler } from "@rangojs/router/rsc";
- * import * as rsc from "@vitejs/plugin-rsc/rsc";
+ * import * as rsc from "@vitejs/plugin-rsc/rsc/server";
  * import { router } from "./router.js";
  *
  * export default createRSCHandler({
@@ -159,7 +168,18 @@ export function createRSCHandler<
   TEnv = unknown,
   TRoutes extends Record<string, string> = Record<string, string>,
 >(options: CreateRSCHandlerOptions<TEnv, TRoutes>) {
-  const { router, version = VERSION, nonce: nonceProvider } = options;
+  const { router, nonce: nonceProvider } = options;
+  // A consumer-set version (this option, else createRouter({ version })) is
+  // used for both; otherwise the router's own pair from the build.
+  const versions = resolveRouterVersions(
+    router.id,
+    options.version ?? router.version,
+  );
+  // Everything the handler itself versions is tied to the HTML a tab holds:
+  // payload metadata (what the browser echoes as `_rsc_v`), the reload check,
+  // shell stamping and gating, the rango state value. The data version is only
+  // a cache-key prefix, read by the stores from the request context.
+  const version = versions.document;
 
   // Handler-owned registry of explicit per-scope stores from cache({ store }).
   // Lives in the closure so it is scoped per handler (multi-router deployments
@@ -168,7 +188,7 @@ export function createRSCHandler<
   // stores not covered by the app-level ctx._cacheStore.
   const explicitTaggedStores = new Set<SegmentCacheStore>();
 
-  // Use provided deps or default to @vitejs/plugin-rsc/rsc exports
+  // Use provided deps or default to @vitejs/plugin-rsc/rsc/server exports
   const deps = options.deps ?? rscDeps;
   const {
     renderToReadableStream,
@@ -242,7 +262,8 @@ export function createRSCHandler<
     actionId?: string,
   ): Promise<Response> {
     const timeoutError = new RouterTimeoutError(phase, durationMs);
-    const cursor = _getRequestContext<TEnv>()?._renderForeground;
+    const requestContext = _getRequestContext<TEnv>();
+    const cursor = requestContext?._renderForeground;
     const render: RenderTimeoutContext | undefined =
       phase === "render-start" && cursor
         ? {
@@ -256,11 +277,29 @@ export function createRSCHandler<
             }),
           }
         : undefined;
+    const trace =
+      phase === "render-start" ? requestContext?._activeRoutine : undefined;
+    const activeEntries = trace?.active() ?? [];
+    const activeStep = activeEntries.at(-1);
+    const activeAt = performance.now();
+    const routineSnapshot =
+      trace && activeStep
+        ? {
+            name: trace.name,
+            path: activeEntries.map((entry) => entry.name),
+            durationMs: activeAt - activeStep.startedAt,
+          }
+        : undefined;
 
-    // Each surface gets its OWN shallow copy of the snapshot. onError, telemetry,
-    // and onTimeout are independent consumers; a consumer that mutates its
-    // `render` (e.g. an onError redacting metadata) must not corrupt what the
-    // other two observe.
+    if (INTERNAL_RANGO_DEBUG && trace && activeStep) {
+      console.log(
+        `[routine] TIMEOUT ${request.method} ${url.pathname} (${trace.name})\n${trace.formatActive(activeEntries, activeAt)}`,
+      );
+    }
+
+    // Each surface gets its OWN shallow render snapshot. A consumer that mutates
+    // its copy must not corrupt what the other two observe. The internal-debug
+    // routine snapshot is bounded metadata sent only to onError.
     callOnError(timeoutError, phase === "action" ? "action" : "handler", {
       request,
       url,
@@ -273,6 +312,7 @@ export function createRSCHandler<
         phase,
         durationMs,
         ...(render && { render: { ...render } }),
+        ...(routineSnapshot && { routine: routineSnapshot }),
       },
     });
 
@@ -408,10 +448,16 @@ export function createRSCHandler<
   };
 
   return async function handler(
-    request: Request,
+    incomingRequest: Request,
     input: RouterRequestInput<TEnv> = {},
   ): Promise<Response> {
     const handlerStart = performance.now();
+    // A degraded PPR HIT's reload carries the forced-MISS marker: keep only
+    // the flag (set on the request context below) and drop the marker before
+    // anything reads the request, so middleware, handlers, loaders, cache
+    // keys and the SSR search seed see the URL the visitor asked for.
+    const unmarkedRequest = withoutShellMissMarker(incomingRequest);
+    const request = unmarkedRequest ?? incomingRequest;
     // Create the metrics store at handler start so handler:total has startTime=0
     // and all metrics are relative to the request entry point.
     const earlyMetricsStore = router.debugPerformance
@@ -428,12 +474,12 @@ export function createRSCHandler<
       }
     }
 
-    // Resolve nonce if provider is set
+    // Resolve nonce if provider is set. false/"" normalize to undefined —
+    // the per-request opt-out (resolveProviderNonce).
     const nonceStart = performance.now();
     let nonce: string | undefined;
     if (nonceProvider) {
-      const result = await nonceProvider(request, env);
-      nonce = result === true ? generateNonce() : result;
+      nonce = resolveProviderNonce(await nonceProvider(request, env));
     }
     const nonceDur = performance.now() - nonceStart;
 
@@ -460,6 +506,7 @@ export function createRSCHandler<
     // Priority: options.cache (handler override) > router.cache (router default)
     // Store is enabled only if: config provided, enabled, and no ?__no_cache query param
     let cacheStore: SegmentCacheStore | undefined;
+    let searchParamsFilter: SearchParamsFilter | undefined;
     const cacheOption = options.cache ?? router.cache;
     if (cacheOption && !url.searchParams.has("__no_cache")) {
       const cacheConfig =
@@ -469,6 +516,9 @@ export function createRSCHandler<
 
       if (cacheConfig.enabled !== false) {
         cacheStore = cacheConfig.store;
+        searchParamsFilter = compileSearchParamsFilter(
+          cacheConfig.searchParams,
+        );
       }
     }
 
@@ -549,13 +599,15 @@ export function createRSCHandler<
       variables,
       cacheStore,
       prerender: resolvedPrerender,
+      searchParamsFilter,
       explicitTaggedStores,
       cacheProfiles: router.cacheProfiles,
       executionContext: executionCtx,
       themeConfig: router.themeConfig,
       stateCookieName: router.resolvedStateCookieName,
-      version,
+      versions,
     });
+    if (unmarkedRequest) requestContext._shellForcedMiss = true;
     // Gate on the SAME enabled-semantics withTimeout uses (isTimeoutEnabled):
     // a `renderStartMs: 0` / negative opt-out disables the timeout, so the
     // driver's cursor bookkeeping (which only the timeout reads) must be off too.
@@ -632,88 +684,182 @@ export function createRSCHandler<
           return coreRequestHandler(request, env, url, variables, nonce);
         };
 
-        // Execute middleware chain if any, otherwise call core handler directly
-        let response: Response;
-        if (matchedMiddleware.length > 0) {
-          const mwResponse = await executeMiddleware(
-            matchedMiddleware,
-            request,
-            env,
-            variables,
-            coreHandler,
-            createReverseFunction(getRequiredRouteMap()),
-          );
+        // Execute middleware chain if any, otherwise call core handler
+        // directly; the response is finalized below, inside the response span.
+        const hasMiddleware = matchedMiddleware.length > 0;
+        const downstream = hasMiddleware
+          ? await executeMiddleware(
+              matchedMiddleware,
+              request,
+              env,
+              variables,
+              coreHandler,
+              createReverseFunction(getRequiredRouteMap()),
+            )
+          : await coreHandler();
 
-          if (
-            url.searchParams.has("_rsc_partial") ||
-            url.searchParams.has("_rsc_action")
-          ) {
-            const intercepted = interceptRedirectForPartial(
-              mwResponse,
-              createRedirectFlightResponse,
-              { requestOrigin: url.origin, basename: router.basename },
-            );
-            response = intercepted ?? finalizeResponse(mwResponse);
+        // Final response construction + host handoff, wrapped in rango.response
+        // — the explicit stream-handoff marker. The callback is synchronous, so
+        // the span ends immediately before the handler returns the response to
+        // the host; it never reads or wraps response.body. A downstream throw
+        // skips it entirely (no response exists to hand off).
+        return observePhase(PHASES.response, (responseSpan) => {
+          // Header and cookie writes from here on (a streaming loader or
+          // render) no longer reach the response.
+          requestContext._responseSent = true;
+          let response: Response;
+          if (hasMiddleware) {
+            if (
+              url.searchParams.has("_rsc_partial") ||
+              url.searchParams.has("_rsc_action")
+            ) {
+              const intercepted = interceptRedirectForPartial(
+                downstream,
+                createRedirectFlightResponse,
+                { requestOrigin: url.origin, basename: router.basename },
+              );
+              response = intercepted ?? finalizeResponse(downstream);
+            } else {
+              response = finalizeResponse(downstream);
+            }
           } else {
-            response = finalizeResponse(mwResponse);
+            response = downstream;
           }
-        } else {
-          response = await coreHandler();
-        }
 
-        // Finalize metrics after all middleware (including post-next work)
-        // has completed so :post spans are captured in the timeline.
-        // Handler timing parts are always emitted (even without debug metrics)
-        // so non-debug requests still get bootstrap Server-Timing entries.
-        const handlerTimingArr: string[] = variables.__handlerTiming || [];
-        // Preserve any existing Server-Timing set by response routes or middleware
-        const existingTiming = response.headers.get("Server-Timing");
-        const timingParts = existingTiming
-          ? [existingTiming, ...handlerTimingArr]
-          : [...handlerTimingArr];
+          // Finalize metrics after all middleware (including post-next work)
+          // has completed so :post spans are captured in the timeline.
+          // Handler timing parts are always emitted (even without debug metrics)
+          // so non-debug requests still get bootstrap Server-Timing entries.
+          const handlerTimingArr: string[] = variables.__handlerTiming || [];
+          // Preserve any existing Server-Timing set by response routes or middleware
+          const existingTiming = response.headers.get("Server-Timing");
+          const timingParts = existingTiming
+            ? [existingTiming, ...handlerTimingArr]
+            : [...handlerTimingArr];
 
-        const metricsStore = requestContext._metricsStore;
-        if (metricsStore) {
-          // When the store was created at handler start (earlyMetricsStore),
-          // handler:total covers the full request. When ctx.debugPerformance()
-          // created the store mid-request its requestStart is now the threaded
-          // _handlerStart (== handlerStart), so both branches yield the true
-          // request entry; reading the store's own anchor keeps this correct even
-          // if a store ever lands without the threading (falls back to its start).
-          const totalStart = earlyMetricsStore
-            ? handlerStart
-            : metricsStore.requestStart;
-          appendMetric(
-            metricsStore,
-            "handler:total",
-            totalStart,
-            performance.now() - totalStart,
-          );
-          const metricsTiming = buildMetricsTiming(
-            request.method,
-            url.pathname,
-            metricsStore,
-          );
-          if (metricsTiming) timingParts.push(metricsTiming);
-        }
-
-        const fullTiming = timingParts.join(", ");
-        if (fullTiming && !isWebSocketUpgradeResponse(response)) {
-          try {
-            response.headers.set("Server-Timing", fullTiming);
-          } catch {
-            // Immutable headers (e.g. a passed-through platform Response) — drop
-            // the timing header, never the response. Instrumentation must not
-            // 500 a request.
+          const metricsStore = requestContext._metricsStore;
+          if (metricsStore) {
+            // When the store was created at handler start (earlyMetricsStore),
+            // handler:total covers the full request. When ctx.debugPerformance()
+            // created the store mid-request its requestStart is now the threaded
+            // _handlerStart (== handlerStart), so both branches yield the true
+            // request entry; reading the store's own anchor keeps this correct even
+            // if a store ever lands without the threading (falls back to its start).
+            const totalStart = earlyMetricsStore
+              ? handlerStart
+              : metricsStore.requestStart;
+            appendMetric(
+              metricsStore,
+              "handler:total",
+              totalStart,
+              performance.now() - totalStart,
+            );
+            const metricsTiming = buildMetricsTiming(
+              request.method,
+              url.pathname,
+              metricsStore,
+            );
+            if (metricsTiming) timingParts.push(metricsTiming);
           }
-        }
 
-        // Single open-redirect chokepoint: every response (PE, full-page,
-        // middleware short-circuit, response-route) funnels through here, so
-        // guarding browser-followed (3xx) redirects once covers them all and any
-        // future redirect exit. Soft SPA/Flight redirects are 200/204 and pass
-        // through untouched (validated client-side instead).
-        return guardOutgoingRedirect(response, url.origin, router.basename);
+          const fullTiming = timingParts.join(", ");
+          if (fullTiming && !isWebSocketUpgradeResponse(response)) {
+            try {
+              response.headers.set("Server-Timing", fullTiming);
+            } catch {
+              // Immutable headers (e.g. a passed-through platform Response) — drop
+              // the timing header, never the response. Instrumentation must not
+              // 500 a request.
+            }
+          }
+
+          // Single open-redirect chokepoint: every response (PE, full-page,
+          // middleware short-circuit, response-route) funnels through here, so
+          // guarding browser-followed (3xx) redirects once covers them all and any
+          // future redirect exit. Soft SPA/Flight redirects are 200/204 and pass
+          // through untouched (validated client-side instead).
+          const guarded = guardOutgoingRedirect(
+            response,
+            url.origin,
+            router.basename,
+          );
+
+          // Stream-idle watchdog (opt-in via timeouts.streamIdleMs): bounds
+          // end-to-end idle flow on the streamed body — see rsc/stream-idle.ts
+          // for the semantics. Applied at this finalization chokepoint so every
+          // streaming exit is covered; websocket upgrades must never be
+          // reconstructed and bodiless responses have nothing to bound. The
+          // trip fires POST-handoff (the request ALS may be gone), so it
+          // reports via the eagerly captured surfaces — callOnError +
+          // router.telemetry directly — mirroring handleStore.onError.
+          // onTimeout does NOT apply: the response already left the handler,
+          // so no replacement Response can be served mid-stream.
+          let finalResponse = guarded;
+          const streamIdleMs = router.timeouts.streamIdleMs;
+          // Websocket check FIRST: a workerd upgrade response must never have
+          // its body getter poked (same invariant as the body_kind attribute
+          // below).
+          if (
+            isTimeoutEnabled(streamIdleMs) &&
+            !isWebSocketUpgradeResponse(guarded) &&
+            guarded.body
+          ) {
+            const routeKey = requestContext._routeName;
+            finalResponse = applyStreamIdleTimeout(
+              guarded,
+              streamIdleMs!,
+              (tripInfo) => {
+                callOnError(tripInfo.error, "handler", {
+                  request,
+                  url,
+                  env,
+                  routeKey,
+                  handledByBoundary: false,
+                  metadata: {
+                    timeout: true,
+                    phase: "stream-idle",
+                    durationMs: tripInfo.totalMs,
+                  },
+                });
+                if (router.telemetry) {
+                  safeEmit(resolveSink(router.telemetry), {
+                    type: "request.timeout",
+                    timestamp: performance.now(),
+                    requestId: getRequestId(request),
+                    phase: "stream-idle",
+                    pathname: url.pathname,
+                    routeKey,
+                    durationMs: tripInfo.totalMs,
+                    customHandler: false,
+                  });
+                }
+              },
+            );
+          }
+
+          // Attributes describe the response actually handed to the host (after
+          // unsafe-redirect replacement), low-cardinality only. body_kind checks
+          // the websocket marker before the body getter so a workerd upgrade
+          // Response is never poked; `.body` is a getter access, not a read of
+          // the stream.
+          responseSpan.setAttribute(
+            "http.response.status_code",
+            finalResponse.status,
+          );
+          responseSpan.setAttribute(
+            "rango.response.mode",
+            requestContext._requestMode ?? "middleware-short-circuit",
+          );
+          responseSpan.setAttribute(
+            "rango.response.body_kind",
+            isWebSocketUpgradeResponse(finalResponse)
+              ? "websocket"
+              : finalResponse.body === null
+                ? "empty"
+                : "stream",
+          );
+          return finalResponse;
+        });
       }),
     );
   };
@@ -769,6 +915,12 @@ export function createRSCHandler<
     const classifyDur = performance.now() - classifyStart;
     handlerTiming.push(`handler-classify;dur=${classifyDur.toFixed(2)}`);
 
+    // Stash the classified mode for the rango.response span (rango.response.mode)
+    // — the outer handler tail cannot see the plan. Stays unset when middleware
+    // short-circuits before core execution runs (reported as
+    // "middleware-short-circuit").
+    getRequestContext()._requestMode = plan.mode;
+
     // ---- 2. Terminal plans (no execution needed) ----
     if (plan.mode === "redirect") {
       // Redirects are handled by the pipeline (match/matchPartial),
@@ -806,8 +958,10 @@ export function createRSCHandler<
         originPhase,
       );
       if (originResult) {
+        const origin = requestHeaders(request).get("origin");
+        const host = requestHeaders(request).get("host");
         const originError = new Error(
-          `Origin check rejected: ${request.headers.get("origin") ?? "none"} vs ${request.headers.get("host") ?? "none"}`,
+          `Origin check rejected: ${origin ?? "none"} vs ${host ?? "none"}`,
         );
         originError.name = "OriginCheckError";
 
@@ -816,11 +970,7 @@ export function createRSCHandler<
           url,
           env,
           handledByBoundary: false,
-          metadata: {
-            phase: originPhase,
-            origin: request.headers.get("origin"),
-            host: request.headers.get("host"),
-          },
+          metadata: { phase: originPhase, origin, host },
         });
 
         if (router.telemetry) {
@@ -831,8 +981,8 @@ export function createRSCHandler<
             method: request.method,
             pathname: url.pathname,
             phase: originPhase,
-            origin: request.headers.get("origin"),
-            host: request.headers.get("host"),
+            origin,
+            host,
           });
         }
 
@@ -1204,11 +1354,12 @@ export function createRSCHandler<
             handledByBoundary: true,
           });
 
-          const notFoundOption = router.notFound;
-          const notFoundComponent =
-            typeof notFoundOption === "function"
-              ? notFoundOption({ pathname: url.pathname })
-              : (notFoundOption ?? createElement("h1", null, "Not Found"));
+          // No boundary to consult: an unmatched route has no entry chain, so
+          // this always lands on the router option or the shared default.
+          const notFoundComponent = resolveDefaultNotFound(
+            router.notFound,
+            url.pathname,
+          );
 
           const notFoundSegment = {
             id: "notFound",
@@ -1242,11 +1393,16 @@ export function createRSCHandler<
               prefetchCacheTTL: router.prefetchCacheTTL,
               prefetchCacheSize: router.prefetchCacheSize,
               prefetchConcurrency: router.prefetchConcurrency,
+              defaultPrefetch: router.defaultPrefetch,
               stateCookieName: router.resolvedStateCookieName,
               themeConfig: router.themeConfig,
               warmupEnabled: router.warmupEnabled,
               strictMode: router.strictMode,
-              initialTheme: getRequestContext().theme,
+              // The visitor's theme, not payloadInitialTheme (full-payload.ts):
+              // that picks the default when middleware opted the URL into the
+              // document cache before next(), but a 404 is never stored or
+              // captured (#978).
+              initialTheme: getRequestContext()._readTheme(),
             },
           };
 

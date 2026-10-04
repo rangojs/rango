@@ -10,6 +10,9 @@ permissions:
 
 jobs:
   preview:
+    # Fork PRs must not publish a preview tarball under this project's
+    # pkg.pr.new namespace. Same-repo PRs only.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 10
 

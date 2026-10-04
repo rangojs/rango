@@ -193,6 +193,31 @@ describe("PHASES registry", () => {
     });
   });
 
+  it("background(kind) is span-only with the exact rango.background name and kind attribute", () => {
+    // Span-only is load-bearing: the perf timeline is finalized with the
+    // response, so a background metric could never reach it.
+    const spec = PHASES.background("shell-capture");
+    expect(spec.metric).toBe(false);
+    expect(spec.tracePhase).toBe("background");
+    expect(spec.spanName).toBe("rango.background");
+    expect(spec.attributes).toEqual({
+      "rango.background.kind": "shell-capture",
+    });
+    expect(PHASES.background("document-revalidation").attributes).toEqual({
+      "rango.background.kind": "document-revalidation",
+    });
+  });
+
+  it("response is span-only (metric:false) with the exact rango.response name", () => {
+    // Span-only is load-bearing: a co-emitted metric would circularly mutate
+    // the Server-Timing header the response phase itself finalizes.
+    expect(PHASES.response.metric).toBe(false);
+    expect(PHASES.response.tracePhase).toBe("response");
+    expect(PHASES.response.spanName).toBe("rango.response");
+    expect(PHASES.response.attributes).toBeUndefined();
+    expect(PHASES.response.lazyAttributes).toBeUndefined();
+  });
+
   it("request is span-only; render/ssr carry their metric labels", () => {
     expect(PHASES.request.metric).toBe(false);
     expect(PHASES.ssr.metric).toEqual({ label: "ssr:render-html" });

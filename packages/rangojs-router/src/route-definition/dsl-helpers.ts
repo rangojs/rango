@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { assertTransitionWhenShape } from "../transition-when-ref.js";
 import type {
   PartialCacheOptions,
   Handler,
@@ -19,6 +20,7 @@ import {
   type HelperContext,
   type InterceptEntry,
   type InterceptConfig,
+  type LoaderEntry,
 } from "../server/context";
 import { invariant } from "../errors";
 import { validateUserRouteName } from "../route-name.js";
@@ -43,12 +45,25 @@ import type {
   UseItems,
 } from "../route-types.js";
 import type { RouteHelpers } from "./helpers-types.js";
-import { resolveHandlerUse, mergeHandlerUse } from "./resolve-handler-use.js";
+import {
+  resolveHandlerUse,
+  mergeHandlerUse,
+  validateInterceptUseItems,
+} from "./resolve-handler-use.js";
 import { ALL_USE_ITEM_TYPES } from "./use-item-types.js";
 
 /**
- * Check if an item contains routes (directly or inside nested structures like cache).
+ * Check if an item contains routes (directly or inside nested wrappers).
  * Used to determine if a layout or cache should be treated as an orphan.
+ *
+ * Recurses through ANY item carrying `uses` (cache, layout, middleware,
+ * wrapper-form transition) rather than an enumerated list: a wrapper helper
+ * that returns `uses` is covered the moment it exists. Scar tissue: the list
+ * form missed `transition`, so `layout(Shell, () => [transition(cfg, () =>
+ * [routes])])` was classified orphan and pushed onto its PARENT's layout[] —
+ * rendering around every sibling route (test-app TxBlockShell wrapped "/").
+ * parallel()/intercept() register their children by side effect and return
+ * no `uses`, so a layout whose only children are those still reads as orphan.
  */
 const hasRoutesInItem = (item: AllUseItems): boolean => {
   if (item.type === "route") return true;
@@ -56,16 +71,8 @@ const hasRoutesInItem = (item: AllUseItems): boolean => {
   // to prevent the parent layout from being misclassified as orphan,
   // which would clear its parent pointer and break the middleware chain.
   if (item.type === "include") return true;
-  if (item.type === "cache" && item.uses) {
-    return item.uses.some((child) => hasRoutesInItem(child));
-  }
-  if (item.type === "layout" && item.uses) {
-    return item.uses.some((child) => hasRoutesInItem(child));
-  }
-  if (item.type === "middleware" && item.uses) {
-    return item.uses.some((child) => hasRoutesInItem(child));
-  }
-  return false;
+  const uses = (item as { uses?: AllUseItems[] }).uses;
+  return uses ? uses.some(hasRoutesInItem) : false;
 };
 
 /**
@@ -129,15 +136,36 @@ const isOrphan = (result: AllUseItems[]): boolean =>
  * pointer so it leaves the middleware/parent-pointer chain (LOAD-BEARING — see
  * docs/tree-structure.md) and push it onto the parent's layout[] so it renders
  * as a wrapper. Used by cache()/middleware()/transition(); layout() runs extra
- * validation and registers inline.
+ * validation and registers inline. `orphanOwner` keeps the owner reachable for
+ * boundary lookup only (router/error-handling.ts).
  */
 const attachOrphanSibling = (
   parent: EntryData | null,
   entry: EntryData,
 ): void => {
   entry.parent = null;
-  if (parent && "layout" in parent) parent.layout.push(entry);
+  if (parent && "layout" in parent) {
+    parent.layout.push(entry);
+    entry.orphanOwner = parent;
+  }
 };
+
+/**
+ * The route whose use() list `parent` sits in: `parent` itself, or the route
+ * above a chain of layout-typed wrappers (layout(), middleware()/transition()
+ * wrapper form). Inside a path those wrappers never hold routes (path-in-path
+ * is rejected), so the route is the only cacheable unit there. An intercept()
+ * scope (its temporary parent: a spread of the declaring entry with an own
+ * `cache` sink) stops the walk, so its cache() stays rejected by
+ * validateInterceptUseItems instead of configuring the path around it.
+ */
+function enclosingRoute(parent: EntryData | null): EntryData | undefined {
+  for (let entry = parent; entry; entry = entry.parent) {
+    if (entry.type === "route") return entry;
+    if (entry.type !== "layout" || "cache" in entry) return undefined;
+  }
+  return undefined;
+}
 
 /**
  * Run `fn` with `ctx.parent` temporarily redirected to `temp` — a satellite
@@ -177,7 +205,7 @@ const revalidate: RouteHelpers<any, any>["revalidate"] = (fn) => {
  * When an error occurs during rendering of this segment or its children,
  * the fallback will be rendered instead. The fallback can be:
  * - A static ReactNode (e.g., <ErrorPage />)
- * - A handler function that receives error info and reset function
+ * - A handler function that receives `{ error }` (server fallbacks get no reset)
  *
  * Error boundaries catch errors from:
  * - Middleware execution
@@ -193,11 +221,11 @@ const revalidate: RouteHelpers<any, any>["revalidate"] = (fn) => {
  *
  * // Or with handler for dynamic error UI:
  * route("products.detail", ProductDetail, () => [
- *   errorBoundary(({ error, reset }) => (
+ *   errorBoundary(({ error }) => (
  *     <div>
  *       <h2>Product failed to load</h2>
  *       <p>{error.message}</p>
- *       <button onClick={reset}>Retry</button>
+ *       <a href="/products">Back to products</a>
  *     </div>
  *   )),
  * ])
@@ -314,6 +342,30 @@ const cache: RouteHelpers<any, any>["cache"] = (
   const cacheIndex = store.getNextIndex("cache");
   const name = `$${cacheIndex}`;
   const cacheConfig = { options };
+
+  // Among a path's children, cache() configures that path: the route entry
+  // carries the config, so buildEntriesAndCacheScope (router/route-snapshot.ts)
+  // makes the route the boundary and its own segments (handler, layouts,
+  // parallels) the cached unit. Both forms leave ctx.parent unchanged, so
+  // every sibling and wrapped item still attaches where it was. Issue #912: a
+  // cache entry here was never an ancestor of the route (no scope, no store
+  // write). The same holds inside a routeless layout()/middleware()/
+  // transition() wrapper in a path (issue #918): a route's record is
+  // all-or-nothing, so the path is the only thing such a cache() can cache.
+  const route = enclosingRoute(ctx.parent);
+  if (route && ctx.parent) {
+    route.cache = cacheConfig;
+    if (!children) return { name, type: "cache" } as CacheItem;
+    const uses = runAndValidateUseItems(
+      store,
+      `${ctx.namespace}.${cacheIndex}`,
+      ctx.parent,
+      children,
+      "cache",
+      "children",
+    );
+    return { name, type: "cache", uses } as CacheItem;
+  }
 
   // If no children, create an orphan cache entry (like orphan layouts)
   // This allows cache() to wrap subsequent siblings
@@ -489,7 +541,19 @@ const middleware: RouteHelpers<any, any>["middleware"] = (...args: any[]) => {
     "children",
   );
 
-  if (isOrphan(result)) attachOrphanSibling(ctx.parent, entry);
+  if (isOrphan(result)) {
+    // Its middleware runs for every route of the enclosing entry
+    // (collectRouteMiddleware walks orphans), so the wrapper scopes nothing;
+    // the flat form says what runs. Issue #918: the nested layout() was
+    // dropped at render.
+    invariant(
+      !result.some((item) => item?.type === "layout"),
+      `middleware(fn, () => [...]) with no routes inside cannot contain layout() [${namespace}]. ` +
+        "The middleware runs for every route of the enclosing path or layout either way; " +
+        "list them as siblings instead: middleware(fn), layout(...)",
+    );
+    attachOrphanSibling(ctx.parent, entry);
+  }
 
   return {
     name: namespace,
@@ -712,15 +776,12 @@ const intercept = (
   const prefixedRouteName =
     isLocal && namePrefix ? `${namePrefix}.${bareRouteName}` : bareRouteName;
 
-  // Create intercept entry with its own loaders/revalidate/middleware/when
+  // Create intercept entry with its own loaders/middleware/when
   const entry: InterceptEntry = {
     slotName: slotName as `@${string}`,
     routeName: prefixedRouteName,
     handler,
     middleware: [],
-    revalidate: [],
-    errorBoundary: [],
-    notFoundBoundary: [],
     loader: [],
     when: [], // Selector conditions for conditional interception
   };
@@ -733,25 +794,44 @@ const intercept = (
     entry.when.push(...selectors);
   }
 
-  // Merge handler.use defaults with explicit use
+  // Merge handler.use defaults with explicit use. mountSite null: the merged
+  // items are validated once below, so both sources get the same message.
   const handlerUseFn = resolveHandlerUse(handler);
-  const mergedUse = mergeHandlerUse(handlerUseFn, useFn, "intercept");
+  const mergedUse = mergeHandlerUse(handlerUseFn, useFn, null);
 
-  // Run merged use callback to collect loaders, revalidate, middleware, etc.
+  // Run merged use callback to collect loaders, middleware, etc.
   if (mergedUse) {
     // Capture layout() calls into a temporary array
     const capturedLayouts: EntryData[] = [];
 
-    // Temporary parent so middleware/loader/revalidate/when attach to the
-    // intercept entry; the loading get/set accessor mirrors writes onto `entry`.
+    // Temporary parent so middleware/loader attach to the intercept entry;
+    // the loading get/set accessor mirrors writes onto `entry`. It is a
+    // shallow spread of the enclosing entry, so every field a rejected helper
+    // writes to points at a throwaway here: a helper called but not returned
+    // from use() never lands on the enclosing layout. cache() writes into
+    // `layout` (capturedLayouts), or into `cache` when the enclosing entry
+    // is a route.
+    //
+    // Why an intercept rejects these (validateInterceptUseItems):
+    // - revalidate(): an intercept only evaluates its loaders' revalidate()
+    //   (router/intercept-resolution.ts).
+    // - errorBoundary()/notFoundBoundary(): error lookup walks EntryData
+    //   parent chains (router/error-handling.ts), which never include an
+    //   InterceptEntry; intercept loader errors resolve against the declaring
+    //   entry's boundaries instead.
+    // - cache(): an intercept navigation is cached under the target route's
+    //   cache() scope, with its own "intercept:" key (cache/cache-scope.ts).
     const tempParent = {
       ...ctx.parent,
       middleware: entry.middleware,
-      revalidate: entry.revalidate,
-      errorBoundary: entry.errorBoundary,
-      notFoundBoundary: entry.notFoundBoundary,
       loader: entry.loader,
-      layout: capturedLayouts, // Capture layout() calls
+      layout: capturedLayouts,
+      revalidate: [],
+      errorBoundary: [],
+      notFoundBoundary: [],
+      parallel: {},
+      intercept: [],
+      cache: undefined,
       get loading() {
         return entry.loading;
       },
@@ -760,19 +840,29 @@ const intercept = (
       },
     };
 
-    const result = withParent(ctx, tempParent as EntryData, () =>
-      mergedUse()?.flat(3),
+    const result = validateUseItems(
+      withParent(ctx, tempParent as EntryData, () => mergedUse()?.flat(3)),
+      namespace,
+      "intercept",
+      "use",
+    );
+    validateInterceptUseItems(
+      result,
+      capturedLayouts,
+      slotName,
+      routeName,
+      tempParent,
     );
 
-    // Extract layout from captured layouts (use first one if multiple)
-    // Layout inside intercept should always be ReactNode or Handler, not Record slots
-    if (capturedLayouts.length > 0 && capturedLayouts[0].type === "layout") {
-      entry.layout = capturedLayouts[0].handler as
-        | ReactNode
-        | Handler<any, any, any>;
+    // The modal chrome is the first returned layout() item. Match it by id so
+    // an entry pushed into capturedLayouts without being returned is never
+    // taken as the chrome. It carries no use() items (validated above).
+    const chromeItem = result.find((item) => item?.type === "layout");
+    const chrome =
+      chromeItem && capturedLayouts.find((l) => l.id === chromeItem.name);
+    if (chrome) {
+      entry.layout = chrome.handler as ReactNode | Handler<any, any, any>;
     }
-
-    validateUseItems(result, namespace, "intercept", "use");
   }
 
   ctx.parent.intercept.push(entry);
@@ -782,7 +872,11 @@ const intercept = (
 /**
  * Loader helper - attaches a loader to the current entry
  */
-const loader: RouteHelpers<any, any>["loader"] = (loaderDef, use) => {
+const loader: RouteHelpers<any, any>["loader"] = (
+  loaderDef,
+  optionsOrUse,
+  maybeUse,
+) => {
   const { store, ctx } = requireDslContext(
     "loader() must be called inside urls()",
   );
@@ -792,12 +886,37 @@ const loader: RouteHelpers<any, any>["loader"] = (loaderDef, use) => {
     invariant(false, "No parent entry available for loader()");
   }
 
+  // loader(Def, use) and loader(Def, options, use) — same options-or-use
+  // disambiguation path() uses, so the long-standing 2-arg form is untouched.
+  const optionsGiven =
+    typeof optionsOrUse === "function" ? undefined : optionsOrUse;
+  const use = typeof optionsOrUse === "function" ? optionsOrUse : maybeUse;
+  invariant(
+    !(typeof optionsOrUse === "function" && maybeUse !== undefined),
+    "loader() received two use() callbacks. Pass loader(Def, options, use) or loader(Def, use).",
+  );
+  invariant(
+    (optionsGiven as { stream?: unknown } | undefined)?.stream === undefined,
+    "loader() stream was replaced: use loader(Def, { ssr: false }) — the same knob as loading(fallback, { ssr: false }) — to await the loader before first flush on document requests.",
+  );
+  invariant(
+    optionsGiven?.ssr === undefined || typeof optionsGiven.ssr === "boolean",
+    `loader() ssr must be a boolean (got ${JSON.stringify(optionsGiven?.ssr)}). Omit it (or pass true) to stream on every render.`,
+  );
+
   const name = `${ctx.namespace}.$${store.getNextIndex("loader")}`;
 
-  // Create loader entry with empty revalidate array
-  const loaderEntry = {
+  // Create loader entry with empty revalidate array. awaitBeforeFlush is
+  // resolved here, at DSL-evaluation time, for the same reason
+  // loading({ ssr: false }) is (below) — per-isSSR entry caching makes the
+  // flag request-mode-correct with no isSSR threading; see LoaderEntry.
+  // `bake` is the lane, the same on both evaluations.
+  const loaderEntry: LoaderEntry = {
     loader: loaderDef,
     revalidate: [] as ShouldRevalidateFn<any, any>[],
+    ...(optionsGiven?.ssr === false && { bake: true as const }),
+    ...(optionsGiven?.ssr === false &&
+      ctx.isSSR && { awaitBeforeFlush: true as const }),
   };
 
   // Merge handler.use defaults (attached to the loader definition) with explicit use
@@ -889,6 +1008,7 @@ const transition = (
   const { store, ctx } = requireDslContext(
     "transition() must be called inside urls()",
   );
+  assertTransitionWhenShape(config.when);
 
   // Allocate a single index for this transition() call (used in all paths),
   // mirroring cache() — the child form uses it for the name, the wrapper form
@@ -929,7 +1049,11 @@ const transition = (
 
   if (isOrphan(result)) attachOrphanSibling(ctx.parent, entry);
 
-  return { name: namespace, type: "transition" } as TransitionItem;
+  return {
+    name: namespace,
+    type: "transition",
+    uses: result,
+  } as TransitionItem;
 };
 
 const route: RouteHelpers<any, any>["route"] = (name, handler, use) => {

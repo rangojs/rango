@@ -1,5 +1,5 @@
 interface InterceptConditionParams {
-  from: { pathname: string };
+  from: { url: URL };
 }
 
 // Intercept author page when navigating from blog index or author pages.
@@ -7,7 +7,7 @@ interface InterceptConditionParams {
 export function shouldInterceptBlogAuthor({
   from,
 }: InterceptConditionParams): boolean {
-  const path = from.pathname;
+  const path = from.url.pathname;
   // Blog index
   if (path === "/blog" || path === "/blog/") {
     return true;

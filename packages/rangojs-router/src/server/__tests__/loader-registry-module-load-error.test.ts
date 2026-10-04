@@ -29,7 +29,7 @@ describe("getLoaderLazy — module load error (H1)", () => {
 // the _rsc_loader endpoint returns a misleading 500 instead of a clean 404.
 // The fallback must be skipped in production so an unknown loader resolves to
 // undefined (-> 404). This was the symptom seen on custom worker entries whose
-// loader manifest was missing entirely (see version-injector).
+// loader manifest was missing entirely (see entry-bootstrap-injector).
 describe("getLoaderLazy — dev fallback is dev-only", () => {
   const prevNodeEnv = process.env.NODE_ENV;
   afterEach(() => {

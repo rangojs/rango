@@ -8,7 +8,7 @@ type InternalOnlyContextKey =
   | "_pendingBackgroundTasks"
   | "_prerender"
   | "_onDemandProducer"
-  | "_shellCaptureLoaderHandleValues"
+  | "_readTheme"
   | "_shellCaptureGuardTripped"
   | "_tracing";
 
@@ -18,6 +18,47 @@ const publicContextHidesInternalFields: Extract<
 > extends never
   ? true
   : false = true;
+
+/**
+ * Names exported by an entry module's `export {}` / `export type {}` lists and
+ * top-level `export type|interface` declarations. With `typesOnly`, only
+ * type-position exports; otherwise values too (function/const/class).
+ */
+function exportedNames(source: string, typesOnly: boolean): Set<string> {
+  const code = source
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "");
+  const names = new Set<string>();
+  for (const [, typeKeyword, list] of code.matchAll(
+    /export\s+(type\s+)?\{([^}]*)\}/g,
+  )) {
+    for (const raw of list.split(",")) {
+      const item = raw.trim();
+      if (!item) continue;
+      if (typesOnly && !typeKeyword && !item.startsWith("type ")) continue;
+      names.add(
+        item
+          .replace(/^type\s+/, "")
+          .split(/\s+as\s+/)
+          .pop()!
+          .trim(),
+      );
+    }
+  }
+  for (const [, , name] of code.matchAll(
+    /export\s+(?:declare\s+)?(type|interface)\s+([A-Za-z_$][\w$]*)/g,
+  )) {
+    names.add(name);
+  }
+  if (!typesOnly) {
+    for (const [, name] of code.matchAll(
+      /export\s+(?:async\s+)?(?:function|const|let|class)\s+([A-Za-z_$][\w$]*)/g,
+    )) {
+      names.add(name);
+    }
+  }
+  return names;
+}
 
 const srcRoot = resolve(import.meta.dirname, "..");
 const hostIndex = resolve(srcRoot, "host", "index.ts");
@@ -48,6 +89,27 @@ describe("public export boundaries", () => {
       );
       expect(root).toContain(`export function ${name}(): never`); // default-entry stub
     }
+  });
+
+  it("default + react-server entries both export TRACKING_SEARCH_PARAMS", () => {
+    const rsc = readFileSync(rscEntry, "utf8");
+    const root = readFileSync(rootIndex, "utf8");
+    for (const source of [rsc, root]) {
+      expect(source).toMatch(
+        /export\s*\{[^}]*\bTRACKING_SEARCH_PARAMS\b[^}]*\}\s*from/,
+      );
+    }
+  });
+
+  // The root `types` condition resolves to index.rsc.d.ts, so a type exported
+  // only from index.ts is invisible to installed consumers. The two export
+  // lists are maintained by hand (LoaderOptions drifted this way).
+  it("react-server entry exports every type the default entry exports", () => {
+    const rscNames = exportedNames(readFileSync(rscEntry, "utf8"), false);
+    const missing = [
+      ...exportedNames(readFileSync(rootIndex, "utf8"), true),
+    ].filter((name) => !rscNames.has(name));
+    expect(missing).toEqual([]);
   });
 
   it("does not expose HostRouterRegistry from the public host subpath", () => {

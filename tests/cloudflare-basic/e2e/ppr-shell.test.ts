@@ -8,8 +8,15 @@ import {
   waitForNavigation,
   goBack,
 } from "./helper";
-import { guardHydrationErrors } from "@shared/e2e";
-import { assertShellStatus } from "@rangojs/router/testing/e2e";
+import {
+  expectEntryHintAfterHeadChunks,
+  guardHydrationErrors,
+  waitForShellHydration,
+} from "@shared/e2e";
+import {
+  assertPprReplayStatus,
+  assertShellStatus,
+} from "@rangojs/router/testing/e2e";
 import type { PprExecCounters } from "../src/loaders/ppr-shell";
 
 // End-to-end coverage for PPR shell caching, opt-in per route via the `ppr` path
@@ -44,6 +51,12 @@ const STREAM_INNER_DELAY_MS = 300;
 // request.get defaults to Accept: * / *, so document probes must ask for HTML
 // the way a browser navigation does.
 const HTML_HEADERS = { Accept: "text/html" };
+// APIRequestContext buffers the body before returning. The fixture shortens
+// only warm-up holes so polling can observe HIT; browser holes stay action-gated.
+const INLINE_ACTION_WARM_HEADERS = {
+  ...HTML_HEADERS,
+  "x-rango-test-short-inline-hole": "1",
+};
 
 /**
  * Poll a URL until the shell cache reports HIT (the background capture landed).
@@ -54,9 +67,13 @@ const HTML_HEADERS = { Accept: "text/html" };
  * cold-start path the retry-in-place exists to smooth. The built preview worker
  * captures on the first attempt (pre-built modules), so it HITs well inside this.
  */
-async function warmToHit(request: Page["request"], url: string): Promise<void> {
+async function warmToHit(
+  request: Page["request"],
+  url: string,
+  headers: Record<string, string> = HTML_HEADERS,
+): Promise<void> {
   await expect(async () => {
-    const res = await request.get(url, { headers: HTML_HEADERS });
+    const res = await request.get(url, { headers });
     expect(res.status()).toBe(200);
     // Dogfood the public testing helper (same contract as production header).
     assertShellStatus(
@@ -71,21 +88,43 @@ async function warmToHit(request: Page["request"], url: string): Promise<void> {
 }
 
 async function expectInlineActionRoundTrip(page: Page): Promise<void> {
-  await expect(testId(page, "ppr-inline-action-page")).toBeVisible();
-  const rendered = await testId(
-    page,
-    "ppr-inline-action-rendered",
-  ).textContent();
+  const roots = page.locator('[data-testid="ppr-inline-action-page"]');
+  await expect(roots).toHaveCount(1);
+  const root = roots.first();
+  await expect(root).toBeVisible();
+  const rendered = await root
+    .locator('[data-testid="ppr-inline-action-rendered"]')
+    .textContent();
   const captured = rendered!.replace(/^rendered:/, "");
   expect(captured).toMatch(/^cf-server-token-/);
 
-  await testId(page, "ppr-inline-action-submit").click();
-  await expect(testId(page, "ppr-inline-action-captured")).toHaveText(
-    `captured:${captured}`,
+  const pageFallback = root.locator(
+    '[data-testid="ppr-inline-page-hole-fallback"]',
   );
-  await expect(testId(page, "ppr-inline-action-submitted")).toHaveText(
-    "submitted:from-client",
-  );
+  const submit = root.locator('[data-testid="ppr-inline-action-submit"]');
+  await expect(pageFallback).toBeVisible();
+
+  await submit.click();
+  await expect(submit).toHaveText("Processing...");
+  await expect(
+    root.locator('[data-testid="ppr-inline-action-stream-fallback"]'),
+  ).toBeVisible();
+  await expect(pageFallback).toBeVisible();
+
+  await expect(
+    root.locator('[data-testid="ppr-inline-action-stream-result"]'),
+  ).toHaveText(`completed:${captured}:from-client`, { timeout: 5_000 });
+  await expect(
+    root.locator('[data-testid="ppr-inline-action-captured"]'),
+  ).toHaveText(`captured:${captured}`);
+  await expect(
+    root.locator('[data-testid="ppr-inline-action-submitted"]'),
+  ).toHaveText("submitted:from-client");
+
+  await expect(pageFallback).toBeVisible();
+  await expect(
+    root.locator('[data-testid="ppr-inline-page-hole-result"]'),
+  ).toHaveText("CF page hole resolved", { timeout: 5_000 });
 }
 
 /** Native fetch + incremental reader: first-chunk latency and the full HTML body. */
@@ -132,33 +171,122 @@ function describePprShell(mode: "dev" | "build") {
   test.describe(`ppr-shell caching (${label})`, () => {
     const f = useFixture({ root: ".", mode });
 
-    test("runtime shell HIT preserves an embedded bound action", async ({
+    // This intentionally pins the retained-tree policy. Default Passthrough
+    // revalidation replaces the boundary and discards local useActionState.
+    const expectPrerenderAction = async (page: Page): Promise<void> => {
+      const submit = testId(page, "ppr-prerender-action-submit");
+      await expect(testId(page, "ppr-prerender-action-result")).toHaveCount(0);
+      await submit.click();
+      await expect(submit).toHaveText("Submitting...");
+      await expect(testId(page, "ppr-prerender-action-fallback")).toBeVisible();
+      await expect(testId(page, "ppr-ppp-source")).toHaveText("baked");
+      await expect(testId(page, "ppr-prerender-action-result")).toHaveText(
+        "cf-prerender-ppr-action:from-client",
+      );
+      await expect(submit).toHaveText("Submit prerender action");
+      await expect(testId(page, "ppr-ppp-source")).toHaveText("baked");
+    };
+
+    test("Passthrough Prerender+ppr document HIT streams with action revalidation opted out", async ({
       page,
     }) => {
       using _ = expectNoPageError(page);
-      const url = f.url("/ppr-shell/inline-action?probe=ppr-inline-hit");
+      using __ = guardHydrationErrors(page);
+      const url = f.url("/ppr-shell/passthrough/baked");
       await warmToHit(page.request, url);
 
       const response = await page.goto(url);
       expect(response?.headers()["x-rango-shell"]).toBe("HIT");
       await waitForHydration(page);
-      await using __ = await expectNoReload(page);
-      await expectInlineActionRoundTrip(page);
+      await using ___ = await expectNoReload(page);
+      await expect(testId(page, "ppr-ppp-source")).toHaveText("baked");
+      await expectPrerenderAction(page);
     });
 
-    test("partial PPR navigation preserves an embedded bound action", async ({
+    test("Prerender-store partial navigation streams a client-imported action", async ({
       page,
     }) => {
       using _ = expectNoPageError(page);
+      using __ = guardHydrationErrors(page);
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+      await using ___ = await expectNoReload(page);
+      const partialResponsePromise = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return (
+          url.pathname === "/ppr-shell/passthrough/baked" &&
+          url.searchParams.has("_rsc_partial")
+        );
+      });
+
+      await testId(page, "nav-prerender-ppr-action").click();
+      const partialResponse = await partialResponsePromise;
+      assertPprReplayStatus(
+        { headers: new Headers(partialResponse.headers()) },
+        { outcome: "BYPASS", reason: "prerender-store" },
+      );
+      await expect(testId(page, "ppr-ppp-source")).toHaveText("baked");
+      await expectPrerenderAction(page);
+    });
+
+    test("document MISS streams a bound action while a page hole is pending", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      using __ = guardHydrationErrors(page);
+      const url = f.url(
+        `/ppr-shell/inline-action?probe=ppr-inline-miss-stream-${crypto.randomUUID()}`,
+      );
+
+      const response = await page.goto(url, { waitUntil: "commit" });
+      expect(response?.headers()["x-rango-shell"]).toBe("MISS");
+      await waitForShellHydration(page);
+      await using ___ = await expectNoReload(page);
+      await expectInlineActionRoundTrip(page);
+    });
+
+    test("document HIT streams a bound action while a page hole is pending", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      using __ = guardHydrationErrors(page);
+      const url = f.url("/ppr-shell/inline-action?probe=ppr-inline-hit-stream");
+      await warmToHit(page.request, url, INLINE_ACTION_WARM_HEADERS);
+
+      const response = await page.goto(url, { waitUntil: "commit" });
+      expect(response?.headers()["x-rango-shell"]).toBe("HIT");
+      await waitForShellHydration(page);
+      await using ___ = await expectNoReload(page);
+      await expectInlineActionRoundTrip(page);
+    });
+
+    test("partial PPR replay streams a bound action while a page hole is pending", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      using __ = guardHydrationErrors(page);
       await warmToHit(
         page.request,
         f.url("/ppr-shell/inline-action?probe=ppr-inline-nav"),
+        INLINE_ACTION_WARM_HEADERS,
       );
 
       await page.goto(f.url("/"));
       await waitForHydration(page);
-      await using __ = await expectNoReload(page);
+      await using ___ = await expectNoReload(page);
+      const partialResponsePromise = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return (
+          url.pathname === "/ppr-shell/inline-action" &&
+          url.searchParams.has("_rsc_partial")
+        );
+      });
       await testId(page, "nav-ppr-inline-action").click();
+      const partialResponse = await partialResponsePromise;
+      assertPprReplayStatus(
+        { headers: new Headers(partialResponse.headers()) },
+        { outcome: "HIT", freshness: "fresh" },
+      );
       await expect(page).toHaveURL(
         /ppr-shell\/inline-action\?probe=ppr-inline-nav$/,
       );
@@ -264,26 +392,176 @@ function describePprShell(mode: "dev" | "build") {
       expect(ttfb).toBeLessThan(LOADER_DELAY_MS);
     });
 
+    // #1025: the capture stores the prelude with the client entry hint
+    // already rewritten (src/ssr/entry-preload-priority.ts); a HIT replays
+    // those bytes and the resume never re-emits the hint.
+    test("HIT: the frozen prelude carries the entry hint at default fetch priority, after the head chunks", async ({
+      request,
+    }) => {
+      const url = f.url("/ppr-shell?probe=entry-hint");
+      await warmToHit(request, url);
+      const res = await request.get(url, { headers: HTML_HEADERS });
+      expect(res.headers()["x-rango-shell"]).toBe("HIT");
+      const html = await res.text();
+      const hint = expectEntryHintAfterHeadChunks(html);
+      expect(splitPrelude(html).prelude).toContain(hint);
+    });
+
     // --- Replay-only capture: the shell is a PHOTOGRAPH, not a re-render. ---
 
-    // PHYSICS hole: PprShellLayout hands a PENDING handler-created promise
-    // (~250ms) to a client component that use()s it under its OWN Suspense. Real
-    // I/O cannot win the capture's task-quantized quiet window, so the boundary
-    // postpones: the frozen prelude carries the fallback and the resume streams
-    // the value in the same body. Holes are render-defined.
-    test("physics hole: a pending handler promise under Suspense postpones (fallback in prelude, value resumed)", async ({
+    // Handler output is baked: PprShellLayout hands a pending handler-created
+    // promise (~250ms) to a client component that use()s it under its OWN
+    // Suspense, and pushes a handle whose nested promise (~200ms) a client
+    // component use()s the same way. The capture waits for both and bakes the
+    // values into the prelude; every HIT replays them (no handler runs).
+    test("a handler promise under Suspense is baked: its value is in the prelude, no fallback", async ({
       request,
     }) => {
       const url = f.url("/ppr-shell?probe=physics");
       await warmToHit(request, url);
 
       const { html } = await measureFirstChunk(url);
-      const { prelude, resumed } = splitPrelude(html);
+      const { prelude } = splitPrelude(html);
 
-      expect(prelude).toContain("physics pending...");
-      expect(prelude).not.toContain("PHYSICS-HOLE-VALUE");
-      expect(resumed).toContain("PHYSICS-HOLE-VALUE");
-      expect(html).toContain("$RC");
+      expect(prelude).toContain("PHYSICS-HOLE-VALUE");
+      expect(prelude).not.toContain("physics pending...");
+    });
+
+    test("a nested promise in a handler handle push is baked: its value is in the prelude, no fallback", async ({
+      request,
+    }) => {
+      const url = f.url("/ppr-shell?probe=nested-push");
+      await warmToHit(request, url);
+
+      const { html } = await measureFirstChunk(url);
+      const { prelude } = splitPrelude(html);
+
+      expect(prelude).toContain("NESTED-HANDLE-VALUE");
+      expect(prelude).not.toContain("nested handle pending...");
+    });
+
+    // A route whose cache() key() partitions its record by the visitor's tier
+    // partitions its shell the same way: each tier captures and serves its own,
+    // hydrates cleanly, and never sees another tier's content. So does a route
+    // under a cache() nested in the keyed one, without a key() of its own
+    // (issue #970); its layout reads the tier too.
+    for (const [route, label, nested] of [
+      ["/ppr-tiered", "a request-partitioned route", false],
+      [
+        "/ppr-tiered-nested",
+        "a route under a cache() nested in a keyed cache()",
+        true,
+      ],
+    ] as const) {
+      test(`${label}: each tier gets its own shell, hydrates cleanly, and nothing leaks`, async ({
+        browser,
+        request,
+      }) => {
+        const url = f.url(`${route}?probe=${crypto.randomUUID().slice(0, 8)}`);
+        const get = (tier: string) =>
+          request.get(url, {
+            headers: { ...HTML_HEADERS, "x-ppr-tier": tier },
+          });
+        const expectHit = async (tier: string, other: string) => {
+          await expect(async () => {
+            const res = await get(tier);
+            expect(res.headers()["x-rango-shell"]).toBe("HIT");
+            const body = await res.text();
+            expect(body).toContain(`tier-${tier}`);
+            if (nested) expect(body).toContain(`layout-tier-${tier}`);
+            // The two routes share the outer key(); neither replays the other's
+            // record.
+            expect(body.includes("ppr-tiered-nested-route")).toBe(nested);
+            expect(body).not.toContain(`tier-${other}`);
+          }).toPass({ timeout: 15_000 });
+        };
+
+        if (nested) {
+          // /ppr-tiered's record sits under the outer key alone
+          // ("key:tier%3Agold"). Write it first: the nested route must not
+          // read it.
+          const flat = f.url(
+            `/ppr-tiered?probe=${crypto.randomUUID().slice(0, 8)}`,
+          );
+          await expect(async () => {
+            const res = await request.get(flat, {
+              headers: { ...HTML_HEADERS, "x-ppr-tier": "gold" },
+            });
+            expect(res.headers()["x-rango-shell"]).toBe("HIT");
+          }).toPass({ timeout: 15_000 });
+        }
+
+        expect((await get("gold")).headers()["x-rango-shell"]).toBe("MISS");
+        await expectHit("gold", "silver");
+        // Silver does not HIT gold's shell: its own MISS, then its own capture.
+        const silverMiss = await get("silver");
+        expect(silverMiss.headers()["x-rango-shell"]).toBe("MISS");
+        expect(await silverMiss.text()).not.toContain("tier-gold");
+        await expectHit("silver", "gold");
+        await expectHit("gold", "silver");
+
+        for (const tier of ["gold", "silver"]) {
+          const context = await browser.newContext({
+            extraHTTPHeaders: { "x-ppr-tier": tier },
+          });
+          try {
+            const page = await context.newPage();
+            using _ = expectNoPageError(page);
+            using __ = guardHydrationErrors(page);
+            const res = await page.goto(url);
+            expect(res?.headers()["x-rango-shell"]).toBe("HIT");
+            await waitForHydration(page);
+            await expect(testId(page, "ppr-tiered")).toHaveText(`tier-${tier}`);
+          } finally {
+            await context.close();
+          }
+        }
+      });
+    }
+
+    // A degraded HIT reloads with the forced-MISS marker; the gate renders it
+    // on axis 1 over the stored shell, so the reload hydrates and never
+    // reloads again.
+    test("a request carrying the forced-MISS marker renders on axis 1 over a stored shell and hydrates once", async ({
+      page,
+      request,
+    }) => {
+      using _ = expectNoPageError(page);
+      using __ = guardHydrationErrors(page);
+      const url = f.url("/ppr-shell?probe=forced-miss");
+      await warmToHit(request, url);
+
+      const forced = `${url}&_rsc_shell=miss`;
+      const res = await request.get(forced, { headers: HTML_HEADERS });
+      expect(res.status()).toBe(200);
+      expect(res.headers()["x-rango-shell"]).toBeUndefined();
+      // The server strips the marker before rendering: the handler's request
+      // URL, the rendered search params and the document carry none of it.
+      const html = await res.text();
+      expect(html).toContain(
+        '<p data-testid="ppr-request-search">?probe=forced-miss</p>',
+      );
+      expect(html).toContain("search-marker:absent");
+      expect(html).not.toContain("_rsc_shell");
+
+      let documents = 0;
+      page.on("response", (response) => {
+        if (response.request().resourceType() === "document") documents++;
+      });
+      await page.goto(forced);
+      await waitForHydration(page);
+      await expect(page.getByTestId("ppr-shell-header")).toBeVisible();
+      // Dropped from the address bar, other params kept; server and client
+      // render the same clean URL (guardHydrationErrors above).
+      await expect(page).toHaveURL(url);
+      await expect(page.getByTestId("ppr-request-search")).toHaveText(
+        "?probe=forced-miss",
+      );
+      await expect(page.getByTestId("ppr-marker-probe")).toHaveText(
+        "search-marker:absent",
+      );
+      await page.waitForTimeout(300);
+      expect(documents).toBe(1);
     });
 
     test("HIT page hydrates with zero errors (cached prelude / fresh payload consistency)", async ({
@@ -301,7 +579,11 @@ function describePprShell(mode: "dev" | "build") {
       await expect(testId(page, "ppr-shell-header")).toHaveText(
         "PPR Shell Demo",
       );
-      await expect(testId(page, "ppr-price")).toContainText("Live price:");
+      // Flight can hydrate the boundary before fizz's $RV removes its hidden
+      // S:n reveal copy. Wait globally so a permanent duplicate still fails.
+      const price = testId(page, "ppr-price");
+      await expect(price).toHaveCount(1);
+      await expect(price).toContainText("Live price:");
 
       const counter = testId(page, "ppr-counter");
       await counter.click();
@@ -351,6 +633,144 @@ function describePprShell(mode: "dev" | "build") {
       const counter = testId(page, "ppr-counter");
       await counter.click();
       await expect(counter).toHaveText("count: 1");
+    });
+
+    // Issue #888. The ssr:false loader awaits an unflagged loader that pushes
+    // a string handle; both run at capture and neither runs on a HIT, so the
+    // doc record keeps the push and the HIT shows it exactly once.
+    test("fast-path HIT renders a string handle pushed by a loader an ssr:false loader awaits once", async ({
+      page,
+    }) => {
+      // Cold-graph absorber (see the fragment-envelope test above).
+      await warmToHit(page.request, f.url("/ppr-shell?probe=warnwarmup"));
+      const url = f.url("/ppr-warnings?probe=warnings");
+      await warmToHit(page.request, url);
+      const runs = async (): Promise<{ storefront: number; stock: number }> =>
+        (await page.request.get(f.url("/__test/ppr-storefront-runs"))).json();
+      const runsBefore = await runs();
+
+      // Fast path, not the full tail: the tail replayed the doc record.
+      const res = await page.request.get(url, { headers: HTML_HEADERS });
+      expect(res.headers()["x-rango-shell"]).toBe("HIT");
+      // The promise-free bake-lane loader, and the loader it awaits, are
+      // served from the shell: neither body runs on a HIT.
+      expect(await runs()).toEqual(runsBefore);
+      expect(splitPrelude(await res.text()).resumed).toContain(
+        "__rangoFragment",
+      );
+
+      using _ = expectNoPageError(page);
+      using __ = guardHydrationErrors(page);
+      const nav = await page.goto(url);
+      expect(nav?.headers()["x-rango-shell"]).toBe("HIT");
+      await waitForHydration(page);
+
+      await expect(testId(page, "ppr-warning")).toHaveText(["Low stock"]);
+    });
+
+    // A client navigation that replays the shell matches the document HIT:
+    // a promise-free ssr:false loader is served from its pin without
+    // running, with or without loading() on its entry.
+    test("a client navigation that replays the shell pins ssr:false loaders like the document HIT", async ({
+      page,
+    }) => {
+      // Cold-graph absorber (see the fragment-envelope test above).
+      await warmToHit(page.request, f.url("/ppr-shell?probe=navpinwarmup"));
+      const replay = (url: string) =>
+        page.request.get(`${url}&_rsc_partial=true&_rsc_segments=`, {
+          headers: { "X-RSC-Router-Client-Path": f.url("/") },
+        });
+
+      const warningsUrl = f.url("/ppr-warnings?probe=navpin");
+      await warmToHit(page.request, warningsUrl);
+      const storefrontRuns = async (): Promise<unknown> =>
+        (await page.request.get(f.url("/__test/ppr-storefront-runs"))).json();
+      const storefrontBefore = await storefrontRuns();
+      const warningsNav = await replay(warningsUrl);
+      expect(warningsNav.headers()["x-rango-ppr-replay"]).toBe(
+        "HIT; freshness=fresh",
+      );
+      expect(await storefrontRuns()).toEqual(storefrontBefore);
+
+      const pinUrl = f.url("/ppr-nav-pin?probe=navpin");
+      await warmToHit(page.request, pinUrl);
+      const pinRuns = async (): Promise<number> =>
+        (
+          (await (
+            await page.request.get(f.url("/__test/ppr-nav-pin-runs"))
+          ).json()) as { baked: number }
+        ).baked;
+      const baked = (text: string) => text.match(/nav-pin-baked-(\d+)/)?.[1];
+      const pinBefore = await pinRuns();
+      const doc = await (
+        await page.request.get(pinUrl, { headers: HTML_HEADERS })
+      ).text();
+      const docBaked = baked(doc);
+      expect(docBaked).toBeDefined();
+      const pinNav = await replay(pinUrl);
+      expect(pinNav.headers()["x-rango-ppr-replay"]).toBe(
+        "HIT; freshness=fresh",
+      );
+      expect(baked(await pinNav.text())).toBe(docBaked);
+      expect(await pinRuns()).toBe(pinBefore);
+    });
+
+    // A shell never outlives the route cache() entry it was captured from:
+    // under cache({ ttl: 5, swr: 0 }) it stops serving with that entry, well
+    // inside ppr's own ttl.
+    test("a shell under a 5 s route cache() entry stops serving once the entry expires", async ({
+      request,
+    }) => {
+      test.setTimeout(45_000);
+      // Its own shell key: a capture another run schedules for the same key
+      // during the wait would be served here.
+      const url = f.url(`/ppr-short-record?probe=shortrecord-${Date.now()}`);
+      const render = (html: string) =>
+        html.match(/short-record-render-(\d+)/)?.[1];
+      let hitRender: string | undefined;
+      await expect(async () => {
+        const res = await request.get(url, { headers: HTML_HEADERS });
+        expect(res.headers()["x-rango-shell"]).toBe("HIT");
+        hitRender = render(await res.text());
+      }).toPass({ timeout: 10_000, intervals: [100] });
+      expect(hitRender).toBeDefined();
+
+      // Past the 5 s entry, and so past the shell captured from it.
+      await new Promise((resolve) => setTimeout(resolve, 6_000));
+
+      // A new connection: the dev and preview servers close a keep-alive
+      // socket idle for 5 s, and reusing it hangs up.
+      const after = await fetch(url, { headers: HTML_HEADERS });
+      expect(after.headers.get("x-rango-shell")).toBe("MISS");
+      expect(render(await after.text())).not.toBe(hitRender);
+    });
+
+    // Issue #929. The ssr:false loader pushes the string handle itself: the
+    // doc record keeps the push (the prelude rendered it) and the loader
+    // does not run on a HIT: the HIT restores its push once.
+    test("fast-path HIT renders a string handle pushed by an ssr:false loader once", async ({
+      page,
+    }) => {
+      // Cold-graph absorber (see the fragment-envelope test above).
+      await warmToHit(page.request, f.url("/ppr-shell?probe=restockwarmup"));
+      const url = f.url("/ppr-restock?probe=restock");
+      await warmToHit(page.request, url);
+
+      // Fast path, not the full tail: the tail replayed the doc record.
+      const res = await page.request.get(url, { headers: HTML_HEADERS });
+      expect(res.headers()["x-rango-shell"]).toBe("HIT");
+      expect(splitPrelude(await res.text()).resumed).toContain(
+        "__rangoFragment",
+      );
+
+      using _ = expectNoPageError(page);
+      using __ = guardHydrationErrors(page);
+      const nav = await page.goto(url);
+      expect(nav?.headers()["x-rango-shell"]).toBe("HIT");
+      await waitForHydration(page);
+      await page.waitForLoadState("networkidle");
+
+      await expect(testId(page, "ppr-warning")).toHaveText(["Restock soon"]);
     });
 
     // --- Loader-carried promise: the deterministic streaming lane in a hole. ---
@@ -486,6 +906,198 @@ function describePprShell(mode: "dev" | "build") {
       expect(liveSeq).toBeGreaterThan(firstSeq);
     });
 
+    // Issue #941: a storefront-sized shell on the real KV-backed CFCacheStore —
+    // a ~614 KB prelude (380 product cards) and a multi-MB capture snapshot
+    // (pages/ppr-large.tsx). The HIT must deliver every prelude byte once, in
+    // order, and hydrate; the holes variant resumes a live loader behind it.
+    for (const [variant, path, cards] of [
+      ["no holes", "/ppr-large", 380],
+      ["with a hole", "/ppr-large/holes", 380],
+    ] as const) {
+      test(`large shell HIT (${variant}): the chunked prelude arrives intact and hydrates`, async ({
+        page,
+      }) => {
+        using _ = expectNoPageError(page);
+        using __ = guardHydrationErrors(page);
+        const url = f.url(`${path}?probe=large`);
+        await warmToHit(page.request, url);
+
+        const { html } = await measureFirstChunk(url);
+        const { prelude, resumed } = splitPrelude(html);
+        expect(new TextEncoder().encode(prelude).length).toBeGreaterThan(
+          500 * 1024,
+        );
+        const skus = [...prelude.matchAll(/data-sku="(sku-\d+)"/g)].map(
+          (m) => m[1],
+        );
+        expect(skus).toEqual(
+          Array.from({ length: cards }, (_unused, i) => `sku-${i}`),
+        );
+        expect(prelude).toContain('data-testid="ppr-large-footer"');
+        if (path === "/ppr-large/holes") {
+          expect(prelude).toContain('data-testid="ppr-large-hole-fallback"');
+          expect(resumed).toContain("Live hole (seq");
+        }
+
+        const response = await page.goto(url);
+        expect(response?.headers()["x-rango-shell"]).toBe("HIT");
+        await waitForHydration(page);
+        await expect(page.locator("[data-sku]")).toHaveCount(cards);
+        if (path === "/ppr-large/holes") {
+          await expect(testId(page, "ppr-large-hole")).toContainText(
+            "Live hole",
+          );
+        }
+      });
+    }
+
+    // Issue #941: under debugPerformance (?__perf_debug=1, src/router.tsx) the
+    // HIT's store read, integrity check, and prelude flush are separate
+    // Server-Timing rows with byte and chunk counts, and the previous HIT's
+    // tail (snapshot read, seed, resume) rides the next response as ppr-tail.
+    // The first HIT after a capture reads the store (the capture's putShell
+    // cleared this isolate's memo) and fills the shell memo; the next HIT is
+    // served from it, with only the marker check.
+    test("a perf-debug large shell HIT reports the read, open, commit, and tail rows with sizes", async ({
+      request,
+    }) => {
+      const url = f.url(`/ppr-large?__perf_debug=1&probe=${Date.now()}`);
+      let storeRead = "";
+      await expect(async () => {
+        const res = await request.get(url, { headers: HTML_HEADERS });
+        expect(res.headers()["x-rango-shell"]).toBe("HIT");
+        storeRead = res.headers()["server-timing"] ?? "";
+      }).toPass({ timeout: 20000 });
+      expect(storeRead).toMatch(/ppr-shell-read;dur=[\d.]+;desc="hit l1"/);
+      expect(storeRead).toMatch(
+        /d1-ppr-shell-memo;dur=[\d.]+;desc="miss size=\d+b"/,
+      );
+
+      const res = await request.get(url, { headers: HTML_HEADERS });
+      expect(res.headers()["x-rango-shell"]).toBe("HIT");
+      const memoHit = res.headers()["server-timing"] ?? "";
+      expect(memoHit).toMatch(/ppr-shell-read;dur=[\d.]+;desc="hit memo"/);
+      expect(memoHit).toMatch(
+        /d1-ppr-shell-memo;dur=[\d.]+;desc="hit size=\d{6,}b"/,
+      );
+      expect(memoHit).toMatch(
+        /d1-ppr-shell-marker;dur=[\d.]+;desc="tags=\d+ parallel commit-wait=[\d.]+ms[^"]*"/,
+      );
+      expect(memoHit).not.toContain("d1-ppr-shell-prelude");
+      const timing = storeRead;
+      expect(timing).toContain("ppr-shell-read;dur=");
+      expect(timing).toMatch(/ppr-shell-read;dur=[\d.]+;desc="hit l1"/);
+      expect(timing).toMatch(
+        /d1-ppr-shell-prelude;dur=[\d.]+;desc="bytes=\d{6,}"/,
+      );
+      expect(timing).toMatch(
+        /d1-ppr-shell-marker;dur=[\d.]+;desc="tags=\d+ parallel commit-wait=[\d.]+ms[^"]*"/,
+      );
+      expect(timing).toMatch(
+        /ppr-shell-open;dur=[\d.]+;desc="cpu raw prelude=\d{6,}b"/,
+      );
+      expect(timing).toMatch(
+        /ppr-shell-commit;dur=[\d.]+;desc="cpu chunks=\d{2,} prelude=\d{6,}b"/,
+      );
+      // The store-read HIT's tail rides the memo HIT's response.
+      expect(memoHit).toMatch(
+        /ppr-tail;dur=[\d.]+;desc="complete snapshot=\d+ms snapshot-read=\d+ms snapshot-bytes=\d+b snapshot-parse-cpu=\d+ms /,
+      );
+    });
+
+    // Issue #941, snapshot pruning: every HIT tail of these entries replays
+    // the handler layer from the doc record, so the capture stores that
+    // record alone and records none of the five "use cache" reads that
+    // produced it (2.6 MB of the production snapshot when they were recorded;
+    // 17 MB in dev, where that snapshot overflowed the 8 MiB cap and was not
+    // stored at all).
+    for (const path of ["/ppr-large", "/ppr-large/holes"]) {
+      test(`${path}: the stored snapshot keeps only the doc record and the HIT hydrates`, async ({
+        page,
+      }) => {
+        using _ = expectNoPageError(page);
+        using __ = guardHydrationErrors(page);
+        const url = f.url(`${path}?__perf_debug=1&probe=pruned`);
+        await warmToHit(page.request, url);
+        // The previous HIT's tail rides each response's Server-Timing. A
+        // shell memo hit's tail has no snapshot read to report, so poll until
+        // the tail of a store read (snapshot-bytes=) comes by.
+        let tail: string | undefined;
+        await expect(async () => {
+          const res = await page.request.get(url, { headers: HTML_HEADERS });
+          expect(res.headers()["x-rango-shell"]).toBe("HIT");
+          tail = /ppr-tail;dur=[\d.]+;desc="([^"]*)"/.exec(
+            res.headers()["server-timing"] ?? "",
+          )?.[1];
+          expect(tail).toMatch(/ snapshot-bytes=\d+b /);
+        }).toPass({ timeout: 15000 });
+        expect(tail).toContain(" records=segment:1 seed=");
+        const snapshotBytes = Number(/snapshot-bytes=(\d+)b/.exec(tail!)?.[1]);
+        expect(snapshotBytes).toBeGreaterThan(500 * 1024);
+        expect(snapshotBytes).toBeLessThan(2 * 1024 * 1024);
+
+        const response = await page.goto(url);
+        expect(response?.headers()["x-rango-shell"]).toBe("HIT");
+        await waitForHydration(page);
+        await expect(page.locator("[data-sku]")).toHaveCount(380);
+      });
+    }
+
+    // Issue #941, snapshot pruning (docs/design/shell-entry-layout.md,
+    // decision 3): /ppr-shared-key's layout, its ssr: false loader and its
+    // live hole read the SAME "drift" item (ttl 2s). The capture bakes the
+    // layout's value inside the doc record and pins the ssr: false loader's
+    // container; it records no cache read, so the hole's loader reads the
+    // store: once the item expires the hole shows a newer stamp while the
+    // shell and the pin keep the capture stamp, and the page still hydrates
+    // cleanly. Before, the bake-lane loader's read pinned the item for every
+    // reader on a HIT and the hole never moved on.
+    test("shared key: the shell and an ssr: false loader keep the capture value while the live hole reads the store", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      using __ = guardHydrationErrors(page);
+      const url = f.url("/ppr-shared-key?probe=shared");
+      await warmToHit(page.request, url);
+      const first = await page.request.get(url, { headers: HTML_HEADERS });
+      const captureStamp =
+        /data-testid="ppr-shared-shell">ppr-shared-(\d+)</.exec(
+          splitPrelude(await first.text()).prelude,
+        )?.[1];
+      expect(captureStamp, "the shell bakes the capture stamp").toBeTruthy();
+
+      await expect(async () => {
+        const res = await page.request.get(url, { headers: HTML_HEADERS });
+        expect(res.headers()["x-rango-shell"]).toBe("HIT");
+        const { prelude, resumed } = splitPrelude(await res.text());
+        expect(prelude).toContain(
+          `data-testid="ppr-shared-shell">ppr-shared-${captureStamp}<`,
+        );
+        expect(prelude).toContain(
+          `data-testid="ppr-shared-baked">ppr-shared-${captureStamp}<`,
+        );
+        const holeStamp =
+          /data-testid="ppr-shared-hole">ppr-shared-(\d+)</.exec(resumed)?.[1];
+        expect(Number(holeStamp)).toBeGreaterThan(Number(captureStamp));
+      }).toPass({ timeout: 15_000 });
+
+      const response = await page.goto(url);
+      expect(response?.headers()["x-rango-shell"]).toBe("HIT");
+      await waitForHydration(page);
+      await expect(testId(page, "ppr-shared-shell")).toHaveText(
+        `ppr-shared-${captureStamp}`,
+      );
+      await expect(testId(page, "ppr-shared-baked")).toHaveText(
+        `ppr-shared-${captureStamp}`,
+      );
+      await expect(testId(page, "ppr-shared-hole")).not.toHaveText(
+        `ppr-shared-${captureStamp}`,
+      );
+      await expect(testId(page, "ppr-shared-hole")).toHaveText(
+        /^ppr-shared-\d+$/,
+      );
+    });
+
     // /ppr-blog is the realistic fixture: the SAME components/loaders/cache()
     // wrapping as the classic /blog (sidebar parallel + ring-3 cache() ttl 60
     // whose rendered content includes a per-render timestamp), duplicated under
@@ -538,99 +1150,102 @@ function describePprShell(mode: "dev" | "build") {
       );
     });
 
-    // --- Negative contract: a loader WITHOUT loading() is not a hole. ---
+    // --- Negative contract: no boundary above the reader = no shell. ---
 
-    // /ppr-shell/no-hole has a loader but NO route-level loading(): the BAKE
-    // lane (docs/design/loader-container-bake.md). The loader executes during
-    // capture; its settled container (the outer label) bakes into the prelude;
-    // the nested pendingData promise postpones at the consumer's own inner
-    // Suspense — a hole. On every HIT the snapshot's loader family overlays
-    // the recorded container onto the fresh run (outer label PINNED at its
-    // capture-time seq) while the nested promise stays live (inner seq
-    // advances per request). Runs on the real KV-backed CFCacheStore under
-    // workerd, so the loader-family snapshot round-trips the KV envelope.
-    test("no loading() (bake lane): HITs with the container baked+pinned and the nested promise live", async ({
+    // /ppr-shell/no-hole — CONTRACT CHANGE (streaming useLoader): route
+    // loaders are LIVE at capture unconditionally; the bake lane for
+    // value-slot loaders is gone. This route's outer read has NO boundary
+    // above it, so the masked loader root-postpones the capture and the
+    // <body> sanity gate refuses the shell: ppr on a boundary-less route
+    // degrades to runtime rendering (once-per-key eternal-MISS warning).
+    // Axis 1 streams everything FRESH per request. Baking route data is
+    // expressed via cache()/"use cache", never by omitting loading(). Runs
+    // on the real KV-backed CFCacheStore under workerd.
+    test("no loading() and no boundary above the reader: capture refuses, stays MISS, axis 1 streams fresh", async ({
       request,
     }) => {
       const url = f.url("/ppr-shell/no-hole?probe=nohole");
-      await warmToHit(request, url);
 
-      const { html } = await measureFirstChunk(url);
-      const { prelude, resumed } = splitPrelude(html);
-
-      expect(prelude).toMatch(/Streamed outer \d+/);
-      expect(prelude).toContain("Loading inner...");
-      expect(prelude).not.toMatch(/Streamed inner \d+/);
-      expect(resumed).toMatch(/Streamed inner \d+/);
-
-      const second = await measureFirstChunk(url);
       const outerSeq = (h: string) =>
         Number(h.match(/Streamed outer (\d+)/)?.[1]);
       const innerSeq = (h: string) =>
         Number(h.match(/Streamed inner (\d+)/)?.[1]);
-      expect(outerSeq(second.html)).toBe(outerSeq(html));
-      expect(innerSeq(second.html)).toBeGreaterThan(innerSeq(html)!);
+
+      let firstHtml = "";
+      for (let i = 0; i < 3; i++) {
+        const res = await request.get(url, { headers: HTML_HEADERS });
+        expect(res.status()).toBe(200);
+        expect(
+          res.headers()["x-rango-shell"],
+          `request #${i} must stay MISS (no boundary above the reader)`,
+        ).toBe("MISS");
+        const html = await res.text();
+        expect(html).toMatch(/Streamed outer \d+/);
+        expect(html).toContain("Loading inner...");
+        expect(html).toMatch(/Streamed inner \d+/);
+        if (i === 0) firstHtml = html;
+        if (i < 2) await new Promise((r) => setTimeout(r, 350));
+      }
+
+      // Liveness: nothing pinned anywhere — both values advance per request.
+      const last = await request.get(url, { headers: HTML_HEADERS });
+      const lastHtml = await last.text();
+      expect(outerSeq(lastHtml)).toBeGreaterThan(outerSeq(firstHtml)!);
+      expect(innerSeq(lastHtml)).toBeGreaterThan(innerSeq(firstHtml)!);
     });
 
-    // /ppr-shell/settled: nested-promise SHAPE is the liveness declaration.
-    // A bake-lane loader's nested promise that is ALREADY RESOLVED at
-    // container return previously won the capture window and its VALUE was
-    // snapshot-pinned — every HIT then served the capture-time value to every
-    // visitor (found live: a storefront basket, with the capturing session's
-    // identifiers, frozen into the shared shell and served to anonymous
-    // requests). Nested thenables are now MASKED at capture regardless of
-    // settle timing: the consumer's own Suspense postpones (its fallback bakes
-    // as the hole) and every HIT streams the FRESH value. The consumer still
-    // receives a real promise, so the original #438 regression stays
-    // impossible. Runs on the real KV-backed CFCacheStore under workerd, so
-    // the hole-marker record round-trips the KV envelope.
-    test("bake lane, nested promise settled inside the window: holes anyway — outer pins, nested value stays FRESH per request", async ({
+    // /ppr-shell/settled — CONTRACT CHANGE (streaming useLoader): the bake
+    // lane for value-slot loaders is gone, so settle timing can no longer pin
+    // ANY value — the whole loader is masked at capture, and this route's
+    // outer read has no boundary above it, so the capture refuses and the
+    // route stays MISS. The cross-session bake leak this fixture guarded
+    // against (a storefront basket frozen into the shared shell) is now
+    // impossible by construction — nothing from a value-slot loader can
+    // enter a shell. Axis 1 serves everything fresh; hydration stays clean
+    // and use(data.fast) still receives a real promise (#438). Runs on the
+    // real KV-backed CFCacheStore under workerd.
+    test("nested promise settled inside the window: stays MISS, everything fresh per request, hydration clean", async ({
       request,
       page,
     }) => {
       const url = f.url("/ppr-shell/settled?probe=settled");
-      await warmToHit(request, url);
 
-      const { html } = await measureFirstChunk(url);
       const outerSeq = (h: string) =>
         Number(h.match(/Settled outer (\d+)/)?.[1]);
       const fastSeq = (h: string) => Number(h.match(/Settled fast (\d+)/)?.[1]);
-      // Parity: the outer (non-promise) container material is snapshot-pinned.
-      expect(outerSeq(html)).toBeGreaterThan(0);
-      // The frozen prelude holds the consumer's Suspense fallback, never a
-      // pinned nested value — the nested promise holes by declaration.
-      const { prelude } = splitPrelude(html);
-      expect(prelude).toContain("fast pending...");
-      expect(prelude).not.toMatch(/Settled fast \d+/);
-      // Liveness: the nested value is a FRESH execution's and advances per HIT.
-      expect(fastSeq(html)).toBeGreaterThan(outerSeq(html)!);
-      const second = await measureFirstChunk(url);
-      expect(outerSeq(second.html)).toBe(outerSeq(html));
-      expect(fastSeq(second.html)).toBeGreaterThan(fastSeq(html)!);
 
-      // Browser: the HIT hydrates cleanly — use(data.fast) still receives a
+      const first = await request.get(url, { headers: HTML_HEADERS });
+      expect(first.headers()["x-rango-shell"]).toBe("MISS");
+      const html = await first.text();
+      expect(outerSeq(html)).toBeGreaterThan(0);
+      expect(html).toMatch(/Settled fast \d+/);
+
+      await new Promise((r) => setTimeout(r, 350));
+      const second = await request.get(url, { headers: HTML_HEADERS });
+      expect(
+        second.headers()["x-rango-shell"],
+        "no boundary above the reader — capture must keep refusing",
+      ).toBe("MISS");
+      const secondHtml = await second.text();
+      // Liveness: nothing pinned — both values advance per request.
+      expect(outerSeq(secondHtml)).toBeGreaterThan(outerSeq(html)!);
+      expect(fastSeq(secondHtml)).toBeGreaterThan(fastSeq(html)!);
+
+      // Browser: axis 1 hydrates cleanly — use(data.fast) still receives a
       // real promise (the fresh one), so #438 cannot recur.
       using __ = guardHydrationErrors(page);
       await page.goto(url);
       await waitForHydration(page);
-      // Scope to the PprShellSettled container (data-testid="ppr-settled").
-      // When the nested promise's Flight payload lands client-side before fizz's
-      // `$RC("B:0","S:0")` completeSegment script executes (a streaming race the
-      // #706 fragment splice widens — the baked payload is now a byte copy that
-      // finishes well ahead of the resume), React client-renders the dehydrated
-      // boundary in place and leaves fizz's HIDDEN segment container
-      // (`<div hidden id="S:0">`, a direct child of <body>) orphaned in the DOM.
-      // That orphan carries the `hidden` attribute — invisible, zero layout, out
-      // of the a11y tree — but it holds a second `ppr-settled-fast` node, so a
-      // bare testid locator strict-mode-collides with it. The container scope
-      // keeps only the visible in-place copy (the orphan lives outside it).
+      // Flight can hydrate this boundary before fizz's $RC/$RV reveal cleanup.
+      // During that normal seam the visible node and hidden S:n copy coexist;
+      // wait globally so a permanently orphaned copy remains a test failure.
+      const fast = testId(page, "ppr-settled-fast");
+      await expect(fast).toHaveCount(1);
       const settled = page.getByTestId("ppr-settled");
       await expect(settled.getByTestId("ppr-settled-label")).toHaveText(
         /Settled outer \d+/,
       );
-      await expect(settled.getByTestId("ppr-settled-fast")).toHaveText(
-        /Settled fast \d+/,
-      );
+      await expect(fast).toHaveText(/Settled fast \d+/);
     });
 
     // --- Per-request nonce via the ContextVar token: ppr stays on axis 1 (#656) ---
@@ -726,52 +1341,39 @@ function describePprShell(mode: "dev" | "build") {
       expect(prelude).toContain("Bare home static content");
     });
 
-    // /ppr-shell/bake-slow: the PIN-FIRST optimization (loader-cache.ts
-    // `if (!recorded.holes)`) on the real KV-backed CFCacheStore under workerd.
-    // The layout registers a 600ms bake-lane loader (no loading() on the
-    // layout) returning a plain HOLE-FREE container. Its container bakes into
-    // the snapshot's loader family hole-free, so on a HIT the payload resolves
-    // the loaderData from the PIN immediately instead of gating on the fresh
-    // 600ms run (which still executes ungated for side effects). The child keeps
-    // a fast ~30ms price hole behind loading() so a real shell captures. Two
-    // guarantees in one: the served label is pinned (frozen across HITs, not the
-    // advancing fresh seq) AND the pin makes the full HIT response beat the
-    // 600ms fresh run.
-    test("pin-first bake lane: a HIT serves the pinned 600ms container fast and frozen across HITs", async ({
+    // /ppr-shell/bake-slow — CONTRACT CHANGE (streaming useLoader): the
+    // pin-first bake optimization is gone with the bake lane itself. The
+    // layout's 600ms loader is masked at capture like every value-slot
+    // loader; its reader sits inside the child route's loading() boundary,
+    // so the shell still captures (chrome baked, the route area one live
+    // hole) and every HIT re-runs the loader FRESH — the label ADVANCES
+    // across HITs instead of freezing. The full HIT body now gates on the
+    // real 600ms run; a route wanting the old fast+frozen behavior expresses
+    // it with cache()/"use cache". Runs on the real KV-backed CFCacheStore
+    // under workerd.
+    test("slow layout loader under the child's loading(): HITs with the label LIVE per request (no pin)", async ({
       request,
     }) => {
       const url = f.url("/ppr-shell/bake-slow?probe=bakeslow");
       await warmToHit(request, url);
 
-      // request.get buffers the WHOLE body, so elapsed covers stream
-      // completion. Without pin-first the payload gates on the fresh 600ms bake
-      // run (elapsed >= 600ms); pinned, the recorded container resolves
-      // immediately and only the ~30ms live hole remains — the 400ms bound
-      // leaves a 200ms+ margin for CI noise either side.
-      const start = Date.now();
       const res = await request.get(url, { headers: HTML_HEADERS });
-      const elapsed = Date.now() - start;
       expect(res.status()).toBe(200);
       expect(res.headers()["x-rango-shell"]).toBe("HIT");
       const html = await res.text();
 
-      // The pinned bake label rides the HIT body beside the live hole content.
-      const captured = /bake-\d+/.exec(html)?.[0];
-      expect(captured, "the pinned bake label rides the HIT body").toBeTruthy();
+      // The fresh bake label rides the HIT body beside the live hole content.
+      const captured = /bake-(\d+)/.exec(html);
+      expect(captured, "the bake label rides the HIT body").toBeTruthy();
       expect(html).toContain("Live price:");
 
-      expect(
-        elapsed,
-        `HIT full-response ${elapsed}ms must beat the 600ms fresh bake run`,
-      ).toBeLessThan(400);
-
-      // Frozen: a second HIT serves the SAME captured label (the pin, not the
-      // fresh seq that keeps advancing in the background) while the price hole
-      // stays live.
+      // LIVE: a second HIT serves an ADVANCED label — the loader re-ran
+      // fresh; nothing from a value-slot loader is pinned into the shell.
       const second = await request.get(url, { headers: HTML_HEADERS });
       expect(second.headers()["x-rango-shell"]).toBe("HIT");
       const secondHtml = await second.text();
-      expect(/bake-\d+/.exec(secondHtml)?.[0]).toBe(captured);
+      const secondLabel = /bake-(\d+)/.exec(secondHtml);
+      expect(Number(secondLabel![1])).toBeGreaterThan(Number(captured![1]));
       expect(secondHtml).toContain("Live price:");
     });
 
@@ -805,6 +1407,13 @@ function describePprShell(mode: "dev" | "build") {
       const firstSeq = Number(html.match(/badge-(\d+)/)?.[1]);
       const secondSeq = Number(second.html.match(/badge-(\d+)/)?.[1]);
       expect(secondSeq).toBeGreaterThan(firstSeq);
+
+      // The slot HANDLER's own awaited copy of the same loader is handler
+      // output: frozen at the capture's value, replayed on every HIT, while
+      // the useLoader read above advanced.
+      const copy = (h: string) => h.match(/slotcopy-(\d+)/)?.[1];
+      expect(copy(html)).toBeDefined();
+      expect(copy(second.html)).toBe(copy(html));
     });
 
     // Shell fast path (docs/design/shell-fast-path.md): on a HIT the tail
@@ -855,6 +1464,10 @@ function describePprShell(mode: "dev" | "build") {
       // Live layers: exactly one execution per HIT.
       expect(second.counters.middleware).toBe(first.middleware + 1);
       expect(second.counters.loader).toBe(first.loader + 1);
+      // transition({ when }) is a browser predicate: the HIT carries it as a
+      // client reference (its export name rides in the Flight import row),
+      // never a server decision.
+      expect(second.html).toContain("pprExecWhen");
 
       // Handler layers: replayed from the captured record — frozen across HITs.
       expect(second.counters.path).toBe(first.path);
@@ -877,24 +1490,788 @@ function describePprShell(mode: "dev" | "build") {
         await page.goto(f.url("/"));
         await waitForHydration(page);
         await using __ = await expectNoReload(page);
+        const partialResponsePromise = page.waitForResponse((response) => {
+          const responseUrl = new URL(response.url());
+          return (
+            responseUrl.pathname === "/ppr-shell/exec-matrix" &&
+            responseUrl.searchParams.has("_rsc_partial")
+          );
+        });
         await testId(page, "nav-ppr-exec").click();
+        const partialResponse = await partialResponsePromise;
         await waitForNavigation(page, /\/ppr-shell\/exec-matrix$/);
+        assertPprReplayStatus(
+          { headers: new Headers(partialResponse.headers()) },
+          { outcome: "HIT", freshness: "fresh" },
+        );
+        // Fragment splice (#700) on navigation: a replay HIT's segments ride
+        // as verbatim __rangoFragment envelopes; the client expands them
+        // before render, so the content assertions below prove they are
+        // consumer-invisible on workerd too.
+        expect(await partialResponse.text()).toContain("__rangoFragment");
         await expect(testId(page, "ppr-exec-chrome")).toHaveText(
           "Exec matrix static chrome",
         );
-        return JSON.parse(
+        const counters = JSON.parse(
           (await testId(page, "ppr-exec-counters").textContent())!,
         ) as PprExecCounters;
+        // transition({ when }) decided this navigation in the browser, once,
+        // and read the middleware's location state from `to.state`: state a
+        // live middleware sets reaches the predicate on a replay HIT.
+        const log = await page.evaluate(
+          () =>
+            (window as unknown as { __txWhenLog?: unknown[] }).__txWhenLog ??
+            [],
+        );
+        expect(log).toEqual([
+          expect.objectContaining({
+            name: "pprExec",
+            kind: "push",
+            from: "/",
+            to: "/ppr-shell/exec-matrix",
+            toMiddlewareMark: expect.any(Number),
+            result: true,
+          }),
+        ]);
+        return {
+          counters,
+          mark: (log[0] as { toMiddlewareMark: number }).toMiddlewareMark,
+        };
       };
 
       const first = await navigateFromFreshDocument();
       const second = await navigateFromFreshDocument();
 
-      expect(second.middleware).toBe(first.middleware + 1);
-      expect(second.loader).toBe(first.loader + 1);
-      expect(second.path).toBe(first.path);
-      expect(second.layout).toBe(first.layout);
-      expect(second.parallel).toBe(first.parallel);
+      expect(second.counters.middleware).toBe(first.counters.middleware + 1);
+      expect(second.counters.loader).toBe(first.counters.loader + 1);
+      expect(second.counters.path).toBe(first.counters.path);
+      expect(second.counters.layout).toBe(first.counters.layout);
+      expect(second.counters.parallel).toBe(first.counters.parallel);
+      // The mark comes from this navigation's live middleware run, not a
+      // captured value: it advances with every navigation.
+      expect(second.mark).toBeGreaterThan(first.mark);
+    });
+
+    test("a cold partial request captures a PPR snapshot for a later prefetch", async ({
+      page,
+      request,
+    }) => {
+      using _ = expectNoPageError(page);
+      const probe = `cold-partial-${mode}-${crypto.randomUUID()}`;
+      const targetPath = `/ppr-shell/slot-hole?probe=${probe}`;
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+      await using __ = await expectNoReload(page);
+
+      const firstResponsePromise = page.waitForResponse((response) => {
+        const responseUrl = new URL(response.url());
+        return (
+          responseUrl.pathname === "/ppr-shell/slot-hole" &&
+          responseUrl.searchParams.get("probe") === probe &&
+          responseUrl.searchParams.has("_rsc_partial")
+        );
+      });
+      await page.evaluate((href) => {
+        const link = document.createElement("a");
+        link.href = href;
+        link.dataset.testid = "cold-partial-link";
+        link.textContent = "Cold partial";
+        document.body.append(link);
+      }, f.url(targetPath));
+      await testId(page, "cold-partial-link").click();
+      const firstResponse = await firstResponsePromise;
+      assertPprReplayStatus(
+        { headers: new Headers(firstResponse.headers()) },
+        { outcome: "BYPASS", reason: "no-entry" },
+      );
+
+      const partialUrl = firstResponse.url();
+      await expect(async () => {
+        const replay = await request.get(partialUrl, {
+          headers: {
+            "X-RSC-Router-Client-Path": f.url("/"),
+            "X-Rango-Prefetch": "1",
+            "X-Rango-Fragment-Passthrough": "1",
+          },
+        });
+        assertPprReplayStatus(
+          { headers: new Headers(replay.headers()) },
+          { outcome: "HIT", freshness: "fresh" },
+        );
+      }).toPass({ timeout: 20000 });
+
+      const document = await request.get(f.url(targetPath), {
+        headers: HTML_HEADERS,
+      });
+      expect(document.status()).toBe(200);
+      assertShellStatus({ headers: new Headers(document.headers()) }, "MISS");
+    });
+
+    test("a warm fragment prefetch expands its client chunk before the click", async ({
+      page,
+      request,
+    }) => {
+      await warmToHit(
+        request,
+        f.url("/ppr-shell?probe=fragment-prefetch-root"),
+      );
+      const targetPath = "/ppr-shell/slot-hole?probe=fragment-prefetch-warm";
+      await warmToHit(request, f.url(targetPath));
+
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+      await using __ = await expectNoReload(page);
+
+      const scriptResources = () =>
+        page.evaluate(() =>
+          performance
+            .getEntriesByType("resource")
+            .map((entry) => entry.name)
+            .filter((name) => /\.[cm]?[jt]sx?$/.test(new URL(name).pathname)),
+        );
+      const beforePrefetch = new Set(await scriptResources());
+      const partialRequests: string[] = [];
+      page.on("request", (req) => {
+        const requestUrl = new URL(req.url());
+        if (
+          requestUrl.pathname === "/ppr-shell/slot-hole" &&
+          requestUrl.searchParams.get("probe") === "fragment-prefetch-warm" &&
+          requestUrl.searchParams.has("_rsc_partial")
+        ) {
+          partialRequests.push(req.url());
+        }
+      });
+      const prefetchResponse = page.waitForResponse((response) => {
+        const responseUrl = new URL(response.url());
+        return (
+          responseUrl.pathname === "/ppr-shell/slot-hole" &&
+          responseUrl.searchParams.get("probe") === "fragment-prefetch-warm" &&
+          response.request().headers()["x-rango-prefetch"] === "1"
+        );
+      });
+
+      await testId(page, "nav-ppr-fragment-prefetch-warm").hover();
+      const response = await prefetchResponse;
+      expect(response.request().headers()["x-rango-fragment-passthrough"]).toBe(
+        "1",
+      );
+      expect(await response.text()).toContain("__rangoFragment");
+      // Dev serves each client module separately, so fragment expansion is
+      // directly visible as pre-click JS I/O. Production may fold the fixture's
+      // client reference into the initial app chunk; the no-new-JS click check
+      // below remains the observable contract there.
+      if (mode === "dev") {
+        await expect
+          .poll(async () => (await scriptResources()).length, {
+            timeout: 10_000,
+          })
+          .toBeGreaterThan(beforePrefetch.size);
+      }
+      const warmedResources = new Set(await scriptResources());
+
+      await testId(page, "nav-ppr-fragment-prefetch-warm").click();
+      await expect(testId(page, "ppr-slot-home")).toHaveText(
+        "Slot home static content",
+      );
+      expect(partialRequests).toHaveLength(1);
+      expect(
+        (await scriptResources()).filter((name) => !warmedResources.has(name)),
+      ).toEqual([]);
+    });
+
+    test("an in-flight fragment prefetch is adopted without a second request", async ({
+      page,
+      request,
+    }) => {
+      await warmToHit(
+        request,
+        f.url("/ppr-shell?probe=fragment-prefetch-inflight-root"),
+      );
+      const targetPath =
+        "/ppr-shell/slot-hole?probe=fragment-prefetch-inflight";
+      await warmToHit(request, f.url(targetPath));
+
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+      await using __ = await expectNoReload(page);
+
+      let releasePrefetch!: () => void;
+      const holdPrefetch = new Promise<void>((resolve) => {
+        releasePrefetch = resolve;
+      });
+      await page.route(
+        (routeUrl) =>
+          routeUrl.pathname === "/ppr-shell/slot-hole" &&
+          routeUrl.searchParams.get("probe") === "fragment-prefetch-inflight" &&
+          routeUrl.searchParams.has("_rsc_partial"),
+        async (route) => {
+          await holdPrefetch;
+          await route.continue();
+        },
+      );
+
+      const partialRequests: string[] = [];
+      page.on("request", (req) => {
+        const requestUrl = new URL(req.url());
+        if (
+          requestUrl.pathname === "/ppr-shell/slot-hole" &&
+          requestUrl.searchParams.get("probe") ===
+            "fragment-prefetch-inflight" &&
+          requestUrl.searchParams.has("_rsc_partial")
+        ) {
+          partialRequests.push(req.url());
+        }
+      });
+      const prefetchStarted = page.waitForRequest((req) => {
+        const requestUrl = new URL(req.url());
+        return (
+          requestUrl.pathname === "/ppr-shell/slot-hole" &&
+          requestUrl.searchParams.get("probe") ===
+            "fragment-prefetch-inflight" &&
+          req.headers()["x-rango-prefetch"] === "1"
+        );
+      });
+      const prefetchResponse = page.waitForResponse((response) => {
+        const responseUrl = new URL(response.url());
+        return (
+          responseUrl.pathname === "/ppr-shell/slot-hole" &&
+          responseUrl.searchParams.get("probe") === "fragment-prefetch-inflight"
+        );
+      });
+
+      await testId(page, "nav-ppr-fragment-prefetch-inflight").hover();
+      await prefetchStarted;
+      // Dispatch while the prefetch is held before response headers. The click
+      // must adopt the inflight promise; a warm entry cannot exist yet.
+      await testId(page, "nav-ppr-fragment-prefetch-inflight").dispatchEvent(
+        "click",
+      );
+      releasePrefetch();
+      const response = await prefetchResponse;
+      expect(await response.text()).toContain("__rangoFragment");
+      await expect(testId(page, "ppr-slot-home")).toHaveText(
+        "Slot home static content",
+      );
+      expect(partialRequests).toHaveLength(1);
+    });
+
+    test("partial replay HIT carries verbatim fragment envelopes; a context-less probe carries none", async ({
+      request,
+    }) => {
+      // #700 extended to navigation on the real KV/workerd path: the doc
+      // segment record that fragments the document HIT tail also fragments
+      // the partial replay serve; the client decoders expand the envelopes.
+      await warmToHit(request, f.url("/ppr-shell?probe=fragwarmup"));
+      const url = f.url("/ppr-shell/slot-hole?probe=fragnav");
+      await warmToHit(request, url);
+
+      const replay = await request.get(
+        `${url}&_rsc_partial=true&_rsc_segments=`,
+        {
+          headers: {
+            "X-RSC-Router-Client-Path": f.url("/"),
+            "X-Rango-Fragment-Passthrough": "1",
+          },
+        },
+      );
+      expect(replay.status()).toBe(200);
+      assertPprReplayStatus(
+        { headers: new Headers(replay.headers()) },
+        { outcome: "HIT", freshness: "fresh" },
+      );
+      const body = await replay.text();
+      expect(body).toContain("__rangoFragment");
+      // Payload completeness: the replayed content still reaches the client,
+      // inside the fragment strings.
+      expect(body).toContain("Slot home static content");
+
+      // Context-less probe (curl shape): the replay gate bypasses BEFORE the
+      // fragment arming, so the fallback render serializes real elements.
+      const probe = await request.get(
+        `${url}&_rsc_partial=true&_rsc_segments=`,
+      );
+      expect(probe.status()).toBe(200);
+      expect(await probe.text()).not.toContain("__rangoFragment");
+    });
+
+    test("partial PPR replay applies the browser's transition({ when }) drop decision", async ({
+      page,
+    }) => {
+      const target = f.url("/ppr-shell/exec-matrix?transition=drop");
+      await warmToHit(page.request, target);
+
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+      await using __ = await expectNoReload(page);
+      await testId(page, "nav-ppr-exec-drop").click();
+
+      await expect(testId(page, "ppr-exec-fallback")).toBeVisible();
+      await waitForNavigation(
+        page,
+        /\/ppr-shell\/exec-matrix\?transition=drop$/,
+      );
+      await expect(testId(page, "ppr-exec-chrome")).toHaveText(
+        "Exec matrix static chrome",
+      );
+      expect(
+        await page.evaluate(
+          () =>
+            (window as unknown as { __txWhenLog?: unknown[] }).__txWhenLog ??
+            [],
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          name: "pprExec",
+          to: "/ppr-shell/exec-matrix?transition=drop",
+          result: false,
+        }),
+      ]);
+    });
+
+    test("a navigation replay keeps the client's list when revalidate() returns false on a route with transition({ when }) (#986)", async ({
+      page,
+    }) => {
+      const probe = crypto.randomUUID();
+      const start = f.url(`/ppr-load-more?probe=${probe}`);
+      const pages = (...numbers: number[]) =>
+        numbers.flatMap((n) => [1, 2, 3].map((item) => `item-${n}-${item}`));
+
+      using _ = expectNoPageError(page);
+      // One session: a fresh document, then "Load more" appends page 2 on the
+      // client and soft-navigates to ?page=2.
+      const loadMoreInFreshSession = async () => {
+        await page.goto(start);
+        await waitForHydration(page);
+        const items = testId(page, "ppr-load-more-items").locator("li");
+        await expect(items).toHaveText(pages(1));
+        await using __ = await expectNoReload(page);
+        const partialPromise = page.waitForResponse((response) => {
+          const url = new URL(response.url());
+          return (
+            url.pathname === "/ppr-load-more" &&
+            url.searchParams.get("probe") === probe &&
+            url.searchParams.get("page") === "2" &&
+            url.searchParams.has("_rsc_partial")
+          );
+        });
+        await testId(page, "ppr-load-more-button").click();
+        const partial = await partialPromise;
+        // The ?page=2 response has committed: read the list after it.
+        await expect(testId(page, "ppr-load-more-list")).toHaveAttribute(
+          "data-route-page",
+          "2",
+        );
+        await expect(items).toHaveText(pages(1, 2));
+        return partial;
+      };
+
+      // Session 1: no snapshot for ?page=2, so the live path serves it and
+      // schedules the navigation-only capture.
+      const live = await loadMoreInFreshSession();
+      assertPprReplayStatus(
+        { headers: new Headers(live.headers()) },
+        { outcome: "BYPASS", reason: "no-entry" },
+      );
+      await expect(async () => {
+        const replay = await page.request.get(live.url(), {
+          headers: {
+            "X-RSC-Router-Client-Path": start,
+            "X-Rango-Prefetch": "1",
+          },
+        });
+        assertPprReplayStatus(
+          { headers: new Headers(replay.headers()) },
+          { outcome: "HIT", freshness: "fresh" },
+        );
+      }).toPass({ timeout: 10000 });
+
+      // Session 2: the same steps replay ?page=2 from the snapshot, and the
+      // accumulated list survives as it did on the live path.
+      const replayed = await loadMoreInFreshSession();
+      assertPprReplayStatus(
+        { headers: new Headers(replayed.headers()) },
+        { outcome: "HIT", freshness: "fresh" },
+      );
+    });
+
+    test("passthrough prerender: a baked param reports prerender-store, a live param keeps replay", async ({
+      request,
+    }) => {
+      // /ppr-shell/passthrough/:slug is Passthrough(Prerender()) + ppr on the
+      // real CFCacheStore/KV path: the trie marks every param pr:true, but
+      // only "baked" holds an artifact. The gate probes the store -- a live
+      // param must not misreport prerender-store (that would permanently skip
+      // eligible shells and never schedule the heal capture).
+      const partialHeaders = {
+        headers: { "X-RSC-Router-Client-Path": f.url("/") },
+      };
+
+      const bakedUrl = f.url("/ppr-shell/passthrough/baked?probe=cf-ppp-baked");
+      await warmToHit(request, bakedUrl);
+      const bakedReplay = await request.get(
+        `${bakedUrl}&_rsc_partial=true&_rsc_segments=`,
+        partialHeaders,
+      );
+      expect(bakedReplay.status()).toBe(200);
+      expect(bakedReplay.headers()["x-rango-ppr-replay"]).toBe(
+        "BYPASS; reason=prerender-store",
+      );
+      const bakedBody = await bakedReplay.text();
+      // Build-time segments supplied the partial: the BAKED handler's source
+      // marker, never the live Passthrough handler's execution stamp.
+      expect(bakedBody).toContain("PPR-PPP content for baked");
+      expect(bakedBody).toContain("baked");
+      expect(bakedBody).not.toContain("ppr-ppp-exec-");
+
+      const liveUrl = f.url(
+        "/ppr-shell/passthrough/live-one?probe=cf-ppp-live",
+      );
+      await warmToHit(request, liveUrl);
+      const liveReplay = await request.get(
+        `${liveUrl}&_rsc_partial=true&_rsc_segments=`,
+        partialHeaders,
+      );
+      expect(liveReplay.status()).toBe(200);
+      expect(liveReplay.headers()["x-rango-ppr-replay"]).toBe(
+        "HIT; freshness=fresh",
+      );
+      const liveBody = await liveReplay.text();
+      // The LIVE handler rendered the capture this replay serves.
+      expect(liveBody).toContain("PPR-PPP content for live-one");
+      expect(liveBody).toContain("live");
+      expect(liveBody).toContain("ppr-ppp-exec-");
+
+      const nextLiveUrl = f.url(
+        "/ppr-shell/passthrough/live-two?probe=cf-ppp-live-next",
+      );
+      const nextLive = await request.get(
+        `${nextLiveUrl}&_rsc_partial=true&_rsc_segments=`,
+        { headers: { "X-RSC-Router-Client-Path": liveUrl } },
+      );
+      expect(nextLive.status()).toBe(200);
+      expect(await nextLive.text()).toContain("PPR-PPP content for live-two");
+    });
+
+    // --- Storefront shape: replay composed with an ancestor cache() scope
+    // (src/urls.tsx `cache({ ttl: 30, swr })` wrapping the /ppr-scoped ppr
+    // routes) on the real CFCacheStore/KV path. Before the composition fix
+    // this shape reported eternal `snapshot-miss` with two wasted KV getShell
+    // reads per navigation.
+
+    test("storefront shape: cold explicit tier — navigation replays the shell snapshot (HIT) with the handler frozen", async ({
+      page,
+    }) => {
+      const probe = crypto.randomUUID();
+      const target = f.url(`/ppr-scoped?probe=${probe}`);
+      await warmToHit(page.request, target);
+
+      using _ = expectNoPageError(page);
+      const navigateFromFreshDocument = async () => {
+        await page.goto(f.url("/"));
+        await waitForHydration(page);
+        await using __ = await expectNoReload(page);
+        const partialResponsePromise = page.waitForResponse((response) => {
+          const responseUrl = new URL(response.url());
+          return (
+            responseUrl.pathname === "/ppr-scoped" &&
+            responseUrl.searchParams.get("probe") === probe &&
+            responseUrl.searchParams.has("_rsc_partial")
+          );
+        });
+        await page.evaluate((href) => {
+          const link = document.createElement("a");
+          link.href = href;
+          link.dataset.testid = "ppr-scoped-entry";
+          link.textContent = "Enter scoped fixture";
+          document.body.append(link);
+        }, target);
+        await testId(page, "ppr-scoped-entry").click();
+        const partialResponse = await partialResponsePromise;
+        await expect(testId(page, "ppr-scoped-chrome")).toHaveText(
+          "Scoped chrome static content",
+        );
+        assertPprReplayStatus(
+          { headers: new Headers(partialResponse.headers()) },
+          { outcome: "HIT", freshness: "fresh" },
+        );
+        return (await testId(page, "ppr-scoped-home").textContent())!;
+      };
+
+      // The ring-3 partial tier is cold for this probe, so BOTH navigations
+      // are supplied by the seeded doc record — the page handler stays frozen
+      // at its capture-time execution.
+      const first = await navigateFromFreshDocument();
+      const second = await navigateFromFreshDocument();
+      expect(first).toMatch(/^scoped-home-execution-\d+$/);
+      expect(second).toBe(first);
+    });
+
+    test("storefront shape: warm explicit tier serves the partial and reports explicit-cache-hit, never a false HIT", async ({
+      page,
+    }) => {
+      const probe = crypto.randomUUID();
+      const target = f.url(`/ppr-scoped?probe=${probe}`);
+      const waitForPartial = () =>
+        page.waitForResponse((response) => {
+          const responseUrl = new URL(response.url());
+          return (
+            responseUrl.pathname === "/ppr-scoped" &&
+            responseUrl.searchParams.get("probe") === probe &&
+            responseUrl.searchParams.has("_rsc_partial")
+          );
+        });
+      const enterFixture = async (suffix: string) => {
+        await page.goto(f.url("/"));
+        await waitForHydration(page);
+        const partialResponsePromise = waitForPartial();
+        await page.evaluate(
+          ([href, id]) => {
+            const link = document.createElement("a");
+            link.href = href!;
+            link.dataset.testid = id!;
+            link.textContent = "Enter scoped fixture";
+            document.body.append(link);
+          },
+          [target, `ppr-scoped-entry-${suffix}`],
+        );
+        await testId(page, `ppr-scoped-entry-${suffix}`).click();
+        const partialResponse = await partialResponsePromise;
+        await expect(testId(page, "ppr-scoped-chrome")).toHaveText(
+          "Scoped chrome static content",
+        );
+        return {
+          response: partialResponse,
+          stamp: (await testId(page, "ppr-scoped-home").textContent())!,
+        };
+      };
+
+      using _ = expectNoPageError(page);
+      // 1. Shell cold: the first navigation renders fresh (bounded no-entry
+      //    bypass) and WRITES the ring-3 partial entry (explicit scope).
+      const cold = await enterFixture("cold");
+      assertPprReplayStatus(
+        { headers: new Headers(cold.response.headers()) },
+        { outcome: "BYPASS", reason: "no-entry" },
+      );
+
+      // 2. Warm the document shell (captures the doc segment record).
+      await warmToHit(page.request, target);
+
+      // 3. Navigate again within the explicit ttl: the consumer's tier stays
+      //    authoritative — served from the ring-3 entry written in step 1
+      //    (same execution stamp), reported honestly as explicit-cache-hit.
+      const warm = await enterFixture("warm");
+      assertPprReplayStatus(
+        { headers: new Headers(warm.response.headers()) },
+        { outcome: "BYPASS", reason: "explicit-cache-hit" },
+      );
+      // The served segments came from the EXPLICIT tier, not the shell
+      // snapshot: the tier holds step 1's proactive re-render (a later
+      // execution than the cold response — null-component partials re-render
+      // in the background before caching), while the snapshot's doc record
+      // froze the capture render's own execution. Equality with the document
+      // HIT's baked stamp would mean the snapshot supplied the match.
+      const doc = await page.request.get(target, { headers: HTML_HEADERS });
+      // Raw HTML carries React's text-node separator between the literal and
+      // the interpolated counter ("…execution-<!-- -->N").
+      const docStamp = (await doc.text()).match(
+        /scoped-home-execution-(?:<!-- -->)?(\d+)/,
+      )?.[1];
+      expect(docStamp).toBeTruthy();
+      expect(warm.stamp.match(/\d+$/)![0]).not.toBe(docStamp);
+    });
+
+    test("storefront shape: cache(false) and condition() opt-outs render documents on axis 1 and report cache-disabled on replay", async ({
+      request,
+    }) => {
+      for (const [path, testid] of [
+        ["/ppr-scoped-optout", "ppr-scoped-optout"],
+        ["/ppr-scoped-condition", "ppr-scoped-condition"],
+      ] as const) {
+        const probe = crypto.randomUUID();
+        const target = f.url(`${path}?probe=${probe}`);
+        // A HIT never consults the route's cache() scope (it replays the doc
+        // record), so the opt-out is decided before the commit: every
+        // document renders like a cache miss, with no shell and no capture.
+        for (let i = 0; i < 3; i++) {
+          const doc = await request.get(target, { headers: HTML_HEADERS });
+          expect(doc.status()).toBe(200);
+          expect(doc.headers()["x-rango-shell"]).toBeUndefined();
+          expect(await doc.text()).toContain(testid);
+          await new Promise((resolve) => setTimeout(resolve, 200));
+        }
+
+        const replay = await request.get(
+          `${target}&_rsc_partial=true&_rsc_segments=`,
+          { headers: { "X-RSC-Router-Client-Path": f.url("/") } },
+        );
+        expect(replay.status()).toBe(200);
+        assertPprReplayStatus(
+          { headers: new Headers(replay.headers()) },
+          { outcome: "BYPASS", reason: "cache-disabled" },
+        );
+        expect(await replay.text()).toContain(testid);
+      }
+    });
+
+    test("a context-less partial probe (curl shape) reports no-navigation-context, not a snapshot miss", async ({
+      request,
+    }) => {
+      const probe = crypto.randomUUID();
+      const target = f.url(`/ppr-scoped?probe=${probe}`);
+      await warmToHit(request, target);
+
+      const replay = await request.get(
+        `${target}&_rsc_partial=true&_rsc_segments=`,
+      );
+      expect(replay.status()).toBe(200);
+      assertPprReplayStatus(
+        { headers: new Headers(replay.headers()) },
+        { outcome: "BYPASS", reason: "no-navigation-context" },
+      );
+    });
+
+    test("Prerender()+ppr partial navigation reports BYPASS; reason=prerender-store and serves build-time segments", async ({
+      request,
+    }) => {
+      // The prerender short-circuit means these captures never record a doc
+      // segment record; replay seeding could never succeed, and the old flow
+      // spent two KV getShell reads to misreport `no-segment-snapshot`.
+      const url = f.url("/ppr-shell/prerendered/alpha?probe=prerender-nav");
+      await warmToHit(request, url);
+
+      const replay = await request.get(
+        `${url}&_rsc_partial=true&_rsc_segments=`,
+        { headers: { "X-RSC-Router-Client-Path": f.url("/") } },
+      );
+      expect(replay.status()).toBe(200);
+      assertPprReplayStatus(
+        { headers: new Headers(replay.headers()) },
+        { outcome: "BYPASS", reason: "prerender-store" },
+      );
+    });
+
+    test("stale SWR navigation replays the captured handler promise, top-level handles, and Meta", async ({
+      page,
+    }) => {
+      const probe = crypto.randomUUID();
+      const one = f.url(`/ppr-stale-replay/1?probe=${probe}`);
+      const two = f.url(`/ppr-stale-replay/2?probe=${probe}`);
+      const waitForPartialResponse = (pathname: string) =>
+        page.waitForResponse((response) => {
+          const url = new URL(response.url());
+          return (
+            url.pathname === pathname && url.searchParams.has("_rsc_partial")
+          );
+        });
+      await warmToHit(page.request, one);
+
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+      await using __ = await expectNoReload(page);
+
+      await page.evaluate((href) => {
+        const link = document.createElement("a");
+        link.href = href;
+        link.dataset.testid = "ppr-stale-replay-entry";
+        link.textContent = "Enter stale replay fixture";
+        document.body.append(link);
+      }, two);
+      const bypassResponsePromise = waitForPartialResponse(
+        "/ppr-stale-replay/2",
+      );
+      await testId(page, "ppr-stale-replay-entry").click();
+      const bypassResponse = await bypassResponsePromise;
+      assertPprReplayStatus(
+        { headers: new Headers(bypassResponse.headers()) },
+        { outcome: "BYPASS", reason: "no-entry" },
+      );
+      await expect(testId(page, "ppr-stale-replay-data")).toContainText(
+        /^ppr-stale-2-execution-\d+$/,
+      );
+
+      const freshResponsePromise = waitForPartialResponse(
+        "/ppr-stale-replay/1",
+      );
+      await testId(page, "ppr-stale-replay-1").click();
+      const freshResponse = await freshResponsePromise;
+      assertPprReplayStatus(
+        { headers: new Headers(freshResponse.headers()) },
+        { outcome: "HIT", freshness: "fresh" },
+      );
+      await expect(testId(page, "ppr-stale-replay-data")).toContainText(
+        /^ppr-stale-1-execution-\d+$/,
+      );
+      const capturedData = await testId(
+        page,
+        "ppr-stale-replay-data",
+      ).textContent();
+      const capturedHandles = await testId(
+        page,
+        "ppr-stale-replay-handles",
+      ).textContent();
+      expect(capturedData).toMatch(/^ppr-stale-1-execution-\d+$/);
+      expect(JSON.parse(capturedHandles!).flat(Infinity)).toEqual([
+        { yo: "yo-1" },
+        { asd: capturedData },
+      ]);
+      await expect(page).toHaveTitle(`Stale replay 1: ${capturedData}`);
+
+      // Return to /2, synchronized on the committed UI, not its replay status:
+      // the first /2 visit scheduled a navigation capture, which is BYPASS
+      // no-entry or HIT depending on whether it stored before this click (as
+      // in the test-app twin, e2e/shell-cache.test.ts; PPR5 pins that a later
+      // request becomes a HIT).
+      await testId(page, "ppr-stale-replay-2").click();
+      await expect(testId(page, "ppr-stale-replay-data")).toContainText(
+        /^ppr-stale-2-execution-\d+$/,
+      );
+
+      const aged = await page.request.get(
+        f.url(`/__test/age-ppr-shell?target=${encodeURIComponent(one)}`),
+      );
+      expect(await aged.json()).toEqual({
+        ok: true,
+        found: true,
+        segmentKeys: [
+          `doc:${new URL(one).host}/ppr-stale-replay/1:id=1?probe=${probe}`,
+        ],
+      });
+      await page.waitForTimeout(1_200);
+
+      // A stale document HIT schedules recapture. Navigate while its handler
+      // promise is still pending so this covers the production race, not only
+      // a passive stale-store read.
+      const staleDocument = await page.request.get(one, {
+        headers: HTML_HEADERS,
+      });
+      assertShellStatus(
+        { headers: new Headers(staleDocument.headers()) },
+        "HIT",
+      );
+
+      const staleResponsePromise = waitForPartialResponse(
+        "/ppr-stale-replay/1",
+      );
+      const startedAt = Date.now();
+      await testId(page, "ppr-stale-replay-1").click();
+      const staleResponse = await staleResponsePromise;
+      assertPprReplayStatus(
+        { headers: new Headers(staleResponse.headers()) },
+        { outcome: "HIT", freshness: "stale" },
+      );
+      await expect(testId(page, "ppr-stale-replay-data")).toHaveText(
+        capturedData!,
+      );
+      await expect(testId(page, "ppr-stale-replay-handles")).toHaveText(
+        capturedHandles!,
+      );
+      await expect(page).toHaveTitle(`Stale replay 1: ${capturedData}`);
+      expect(Date.now() - startedAt).toBeLessThan(1_200);
     });
 
     // Prerender + ppr COMPOSITION (docs/design/shell-fast-path.md): one route

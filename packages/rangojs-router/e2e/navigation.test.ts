@@ -519,7 +519,7 @@ test.describe("conditional-intercept-when", () => {
     const productLink = page.locator('[data-testid="product-link-product-a"]');
     await productLink.click();
 
-    // Should show modal (when condition: from.pathname === "/" is true)
+    // Should show modal (when condition: from.url.pathname === "/" is true)
     await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
     await expect(
       page.locator('[data-testid="intercept-indicator"]'),
@@ -545,7 +545,7 @@ test.describe("conditional-intercept-when", () => {
     const productLink = page.locator('[data-testid="blog-product-link"]');
     await productLink.click();
 
-    // Should NOT show modal (when condition: from.pathname === "/" is false)
+    // Should NOT show modal (when condition: from.url.pathname === "/" is false)
     await expect(
       page.locator('[data-testid="product-modal"]'),
     ).not.toBeVisible();

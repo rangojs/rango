@@ -1,5 +1,7 @@
+import type { Plugin } from "vite";
+import { gzipSync } from "node:zlib";
 import type { ClientChunkMeta, ClientChunks } from "../plugin-types.js";
-import { createRangoDebugger, NS } from "../debug.js";
+import { createRangoDebugger, NS, type Debugger } from "../debug.js";
 import { hashRefKey } from "../plugins/client-ref-hashing.js";
 
 /** The callback shape @vitejs/plugin-rsc's `clientChunks` option accepts. */
@@ -98,6 +100,20 @@ const ROUTE_ROOT_DIRS = new Set([
 ]);
 
 /**
+ * Markers that double as a conventional source root. `app/` is both a Next-style
+ * route root (`app/<segment>/…`) and the source root of many apps
+ * (`app/components`, `app/routes/<id>`). Keying on the segment after it put every
+ * route under `app/routes/` into one `app-routes` group, and a group is the
+ * loading unit, so rendering any one member downloaded every route's client code
+ * (#1022). A source-root marker therefore defers to a marker that IMMEDIATELY
+ * follows it when that inner marker has a route directory after it
+ * (`app/routes/<id>/…` -> `app-<id>`). Anything else after `app/` (including
+ * `app/components/`) is still the Next-style route id. Only these markers defer:
+ * `routes/view/<sub>/…` keeps `view` as the route id.
+ */
+const SOURCE_ROOT_DIRS = new Set(["app"]);
+
+/**
  * Built-in strategy used when `clientChunks: true` (also the default). Splits app
  * client components by route/feature identity ONLY where it can recognize a route
  * structure; everywhere else it inherits the default grouping (returns undefined).
@@ -116,8 +132,11 @@ const ROUTE_ROOT_DIRS = new Set([
  * 1. Shared runtime (React / router / node_modules) -> `undefined` (never split).
  * 2. A registered error/notFound fallback (`ctx.fallbackRefs`) -> `app-fallback`,
  *    regardless of location, so the error UI is decoupled from the happy path.
- * 3. A {@link ROUTE_ROOT_DIRS} marker with a directory after it -> key on that
- *    next segment (the route id), robust to any nesting depth.
+ * 3. The first {@link ROUTE_ROOT_DIRS} marker with a directory after it -> key on
+ *    that next segment (the route id), robust to any nesting depth. A
+ *    {@link SOURCE_ROOT_DIRS} marker (`app`) directly followed by another marker
+ *    with a directory after it defers to that inner marker:
+ *    `app/routes/<id>/…` -> `app-<id>`, while `app/<segment>/…` -> `app-<segment>`.
  * 4. Otherwise `undefined` (inherit the default `serverChunk` grouping).
  */
 export function directoryClientChunks(
@@ -140,17 +159,21 @@ export function directoryClientChunks(
   }
   const segments = meta.normalizedId.split("/").filter(Boolean);
   const dirCount = segments.length - 1; // exclude the filename
-  if (dirCount >= 1) {
-    // Route-root marker -> the segment after it is the route id. First marker
-    // wins, so a top-level route owns its whole subtree. The `< dirCount - 1`
-    // bound guarantees the segment after the marker is a directory, not the file.
-    for (let i = 0; i < dirCount - 1; i++) {
-      if (ROUTE_ROOT_DIRS.has(segments[i].toLowerCase())) {
-        const group = `app-${sanitizeGroup(segments[i + 1])}`;
-        debugChunks?.("split %s -> %s", meta.normalizedId, group);
-        return group;
-      }
-    }
+  // Route-root marker -> the segment after it is the route id. First marker wins,
+  // so a top-level route owns its whole subtree. The `< dirCount - 1` bound
+  // guarantees the segment after the marker is a directory, not the file.
+  const isMarkerAt = (i: number) =>
+    i < dirCount - 1 && ROUTE_ROOT_DIRS.has(segments[i].toLowerCase());
+  for (let i = 0; i < dirCount - 1; i++) {
+    if (!isMarkerAt(i)) continue;
+    // A source root (`app/`) yields to an inner marker right after it.
+    const marker =
+      SOURCE_ROOT_DIRS.has(segments[i].toLowerCase()) && isMarkerAt(i + 1)
+        ? i + 1
+        : i;
+    const group = `app-${sanitizeGroup(segments[marker + 1])}`;
+    debugChunks?.("split %s -> %s", meta.normalizedId, group);
+    return group;
   }
   // No recognized route structure -> inherit the default serverChunk grouping.
   // This is the actionable "silent" case: app code that did NOT split by route.
@@ -181,4 +204,51 @@ export function resolveClientChunks(
   if (!option) return undefined;
   if (option === true) return (meta) => directoryClientChunks(meta, ctx);
   return option;
+}
+
+/** @vitejs/plugin-rsc's client-reference map; its group modules sit under it. */
+export const CLIENT_REFERENCES_MODULE_ID =
+  "\0virtual:vite-rsc/client-references";
+
+/** Module-id prefix of the per-group virtual module @vitejs/plugin-rsc emits. */
+const CLIENT_GROUP_PREFIX = `${CLIENT_REFERENCES_MODULE_ID}/group/`;
+
+/**
+ * Build-end group report under `DEBUG=rango:chunks`: one line per client
+ * reference group with its client-reference count and the size of the group's
+ * own chunk (code split into shared chunks such as `react`/`router` is not
+ * counted). A group is the loading unit (plugin-rsc imports the group's virtual
+ * module to resolve any one member), so a large group that an always-rendered
+ * component belongs to is downloaded on every route; this line makes that
+ * visible. Covers every group, including ones named by a custom `clientChunks`
+ * function or by plugin-rsc's default `serverChunk` grouping. `undefined` when
+ * the namespace is off, so a normal build does not register it. Group names are
+ * printed with NUL escaped: plugin-rsc's default group is named
+ * `facade:\0virtual:…`, and a raw NUL makes `grep` treat the output as binary
+ * and drop that line, usually the largest group. `log` is injectable for tests.
+ */
+export function clientChunksReport(
+  log: Debugger | undefined = debugChunks,
+): Plugin | undefined {
+  if (!log) return undefined;
+  return {
+    name: "@rangojs/router:client-chunks-report",
+    apply: "build",
+    applyToEnvironment: (env) => env.name === "client",
+    generateBundle(_options, bundle) {
+      for (const chunk of Object.values(bundle)) {
+        if (chunk.type !== "chunk") continue;
+        const facade = chunk.facadeModuleId;
+        if (!facade?.startsWith(CLIENT_GROUP_PREFIX)) continue;
+        log(
+          "group %s: %d client reference(s), %d B (%d B gzip) -> %s",
+          facade.slice(CLIENT_GROUP_PREFIX.length).replaceAll("\0", "\\0"),
+          this.getModuleInfo(facade)?.importedIds.length ?? 0,
+          Buffer.byteLength(chunk.code),
+          gzipSync(chunk.code).length,
+          chunk.fileName,
+        );
+      }
+    },
+  };
 }

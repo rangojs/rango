@@ -2,15 +2,19 @@ import { describe, it, expect, vi } from "vitest";
 
 // createRouter's match path transitively imports @vitejs/plugin-rsc/rsc; stub it
 // (these tests never render RSC). Mirrors src/testing/__tests__/dispatch.test.ts.
-vi.mock("@vitejs/plugin-rsc/rsc", () => ({
-  createFromReadableStream: vi.fn(),
-  renderToReadableStream: vi.fn(),
-  loadServerAction: vi.fn(),
-  decodeReply: vi.fn(),
-  decodeAction: vi.fn(),
-  decodeFormState: vi.fn(),
-  createTemporaryReferenceSet: vi.fn(),
-}));
+function pluginRscMock() {
+  return {
+    createFromReadableStream: vi.fn(),
+    renderToReadableStream: vi.fn(),
+    loadServerAction: vi.fn(),
+    decodeReply: vi.fn(),
+    decodeAction: vi.fn(),
+    decodeFormState: vi.fn(),
+    createTemporaryReferenceSet: vi.fn(),
+  };
+}
+vi.mock("@vitejs/plugin-rsc/rsc/server", pluginRscMock);
+vi.mock("@vitejs/plugin-rsc/rsc/client", pluginRscMock);
 
 import { Static } from "../static-handler.js";
 import { Prerender } from "../prerender.js";
@@ -104,6 +108,28 @@ describe("Cloudflare dev discovery probe", () => {
       );
 
       expect(response.headers.get(DEV_DISCOVERY_EPOCH_HEADER)).toBe("23");
+    } finally {
+      globals.__RANGO_DEV_DISCOVERY_EPOCH = previousEpoch;
+    }
+  });
+
+  it("reports its actual epoch without rendering when the probe expects a newer generation", async () => {
+    const globals = globalThis as typeof globalThis & {
+      __RANGO_DEV_DISCOVERY_EPOCH?: unknown;
+    };
+    const previousEpoch = globals.__RANGO_DEV_DISCOVERY_EPOCH;
+    globals.__RANGO_DEV_DISCOVERY_EPOCH = 23;
+
+    try {
+      const router = createRouter({ id: "stale-dev-discovery-probe" });
+      const response = await router.fetch(
+        new Request("http://localhost/", {
+          headers: { [DEV_DISCOVERY_PROBE_HEADER]: "24" },
+        }),
+      );
+
+      expect(response.headers.get(DEV_DISCOVERY_EPOCH_HEADER)).toBe("23");
+      expect(await response.text()).toBe("");
     } finally {
       globals.__RANGO_DEV_DISCOVERY_EPOCH = previousEpoch;
     }

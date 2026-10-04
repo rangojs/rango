@@ -13,13 +13,14 @@ function NestedFast({ promise }: { promise: Promise<string> }) {
 }
 
 /**
- * Handles-contract consumer ("nesting = liveness"):
+ * Handle-push consumer:
  *   - the BAKED item was pushed as a TOP-LEVEL promise; the router awaited it
- *     before the payload's handles row emitted (and the capture gate held for the
- *     same await), so its value renders synchronously — shell material;
- *   - the NESTED item is a container whose `pending` promise passed through
- *     verbatim (shallow resolution never bakes nested promises); this component
- *     must Suspense it, and under capture that boundary postpones — a hole.
+ *     before the payload's handles row emitted, so its value renders
+ *     synchronously;
+ *   - the NESTED items are containers whose `pending` promise passed through
+ *     verbatim; this component Suspenses them. They were pushed by a handler,
+ *     so the PPR capture waits for them and bakes their values too (a DSL
+ *     loader's nested push would stay live).
  */
 export function ShellHandleView() {
   const items = useHandle(ShellHandles) ?? [];

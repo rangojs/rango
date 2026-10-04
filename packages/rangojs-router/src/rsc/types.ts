@@ -34,11 +34,30 @@ export interface RscPayload {
     resolvedIds?: string[];
     /** Merged route params from the matched route */
     params?: Record<string, string>;
+    /** Matched route name, when named (transition({ when }) route names). */
+    routeName?: string;
     slots?: Record<string, SlotState>;
+    /**
+     * Intercept TARGET route names reachable from this location as a
+     * navigation origin (see MatchResult.interceptTargets). The browser-local
+     * clientUrls matcher declines optimistic presentation for these.
+     */
+    interceptTargets?: string[];
     /** Root layout component for browser-side re-renders (client component reference) */
     rootLayout?: React.ComponentType<{ children: React.ReactNode }>;
     /** Handle data accumulated across route segments (async generator that yields on each push) */
     handles?: AsyncGenerator<HandleData, void, unknown>;
+    /**
+     * Document-lane late handle channel: full-state updates for pushes landing
+     * AFTER the handler barrier (streaming loader bodies writing handles
+     * mid-body). `handles` above is drained to completion in blocking
+     * positions (SSR seed, pre-hydration), so late pushes need this separate
+     * generator, consumed non-blocking post-hydration (rsc-router.tsx).
+     * Empty/instantly-complete when no auxiliary-lane work is pending at the
+     * handler barrier. Full payloads only — partial payloads' `handles`
+     * generator streams to full settle already.
+     */
+    handlesLate?: AsyncGenerator<HandleData, void, unknown>;
     /** RSC version string for cache invalidation */
     version?: string;
     /** Cloudflare dev worker generation used for stale-document convergence. */
@@ -49,6 +68,8 @@ export interface RscPayload {
     prefetchCacheSize?: number;
     /** Max concurrent speculative prefetch requests on the client */
     prefetchConcurrency?: number;
+    /** Router-wide default prefetch strategy for Links without a `prefetch` prop */
+    defaultPrefetch?: import("../router/prefetch-default.js").PrefetchStrategy;
     /** Server-resolved rango state cookie name; the client reads it verbatim. */
     stateCookieName?: string;
     /** Theme configuration for FOUC prevention */
@@ -84,11 +105,11 @@ export interface RscPayload {
 export type ReactFormState = unknown;
 
 /**
- * RSC dependencies from @vitejs/plugin-rsc/rsc
+ * RSC dependencies from @vitejs/plugin-rsc/rsc/server
  */
 export interface RSCDependencies {
   /**
-   * renderToReadableStream from @vitejs/plugin-rsc/rsc
+   * renderToReadableStream from @vitejs/plugin-rsc/rsc/server
    */
   renderToReadableStream: <T>(
     payload: T,
@@ -99,7 +120,7 @@ export interface RSCDependencies {
   ) => ReadableStream<Uint8Array>;
 
   /**
-   * decodeReply from @vitejs/plugin-rsc/rsc
+   * decodeReply from @vitejs/plugin-rsc/rsc/server
    */
   decodeReply: (
     body: FormData | string,
@@ -107,23 +128,23 @@ export interface RSCDependencies {
   ) => Promise<unknown[]>;
 
   /**
-   * createTemporaryReferenceSet from @vitejs/plugin-rsc/rsc
+   * createTemporaryReferenceSet from @vitejs/plugin-rsc/rsc/server
    */
   createTemporaryReferenceSet: () => unknown;
 
   /**
-   * loadServerAction from @vitejs/plugin-rsc/rsc
+   * loadServerAction from @vitejs/plugin-rsc/rsc/server
    */
   loadServerAction: (actionId: string) => Promise<Function>;
 
   /**
-   * decodeAction from @vitejs/plugin-rsc/rsc
+   * decodeAction from @vitejs/plugin-rsc/rsc/server
    * Decodes a FormData into a bound action function (for useActionState forms)
    */
   decodeAction: (body: FormData) => Promise<() => Promise<unknown>>;
 
   /**
-   * decodeFormState from @vitejs/plugin-rsc/rsc
+   * decodeFormState from @vitejs/plugin-rsc/rsc/server
    * Decodes the action result into a ReactFormState for useActionState progressive enhancement
    */
   decodeFormState: (
@@ -156,6 +177,31 @@ export interface SSRRenderOptions {
    * - `"allReady"` — await `stream.allReady` before returning.
    */
   streamMode?: import("../router/router-options.js").SSRStreamMode;
+
+  /**
+   * The live request's query string (`url.search`, `?`-prefixed or empty).
+   * Seeds the SSR navigation store so `useSearchParams` (and
+   * `useNavigation().location`) carry real values during document renders.
+   * Out-of-band by design — never payload metadata, which cached/prerendered
+   * payloads replay; search is not route identity. The build-time prerender
+   * pass passes none — build shells capture bare pathnames and serve
+   * search-less requests only (runtime ppr captures seed the shell key's
+   * search; see ShellCaptureOptions.search in the SSR entry).
+   */
+  search?: string;
+  /**
+   * The live request's origin (`url.origin`), seeding the SSR store
+   * location so origin-dependent markup (Link's data-external) agrees with
+   * the browser across hydration. Absent on host-agnostic build captures.
+   */
+  origin?: string;
+
+  /**
+   * Called for each error Fizz reports through its onError: a component that
+   * threw inside a Suspense boundary, which leaves the boundary errored in an
+   * otherwise completed document. React's default console.error is kept.
+   */
+  onError?: (error: unknown) => void;
 }
 
 /**
@@ -177,7 +223,21 @@ export interface SSRModule {
    */
   captureShellHTML?: (
     rscStream: ReadableStream<Uint8Array>,
-    options: { quiesce: Promise<void>; maxWaitMs?: number },
+    options: {
+      quiesce: Promise<void>;
+      maxWaitMs?: number;
+      search?: string;
+      origin?: string;
+      /** Each component error the prerender reports (never the capture's own abort). */
+      onError?: (error: unknown) => void;
+      /**
+       * React's errorInfo for each task still pending at the capture's abort
+       * (its componentStack is computed when read).
+       */
+      onAbortedTask?: (
+        errorInfo: { componentStack?: string } | undefined,
+      ) => void;
+    },
   ) => Promise<{ prelude: Uint8Array; postponed: string | null } | null>;
 
   /**
@@ -190,7 +250,14 @@ export interface SSRModule {
    */
   resumeShellHTML?: (
     rscStream: ReadableStream<Uint8Array>,
-    options: { postponed: string | null; nonce?: string },
+    options: {
+      postponed: string | null;
+      nonce?: string;
+      search?: string;
+      origin?: string;
+      /** Each component error the resumed holes report. */
+      onError?: (error: unknown) => void;
+    },
   ) => Promise<ReadableStream<Uint8Array>>;
 }
 
@@ -208,16 +275,37 @@ export interface HandlerCacheConfig {
   store: import("../cache/types.js").SegmentCacheStore;
   /** Enable/disable caching (default: true) */
   enabled?: boolean;
+  /**
+   * Which query params key the cache (default: `"all"`). Affects cache keys
+   * ONLY -- handlers and loaders still see the full query string. Global by
+   * design: the per-route case is already reachable through `cache({ key })`.
+   *
+   * Excluding a param is a promise that rendered output does not depend on
+   * it; if it does, the first variant is cached and served to everyone.
+   *
+   * @example
+   * ```typescript
+   * cache: {
+   *   store: cacheStore,
+   *   searchParams: { exclude: TRACKING_SEARCH_PARAMS },
+   * }
+   * ```
+   */
+  searchParams?: import("../cache/search-params-filter.js").CacheSearchParams;
 }
 
 /**
  * Nonce provider function type.
- * Can return a nonce string, or true to auto-generate one.
+ * Return a nonce string to use verbatim, `true` to auto-generate one, or
+ * `false` (or an empty string) to serve THIS request without a nonce — the
+ * per-request opt-out for apps that nonce globally but declare `ppr` on some
+ * routes: a shell is shared per host+URL and can never bake a per-request
+ * nonce, so a ppr route only captures when its requests opt out here.
  */
 export type NonceProvider<TEnv = unknown> = (
   request: Request,
   env: TEnv,
-) => string | true | Promise<string | true>;
+) => string | boolean | Promise<string | boolean>;
 
 /**
  * Options for creating an RSC handler
@@ -232,8 +320,8 @@ export interface CreateRSCHandlerOptions<
   router: RangoInternal<TEnv, TRoutes>;
 
   /**
-   * RSC dependencies from @vitejs/plugin-rsc/rsc.
-   * Defaults to the exports from @vitejs/plugin-rsc/rsc.
+   * RSC dependencies from @vitejs/plugin-rsc/rsc/server.
+   * Defaults to the exports from @vitejs/plugin-rsc/rsc/server.
    */
   deps?: RSCDependencies;
 
@@ -269,13 +357,11 @@ export interface CreateRSCHandlerOptions<
   cache?: HandlerCacheConfig | ((env: TEnv) => HandlerCacheConfig);
 
   /**
-   * RSC version string included in metadata.
-   * The browser sends this back on partial requests to detect version mismatches.
+   * Version override for this handler. Same meaning as
+   * `createRouter({ version })`, which it takes precedence over: this exact
+   * value is used for both of the router's versions.
    *
-   * Defaults to the auto-generated VERSION from `rsc-router:version` virtual module.
-   * Only set this if you need a custom versioning strategy.
-   *
-   * @default VERSION from rsc-router:version
+   * @default createRouter({ version }), else the router's build versions
    */
   version?: string;
 

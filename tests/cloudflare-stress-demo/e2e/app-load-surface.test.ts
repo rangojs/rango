@@ -80,10 +80,23 @@ async function expectCachedSegmentServesStoredRender(
     return m![1]!;
   };
 
-  const first = await read();
-  const second = await read();
-  // A cache hit serves the STORED render: same timestamp both times.
-  expect(second).toBe(first);
+  // CFCacheStore.set() schedules L1 cache.put via ctx.waitUntil (non-blocking).
+  // A GET issued before that put is visible is another miss, so two back-to-back
+  // reads can disagree even though the write will land (vite-plugin-cloudflare
+  // dev is slower to surface the put than wrangler preview). Poll until two
+  // consecutive reads agree — that is the stored render. Matching the first
+  // timestamp is the wrong contract: a later miss can overwrite the in-flight
+  // first put (see tests/cloudflare-basic/e2e/cache-tag.test.ts).
+  await expect
+    .poll(
+      async () => {
+        const a = await read();
+        const b = await read();
+        return a === b ? a : null;
+      },
+      { timeout: 8000 },
+    )
+    .not.toBeNull();
 }
 
 test.describe("app load surface (dev)", () => {

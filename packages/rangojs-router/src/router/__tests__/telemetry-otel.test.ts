@@ -6,6 +6,7 @@ import {
   type OTelTracer,
   type OTelActiveSpanTracer,
 } from "../telemetry-otel";
+import { resolveTracing, traceSpan } from "../tracing.js";
 
 // The real OTel Tracer implements both methods; the mock satisfies both the
 // event sink's (startSpan) and the tracing adapter's (startActiveSpan) contract.
@@ -168,6 +169,29 @@ describe("createOTelTracing", () => {
     expect(config.enabled).toBe(false);
     expect(config.spans).toEqual({ ssr: false });
     expect(typeof config.runner).toBe("function");
+  });
+
+  it("emits rango.response nested under the request; spans:{response:false} suppresses only it", () => {
+    // Parity with the Cloudflare runner: the response phase is a first-class
+    // toggleable phase on every platform.
+    const resolvedOn = resolveTracing(createOTelTracing(tracer));
+    traceSpan(resolvedOn, "request", "rango.request", () =>
+      traceSpan(resolvedOn, "response", "rango.response", () => "ok"),
+    );
+    expect(spans.map((s) => [s.name, s.parent])).toEqual([
+      ["rango.request", undefined],
+      ["rango.response", "rango.request"],
+    ]);
+
+    const off = createMockTracer();
+    const resolvedOff = resolveTracing(
+      createOTelTracing(off.tracer, { spans: { response: false } }),
+    );
+    const out = traceSpan(resolvedOff, "request", "rango.request", () =>
+      traceSpan(resolvedOff, "response", "rango.response", () => "ok"),
+    );
+    expect(out).toBe("ok");
+    expect(off.spans.map((s) => s.name)).toEqual(["rango.request"]);
   });
 });
 

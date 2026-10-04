@@ -1,15 +1,16 @@
-export const siteName = "Vercel Shop";
+export const siteName = "Rango";
 
-export const homeTitle = "Production-ready Shopify storefront on Rango";
+export const homeTitle = "The Django-inspired RSC router for Vite";
 
-export const homeSubtitle = "Customize everything with AI agents";
+export const homeSubtitle =
+  "One explicit route tree, React Server Components, and correctness-first caching. Deploys to Cloudflare Workers and Vercel.";
 
-export const homeDescription = `${homeTitle} ${homeSubtitle}`;
+export const homeDescription = `${homeTitle}. ${homeSubtitle}`;
 
-export const docsTitle = "Vercel Shop Documentation";
+export const docsTitle = "Rango Documentation";
 
 export const docsDescription =
-  "Documentation for Vercel Shop — an agent-native, fast-by-default Shopify storefront built on Rango.";
+  "Documentation for Rango (@rangojs/router) — a Django-inspired React Server Components router for Vite.";
 
 export function getBaseUrl() {
   // SITE_URL is a wrangler var on the deployed worker (nodejs_compat

@@ -1,8 +1,16 @@
 import React from "react";
-import { createSsrRootComponent } from "./ssr-root.js";
+import { createSsrRootComponent, deserializeSsrPayload } from "./ssr-root.js";
 import { injectRSCPayloadEager } from "./inject-rsc-eager.js";
 import { runWithPreinitNonce } from "./preinit-client-references.js";
-import { SHELL_CAPTURE_MAX_WAIT_MS } from "../rsc/shell-capture-constants.js";
+import {
+  entryPreloadPriorityTransform,
+  rewriteEntryPreloadPriority,
+} from "./entry-preload-priority.js";
+import {
+  POST_QUIESCE_TASK_HOPS,
+  SHELL_CAPTURE_MAX_WAIT_MS,
+} from "../rsc/shell-capture-constants.js";
+import { isThenable } from "../handles/is-thenable.js";
 import type { ErrorPhase } from "../types.js";
 import type { HeadScriptsOption } from "../vite/plugin-types.js";
 
@@ -26,6 +34,8 @@ interface RenderToReadableStreamOptions {
   bootstrapModules?: string[];
   nonce?: string;
   formState?: unknown;
+  progressiveChunkSize?: number;
+  onError?: (error: unknown) => void;
 }
 
 /**
@@ -43,6 +53,7 @@ interface PrerenderOptions {
   bootstrapScriptContent?: string;
   bootstrapModules?: string[];
   onError?: (error: unknown) => void;
+  progressiveChunkSize?: number;
 }
 
 /**
@@ -105,6 +116,30 @@ export interface SSRRenderOptions {
    * - `"allReady"` — await `stream.allReady` before returning.
    */
   streamMode?: import("../router/router-options.js").SSRStreamMode;
+
+  /**
+   * The live request's query string (`?`-prefixed or empty). Seeds the SSR
+   * navigation store location so `useSearchParams` carries real values
+   * during document renders. Absent on the build-time prerender pass —
+   * build shells capture bare pathnames and serve search-less requests
+   * only (runtime captures own the search variants, seeded per key).
+   */
+  search?: string;
+
+  /**
+   * The live request's origin, seeding the SSR store location so
+   * origin-dependent markup (Link's data-external) agrees with the
+   * browser's window.location across hydration. Absent on the build-time
+   * prerender pass (host-agnostic bare captures).
+   */
+  origin?: string;
+
+  /**
+   * Called for each error Fizz reports through its onError: a component that
+   * threw inside a Suspense boundary, which leaves the boundary errored in an
+   * otherwise completed document. React's default console.error is kept.
+   */
+  onError?: (error: unknown) => void;
 }
 
 /**
@@ -135,10 +170,20 @@ export interface SSRDependencies<TEnv = unknown> {
   ) => TransformStream<Uint8Array, Uint8Array>;
 
   /**
-   * Function to load bootstrap script content
-   * Typically: () => import.meta.viteRsc.loadBootstrapScriptContent("index")
+   * Function to load bootstrap script content.
+   * Required unless `getClientEntryUrl` is provided with `headScripts: "preinit"`.
+   * Custom SSR entries typically: `() => import.meta.viteRsc.loadBootstrapScriptContent("index")`
+   * (deprecated in `@vitejs/plugin-rsc` 0.5.33 in favor of `getClientEntryUrl`).
    */
-  loadBootstrapScriptContent: () => Promise<string>;
+  loadBootstrapScriptContent?: () => Promise<string>;
+
+  /**
+   * Client entry URL from `@vitejs/plugin-rsc/ssr` `getClientEntryUrl()`.
+   * Preferred when `headScripts` is `"preinit"`: Fizz receives `bootstrapModules`
+   * without the deprecated `loadBootstrapScriptContent` round-trip. Custom SSR
+   * entries can omit this and keep the inline bootstrap path.
+   */
+  getClientEntryUrl?: () => string;
 
   /**
    * Document script strategy; the generated virtual SSR entry threads the
@@ -148,8 +193,26 @@ export interface SSRDependencies<TEnv = unknown> {
    * undefined keeps the inline bootstrap verbatim, so a custom SSR entry that
    * never installed the preinit hook cannot drift into the half-converted
    * state on upgrade (the generated entry always passes an explicit value).
+   * Any other value throws when the handler is created.
    */
   headScripts?: HeadScriptsOption;
+
+  /**
+   * Fizz `progressiveChunkSize`, forwarded verbatim to renderToReadableStream
+   * (live SSR) and prerender (shell capture); resume() inherits the capture
+   * value from the postponed state. The generated virtual SSR entry threads
+   * the `rango({ progressiveChunkSize })` plugin option here (canonical docs
+   * on `RangoBaseOptions.progressiveChunkSize` in vite/plugin-types.ts).
+   *
+   * When UNSET, createSSRHandler auto-raises to Number.MAX_SAFE_INTEGER for
+   * document renders whose matched chain has a `loader(Def, { ssr: false })`
+   * entry (payload segments carry `awaitBeforeFlush`): the loader was awaited
+   * before first flush precisely so its content ships in-place, and React
+   * 19.2's Fizz would otherwise move any completed boundary over ~500 bytes
+   * to an end-of-stream `<div hidden>` + $RC reveal once the shell saturates
+   * the default 12800 budget. An explicit value disables the auto-raise.
+   */
+  progressiveChunkSize?: number;
 
   /**
    * prerender from react-dom/static.edge. Optional; required only by
@@ -183,28 +246,64 @@ export interface SSRDependencies<TEnv = unknown> {
 }
 
 /**
- * Fixed number of macrotask hops between `quiesce` resolving and the abort. These
- * give React's fizz worker turns to flush the settled shell into the prelude and
- * mark still-pending boundaries as POSTPONED (rather than errored) before
- * controller.abort() lands. Not a wall-clock wait.
- *
- * Why 16 and not the original 2: under the REPLAY-ONLY capture model
- * (docs/design/ppr-shell-resume.md), the capture Flight render serializes ring-3
- * cached segments that are ALREADY serialized, so it emits the whole shell payload
- * in the first tick and the gate declares quiesce almost immediately (~a few ms).
- * On the old fresh-execution path the Flight dribbled out as handlers ran, so
- * Flight-quiet effectively meant "the shell has rendered" and 2 hops sufficed.
- *
- * Hops alone are NOT render-readiness: fizz cannot emit even <html> until the
- * payload root settles, which waits on every referenced client-module LOAD —
- * real module-runner I/O in dev (100ms+ cold), which no fixed count of near-
- * zero-cost task hops can buy. captureShellHTML therefore awaits the payload-
- * settled signal (SsrRootOptions.onPayloadSettled, deadline-bounded) between
- * quiesce and these hops; the hops then only flush the settled tree and mark
- * pending boundaries POSTPONED. Still task-based (masked loaders never emit,
- * so more hops never lets a hole settle). Bounded by maxWaitMs end to end.
+ * One set per running capture, collecting the client-reference module loads
+ * requested while it runs (captureClientLoads). The Flight client resolves a
+ * client component used as an element type lazily, so the payload settles
+ * while its module is still loading, and a shell that renders it outside any
+ * Suspense boundary cannot complete until the load does. On the
+ * cloudflare-basic build a cold load (the module, its imports, its CSS
+ * virtual) settled at +890.1ms, after the payload (+873.4ms) and 1ms before
+ * the abort, and uninstrumented builds lost that race (issue #949). The
+ * Flight client asks the loader again for every import row, even for a
+ * module another render is already loading, so a capture sees each load it
+ * needs; one a concurrent render requests meanwhile is collected too and is
+ * the same bounded I/O. The sets are per capture, their contents isolate-wide:
+ * a load that never settles can only hold the captures running when it was
+ * requested, each until its deadline.
  */
-const POST_QUIESCE_TASK_HOPS = 16;
+const activeCaptureClientLoads = new Set<Set<PromiseLike<unknown>>>();
+
+/** The loader wrapper {@link captureClientLoads} last installed. */
+let recordingClientReferenceLoader: ((id: string) => unknown) | undefined;
+
+/**
+ * Start collecting the client-reference loads requested during a capture;
+ * call the returned `stop` when the capture ends. Wraps plugin-rsc's SSR
+ * loader (`globalThis.__vite_rsc_client_require__`, which
+ * `__vite_rsc_require__` reads per call) on the first capture, so an isolate
+ * that never captures keeps the bare loader. Wraps again when another wrapper
+ * replaced this one (the build shell phase bridges hashed ids the same way,
+ * vite/discovery/shell-prerender-phase.ts). Collects nothing without the
+ * loader.
+ */
+function captureClientLoads(): {
+  loads: Set<PromiseLike<unknown>>;
+  stop: () => void;
+} {
+  const g = globalThis as {
+    __vite_rsc_client_require__?: (id: string) => unknown;
+  };
+  const load = g.__vite_rsc_client_require__;
+  if (typeof load === "function" && load !== recordingClientReferenceLoader) {
+    recordingClientReferenceLoader = (id) => {
+      const loading = load(id);
+      // plugin-rsc memoizes one promise per id and the Flight client stamps
+      // status "fulfilled" on it once loaded: a warm module is not collected.
+      if (
+        activeCaptureClientLoads.size > 0 &&
+        isThenable(loading) &&
+        (loading as { status?: string }).status !== "fulfilled"
+      ) {
+        for (const loads of activeCaptureClientLoads) loads.add(loading);
+      }
+      return loading;
+    };
+    g.__vite_rsc_client_require__ = recordingClientReferenceLoader;
+  }
+  const loads = new Set<PromiseLike<unknown>>();
+  activeCaptureClientLoads.add(loads);
+  return { loads, stop: () => activeCaptureClientLoads.delete(loads) };
+}
 
 /**
  * Route an SSR error through the deps.onError notification callback with the
@@ -347,6 +446,33 @@ interface ShellCaptureOptions {
   quiesce: Promise<void>;
   /** Upper bound on how long to wait for `quiesce`. Default SHELL_CAPTURE_MAX_WAIT_MS. */
   maxWaitMs?: number;
+  /**
+   * The SHELL KEY's search string (`?`-prefixed, sorted, cache.searchParams
+   * filter applied — shellSearchSeed in rsc/shell-serve.ts), seeding the SSR
+   * store so static-part `useSearchParams` reads bake markup consistent with
+   * the shell's own key. MUST equal the resume pass's seed for the same key.
+   */
+  search?: string;
+  /**
+   * The capture request's origin. Shell keys are host-scoped, so the resume
+   * pass's request agrees modulo protocol drift; seeding it keeps
+   * origin-dependent static markup (Link's data-external) identical across
+   * capture, resume, and browser hydration.
+   */
+  origin?: string;
+  /**
+   * Called for each component error the prerender reports (an errored
+   * boundary in the prelude), never for the capture's own abort. The caller
+   * refuses to store the shell (issue #915).
+   */
+  onError?: (error: unknown) => void;
+  /**
+   * Called with React's errorInfo for each task still pending when the
+   * capture's own abort froze the prelude; its componentStack is computed
+   * when read. The dev no-shell warning prints the stacks: one of them is what
+   * suspended above <body> (issue #941).
+   */
+  onAbortedTask?: (errorInfo: { componentStack?: string } | undefined) => void;
 }
 
 /**
@@ -368,6 +494,17 @@ interface ShellResumeOptions {
   postponed: string | null;
   /** Nonce for CSP. */
   nonce?: string;
+  /**
+   * The SHELL KEY's search string — same derivation as the capture pass
+   * (shellSearchSeed). A HIT shares the capture's key, so seeding the same
+   * string keeps the resume tree identical to the captured tree above the
+   * postponed holes.
+   */
+  search?: string;
+  /** The HIT request's origin — same host as the capture's (key-scoped). */
+  origin?: string;
+  /** Called for each component error the resumed holes report. */
+  onError?: (error: unknown) => void;
 }
 
 /**
@@ -379,36 +516,124 @@ interface ShellResumeOptions {
 const BOOTSTRAP_IMPORT_ONLY_RE =
   /^\s*import\(\s*(["'])([^"'\\]+)\1\s*\)\s*;?\s*$/;
 
+const MISSING_BOOTSTRAP_MSG =
+  "[ssr] Missing bootstrap dependency: provide loadBootstrapScriptContent(), " +
+  'or getClientEntryUrl with headScripts: "preinit".';
+
 /**
- * Prefer bootstrapModules over the inline import() bootstrap. When the content
- * is exactly `import("<entry-url>")`, hand Fizz the URL instead: React then
- * emits a `<link rel="modulepreload" fetchpriority="low">` hint in the head
- * plus the executing `<script type="module" src async>` at end of shell — the
- * entry fetch starts with the first flushed bytes instead of when the parser
- * reaches an opaque inline script that only reveals the URL once executed.
- * Fizz stamps the request nonce on both tags (the inline form needed that
- * too), and under PPR both land in the stored prelude; on resume React has
- * already cleared the bootstrap fields from the postponed state, so nothing
- * re-emits.
+ * Construction-time guard for {@link resolveBootstrap}: a handler whose deps
+ * can never produce a bootstrap must fail at startup, not 500 per request.
+ * getClientEntryUrl only counts under an explicit `headScripts: "preinit"` —
+ * any other headScripts keeps the inline path, so its presence alone is a
+ * misconfiguration worth flagging rather than silently ignoring.
+ * An unknown headScripts value throws: a custom SSR entry bypasses the
+ * rango({ headScripts }) check in getVirtualEntrySSR, and a typo such as
+ * "prenit" would otherwise run the inline path as if it were "preload".
+ * undefined stays valid (see {@link resolveBootstrap}).
  */
-function resolveBootstrapOptions(
-  content: string,
-  headScripts: SSRDependencies["headScripts"],
-): Pick<
+function assertBootstrapDeps(deps: SSRDependencies): void {
+  const { headScripts } = deps;
+  if (
+    headScripts !== undefined &&
+    headScripts !== "preinit" &&
+    headScripts !== "preload"
+  ) {
+    throw new Error(
+      `[ssr] headScripts must be "preinit" or "preload", received ${JSON.stringify(headScripts)}`,
+    );
+  }
+  const preinit = headScripts === "preinit";
+  if (deps.getClientEntryUrl && !preinit) {
+    console.warn(
+      '[ssr] getClientEntryUrl is ignored without headScripts: "preinit"; ' +
+        "the inline loadBootstrapScriptContent path is used instead.",
+    );
+  }
+  if (
+    !(preinit && deps.getClientEntryUrl) &&
+    !deps.loadBootstrapScriptContent
+  ) {
+    throw new Error(MISSING_BOOTSTRAP_MSG);
+  }
+}
+
+type BootstrapOptions = Pick<
   RenderToReadableStreamOptions,
   "bootstrapScriptContent" | "bootstrapModules"
-> {
-  // Explicit opt-in only: undefined (a custom SSR entry that predates the
-  // option, which also never installed the preinit hook) keeps the inline
-  // bootstrap byte-for-byte — converting by default would break CSPs that
-  // allowlist the known inline import() via a script hash.
-  if (headScripts !== "preinit") {
-    return { bootstrapScriptContent: content };
+>;
+
+/**
+ * Resolve Fizz's bootstrap options from the deps.
+ *
+ * Prefer bootstrapModules over the inline import() bootstrap: with
+ * `headScripts: "preinit"`, getClientEntryUrl() (sync — nothing to race)
+ * short-circuits to bootstrapModules, and inline content that is exactly
+ * `import("<entry-url>")` converts to the URL. React then emits a
+ * `<link rel="modulepreload">` hint in the head plus the executing
+ * `<script type="module" src async>` at end of shell — the entry fetch starts
+ * with the first flushed bytes instead of when the parser reaches an opaque
+ * inline script that only reveals the URL once executed. Fizz writes that hint
+ * with `fetchPriority="low"` ahead of the head chunk scripts; the handlers
+ * serve it without the attribute after the head chunk scripts
+ * (entry-preload-priority.ts, issue #1025), because at Low the entry queued
+ * behind in-viewport images and gated hydration (+3.8 s measured on a
+ * prioritising HTTP/2 link). Fizz stamps the request nonce on both tags, and
+ * under PPR both land in the stored prelude; on resume React has already
+ * cleared the bootstrap fields from the postponed state, so nothing re-emits.
+ * The conversion is an explicit opt-in:
+ * undefined headScripts (a custom SSR entry that predates the option, which
+ * also never installed the preinit hook) keeps the inline bootstrap
+ * byte-for-byte — converting by default would break CSPs that allowlist the
+ * known inline import() via a script hash.
+ *
+ * With `deadline` (shell capture), the inline load races it: a load that never
+ * resolves within the deadline is the same bounded no-shell degrade as a shell
+ * that never goes quiet — resolves `null`, the caller's degrade sentinel
+ * (disjoint from the load's string). A load that REJECTS is a genuine error
+ * and still propagates. The no-op catch keeps a late rejection off the
+ * unhandledRejection path when the deadline already won; a rejection that
+ * lands first still propagates out.
+ */
+async function resolveBootstrap(
+  deps: SSRDependencies,
+): Promise<BootstrapOptions>;
+async function resolveBootstrap(
+  deps: SSRDependencies,
+  deadline: Promise<void>,
+): Promise<BootstrapOptions | null>;
+async function resolveBootstrap(
+  deps: SSRDependencies,
+  deadline?: Promise<void>,
+): Promise<BootstrapOptions | null> {
+  const preinit = deps.headScripts === "preinit";
+  if (preinit) {
+    // Truthy on purpose, and the ONLY predicate on the URL: an empty string is
+    // an unusable entry URL and falls through to the inline path.
+    const url = deps.getClientEntryUrl?.();
+    if (url) {
+      return { bootstrapModules: [url] };
+    }
   }
-  const match = BOOTSTRAP_IMPORT_ONLY_RE.exec(content);
-  return match
-    ? { bootstrapModules: [match[2]!] }
-    : { bootstrapScriptContent: content };
+  if (!deps.loadBootstrapScriptContent) {
+    throw new Error(MISSING_BOOTSTRAP_MSG);
+  }
+  let content: string;
+  if (deadline) {
+    const load = deps.loadBootstrapScriptContent();
+    load.catch(() => {});
+    const raced = await Promise.race([load, deadline.then(() => null)]);
+    if (raced === null) return null;
+    content = raced;
+  } else {
+    content = await deps.loadBootstrapScriptContent();
+  }
+  if (preinit) {
+    const match = BOOTSTRAP_IMPORT_ONLY_RE.exec(content);
+    return match
+      ? { bootstrapModules: [match[2]!] }
+      : { bootstrapScriptContent: content };
+  }
+  return { bootstrapScriptContent: content };
 }
 
 /**
@@ -417,10 +642,24 @@ function resolveBootstrapOptions(
  * @example
  * ```tsx
  * import { createSSRHandler } from "@rangojs/router/ssr";
- * import { createFromReadableStream } from "@rangojs/router/internal/deps/ssr";
+ * import {
+ *   createFromReadableStream,
+ *   getClientEntryUrl,
+ * } from "@rangojs/router/internal/deps/ssr";
  * import { renderToReadableStream } from "react-dom/server.edge";
  * import { injectRSCPayload } from "@rangojs/router/internal/deps/html-stream-server";
  *
+ * export const renderHTML = createSSRHandler({
+ *   createFromReadableStream,
+ *   renderToReadableStream,
+ *   injectRSCPayload,
+ *   getClientEntryUrl,
+ *   headScripts: "preinit", // getClientEntryUrl is only used under "preinit"
+ * });
+ * ```
+ *
+ * Custom SSR entries that still use the deprecated bootstrap helper:
+ * ```tsx
  * export const renderHTML = createSSRHandler({
  *   createFromReadableStream,
  *   renderToReadableStream,
@@ -435,9 +674,9 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
     createFromReadableStream,
     renderToReadableStream,
     injectRSCPayload,
-    loadBootstrapScriptContent,
     onError,
   } = deps;
+  assertBootstrapDeps(deps);
 
   /**
    * Render RSC stream to HTML stream
@@ -449,7 +688,14 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
     rscStream: ReadableStream<Uint8Array>,
     options?: SSRRenderOptions,
   ): Promise<ReadableStream<Uint8Array>> {
-    const { nonce, formState, streamMode } = options ?? {};
+    const {
+      nonce,
+      formState,
+      streamMode,
+      search,
+      origin,
+      onError: onRenderError,
+    } = options ?? {};
 
     try {
       // Tee the stream:
@@ -457,14 +703,44 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
       // - rscStream2: For browser hydration (inject as __FLIGHT_DATA__)
       const [rscStream1, rscStream2] = rscStream.tee();
 
+      // Deserialization starts here (not lazily on SsrRoot's first render) so
+      // the auto-raise below can read payload metadata before the fizz call.
+      // The parallel no-op catch keeps a payload rejection off the
+      // unhandledRejection path if fizz errors before consuming the promise;
+      // SsrRoot's React.use() on the SAME promise still observes the rejection.
+      const payload = deserializeSsrPayload(
+        createFromReadableStream,
+        rscStream1,
+      );
+      payload.catch(() => {});
+
       const SsrRoot = createSsrRootComponent({
         createFromReadableStream,
         rscStream: rscStream1,
+        payload,
         nonce,
+        // Live fizz seeds the request's RAW search. The shell capture pass
+        // below and its resume twin seed the SHELL KEY's search instead
+        // (sorted, cache.searchParams filter applied — shellSearchSeed):
+        // same key => same seed, so the resume tree matches the captured
+        // tree while static-part search reads render what the key names.
+        search,
+        origin,
       });
 
-      // Get bootstrap script content
-      const bootstrapScriptContent = await loadBootstrapScriptContent();
+      const bootstrap = await resolveBootstrap(deps);
+
+      // ssr:false auto-raise (see SSRDependencies.progressiveChunkSize).
+      // Awaiting the payload here is latency-neutral: fizz cannot emit even
+      // <html> until this same promise settles. A rejection lands in the
+      // catch below — the same reportRenderError path a shell error takes.
+      let progressiveChunkSize = deps.progressiveChunkSize;
+      if (progressiveChunkSize === undefined) {
+        const resolved = await payload;
+        if (resolved.metadata?.segments?.some((s) => s.awaitBeforeFlush)) {
+          progressiveChunkSize = Number.MAX_SAFE_INTEGER;
+        }
+      }
 
       // Render React tree to HTML stream
       // Pass formState for useActionState progressive enhancement if provided
@@ -473,9 +749,17 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
       // isolate-global, the nonce per request).
       const htmlStream = await runWithPreinitNonce(nonce, () =>
         renderToReadableStream(<SsrRoot />, {
-          ...resolveBootstrapOptions(bootstrapScriptContent, deps.headScripts),
+          ...bootstrap,
           formState,
           nonce,
+          ...(progressiveChunkSize !== undefined && { progressiveChunkSize }),
+          ...(onRenderError && {
+            onError: (error: unknown) => {
+              onRenderError(error);
+              // What React's default onError does (it only logs).
+              console.error(error);
+            },
+          }),
         }),
       );
 
@@ -486,8 +770,15 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
         await htmlStream.allReady;
       }
 
+      // The entry's Fizz hint at default priority, after the head chunk
+      // scripts (entry-preload-priority.ts).
+      const entryUrl = bootstrap.bootstrapModules?.[0];
+      const html = entryUrl
+        ? htmlStream.pipeThrough(entryPreloadPriorityTransform(entryUrl, nonce))
+        : htmlStream;
+
       // Inject RSC payload into HTML as <script nonce="...">__FLIGHT_DATA__</script>
-      return htmlStream.pipeThrough(injectRSCPayload(rscStream2, { nonce }));
+      return html.pipeThrough(injectRSCPayload(rscStream2, { nonce }));
     } catch (error) {
       reportRenderError(onError, error);
       throw error;
@@ -509,8 +800,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
 export function createShellCaptureHandler<TEnv = unknown>(
   deps: SSRDependencies<TEnv>,
 ) {
-  const { createFromReadableStream, loadBootstrapScriptContent, prerender } =
-    deps;
+  const { createFromReadableStream, prerender } = deps;
   const onError = deps.onError;
 
   if (!prerender) {
@@ -519,6 +809,7 @@ export function createShellCaptureHandler<TEnv = unknown>(
         "PPR shell capture requires the prerender export; wire it in the SSR virtual entry.",
     );
   }
+  assertBootstrapDeps(deps);
 
   /**
    * Prerender the shell and return the stored artifacts, or null when the
@@ -548,12 +839,13 @@ export function createShellCaptureHandler<TEnv = unknown>(
     const deadline = (await isDebuggerAttached())
       ? { promise: new Promise<void>(() => {}), cancel: () => {} }
       : createCancelableTimeout(maxWaitMs);
+    const clientLoads = captureClientLoads();
     try {
       // No nonce (nonce'd requests never reach capture); no formState.
-      // payloadSettled: fires when the Flight payload root settles — i.e.
-      // every client-module load the payload references completed and fizz
-      // can actually emit the tree. The abort below gates on it (bounded by
-      // the same deadline): Flight byte-quiet alone is NOT render-readiness.
+      // payloadSettled: fires when the Flight payload root settles and fizz
+      // can emit the tree. The abort below gates on it and on the
+      // client-reference loads in flight in the isolate (bounded by the same
+      // deadline): Flight byte-quiet alone is NOT render-readiness.
       let settlePayload!: () => void;
       const payloadSettled = new Promise<void>((resolve) => {
         settlePayload = resolve;
@@ -562,23 +854,16 @@ export function createShellCaptureHandler<TEnv = unknown>(
         createFromReadableStream,
         rscStream,
         onPayloadSettled: settlePayload,
+        // The shell key's own search: static-part search reads render what
+        // the key names, and the resume pass seeds the identical string.
+        search: opts.search,
+        origin: opts.origin,
       });
 
-      // Bootstrap load raced against the deadline. A load that never resolves
-      // within maxWaitMs is the same bounded no-shell degrade as a shell that
-      // never goes quiet: return null, do not hang. A load that REJECTS is a
-      // genuine error and still propagates (it is not the deadline). `null` is
-      // the deadline sentinel — disjoint from the load's `Promise<string>`, so
-      // the race narrows to `string | null` with no wrapper. The no-op catch
-      // keeps a late rejection off the unhandledRejection path when the deadline
-      // already won; a rejection that lands first still propagates out.
-      const load = loadBootstrapScriptContent();
-      load.catch(() => {});
-      const bootstrapScriptContent = await Promise.race([
-        load,
-        deadline.promise.then(() => null),
-      ]);
-      if (bootstrapScriptContent === null) {
+      // Bootstrap resolution raced against the deadline (see resolveBootstrap):
+      // null means the deadline won — the bounded no-shell degrade.
+      const bootstrap = await resolveBootstrap(deps, deadline.promise);
+      if (bootstrap === null) {
         return null;
       }
 
@@ -594,7 +879,15 @@ export function createShellCaptureHandler<TEnv = unknown>(
       const abortReason = { rangoShellCaptureAbort: true };
       const prerenderPromise = prerender(<SsrRoot />, {
         signal: controller.signal,
-        ...resolveBootstrapOptions(bootstrapScriptContent, deps.headScripts),
+        ...bootstrap,
+        // Explicit option only — the ssr:false auto-raise is live-SSR scoped
+        // (RangoBaseOptions.progressiveChunkSize documents the contract); the
+        // capture handler starts prerender without deserializing the payload,
+        // so segment metadata is not read here. The captured value rides the
+        // postponed state into every later resume().
+        ...(deps.progressiveChunkSize !== undefined && {
+          progressiveChunkSize: deps.progressiveChunkSize,
+        }),
         // Abort is how capture WORKS: once the shell is quiet we abort() to
         // freeze the prelude and let the still-pending holes postpone. React
         // reports the abort reason for each pending boundary through onError.
@@ -609,10 +902,12 @@ export function createShellCaptureHandler<TEnv = unknown>(
         // render errors are NOT our sentinel and still surface through
         // deps.onError, the same channel renderHTML uses. See
         // docs/design/ppr-shell-resume.md.
-        onError: (error: unknown) => {
+        onError: (error: unknown, errorInfo?: { componentStack?: string }) => {
           if (error === abortReason) {
+            opts.onAbortedTask?.(errorInfo);
             return;
           }
+          opts.onError?.(error);
           reportRenderError(onError, error);
         },
       });
@@ -631,25 +926,34 @@ export function createShellCaptureHandler<TEnv = unknown>(
       // shell that never goes quiet (a root postpone / hung handle).
       await Promise.race([opts.quiesce, deadline.promise]);
       // Then wait for fizz RENDER-READINESS, bounded by the same deadline:
-      // the payload root settles only after every client-module load the
-      // payload references completed (real module-runner I/O in dev; 100ms+
-      // on a cold graph). Flight byte-quiet does NOT imply this — a fully
+      // the payload root settles, then the client-reference module loads the
+      // capture started settle — a client component used as an element type
+      // resolves lazily, after the payload (real module-runner I/O in dev;
+      // 100ms+ on a cold graph). Flight byte-quiet does NOT imply this — a fully
       // REPLAYED (prerendered) route's Flight stream finishes in ~1-3ms and
       // an abort taken on quiet-plus-task-hops alone landed BEFORE fizz could
       // emit <html>, freezing a zero-byte prelude: the eternal-MISS shape
       // this route class showed on every cold graph (dev cold boots, GH
       // runners) while ordinary routes — whose live handler execution keeps
-      // Flight noisy long enough — never hit it. Masked-loader holes do not
-      // block payload settlement (they postpone below the root), so this
-      // await costs a genuinely hole-y shell nothing; a payload that NEVER
-      // settles (hung handles) degrades at the deadline exactly as before.
-      // A prerender that SETTLES first (early success or a hard rejection)
-      // ends the wait immediately — fizz is already done either way.
+      // Flight noisy long enough — never hit it. Holes the payload carries
+      // block neither wait (masked live loaders and loader-nested promises postpone
+      // below the root and load no module; the Flight input stays frozen),
+      // so this await costs a genuinely hole-y shell nothing; a payload that
+      // NEVER settles (hung handles) degrades at the deadline exactly as
+      // before. A prerender that SETTLES first (early success or a hard
+      // rejection) ends the wait immediately — fizz is already done either
+      // way.
       const prerenderSettled = prerenderPromise.then(
         () => {},
         () => {},
       );
-      await Promise.race([payloadSettled, prerenderSettled, deadline.promise]);
+      // The capture's loads all started when their import rows were parsed,
+      // before the Flight input froze.
+      await Promise.race([
+        payloadSettled.then(() => Promise.allSettled(clientLoads.loads)),
+        prerenderSettled,
+        deadline.promise,
+      ]);
       // Fixed task hops before the abort: give React's fizz worker turns to flush
       // the now-complete shell and mark the still-pending boundaries as POSTPONED
       // rather than errored. Deterministic (the byte set is already frozen and
@@ -679,6 +983,12 @@ export function createShellCaptureHandler<TEnv = unknown>(
         const result = await prerenderPromise;
         prelude = await readStreamToUint8Array(result.prelude);
         postponed = result.postponed;
+        // Same hint rewrite as renderHTML, applied to the stored prelude; a
+        // resume never re-emits the bootstrap pair (Fizz clears it).
+        const entryUrl = bootstrap.bootstrapModules?.[0];
+        if (entryUrl) {
+          prelude = rewriteEntryPreloadPriority(prelude, entryUrl);
+        }
       } catch (error) {
         // Identity match: swallow ONLY our own deliberate abort
         // (error === abortReason). Not error.name — capture aborts before this
@@ -693,11 +1003,10 @@ export function createShellCaptureHandler<TEnv = unknown>(
 
       // Sanity gate: a prelude with no `<body` is the no-shell failure mode.
       // Return null and store nothing; the request falls back to axis 1 and a
-      // later request re-captures. The dominant real-world cause is a loader
-      // route WITHOUT a route-level loading() boundary: renderSegments' loading-
-      // less branch awaits loader data at TREE-BUILD, so the masked loader pins
-      // the whole tree above <body> (root postpone). Root-postponing layouts and
-      // hung handles degrade the same way. shell-capture.ts logs a once-per-key
+      // later request re-captures. The dominant real-world cause is a masked
+      // live-loader read with no boundary above it (lane rule: see
+      // resolveLoaderData, loader-cache.ts), which root-postpones above
+      // <body>. Root-postponing layouts and hung handles degrade the same way. shell-capture.ts logs a once-per-key
       // warning so the eternal-MISS shape is diagnosable.
       if (!new TextDecoder().decode(prelude).includes("<body")) {
         return null;
@@ -709,6 +1018,7 @@ export function createShellCaptureHandler<TEnv = unknown>(
       };
     } finally {
       deadline.cancel();
+      clientLoads.stop();
     }
   };
 }
@@ -735,7 +1045,7 @@ export function createShellResumeHandler<TEnv = unknown>(
     rscStream: ReadableStream<Uint8Array>,
     opts: ShellResumeOptions,
   ): Promise<ReadableStream<Uint8Array>> {
-    const { postponed, nonce } = opts;
+    const { postponed, nonce, search, origin } = opts;
 
     try {
       if (postponed === null) {
@@ -765,6 +1075,10 @@ export function createShellResumeHandler<TEnv = unknown>(
         createFromReadableStream,
         rscStream: rscStream1,
         nonce,
+        // Same seed as the capture pass for this key: the resume tree must
+        // match the captured tree above the holes, search reads included.
+        search,
+        origin,
       });
 
       // EAGER injection (resume-only): the stored prelude — a complete document
@@ -794,7 +1108,10 @@ export function createShellResumeHandler<TEnv = unknown>(
           // resumed stream and need the per-request nonce.
           const resumed = await runWithPreinitNonce(nonce, () =>
             resume(<SsrRoot />, JSON.parse(postponed), {
-              onError: (error) => reportRenderError(onError, error),
+              onError: (error) => {
+                opts.onError?.(error);
+                reportRenderError(onError, error);
+              },
               nonce,
             }),
           );

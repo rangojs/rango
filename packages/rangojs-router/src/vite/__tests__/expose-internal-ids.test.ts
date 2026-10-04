@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import {
+  createLoaderScanStubPlugin,
   exposeInternalIds,
   type ExposeInternalIdsApi,
 } from "../plugins/expose-internal-ids.js";
@@ -32,6 +33,25 @@ function rscCtx() {
 
 function clientCtx() {
   return { environment: { name: "client" }, warn: vi.fn() };
+}
+
+function createLoaderScanPlugin(isScanBuild: boolean) {
+  const plugin = createLoaderScanStubPlugin() as ReturnType<
+    typeof createLoaderScanStubPlugin
+  > & {
+    configResolved: (config: any) => void;
+    transform: (this: any, code: string, id: string) => any;
+  };
+  plugin.configResolved({
+    root: ROOT,
+    plugins: [
+      {
+        name: "rsc:minimal",
+        api: { manager: { isScanBuild } },
+      },
+    ],
+  });
+  return plugin;
 }
 
 /**
@@ -775,8 +795,76 @@ export { DocsPage as DocsPagePublic };
 });
 
 // ---------------------------------------------------------------------------
-// Client loader stubs for const + export { X } pattern
+// Loader stubs
 // ---------------------------------------------------------------------------
+
+describe("createLoaderScanStubPlugin", () => {
+  const loaderSource = `import { createLoader as defineLoader } from "@rangojs/router";
+const InternalLoader = defineLoader(async () => {
+  await import("server-only");
+  return { ok: true };
+}, true);
+export { InternalLoader as PublicLoader };
+`;
+
+  it("stubs export-only loaders during non-RSC scan builds", () => {
+    const plugin = createLoaderScanPlugin(true);
+    const result = plugin.transform.call(clientCtx(), loaderSource, FILE_ID);
+
+    expect(result?.code).toContain("export const PublicLoader");
+    expect(result?.code).toContain('__brand: "loader"');
+    expect(result?.code).not.toContain("server-only");
+    expect(result?.code).not.toContain("defineLoader");
+  });
+
+  it("leaves RSC scan modules unchanged", () => {
+    const plugin = createLoaderScanPlugin(true);
+    expect(
+      plugin.transform.call(rscCtx(), loaderSource, FILE_ID),
+    ).toBeUndefined();
+  });
+
+  it("leaves real non-RSC builds to the post transform", () => {
+    const plugin = createLoaderScanPlugin(false);
+    expect(
+      plugin.transform.call(clientCtx(), loaderSource, FILE_ID),
+    ).toBeUndefined();
+  });
+
+  it("does not replace mixed-export loader modules", () => {
+    const plugin = createLoaderScanPlugin(true);
+    const mixedSource = `${loaderSource}export const title = "Mixed";\n`;
+    expect(
+      plugin.transform.call(clientCtx(), mixedSource, FILE_ID),
+    ).toBeUndefined();
+  });
+
+  it.each([
+    [
+      "createHandle",
+      `import "server-only";
+import { createHandle } from "@rangojs/router";
+export const Breadcrumbs = createHandle((segments) => segments.flat());
+`,
+    ],
+    [
+      "createLocationState",
+      `import "server-only";
+import { createLocationState } from "@rangojs/router";
+export const FlashMessage = createLocationState({ flash: true });
+`,
+    ],
+  ])("leaves %s modules visible to non-RSC validation", (_name, source) => {
+    const plugin = createLoaderScanPlugin(true);
+    expect(plugin.transform.call(clientCtx(), source, FILE_ID)).toBeUndefined();
+  });
+
+  it("runs only during build without joining the post transform group", () => {
+    const plugin = createLoaderScanStubPlugin();
+    expect(plugin.apply).toBe("build");
+    expect(plugin.enforce).toBeUndefined();
+  });
+});
 
 describe("exposeInternalIds - client loader stubs for const + export patterns", () => {
   it("generates client stub for const + export { X }", () => {
@@ -1552,5 +1640,42 @@ export const MyPage = Prerender(() => <div>page</div>);
     // RSC: Prerender gets $$id (not stubbed)
     expect(result.code).toContain("MyPage.$$id");
     expect(result.code).toContain("Prerender(");
+  });
+});
+
+describe("loader manifest order", () => {
+  const loaderFile = (name: string) =>
+    `import { createLoader } from "@rangojs/router";
+export const ${name} = createLoader(async () => ({ ok: true }));
+`;
+  const FILES = ["zeta", "alpha", "mid"];
+
+  // The registry fills in directory-scan and transform order, both of which
+  // differ between machines and runs; the manifest's bytes feed the cache
+  // version of every router bundled with it (discovery/build-versions.ts).
+  const manifestFor = (order: string[]) => {
+    const plugin = createPlugin();
+    plugin.configResolved({ command: "build", root: ROOT });
+    for (const name of order) {
+      plugin.transform.call(
+        rscCtx(),
+        loaderFile(`${name}Loader`),
+        `${ROOT}/src/${name}.ts`,
+      );
+    }
+    return plugin.load.call(
+      rscCtx(),
+      "\0virtual:rsc-router/loader-manifest",
+    ) as string;
+  };
+
+  it("lists the same loaders in the same order, whatever order they registered in", () => {
+    const manifest = manifestFor(FILES);
+    expect(manifest).toBe(manifestFor([...FILES].reverse()));
+    const ids = [...manifest.matchAll(/^\s+"([^"]+)": \(\) => import/gm)].map(
+      (match) => match[1],
+    );
+    expect(ids).toHaveLength(3);
+    expect(ids).toEqual([...ids].sort());
   });
 });

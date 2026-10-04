@@ -29,6 +29,7 @@ const PROBES = [
   "search",
   "segments",
   "navigation",
+  "locationState",
 ] as const;
 
 interface RenderSnapshot {
@@ -59,8 +60,9 @@ interface SuiteOpts {
   mountRenders: number;
   /**
    * Expected committed renders per probe on the initial (hydration) mount.
-   * StrictMode does NOT double-fire effects during hydration, so this is 1 in
-   * every variant.
+   * Since React 19.3 StrictMode double-invokes effects during hydration as
+   * well (react#35961; 19.2 ran them once), so this is 2 when StrictMode is on
+   * in dev, and 1 otherwise.
    */
   mountCommits: number;
   /**
@@ -178,6 +180,9 @@ function defineStabilitySuite(opts: SuiteOpts) {
         "pathname",
         "params",
         "segments",
+        // Hears the push's location-state commit and bails out: the entry
+        // carries no state, like the one before it.
+        "locationState",
       ]) {
         expect(delta(probe), `commit delta[${probe}]`).toBe(0);
       }
@@ -215,6 +220,7 @@ function defineStabilitySuite(opts: SuiteOpts) {
         "params",
         "search",
         "segments",
+        "locationState",
       ]) {
         expect(delta(probe), `remount delta[${probe}]`).toBe(
           opts.remountCommits,
@@ -231,13 +237,13 @@ function defineStabilitySuite(opts: SuiteOpts) {
 }
 
 // Dev, StrictMode on (default): the hydration render runs twice (the StrictMode
-// signal), hydration effects run once, and a later client remount runs effects
-// twice.
+// signal), hydration effects run twice (React 19.3+), and a later client
+// remount runs effects twice.
 defineStabilitySuite({
   mode: "dev",
   strictMode: true,
   mountRenders: 2,
-  mountCommits: 1,
+  mountCommits: 2,
   remountCommits: 2,
 });
 

@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { dispatch } from "@rangojs/router/testing";
 import { createRouter, urls } from "@rangojs/router";
+import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 import type { TimeoutContext } from "@rangojs/router";
 import { apiPatterns } from "../src/api/urls.js";
+import { CACHE_LAB_TAGS } from "../src/cache-lab-contract.js";
 import type { AppBindings } from "../src/env.js";
 
 // Dogfood `dispatch` against the cloudflare-basic app's REAL API route handlers.
@@ -95,6 +97,60 @@ describe("dispatch against cloudflare-basic API route handlers", () => {
   it("returns 404 for an unmatched path (this router has no catch-all)", async () => {
     const res = await dispatch(router, { request: "/not-a-route", env });
     expect(res.status).toBe(404);
+  });
+
+  it("rejects cache tags outside the bounded allowlist", async () => {
+    const store = new MemorySegmentCacheStore();
+    const cacheRouter = createRouter<AppBindings>({
+      cache: { store },
+    }).routes(apiPatterns);
+    await store.setItem("cache-lab-alpha", "cached", {
+      tags: [CACHE_LAB_TAGS.productAlpha],
+      ttl: 60,
+    });
+
+    const unknown = await dispatch(cacheRouter, {
+      env,
+      request: new Request("http://localhost/cache/invalidate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tags: ["cache-lab:user-input"] }),
+      }),
+    });
+    expect(unknown.status).toBe(400);
+    expect(await store.getItem("cache-lab-alpha")).not.toBeNull();
+  });
+
+  it("invalidates allowed tags before the API response resolves", async () => {
+    const store = new MemorySegmentCacheStore();
+    const cacheRouter = createRouter<AppBindings>({
+      cache: { store },
+    }).routes(apiPatterns);
+    await store.setItem("cache-lab-alpha", "cached", {
+      tags: [CACHE_LAB_TAGS.productAlpha],
+      ttl: 60,
+    });
+    await store.setItem("cache-lab-beta", "cached", {
+      tags: [CACHE_LAB_TAGS.productBeta],
+      ttl: 60,
+    });
+
+    const response = await dispatch(cacheRouter, {
+      env,
+      request: new Request("http://localhost/cache/invalidate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tags: [CACHE_LAB_TAGS.productAlpha] }),
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({
+      invalidated: [CACHE_LAB_TAGS.productAlpha],
+    });
+    expect(await store.getItem("cache-lab-alpha")).toBeNull();
+    expect(await store.getItem("cache-lab-beta")).not.toBeNull();
   });
 });
 

@@ -9,6 +9,7 @@ import {
   useRouter,
   useSegments,
   useHref,
+  useLocationState,
 } from "@rangojs/router/client";
 import { useRenderTracker } from "../render-tracker.js";
 
@@ -61,7 +62,7 @@ export const ParamsProbe = React.memo(function ParamsProbe() {
 // useSearchParams re-renders only when the committed search string changes.
 export const SearchProbe = React.memo(function SearchProbe() {
   useRenderTracker("search");
-  const sp = useSearchParams();
+  const [sp] = useSearchParams();
   return <span data-testid="probe-search">n:{sp.get("n") ?? "none"}</span>;
 });
 
@@ -81,6 +82,20 @@ export const NavigationProbe = React.memo(function NavigationProbe() {
   return <span data-testid="probe-navigation">state:{state}</span>;
 });
 
+// useLocationState re-renders only when a commit changes its slot of the
+// entry's state. No navigation of this page carries state, so after mount it
+// must not re-render at all: the reader hears every location-state commit
+// (each push is one) and bails out on an unchanged slot.
+export const LocationStateProbe = React.memo(function LocationStateProbe() {
+  useRenderTracker("locationState");
+  const state = useLocationState<{ from?: string }>();
+  return (
+    <span data-testid="probe-location-state">
+      state:{state?.from ?? "none"}
+    </span>
+  );
+});
+
 function Probes() {
   return (
     <div data-testid="probes">
@@ -91,6 +106,7 @@ function Probes() {
       <SearchProbe />
       <SegmentsProbe />
       <NavigationProbe />
+      <LocationStateProbe />
     </div>
   );
 }

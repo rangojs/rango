@@ -1,5 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
-import { checkoutPortOffset } from "@shared/e2e";
+import { assertExistingServerIsOurs, checkoutPortOffset } from "@shared/e2e";
 
 const browserConfig = {
   ...devices["Desktop Chrome"],
@@ -27,6 +27,12 @@ const PREVIEW_SERVER_PORT = 5189 + PORT_OFFSET;
 // bases + checkoutPortOffset(), so it cannot drift from this config.
 const HOST_DEV_PORT = 5296 + PORT_OFFSET;
 const HOST_PREVIEW_PORT = 5297 + PORT_OFFSET;
+// webServer commands call the e2e/test-app scripts' vite commands directly,
+// not `pnpm <script>`: pnpm's verifyDepsBeforeRun can run `pnpm install`
+// first, which aborts (ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY) in a git
+// worktree with symlinked node_modules (issue #886).
+const VITE = "./node_modules/.bin/vite";
+const HOST_CONFIG = "--config .host-fixture/vite.config.ts";
 
 const isUIMode = process.argv.includes("--ui");
 const isCI = !!process.env.CI;
@@ -47,10 +53,47 @@ const RUN_HOST = !isCI || process.env.RANGO_E2E_HOST === "1";
 // test-app build/dev/preview servers.
 const HOST_ONLY = process.env.RANGO_E2E_HOST === "1";
 
+// reuseExistingServer only checks that the TCP port is open. Probe GET /
+// for an app-specific marker so a foreign Vite server on this checkout's
+// port fails at config load with lsof instead of running the suite against
+// the wrong app (issue #863). Skipped on CI (reuse is off there).
+if (!isCI) {
+  if (!HOST_ONLY && !ROUTE_HMR_ONLY) {
+    assertExistingServerIsOurs({
+      port: DEV_SERVER_PORT,
+      marker: 'data-testid="index-page"',
+      label: "rangojs-router test-app dev",
+    });
+    assertExistingServerIsOurs({
+      port: PREVIEW_SERVER_PORT,
+      marker: 'data-testid="index-page"',
+      label: "rangojs-router test-app preview",
+    });
+  }
+  if (RUN_HOST && !ROUTE_HMR_ONLY) {
+    const hostHeaders = { cookie: "x-rango-host=a.localhost" };
+    assertExistingServerIsOurs({
+      port: HOST_DEV_PORT,
+      marker: "App A home",
+      label: "rangojs-router host-fixture dev",
+      headers: hostHeaders,
+    });
+    assertExistingServerIsOurs({
+      port: HOST_PREVIEW_PORT,
+      marker: "App A home",
+      label: "rangojs-router host-fixture preview",
+      headers: hostHeaders,
+    });
+  }
+}
+
 export default defineConfig({
   testDir: "e2e",
   fullyParallel: true,
-  globalTimeout: 600000, // 10 minutes max
+  // 10m hang guard on CI shards only. A local dev+production run is ~2200
+  // tests / ~15 min and was cut mid-suite with a green "N passed" line
+  // (issue #864). Playwright default (0) is unlimited locally.
+  globalTimeout: process.env.CI ? 10 * 60 * 1000 : undefined,
   timeout: process.env.CI ? 60000 : 30000, // 60s on CI, 30s locally
   webServer: [
     ...(HOST_ONLY || ROUTE_HMR_ONLY
@@ -61,7 +104,7 @@ export default defineConfig({
             // start dev server. Building before the dev server prevents `vite
             // build` from overwriting the running server's optimizer cache
             // (node_modules/.vite/deps).
-            command: `pnpm build && rm -rf node_modules/.vite-e2e-test-app && pnpm dev --port ${DEV_SERVER_PORT}`,
+            command: `${VITE} build && rm -rf node_modules/.vite-e2e-test-app && ${VITE} --port ${DEV_SERVER_PORT}`,
             cwd: "./e2e/test-app",
             port: DEV_SERVER_PORT,
             reuseExistingServer: !process.env.CI,
@@ -69,7 +112,7 @@ export default defineConfig({
           {
             // Shared preview server for all production tests using test-app.
             // Started after the build (included in the dev server command above).
-            command: `pnpm preview --port ${PREVIEW_SERVER_PORT}`,
+            command: `${VITE} preview --port ${PREVIEW_SERVER_PORT}`,
             cwd: "./e2e/test-app",
             port: PREVIEW_SERVER_PORT,
             reuseExistingServer: !process.env.CI,
@@ -81,7 +124,7 @@ export default defineConfig({
             // Host-router fixture (e2e/test-app/.host-fixture), node preset. Dev
             // server for host-routing.test.ts "(dev)". Self-contained (vite dev
             // generates its own manifests).
-            command: `pnpm host:dev --port ${HOST_DEV_PORT}`,
+            command: `${VITE} ${HOST_CONFIG} --port ${HOST_DEV_PORT}`,
             cwd: "./e2e/test-app",
             port: HOST_DEV_PORT,
             reuseExistingServer: !process.env.CI,
@@ -90,7 +133,7 @@ export default defineConfig({
             // Host-router fixture preview (built) for host-routing.test.ts
             // "(production)". Builds then serves the .vercel/output-equivalent
             // node build.
-            command: `pnpm host:build && pnpm host:preview --port ${HOST_PREVIEW_PORT}`,
+            command: `${VITE} build ${HOST_CONFIG} && ${VITE} preview ${HOST_CONFIG} --port ${HOST_PREVIEW_PORT}`,
             cwd: "./e2e/test-app",
             port: HOST_PREVIEW_PORT,
             reuseExistingServer: !process.env.CI,
@@ -125,11 +168,13 @@ export default defineConfig({
             "**/smoke.test.ts",
             "**/loader-hmr.test.ts",
             "**/route-types-hmr.test.ts",
+            "**/client-urls-hmr*.test.ts",
             "**/client-component-hmr.test.ts",
             "**/intercept-hmr*.test.ts",
             "**/prerender-hmr.test.ts",
             "**/basename-hmr.test.ts",
             "**/refresh-cmd.test.ts",
+            "**/head-script-preload.test.ts",
             "**/*.setup.ts",
             // mini is a Vitest dogfood app nested under e2e/; its vitest
             // test/*.test.tsx files must not be collected by Playwright.
@@ -143,7 +188,11 @@ export default defineConfig({
         {
           name: "production",
           grep: /\(production/,
-          testIgnore: ["**/smoke.test.ts", "**/mini/**"],
+          testIgnore: [
+            "**/smoke.test.ts",
+            "**/head-script-preload.test.ts",
+            "**/mini/**",
+          ],
           use: {
             ...browserConfig,
             baseURL: `http://localhost:${PREVIEW_SERVER_PORT}`,
@@ -155,6 +204,7 @@ export default defineConfig({
           testMatch: "**/prerender-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
+          workers: 1,
           dependencies: ["dev"],
         },
         {
@@ -162,6 +212,7 @@ export default defineConfig({
           testMatch: "**/client-component-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
+          workers: 1,
           dependencies: ["dev"],
         },
         {
@@ -169,6 +220,7 @@ export default defineConfig({
           testMatch: ["**/loader-hmr.test.ts", "**/refresh-cmd.test.ts"],
           use: browserConfig,
           fullyParallel: false,
+          workers: 1,
           dependencies: ["dev"],
         },
         {
@@ -176,6 +228,17 @@ export default defineConfig({
           testMatch: "**/route-types-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
+          workers: 1,
+          dependencies: ["dev"],
+        },
+        {
+          name: "hmr-client-urls",
+          testMatch: "**/client-urls-hmr*.test.ts",
+          use: browserConfig,
+          fullyParallel: false,
+          workers: 1,
+          // Mutates the clientUrls fixture source; isolated server, but keep
+          // it out of the parallel dev window like the other HMR suites.
           dependencies: ["dev"],
         },
         {
@@ -183,6 +246,10 @@ export default defineConfig({
           testMatch: "**/intercept-hmr*.test.ts",
           use: browserConfig,
           fullyParallel: false,
+          // Both intercept-hmr files rewrite intercept-hmr-config.ts; a second
+          // worker running the sibling file flips the guard mid-test (CI already
+          // runs the HMR projects with --workers=1).
+          workers: 1,
           dependencies: ["dev"],
         },
         {
@@ -190,6 +257,7 @@ export default defineConfig({
           testMatch: "**/basename-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
+          workers: 1,
           // Basename HMR modifies router.tsx to add basename: "/app",
           // which triggers route rediscovery and rewrites the gen file.
           // Must run after dev tests to avoid contaminating parallel tests.
@@ -257,11 +325,13 @@ export default defineConfig({
             "**/smoke.test.ts",
             "**/loader-hmr.test.ts",
             "**/route-types-hmr.test.ts",
+            "**/client-urls-hmr*.test.ts",
             "**/client-component-hmr.test.ts",
             "**/intercept-hmr*.test.ts",
             "**/prerender-hmr.test.ts",
             "**/basename-hmr.test.ts",
             "**/refresh-cmd.test.ts",
+            "**/head-script-preload.test.ts",
             "**/*.setup.ts",
             // host-routing runs in its own `host` project (with its own servers),
             // not the sharded dev bucket -- see the RUN_HOST block above.
@@ -283,6 +353,7 @@ export default defineConfig({
             "**/smoke.test.ts",
             // host-routing "(production)" runs in the `host` project.
             "**/host-routing.test.ts",
+            "**/head-script-preload.test.ts",
             "**/mini/**",
           ],
           use: {
@@ -300,6 +371,7 @@ export default defineConfig({
           testMatch: "**/client-component-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
+          workers: 1,
           // HMR tests modify route files in the shared test-app directory.
           // The dev server's Vite watcher picks up these changes, invalidating
           // modules and busting the in-memory cache — causing cache tests to fail.
@@ -311,6 +383,7 @@ export default defineConfig({
           testMatch: ["**/loader-hmr.test.ts", "**/refresh-cmd.test.ts"],
           use: browserConfig,
           fullyParallel: false,
+          workers: 1,
           dependencies: ["dev", "hmr-client"],
         },
         {
@@ -320,6 +393,7 @@ export default defineConfig({
           testMatch: "**/route-types-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
+          workers: 1,
           dependencies: ["dev", "hmr-loader"],
         },
         {
@@ -329,6 +403,10 @@ export default defineConfig({
           testMatch: "**/intercept-hmr*.test.ts",
           use: browserConfig,
           fullyParallel: false,
+          // Both intercept-hmr files rewrite intercept-hmr-config.ts; a second
+          // worker running the sibling file flips the guard mid-test (CI already
+          // runs the HMR projects with --workers=1).
+          workers: 1,
           dependencies: ["dev", "hmr-routes"],
         },
         {
@@ -340,7 +418,19 @@ export default defineConfig({
           testMatch: "**/basename-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
+          workers: 1,
           dependencies: ["dev"],
+        },
+        {
+          name: "hmr-client-urls",
+          // Mutates the clientUrls fixture source (route-shape edit), which
+          // triggers rediscovery on every watching server — run at the end of
+          // the serial HMR chain like the other file-mutating suites.
+          testMatch: "**/client-urls-hmr*.test.ts",
+          use: browserConfig,
+          fullyParallel: false,
+          workers: 1,
+          dependencies: ["dev", "hmr-basename"],
         },
         {
           name: "hmr-prerender",
@@ -348,6 +438,7 @@ export default defineConfig({
           testMatch: "**/prerender-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
+          workers: 1,
           dependencies: ["dev"],
         },
         {

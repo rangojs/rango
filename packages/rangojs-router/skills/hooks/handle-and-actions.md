@@ -30,15 +30,34 @@ function BreadcrumbNav() {
 const lastCrumb = useHandle(Breadcrumbs, (data) => data.at(-1));
 ```
 
+Writers: handlers AND loader bodies — `ctx.use(Handle)` returns the push
+function in each (middleware has no handle APIs). Loader pushes follow a delivery race (settle before
+the handler barrier → in the SSR'd document; later → applied client-side), and
+`loader(Def, { ssr: false })` makes them deterministic in the
+document. On a `ppr` shell HIT, a loader without `ssr: false` never ran during
+the capture, so its pushes always apply client-side; with `ssr: false` they
+bake into the shell. See `/loader` → "Writing Handles from Loaders". `useHandle`
+re-renders on every handle update, late loader pushes included.
+
+On a document load `useHandle` hydrates with the handle data its HTML was
+rendered from, then takes whatever arrived since. That holds wherever the
+reader sits: a reader inside a `<Suspense>` or `loading()` boundary, which
+hydrates after the rest of the page, does not see a late loader push during
+its hydration render, so it cannot mismatch its server HTML.
+
 Handles can be passed as props from server to client components:
 
 ```tsx
-// Server component
-path("/dashboard", (ctx) => {
-  const push = ctx.use(Breadcrumbs);
-  push({ label: "Dashboard", href: "/dashboard" });
-  return <DashboardNav handle={Breadcrumbs} />;
-});
+// Server component (route handler)
+path(
+  "/dashboard",
+  (ctx) => {
+    const push = ctx.use(Breadcrumbs);
+    push({ label: "Dashboard", href: "/dashboard" });
+    return <DashboardNav handle={Breadcrumbs} />;
+  },
+  { name: "dashboard" },
+);
 ```
 
 ```tsx
@@ -51,7 +70,9 @@ function DashboardNav({ handle }: { handle: typeof Breadcrumbs }) {
   return (
     <nav>
       {crumbs.map((c) => (
-        <a href={c.href}>{c.label}</a>
+        <a key={c.href} href={c.href}>
+          {c.label}
+        </a>
       ))}
     </nav>
   );
@@ -71,33 +92,42 @@ tracking actions called outside a `<form action={...}>` flow.
 
 ### useAction()
 
-Track state of server action invocations:
+Track the lifecycle of a server action, wherever on the page it was invoked.
+If the same action fires several times, the hook reports the latest call.
 
 ```tsx
 "use client";
 import { useAction } from "@rangojs/router/client";
-import { addToCart } from "../actions/cart";
+import { addToCart } from "../actions/cart"; // addToCart(productId: string)
 
 function AddToCartButton({ productId }: { productId: string }) {
   const { state, error, result } = useAction(addToCart);
 
   // state: 'idle' | 'loading' | 'streaming'
   // actionId: string | null
-  // payload: unknown | null (input data)
-  // error: Error | null
+  // payload: unknown[] | FormData | null (the call's arguments)
+  // error: unknown | null (whatever the action threw)
   // result: unknown | null (return value)
 
   return (
-    <form action={addToCart}>
-      <input type="hidden" name="productId" value={productId} />
+    // .bind keeps the form progressively enhanced; useAction still matches it
+    <form action={addToCart.bind(null, productId)}>
       <button disabled={state === "loading"}>
         {state === "loading" ? "Adding..." : "Add to Cart"}
       </button>
-      {error && <p className="error">{error.message}</p>}
+      {error instanceof Error && <p className="error">{error.message}</p>}
     </form>
   );
 }
 
-// Match by string suffix (convenient but may be ambiguous)
-const isLoading = useAction("addToCart", (s) => s.state === "loading");
+// With a selector (re-renders only when the selected value changes)
+const isLoading = useAction(addToCart, (s) => s.state === "loading");
+
+// Match by export name (suffix match on "#addToCart"; ambiguous if two
+// "use server" files export the same name)
+const isAdding = useAction("addToCart", (s) => s.state === "loading");
 ```
+
+Pass an action imported directly into the client component, or its export
+name as a string. An action received as a prop from a server component has
+lost the metadata `useAction` needs and throws; use the string form there.

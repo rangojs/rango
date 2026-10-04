@@ -83,6 +83,12 @@ export interface ClientChunkMeta {
  *   strategy**. It splits app `"use client"` modules by **route id** — the segment
  *   after a route-root directory (`routes`, `app`, `pages`, `features`, `handlers`,
  *   …) — so `routes/dashboard/**` becomes `app-dashboard` at any nesting depth.
+ *   The first marker in the path wins, except that an `app/` directly followed
+ *   by another marker with a directory after it is treated as a source root:
+ *   `app/routes/product/**` becomes `app-product`, while `app/dashboard/**`
+ *   (Next-style), `app/components/**` and files directly in `app/routes/` stay
+ *   `app-dashboard` / `app-components` / `app-routes`. The same route id under
+ *   different markers is one group.
  *   Where it finds NO route structure (a flat `src/components/`, or host sub-apps
  *   already split by a dynamic `import()`), it inherits the default grouping
  *   unchanged — so the shared `src/components` chunk stays shared and host apps do
@@ -94,10 +100,14 @@ export interface ClientChunkMeta {
  *   back to the default grouping for that one module. Forwarded directly to
  *   `@vitejs/plugin-rsc`'s `clientChunks`.
  *
- * Every module maps to exactly one group, so there is no byte duplication: a
- * component used by two routes lives in one group and is fetched whenever it
- * renders. Put genuinely shared client components OUTSIDE route directories so
- * they land in the shared group rather than one route's chunk.
+ * Every module maps to exactly one group, so there is no byte duplication. A
+ * group is also the loading unit: rendering any one member downloads the whole
+ * group's chunk, every other member included. A component used by two routes
+ * lives in one group, and rendering it on either route fetches that entire
+ * group. Put genuinely shared client components OUTSIDE route directories so
+ * they land in the shared group rather than one route's chunk, and keep an
+ * always-rendered component (a layout header) out of a large group.
+ * `DEBUG=rango:chunks vite build` logs each group's module count and size.
  *
  * @default true
  */
@@ -137,13 +147,17 @@ interface RangoBaseOptions {
    * - `"preinit"` (**default**): client-reference chunks render as EXECUTING
    *   `<script type="module" async>` tags hoisted into `<head>` (upgrading
    *   plugin-rsc's modulepreload hints in place), and the browser entry ships
-   *   as Fizz `bootstrapModules` — a head `modulepreload fetchpriority=low`
-   *   hint plus the executing end-of-shell `id="_R_"` module script. Chunk
+   *   as Fizz `bootstrapModules` — a `modulepreload` hint after the head
+   *   chunk scripts (default priority; Fizz's `fetchpriority=low` is dropped,
+   *   #1025)
+   *   plus the executing end-of-shell `id="_R_"` module script. Chunk
    *   execution overlaps body streaming instead of waiting for the hydration
    *   import walk; under PPR everything lands in the stored shell prelude.
    * - `"preload"`: the previous behavior — `<link rel="modulepreload">` hints
    *   only, entry as an inline `import()` script at end of shell. Chunks
    *   fetch+compile early but execute only when hydration imports them.
+   *
+   * Any other value throws when the generated SSR entry is built.
    *
    * Build-only for the chunk half: plugin-rsc resolves no JS deps per client
    * reference in dev, so dev documents carry no head chunk scripts in either
@@ -158,6 +172,34 @@ interface RangoBaseOptions {
    * @default "preinit"
    */
   headScripts?: HeadScriptsOption;
+
+  /**
+   * React Fizz `progressiveChunkSize`, forwarded to the document renders the
+   * generated SSR entry performs: renderToReadableStream (live SSR) and
+   * prerender (PPR shell capture); resume() inherits the capture value from
+   * the stored postponed state.
+   *
+   * Controls COMPLETED-boundary outlining. Once the shell exceeds this budget
+   * (React's default is 12800 bytes — any real document), Fizz moves every
+   * completed Suspense boundary over ~500 bytes out of its document position
+   * to an end-of-stream `<div hidden>` + `$RC()` script reveal. Raise it (e.g.
+   * `Number.MAX_SAFE_INTEGER`) to keep completed content inline: in-place for
+   * non-executing HTML consumers, no reveal step. Boundaries with suspensey
+   * content (hoisted stylesheets) still outline — their reveal must wait for
+   * the CSS. Trade-off: inline content delays later shell bytes behind it,
+   * which is why React outlines by default.
+   *
+   * When UNSET, document renders whose matched chain has a
+   * `loader(Def, { ssr: false })` entry auto-raise to MAX_SAFE_INTEGER — the
+   * loader was awaited before first flush precisely so its content ships
+   * in-place, and outlining the boundary it feeds would defeat that. Setting
+   * an explicit value disables the auto-raise. The auto-raise is live-SSR
+   * only; captured shells use the explicit value or React's default.
+   *
+   * Apps with a custom SSR entry set this per-handler via
+   * `SSRDependencies.progressiveChunkSize`.
+   */
+  progressiveChunkSize?: number;
 
   /**
    * Filter which files route discovery scans, by glob. Paths are matched
@@ -197,6 +239,34 @@ interface RangoBaseOptions {
   prerender?: {
     onError?: "fail" | "warn";
   };
+
+  /**
+   * The key inline server actions encrypt their bound arguments with:
+   * base64-encoded 32 bytes (`openssl rand -base64 32`). Pass it from the
+   * environment, never as a literal in the config file:
+   *
+   * ```ts
+   * rango({ encryptionKey: process.env.RANGO_ENCRYPTION_KEY })
+   * ```
+   *
+   * Why set it: the key is part of the cache version of every router whose
+   * server code encrypts with it, because a payload cached under one key
+   * carries arguments another key cannot decrypt. Without a stable key rango
+   * generates one per build, so those routers get a new version, and a cleared
+   * cache, on every deploy. With a stable key their cache survives a deploy
+   * that does not change their server code. It also lets a build decrypt
+   * arguments an earlier build encrypted (a cached or prerendered payload, an
+   * open tab).
+   *
+   * Validated when `rango()` is called: a value that is not base64 or does not
+   * decode to an AES key size (16, 24 or 32 bytes) throws. `undefined` (the
+   * variable is unset) falls back to the `RANGO_ENCRYPTION_KEY` environment
+   * variable, then to a generated key. Rotating the key clears the cache of
+   * the routers that use it.
+   *
+   * @default process.env.RANGO_ENCRYPTION_KEY, else a key generated per build
+   */
+  encryptionKey?: string;
 }
 
 /**
@@ -267,7 +337,7 @@ export interface RangoCloudflareOptions extends RangoBaseOptions {
  * `.vc-config.json` (and `config.json` for `functionName`).
  */
 export interface VercelPresetOptions {
-  /** Node runtime for the function. @default "nodejs22.x" */
+  /** Node runtime for the function. @default "nodejs24.x" */
   runtime?: string;
   /** Max execution time in seconds. @default 30 */
   maxDuration?: number;

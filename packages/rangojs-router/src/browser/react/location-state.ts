@@ -1,7 +1,14 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import type { LocationStateDefinition } from "./location-state-shared.js";
+import { useContext, useEffect, useSyncExternalStore } from "react";
+import { subscribeToNothing } from "./subscribe-to-nothing.js";
+import { LocationStateContext } from "./context.js";
+import { OptimisticLocationContext } from "../../client-urls/optimistic-location.js";
+import {
+  readableLocationState,
+  replaceCurrentHistoryState,
+  type LocationStateDefinition,
+} from "./location-state-shared.js";
 
 export {
   createLocationState,
@@ -12,29 +19,25 @@ export {
   type LocationStateOptions,
 } from "./location-state-shared.js";
 
-function readLocationStateValue<TState>(
-  key: string | undefined,
-): TState | undefined {
-  if (typeof window === "undefined") return undefined;
-  if (key) {
-    return window.history.state?.[key] as TState | undefined;
-  }
-  // Plain state: stored under history.state.state
-  return window.history.state?.state as TState | undefined;
-}
-
-function hasHydrated(): boolean {
-  return (
-    typeof document !== "undefined" &&
-    document.documentElement.hasAttribute("data-hydrated")
-  );
+/**
+ * Server and hydration renders must match the SSR output (`undefined`).
+ * React then re-renders with `getSnapshot`, including a reader whose Suspense
+ * boundary hydrates after the root has set `data-hydrated`.
+ */
+function getServerSnapshot(): undefined {
+  return undefined;
 }
 
 /**
- * Hook to read location state from history.state
+ * Hook to read the location state of the history entry on screen
+ *
+ * A reader sees an entry's state together with that entry's tree: on a
+ * navigation the value changes in the React commit that brings the
+ * destination, so content a pending navigation keeps on screen keeps the
+ * state of the entry being left, for a reader that mounts there too (#1029).
  *
  * Behavior depends on the definition:
- * - Normal state: persists across navigations, reactive to popstate
+ * - Normal state: persists across navigations and back/forward
  * - Flash state (created with { flash: true }): read once, cleared after paint
  *
  * Overloaded:
@@ -64,69 +67,34 @@ export function useLocationState<TArgs extends unknown[], TState>(
 ): TState | undefined {
   const key = definition?.__rsc_ls_key;
   const isFlash = definition?.__rsc_ls_flash ?? false;
+  const entry = useContext(LocationStateContext);
+  const optimistic = useContext(OptimisticLocationContext);
 
-  // Track whether the initial render returned undefined because the page
-  // hadn't hydrated yet. If so, the mount effect catches up by reading
-  // history.state once. If not, we already have the right value and must
-  // not re-read on mount — under StrictMode, the flash-cleanup effect runs
-  // before the second setup pass, so a re-read would clobber the captured
-  // value with the now-cleared `undefined`.
-  const initialReadDeferredRef = useRef(false);
+  // Typed state: the slot under its key. Plain state: the `state` slot.
+  // Inside an optimistically rendered clientUrls() destination the provider
+  // still holds the entry being left: read the entry the navigation will push.
+  const shown = (optimistic ? readableLocationState(optimistic) : entry)?.[
+    key || "state"
+  ] as TState | undefined;
+  // useSyncExternalStore only for its server snapshot: no other hook tells a
+  // hydrating render from a client one.
+  const state = useSyncExternalStore<TState | undefined>(
+    subscribeToNothing,
+    () => shown,
+    getServerSnapshot,
+  );
 
-  const [state, setState] = useState<TState | undefined>(() => {
-    if (!hasHydrated()) {
-      initialReadDeferredRef.current = true;
-      return undefined;
-    }
-    return readLocationStateValue<TState>(key);
-  });
-
-  // Subscribe to popstate and programmatic state changes
+  // Flash: removed from history.state after paint, so a reload or a return to
+  // the entry does not show it again. The provider's snapshot keeps it, so it
+  // stays on screen until the next commit of the entry's state. Not while the
+  // value is the optimistic entry's: history.state is another entry's.
   useEffect(() => {
-    const handlePopstate = () => {
-      setState(readLocationStateValue<TState>(key));
-    };
-
-    // Handle programmatic state changes (same-page navigation with
-    // ctx.setLocationState where components don't remount)
-    const handleLocationState = () => {
-      if (key) {
-        const val = readLocationStateValue<TState>(key);
-        if (isFlash) {
-          // For flash state, only update if there's a new value
-          if (val !== undefined) {
-            setState(val);
-          }
-        } else {
-          setState(val);
-        }
-      } else {
-        setState(readLocationStateValue<TState>(key));
-      }
-    };
-
-    if (initialReadDeferredRef.current) {
-      initialReadDeferredRef.current = false;
-      setState(readLocationStateValue<TState>(key));
-    }
-
-    window.addEventListener("popstate", handlePopstate);
-    window.addEventListener("__rsc_locationstate", handleLocationState);
-    return () => {
-      window.removeEventListener("popstate", handlePopstate);
-      window.removeEventListener("__rsc_locationstate", handleLocationState);
-    };
-  }, [key, isFlash]);
-
-  // Flash: clear from history.state after paint so subsequent navigations don't see it.
-  // Depends on `state` so it re-runs when state is set via the event listener.
-  useEffect(() => {
-    if (isFlash && key && state !== undefined) {
+    if (isFlash && key && !optimistic && state !== undefined) {
       const cleaned = { ...window.history.state };
       delete cleaned[key];
-      window.history.replaceState(cleaned, "", window.location.href);
+      replaceCurrentHistoryState(cleaned);
     }
-  }, [isFlash, key, state]);
+  }, [isFlash, key, state, optimistic]);
 
   return state;
 }

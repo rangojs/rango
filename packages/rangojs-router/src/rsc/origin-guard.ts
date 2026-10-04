@@ -9,6 +9,7 @@
  * navigations, bookmarks, and non-browser clients don't send Origin.
  */
 
+import { requestHeaders } from "../server/request-headers.js";
 import type { RequestPlan } from "../router/request-classification.js";
 
 /**
@@ -69,10 +70,11 @@ export type OriginCheckConfig<TEnv = any> =
  * Returns true to allow, false to reject.
  */
 export function defaultOriginCheck(request: Request, url: URL): boolean {
-  let requestOrigin = request.headers.get("origin");
+  const headers = requestHeaders(request);
+  let requestOrigin = headers.get("origin");
 
   if (!requestOrigin) {
-    const referer = request.headers.get("referer");
+    const referer = headers.get("referer");
     if (referer) {
       try {
         requestOrigin = new URL(referer).origin;
@@ -92,7 +94,7 @@ export function defaultOriginCheck(request: Request, url: URL): boolean {
   // :authority), so a missing Host here is anomalous. Fail closed rather than
   // fall back to url.host (derived from the request line) when the trusted Host
   // cannot be established.
-  const expectedHost = request.headers.get("host");
+  const expectedHost = headers.get("host");
   if (!expectedHost) return false;
 
   const expectedOrigin = `${url.protocol}//${expectedHost}`;
@@ -102,11 +104,12 @@ export function defaultOriginCheck(request: Request, url: URL): boolean {
 
 function createForbiddenResponse(request: Request): Response {
   const isDev = process.env.NODE_ENV !== "production";
+  const headers = requestHeaders(request);
   const body = isDev
     ? "Forbidden: Origin mismatch. The request origin does not match the server host. " +
       `Set originCheck: false in createRouter() to disable this check. ` +
-      `(Origin: ${request.headers.get("origin") ?? "none"}, ` +
-      `Host: ${request.headers.get("host") ?? "none"})`
+      `(Origin: ${headers.get("origin") ?? "none"}, ` +
+      `Host: ${headers.get("host") ?? "none"})`
     : "Forbidden";
 
   return new Response(body, {

@@ -26,14 +26,16 @@ with the shape, then pick a primitive.
   inside a cached render. They run **in parallel** right after middleware and
   **stream**, so data latency overlaps first paint instead of blocking it (a
   cache hit streams UI instantly while loaders resolve fresh alongside). Opt into
-  caching explicitly. See `/loader` → "Parallel and streaming".
+  caching explicitly. See `/loader` → "Parallel and streaming". The one
+  exception is a `ppr` route's `ssr: false` loader: it bakes into the shell
+  and runs on a shell HIT only when its return carries promises (`/ppr`).
 - **One identity, one store** — loaders, handles, cached fns, and actions are all
   `path#export`; all caches share one store. Entries expire by TTL/SWR, and are
   tagged via `cache({ tags })` or runtime `cacheTag(...tags)`; built-in stores
   index by tag and invalidate via `updateTag(...tags)` (awaitable, read-your-own-writes)
   or `revalidateTag(...tags)` (background, non-blocking).
 - **Type-safe end to end** — route names, params, search schemas, loader return
-  types, context vars, and `href` / `reverse` are checked at compile time
+  types, context vars, and `href()` / `ctx.reverse()` are checked at compile time
   (`/typesafety`).
 - **See where time goes** — turn on `debugPerformance` early (router option, or
   `ctx.debugPerformance()` in middleware for per-request opt-in). It prints a
@@ -42,7 +44,9 @@ with the shape, then pick a primitive.
   console, OpenTelemetry, or custom sink. See `/observability`.
 
 Most features are **just-in-time**: the core is `urls()`, `path()`, `layout()`,
-`include()`, and `reverse()`. Caching, parallel routes, intercepts, prerender,
+`include()`, and URL generation (`ctx.reverse()` on the server, `href()` /
+`useReverse()` on the client; there is no standalone `reverse()` export — see
+`/links`). Caching, parallel routes, intercepts, prerender,
 i18n, themes, and the rest are opt-in — reach for them when a requirement
 appears, not up front.
 
@@ -66,8 +70,9 @@ Reach for the next rung only when the one above doesn't fit — the higher rungs
 are immune to partial-revalidation staleness by construction.
 
 1. **A loader** (`loader()` + `useLoader()`). Loaders resolve fresh on every
-   pass — full renders, action revalidations, cache hits. Nothing to keep in
-   sync. If the data can be a loader, make it a loader.
+   pass — full renders, action revalidations, cache hits, PPR shell HITs (on a
+   `ppr` route, keep it off `ssr: false`, which bakes it into the shell).
+   Nothing to keep in sync. If the data can be a loader, make it a loader.
 2. **Middleware `ctx.set()`**. Route middleware wraps every render pass,
    including post-action revalidation and PE re-renders, so its variables are
    never stale. Right for request-shaped context: auth, session, locale.
@@ -107,9 +112,13 @@ stated, greppable contract.
 | share config across routes              | factory returning a helper array   | /composability          |
 | compose a sub-app / module              | `include()`                        | /route                  |
 | modal / soft navigation                 | `intercept()`                      | /intercept              |
+| route group of client components        | `clientUrls()` in `"use client"`   | /client-urls            |
+| set meta/breadcrumbs from loader data   | `ctx.use(Handle)` in the loader    | /loader                 |
+| guarantee loader output in the SSR HTML | `loader(L, { ssr: false })`        | /loader                 |
 | pre-render a route at build time        | `Prerender(...)` wrapper           | /prerender              |
 | feed live loaders from a cached shell   | replayed handle + `ctx.rendered()` | /shell-manifest         |
-| cache the HTML shell, keep loaders live | `ppr` path option                  | /ppr                    |
+| cache HTML shell, live loaders as holes | `ppr` path option                  | /ppr                    |
+| choose in-function vs CDN caching       | deployment cache boundary          | /deployment-caching     |
 | stream SSE / upgrade a WebSocket        | `path.stream()` / `path.any()`     | /streams-and-websockets |
 
 ## Invariants
@@ -117,32 +126,63 @@ stated, greppable contract.
 - `path()`/`include()` are always visible in `urls()`; config helpers are extractable.
 - **Cache decides freshness; `revalidate()` decides client-update.** Orthogonal; compose.
 - Loaders resolve fresh every request (even inside `cache()`) and never run twice/request.
+  The exception is a `ppr` route's `ssr: false` loader: it bakes into the shell
+  and runs on a shell HIT only when its return carries promises.
 - **The consumption-lane rule.** For every shared artifact (`cache()`,
   `"use cache"`, the PPR shell): server-side handler consumption
-  (`await ctx.use(loader)`) yields a BAKED copy — identity reads
-  (`cookies()`/`headers()`) are permitted there and the capture-time value
-  freezes into the shared artifact (a documented footgun; see `/caching` →
-  "Cache purity & tainted objects"). Client-side consumption (`useLoader` in
-  a `"use client"` component) is the LIVE lane. DSL `loader()` segments
-  follow their lane machinery (live under renderable `loading()`, bake
-  otherwise). Pinned by semantic-matrix row PPR3.
-- Inside `"use cache"`: `cookies()`/`headers()` and `ctx` side-effects
+  (`await ctx.use(loader)`) yields a BAKED copy — the capture-time value
+  freezes into the shared artifact. Identity reads (`cookies()`/`headers()`/
+  `ctx.request.headers`, a `{ cache: false }` variable) inside that loader
+  are permitted under a route `cache()` (a documented footgun; see
+  `/caching` → "Cache purity & tainted objects"). They throw inside
+  `"use cache"` (whichever code started the loader first: a handler, a
+  `loader()` binding, or the cached function itself) and REFUSE a PPR capture: the route serves uncached until
+  the read moves to a live loader. Client-side consumption
+  (`useLoader` in a `"use client"` component) is the LIVE lane. DSL
+  `loader()` segments follow their PPR lane (only `ssr: false` bakes; see
+  `/ppr` → The loader lane rule).
+- **A PPR shell HIT never runs a handler.** Everything a handler produces
+  (promises it passes under `<Suspense>`, async server components, handle
+  pushes, loaders it awaits) is shell material, as under `cache()`; a HIT
+  runs middleware and live loaders only (an `ssr: false` loader runs there
+  only when its return carries promises). Live data belongs in a loader without
+  `ssr: false`, read with `useLoader` under `loading()` or an inline
+  `<Suspense>`.
+- Inside `"use cache"`: `cookies()`/`headers()`/`ctx.request.headers` and `ctx` side-effects
   (`set`/`header`/`setTheme`/`onResponse`/`setLocationState`) throw; `ctx.use(Handle)`
-  is captured on miss and replayed on hit. (The non-cacheable read guard is a
-  separate `cache()`-boundary check — see the correctness bullet below.)
+  is captured on miss and replayed on hit. A non-cacheable variable read
+  (`createVar({ cache: false })`) throws too — see the correctness bullet below.
 - One identity `path#export` (`functionId`/`$$id`/`actionId`); one store. Freshness
   is TTL/SWR expiry plus tag-based invalidation: tag via `cache({ tags })` /
   `cacheTag(...tags)`, then `updateTag(...tags)` (awaitable) or `revalidateTag(...tags)`
   (background). Built-in stores index by tag.
 - `useLoader` / `useHandle` / `useFetchLoader` are client-only.
-- Caches are correctness-first: persistent store keys are version-segmented (no
-  cross-deploy drift), the forward/back cache is mutation-aware, and
+- Caches are correctness-first: persistent store keys are version-segmented per
+  `createRouter()` by a hash of its built code (a deploy that does not change a
+  router keeps its cache; one that does reads under new keys), the forward/back cache is mutation-aware, and
   `createVar({ cache: false })` throws on a **direct** read inside a `cache()`
-  boundary (a deliberately non-propagating guard). See `/cache-guide` →
+  boundary or a `"use cache"` function (a deliberately non-propagating guard). See `/cache-guide` →
   "Correctness & invalidation".
 - Nested caches: the outer cache window bounds the inner — an inner shorter TTL
   only applies when the enclosing cache recomputes; put a value in a loader if it
   must be fresher. See `/cache-guide` → "Combining Both".
+- **A predicate runs where its effect lands.** A server-tree `revalidate()`
+  decides what the server re-sends, so it runs on the server; an `intercept({
+when })` selector decides what the server renders, so it runs on the server;
+  a `clientUrls()` `revalidate()` and `transition({ when })` decide a browser
+  commit, so they run in the browser. A browser predicate sees URLs, params,
+  route names, history state and action data, never `get()`, `env` or handler
+  state; in a server `urls()` it is written inline (the build hoists it into a
+  client module) or imported from a `"use client"` module (`/view-transitions`).
+- **Vocabulary.** `revalidate()` keeps React Router's `shouldRevalidate`
+  dialect (`currentUrl`/`nextUrl`, `currentParams`/`nextParams`). Navigation
+  selectors (`intercept({ when })`, `transition({ when })`) use `from`/`to`
+  locations (`{ url, params, routeName }`, plus `state` in the browser).
+- **A throwing predicate yields the conservative default.** For
+  `transition({ when })` that is no hold (an urgent commit) plus
+  `console.error`; for a `revalidate()` it is the default decision it would
+  have deferred to, logged; for an `intercept({ when })` selector it is no
+  intercept (the full page renders), logged with the route name.
 
 ## Don't confuse
 
@@ -156,17 +196,22 @@ stated, greppable contract.
 Same words, different jobs — this is the most common source of the
 `revalidate()`-is-caching misread.
 
-| You may know                            | Maps to Rango axis | Watch out                                                                                                                                                                                                                                                                               |
-| --------------------------------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Next.js `export const revalidate = N`   | **Axis 1** (cache) | Same word, opposite meaning. Next's `revalidate` is time-based cache expiry; Rango's `revalidate()` is **axis 2**. Use `cache({ ttl })` for the Next behavior.                                                                                                                          |
-| Next.js `revalidateTag` / `updateTag`   | **Axis 1** (cache) | Cache busting by tag. Tag via `cache({ tags })` / `cacheTag(...tags)`; invalidate with `updateTag(...tags)` (awaitable, read-your-own-writes) or `revalidateTag(...tags)` (background, non-blocking). Built-in stores index by tag. No `revalidatePath` (path-based busting); use tags. |
-| React Router / Remix `shouldRevalidate` | **Axis 2**         | This is the correct mental model for Rango's `revalidate()`.                                                                                                                                                                                                                            |
-| HTTP `Cache-Control` / ISR              | **Axis 1**         | Edge/document layer — see `/document-cache`. Separate from both `cache()` and `revalidate()`.                                                                                                                                                                                           |
-| Next.js PPR (partial prerendering)      | HTML shell layer   | Same idea, different wiring: the opt-in `ppr` path option captures at runtime (no build-time default); holes are render-defined — `loading()` subtrees plus pending promises under a consumer's own `<Suspense>`. See `/ppr`.                                                           |
-| Remix/RR `loader`                       | live data          | Like Rango loaders, fresh per request — but Rango loaders run in parallel and stream (latency overlaps first paint), and can opt into caching on demand.                                                                                                                                |
+| You may know                            | Maps to Rango                | Watch out                                                                                                                                                                                                                                                                               |
+| --------------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Next.js `export const revalidate = N`   | **Value freshness** (cache)  | Same word, opposite meaning. Next's `revalidate` is time-based cache expiry; Rango's `revalidate()` is **partial-render selection**. Use `cache({ ttl })` for the Next behavior.                                                                                                        |
+| Next.js `revalidateTag` / `updateTag`   | **Value freshness** (cache)  | Cache busting by tag. Tag via `cache({ tags })` / `cacheTag(...tags)`; invalidate with `updateTag(...tags)` (awaitable, read-your-own-writes) or `revalidateTag(...tags)` (background, non-blocking). Built-in stores index by tag. No `revalidatePath` (path-based busting); use tags. |
+| React Router / Remix `shouldRevalidate` | **Partial-render selection** | This is the correct mental model for Rango's `revalidate()`.                                                                                                                                                                                                                            |
+| HTTP `Cache-Control` / ISR              | Deployment layer             | Complete-response deployment layer. A CDN hit bypasses Rango entirely; the store-backed middleware does not. See `/deployment-caching` and `/document-cache`.                                                                                                                           |
+| Next.js PPR (partial prerendering)      | HTML shell layer             | Same React primitive, different transport: Rango serves shells in-function after middleware. Ordinary `ppr` captures at runtime; `Prerender + ppr` captures at build. See `/ppr`, `/prerender`, and `/deployment-caching`.                                                              |
+| Remix/RR `loader`                       | live data                    | Like Rango loaders, fresh per request — but Rango loaders run in parallel and stream (latency overlaps first paint), and can opt into caching on demand.                                                                                                                                |
 
-See `/cache-guide` for the axis-1 decision guide, `/loader` and `/route` for
-`revalidate()` (axis 2), and `/document-cache` for the edge layer.
+Next.js PPR and Rango's `ppr` also differ in the hole model: in Rango only
+loaders make holes. A handler's own promise under `<Suspense>` bakes into the
+shell, as under `cache()`.
+
+See `/cache-guide` for the cache decision guide, `/loader` and `/route` for
+`revalidate()` (partial-render selection), and `/document-cache` for the edge
+layer.
 
 ## Canonical shape
 
@@ -174,9 +219,10 @@ See `/cache-guide` for the axis-1 decision guide, `/loader` and `/route` for
 export const urlpatterns = urls(({ path, layout, loader, loading, cache, revalidate }) => [
   layout(<ShopLayout />, () => [                 // structure: wraps children
     loader(CartLoader, () => [                   // config: live data
-      // partial-render axis: re-run on cart actions, defer otherwise.
+      // partial-render axis: after an action, re-run only for cart actions;
+      // on navigation, undefined keeps the default.
       // ctx.isAction() matches by reference (rename-safe), not by string.
-      revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+      revalidate((ctx) => (ctx.isAction() ? ctx.isAction(CartActions) : undefined)),
     ]),
     path("/shop/:slug", ProductPage, { name: "product" }, () => [  // structure: leaf
       loader(ProductLoader, () => [cache({ ttl: 60 })]),  // config: cache loader DATA
@@ -197,17 +243,29 @@ The predicate arg carries the action's full context, not just its identity. Matc
 _which_ action with `ctx.isAction(addToCart)` (rename-safe); branch on _what it
 returned_ with `ctx.actionResult` — the value your `"use server"` function
 returned, for outcome-conditional revalidation. The arg also exposes `actionId`
-(raw `path#export`), `actionUrl`, `formData`, `method`, and `stale` (cross-tab
-`_rsc_stale` signal). All are `undefined` on plain navigation (no action).
+(raw `path#export`), `actionUrl`, `formData` (form-based actions only), `method`,
+and `stale` (the `_rsc_stale` signal that an action ran in this or another tab).
+`actionId`, `actionUrl`, `actionResult`, and `formData` are `undefined` on plain
+navigation; `method` is `"GET"` there and `"POST"` for an action. Call
+`ctx.isAction()` with no arguments to ask "was this any action?".
 
-Two idioms, picked by what an _unrelated_ action should do. `ctx.isAction()`
-returns a raw boolean, so combine it with `|| undefined` to **defer** ("mine,
-else let the default decide": `ctx.isAction(CartActions) || undefined`) or leave
-it bare to **suppress** ("mine only": `ctx.isAction(CartActions)`). Prefer the
-defer form unless a sibling segment must own the unrelated-action decision.
+`ctx.isAction()` returns a raw boolean. Pick the idiom by what the segment's
+default already does: after an action, loaders, the route, and segments inside
+the `path()` re-run; layouts and parallels above the route are skipped.
+
+- **Add a signal** where the default skips: `ctx.isAction(CartActions) || undefined`
+  on a parent layout re-renders it after cart actions and defers otherwise. On a
+  loader or route segment it changes nothing.
+- **Narrow after actions** where the default re-runs:
+  `ctx.isAction() ? ctx.isAction(CartActions) : undefined` re-runs only for cart
+  actions and keeps the navigation default (params or search changed).
+- **Avoid bare `ctx.isAction(CartActions)`.** It is a hard `false` on navigation
+  too, so a loader stops refetching when params change, and it ends the chain for
+  any later revalidator on the segment.
 
 ```ts
-// re-render only when checkout actually succeeded; defer otherwise
+// on a parent layout (skipped after actions by default): also re-render when
+// checkout succeeded; defer to the default otherwise
 revalidate((ctx) => (ctx.isAction(checkout) && ctx.actionResult?.ok) || undefined),
 ```
 
@@ -242,6 +300,7 @@ Grouped by concern — read when you need to…
 | ------------------------- | -------------------------------------------------------------------------- |
 | `/router-setup`           | Create and configure the RSC router                                        |
 | `/route`                  | Define routes with `urls()`, `path()`, and `include()`                     |
+| `/client-urls`            | Client-component route groups with `clientUrls()` — no handlers            |
 | `/layout`                 | Layouts that wrap child routes                                             |
 | `/parallel`               | Multi-column layouts and sidebars                                          |
 | `/intercept`              | Modal/slide-over patterns for soft navigation                              |
@@ -257,17 +316,18 @@ Grouped by concern — read when you need to…
 
 **Data & caching** — fetch, mutate, and cache:
 
-| Skill             | Description                                                                                                                                                       |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/loader`         | Data loaders with `createLoader()` and `revalidate()`                                                                                                             |
-| `/server-actions` | Mutations with `"use server"`, useActionState, validation, revalidation                                                                                           |
-| `/caching`        | Segment caching with memory or KV stores                                                                                                                          |
-| `/use-cache`      | Function-level caching with `"use cache"` directive                                                                                                               |
-| `/cache-guide`    | When to use `cache()` vs `"use cache"` — differences and decision guide                                                                                           |
-| `/document-cache` | Edge caching with Cache-Control headers                                                                                                                           |
-| `/ppr`            | PPR shell caching: cached shell served instantly, live holes resumed — a hole is a `loading()` subtree OR a pending promise under `<Suspense>` (no loader needed) |
-| `/prerender`      | Pre-render route segments at build time (Passthrough live fallback)                                                                                               |
-| `/shell-manifest` | Replayed handles as cache metadata read by live loaders (frozen shell, batched live holes)                                                                        |
+| Skill                 | Description                                                                                                                                                           |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/loader`             | Data loaders with `createLoader()` and `revalidate()`                                                                                                                 |
+| `/server-actions`     | Mutations with `"use server"`, useActionState, validation, revalidation                                                                                               |
+| `/caching`            | Segment caching with memory or KV stores                                                                                                                              |
+| `/use-cache`          | Function-level caching with `"use cache"` directive                                                                                                                   |
+| `/cache-guide`        | When to use `cache()` vs `"use cache"` — differences and decision guide                                                                                               |
+| `/document-cache`     | Store-backed complete-response middleware using Cache-Control policy                                                                                                  |
+| `/deployment-caching` | Choose between in-function caches, store-backed responses, and an external CDN cache                                                                                  |
+| `/ppr`                | PPR shell caching: cached shell served instantly, live holes resumed — a hole is a live loader read under `loading()` or an inline `<Suspense>`; handler output bakes |
+| `/prerender`          | Pre-render route segments at build time (Passthrough live fallback)                                                                                                   |
+| `/shell-manifest`     | Replayed handles as cache metadata read by live loaders (frozen shell, batched live holes)                                                                            |
 
 **Client & presentation** — build the client-side UX:
 
@@ -283,7 +343,7 @@ Grouped by concern — read when you need to…
 | `/view-transitions` | React View Transitions on layouts, routes, and parallel slots                                                                      |
 | `/defer-hydration`  | Full body HTML in the PPR shell + hydration off the critical path (gated Suspense boundary, content-as-fallback)                   |
 | `/breadcrumbs`      | Built-in Breadcrumbs handle for breadcrumb navigation                                                                              |
-| `/react-compiler`   | Enable React Compiler (opt-in) the vite-rsc way; client-only scope                                                                 |
+| `/react-compiler`   | Enable React Compiler (opt-in) via plugin-react's native `compiler` option; client-only scope                                      |
 
 **Observability & production health**:
 
@@ -295,10 +355,11 @@ Grouped by concern — read when you need to…
 
 **Deployment**:
 
-| Skill         | Description                                                                                                      |
-| ------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `/cloudflare` | Deploy to Cloudflare Workers with the Vite plugin, typed D1/KV bindings, migrations, secrets, and preview parity |
-| `/vercel`     | Deploy to Vercel Functions (`preset: "vercel"`), Runtime Cache, and `createVercelTracing`                        |
+| Skill                 | Description                                                                                                      |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `/cloudflare`         | Deploy to Cloudflare Workers with the Vite plugin, typed D1/KV bindings, migrations, secrets, and preview parity |
+| `/vercel`             | Deploy to Vercel Functions (`preset: "vercel"`), Runtime Cache, and `createVercelTracing`                        |
+| `/deployment-caching` | Compare deployment cache boundaries, middleware execution, PPR transport, and HTTP CDN caching                   |
 
 **Testing**:
 
@@ -319,6 +380,8 @@ Grouped by concern — read when you need to…
 ```typescript
 // urls.tsx
 import { urls } from "@rangojs/router";
+import { RootLayout } from "./layouts/root"; // renders <Outlet />
+import { HomePage, AboutPage } from "./pages";
 
 export const urlpatterns = urls(({ path, layout }) => [
   layout(RootLayout, () => [
@@ -329,12 +392,15 @@ export const urlpatterns = urls(({ path, layout }) => [
 
 // router.tsx
 import { createRouter } from "@rangojs/router";
+import { Document } from "./document"; // <html>/<head>/<body> shell
 import { urlpatterns } from "./urls";
 
-export default createRouter({ document: Document }).routes(urlpatterns);
+export const router = createRouter({ document: Document, urls: urlpatterns });
 ```
 
-Use `/typesafety` for type-safe href and environment setup.
+`createRouter({ ... }).routes(urlpatterns)` is equivalent to passing `urls`.
+See `/router-setup` for the Document component and router options, and
+`/typesafety` for type-safe href and environment setup.
 
 ## CLI: `npx rango generate`
 
@@ -355,27 +421,37 @@ npx rango generate src/
 npx rango generate src/urls.tsx src/api/
 ```
 
+Three modes:
+
+| Flag        | Behavior                                                                                                                                    |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| (none)      | Static parser. Exits with an error, writing nothing, if an `include()` can't be resolved statically (factory or dynamic).                   |
+| `--static`  | Static parser, but writes partial output and prints the unresolvable includes as warnings.                                                  |
+| `--runtime` | Vite-based runtime discovery (full coverage; needs `vite`; `@vitejs/plugin-rsc` comes with the router). `--config <path>` picks the config. |
+
 ### Auto-detection
 
 Each file is classified by its contents:
 
-| Contains       | Generated output                                                 |
-| -------------- | ---------------------------------------------------------------- |
-| `urls(`        | Per-module `*.gen.ts` with route names, patterns, params, search |
-| `createRouter` | Per-router `*.named-routes.gen.ts` with global route map         |
-| Both           | Both files                                                       |
+| Contains                 | Generated output                                                 |
+| ------------------------ | ---------------------------------------------------------------- |
+| `urls(` or `clientUrls(` | Per-module `*.gen.ts` with route names, patterns, params, search |
+| `createRouter`           | Per-router `*.named-routes.gen.ts` with global route map         |
+| Both                     | Both files                                                       |
 
-Directories are scanned recursively for `.ts`/`.tsx` files, skipping `node_modules`,
-dotfiles, and existing `.gen.` files.
+Directories are scanned recursively for `.ts`/`.tsx`/`.js`/`.jsx` files, skipping
+`node_modules`, `dist`, `build`, `coverage`, dot-directories, and existing
+`.gen.` files.
 
 > The two generated files are **not interchangeable surfaces**.
 > `router.named-routes.gen.ts` augments the global `GeneratedRouteMap` for
 > named-route typing (`Handler<"name">`, `ctx.reverse("name")`, prerender).
 > Per-module `*.gen.ts` exports a local `routes` map for `useReverse(routes)`
 > and explicit local handler typing (`Handler<".name", routes>`). Neither
-> carries response payloads — response/MIME payload inference comes from
-> `typeof router.routeMap` via `RegisteredRoutes`, not `*.named-routes.gen.ts`.
-> See `/typesafety` for the full surface breakdown.
+> carries response payloads: `RouteResponse<typeof patterns, "name">` reads
+> them from the `urls()` value directly, and `Rango.PathResponse` reads them from
+> `RegisteredRoutes` (`typeof router.routeMap`). See `/typesafety` for the full
+> surface breakdown.
 
 ### Recursive includes
 
@@ -406,7 +482,8 @@ extract routes defined dynamically:
 - Routes computed from external data (databases, config files)
 - Template literal patterns with interpolated variables
 
-These routes are only discovered by the Vite plugin's runtime discovery during
-`pnpm dev` or `pnpm build`. The CLI-generated `.gen.ts` may have fewer routes
-than the runtime-generated version. During dev, the `preserveIfLarger` guard
-prevents the static parser from overwriting a larger runtime-discovered file.
+These routes are only discovered at runtime: by the Vite plugin during
+`pnpm dev` / `pnpm build`, or by `rango generate --runtime`. A statically
+generated `.gen.ts` may have fewer routes than the runtime-generated version.
+During dev, the `preserveIfLarger` guard prevents the static parser from
+overwriting a larger runtime-discovered file.

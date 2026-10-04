@@ -1,5 +1,9 @@
 # Webhooks and WebCrypto on Workers
 
+Verifying signed webhooks against the raw request body, testing them offline,
+porting Node crypto to WebCrypto, and keeping large SDKs out of the Worker's
+startup path.
+
 ## Contents
 
 - [Read the original request body](#read-the-original-request-body)
@@ -136,10 +140,13 @@ provider behavior when upgrading the SDK major.
 
 ## Keep SDKs off the cold path
 
-Put a large, rarely used webhook/billing group behind an async include:
+Put a large, rarely used webhook/billing group behind an async include with
+its own URL prefix. The chunk is imported on the first request that reaches
+that prefix, not at Worker startup (`/composability`):
 
 ```typescript
-include("/", () => import("./urls/billing.js"), { name: "billing" });
+// urls/billing.ts: `export default urls(({ path }) => [ ... ])`
+include("/api/billing", () => import("./urls/billing.js"), { name: "billing" });
 ```
 
 Measure a before/after production build before claiming an SDK's incremental

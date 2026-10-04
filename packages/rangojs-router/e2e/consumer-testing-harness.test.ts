@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 // (non-Vite) loader: the unit barrel `@rangojs/router/testing` re-exports
 // `dispatch`/`runMiddleware`, which reach the router manifest's Vite-only
 // `@rangojs/router:version` virtual module and cannot resolve here.
-import { createRangoE2E } from "@rangojs/router/testing/e2e";
+import { blockPrefetch, createRangoE2E } from "@rangojs/router/testing/e2e";
 
 /**
  * Worked example of the consumer e2e harness (`@rangojs/router/testing/e2e`),
@@ -60,6 +60,14 @@ function harnessSpecs(): void {
   test("expectParity: /blog navigation matches across JS and no-JS", async ({
     page,
   }) => {
+    // expectParity guards its own window against speculative prefetch, but
+    // a production home load can spray viewport prefetches BEFORE the
+    // parity call — a prefetched route's Set-Cookie (e.g. cart-id) would land
+    // in the JS jar only and fail the cookie comparison. Consumers comparing
+    // cookie jars should do the same (or list volatile cookies in
+    // `ignoreCookies`).
+    await blockPrefetch(page);
+
     await page.goto("/");
     await waitForHydration(page);
 

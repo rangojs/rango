@@ -4,7 +4,14 @@ description: Wrap child routes in a persistent shell with layout() and Outlet, a
 type: guide
 ---
 
-You need a nav bar, sidebar, or page chrome that stays put while the routes inside it change. `layout()` wraps a group of child routes; the layout persists during navigation within its scope, and child content flows through `<Outlet />`.
+You need a nav bar, sidebar, or page chrome that stays put while the routes inside it change. `layout()` wraps a group of child routes: the layout stays mounted while you navigate between the routes it wraps, and child content renders where the layout places `<Outlet />`.
+
+This guide covers the ways to pass a layout, nesting, layouts that live inside a route ("orphan" layouts), and when a layout re-renders.
+
+Two rules to keep in mind throughout:
+
+- **Child content always flows through `<Outlet />`.** A layout never receives a `children` prop. A function layout receives the handler context (`ctx`), the same one a route handler gets.
+- **A standalone layout renders once and is then kept.** Navigating between the routes it wraps, and running server actions, both leave it as-is unless a `revalidate()` opts it in. See [Revalidation](#revalidation).
 
 ## The shortest path
 
@@ -30,18 +37,20 @@ export const urlpatterns = urls(({ path, layout }) => [
 ]);
 ```
 
-`<Outlet />` comes from `@rangojs/router/client`. Everything the layout renders around it — header, footer, sidebar — stays mounted while `/shop`, `/shop/cart`, and `/shop/product/:slug` swap through it.
+`<Outlet />` comes from `@rangojs/router/client` and works in both server and client components. Everything the layout renders around it (header, footer, sidebar) stays mounted while `/shop`, `/shop/cart`, and `/shop/product/:slug` swap through it.
 
 ## Three ways to pass the layout
 
 ```tsx
+import { Breadcrumbs } from "@rangojs/router";
+
 // JSX element
 layout(<ShopLayout />, () => [path("/shop", ShopIndex, { name: "shop" })]);
 
 // Component function
 layout(ShopLayout, () => [path("/shop", ShopIndex, { name: "shop" })]);
 
-// Handler with context — runs per request, can use handles
+// Handler with context: runs per request and can read params, vars, and handles
 layout(
   (ctx) => {
     const push = ctx.use(Breadcrumbs);
@@ -52,7 +61,9 @@ layout(
 );
 ```
 
-Layouts nest by wrapping order — the first layout wraps outermost:
+A function layout gets `ctx.params`, `ctx.get()`, `ctx.set()`, and `ctx.use()`, like a route handler. If it awaits anything, declare it `async`.
+
+Layouts nest by wrapping order. The first layout wraps outermost:
 
 ```tsx
 urls(({ path, layout }) => [
@@ -67,46 +78,53 @@ urls(({ path, layout }) => [
 // Result: RootLayout > ShopLayout > ShopIndex
 ```
 
+The `<html>`, `<head>`, and `<body>` elements belong to the router's `document` component, not to a layout. See [createRouter](/docs/rango/reference/create-router).
+
 ## Layouts carry their own data and config
 
-The children callback isn't just for routes — it accepts loaders, revalidation rules, and parallel slots that belong to the layout:
+The children callback isn't just for routes. It also takes loaders, revalidation rules, and parallel slots that belong to the layout:
 
 ```tsx
-layout(<ShopLayout />, () => [
-  loader(CartLoader),
-  loader(UserLoader),
-  revalidate(shopRevalidation),
+urls(({ path, layout, loader, revalidate }) => [
+  layout(<ShopLayout />, () => [
+    loader(CartLoader),
+    loader(UserLoader),
+    revalidate(shopRevalidation),
 
-  path("/shop", ShopIndex, { name: "shop" }),
-  path("/shop/cart", CartPage, { name: "cart" }),
+    path("/shop", ShopIndex, { name: "shop" }),
+    path("/shop/cart", CartPage, { name: "cart" }),
+  ]),
 ]);
 ```
 
-For multi-region layouts, render named slots with `<ParallelOutlet name="@slot" />` next to the default `<Outlet />` — see [Parallel Routes](/docs/rango/guides/parallel-routes) for slot semantics.
+For multi-region layouts, render named slots with `<ParallelOutlet name="@slot" />` next to the default `<Outlet />` (`<Outlet name="@slot" />` is equivalent). See [Parallel Routes](/docs/rango/guides/parallel-routes) for slot semantics.
 
 ## Passing handler data down: orphan layouts
 
-A layout placed as a _child of_ `path()` (an "orphan" layout) wraps that route's content and can read data the route handler set with `ctx.set()`. The handler always executes before its children, so the data is there when the layout reads it:
+A layout declared inside a `path()` (an "orphan" layout) wraps that route's content and can read data the route handler stored with `ctx.set()`. The handler always runs before its orphan layouts and their parallels, so the data is there when they read it:
 
 ```tsx
+import { createVar } from "@rangojs/router";
 import { Outlet, ParallelOutlet } from "@rangojs/router/client";
+
+const CurrentProduct = createVar<Product>();
 
 urls(({ path, layout, parallel }) => [
   path(
     "/product/:slug",
     async (ctx) => {
       const product = await fetchProduct(ctx.params.slug);
-      ctx.set("product", product);
+      ctx.set(CurrentProduct, product);
       return <ProductPage product={product} />;
     },
     { name: "product" },
     () => [
       layout(
         (ctx) => {
-          const product = ctx.get("product");
+          const product = ctx.get(CurrentProduct); // Product | undefined
           return (
             <div>
-              <Breadcrumb name={product?.name} />
+              <ProductHeader name={product?.name} />
               <Outlet />
               <ParallelOutlet name="@related" />
             </div>
@@ -115,7 +133,7 @@ urls(({ path, layout, parallel }) => [
         () => [
           parallel({
             "@related": (ctx) => {
-              const product = ctx.get("product");
+              const product = ctx.get(CurrentProduct);
               return <RelatedProducts category={product?.category} />;
             },
           }),
@@ -126,34 +144,57 @@ urls(({ path, layout, parallel }) => [
 ]);
 ```
 
-This is the recommended way to pass handler data downward, and it needs zero revalidation configuration: orphan layouts (and their parallels) belong to the route entry, and on an action the whole entry re-runs together by default — route segment, loaders, and children all revalidate with handler-first ordering preserved. Producer and consumer can't desync unless you narrow one side with a predicate that returns a hard `false` (then put the same contract on both sides — see below).
+This is the recommended way to pass handler data downward, and it needs no revalidation setup. Orphan layouts and their parallels belong to the route entry, so on an action the route segment, its loaders, and these children re-run together, handler first. Producer and consumer can only desync if you narrow one side with a predicate that returns a hard `false`; if you do, put the same contract on both sides (see [Revalidation contracts](#revalidation-contracts)).
 
-Data from an **outer** handler or layout entry is the opposite case: outer entries do not revalidate on actions by default. If an orphan layout depends on data established above its own route entry, that outer segment must share a revalidation contract, or the orphan must guard/reload the data itself. See [Data Flow](/docs/rango/concepts/data-flow) for the full safest-first ladder.
+Orphan layouts can call `ctx.set()` for their own children too, but the usual split is: middleware and route handlers write, orphan layouts and parallels read.
 
-## Revalidation on actions
+Data from an **outer** handler or layout entry is the opposite case: outer entries are skipped on actions by default. If an orphan layout depends on data set above its own route entry, give that outer segment a shared revalidation contract, or have the orphan load or guard the data itself. See [Data Flow](/docs/rango/concepts/data-flow) for the full safest-first ladder.
 
-Standalone `layout()` entries are skipped on actions by default — parent-chain segments don't re-run unless a `revalidate()` opts them in. (Orphan layouts inside a `path()` are the opposite: they ride along with the route entry.) Control it explicitly:
+## Revalidation
+
+A standalone `layout()` renders when it is first mounted and is then kept:
+
+- **Navigation** between routes it already wraps does not re-render it, even when the URL params change.
+- **Actions** skip it too.
+
+Orphan layouts inside a `path()` are the opposite: they belong to the route entry and re-render with it, on param or search changes and on every action.
+
+Opt a standalone layout in with `revalidate()`. Return `true` to re-render, or `undefined` to defer to the default:
 
 ```tsx
 import * as CartActions from "./actions/cart";
 
+// Re-render after any cart action
 layout(<CartLayout />, () => [
   revalidate((ctx) => ctx.isAction(CartActions) || undefined),
   path("/cart", CartPage, { name: "cart" }),
 ]);
+
+// Re-render when a param the layout displays changes
+layout(LocaleLayout, () => [
+  revalidate(
+    ({ currentParams, nextParams }) =>
+      currentParams.locale !== nextParams.locale || undefined,
+  ),
+  path("/:locale/shop", ShopIndex, { name: "shop" }),
+]);
 ```
 
-Partial revalidation does not re-run non-revalidated ancestors just to rebuild their `ctx.set()` state. If child segments read data established by this layout or a handler above them, revalidate the outer segment too.
+`revalidate(() => false)` on a standalone layout only restates the default. Revalidate callbacks must be synchronous; the full set of return shapes (hard boolean, soft `{ defaultShouldRevalidate }`, or defer) is covered in [Loaders](/docs/rango/features/loaders).
+
+Partial revalidation does not re-run non-revalidated ancestors just to rebuild their `ctx.set()` state. If child segments read data established by this layout or by a handler above them, revalidate the outer segment too.
 
 ### Revalidation contracts
 
-When data genuinely must flow from an outer entry, define a named revalidation function and reuse it on both producer and consumer — the shared name is the contract:
+When data genuinely must flow from an outer entry, define a named revalidation function and reuse it on both producer and consumer. The shared name is the contract:
 
 ```ts
 // revalidation-contracts.ts
+import type { Revalidate } from "@rangojs/router";
 import { addToCart } from "./actions/cart";
 
-export const revalidateCartData = (ctx) => ctx.isAction(addToCart) || undefined;
+export const revalidateCartData: Revalidate = (ctx) =>
+  ctx.isAction(addToCart) || undefined;
 ```
 
 ```tsx
@@ -165,13 +206,17 @@ layout(<CartLayout />, () => [
 ]);
 ```
 
-If a segment depends on multiple upstream domains, compose multiple contracts. You can also package a contract as an importable handoff helper (`export const revalidateAuth = () => [revalidate(revalidateAuthData)]`) and drop it into both children callbacks. Before writing a contract, check whether the producer can move down a rung instead: into the consumer's own entry as an orphan layout, into middleware, or into a loader.
+On the layout, the contract adds the re-render the default skips after an action. The route segment already re-runs after every action, so there it changes nothing by default; the shared name documents the dependency.
+
+If a segment depends on multiple upstream domains, compose multiple contracts. You can also package a contract as an importable helper (`export const revalidateAuth = () => [revalidate(revalidateAuthData)]`) and drop it into both children callbacks. Before writing a contract, check whether the producer can move down a rung instead: into the consumer's own entry as an orphan layout, into middleware, or into a loader.
 
 ## Reusable layouts with handler.use
 
 A layout handler can carry its own middleware, default parallels, and includes via `.use`, making it a self-contained unit you can mount anywhere:
 
 ```tsx
+import { middleware, parallel, type Handler } from "@rangojs/router";
+
 const AdminLayout: Handler = (ctx) => {
   const user = ctx.get(CurrentUser);
   return <Admin user={user} />;
@@ -181,18 +226,18 @@ AdminLayout.use = () => [
   parallel({ "@adminNotifs": AdminNotifsSlot }),
 ];
 
-// Mount site declares structure only; defaults travel with the layout.
+// The mount site declares structure only; defaults travel with the layout.
 layout(AdminLayout, () => [
   path("/admin", AdminIndex, { name: "admin.index" }),
 ]);
 ```
 
-Explicit `use()` at the mount site merges with `handler.use` — handler defaults first, explicit items second. The layout mount site accepts the broadest set of item types. See [handler.use](/docs/rango/guides/handler-use) for the merge rules and the per-mount-site table.
+Explicit `use()` at the mount site merges with `handler.use`: handler defaults first, explicit items second. The layout mount site accepts the broadest set of item types. See [handler.use](/docs/rango/guides/handler-use) for the merge rules and the per-mount-site table.
 
 ## Pitfalls
 
-- **`transition()` wraps outlet content, not chrome.** A layout's `transition()` config wraps the content flowing through `<Outlet />` — not the layout chrome itself, and not sibling `<ParallelOutlet />` slots. Stacking transitions across nested layouts collapses around the deepest default outlet content. See [View Transitions](/docs/rango/guides/view-transitions).
-- **Orphan layouts read; handlers write.** Orphan layouts can call `ctx.set()`, but the primary pattern is route handlers and middleware writing context variables and orphan layouts reading them via `ctx.get()`.
+- **`transition()` wraps outlet content, not chrome.** A layout's `transition()` config wraps the content flowing through `<Outlet />`, not the layout chrome itself and not sibling `<ParallelOutlet />` slots. Stacking transitions across nested layouts collapses around the deepest default outlet content. See [View Transitions](/docs/rango/guides/view-transitions).
+- **A layout that shows a URL param goes stale.** Navigating from `/en/shop` to `/fr/shop` keeps a standalone layout as-is. Add a `revalidate()` that compares `currentParams` and `nextParams`, or move the layout inside the `path()`.
 - **A hard `false` from `revalidate()` can desync producer and consumer.** If you narrow one side of a data dependency with a predicate, put the identical contract on both segments.
 
 <Cards>

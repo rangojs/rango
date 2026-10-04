@@ -100,4 +100,4 @@ describe("bindings seam", () => {
 
 - (cross-cutting)
 - Siblings: `./loader.md`, `./middleware.md`, `./server-actions.md`
-- Long-form prose: [docs/testing.md](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/testing.md) — section "What these primitives deliberately don't cover (the platform-bindings paragraph)"
+- Long-form prose: [docs/testing.md](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/testing.md) — section "What these primitives deliberately don't cover (the platform-bindings paragraph)"

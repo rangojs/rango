@@ -12,7 +12,8 @@
     "test:e2e": "playwright test",
     "bench": "npx tsx bench/run.ts",
     "bench:dev": "npx tsx bench/run.ts --mode=dev",
-    "bench:compare": "npx tsx bench/compare.ts"
+    "bench:compare": "npx tsx bench/compare.ts",
+    "bench:retention": "npx tsx bench/retention.ts"
   },
   "dependencies": {
     "@rangojs/router": "workspace:*",
@@ -20,9 +21,9 @@
     "react-dom": "catalog:"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "^1.42.1",
-    "@cloudflare/workers-types": "^4.20260617.1",
-    "@playwright/test": "^1.57.0",
+    "@cloudflare/vite-plugin": "^1.44.0",
+    "@cloudflare/workers-types": "^5.20260708.1",
+    "@playwright/test": "^1.62.0",
     "@types/autocannon": "^7.12.7",
     "@types/node": "^24.10.1",
     "@types/react": "catalog:",
@@ -32,6 +33,6 @@
     "tinyexec": "^0.3.2",
     "typescript": "^5.7.0",
     "vite": "catalog:",
-    "wrangler": "^4.103.0"
+    "wrangler": "^4.110.0"
   }
 }

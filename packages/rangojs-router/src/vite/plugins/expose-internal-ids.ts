@@ -35,6 +35,7 @@ import {
   hasCreateLoaderImport,
   generateClientLoaderStubs,
   transformLoaders,
+  findLoaderServerDirective,
 } from "./expose-ids/loader-transform.js";
 import {
   transformHandles,
@@ -44,6 +45,8 @@ import {
   transformHandlerIds,
 } from "./expose-ids/handler-transform.js";
 import { createRangoDebugger, createCounter, NS } from "../debug.js";
+import { compareStrings } from "../utils/compare-strings.js";
+import { VIRTUAL_LOADER_MANIFEST_ID } from "../discovery/state.js";
 
 const debug = createRangoDebugger(NS.transform);
 
@@ -55,7 +58,7 @@ export type { ExposeInternalIdsApi } from "./expose-ids/types.js";
 // Virtual module for loader manifest
 // ---------------------------------------------------------------------------
 
-const VIRTUAL_LOADER_MANIFEST = "virtual:rsc-router/loader-manifest";
+const VIRTUAL_LOADER_MANIFEST = VIRTUAL_LOADER_MANIFEST_ID;
 const RESOLVED_VIRTUAL_LOADER_MANIFEST = "\0" + VIRTUAL_LOADER_MANIFEST;
 
 // ---------------------------------------------------------------------------
@@ -67,6 +70,97 @@ const VIRTUAL_HANDLER_PREFIX = "virtual:handler-extract:";
 // ---------------------------------------------------------------------------
 // Consolidated plugin
 // ---------------------------------------------------------------------------
+
+interface RscScanPluginApi {
+  manager?: { isScanBuild?: boolean };
+}
+
+/**
+ * Stub export-only loader modules before plugin-rsc reduces scan modules to
+ * imports. The regular post transform remains authoritative outside scan builds.
+ *
+ * Handles and location-state definitions are intentionally excluded: handle
+ * collect functions run in the browser, and location-state definitions are
+ * callable browser objects. Their dependencies must remain visible to non-RSC
+ * validation rather than being hidden behind an opaque scan stub.
+ */
+export function createLoaderScanStubPlugin(): Plugin {
+  let projectRoot = "";
+  let rscApi: RscScanPluginApi | undefined;
+
+  return {
+    name: "@rangojs/router:loader-scan-stubs",
+    apply: "build",
+    configResolved(config) {
+      projectRoot = config.root;
+      rscApi = config.plugins.find((plugin) => plugin.name === "rsc:minimal")
+        ?.api as RscScanPluginApi | undefined;
+    },
+    transform(code, id) {
+      if (
+        !rscApi?.manager?.isScanBuild ||
+        this.environment?.name === "rsc" ||
+        id.includes("/node_modules/") ||
+        !code.includes("createLoader") ||
+        !hasCreateLoaderImport(code)
+      ) {
+        return;
+      }
+
+      const fnNames = getImportedFnNames(code, "createLoader");
+      const bindings = collectCreateExportBindings(code, fnNames);
+      const filePath = normalizePath(path.relative(projectRoot, id));
+      return (
+        generateClientLoaderStubs(bindings, code, filePath, true) ?? undefined
+      );
+    },
+  };
+}
+
+/**
+ * Refuse an inline `"use server"` directive inside a createLoader() callback.
+ * Runs `pre` so it sees the raw source before plugin-rsc's directive transform
+ * hoists the body into a registered server reference. See
+ * findLoaderServerDirective for why that registration is a problem.
+ */
+export function createLoaderDirectiveGuardPlugin(): Plugin {
+  return {
+    name: "@rangojs/router:loader-directive-guard",
+    enforce: "pre",
+    transform(code, id) {
+      if (
+        id.includes("/node_modules/") ||
+        !code.includes("use server") ||
+        !code.includes("createLoader") ||
+        !hasCreateLoaderImport(code)
+      ) {
+        return;
+      }
+
+      const cleanId = id.split("?", 1)[0];
+      let program: any;
+      try {
+        program = parseAst(code, { lang: "tsx" });
+      } catch {
+        return;
+      }
+
+      const hit = findLoaderServerDirective(
+        code,
+        getImportedFnNames(code, "createLoader"),
+        program,
+      );
+      if (!hit) return;
+
+      throw new Error(
+        `[rango] createLoader() body at ${cleanId}:${hit.line} carries a "use server" directive. ` +
+          `Loader bodies already run only on the server; the directive would register the body as a ` +
+          `client-callable server reference (reachable through the action endpoint with caller-supplied ` +
+          `arguments). Remove the directive.`,
+      );
+    },
+  };
+}
 
 export function exposeInternalIds(options?: { forceBuild?: boolean }): Plugin {
   let config: ResolvedConfig;
@@ -153,10 +247,17 @@ setLoaderImports({});
 `;
       }
 
-      // Build mode: generate lazy import map
+      // Build mode: generate lazy import map. Sorted by id: the registry fills
+      // in directory-scan order (the pre-scan below) and transform order, both
+      // of which vary between machines and runs, and this module's bytes feed
+      // the cache version of every router bundled with it
+      // (discovery/build-versions.ts).
       const lazyImports: string[] = [];
+      const sortedLoaders = [...loaderRegistry].sort(([a], [b]) =>
+        compareStrings(a, b),
+      );
 
-      for (const [hashedId, { filePath, exportName }] of loaderRegistry) {
+      for (const [hashedId, { filePath, exportName }] of sortedLoaders) {
         lazyImports.push(
           `  "${hashedId}": () => import("/${filePath}").then(m => m.${exportName})`,
         );

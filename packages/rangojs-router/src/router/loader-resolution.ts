@@ -7,7 +7,20 @@
 import type { ReactNode } from "react";
 import type { EntryData } from "../server/context";
 import { observePhase, PHASES } from "./instrument.js";
-import { contextGet } from "../context-var.js";
+import { contextGet, isNonCacheable } from "../context-var.js";
+import { NOCACHE_SYMBOL } from "../cache/taint.js";
+import {
+  linkLoaderTags,
+  linkRecordedTags,
+  linkValueTags,
+  loaderTagSetsArmed,
+  markTagSetStart,
+  readStartedLoaderValue,
+  readValueTags,
+  tagLoaderValue,
+  trackLoaderRun,
+} from "../cache/cache-tag.js";
+import { executionStart } from "../cache/tag-invalidation.js";
 import type {
   ResolvedSegment,
   HandlerContext,
@@ -18,17 +31,38 @@ import type {
   ErrorBoundaryHandler,
   ErrorBoundaryFallbackProps,
   ErrorInfo,
+  NotFoundBoundaryHandler,
+  NotFoundBoundaryFallbackProps,
 } from "../types";
+import { createElement } from "react";
+import { isDataNotFoundError } from "../errors.js";
+import { isRedirectResponse } from "../response-utils.js";
+import {
+  resolveSoftRedirectUrl,
+  getRedirectState,
+  isExternalRedirect,
+} from "../redirect-origin.js";
+import {
+  createNotFoundInfo,
+  renderNotFoundFallback,
+  resolveNotFoundFallback,
+} from "./error-handling.js";
 import { isHandle, collectHandleData, type Handle } from "../handle.js";
 import { withDefer } from "../defer.js";
-import { buildHandleSnapshot } from "../server/handle-store.js";
+import {
+  buildHandleSnapshot,
+  type HandleStore,
+} from "../server/handle-store.js";
 import { getFetchableLoader } from "../server/fetchable-loader-store.js";
 import { _getRequestContext } from "../server/request-context.js";
 import {
+  assertNonCacheableReadAllowed,
   isInsideLoaderScope,
   runInsideLoaderBodyScope,
+  runInsideLoaderRun,
   isInsidePushCallbackScope,
   runInsidePushCallbackScope,
+  type LoaderRunIdentity,
 } from "../server/context.js";
 import { debugLog } from "./logging.js";
 
@@ -47,9 +81,64 @@ export type LoaderErrorCallback = (
 ) => void;
 
 /**
+ * Loader-thrown authority signals (notFound()/redirect()) are detected by the
+ * shape a consumer can actually throw: DataNotFoundError via the shared
+ * cross-realm-safe isDataNotFoundError, redirect by 3xx Response.
+ */
+
+/**
+ * Deliver one `ctx.use(Handle)(value)` push to the owning segment.
+ *
+ * Shared by the handler lane (setupLoaderAccess) and the loader-body lane
+ * (createLoaderExecutor) so a loader push attributes and scopes EXACTLY like a
+ * handler push — that parity is the contract `ctx.use` in a loader promises.
+ *
+ * A function value runs inside the push-callback scope so `ctx.use(loader)`
+ * calls it makes — including after its own awaits, for an async callback — are
+ * not registered as handler-to-loader deps and do not trip the deadlock guard.
+ * A pushed promise value is not tracked by handleStore.settled and does not
+ * block segment resolution, so it cannot form a rendered() deadlock. The ALS
+ * scope (not a plain boolean) is what survives the callback's awaits.
+ */
+function pushHandleValue(
+  store: HandleStore | undefined,
+  segmentId: string | undefined,
+  handleId: string,
+  dataOrFn: unknown | Promise<unknown> | (() => Promise<unknown>),
+): void {
+  if (!store || !segmentId) return;
+  if (typeof dataOrFn === "function") {
+    store.push(
+      handleId,
+      segmentId,
+      runInsidePushCallbackScope(() => (dataOrFn as () => Promise<unknown>)()),
+    );
+    return;
+  }
+  store.push(handleId, segmentId, dataOrFn);
+}
+
+/**
  * Wrap a loader promise with error handling for deferred client-side resolution.
  * Catches errors and converts them to LoaderDataResult objects that include
  * error info and pre-rendered fallback UI when an error boundary is available.
+ *
+ * Loader-thrown SIGNALS are routed before error handling — they are control
+ * flow, not failures (onError is not invoked for them):
+ * - notFound(): the not-found UI is resolved and rendered HERE, server-side
+ *   (nearest notFoundBoundary → router notFound option → default), exactly
+ *   like the consumption lane (segment-resolution/helpers.ts), and rides the
+ *   envelope's `fallback` — the client swaps with zero extra fetches. The
+ *   response status is opportunistically set to 404 via the request stub: if
+ *   the rejection settles before the document Response is constructed the
+ *   status is a real 404; after, the stub write is inert (streamed fix-up
+ *   only). Nav-lane payloads are 200 either way — the client owns 404
+ *   presentation there.
+ * - redirect() (thrown 3xx Response): the target is resolved through the
+ *   soft-redirect same-origin rules NOW so unsafe targets never leave the
+ *   server; the client navigates when the entry decodes. No document-lane
+ *   302 — pre-stream redirect authority belongs to middleware (doctrine);
+ *   a loader redirect is always a client-side navigate.
  *
  * @param onError - Optional callback invoked when loader errors occur.
  *   This has a simplified signature for internal use - the caller (typically
@@ -70,6 +159,14 @@ export function wrapLoaderWithErrorHandling<T>(
     segmentType: ErrorInfo["segmentType"],
   ) => ErrorInfo,
   onError?: LoaderErrorCallback,
+  notFoundDeps?: {
+    findNearestNotFoundBoundary: (
+      entry: EntryData | null,
+    ) => ReactNode | NotFoundBoundaryHandler | null;
+    notFoundComponent?:
+      | ReactNode
+      | ((props: { pathname: string }) => ReactNode);
+  },
 ): Promise<LoaderDataResult<T>> {
   // Extract the trailing token from segmentId (format: "<shortCode>D<i>.<loaderId>").
   // The token is the loader's $$id (hash#export in prod, pathfrag#export in dev),
@@ -85,6 +182,92 @@ export function wrapLoaderWithErrorHandling<T>(
       }),
     )
     .catch((error): LoaderDataResult<T> => {
+      if (isDataNotFoundError(error)) {
+        // Opportunistic document 404: the stub status is read once when the
+        // document Response is constructed (createResponseWithMergedHeaders);
+        // a pre-construction write becomes the real status, a later write is
+        // harmless. Same mechanism as the consumption lane's setResponseStatus.
+        _getRequestContext()?._setStatus(404);
+
+        const effective = resolveNotFoundFallback(
+          notFoundDeps?.findNearestNotFoundBoundary(entry),
+          notFoundDeps?.notFoundComponent,
+          pathname,
+        );
+
+        const notFoundInfo = createNotFoundInfo(
+          error as { message: string },
+          segmentId,
+          "loader",
+          pathname,
+        );
+        let renderedNotFound: ReactNode;
+        try {
+          renderedNotFound = renderNotFoundFallback(effective, notFoundInfo);
+        } catch {
+          // A throwing boundary must not collapse the envelope (the wrapped
+          // promise is contracted to never reject); degrade to the default.
+          // Deliberately NOT shared with the consumption lane
+          // (segment-resolution/helpers.ts), which lets a throwing boundary
+          // propagate to the error boundary — only this lane is contracted to
+          // never reject.
+          renderedNotFound = createElement("h1", null, "Not Found");
+        }
+
+        debugLog("loader", "loader threw notFound()", {
+          segmentId,
+          pathname,
+        });
+
+        return {
+          __loaderResult: true,
+          ok: false,
+          notFound: true,
+          error: createErrorInfo(error, segmentId, "loader"),
+          fallback: renderedNotFound ?? null,
+        };
+      }
+
+      if (error instanceof Response && isRedirectResponse(error)) {
+        const reqCtx = _getRequestContext();
+        const requestOrigin = reqCtx?.originalUrl?.origin ?? reqCtx?.url.origin;
+        const location = error.headers.get("Location")!;
+        // Same-origin policy applied server-side; the wire never carries an
+        // unresolved target. redirect(url, { external: true })'s WeakSet brand
+        // survives (the thrown Response IS the branded object).
+        const to = requestOrigin
+          ? resolveSoftRedirectUrl(
+              location,
+              requestOrigin,
+              reqCtx?._basename,
+              isExternalRedirect(error),
+            )
+          : location;
+
+        debugLog("loader", "loader threw redirect()", {
+          segmentId,
+          to,
+        });
+
+        // redirect(url, { state }): the resolved state rides the thrown
+        // Response (attachRedirectState), NOT payload metadata — a streaming
+        // loader settles after the metadata flush, so the marker is the only
+        // carrier that reaches the client. LoaderRedirect navigates with it.
+        const redirectState = getRedirectState(error);
+
+        return {
+          __loaderResult: true,
+          ok: false,
+          redirect: { to, ...(redirectState && { state: redirectState }) },
+          error: createErrorInfo(
+            new Error(`Loader redirected to ${to}`),
+            segmentId,
+            "loader",
+          ),
+          fallback: null,
+        };
+      }
+
       // Find nearest error boundary
       const fallback = findNearestErrorBoundary(entry);
 
@@ -210,12 +393,38 @@ function detectLoaderCycle(
 function createLoaderExecutor<TEnv>(
   ctx: HandlerContext<any, TEnv>,
   loaderPromises: Map<string, Promise<any>>,
+  executorOptions?: {
+    /**
+     * Background proactive-caching mode: ctx.handle() pushes become no-ops
+     * (mirroring setupLoaderAccessSilent's handler-handle no-op) and loader
+     * bodies are NOT aux-tracked into the foreground handle store — a
+     * background run must neither duplicate handle data nor extend the live
+     * payload's handle-stream lifetime.
+     */
+    silentHandles?: boolean;
+    /**
+     * A stale refresh's executor (setupLoaderAccess _runLoaderIsolated): its
+     * runs' pushes are diverted from the page's store, so a run's end says
+     * nothing about the page's replayed values (HandleStore.settleLoaderRun).
+     */
+    detached?: boolean;
+    /**
+     * loaderId -> the cache() tags of that loader's binding in this request
+     * (setupLoaderAccess _bindLoaderCacheTags): an execution of it outside
+     * the binding answers for them too (#964).
+     */
+    bindingTags?: ReadonlyMap<string, Set<string>>;
+  },
 ): (
   loader: LoaderDefinition<any, any>,
   callerLoaderId: string | null,
 ) => Promise<any> {
   // Capture RequestContext eagerly for cookie access (ALS protection on Cloudflare)
   const reqCtxRef = _getRequestContext();
+  const silentHandles = executorOptions?.silentHandles === true;
+  // A run's end reports to the page's store only when its pushes reach it.
+  const reportsRunEnd = !silentHandles && executorOptions?.detached !== true;
+  const internal = ctx as InternalHandlerContext<any, TEnv>;
 
   // Dependency graph: loaderId -> set of loader IDs it directly depends on.
   const dependsOn = new Map<string, Set<string>>();
@@ -251,9 +460,32 @@ function createLoaderExecutor<TEnv>(
       deps.add(loader.$$id);
     }
 
-    // Return cached promise if already started
-    if (loaderPromises.has(loader.$$id)) {
-      return loaderPromises.get(loader.$$id)!;
+    // Every loader execution funnels here (handler and loader-to-loader
+    // reads, uncached DSL bindings, cache misses): memoized per request, so a
+    // loader runs at most once however many reads, with no store cache. A
+    // loader's cache() read-through lives in loader-cache.ts
+    // (executeLoaderData), whose ctx.use override serves a later handler read
+    // the binding's result.
+    //
+    // A read is a consumption: the value bakes into the reader's output, so
+    // the loader's tags follow the reader onto a cache() record (#957) and
+    // into the reader's own loader-cache entry (#964, readValueTags; armed
+    // only where a loader cache() can read them).
+    const reqCtx = reqCtxRef ?? _getRequestContext();
+    linkLoaderTags(loader.$$id, reqCtx);
+    const recordTags = loaderTagSetsArmed(reqCtx);
+    // A loader body reads a cache()-bound loader through its binding too, so
+    // every reader in the request gets the one value a HIT served. The
+    // binding's own MISS (callerLoaderId null) runs the loader below.
+    const bound =
+      callerLoaderId !== null &&
+      internal._loaderCacheOverrides?.get(loader.$$id);
+    const memo = bound || loaderPromises.get(loader.$$id);
+    if (memo) {
+      if (recordTags) readValueTags(memo);
+      // A "use cache" body reading it refuses an identity read the run made
+      // (#1011): the body ran outside the cached function, unguarded.
+      return readStartedLoaderValue(memo, loader.$$id);
     }
 
     // Get loader function - either from loader object or fetchable registry
@@ -274,22 +506,40 @@ function createLoaderExecutor<TEnv>(
     pendingLoaders.add(loader.$$id);
 
     const currentLoaderId = loader.$$id;
-    const variables = (ctx as InternalHandlerContext<any, TEnv>)._variables;
+    const variables = internal._variables;
 
     // Capture whether this loader is being started from a DSL loader scope
     // (runInsideLoaderScope in fresh.ts). Handler-invoked loaders are NOT
     // inside loader scope. This determines whether rendered() is allowed.
     const isDslLoader = isInsideLoaderScope();
 
+    // Owning segment for ctx.handle() attribution, captured SYNCHRONOUSLY at
+    // kickoff: segment resolution sets _currentSegmentId while resolving the
+    // segment that declares this loader (fresh.ts), and the value moves on as
+    // resolution continues — by the time the async body pushes, it would be
+    // stale. Attributing to the owning route/layout segment gives handle
+    // pushes the same granularity handler pushes have (segmentOrder-correct
+    // for breadcrumb accumulation).
+    const owningSegmentId = internal._currentSegmentId;
+
     let renderedResolved = false;
     let renderedPromise: Promise<void> | null = null;
 
-    // Loader functions are always fresh (never cached), so they get an
-    // unguarded get that bypasses non-cacheable read guards. This applies
-    // to ALL loaders — DSL and handler-called — because the loader
-    // function itself always re-executes. Also handles nested deps
-    // (loaderA → use(loaderB)) since all share this unguarded get.
-    const loaderCtx: LoaderContext<Record<string, string | undefined>, TEnv> = {
+    // Request-scoped like the handler ctx it derives from (issue #940): the
+    // NOCACHE_SYMBOL brand below makes a "use cache" function taking it key by
+    // the route fields (_routeName, _responseType) and replay its handle
+    // pushes into the owning segment, claimed per loader like a handler ctx
+    // (_claimLoaderPushes, _runLoaderIsolated). Non-cacheable ctx.get reads
+    // run the shared guard; the body itself stays exempt (loader body scope).
+    const loaderCtx: LoaderContext<Record<string, string | undefined>, TEnv> &
+      Pick<
+        InternalHandlerContext<any, TEnv>,
+        | "_routeName"
+        | "_responseType"
+        | "_currentSegmentId"
+        | "_claimLoaderPushes"
+        | "_runLoaderIsolated"
+      > = {
       params: ctx.params,
       routeParams: (ctx.params ?? {}) as Record<string, string>,
       request: ctx.request,
@@ -301,20 +551,20 @@ function createLoaderExecutor<TEnv>(
       env: ctx.env,
       waitUntil: ctx.waitUntil.bind(ctx),
       executionContext: ctx.executionContext,
-      get: ((keyOrVar: any) =>
-        contextGet(variables, keyOrVar)) as typeof ctx.get,
-      use: ((item: LoaderDefinition<any, any> | Handle<any, any>) => {
-        if (isHandle(item)) {
+      get: ((keyOrVar: any) => {
+        // Handle READ (moved from ctx.use(handle)): collected data, available
+        // after `await ctx.rendered()` — the rendered-barrier contract.
+        if (isHandle(keyOrVar)) {
           if (!renderedResolved) {
             throw new Error(
-              `ctx.use(handle) in a loader requires "await ctx.rendered()" first. ` +
-                `Handle "${item.$$id}" cannot be read until the render tree has settled.`,
+              `ctx.get(handle) in a loader requires "await ctx.rendered()" first. ` +
+                `Handle "${keyOrVar.$$id}" cannot be read until the render tree has settled.`,
             );
           }
           const reqCtx = reqCtxRef ?? _getRequestContext();
           if (!reqCtx) {
             throw new Error(
-              `ctx.use(handle) failed: request context not available.`,
+              `ctx.get(handle) failed: request context not available.`,
             );
           }
           const segmentOrder = reqCtx._renderBarrierSegmentOrder ?? [];
@@ -327,7 +577,38 @@ function createLoaderExecutor<TEnv>(
           const snapshot =
             reqCtx._renderBarrierHandleSnapshot ??
             buildHandleSnapshot(reqCtx._handleStore, segmentOrder);
-          return collectHandleData(item, snapshot, segmentOrder);
+          return collectHandleData(keyOrVar, snapshot, segmentOrder);
+        }
+        if (isNonCacheable(variables, keyOrVar)) {
+          assertNonCacheableReadAllowed(keyOrVar, _getRequestContext());
+        }
+        return contextGet(variables, keyOrVar);
+      }) as typeof ctx.get,
+      use: ((item: LoaderDefinition<any, any> | Handle<any, any>) => {
+        if (isHandle(item)) {
+          // Handle WRITE — handler parity: `ctx.use(Meta)({...})` pushes from
+          // the loader body exactly like a handler push. Reads moved to
+          // ctx.get(handle) (rendered()-gated). Pushes attribute to the OWNING
+          // segment and are legal for the whole body: the body is tracked on
+          // the handle store's auxiliary lane, so the store stays open past
+          // the handler barrier. Delivery follows the race: pushes that beat
+          // the handler barrier ride the SSR snapshot, later ones stream via
+          // metadata.handlesLate (document) or the still-open handles
+          // generator (nav/action lanes).
+          const handleDef = item;
+          if (silentHandles) {
+            return withDefer((_dataOrFn: unknown) => {});
+          }
+          const store =
+            reqCtxRef?._handleStore ?? _getRequestContext()?._handleStore;
+          const segmentId = owningSegmentId;
+          return withDefer(
+            (
+              dataOrFn: unknown | Promise<unknown> | (() => Promise<unknown>),
+            ) => {
+              pushHandleValue(store, segmentId, handleDef.$$id, dataOrFn);
+            },
+          );
         }
 
         // Loader case
@@ -336,6 +617,11 @@ function createLoaderExecutor<TEnv>(
       method: "GET",
       body: undefined,
       reverse: ctx.reverse as LoaderContext["reverse"],
+      _routeName: internal._routeName,
+      _responseType: internal._responseType,
+      _currentSegmentId: owningSegmentId,
+      _claimLoaderPushes: internal._claimLoaderPushes,
+      _runLoaderIsolated: internal._runLoaderIsolated,
       rendered: (): Promise<void> => {
         // Guard: only DSL loaders may use rendered()
         if (!isDslLoader) {
@@ -352,6 +638,24 @@ function createLoaderExecutor<TEnv>(
         if (!reqCtx) {
           throw new Error(
             `ctx.rendered() failed: request context not available.`,
+          );
+        }
+
+        // awaitBeforeFlush cycle: segment resolution awaits this loader
+        // (loader(Def, { ssr: false })), the barrier awaits segment
+        // resolution, and rendered() awaits the barrier — waiting here can
+        // never complete. Fail fast with the cause instead of hanging the
+        // document render. Only document renders populate the set (the flag is
+        // stamped per-isSSR), so the same loader may still use rendered() on
+        // navigation renders.
+        if (reqCtx._awaitBeforeFlushLoaderIds?.has(currentLoaderId)) {
+          throw new Error(
+            `Deadlock: loader "${currentLoaderId}" is registered with ` +
+              `ssr: false, so the document render awaits it before ` +
+              `the render barrier resolves — ctx.rendered() (and the ` +
+              `ctx.get(handle) read it gates) can never settle here. Drop ` +
+              `ssr: false on this loader or move the handle read to ` +
+              `a component.`,
           );
         }
 
@@ -405,6 +709,7 @@ function createLoaderExecutor<TEnv>(
         return renderedPromise;
       },
     };
+    (loaderCtx as any)[NOCACHE_SYMBOL] = true;
 
     // Meter this loader once via observePhase (loader:<id> perf metric +
     // rango.loader span); loaderFn runs inside the span callback so its KV/D1/
@@ -421,42 +726,59 @@ function createLoaderExecutor<TEnv>(
     // does not grant rendered() to handler-invoked loaders. Uses a body-only
     // scope, so isInsideLoaderScope() / barrier / deadlock gating is unchanged.
     //
-    // `handlerInvoked` (!isDslLoader) rides on the scope for the CONSUMPTION-
-    // LANE RULE: a handler-consumed loader's value is a BAKED copy in every
-    // shared artifact (cache(), "use cache", the PPR shell), so its identity
-    // reads are exempt from the shell-capture guard — same allowance the
-    // cache-purity guards give it. DSL segment loaders keep their lane
-    // machinery (live = masked at capture, bake = guarded). A DSL loader's
-    // nested deps inherit isDslLoader=false only when the CHAIN started in a
-    // handler; a chain started by the segment funnel stays DSL (the loader
-    // scope ALS survives the body's awaits).
-    // Shell fast path eligibility: a HANDLER-invoked loader executing during a
-    // capture is handler-layer dynamism — on a handler-free (replayed) HIT it
-    // would never re-run, freezing its consumption-lane value (#672's "fresh
-    // per serve" slot shape). Mark the capture; the entry declines the fast
-    // path and keeps the full tail. DSL loaders re-run on every HIT and never
-    // set this.
-    if (!isDslLoader) {
-      const captureCtx = _getRequestContext();
-      if (
-        captureCtx?._shellCaptureRun &&
-        captureCtx._shellCaptureHandleLiveness
-      ) {
-        captureCtx._shellCaptureHandleLiveness.handlerInvokedLoader = true;
-      }
-    }
+    // The CONSUMPTION-LANE RULE: a handler-consumed loader's value is a
+    // BAKED copy in every shared artifact (cache(), "use cache", the PPR
+    // shell). The cache() guard permits its identity reads; a "use cache"
+    // body it was entered in and a PPR capture do not (server/context.ts
+    // guardIdentityRead), and a "use cache" body that reads the value after
+    // another reader started it refuses what `identity` recorded (#1011).
 
+    const identity: LoaderRunIdentity = { loaderId: loader.$$id };
+    const recordedTags = recordTags ? new Set<string>() : undefined;
+    // A loader-cache write that stores or reads this value gates on the
+    // earliest start behind it (#977, earliestRecordedStart).
+    if (recordedTags) markTagSetStart(recordedTags, executionStart());
+    const runEndStore = reportsRunEnd
+      ? (reqCtxRef ?? _getRequestContext())?._handleStore
+      : undefined;
     const promise = observePhase(PHASES.loader(loader.$$id), () =>
       Promise.resolve(
         runInsideLoaderBodyScope(
-          () => loaderFn(loaderCtx as LoaderContext<any, TEnv>),
+          () =>
+            runInsideLoaderRun(identity, () =>
+              loaderFn(loaderCtx as LoaderContext<any, TEnv>),
+            ),
           loader.$$id,
-          !isDslLoader,
+          recordedTags,
         ),
       ).finally(() => {
         pendingLoaders.delete(loader.$$id);
+        // Its pushes are made: values replayed for it that none replaced
+        // go (a hole that throws or skips its push shows none).
+        runEndStore?.settleLoaderRun(loader.$$id);
       }),
     );
+    trackLoaderRun(promise, identity);
+    if (recordedTags) {
+      tagLoaderValue(promise, recordedTags);
+      readValueTags(promise);
+      const bindingTags = executorOptions?.bindingTags?.get(loader.$$id);
+      if (bindingTags) linkRecordedTags(recordedTags, bindingTags);
+    }
+
+    // Auxiliary-lane tracking: keeps the handle store open for this body's
+    // ctx.handle() pushes without joining `settled` (the handler barrier that
+    // gates SSR/hydration and rendered()-readers — joining it would block the
+    // document on the slowest loader and self-deadlock rendered() callers).
+    // DSL loaders only: handler-invoked loaders are awaited by their handler,
+    // so they complete inside the handler lane already. A nested DSL kickoff
+    // mid-body registers while its parent is still tracked, so the lane can
+    // never re-open after draining.
+    if (isDslLoader && !silentHandles) {
+      (reqCtxRef ?? _getRequestContext())?._handleStore?.trackAuxiliary(
+        promise,
+      );
+    }
 
     loaderPromises.set(loader.$$id, promise);
     return promise;
@@ -486,7 +808,46 @@ export function setupLoaderAccess<TEnv>(
   const reqCtxRef = _getRequestContext();
   const handleStoreRef = reqCtxRef?._handleStore;
 
-  const useLoader = createLoaderExecutor(ctx, loaderPromises);
+  // Loader-cache HIT replay (loader-cache.ts replayLoaderHandles): a cached
+  // entry records its ctx.use dependencies' pushes too, and a dependency is
+  // memoized here and shared with live readers. A loader that already ran
+  // here keeps its live pushes; otherwise one replay delivers its recorded
+  // pushes, and a later run here replaces them (HandleStore.pushReplayed).
+  const claimed = new Set<string>();
+  const internal = ctx as InternalHandlerContext<any, TEnv>;
+  internal._claimLoaderPushes = (loaderId) => {
+    if (loaderPromises.has(loaderId) || claimed.has(loaderId)) return false;
+    claimed.add(loaderId);
+    return true;
+  };
+  // A loader cache() binding's tags reach every execution of that loader
+  // outside the binding: one a reader started before the binding (linked
+  // here), a later one, or a refresh's (bindingTags).
+  const executor: { bindingTags?: Map<string, Set<string>> } = {};
+  internal._bindLoaderCacheTags = (loaderId, tags) => {
+    (executor.bindingTags ??= new Map()).set(loaderId, tags);
+    const started = loaderPromises.get(loaderId);
+    if (started) linkValueTags(started, tags);
+  };
+  const useLoader = createLoaderExecutor(ctx, loaderPromises, executor);
+  // A refresh's pushes are diverted, so its loader ctxs never claim
+  // (cache-runtime.ts refreshView). It reads each loader fresh, not through
+  // the page's bindings: a stale refresh must not rebuild its entry from
+  // another stale entry.
+  internal._runLoaderIsolated = (loader) =>
+    createLoaderExecutor(
+      Object.create(ctx, {
+        _claimLoaderPushes: { value: undefined },
+        _loaderCacheOverrides: { value: undefined },
+      }),
+      new Map(),
+      {
+        get bindingTags() {
+          return executor.bindingTags;
+        },
+        detached: true,
+      },
+    )(loader, null);
 
   ctx.use = ((item: LoaderDefinition<any, any> | Handle<any, any>) => {
     if (isHandle(item)) {
@@ -504,24 +865,7 @@ export function setupLoaderAccess<TEnv>(
 
       return withDefer(
         (dataOrFn: unknown | Promise<unknown> | (() => Promise<unknown>)) => {
-          if (!store) return;
-
-          if (typeof dataOrFn === "function") {
-            // Run the callback inside the push-callback scope so ctx.use(loader)
-            // calls it makes — including after its own awaits, for an async
-            // callback — are not registered as handler-to-loader deps and do not
-            // trip the deadlock guard. A pushed promise value is not tracked by
-            // handleStore.settled and does not block segment resolution, so it
-            // cannot form a rendered() deadlock. The ALS scope (not a plain
-            // boolean) is what survives the callback's awaits.
-            const result = runInsidePushCallbackScope(() =>
-              (dataOrFn as () => Promise<unknown>)(),
-            );
-            store.push(handle.$$id, segmentId, result);
-            return;
-          }
-
-          store.push(handle.$$id, segmentId, dataOrFn);
+          pushHandleValue(store, segmentId, handle.$$id, dataOrFn);
         },
       );
     }
@@ -632,7 +976,9 @@ export function setupLoaderAccessSilent<TEnv>(
   ctx: HandlerContext<any, TEnv>,
   loaderPromises: Map<string, Promise<any>>,
 ): void {
-  const useLoader = createLoaderExecutor(ctx, loaderPromises);
+  const useLoader = createLoaderExecutor(ctx, loaderPromises, {
+    silentHandles: true,
+  });
 
   ctx.use = ((item: LoaderDefinition<any, any> | Handle<any, any>) => {
     if (isHandle(item)) {

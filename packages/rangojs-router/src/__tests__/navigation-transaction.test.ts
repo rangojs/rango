@@ -5,6 +5,7 @@ vi.mock("../browser/scroll-restoration", () => ({
   handleNavigationStart: vi.fn(),
   handleNavigationEnd: vi.fn(),
   ensureHistoryKey: vi.fn(),
+  getHistoryStateKey: vi.fn(() => "entry-key"),
 }));
 
 // Mock logging to keep test output clean
@@ -236,89 +237,147 @@ describe("createNavigationTransaction", () => {
     expect(replaceStateSpy).not.toHaveBeenCalled();
   });
 
-  it("dispatches __rsc_locationstate when clearing typed location state", () => {
-    const { store, eventController } = createTestContext();
+  // #1029: commit() hands the controller the entry state it pushed, restored
+  // or merged, and notifies no reader. NavigationProvider takes the recorded
+  // state in the update that renders the entry's payload; only a commit the
+  // caller marks treeless rides the state notification.
+  describe("location state commit", () => {
+    type CommitFlags = {
+      replace?: boolean;
+      traversal?: boolean;
+      storeOnly?: boolean;
+      cacheOnly?: boolean;
+      intercept?: boolean;
+      interceptSourceUrl?: string;
+      state?: unknown;
+      serverState?: Record<string, unknown>;
+      treeless?: boolean;
+    };
+    const SOURCE = { __rsc_ls_product: { name: "Widget" }, key: "abc" };
+    function commitOf(flags: CommitFlags, previous: unknown = SOURCE) {
+      const { store, eventController } = createTestContext();
+      historyState = previous;
+      eventController.commitLocationState(previous);
+      const before = eventController.getLocationState();
+      const heard = vi.fn();
+      eventController.subscribe(heard);
+      const tx = createNavigationTransaction(
+        store,
+        eventController,
+        "http://localhost/other",
+      );
+      // startNavigation's own notification: out of the way.
+      eventController.flushRouteState();
+      heard.mockClear();
+      const commitSpy = vi.spyOn(eventController, "commitLocationState");
+      tx.commit({
+        url: "http://localhost/other",
+        segmentIds: ["root"],
+        segments: [],
+        ...flags,
+      });
+      return { tx, eventController, before, heard, commitSpy };
+    }
 
-    // Simulate old history entry with typed location state
-    historyState = { __rsc_ls_product: { name: "Widget" }, key: "abc" };
+    it.each([
+      { label: "push", options: {} },
+      { label: "replace", options: { replace: true } },
+      {
+        // A modal over the page: its entry carries the Link's state only.
+        label: "intercept push",
+        options: {
+          intercept: true,
+          interceptSourceUrl: "http://localhost/start",
+        },
+      },
+    ])("a $label commit records the state object it pushes", ({ options }) => {
+      const { tx, eventController, commitSpy } = commitOf({
+        ...options,
+        state: { from: "list" },
+      });
 
-    const tx = createNavigationTransaction(
-      store,
-      eventController,
-      "http://localhost/other",
-    );
-
-    tx.commit({
-      url: "http://localhost/other",
-      segmentIds: ["root"],
-      segments: [],
+      // The object handed to history, before the idx stamp: one source.
+      const pushed = (
+        options.replace ? replaceStateSpy : pushStateSpy
+      ).mock.calls.at(-1)![0];
+      expect(commitSpy).toHaveBeenCalledOnce();
+      expect(pushed).toMatchObject(commitSpy.mock.calls[0][0] as object);
+      expect(eventController.getLocationState()).toEqual({
+        state: { from: "list" },
+      });
+      expect(window.dispatchEvent).not.toHaveBeenCalled();
+      tx[Symbol.dispose]();
     });
 
-    // Event should fire because old state had __rsc_ls_ key
-    const dispatchCalls = (window.dispatchEvent as ReturnType<typeof vi.fn>)
-      .mock.calls;
-    const locationStateEvents = dispatchCalls.filter(
-      (args: unknown[]) => (args[0] as Event).type === "__rsc_locationstate",
-    );
-    expect(locationStateEvents).toHaveLength(1);
+    it("a back/forward commit records the entry history restored, with server-set state merged in", () => {
+      // history is already at the destination entry.
+      const restored = { __rsc_ls_product: { name: "Restored" }, key: "dest" };
+      const plain = commitOf({ traversal: true }, restored);
+      expect(plain.commitSpy).toHaveBeenCalledWith(restored, undefined);
+      expect(pushStateSpy).not.toHaveBeenCalled();
+      plain.tx[Symbol.dispose]();
 
-    tx[Symbol.dispose]();
-  });
-
-  it("dispatches __rsc_locationstate when clearing plain state", () => {
-    const { store, eventController } = createTestContext();
-
-    // Simulate old history entry with plain state
-    historyState = { state: { from: "/dashboard" }, key: "abc" };
-
-    const tx = createNavigationTransaction(
-      store,
-      eventController,
-      "http://localhost/other",
-    );
-
-    tx.commit({
-      url: "http://localhost/other",
-      segmentIds: ["root"],
-      segments: [],
+      const merged = commitOf(
+        { traversal: true, serverState: { __rsc_ls_flash: "saved" } },
+        restored,
+      );
+      expect(merged.eventController.getLocationState()).toEqual({
+        __rsc_ls_product: { name: "Restored" },
+        __rsc_ls_flash: "saved",
+      });
+      // What was recorded is what was written to the entry.
+      expect(merged.commitSpy.mock.calls[0][0]).toBe(
+        replaceStateSpy.mock.calls.at(-1)![0],
+      );
+      merged.tx[Symbol.dispose]();
     });
 
-    const dispatchCalls = (window.dispatchEvent as ReturnType<typeof vi.fn>)
-      .mock.calls;
-    const locationStateEvents = dispatchCalls.filter(
-      (args: unknown[]) => (args[0] as Event).type === "__rsc_locationstate",
-    );
-    expect(locationStateEvents).toHaveLength(1);
-
-    tx[Symbol.dispose]();
-  });
-
-  it("does not dispatch __rsc_locationstate when no location state on either side", () => {
-    const { store, eventController } = createTestContext();
-
-    // No location state in old history entry
-    historyState = { key: "abc" };
-
-    const tx = createNavigationTransaction(
-      store,
-      eventController,
-      "http://localhost/other",
-    );
-
-    tx.commit({
-      url: "http://localhost/other",
-      segmentIds: ["root"],
-      segments: [],
+    it("notifies no listener: the provider takes the state with the payload", () => {
+      const { tx, eventController, heard } = commitOf({
+        state: { from: "list" },
+      });
+      // handle.complete() notifies once; that notification carries no cue to
+      // take location state.
+      eventController.flushRouteState();
+      expect(heard).toHaveBeenCalledOnce();
+      expect(eventController.takeTreelessLocationState()).toBe(false);
+      tx[Symbol.dispose]();
     });
 
-    const dispatchCalls = (window.dispatchEvent as ReturnType<typeof vi.fn>)
-      .mock.calls;
-    const locationStateEvents = dispatchCalls.filter(
-      (args: unknown[]) => (args[0] as Event).type === "__rsc_locationstate",
+    it.each([
+      { label: "push", options: {} },
+      { label: "back/forward", options: { traversal: true } },
+    ])(
+      "a treeless $label commit hands the state over with its notification",
+      ({ options }) => {
+        const { tx, eventController } = commitOf({
+          ...options,
+          state: { from: "list" },
+          treeless: true,
+        });
+        expect(eventController.takeTreelessLocationState()).toBe(true);
+        tx[Symbol.dispose]();
+      },
     );
-    expect(locationStateEvents).toHaveLength(0);
 
-    tx[Symbol.dispose]();
+    it("records an entry without location state as none", () => {
+      // A reader has to drop the previous entry's value with the entry.
+      const { tx, eventController, before } = commitOf({});
+      expect(before).toEqual({ __rsc_ls_product: { name: "Widget" } });
+      expect(eventController.getLocationState()).toBeUndefined();
+      tx[Symbol.dispose]();
+    });
+
+    it.each([
+      { label: "storeOnly (action refetch)", options: { storeOnly: true } },
+      { label: "cacheOnly (stale revalidation)", options: { cacheOnly: true } },
+    ])("a $label commit leaves the entry's state alone", ({ options }) => {
+      const { tx, eventController, before, commitSpy } = commitOf(options);
+      expect(commitSpy).not.toHaveBeenCalled();
+      expect(eventController.getLocationState()).toBe(before);
+      expect(window.dispatchEvent).not.toHaveBeenCalled();
+      tx[Symbol.dispose]();
+    });
   });
 
   it("cacheOnly commit completes the navigation handle", () => {
@@ -357,5 +416,74 @@ describe("createNavigationTransaction", () => {
       segments: [],
     });
     tx2[Symbol.dispose]();
+  });
+});
+
+describe("createNavigationTransaction traversal commit", () => {
+  let handleNavigationStart: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    const scroll = await import("../browser/scroll-restoration");
+    handleNavigationStart = vi.mocked(scroll.handleNavigationStart);
+    handleNavigationStart.mockClear();
+  });
+
+  it("keeps the history entry the browser restored and saves no scroll", () => {
+    const { store, eventController } = createTestContext();
+    const entryState = {
+      key: "k-entry",
+      idx: 3,
+      state: { from: "list" },
+      __rsc_ls_origin: { from: "origin-link" },
+    };
+    historyState = entryState;
+
+    const tx = createNavigationTransaction(
+      store,
+      eventController,
+      "http://localhost/start",
+      { replace: true },
+    );
+    tx.commit({
+      url: "http://localhost/start",
+      segmentIds: [],
+      segments: [],
+      traversal: true,
+    });
+
+    expect(handleNavigationStart).not.toHaveBeenCalled();
+    expect(pushStateSpy).not.toHaveBeenCalled();
+    expect(replaceStateSpy).not.toHaveBeenCalled();
+    expect(historyState).toBe(entryState);
+    expect(store.getHistoryKey()).toBe("/start");
+    tx[Symbol.dispose]();
+  });
+
+  it("merges server-set state into the entry instead of replacing it", () => {
+    const { store, eventController } = createTestContext();
+    historyState = { key: "k-entry", idx: 3, state: { from: "list" } };
+
+    const tx = createNavigationTransaction(
+      store,
+      eventController,
+      "http://localhost/start",
+      { replace: true },
+    );
+    tx.commit({
+      url: "http://localhost/start",
+      segmentIds: [],
+      segments: [],
+      traversal: true,
+      serverState: { __rsc_ls_flash: { text: "saved" } },
+    });
+
+    expect(replaceStateSpy).toHaveBeenCalledOnce();
+    expect(historyState).toEqual({
+      key: "k-entry",
+      idx: 3,
+      state: { from: "list" },
+      __rsc_ls_flash: { text: "saved" },
+    });
+    tx[Symbol.dispose]();
   });
 });

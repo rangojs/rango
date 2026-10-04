@@ -27,6 +27,7 @@ import { cachePatterns } from "./urls/cache.js";
 import { shellCachePatterns } from "./urls/shell-cache.js";
 import { pprHeaderGuardPatterns } from "./urls/ppr-header-guard.js";
 import { shellCacheActionPatterns } from "./urls/shell-cache-action.js";
+import { shellPushOwnershipPatterns } from "./urls/shell-push-ownership.js";
 import { shellSecurePatterns } from "./urls/shell-secure.js";
 import { themePatterns } from "./urls/theme.js";
 import { hrefPatterns } from "./urls/href.js";
@@ -42,10 +43,12 @@ import { prerenderPatterns } from "./urls/prerender.js";
 import { onDemandPatterns } from "./urls/on-demand-prerender.js";
 import { prerenderComplexPatterns } from "./urls/prerender-complex.js";
 import { prerenderInterceptPatterns } from "./urls/prerender-intercept.js";
+import { interceptWhenShapePatterns } from "./urls/intercept-when-shape.js";
 import { transformCasesPatterns } from "./urls/transform-cases.js";
 import { apiShopPatterns } from "./urls/api-shop.js";
 import { locationStatePatterns } from "./urls/location-state.js";
 import { responseCachePatterns } from "./urls/response-cache.js";
+import { searchParamsKeyPatterns } from "./urls/search-params-key.js";
 import { includeMiddlewarePatterns } from "./urls/include-middleware.js";
 import {
   optionalIncludePatterns,
@@ -90,14 +93,18 @@ import { alsScopePatterns } from "./urls/als-scope.js";
 import { streamModePatterns } from "./urls/stream-mode.js";
 import { devDebugPatterns, devInfoHandler } from "./urls/dev-routes.js";
 import { contextDedupPatterns } from "./urls/context-dedup.js";
+import { clientPackageResolutionPatterns } from "./urls/client-package-resolution.js";
 import { parallelMetaPatterns } from "./urls/parallel-meta.js";
 import { parallelMetaStalePatterns } from "./urls/parallel-meta-stale.js";
 import { renderedBarrierPatterns } from "./urls/rendered-barrier.js";
 import { cacheScopeGuardPatterns } from "./urls/cache-scope-guard.js";
+import { identityRawPatterns } from "./urls/identity-raw.js";
+import { useCacheMemoPatterns } from "./urls/use-cache-memo.js";
 import { colocatedLoaderPrerenderPatterns } from "./urls/colocated-loader-prerender.js";
 import { colocatedFastRefreshPatterns } from "./urls/colocated-fast-refresh.js";
 import { parallelLoaderRevalPatterns } from "./urls/parallel-loader-reval.js";
 import { parallelRevalAfterActionPatterns } from "./urls/parallel-reval-after-action.js";
+import { parallelNewSlotRevalPatterns } from "./urls/parallel-new-slot-reval.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
@@ -106,10 +113,23 @@ import {
   CartQuantityLoader,
   SlowProductDetailLoader,
   SwrProductLoader,
+  TxShellLoader,
 } from "./loaders.js";
 import { SwrProductCounter } from "./components/SwrProductCounter.js";
+import { SwrProductStatus } from "./components/SwrProductStatus.js";
+import { TxShellStatus } from "./components/TxShellStatus.js";
 import { SlowProductLocationState } from "./location-states.js";
 import { onErrorLog, clearOnErrorLog } from "./error-log.js";
+import clientUrlPatterns from "./urls/client-urls.js";
+import clientUrlsVarsPatterns from "./urls/client-urls-vars.js";
+import clientUrlsSsrSignalsPatterns from "./urls/client-urls-ssr-signals.js";
+import { clientUrlsVarsMiddleware } from "./urls/client-urls-vars-shared.js";
+import clientUrlsInterceptPatterns from "./urls/client-urls-intercept.js";
+import clientUrlsTransitionPatterns from "./urls/client-urls-transition.js";
+import clientUrlsActionPatterns from "./urls/client-urls-action.js";
+import clientUrlsSlowPatterns, { SlowChrome } from "./urls/client-urls-slow.js";
+import { getClientUrlsActionCount } from "./urls/client-urls-action.store.js";
+import { ClientUrlsItemLoader } from "./urls/client-urls.loader.js";
 import { Modal } from "./components/Modal.js";
 import { QuantityControl } from "./components/QuantityControl.js";
 import { SlowModalSkeleton } from "./components/SlowModalSkeleton.js";
@@ -137,6 +157,47 @@ function TxBlockShell(): React.ReactNode {
     <div data-testid="tx-block-shell">
       <Outlet />
     </div>
+  );
+}
+
+/**
+ * Layout INSIDE the tx-group transition block, registering TxShellLoader. It
+ * persists across /tx-group-a/1 -> /2 (not re-run), so TxShellStatus pins that
+ * a non-revalidating loader never reports isLoading:true during the hold
+ * (loader-nav-stale.test.ts). Deliberately NOT on TxBlockShell: in this app
+ * that layout also sits in the chain of sibling routes (/, /inline-bound-action,
+ * ...), and a boundary-less live loader there breaks every PPR shell capture.
+ */
+function TxShellLayout(): React.ReactNode {
+  return (
+    <div data-testid="tx-shell-layout">
+      <TxShellStatus />
+      <Outlet />
+    </div>
+  );
+}
+
+/**
+ * Parent-chain RSC layout for the clientUrls action-revalidation fixture. It
+ * reads the same counter the group's projected loader reads, and declares no
+ * revalidate(): after the action, the loader shows the new count while this
+ * value stays pre-action (locked `action:parent-chain-skip` default).
+ */
+function ClientUrlsSlowParent(): React.ReactNode {
+  return (
+    <section data-testid="cus-parent">
+      <SlowChrome />
+      <Outlet />
+    </section>
+  );
+}
+
+function ClientUrlsActionParent(): React.ReactNode {
+  return (
+    <section>
+      <p data-testid="ca-parent-count">{`parent:${getClientUrlsActionCount()}`}</p>
+      <Outlet />
+    </section>
   );
 }
 
@@ -472,6 +533,7 @@ export const urlpatterns = urls(
               <h1 data-testid="swr-product-name">{name}</h1>
               <p data-testid="swr-product-loaded-at">{loadedAt}</p>
               <SwrProductCounter />
+              <SwrProductStatus />
               <nav>
                 <Link to="/swr-product/1" data-testid="swr-product-link-1">
                   Product 1
@@ -548,17 +610,21 @@ export const urlpatterns = urls(
       ),
 
       // Contrast route: same :param + loading() skeleton, but WITHOUT
-      // transition(). This is the default behavior — navigating between params
-      // remounts the route and shows the skeleton. Pins that the opt-in is
-      // required and the default is unchanged.
+      // transition(). PARAM navs remount and show the skeleton (param-bearing
+      // key — the opt-in is required for the param hold). SEARCH-only navs on
+      // the same param reconcile and HOLD by default (isSameStructureNav
+      // transition commit in browser/partial-update.ts): the tab link + echo
+      // below pin that split.
       path(
         "/plain-product/:id",
         async (ctx) => {
           const { id, name, loadedAt } = await ctx.use(SwrProductLoader);
+          const tab = ctx.url.searchParams.get("tab") ?? "none";
           return (
             <div data-testid="plain-product-page">
               <h1 data-testid="plain-product-name">{name}</h1>
               <p data-testid="plain-product-loaded-at">{loadedAt}</p>
+              <p data-testid="plain-product-tab">tab: {tab}</p>
               <SwrProductCounter />
               <nav>
                 <Link to="/plain-product/1" data-testid="plain-product-link-1">
@@ -566,6 +632,12 @@ export const urlpatterns = urls(
                 </Link>
                 <Link to="/plain-product/2" data-testid="plain-product-link-2">
                   Product 2
+                </Link>
+                <Link
+                  to="/plain-product/1?tab=specs"
+                  data-testid="plain-product-link-1-specs"
+                >
+                  Product 1 specs
                 </Link>
               </nav>
             </div>
@@ -589,51 +661,55 @@ export const urlpatterns = urls(
       // across different routes.
       layout(TxBlockShell, () => [
         transition({}, () => [
-          path(
-            "/tx-group-a/:id",
-            async (ctx) => {
-              const { name, loadedAt } = await ctx.use(SwrProductLoader);
-              return (
-                <div data-testid="tx-group-a-page">
-                  <h1 data-testid="tx-group-a-name">{name}</h1>
-                  <p data-testid="tx-group-a-loaded-at">{loadedAt}</p>
-                  <nav>
-                    <Link to="/tx-group-a/1" data-testid="tx-a-link-1">
-                      A1
-                    </Link>
-                    <Link to="/tx-group-a/2" data-testid="tx-a-link-2">
-                      A2
-                    </Link>
-                    <Link to="/tx-group-b/1" data-testid="tx-cross-b-link">
-                      to B
-                    </Link>
-                  </nav>
-                </div>
-              );
-            },
-            { name: "txGroup.a" },
-            () => [
-              loader(SwrProductLoader),
-              loading(<div data-testid="tx-group-a-skeleton">Loading…</div>),
-            ],
-          ),
-          path(
-            "/tx-group-b/:id",
-            async (ctx) => {
-              const { name, loadedAt } = await ctx.use(SwrProductLoader);
-              return (
-                <div data-testid="tx-group-b-page">
-                  <h1 data-testid="tx-group-b-name">{name}</h1>
-                  <p data-testid="tx-group-b-loaded-at">{loadedAt}</p>
-                </div>
-              );
-            },
-            { name: "txGroup.b" },
-            () => [
-              loader(SwrProductLoader),
-              loading(<div data-testid="tx-group-b-skeleton">Loading…</div>),
-            ],
-          ),
+          layout(TxShellLayout, () => [
+            loader(TxShellLoader),
+            path(
+              "/tx-group-a/:id",
+              async (ctx) => {
+                const { name, loadedAt } = await ctx.use(SwrProductLoader);
+                return (
+                  <div data-testid="tx-group-a-page">
+                    <h1 data-testid="tx-group-a-name">{name}</h1>
+                    <p data-testid="tx-group-a-loaded-at">{loadedAt}</p>
+                    <SwrProductStatus />
+                    <nav>
+                      <Link to="/tx-group-a/1" data-testid="tx-a-link-1">
+                        A1
+                      </Link>
+                      <Link to="/tx-group-a/2" data-testid="tx-a-link-2">
+                        A2
+                      </Link>
+                      <Link to="/tx-group-b/1" data-testid="tx-cross-b-link">
+                        to B
+                      </Link>
+                    </nav>
+                  </div>
+                );
+              },
+              { name: "txGroup.a" },
+              () => [
+                loader(SwrProductLoader),
+                loading(<div data-testid="tx-group-a-skeleton">Loading…</div>),
+              ],
+            ),
+            path(
+              "/tx-group-b/:id",
+              async (ctx) => {
+                const { name, loadedAt } = await ctx.use(SwrProductLoader);
+                return (
+                  <div data-testid="tx-group-b-page">
+                    <h1 data-testid="tx-group-b-name">{name}</h1>
+                    <p data-testid="tx-group-b-loaded-at">{loadedAt}</p>
+                  </div>
+                );
+              },
+              { name: "txGroup.b" },
+              () => [
+                loader(SwrProductLoader),
+                loading(<div data-testid="tx-group-b-skeleton">Loading…</div>),
+              ],
+            ),
+          ]),
         ]),
       ]),
 
@@ -738,7 +814,7 @@ export const urlpatterns = urls(
             </Modal>
           );
         },
-        { when: ({ from }) => shouldInterceptProduct(from.pathname) },
+        { when: ({ from }) => shouldInterceptProduct(from.url.pathname) },
         () => [loader(ProductDetailLoader), loader(CartQuantityLoader)],
       ),
 
@@ -803,6 +879,106 @@ export const urlpatterns = urls(
 
       // Blog patterns
       include("/blog", blogPatterns, { name: "blog" }),
+
+      // clientUrls() group: browser-local presentation routes mounted through
+      // include() like any urls() module — the canonical composition model.
+      include("/client-urls-e2e", clientUrlPatterns),
+      // Route middleware vars (createVar token + string key) must reach a
+      // group loader on the document and partial lanes; the fetch lane is
+      // pinned separately (e2e/client-urls.test.ts "middleware vars").
+      middleware(clientUrlsVarsMiddleware, () => [
+        include("/client-urls-vars", clientUrlsVarsPatterns),
+      ]),
+      include("/client-urls-ssr-signals", clientUrlsSsrSignalsPatterns),
+      // Async include + clientUrls: supported when the include chain and the
+      // client routes are NAMED (see urls/client-urls-async-named.ts).
+      include(
+        "/client-urls-async",
+        () => import("./urls/client-urls-async-named.js"),
+        { name: "asyncClient" },
+      ),
+      // Group behind a 5s middleware: pins optimistic presentation vs the
+      // gated canonical request (client-urls-slow.test.ts). The landing route
+      // sits OUTSIDE the middleware so the loader redirect is not gated twice.
+      path(
+        "/client-urls-slow-landing",
+        () => <div data-testid="cus-landing">landed</div>,
+        { name: "clientSlowLanding" },
+      ),
+      layout(ClientUrlsSlowParent, () => [
+        middleware(async (_ctx, next) => {
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+          await next();
+        }),
+        include("/client-urls-slow", clientUrlsSlowPatterns, {
+          name: "clientSlow",
+        }),
+      ]),
+      // Async include resolving DIRECTLY to a clientUrls() module (no server
+      // urls() wrapper) — see docs/internal/async-includes.md.
+      include(
+        "/client-urls-async-direct",
+        () => import("./urls/client-urls-async-direct.js"),
+        { name: "asyncClientDirect" },
+      ),
+
+      // Intercept over a clientUrls TARGET: the shared layout declares the
+      // modal intercept by the client route's canonical name. Origins:
+      // (A) the server page below — no client group active, standard modal;
+      // (B) the group's own index — the local presentation must decline in
+      //     favor of the intercept (coordination in client-urls/navigation.ts).
+      path(
+        "/client-urls-intercept-origin",
+        () => (
+          <div data-testid="ci-origin">
+            <Link
+              to="/client-urls-intercept/items/alpha"
+              prefetch="none"
+              data-testid="ci-origin-link"
+            >
+              Open item from server page
+            </Link>
+            <Link
+              to="/client-urls-intercept/detail/gamma"
+              prefetch="none"
+              data-testid="ci-origin-detail-link"
+            >
+              Open detail from server page
+            </Link>
+          </div>
+        ),
+        { name: "ciOrigin" },
+      ),
+      include("/client-urls-intercept", clientUrlsInterceptPatterns, {
+        name: "clientIntercept",
+      }),
+      // Data-only transition() projection: /items holds same-route param navs
+      // (client-declared transition), /plain re-streams its skeleton.
+      include("/client-urls-transition", clientUrlsTransitionPatterns, {
+        name: "clientTransition",
+      }),
+      // Action revalidation over a clientUrls group: the group's projected
+      // loaders re-run on the action follow-up (route-owned default true);
+      // this parent-chain layout reads the SAME counter and keeps the locked
+      // skip (no revalidate() declared), so its value stays pre-action.
+      layout(ClientUrlsActionParent, () => [
+        include("/client-urls-action", clientUrlsActionPatterns, {
+          name: "clientAction",
+        }),
+      ]),
+      intercept(
+        "@modal",
+        ".clientIntercept.item",
+        async (ctx) => {
+          const item = await ctx.use(ClientUrlsItemLoader);
+          return (
+            <Modal testId="ci-modal">
+              <p data-testid="ci-modal-item">{item}</p>
+            </Modal>
+          );
+        },
+        () => [loader(ClientUrlsItemLoader)],
+      ),
 
       // Factory-generated patterns (static parser can't resolve the function call)
       include("/factory-hmr", createFactoryHmrPatterns(), {
@@ -874,6 +1050,9 @@ export const urlpatterns = urls(
       // PPR action-correctness fixtures — /shell-cache-action.
       include("/", shellCacheActionPatterns, { name: "" }),
 
+      // PPR push-ownership fixtures — /shell-push (issues #1001, #1003).
+      include("/", shellPushOwnershipPatterns, { name: "" }),
+
       // PPR guarding + scope-fidelity fixtures — /shell-secure (global auth
       // middleware, mounted in router.tsx) and /shell-secure-dsl (route DSL
       // middleware rejection); the commit point is after ALL middleware.
@@ -921,6 +1100,11 @@ export const urlpatterns = urls(
         name: "prerenderIntercept",
       }),
 
+      // intercept() when selector: { from, to } locations
+      include("/intercept-when-shape", interceptWhenShapePatterns, {
+        name: "interceptWhenShape",
+      }),
+
       // Transform coverage patterns (alias imports + export specifiers)
       include("/transform-cases", transformCasesPatterns, {
         name: "transformCases",
@@ -938,6 +1122,9 @@ export const urlpatterns = urls(
       include("/response-cache", responseCachePatterns, {
         name: "responseCache",
       }),
+
+      // Global cache.searchParams key-filter test patterns
+      include("/spk", searchParamsKeyPatterns, { name: "spk" }),
 
       // Handler-first execution order + cache scope tests
       include("/handler-first", handlerFirstPatterns, { name: "handlerFirst" }),
@@ -997,6 +1184,12 @@ export const urlpatterns = urls(
       // skipped revalidate fns)
       include("/", parallelRevalAfterActionPatterns, {
         name: "parallelRevalAfterAction",
+      }),
+
+      // Regression: revalidate(() => false) on a route-scoped parallel slot
+      // must not blank the slot on the soft nav that first introduces it
+      include("/", parallelNewSlotRevalPatterns, {
+        name: "parallelNewSlotReval",
       }),
 
       // Skip test patterns (prerender + static skip/error handling)
@@ -1487,6 +1680,10 @@ export const urlpatterns = urls(
         name: "contextDedup",
       }),
 
+      include("/client-package-resolution", clientPackageResolutionPatterns, {
+        name: "clientPackageResolution",
+      }),
+
       // @meta parallel slot pattern (handles from parallel slots)
       include("/parallel-meta", parallelMetaPatterns, {
         name: "parallelMeta",
@@ -1511,6 +1708,14 @@ export const urlpatterns = urls(
       // cache() scope guard tests (header/cookie/status blocked, set allowed)
       include("/cache-scope-guard", cacheScopeGuardPatterns, {
         name: "cacheScopeGuard",
+      }),
+
+      // Raw request-identity reads refuse like cookies() (#976)
+      include("/identity-raw", identityRawPatterns, { name: "identityRaw" }),
+
+      // "use cache" refuses a memoized loader value that read cookies() (#1011)
+      include("/use-cache-memo", useCacheMemoPatterns, {
+        name: "useCacheMemo",
       }),
 
       // rendered() barrier tests (loader reads handle data after handlers settle)

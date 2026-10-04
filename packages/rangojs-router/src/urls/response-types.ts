@@ -1,32 +1,11 @@
 import type { ContextVar } from "../context-var.js";
-import type { ReverseFunction } from "../reverse.js";
+import type { GlobalReverseFunction } from "../reverse.js";
 import type {
   DefaultReverseRouteMap,
   DefaultVars,
 } from "../types/global-namespace.js";
 import type { UseItems, ResponseRouteUseItem } from "../route-types.js";
 import type { RequestScope } from "../types/request-scope.js";
-
-/**
- * Reverse function for response handler contexts.
- * Global names get autocomplete and param validation from the generated route map.
- * Local `.name` calls are accepted but not validated (scope unknown at type level).
- */
-type ResponseReverseFunction = [DefaultReverseRouteMap] extends [
-  Record<string, string>,
-]
-  ? (
-      name: string,
-      params?: Record<string, string>,
-      search?: Record<string, unknown>,
-    ) => string
-  : ReverseFunction<DefaultReverseRouteMap> & {
-      (
-        name: `.${string}`,
-        params?: Record<string, string>,
-        search?: Record<string, unknown>,
-      ): string;
-    };
 
 /**
  * Symbol marking a route as a response route (non-RSC).
@@ -99,7 +78,8 @@ export interface ResponseHandlerContext<
   params: TParams;
   /** @internal Phantom property for params type invariance. Prevents mounting handlers on wrong routes. */
   readonly _paramCheck?: (params: TParams) => TParams;
-  reverse: ResponseReverseFunction;
+  /** Global route names only; see {@link GlobalReverseFunction}. */
+  reverse: GlobalReverseFunction<DefaultReverseRouteMap>;
   /** Read a variable set by middleware via ctx.set(key, value) or ctx.set(ContextVar, value). */
   get: {
     <T>(contextVar: ContextVar<T>): T | undefined;

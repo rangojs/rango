@@ -10,8 +10,12 @@ npm remove react-router @react-router/dev @react-router/node @react-router/serve
 # Library mode:
 npm remove react-router react-router-dom
 
-npm install @rangojs/router
+npm install @rangojs/router   # keep react and react-dom
 ```
+
+`rango()` includes `@vitejs/plugin-rsc` and supplies the client and server
+entries. Add `@vitejs/plugin-react` only if you want Fast Refresh or the React
+Compiler.
 
 Replace the `@react-router/dev` Vite plugin with `rango()`:
 
@@ -34,7 +38,7 @@ import { createRouter } from "@rangojs/router";
 import { Document } from "./document";
 import { urlpatterns } from "./urls";
 
-export default createRouter({
+export const router = createRouter({
   document: Document,
 }).routes(urlpatterns);
 ```
@@ -52,10 +56,13 @@ In framework mode, each route is a file with conventional exports (`loader`,
 RR7 route module export     → Rango equivalent
 ─────────────────────────────────────────────────────
 default (Component)         → handler in path()
-loader                      → fetch in handler, or createLoader()
+loader                      → fetch in handler, or createLoader() — a Rango
+                              loader keeps the RR shape: throw redirect()/
+                              notFound(), push meta from the body
 action                      → "use server" function
-meta                        → ctx.use(Meta) in handler
-headers                     → ctx.header() in handler or middleware
+meta                        → ctx.use(Meta) in handler; meta({ data }) →
+                              ctx.use(Meta) push in the loader that owns data
+headers                     → ctx.headers.set() in a handler; ctx.header() in middleware
 shouldRevalidate            → revalidate() DSL
 ErrorBoundary               → errorBoundary() DSL
 HydrateFallback             → loading() DSL
@@ -104,15 +111,15 @@ export function ErrorBoundary() {
 
 ```typescript
 // Rango: urls.tsx + handler
-import { notFound } from "@rangojs/router";
+import { Meta, notFound, type Handler } from "@rangojs/router";
 
 const ProductPage: Handler<"product"> = async (ctx) => {
   const product = await getProduct(ctx.params.slug);
-  if (!product) notFound("Product not found");
+  if (!product) notFound("Product not found"); // throws: nearest notFoundBoundary, else the router's notFound
 
   const meta = ctx.use(Meta);
   meta({ title: product.name });
-  ctx.header("Cache-Control", "max-age=300");
+  ctx.headers.set("Cache-Control", "max-age=300"); // response headers
 
   return <div>{product.name}</div>;
 };
@@ -127,6 +134,21 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 
 Key shift: the route module's scattered exports consolidate into the handler
 (data fetching, meta, headers) and the DSL (revalidation, error boundary, loading).
+The `action` export becomes a `"use server"` function (see
+[`./data-and-actions.md`](./data-and-actions.md)).
+
+The loader-shaped variant is equally valid — and closer to the RR module when
+the loader carried authority. A `createLoader()` body can throw `notFound()`
+for the missing product AND push the data-derived meta itself
+(`ctx.use(Meta)({ title: product.name })`); register it with
+`loader(ProductLoader, { ssr: false })` when the 404 status and
+title must be in the document deterministically (the flag makes the server
+settle that loader before the first flush; it is unrelated to RR7's
+`ssr: false` SPA mode, which has no route-wide Rango equivalent). See
+`/loader` → "Loader Authority" and "Writing Handles from Loaders". (One RR
+habit that does NOT carry over: a loader `throw redirect()` is a client-side
+navigate on document loads, never an HTTP 302 — pre-stream 302s belong in
+middleware.)
 
 ### RR7 file routing → urls() DSL
 

@@ -1,4 +1,10 @@
-import { urls, Meta } from "@rangojs/router";
+import { urls, Meta, getRequestContext } from "@rangojs/router";
+import { Outlet } from "@rangojs/router/client";
+import {
+  DemoSessionLoader,
+  DemoBasketLoader,
+  DemoVehicleLoader,
+} from "../handlers/shop/loaders/chrome-fixture.js";
 import { GtmBootstrap } from "../handles/gtm.js";
 import { HomePage } from "../pages/home.js";
 import { AboutPage } from "../pages/about.js";
@@ -15,10 +21,31 @@ import { kanbanPatterns } from "./kanban.js";
 import { loadersPatterns } from "./loaders.js";
 import { middlewarePatterns } from "./middleware.js";
 import { shopPatterns } from "./shop.js";
+import clientShopUrls from "./client-shop.client.js";
+import {
+  ClientShopOuterLayout,
+  clientShopGuardMiddleware,
+} from "./client-shop-guard.js";
 import { magazinePatterns } from "./magazine.js";
 import { compositionPatterns } from "./composition-test.js";
 import { refreshDemoPatterns } from "./refresh-demo.js";
 import { gtmDemoPatterns } from "./gtm.js";
+
+/**
+ * Consumer-app CategoryTemplate mirror: a server layout between the chrome
+ * layout and the clientUrls include. Reads params from getRequestContext (a
+ * JSX-mounted layout takes no props) and conditionally frames the outlet —
+ * the exact shape the source app uses for its Contentful template slots.
+ */
+function DemoCategoryTemplate() {
+  const params: Record<string, string | undefined> = getRequestContext().params;
+  if (params.slug === undefined) return <Outlet />;
+  return (
+    <>
+      <Outlet />
+    </>
+  );
+}
 
 /**
  * URL patterns - Django-style routing API
@@ -27,62 +54,84 @@ import { gtmDemoPatterns } from "./gtm.js";
  * Each module exports a urls() result that defines routes with relative paths.
  * The include() helper adds URL prefix and optional name prefix.
  */
-export const urlpatterns = urls(({ path, include, parallel }) => [
-  // The GTM bootstrap and the default document title are pushed by UI-less parallel
-  // slots (@gtm, @meta), not a layout handler. There is NO inner layout: RootLayout
-  // (the createRouter `document`) already wraps every route in <html><body>, so a
-  // pass-through layout(<Outlet/>) would only add a redundant segment. These slots
-  // sit at the route ROOT, so they apply to EVERY route (including the standalone
-  // /errors/unhandled). @gtm pushes the GTM bootstrap Script, rendered by <Scripts/>
-  // in RootLayout's <head> with the request nonce; a route OVERRIDES it by reusing
-  // the "gtm" id (see /gtm). @meta sets the SOLE managed <title>, so document.title
-  // is correct at parse time when the bootstrap reads page_title. A child route's
-  // own ctx.use(Script)/ctx.use(Meta) wins (root -> child, last-push-wins).
-  parallel({
-    "@gtm": GtmBootstrap,
-    "@meta": (ctx) => {
-      ctx.use(Meta)({ title: "RSC Router Demo" });
-      return null;
-    },
-  }),
+export const urlpatterns = urls(
+  ({ path, include, parallel, layout, middleware, loader }) => [
+    // The GTM bootstrap and the default document title are pushed by UI-less parallel
+    // slots (@gtm, @meta), not a layout handler. There is NO inner layout: RootLayout
+    // (the createRouter `document`) already wraps every route in <html><body>, so a
+    // pass-through layout(<Outlet/>) would only add a redundant segment. These slots
+    // sit at the route ROOT, so they apply to EVERY route (including the standalone
+    // /errors/unhandled). @gtm pushes the GTM bootstrap Script, rendered by <Html.Scripts/>
+    // in RootLayout's <head> with the request nonce; a route OVERRIDES it by reusing
+    // the "gtm" id (see /gtm). @meta sets the SOLE managed <title>, so document.title
+    // is correct at parse time when the bootstrap reads page_title. A child route's
+    // own ctx.use(Script)/ctx.use(Meta) wins (root -> child, last-push-wins).
+    parallel({
+      "@gtm": GtmBootstrap,
+      "@meta": (ctx) => {
+        ctx.use(Meta)({ title: "RSC Router Demo" });
+        return null;
+      },
+    }),
 
-  // Root routes
-  path(
-    "/",
-    (ctx) => {
-      ctx.use(Meta)({ title: "Home" });
-      return <HomePage />;
-    },
-    { name: "home.index" },
-  ),
-  path(
-    "/about",
-    (ctx) => {
-      ctx.use(Meta)({ title: "About" });
-      return <AboutPage />;
-    },
-    { name: "about.index" },
-  ),
-  path("/prefetch-test", PrefetchTestPage, { name: "prefetch-test" }),
+    // Root routes
+    path(
+      "/",
+      (ctx) => {
+        ctx.use(Meta)({ title: "Home" });
+        return <HomePage />;
+      },
+      { name: "home.index" },
+    ),
+    path(
+      "/about",
+      (ctx) => {
+        ctx.use(Meta)({ title: "About" });
+        return <AboutPage />;
+      },
+      { name: "about.index" },
+    ),
+    path("/prefetch-test", PrefetchTestPage, { name: "prefetch-test" }),
 
-  // Include patterns from separate modules
-  include("/blog", blogPatterns, { name: "blog" }),
-  include("/dashboard", dashboardPatterns, { name: "dashboard" }),
-  include("/admin", adminPatterns, { name: "admin" }),
-  include("/protected", protectedPatterns, { name: "protected" }),
-  include("/todos", todosPatterns, { name: "todos" }),
-  include("/errors", errorsPatterns, { name: "errors" }),
-  include("/kanban", kanbanPatterns, { name: "kanban" }),
-  include("/loaders", loadersPatterns, { name: "loaders" }),
-  include("/refresh", refreshDemoPatterns, { name: "refresh" }),
-  include("/middleware", middlewarePatterns, { name: "middleware" }),
-  include("/shop", shopPatterns, { name: "shop" }),
-  include("/magazine", magazinePatterns, { name: "magazine" }),
-  include("/composition", compositionPatterns, { name: "composition" }),
-  include("/gtm", gtmDemoPatterns, { name: "gtm" }),
+    // Include patterns from separate modules
+    include("/blog", blogPatterns, { name: "blog" }),
+    include("/dashboard", dashboardPatterns, { name: "dashboard" }),
+    include("/admin", adminPatterns, { name: "admin" }),
+    include("/protected", protectedPatterns, { name: "protected" }),
+    include("/todos", todosPatterns, { name: "todos" }),
+    include("/errors", errorsPatterns, { name: "errors" }),
+    include("/kanban", kanbanPatterns, { name: "kanban" }),
+    include("/loaders", loadersPatterns, { name: "loaders" }),
+    include("/refresh", refreshDemoPatterns, { name: "refresh" }),
+    include("/middleware", middlewarePatterns, { name: "middleware" }),
+    include("/shop", shopPatterns, { name: "shop" }),
+    // clientUrls() shop mirror: the /shop product experience with all data
+    // consumption moved from handler ctx.use() to useLoader at read sites —
+    // clientUrls routes have no handlers, so the shape is forced. The wrapping
+    // layout + middleware pin the outer-guard semantics: middleware wraps EVERY
+    // canonical request into the group (held-loader navs included), the layout
+    // handler holds across within-group navigations (client-shop-guards e2e).
+    layout(ClientShopOuterLayout, () => [
+      middleware(clientShopGuardMiddleware),
+      // Consumer-app chrome mirror: unflagged loaders stream at the layout
+      // level while the route's { ssr: false } loader is awaited.
+      loader(DemoSessionLoader),
+      loader(DemoBasketLoader),
+      loader(DemoVehicleLoader),
+      // Server template layout between the chrome and the clientUrls include,
+      // reading params from getRequestContext — the consumer CategoryTemplate
+      // shape (conditional slots around the outlet).
+      layout(<DemoCategoryTemplate />, () => [
+        include("/client-shop", clientShopUrls, { name: "clientShop" }),
+      ]),
+    ]),
+    include("/magazine", magazinePatterns, { name: "magazine" }),
+    include("/composition", compositionPatterns, { name: "composition" }),
+    include("/gtm", gtmDemoPatterns, { name: "gtm" }),
 
-  // Unhandled error route - no error boundary in its parent chain (it deliberately
-  // renders standalone to demonstrate an unhandled error escaping boundaries). It
-  // now ALSO receives the @gtm/@meta root slots above, since they apply at the root.
-  include("", unhandledErrorPattern, { name: "" }),
-]);
+    // Unhandled error route - no error boundary in its parent chain (it deliberately
+    // renders standalone to demonstrate an unhandled error escaping boundaries). It
+    // now ALSO receives the @gtm/@meta root slots above, since they apply at the root.
+    include("", unhandledErrorPattern, { name: "" }),
+  ],
+);

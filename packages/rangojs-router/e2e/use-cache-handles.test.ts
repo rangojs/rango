@@ -1,6 +1,91 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError, goBack } from "./helper";
+
+/**
+ * /use-cache-test/dep-crumbs: a "use cache" function reads a loader that the
+ * handler also reads live after it. The loader's crumb (a per-run id) renders
+ * once on the MISS and once on each HIT, where it is the live run's crumb,
+ * replacing the replayed one (#928).
+ */
+async function expectUseCacheDepCrumbOnceAcrossHit(
+  page: Page,
+  url: (path: string) => string,
+) {
+  const oneCrumb = /^Category [0-9a-f]{8}$/;
+  const load = async () => {
+    await page.goto(url("/use-cache-test/dep-crumbs"));
+    await waitForHydration(page);
+    await expect(page.getByTestId("use-cache-dep-page")).toBeVisible();
+    return {
+      stamp: await page.getByTestId("use-cache-dep-ts").textContent(),
+      crumbs: await page.getByTestId("dep-crumbs").textContent(),
+    };
+  };
+
+  const first = await load();
+  expect(first.crumbs).toMatch(oneCrumb);
+
+  // An unchanged stamp is the cached value: a "use cache" HIT.
+  let hit = first;
+  await expect
+    .poll(async () => (hit = await load()).stamp, {
+      timeout: 8000,
+      message: 'Expected a "use cache" HIT (unchanged stamp)',
+    })
+    .toBe(first.stamp);
+  expect(hit.crumbs).toMatch(oneCrumb);
+
+  // Each HIT shows the live run's crumb, not the replayed copy.
+  const next = await load();
+  expect(next.stamp).toBe(first.stamp);
+  expect(next.crumbs).toMatch(oneCrumb);
+  expect(next.crumbs).not.toBe(hit.crumbs);
+}
+
+/**
+ * /use-cache-test/loader-ctx/:id: a DSL loader passes its own ctx to a "use
+ * cache" function that pushes a crumb through it (#940). The stamp is the
+ * cached value: a HIT repeats it and replays the crumb once; another id
+ * misses. Ids are unique per run so the first load is a MISS.
+ */
+async function expectLoaderCtxCachedPerParams(
+  page: Page,
+  url: (path: string) => string,
+) {
+  const run = Math.random().toString(36).slice(2, 8);
+  const [a, b] = [`a${run}`, `b${run}`];
+  const load = async (id: string) => {
+    await page.goto(url(`/use-cache-test/loader-ctx/${id}`));
+    await waitForHydration(page);
+    await expect(page.getByTestId("use-cache-loader-ctx-page")).toBeVisible();
+    return {
+      stamp:
+        (await page.getByTestId("use-cache-loader-ctx-stamp").textContent()) ??
+        "",
+      crumbs: await page.getByTestId("dep-crumbs").textContent(),
+    };
+  };
+
+  const first = await load(a);
+  expect(first.stamp.startsWith(`${a} `)).toBe(true);
+  expect(first.crumbs).toBe(`Item ${a}`);
+
+  let hit = first;
+  await expect
+    .poll(async () => (hit = await load(a)).stamp, {
+      timeout: 8000,
+      message: 'Expected a "use cache" HIT for the loader ctx call',
+    })
+    .toBe(first.stamp);
+  expect(hit.crumbs).toBe(`Item ${a}`);
+
+  const other = await load(b);
+  expect(other.stamp.startsWith(`${b} `)).toBe(true);
+  expect(other.crumbs).toBe(`Item ${b}`);
+
+  expect((await load(a)).stamp).toBe(first.stamp);
+}
 
 /**
  * Tests for the "use cache" directive — context/handles, inline use cache,
@@ -71,6 +156,20 @@ test.describe("use-cache handles", () => {
     // Breadcrumb should still appear (handle replay from cache)
     await expect(breadcrumbs).toBeVisible();
     await expect(breadcrumbs).toContainText("Cached Page");
+  });
+
+  test("a loader read inside the cached function and live shows its live crumb once on a HIT", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectUseCacheDepCrumbOnceAcrossHit(page, (p) => f.url(p));
+  });
+
+  test("a DSL loader passing its ctx caches per params and replays its crumb once", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectLoaderCtxCachedPerParams(page, (p) => f.url(p));
   });
 
   test("cached function returning React node serializes through cache", async ({
@@ -365,6 +464,20 @@ test.describe("use-cache handles (production)", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "build",
+  });
+
+  test("a loader read inside the cached function and live shows its live crumb once on a HIT", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectUseCacheDepCrumbOnceAcrossHit(page, (p) => f.url(p));
+  });
+
+  test("a DSL loader passing its ctx caches per params and replays its crumb once", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectLoaderCtxCachedPerParams(page, (p) => f.url(p));
   });
 
   test("tainted ctx excluded from cache key and handles replayed", async ({

@@ -5,6 +5,7 @@ import type {
   Handler,
   HandlerContext,
   LoaderDefinition,
+  LoaderOptions,
   MiddlewareFn,
   NotFoundBoundaryHandler,
   PartialCacheOptions,
@@ -40,7 +41,10 @@ import type {
   PrerenderHandlerDefinition,
   PassthroughHandlerDefinition,
 } from "../prerender.js";
-import type { StaticHandlerDefinition } from "../static-handler.js";
+import type {
+  StaticHandlerDefinition,
+  StaticHandlerRef,
+} from "../static-handler.js";
 import type {
   ResponseHandler,
   ResponseHandlerContext,
@@ -54,6 +58,7 @@ import type {
   IncludeOptions,
 } from "./pattern-types.js";
 import type { ExtractRoutes, ExtractResponses } from "./type-extraction.js";
+import type { ClientUrlPatterns } from "../client-urls/types.js";
 
 /**
  * Base path function signature for defining routes with URL patterns.
@@ -155,7 +160,9 @@ export type TextResponsePathFn<TEnv> = <
 /**
  * What an async include() provider resolves to. Route types (`TRoutes`) are
  * inferred from the resolved `urls()` value so `href()` and named routes stay
- * type-safe through a code-split module (`() => import("./routes")`).
+ * type-safe through a code-split module (`() => import("./routes")`). A
+ * clientUrls() module's default export types as ClientUrlPatterns, so
+ * `() => import("./shop.client")` infers the group's names the same way.
  */
 type IncludeResolved<
   TEnv,
@@ -163,7 +170,12 @@ type IncludeResolved<
   TResponses extends Record<string, unknown>,
 > =
   | UrlPatterns<TEnv, TRoutes, TResponses>
-  | { default: UrlPatterns<TEnv, TRoutes, TResponses> };
+  | ClientUrlPatterns<TRoutes>
+  | {
+      default:
+        | UrlPatterns<TEnv, TRoutes, TResponses>
+        | ClientUrlPatterns<TRoutes>;
+    };
 
 /** include() argument: an eager `urls()` value or an async provider thunk. */
 export type IncludeArg<
@@ -172,6 +184,11 @@ export type IncludeArg<
   TResponses extends Record<string, unknown>,
 > =
   | UrlPatterns<TEnv, TRoutes, TResponses>
+  // clientUrls() definitions mount through include() like any urls() module;
+  // on the server the runtime value is the module's client reference, but the
+  // TypeScript type of that default export IS ClientUrlPatterns, so route
+  // names flow into NamedRoutes through the same TRoutes inference.
+  | ClientUrlPatterns<TRoutes>
   | (() =>
       | IncludeResolved<TEnv, TRoutes, TResponses>
       | Promise<IncludeResolved<TEnv, TRoutes, TResponses>>);
@@ -271,22 +288,18 @@ export type PathHelpers<TEnv> = {
    *
    * Not generic over the slots record: an inferred type parameter makes the
    * object literal an inference site, which suppresses contextual typing of
-   * arrow slot handlers (`(ctx) => ...` was implicit any). Bare handlers infer
-   * now; a descriptor's `handler:` arrow still needs an explicit ctx annotation
-   * because StaticHandlerDefinition's own `.handler` joins the contextual union
-   * (two callables — see parallel-slot-handler-types.test.ts).
+   * arrow slot handlers (`(ctx) => ...` was implicit any). Static() values use
+   * an opaque handler-less reference here so their own `.handler` cannot
+   * contribute a second call signature or expose internal fields in completion.
    */
   parallel: (
     slots: Record<
       `@${string}`,
       | Handler<any, any, TEnv>
       | ReactNode
-      | StaticHandlerDefinition
+      | StaticHandlerRef
       | {
-          handler:
-            | Handler<any, any, TEnv>
-            | ReactNode
-            | StaticHandlerDefinition;
+          handler: Handler<any, any, TEnv> | ReactNode | StaticHandlerRef;
           use?: () => ParallelUseItem[];
         }
     >,
@@ -339,10 +352,20 @@ export type PathHelpers<TEnv> = {
   revalidate: (fn: ShouldRevalidateFn<any, TEnv>) => RevalidateItem;
 
   /**
-   * Attach a data loader to the current route/layout
+   * Attach a data loader to the current route/layout.
+   *
+   * Pass `{ ssr: false }` — the same knob as loading(fallback, { ssr:
+   * false }) — to await this loader before first flush on DOCUMENT requests
+   * (see {@link LoaderOptions}): the opt-in for loaders whose data, handle
+   * pushes, or thrown notFound()/redirect() must be in the SSR'd HTML.
+   * Per-loader: a streaming sibling keeps streaming. Under a `ppr` route the
+   * flag BAKES: the loader executes at shell capture and its settled return
+   * freezes into the shell (nested promises stay live holes) — the pre-flush
+   * promise applied to the prelude.
    */
   loader: <TData>(
     loaderDef: LoaderDefinition<TData>,
+    optionsOrUse?: LoaderOptions | (() => LoaderUseItem[]),
     use?: () => LoaderUseItem[],
   ) => LoaderItem;
 
@@ -394,9 +417,9 @@ export type PathHelpers<TEnv> = {
    * transition cannot fire without a startTransition. See
    * skills/view-transitions for the startTransition x ViewTransition matrix.
    *
-   * Pass `when: (ctx) => boolean` to gate the transition per request: it runs
-   * server-side after the route handler (can read `ctx.get(...)`), and returning
-   * false drops the transition so the navigation streams its loading() skeleton.
+   * Pass `when` (inline, hoisted into a client module by the build, or a
+   * "use client" export) to gate the navigation's hold and view transition in
+   * the browser (never on the server); see TransitionWhenFn.
    */
   transition: {
     (): TransitionItem;

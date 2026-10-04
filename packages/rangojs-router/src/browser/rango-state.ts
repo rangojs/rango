@@ -7,7 +7,9 @@
  * cache keys responses by (URL, X-Rango-State value).
  *
  * Value format: `{buildVersion}:{invalidationTimestamp}`
- * - Build version changes on deploy, busting all cached prefetches at boot.
+ * - Build version: the router's document version. It changes when a deploy
+ *   changes the router's server code or the client assets, busting all cached
+ *   prefetches at boot; a deploy that changes neither keeps them.
  * - Timestamp rotates on invalidation (server action, invalidateClientCache).
  *
  * Storage is a session cookie named by the server-resolved name passed to
@@ -50,6 +52,11 @@ export function setRangoStateObserver(
   observer: ((value: string) => void) | null,
 ): void {
   externalRotationObserver = observer;
+}
+
+/** Return the resolved cookie name used to namespace cross-tab messages. */
+export function getRangoStateCookieName(): string {
+  return cookieName;
 }
 
 function notifyExternalRotation(value: string): void {
@@ -177,6 +184,22 @@ export function invalidateRangoState(): void {
   mirror = mintValue();
   cookieBacked = false;
   writeCookie(cookieName, mirror);
+}
+
+/** Adopt the state carried by a same-origin cache-invalidation broadcast. */
+export function adoptRangoState(value: string): boolean {
+  const incoming = decodeStateValue(value);
+  if (!incoming || incoming.version !== currentVersion) return false;
+  const current = mirror ? decodeStateValue(mirror) : null;
+  if (
+    current?.version === incoming.version &&
+    current.timestamp >= incoming.timestamp
+  ) {
+    return false;
+  }
+  mirror = value;
+  cookieBacked = false;
+  return true;
 }
 
 function cleanupLegacyStorage(): void {

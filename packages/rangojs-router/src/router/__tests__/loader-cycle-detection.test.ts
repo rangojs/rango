@@ -5,6 +5,10 @@ vi.mock("../../server/context", () => ({
   track: () => () => {},
   isInsideLoaderScope: () => false,
   runInsideLoaderBodyScope: <T>(fn: () => T): T => fn(),
+  getCurrentLoaderBodyId: () => undefined,
+  getLoaderBodyTags: () => undefined,
+  getLoaderRunIdentity: () => undefined,
+  runInsideLoaderRun: <T>(_run: unknown, fn: () => T): T => fn(),
   isInsidePushCallbackScope: () => false,
   runInsidePushCallbackScope: <T>(fn: () => T): T => fn(),
 }));

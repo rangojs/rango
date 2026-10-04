@@ -1,9 +1,13 @@
 import type { LocationStateEntry } from "../browser/react/location-state-shared.js";
+import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
 import {
   getRequestContext,
   _getRequestContext,
 } from "../server/request-context.js";
-import { markExternalRedirect } from "../redirect-origin.js";
+import {
+  attachRedirectState,
+  markExternalRedirect,
+} from "../redirect-origin.js";
 
 /**
  * Create a soft redirect Response for middleware short-circuit
@@ -77,23 +81,6 @@ export function redirect(
   if (state) {
     const ctx = getRequestContext();
     ctx.setLocationState(state);
-
-    if (process.env.NODE_ENV !== "production") {
-      const reqCtx = getRequestContext();
-      // Warn only on true full-page SSR loads. SPA partial requests and server
-      // actions both deliver state through Flight payloads, so suppress for those.
-      if (
-        reqCtx &&
-        !reqCtx.originalUrl.searchParams.has("_rsc_partial") &&
-        !reqCtx.request.headers.has("rsc-action") &&
-        !reqCtx.originalUrl.searchParams.has("_rsc_action")
-      ) {
-        console.warn(
-          `[Router] redirect() with state during a full-page (SSR) request to "${url}". ` +
-            "Location state is only delivered during SPA navigations and will be lost on this request.",
-        );
-      }
-    }
   }
 
   // Auto-prefix root-relative URLs with basename for app-local redirects.
@@ -119,6 +106,18 @@ export function redirect(
   };
 
   const response = new Response(null, { status, headers });
+
+  // Also brand the Response itself with the resolved state (see
+  // redirect-origin.ts): the request-context write above misses the payload
+  // when a STREAMING loader throws this Response after metadata flushed, so
+  // the loader lane reads the state off the thrown object and ships it on
+  // the redirect marker instead.
+  if (state) {
+    attachRedirectState(
+      response,
+      resolveLocationStateEntries(Array.isArray(state) ? state : [state]),
+    );
+  }
 
   // Mark an explicit off-host redirect with an out-of-band brand so the
   // same-origin guard (rsc/redirect-guard.ts) lets it through. The brand is a

@@ -13,6 +13,22 @@ import type { ResolvedSegment } from "../types.js";
 import type { RequestContext } from "../server/request-context.js";
 
 /**
+ * Sentinel a `SegmentCacheStore.get` MAY return instead of `null` when the
+ * read FAILED (backend error) rather than genuinely missing. For the render
+ * outcome the two are identical — render fresh, re-cache — so hit/miss-only
+ * consumers can treat it as a miss. The PPR replay composition needs the
+ * distinction: an errored explicit-tier read must render uncached
+ * (`lookupRouteDetailed` classifies it `error`), never be substituted by the
+ * seeded doc record — the built-in stores swallow backend errors internally,
+ * so without this signal their failures read as replayable misses. Third-party
+ * stores returning plain `null` on error keep the miss classification.
+ */
+export const CACHE_READ_ERROR: unique symbol = Symbol.for(
+  "rango.cache.readError",
+);
+export type CacheReadError = typeof CACHE_READ_ERROR;
+
+/**
  * Result from cache get() including data and revalidation status
  */
 export interface CacheGetResult {
@@ -32,6 +48,13 @@ export interface CacheGetResult {
  * Implementations handle the actual storage (memory, KV, Redis, etc.).
  * The store deals with serialized data - RSC serialization is handled
  * by the cache provider layer.
+ *
+ * A store that outlives the process has to keep one build from reading what
+ * other code wrote. The built-in stores prefix their keys with the serving
+ * router's cache versions; a custom store reads the same pair with
+ * `getCacheVersions()` (`@rangojs/router/cache`): `data` for segment entries
+ * and items, `document` for responses and shells, and no version on its
+ * tag-invalidation records, so an invalidation reaches every version.
  *
  * @typeParam TEnv - Platform bindings type (e.g., Cloudflare env)
  */
@@ -58,6 +81,12 @@ export interface SegmentCacheStore<TEnv = unknown> {
    * 1. Route-level `key` function (full override)
    * 2. Store-level `keyGenerator` (modifies default key)
    * 3. Default key generation (prefix:pathname:params)
+   *
+   * Return `defaultKey` unchanged to leave a request unpartitioned. An empty
+   * string is not a key: where the result partitions a nested cache() on
+   * another store, or a ppr shell, it fails key resolution, so the request
+   * renders uncached (as when the keyGenerator throws), and the router warns
+   * once naming the store.
    *
    * @example Using headers for cache segmentation
    * ```typescript
@@ -90,12 +119,17 @@ export interface SegmentCacheStore<TEnv = unknown> {
 
   /**
    * Get cached entry data by key
-   * @returns Cache result with data and staleness, or null if not found/expired
+   * @returns Cache result with data and staleness, null if not found/expired,
+   * or CACHE_READ_ERROR when the read failed (optional — see the sentinel).
    */
-  get(key: string): Promise<CacheGetResult | null>;
+  get(key: string): Promise<CacheGetResult | null | CacheReadError>;
 
   /**
-   * Store entry data with TTL
+   * Store entry data with TTL. Resolve once a later `get(key)` from the same
+   * location observes the entry: the route cache() write runs in a background
+   * task, and a PPR shell capture awaits that task before it reads the entry
+   * back (#957). A store that resolves earlier makes the capture re-render
+   * the page instead of replaying the entry.
    * @param key - Cache key
    * @param data - Serialized entry data
    * @param ttl - Time-to-live in seconds
@@ -166,12 +200,23 @@ export interface SegmentCacheStore<TEnv = unknown> {
    * upgrade — the reactVersion field on the entry gates that at read time).
    * @param key - Cache key
    * @param entry - The shell prelude/postponed/version/createdAt bundle
-   * @param ttlSeconds - Time-to-live in seconds
-   * @param swrSeconds - Optional stale-while-revalidate window in seconds
+   * @param ttlSeconds - Time-to-live in seconds: the route's `ppr.ttl`
+   *   (undefined: the store's default), capped to the route cache() entry
+   *   the capture replayed or wrote. A capped window arrives in whole
+   *   seconds, rounded up, with ttl + swr at least 1; its ttl can be 0 (a
+   *   shell stale from the start, captured from a record inside its swr
+   *   window).
+   * @param swrSeconds - Optional stale-while-revalidate window in seconds,
+   *   under the same cap
    * @param tags - Optional cache tags for invalidation (participates in
    *   invalidateTags via the same tag machinery as the item family)
    * @returns `invalidated` when a generation marker rejected the write,
-   *   `stored` when acknowledged, or void for stores without acknowledgements.
+   *   `stored` when acknowledged, `uncacheable` when the entry can NEVER be
+   *   stored under the current configuration (every retry would refuse
+   *   identically — the capture scheduler backs the key off instead of
+   *   recapturing per MISS; CFCacheStore returns it for a tag set whose
+   *   Cache-Tag header overflows in KV-less purge mode), or void for stores
+   *   without acknowledgements.
    */
   putShell?(
     key: string,
@@ -179,7 +224,73 @@ export interface SegmentCacheStore<TEnv = unknown> {
     ttlSeconds?: number,
     swrSeconds?: number,
     tags?: string[],
-  ): Promise<"stored" | "invalidated" | void>;
+  ): Promise<"stored" | "invalidated" | "uncacheable" | void>;
+
+  /**
+   * @internal The document serve path's shell read, for built-in stores. The
+   * serve path prefers it over getShell: it resolves with the entry and the
+   * raw (decoded) prelude, the snapshot on its own promise, and the read's
+   * `debugPerformance` stats. CFCacheStore's layout keeps the snapshot behind
+   * the prelude, so its HIT can commit before the snapshot is read;
+   * VercelCacheStore reads the whole entry and decodes the prelude once per
+   * memoized shell (issue #941, docs/design/shell-entry-layout.md). Not part
+   * of the custom-store contract.
+   */
+  readShellDocument?(
+    key: string,
+    options?: ShellDocumentReadOptions,
+  ): Promise<ShellDocumentRead | null>;
+
+  /**
+   * @internal How long (ms) this store's isolate memos (shell, tag markers)
+   * can serve a read that predates a tag invalidation made elsewhere. After
+   * updateTag()/revalidateTag(), the response's fresh-reads cookie lasts the
+   * longest of these, and the same user's requests skip the memos meanwhile.
+   * Absent or 0: nothing to cover.
+   */
+  readonly freshReadsWindowMs?: number;
+
+  /**
+   * @internal Drop this isolate's memoized copy of a shell (shell-memo.ts) so
+   * the next read goes to the store. A HIT whose doc record failed to decode
+   * calls it after replacing the entry with a tombstone: the memoized copy
+   * holds the same record. Built-in stores only; not part of the custom-store
+   * contract.
+   */
+  dropShellMemo?(key: string): void;
+
+  /**
+   * @internal The largest shell entry (prelude, postponed state, and snapshot
+   * bytes) this store can hold in one value. The capture refuses a bigger
+   * entry instead of letting the write fail inside waitUntil. Absent: the
+   * capture applies DEFAULT_SHELL_ENTRY_MAX_BYTES (Cloudflare KV's 25 MiB).
+   */
+  readonly maxShellEntryBytes?: number;
+
+  /**
+   * Declares the shell family present-but-inert: getShell/putShell exist but
+   * no-op (a custom store whose backing tier is conditionally unavailable).
+   * scheduleShellCapture skips captures whose only write target is inert —
+   * the background render would be dead work that still occupies the
+   * per-isolate serialized capture queue (a promise-heavy route bakes for
+   * seconds per MISS with nothing stored). Absent/false means the family,
+   * when present, actually stores. The built-in stores never declare it:
+   * CFCacheStore is L1-only without KV (edge-only ppr), not inert.
+   */
+  shellFamilyInert?: boolean;
+
+  /**
+   * Declares isTagsInvalidatedSince present-but-inert: the store implements
+   * the method but has no DURABLE invalidation history behind it (a KV-less
+   * CFCacheStore answers from the per-request memo at best). Runtime shells
+   * tolerate that — purge eviction plus ttl/swr bound their staleness — but
+   * a TAGGED build-manifest shell is immutable with no ttl of its own, so
+   * serving it on such a store would make updateTag() a permanent no-op for
+   * it. The build-shell read-through declines tagged entries on this flag
+   * (same declared-intent-cannot-be-honored doctrine as a store missing the
+   * method entirely). Absent/false means answers are durably backed.
+   */
+  tagHistoryInert?: boolean;
 
   /**
    * Get a cached function result by key.
@@ -205,6 +316,20 @@ export interface SegmentCacheStore<TEnv = unknown> {
    * APIs delegate to. Receives ALL of one invalidation call's tags at once so
    * stores can batch their work (e.g. a single CDN purge request rather than
    * one per tag). Stores that do not support tags simply omit this method.
+   *
+   * Both verbs call it synchronously, inside the request that invalidates
+   * (#973); revalidateTag() then hands the returned promise to waitUntil
+   * without awaiting it. Read-your-own-writes for that request comes from
+   * what the store does before its first await: record the tags as
+   * invalidated in state its reads consult for the rest of the request (the
+   * built-in stores key a map by the request's root context and the store,
+   * so contexts derived from the request share it, and compare each hit's
+   * tags and write time against it), then start the
+   * durable write. Such a mask must only ever turn hits into misses, and only
+   * in that request: a durable write that later fails then costs extra
+   * misses, never a stale read. A store that records nothing before its
+   * first await still works; the request that ran revalidateTag() can read
+   * entries the invalidation covers until the durable write lands.
    * @param tags - The cache tags to invalidate
    */
   invalidateTags?(tags: string[]): Promise<void>;
@@ -215,12 +340,27 @@ export interface SegmentCacheStore<TEnv = unknown> {
    * freshness). Consulted by build-shell read-through and runtime shell stores:
    * "was it evicted" is answered by tag markers against the entry's createdAt,
    * including when invalidation races a capture that has not been written yet.
+   * Also the store's half of every cache write's gate (#977,
+   * tag-invalidation.ts predatesInvalidation): a "use cache", loader cache(),
+   * route cache() or document-cache write whose execution started before an
+   * invalidation another isolate made is skipped when this answers true, so
+   * it must reflect invalidations made after this request started reading
+   * (not a value memoized earlier in the request).
    * Optional: without it, TAGGED build entries are not served (untagged ones
-   * are unaffected — they are evictable only by deploy/buildVersion anyway).
+   * are unaffected — they are evictable only by deploy/buildVersion anyway),
+   * and writes are gated by this isolate's invalidations only.
    * Fail open to `false` on marker-read errors: a transient store fault must
    * degrade to "still valid", the same posture as the envelope tag checks.
+   * The write gate passes `{ failClosed: true }` instead: a marker it cannot
+   * read (an error, a timed-out read) answers `true`, since a skipped write
+   * only costs a later miss. A store that ignores the option still works;
+   * its fault then lets that write through.
    */
-  isTagsInvalidatedSince?(tags: string[], sinceMs: number): Promise<boolean>;
+  isTagsInvalidatedSince?(
+    tags: string[],
+    sinceMs: number,
+    options?: { failClosed?: boolean },
+  ): Promise<boolean>;
 }
 
 /**
@@ -247,8 +387,8 @@ export interface CacheItemResult {
 /**
  * A cached PPR (Partial Pre-rendering) shell entry.
  *
- * One entry carries BOTH artifacts a resume needs — the rendered HTML prelude
- * and React's postponed state — because the pair is version- and
+ * A DOCUMENT entry carries BOTH artifacts a resume needs — the rendered HTML
+ * prelude and React's postponed state — because the pair is version- and
  * generation-coupled and must never be mixed across a React upgrade or a build
  * change. The reactVersion and buildVersion fields are the read-time gates that
  * enforce both halves: isValidShellHit (rsc/shell-serve.ts) treats an entry
@@ -257,87 +397,229 @@ export interface CacheItemResult {
  * positions against one exact tree; resuming it against a different React or a
  * different app build tree-mismatches inside resume(), AFTER the 200 + prelude
  * are committed — an unrecoverable broken serve).
+ *
+ * A `navigationOnly` entry stores NEITHER half: nothing ever serves its HTML
+ * (document serving skips navigationOnly entries at the read gate, and partial
+ * replay consumes only `snapshot`/`docKey`), so the prelude would ride every
+ * store write and read as dead weight at KV-value scale. The capture still runs
+ * the full fizz prerender — it is the completeness arbiter and sanity gate —
+ * but its output is dropped before putShell. hasIntactShellPayload is the
+ * document-half gate; navigationOnly entries never satisfy it.
  */
 export interface ShellCacheEntry {
-  /** Rendered HTML prelude bytes, base64-encoded (stores are JSON-serializing). */
-  prelude: string;
+  /**
+   * Rendered HTML prelude bytes, base64-encoded (stores are JSON-serializing).
+   * Absent on `navigationOnly` entries (no document half is stored — see the
+   * interface doc); present on every document-servable entry.
+   */
+  prelude?: string;
   /**
    * JSON.stringify of React's postponed state, or null when the shell settled
-   * with no holes (the DATA variant — served without a fizz resume).
+   * with no holes (the DATA variant — served without a fizz resume). Absent
+   * exactly when `prelude` is (navigationOnly entries).
    */
-  postponed: string | null;
+  postponed?: string | null;
   /** React.version captured at prerender time; the read-time invalidation gate. */
   reactVersion: string;
   /**
-   * Build version captured at prerender time (the RSC handler's `version` —
-   * the `@rangojs/router:version` build stamp by default, bumped per build and
-   * on dev RSC-module edits). The second read-time gate: a persistent shared
+   * Build version captured at prerender time: the RSC handler's `version`,
+   * which is the router's DOCUMENT version (router-versions.ts) — a hash of
+   * its server code and the client asset names by default, a stamp bumped on
+   * dev RSC-module edits. The second read-time gate: a persistent shared
    * store (KV/runtime-cache) survives deploys, and an app-code change that
    * keeps the same React version would otherwise leave a stale-build
-   * prelude+postponed live under the same key. Optional only for entries
-   * stored before the field existed — those are treated as a miss and the
-   * recapture re-stamps them (pre-release, no compat shim).
+   * prelude+postponed live under the same key. A deploy that changes neither
+   * keeps the entry. A custom store returns it as putShell received it.
    */
-  buildVersion?: string;
+  buildVersion: string;
   /**
-   * The initialTheme the CAPTURE render was built with (the derived context's
-   * reqCtx.theme). The resume tail must render ThemeProvider with the SAME
+   * The initialTheme the CAPTURE render was built with: the no-cookie default
+   * (payloadInitialTheme, rsc/full-payload.ts), never the capturing visitor's
+   * theme (#971). The resume tail must render ThemeProvider with the SAME
    * initialTheme the frozen prelude was rendered with: React resume requires the
    * tree above the holes to match the prerendered tree, and initialTheme is
    * per-request METADATA, not part of the cached segments — a visitor whose
-   * theme differs from the capturer's would otherwise produce a divergent resume
+   * theme differs from the capture's would otherwise produce a divergent resume
    * tree (broken stitching/hydration). The visitor's real theme is applied
    * pre-paint by the FOUC script and re-synced from the cookie post-mount by
    * ThemeProvider.
    */
   initialTheme?: string;
   /**
-   * The CAPTURE DATA SNAPSHOT: every cache-store read-hit and write the capture
-   * render performed, in stored/serialized form. Replaying these on a HIT (via
-   * the SeededShellStore overlay, for the tail render only) reproduces the
-   * shell's cached content byte-identically, so the freshly rendered hydration
-   * payload matches the frozen prelude even after the underlying cache entries
-   * have drifted (expired, been recomputed, or been tag-invalidated).
-   *
-   * Optional: an entry captured before this field existed simply has no
-   * snapshot and keeps the pre-snapshot behavior (the tail reads live, so any
-   * shell-baked cached value that drifted mismatches the prelude). Recapture
-   * heals it. See docs/design/ppr-shell-resume.md ("the capture data snapshot").
+   * The CAPTURE DATA SNAPSHOT, in stored/serialized form: the doc segment
+   * record every HIT replays the handler layer from (`docKey`) and the
+   * bake-lane loader pins (pruned to what a HIT reads, issue #941). Replaying
+   * them on a HIT keeps the freshly rendered hydration payload equal to the
+   * frozen prelude after the underlying cache entries have drifted; every
+   * other read on a HIT, a hole's included, reads the store. Empty when the capture
+   * recorded nothing (a prerender-served capture without bake-lane loaders,
+   * a tombstone). A custom store returns it as putShell received it. See
+   * docs/design/ppr-shell-resume.md ("the capture data snapshot").
    */
-  snapshot?: ShellSnapshotRecord[];
+  snapshot: ShellSnapshotRecord[];
   /**
-   * True when the capture's HANDLER layer declared per-request liveness: a
-   * handle pushed OUTSIDE a DSL loader scope carried a nested thenable (the
-   * capture mask turns it into a never-filling hole), such a push was still
-   * pending when the entry was written, or a handler-invoked loader
-   * (ctx.use(loader) from a handler body — the consumption lane, #672)
-   * executed during the capture. The serve tail then must NOT take the
-   * handler-free fast path (the implicit doc-cache hit): only a handler
-   * re-run can mint that hole's live promise or refresh that consumed value.
-   * DSL-loader pushes never set this — loaders re-run fresh on every HIT, so
-   * their holes always fill.
+   * Records the capture dropped from `snapshot` because no reader of this
+   * entry consumes them, by family (`loader:1`). Diagnostic only: the
+   * HIT tail timing reports it next to the kept records. See
+   * docs/design/shell-entry-layout.md ("Record only what a HIT reads").
    */
-  handlerLiveHoles?: boolean;
+  prunedRecords?: string;
   /**
-   * The capture encountered transition({ when }). Its effective hold policy is
-   * request-dependent, so handler-free document and navigation replay must
-   * re-run resolution to collect and evaluate the predicate.
+   * The key of the document segment record inside `snapshot`: the handler
+   * layer every HIT replays (a document HIT tail looks the record up by this
+   * key, so a store keyGenerator or a build-time capture host cannot send it
+   * elsewhere) and the record navigation replay consumes (resolved under the
+   * implicit doc namespace at capture; see CacheScope.cacheRoute). A capture
+   * that ran handlers always stores it; only a prerender-served entry (the
+   * prerender store supplies the handler layer) has none. A document entry
+   * without it is served as a MISS.
    */
-  transitionWhen?: true;
+  docKey?: string;
+  /**
+   * The entry was captured from a partial request only to produce an eligible
+   * segment snapshot. Document serving must treat its HTML prelude as a miss;
+   * the partial request's headers and middleware state are not document state.
+   */
+  navigationOnly?: true;
   /** Capture-generation start time; tag invalidations at or after it win. */
   createdAt: number;
 }
 
 /**
- * The families a shell snapshot pins. The item/segment/response families are
- * cache-store reads/writes (recorded by RecordingShellStore); the loader family
- * pins the settled CONTAINER of a bake-lane loader (a loader on an entry with
- * no renderable loading(), executed during capture — see
- * docs/design/loader-container-bake.md). Excludes the shell family itself
- * (getShell/putShell) — the snapshot rides INSIDE a shell entry, so recording
- * it would be self-referential.
+ * @internal A shell entry without its prelude and snapshot: what a
+ * prelude-first read (SegmentCacheStore.readShellDocument) resolves with
+ * before the snapshot bytes arrive.
  */
-export type ShellSnapshotFamily = "item" | "segment" | "response" | "loader";
+export type ShellEntryHead = Omit<ShellCacheEntry, "prelude" | "snapshot">;
+
+/**
+ * A shell entry whose document half is present — what the document HIT path
+ * (serveShellHit / lookupBuildShell) consumes. hasIntactShellPayload
+ * (rsc/shell-serve.ts) is the runtime gate AND the type narrowing to this
+ * shape; navigationOnly entries never pass it (their document half is not
+ * stored).
+ */
+export type DocumentShellCacheEntry = ShellCacheEntry & {
+  prelude: string;
+  postponed: string | null;
+};
+
+/** @internal Options of {@link SegmentCacheStore.readShellDocument}. */
+export interface ShellDocumentReadOptions {
+  /**
+   * Tag names the route declares for its shell (`ppr.tags`), known before the
+   * entry is read: their marker reads can start alongside the entry read.
+   */
+  tagHints?: readonly string[];
+}
+
+/**
+ * @internal Why a prelude-first read's snapshot is missing although the entry
+ * stored one: `unavailable` (the read timed out or failed; the entry may be
+ * sound) or `corrupt` (the bytes arrived and do not parse; the store evicted
+ * the entry).
+ */
+export type ShellSnapshotFailure = "unavailable" | "corrupt";
+
+/**
+ * @internal Result of {@link SegmentCacheStore.readShellDocument}.
+ */
+export interface ShellDocumentRead {
+  /** The entry without its prelude and snapshot (delivered separately). */
+  entry: ShellEntryHead;
+  /** Raw prelude bytes (empty for a navigationOnly entry). */
+  prelude: Uint8Array;
+  shouldRevalidate?: boolean;
+  /**
+   * The capture snapshot, read after the prelude. Resolves undefined when the
+   * entry has none or it could not be read (`snapshotFailure` says which); a
+   * document HIT then cannot replay its doc record and degrades
+   * (rsc-rendering.ts serveShellHit).
+   * Never rejects.
+   */
+  snapshot: Promise<ShellSnapshotRecord[] | undefined>;
+  /**
+   * Why `snapshot` resolved undefined although the entry stored one, or
+   * undefined when it did not fail. A document HIT that cannot replay its
+   * doc record replaces the entry only when it is broken, not when its read
+   * was merely slow (rsc-rendering.ts serveShellHit). Never rejects.
+   */
+  snapshotFailure?: Promise<ShellSnapshotFailure | undefined>;
+  /**
+   * Where the read's time and bytes went, for the `debugPerformance` metrics
+   * (rsc-rendering.ts) and the store's own debug trace. Present only when one
+   * of them is on for the request.
+   */
+  stats?: ShellReadStats;
+}
+
+/**
+ * @internal Sub-steps of a prelude-first shell read. Times are ms. workerd
+ * advances its clock only on I/O, so a CPU-only field
+ * (`snapshot.parseMs`) reads 0 on a deployed worker: the byte counts are the
+ * cost signal there.
+ */
+export interface ShellReadStats {
+  /**
+   * The tier that answered: `memo` (the store's shell memo), `l1`/`kv`
+   * (CFCacheStore), or `store` (a single-tier store, VercelCacheStore).
+   */
+  tier: "memo" | "l1" | "kv" | "store";
+  /** The per-isolate memo's outcome for this read and its size after it. */
+  memo?: { hit: boolean; bytes: number };
+  /**
+   * A KV read after an L1 attempt: how long the L1 attempt took and why it
+   * missed. The KV fields below then restart from the KV read.
+   */
+  l1MissMs?: number;
+  l1MissReason?: string;
+  /** Cache API match (L1) or KV get (KV) until the body was available. */
+  matchMs?: number;
+  /** Frame head read (I/O) and parse. */
+  headMs?: number;
+  /** Prelude bytes read. */
+  preludeMs?: number;
+  /** Tag-marker read, start to resolve (runs alongside the prelude read). */
+  markerMs?: number;
+  /** How long the read waited for the marker after the prelude was read. */
+  markerWaitMs?: number;
+  /**
+   * The marker check was awaited after the entry read (VercelCacheStore), not
+   * alongside the prelude read; hinted reads still start with the entry read.
+   */
+  markerSerial?: true;
+  /**
+   * How the isolate marker memo answered the shell's tags (the most
+   * store-bound outcome across them): `fresh`, `stale` (served, refreshing in
+   * the background), `read` (from the store), `bypass` (fresh-reads cookie).
+   */
+  markerMemo?: "fresh" | "stale" | "read" | "bypass";
+  /** Tags whose marker reads were started before the entry's head (hints). */
+  markerHinted?: readonly string[];
+  /** When the hinted marker reads started (performance.now()). */
+  markerHintStartedAt?: number;
+  /** How many of the shell's tags were hinted. */
+  markerHintHits?: number;
+  /** How long the hinted marker reads ran before the entry named its tags. */
+  markerLeadMs?: number;
+  /** The request carried the fresh-reads cookie: no isolate memo was used. */
+  freshReads?: true;
+  headBytes?: number;
+  preludeBytes?: number;
+  /** Number of the shell's tags the marker read covered. */
+  tags?: number;
+  /** Filled after the commit, once the snapshot has been read. */
+  snapshot?: { readMs: number; parseMs: number; bytes: number };
+}
+
+/**
+ * The families a shell snapshot pins: the doc segment record (recorded by
+ * RecordingShellStore) and the settled CONTAINER of each bake-lane loader
+ * (lane rule: see resolveLoaderData, loader-cache.ts). No cache read is
+ * pinned: a HIT's holes, and a bake-lane loader body that runs on the HIT,
+ * read the store.
+ */
+export type ShellSnapshotFamily = "segment" | "loader";
 
 /**
  * The stored form of a loader-family snapshot value: the bake-lane loader's
@@ -354,49 +636,35 @@ export interface ShellSnapshotLoaderValue {
    * container carries hole markers, so a HIT must gate the overlay on the
    * fresh run (only the loader body can mint the live nested promises);
    * 0 = fully pinned, so a HIT resolves the payload promise immediately from
-   * the pin while the fresh run proceeds ungated (side effects and cache
-   * read-through writes preserved; its values were discarded either way —
-   * recorded paths win wholesale). Absent on pre-bit snapshots, which keep
-   * the gated path.
+   * the pin and does not run the loader body (unless `runs`).
    */
-  holes?: 0 | 1;
-}
-
-/** A serialized cached Response for the response family of a shell snapshot. */
-export interface ShellSnapshotResponseValue {
-  status: number;
-  /** Client-facing header pairs (per-client signal headers excluded at record). */
-  headers: [string, string][];
-  /** base64-encoded response body (binary-safe, JSON-serializable). */
-  body: string;
-}
-
-/** The stored form of an item-family (use cache / loader cache) snapshot value. */
-export interface ShellSnapshotItemValue {
-  /** RSC-serialized return value. */
-  value: string;
-  /** RSC-encoded handle data, if any. */
-  handles?: string;
-  /** The entry's cache tags. */
-  tags?: string[];
+  holes: 0 | 1;
+  /**
+   * 1 when the capture saw a loader push it could not record (a deferred
+   * push, one with masked nested promises, or one made outside any loader
+   * body): a HIT then still runs the loader body in the background
+   * (pin-first) so those pushes reach the page. 0: a hole-free record is
+   * served from the pin alone and its body does not run on a HIT.
+   *
+   * Both bits are always written. A record stored before they existed (v0.17)
+   * reads each missing bit as 1 (buildShellLoaderSeed): its snapshot lacks
+   * the loader-owned pushes, so the body supplies them.
+   */
+  runs: 0 | 1;
 }
 
 /**
- * One recorded cache-store read-hit or write from the capture render. `value`
- * carries the entry in its stored/serialized shape so it round-trips through a
- * JSON-serializing store (KV, CF, Vercel) with the rest of the ShellCacheEntry:
- * - `item`    -> {@link ShellSnapshotItemValue}
+ * One snapshot record: the doc segment record or a bake-lane loader pin.
+ * `value` carries it in its stored/serialized shape so it round-trips
+ * through a JSON-serializing store (KV, CF, Vercel) with the rest of the
+ * ShellCacheEntry:
  * - `segment` -> {@link CachedEntryData} (already JSON-able)
- * - `response`-> {@link ShellSnapshotResponseValue}
+ * - `loader`  -> {@link ShellSnapshotLoaderValue}
  */
 export interface ShellSnapshotRecord {
   family: ShellSnapshotFamily;
   key: string;
-  value:
-    | ShellSnapshotItemValue
-    | CachedEntryData
-    | ShellSnapshotResponseValue
-    | ShellSnapshotLoaderValue;
+  value: CachedEntryData | ShellSnapshotLoaderValue;
 }
 
 /**
@@ -449,6 +717,11 @@ export interface CachedEntryData {
    *  (see handle-snapshot.ts encodeHandles) so Promise/ReactNode handle values
    *  round-trip through JSON-serializing stores instead of being flattened. */
   handles: string;
+  /**
+   * Owning loader ids index-aligned with the decoded `handles` values
+   * (HandleOwners). Absent: every value restores as a plain replay.
+   */
+  handleOwners?: HandleOwners;
   /** Expiration timestamp (ms since epoch) */
   expiresAt: number;
   /** Cache tags for invalidation */
@@ -490,3 +763,19 @@ export interface CacheDefaults {
  * Structure: { handleName: [values...] }
  */
 export type SegmentHandleData = Record<string, unknown[]>;
+
+/**
+ * segmentId -> handleName -> the owning loader id of each recorded value, by
+ * index (null: not owned). Only a PPR shell capture writes owners: the
+ * settled pushes of the loader bodies it ran (an `ssr: false` loader's own,
+ * the loaders it awaits, and its own cache() replays), which the record keeps
+ * because the prelude rendered them. A restore of the record
+ * (handle-snapshot.ts restoreHandles) keeps an owner's value where the
+ * request serves that loader from the pin stored with the record
+ * (HandleStore.pushRestored: it stands against a run of the loader), on a
+ * document HIT and on a navigation replay alike. Every other owner's value
+ * is a placeholder (pushPlaceholder): a live-lane loader's, and every
+ * owner's where the record has no pin for it. The loader's run, or its own
+ * cache() entry, replaces it.
+ */
+export type HandleOwners = Record<string, Record<string, (string | null)[]>>;

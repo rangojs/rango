@@ -1,12 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React from "react";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
+import { compileSearchParamsFilter } from "../../cache/search-params-filter.js";
 import type { ShellCacheEntry } from "../../cache/types.js";
 import {
   lookupBuildShell,
   resetBuildShellManifestForTests,
   type BuildShellEntry,
 } from "../shell-build-manifest.js";
+import { openShellDocument } from "../shell-serve.js";
 
 const BUILD_VERSION = "build-1";
 
@@ -17,6 +19,7 @@ function entry(overrides: Partial<ShellCacheEntry> = {}): ShellCacheEntry {
     reactVersion: React.version,
     buildVersion: BUILD_VERSION,
     createdAt: Date.now(),
+    snapshot: [],
     ...overrides,
   };
 }
@@ -49,14 +52,14 @@ describe("lookupBuildShell (build-shell read-through gates)", () => {
   const url = (p: string) => new URL(p, "http://app.test");
 
   it("serves a fresh manifest entry (stale=false inside ttl)", async () => {
-    installManifest({ "/pp/a": { entry: entry(), ttl: 300, routeName: "pp" } });
+    installManifest({ "/pp/a": { entry: entry(), ttl: 300 } });
     const hit = await lookupBuildShell(url("/pp/a"), BUILD_VERSION, store);
     expect(hit).not.toBeNull();
     expect(hit!.stale).toBe(false);
   });
 
   it("marks the entry stale past createdAt + ttl (serve + recapture upgrade)", async () => {
-    installManifest({ "/pp/a": { entry: entry(), ttl: 300, routeName: "pp" } });
+    installManifest({ "/pp/a": { entry: entry(), ttl: 300 } });
     vi.setSystemTime(Date.now() + 301_000);
     const hit = await lookupBuildShell(url("/pp/a"), BUILD_VERSION, store);
     expect(hit).not.toBeNull();
@@ -64,14 +67,37 @@ describe("lookupBuildShell (build-shell read-through gates)", () => {
   });
 
   it("skips search-bearing URLs (runtime capture owns those shell keys)", async () => {
-    installManifest({ "/pp/a": { entry: entry(), ttl: 300, routeName: "pp" } });
+    installManifest({ "/pp/a": { entry: entry(), ttl: 300 } });
     expect(
       await lookupBuildShell(url("/pp/a?x=1"), BUILD_VERSION, store),
     ).toBeNull();
   });
 
+  it("matches when the URL's only params are excluded by cache.searchParams", async () => {
+    installManifest({ "/pp/a": { entry: entry(), ttl: 300 } });
+    const filter = compileSearchParamsFilter({ exclude: ["utm_*", "fbclid"] });
+    const hit = await lookupBuildShell(
+      url("/pp/a?fbclid=abc&utm_source=tw"),
+      BUILD_VERSION,
+      store,
+      undefined,
+      filter,
+    );
+    expect(hit).not.toBeNull();
+    // A surviving (non-excluded) param still skips the baked shell.
+    expect(
+      await lookupBuildShell(
+        url("/pp/a?fbclid=abc&page=2"),
+        BUILD_VERSION,
+        store,
+        undefined,
+        filter,
+      ),
+    ).toBeNull();
+  });
+
   it("misses unknown pathnames", async () => {
-    installManifest({ "/pp/a": { entry: entry(), ttl: 300, routeName: "pp" } });
+    installManifest({ "/pp/a": { entry: entry(), ttl: 300 } });
     expect(
       await lookupBuildShell(url("/pp/b"), BUILD_VERSION, store),
     ).toBeNull();
@@ -82,7 +108,6 @@ describe("lookupBuildShell (build-shell read-through gates)", () => {
       "/pp/a": {
         entry: entry({ buildVersion: "older-build" }),
         ttl: 300,
-        routeName: "pp",
       },
     });
     expect(
@@ -90,12 +115,45 @@ describe("lookupBuildShell (build-shell read-through gates)", () => {
     ).toBeNull();
   });
 
-  it("rejects a corrupt prelude (integrity gate before commit)", async () => {
+  // Document versions are per router, and the manifest key is the pathname
+  // alone, so two routers of one host build can ask about the same record.
+  // The verdict memo was keyed by the record only: whichever router asked
+  // first decided for both.
+  it("judges a record per asking router's version, in either order", async () => {
+    installManifest({ "/pp/a": { entry: entry(), ttl: 300 } });
+    // Another router (another document version) asks first: not its shell.
+    expect(
+      await lookupBuildShell(url("/pp/a"), "other-router-doc", store),
+    ).toBeNull();
+    // The owner still gets it.
+    expect(
+      await lookupBuildShell(url("/pp/a"), BUILD_VERSION, store),
+    ).not.toBeNull();
+    // And the owner's verdict does not hand it to the other router.
+    expect(
+      await lookupBuildShell(url("/pp/a"), "other-router-doc", store),
+    ).toBeNull();
+  });
+
+  // The read-through's gates are structural; the document serve decodes the
+  // prelude once (openShellDocument) and treats a failed decode as a MISS.
+  it("leaves an undecodable prelude to the document serve's one decode", async () => {
     installManifest({
       "/pp/a": {
         entry: entry({ prelude: "not-base64!!!" }),
         ttl: 300,
-        routeName: "pp",
+      },
+    });
+    const hit = await lookupBuildShell(url("/pp/a"), BUILD_VERSION, store);
+    expect(hit).not.toBeNull();
+    expect(openShellDocument(hit!.entry)).toBeNull();
+  });
+
+  it("rejects an unparseable postponed blob (integrity gate before commit)", async () => {
+    installManifest({
+      "/pp/a": {
+        entry: entry({ postponed: "{" }),
+        ttl: 300,
       },
     });
     expect(
@@ -109,7 +167,6 @@ describe("lookupBuildShell (build-shell read-through gates)", () => {
         entry: entry(),
         ttl: 300,
         tags: ["pp-shell"],
-        routeName: "pp",
       },
     });
     // Not invalidated: serves.
@@ -132,9 +189,8 @@ describe("lookupBuildShell (build-shell read-through gates)", () => {
           entry: entry(),
           ttl: 300,
           tags: ["t"],
-          routeName: "pp",
         },
-        "/pp/untagged": { entry: entry(), ttl: 300, routeName: "pp" },
+        "/pp/untagged": { entry: entry(), ttl: 300 },
       });
       const bareStore = {} as any;
       expect(
@@ -153,6 +209,43 @@ describe("lookupBuildShell (build-shell read-through gates)", () => {
     }
   });
 
+  it("declines TAGGED entries on a tagHistoryInert store (memo-only answers would resurrect the immutable asset)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      installManifest({
+        "/pp/inert-history": {
+          entry: entry(),
+          ttl: 300,
+          tags: ["t"],
+        },
+        "/pp/untagged": { entry: entry(), ttl: 300 },
+      });
+      // The KV-less CFCacheStore shape: the method EXISTS but answers carry
+      // no durable history — "false" here means "cannot know", so a tagged
+      // immutable entry must decline, not serve forever.
+      const inertStore = {
+        isTagsInvalidatedSince: async () => false,
+        tagHistoryInert: true,
+      } as any;
+      expect(
+        await lookupBuildShell(
+          url("/pp/inert-history"),
+          BUILD_VERSION,
+          inertStore,
+        ),
+      ).toBeNull();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("no durable tag history"),
+      );
+      // Untagged entries never consult tag history and still serve.
+      expect(
+        await lookupBuildShell(url("/pp/untagged"), BUILD_VERSION, inertStore),
+      ).not.toBeNull();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("is inert with no manifest loader and no dev context", async () => {
     expect(
       await lookupBuildShell(url("/pp/a"), BUILD_VERSION, store),
@@ -163,7 +256,6 @@ describe("lookupBuildShell (build-shell read-through gates)", () => {
     const DEV_RECORD: BuildShellEntry = {
       entry: entry(),
       ttl: 300,
-      routeName: "pp",
     };
 
     beforeEach(() => {

@@ -6,8 +6,18 @@
  * turns these into tsc errors. Run via tsconfig.augment-check.json.
  */
 import "./augment.js";
-import type { Handler, RouteParams, RouteSearchParams } from "../index.js";
+import type {
+  Handler,
+  MiddlewareContext,
+  ResponseHandlerContext,
+  RouteLocation,
+  RouteParams,
+  RouteSearchParams,
+  ServerRouteLocation,
+  TransitionWhenFn,
+} from "../index.js";
 import type { DefaultRouteName } from "../types/global-namespace.js";
+import type { InterceptWhenFn } from "../server/context.js";
 import { href } from "../href-client.js";
 import type { Money, TestBindings } from "./augment.js";
 
@@ -39,10 +49,46 @@ const varsHandler: Handler<"home"> = (ctx) => {
 };
 void varsHandler;
 
+// Response-route and middleware ctx.reverse resolve global names only (no
+// include() scope): generated names and params are validated, `.name` is not.
+function responseReverse(ctx: ResponseHandlerContext): void {
+  ctx.reverse("home");
+  ctx.reverse("blog.post", { slug: "hello" });
+  // @ts-expect-error - dot-local name; no include() scope to resolve it
+  ctx.reverse(".home");
+  // @ts-expect-error - unknown global name is rejected
+  ctx.reverse("nope");
+}
+void responseReverse;
+
+function middlewareReverse(ctx: MiddlewareContext): void {
+  ctx.reverse("blog.post", { slug: "hello" });
+  // @ts-expect-error - dot-local name; no include() scope to resolve it
+  ctx.reverse(".home");
+}
+void middlewareReverse;
+
 // routeName narrows to the generated route names.
 type _routeName = Expect<
   Equal<DefaultRouteName, "home" | "blog.post" | "search">
 >;
+
+// transition({ when }) / intercept({ when }) locations carry the public route
+// name (internal names never reach them), typed like every routeName.
+type _locationRouteName = Expect<
+  Equal<RouteLocation["routeName"], DefaultRouteName | undefined>
+>;
+type _serverLocationRouteName = Expect<
+  Equal<ServerRouteLocation["routeName"], DefaultRouteName | undefined>
+>;
+const transitionWhenTypo: TransitionWhenFn = ({ to }) =>
+  // @ts-expect-error - "blog.pots" is not a generated route name
+  to.routeName === "blog.pots";
+const interceptWhenTypo: InterceptWhenFn = ({ from }) =>
+  // @ts-expect-error - "hom" is not a generated route name
+  from.routeName === "hom";
+void transitionWhenTypo;
+void interceptWhenTypo;
 
 // RouteParams / RouteSearchParams resolve from the generated map with no
 // explicit route map argument.
@@ -106,6 +152,8 @@ type _flightOverride = Expect<Equal<Rango.FlightSerialize<Money>, number>>;
 // Reference the top-level assertion aliases so they are unambiguously evaluated.
 export type _Assertions = [
   _routeName,
+  _locationRouteName,
+  _serverLocationRouteName,
   _params,
   _search,
   _orderWireByPattern,

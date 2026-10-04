@@ -17,7 +17,7 @@ import { GtmDemoPage } from "../pages/gtm-demo.js";
  *   - Plausible as an external ASYNC resource — React loads it on first visit to
  *     /gtm, whether reached by hard load OR soft navigation (async = resource).
  *   - a body-positioned INLINE script — document-load only: it runs on a hard
- *     load of /gtm, but a soft navigation to /gtm does NOT re-run it (<Scripts/>
+ *     load of /gtm, but a soft navigation to /gtm does NOT re-run it (<Html.Scripts/>
  *     freezes the non-async set after hydration).
  *
  * The product data is NOT awaited here: it is registered via the loader() DSL

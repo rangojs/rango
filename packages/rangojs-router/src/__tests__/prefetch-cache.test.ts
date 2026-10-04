@@ -1,8 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { abortAllPrefetchesMock, invalidateRangoStateMock } = vi.hoisted(() => ({
+const {
+  abortAllPrefetchesMock,
+  invalidateRangoStateMock,
+  notifyPrefetchCacheInvalidatedMock,
+} = vi.hoisted(() => ({
   abortAllPrefetchesMock: vi.fn(),
   invalidateRangoStateMock: vi.fn(),
+  notifyPrefetchCacheInvalidatedMock: vi.fn(),
 }));
 
 vi.mock("../browser/prefetch/loader", () => ({
@@ -11,6 +16,10 @@ vi.mock("../browser/prefetch/loader", () => ({
 
 vi.mock("../browser/rango-state", () => ({
   invalidateRangoState: invalidateRangoStateMock,
+}));
+
+vi.mock("../browser/prefetch/invalidation", () => ({
+  notifyPrefetchCacheInvalidated: notifyPrefetchCacheInvalidatedMock,
 }));
 
 import {
@@ -48,21 +57,28 @@ describe("prefetch cache", () => {
     clearPrefetchCache();
     abortAllPrefetchesMock.mockClear();
     invalidateRangoStateMock.mockClear();
+    notifyPrefetchCacheInvalidatedMock.mockClear();
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("buildPrefetchKey concatenates prefix and target (wildcard shape)", () => {
-    const target = new URL("http://localhost/products?page=1");
-    expect(buildPrefetchKey("v1:123", target)).toBe("v1:123\0/products?page=1");
+  it("buildPrefetchKey omits source-tree segment ids from the wildcard shape", () => {
+    const target = new URL(
+      "http://localhost/products?page=1&_rsc_partial=true&_rsc_segments=L0%2CR1&_rsc_v=v1",
+    );
+    expect(buildPrefetchKey("v1:123", target)).toBe(
+      "v1:123\0/products?page=1&_rsc_partial=true&_rsc_v=v1",
+    );
   });
 
-  it("buildSourceKey embeds rango state and source href (source-scoped shape)", () => {
-    const target = new URL("http://localhost/products?page=1");
+  it("buildSourceKey keeps source-tree segment ids in the source-scoped shape", () => {
+    const target = new URL(
+      "http://localhost/products?page=1&_rsc_segments=L0%2CR1",
+    );
     expect(buildSourceKey("v1:123", "http://localhost/home", target)).toBe(
-      "v1:123\0http://localhost/home\0/products?page=1",
+      "v1:123\0http://localhost/home\0/products?page=1&_rsc_segments=L0%2CR1",
     );
   });
 
@@ -136,6 +152,15 @@ describe("prefetch cache", () => {
     expect(hasPrefetch("http://localhost/\0/b")).toBe(false);
     expect(abortAllPrefetchesMock).toHaveBeenCalledTimes(1);
     expect(invalidateRangoStateMock).toHaveBeenCalledTimes(1);
+    expect(notifyPrefetchCacheInvalidatedMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("can clear a receiving tab without rotating shared rango state", () => {
+    clearPrefetchCache(false);
+
+    expect(abortAllPrefetchesMock).toHaveBeenCalledOnce();
+    expect(invalidateRangoStateMock).not.toHaveBeenCalled();
+    expect(notifyPrefetchCacheInvalidatedMock).toHaveBeenCalledOnce();
   });
 
   it("evicts oldest entry at the default max capacity (100)", () => {
@@ -249,6 +274,86 @@ describe("prefetch cache", () => {
       expect(hasPrefetch(keys[1])).toBe(true);
       expect(hasPrefetch(keys[2])).toBe(true);
       expect(hasPrefetch(keys[3])).toBe(true);
+    });
+  });
+
+  describe("respawnable entries", () => {
+    it("re-arms the slot in place when the entry carries respawn", () => {
+      const key = "s\0/products";
+      const gen = currentGeneration();
+      const replacement = makeEntry();
+      const original = makeEntry();
+      original.respawn = () => replacement;
+      storePrefetch(key, original, gen);
+
+      expect(consumePrefetch(key)).toBe(original);
+      // Slot re-armed with the respawned entry instead of deleted.
+      expect(hasPrefetch(key)).toBe(true);
+      expect(consumePrefetch(key)).toBe(replacement);
+      // The replacement had no respawn of its own: back to one-shot.
+      expect(hasPrefetch(key)).toBe(false);
+    });
+
+    it("expires a re-armed slot by the ORIGINAL fetch age, not the last adoption", () => {
+      vi.useFakeTimers();
+      try {
+        initPrefetchCache(1_000);
+        const key = "s\0/products";
+        const gen = currentGeneration();
+        const entry = makeEntry();
+        entry.respawn = () => {
+          const next = makeEntry();
+          next.respawn = entry.respawn;
+          return next;
+        };
+        storePrefetch(key, entry, gen);
+
+        vi.advanceTimersByTime(600);
+        expect(consumePrefetch(key)).toBe(entry); // re-arms at t=600
+
+        // TTL bounds data age: expired at t=1200 even though the slot was
+        // refreshed at t=600 — respawn must not extend staleness.
+        vi.advanceTimersByTime(600);
+        expect(consumePrefetch(key)).toBeNull();
+        expect(hasPrefetch(key)).toBe(false);
+      } finally {
+        vi.useRealTimers();
+        initPrefetchCache(300_000);
+      }
+    });
+
+    it("releases buffered bytes via dispose on eviction paths", () => {
+      const gen = currentGeneration();
+
+      const clearDispose = vi.fn();
+      const cleared = makeEntry();
+      cleared.dispose = clearDispose;
+      storePrefetch("s\0/cleared", cleared, gen);
+      clearPrefetchCache();
+      expect(clearDispose).toHaveBeenCalledTimes(1);
+
+      vi.useFakeTimers();
+      try {
+        initPrefetchCache(1_000);
+        const expiredDispose = vi.fn();
+        const expired = makeEntry();
+        expired.dispose = expiredDispose;
+        storePrefetch("s\0/expired", expired, currentGeneration());
+        vi.advanceTimersByTime(2_000);
+        expect(hasPrefetch("s\0/expired")).toBe(false);
+        expect(expiredDispose).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+        initPrefetchCache(300_000);
+      }
+
+      // Consumption is NOT an eviction: the adopter owns the entry.
+      const consumedDispose = vi.fn();
+      const consumed = makeEntry();
+      consumed.dispose = consumedDispose;
+      storePrefetch("s\0/consumed", consumed, currentGeneration());
+      expect(consumePrefetch("s\0/consumed")).toBe(consumed);
+      expect(consumedDispose).not.toHaveBeenCalled();
     });
   });
 });

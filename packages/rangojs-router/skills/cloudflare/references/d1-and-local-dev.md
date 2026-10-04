@@ -1,5 +1,8 @@
 # D1, KV, and local parity
 
+Provisioning D1/KV bindings, applying migrations, loading local secrets, and
+testing that `vite dev` and `vite preview` behave like the deployed Worker.
+
 ## Contents
 
 - [Provision bindings](#provision-bindings)
@@ -50,9 +53,11 @@ therefore visible to both `vite dev` and `vite preview`; treat the internal
 `.wrangler/state` layout as an implementation detail.
 
 Add a real handler probe while setting up the binding, then remove it after the
-first production-shaped test:
+first production-shaped test. `path.json` is a response route (`/response-routes`):
+return a value and it is serialized as JSON.
 
 ```typescript
+// inside urls(({ path }) => [ ... ])
 path.json("/__db-check", async (ctx) => {
   const row = await ctx.env.DB.prepare(
     "SELECT COUNT(*) AS n FROM users",
@@ -65,9 +70,17 @@ path.json("/__db-check", async (ctx) => {
 
 ## Use bindings
 
-Handlers, loaders, and middleware all receive the same typed bindings:
+Handlers, loaders, and middleware all receive the same typed bindings on
+`ctx.env`:
 
 ```typescript
+import {
+  cookies,
+  createLoader,
+  redirect,
+  type Middleware,
+} from "@rangojs/router";
+
 export const UserLoader = createLoader(async (ctx) =>
   ctx.env.DB.prepare("SELECT * FROM users WHERE id = ?")
     .bind(ctx.params.id)

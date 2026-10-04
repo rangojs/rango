@@ -4,4 +4,3 @@ export {
   cancelAllPrefetches,
   setPrefetchConcurrency,
 } from "./queue.js";
-export { observeForPrefetch, unobserveForPrefetch } from "./observer.js";

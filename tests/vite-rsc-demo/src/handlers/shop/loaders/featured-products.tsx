@@ -22,8 +22,6 @@ import type { Product } from "./product.js";
  */
 export const FeaturedProductsLoader = createLoader<FeaturedProductsData>(
   async (_ctx) => {
-    "use server";
-
     // Return immediately with a promise that resolves later
     // This promise streams via RSC - not awaited on server
     const contentPromise = new Promise<ReactNode>((resolve) => {

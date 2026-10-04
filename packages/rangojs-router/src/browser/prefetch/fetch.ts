@@ -25,6 +25,7 @@ import {
   removePrefetch,
   clearPrefetchInflight,
   currentGeneration,
+  isFragmentPassthroughEnabled,
   type DecodedPrefetch,
 } from "./cache.js";
 import { getRangoState } from "../rango-state.js";
@@ -33,6 +34,7 @@ import { enqueuePrefetch } from "./queue.js";
 import { shouldPrefetch } from "./policy.js";
 import { debugLog, IS_BROWSER_DEBUG } from "../logging.js";
 import { teeWithCompletion, isForeignRouterId } from "../response-adapter.js";
+import { SEGMENT_FRAGMENT_CAPABILITY_HEADER } from "../../segment-fragments.js";
 import type { RscPayload } from "../types.js";
 
 /**
@@ -66,6 +68,49 @@ const PREFETCH_FETCH_TIMEOUT_MS = 30_000;
  */
 export function setPrefetchDecoder(fn: PrefetchDecoder): void {
   decoder = fn;
+}
+
+/**
+ * Build the respawn closure for a cleanly-completed prefetch entry. Each call
+ * tees the reserve byte branch: one side feeds a fresh decode — a fresh handle
+ * stream and fresh serialized-stream instances, which no cloning of the
+ * revived payload graph could produce — and the other becomes the next
+ * reserve, so the replacement entry can respawn again. `streamComplete`
+ * resolves immediately and `complete` starts true: the buffered bytes are a
+ * finished stream by construction. The chunk imports the decode triggers are
+ * already in the module cache from the original eager decode, so a respawn
+ * costs ~ms with no network.
+ */
+function makeRespawn(
+  storageKey: string,
+  reserve: ReadableStream<Uint8Array>,
+  scope: "source" | "wildcard",
+): () => DecodedPrefetch {
+  return () => {
+    const [body, nextReserve] = reserve.tee();
+    // decoder is non-null here: respawn is only armed after a successful
+    // eager decode, which requires the decoder to have been set.
+    const payload = decoder!(Promise.resolve(new Response(body)));
+    payload.catch(() => {});
+    const entry: DecodedPrefetch = {
+      payload,
+      streamComplete: Promise.resolve(),
+      scope,
+      complete: true,
+      dispose: () => {
+        // Rejects (caught) instead of throwing if the branch is already
+        // locked by a later respawn — cache eviction never races adoption on
+        // the same entry object, so this is belt-and-braces.
+        nextReserve.cancel().catch(() => {});
+      },
+    };
+    entry.respawn = makeRespawn(storageKey, nextReserve, scope);
+    // Parity with the original path: a rejected decode must not stay
+    // consumable. Clean bytes should never fail to decode, but if they do,
+    // evict (identity-guarded) so navigation refetches instead.
+    payload.catch(() => removePrefetch(storageKey, entry));
+    return entry;
+  };
 }
 
 /**
@@ -144,8 +189,8 @@ function buildPrefetchUrl(
  * - Otherwise: dual inflight registration under both `wildcardKey` and
  *   `sourceKey` so same-source navigations adopt directly via their own
  *   source key. Storage key is chosen at response time from the
- *   `X-RSC-Prefetch-Scope` header — `"source"` → `sourceKey` (intercept
- *   modals etc.), anything else → `wildcardKey`. The entry records its scope
+ *   `X-RSC-Prefetch-Scope` header — `"source"` → `sourceKey` (a route an
+ *   intercept targets), anything else → `wildcardKey`. The entry records its scope
  *   so cross-source navigations that adopted via `wildcardKey` can bail out
  *   in `navigation-client.ts` when the adopted entry turns out source-scoped.
  */
@@ -219,6 +264,9 @@ function executePrefetchFetch(
       "X-Rango-State": rangoState,
       "X-RSC-Router-Client-Path": window.location.href,
       "X-Rango-Prefetch": "1",
+      ...(isFragmentPassthroughEnabled() && {
+        [SEGMENT_FRAGMENT_CAPABILITY_HEADER]: "1",
+      }),
     },
   })
     .then((response) => {
@@ -266,9 +314,23 @@ function executePrefetchFetch(
         true,
       );
 
+      // Split the decode branch: one side feeds the eager decoder (unchanged —
+      // client chunks still import at prefetch time), the other stays unread as
+      // a reserve of the raw Flight bytes. A decoded payload is single-render
+      // (its handle stream drains during commit), so adoption would otherwise
+      // spend the entry; the reserve lets a cleanly-completed entry respawn a
+      // fresh decode per adoption instead (see makeRespawn).
+      let decodeSource: Response = tracked;
+      let reserve: ReadableStream<Uint8Array> | undefined;
+      if (tracked.body) {
+        const [decodeBody, reserveBody] = tracked.body.tee();
+        decodeSource = new Response(decodeBody, { headers: tracked.headers });
+        reserve = reserveBody;
+      }
+
       // Eager decode: parsing the Flight stream imports the route's client
       // chunks now, not on click.
-      const payload = decoder(Promise.resolve(tracked));
+      const payload = decoder(Promise.resolve(decodeSource));
       // Mark handled so an unconsumed prefetch decode error stays quiet; the
       // error is still surfaced to navigation if it consumes the entry.
       payload.catch(() => {});
@@ -278,6 +340,11 @@ function executePrefetchFetch(
         streamComplete,
         scope,
         complete: false,
+        ...(reserve && {
+          dispose: () => {
+            reserve.cancel().catch(() => {});
+          },
+        }),
       };
       storePrefetch(storageKey, entry, gen);
       // The stall timeout now owns the body stream: arm eviction (publishedKey)
@@ -296,10 +363,29 @@ function executePrefetchFetch(
       streamComplete.then(() => {
         if (!endedCleanly) removePrefetch(storageKey, entry);
       });
-      // Mark complete ONLY on a fully-healthy prefetch (decode resolved AND clean EOF).
+      // Mark complete ONLY on a fully-healthy prefetch (decode resolved AND
+      // clean EOF) — and only then arm respawn: a truncated or failed stream's
+      // reserve would replay broken bytes, so it stays one-shot (and its
+      // buffered reserve is released via the removePrefetch dispose above).
       Promise.allSettled([payload, streamComplete]).then(([decode]) => {
         if (decode.status === "fulfilled" && endedCleanly) {
           entry.complete = true;
+          if (reserve) {
+            entry.respawn = makeRespawn(storageKey, reserve, scope);
+            // Refill after an early adoption. A click that lands before this
+            // point adopts the entry with respawn unarmed and leaves the slot
+            // empty — via either path: pre-headers inflight adoption makes
+            // storePrefetch skip publication (adoptedKeys), and a mid-stream
+            // cache adoption deletes the incomplete entry. Now that the bytes
+            // proved themselves complete, publish a respawned sibling so the
+            // revisit is warm. Guards: hasPrefetch skips when the slot is
+            // live again (our own un-adopted entry, a fresh entry, or a new
+            // in-flight prefetch), and storePrefetch's generation check drops
+            // the sibling if the cache was invalidated since the fetch began.
+            if (!hasPrefetch(storageKey)) {
+              storePrefetch(storageKey, entry.respawn(), gen);
+            }
+          }
         }
         clearTimeout(timeoutId);
       });

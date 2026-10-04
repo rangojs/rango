@@ -21,12 +21,36 @@
  * primitive for each tag. A single configured store (the common case) owns its
  * own tag index and distributed invalidation - there is no separate
  * tag-invalidation store.
+ *
+ * Both call invalidateTags() synchronously, inside the request (#973). A store
+ * masks the tags for the rest of the request before its first await (the
+ * built-in stores write their per-request marker state there), so the request
+ * that ran either verb reads its own writes; revalidateTag() leaves only the
+ * durable remainder (KV marker put, tag purge, expireTag) to waitUntil.
+ * Invariant: the mask only turns the invalidating request's hits into misses.
+ * If the durable write then fails, that request paid extra misses, never a
+ * stale read, and other requests read the durable state. Both also record
+ * the tags in the isolate's invalidation order (markInvalidated), so a cache
+ * execution that started before one of its tags was invalidated, in any
+ * request, is neither joined nor written (#973, #977): see
+ * predatesInvalidation, and docs/design/caching.md "Read-your-own-writes".
  */
 
 import { _getRequestContext } from "../server/request-context.js";
 import { reportingAsync } from "./cache-error.js";
 import { normalizeTags } from "./cache-tag.js";
 import type { SegmentCacheStore } from "./types.js";
+import {
+  invalidatedSince,
+  markInvalidated,
+  type ExecutionStart,
+} from "./invalidation-order.js";
+
+export {
+  executionStart,
+  invalidatedSince,
+  type ExecutionStart,
+} from "./invalidation-order.js";
 
 /**
  * Collect every store that may hold entries tagged for this request's handler:
@@ -68,8 +92,8 @@ function warnNoTagStore(fn: string, tags: string[]): void {
   console.warn(
     `[${fn}] No tag-capable cache store is configured; tags ` +
       `[${tags.join(", ")}] were not invalidated. The configured store must ` +
-      `implement invalidateTags() (the built-in MemorySegmentCacheStore and ` +
-      `CFCacheStore do).`,
+      `implement invalidateTags() (the built-in MemorySegmentCacheStore, ` +
+      `CFCacheStore, and VercelCacheStore do).`,
   );
 }
 
@@ -98,9 +122,71 @@ function warnPartialTagStore(fn: string, incapable: number): void {
   console.warn(
     `[${fn}] ${incapable} configured cache store(s) do not implement ` +
       `invalidateTags(); their tagged entries were NOT invalidated. Use a ` +
-      `tag-capable store (e.g. MemorySegmentCacheStore / CFCacheStore) for any ` +
+      `tag-capable store (MemorySegmentCacheStore / CFCacheStore / ` +
+      `VercelCacheStore) for any ` +
       `cache({ store }) boundary whose entries you invalidate by tag.`,
   );
+}
+
+/**
+ * Set the fresh-reads cookie on this request's response for as long as the
+ * invalidated stores' isolate memos can stay stale (isolate-tag-memo.ts), so
+ * the same user's next requests read past them on every isolate.
+ */
+function markFreshReads(stores: SegmentCacheStore[]): void {
+  const ctx = _getRequestContext();
+  if (!ctx?._setFreshReadsCookie) return;
+  let windowMs = 0;
+  for (const store of stores) {
+    windowMs = Math.max(windowMs, store.freshReadsWindowMs ?? 0);
+  }
+  if (windowMs > 0) ctx._setFreshReadsCookie(windowMs);
+}
+
+/**
+ * The write gate of every cache execution (#977): whether one of `tags` was
+ * invalidated after the execution that produced the value started.
+ *
+ * Every built-in store stamps an entry when it is written (CFCacheStore's
+ * `taggedAt`, VercelCacheStore's `ta`) or checks nothing on write
+ * (MemorySegmentCacheStore), so a value read before an invalidation and
+ * written after it would be served as newer than the invalidation until it
+ * expires. Two answers, either one skips the write:
+ *
+ * - this isolate's order (invalidatedSince), which sees every request's
+ *   updateTag()/revalidateTag() here, the calling one included;
+ * - the store's markers (isTagsInvalidatedSince), for another isolate's
+ *   invalidation, as far as the store can tell: KV markers on CFCacheStore
+ *   (KV-less, only this request's own), `tm` markers on VercelCacheStore,
+ *   the process markers on MemorySegmentCacheStore. Asked about the
+ *   milliseconds after the start's: this isolate's own invalidation that
+ *   preceded the start usually shares its millisecond (Workers freeze
+ *   Date.now() between I/O), and `>=` would skip every write started right
+ *   after it. Another isolate's invalidation in the start's own millisecond
+ *   is not caught. Asked fail-closed: a marker the store cannot read
+ *   counts as an invalidation.
+ *
+ * The order is read again once the store answers: its read can be in flight
+ * while this isolate invalidates (an action awaits a "use cache" miss, whose
+ * write waits on the read, then runs updateTag()), and it then answers with
+ * the markers from before. markInvalidated is synchronous, so this second
+ * look sees every invalidation made before the answer.
+ *
+ * Invariant: a skipped write only costs a later miss, never a stale read.
+ * The caller still returns the value it computed.
+ */
+export async function predatesInvalidation(
+  store: SegmentCacheStore,
+  tags: readonly string[] | undefined,
+  start: ExecutionStart,
+): Promise<boolean> {
+  if (!tags || tags.length === 0) return false;
+  if (invalidatedSince(tags, start.seq)) return true;
+  if (!store.isTagsInvalidatedSince) return false;
+  const marked = await store.isTagsInvalidatedSince([...tags], start.at + 1, {
+    failClosed: true,
+  });
+  return marked || invalidatedSince(tags, start.seq);
 }
 
 async function invalidateAcross(
@@ -162,6 +248,8 @@ export async function updateTag(...tags: string[]): Promise<void> {
   }
   if (incapable > 0) warnPartialTagStore("updateTag", incapable);
 
+  markFreshReads(capable);
+  markInvalidated(valid);
   await invalidateAcross(capable, valid);
 }
 
@@ -172,10 +260,12 @@ export async function updateTag(...tags: string[]): Promise<void> {
  * This is NOT stale-while-revalidate: like updateTag() it hard-purges, so the
  * next read after the invalidation lands is a miss that re-renders fresh. The
  * only difference from updateTag() is awaitability - revalidateTag() defers the
- * purge off the response path and is not awaited.
+ * durable write off the response path and is not awaited.
  *
- * Use in Route Handlers / webhooks. For read-your-own-writes inside a Server
- * Action, use updateTag() instead so the action's own response is fresh.
+ * Read-your-own-writes (#973): each built-in store masks the tags for the rest
+ * of this request before revalidateTag() returns, so a Server Action's own
+ * re-render after it is fresh, as after `await updateTag()`. Other requests see
+ * the invalidation once the durable write lands.
  *
  * Fire-and-forget: because this returns void and runs in the background, a
  * failed durable marker write (e.g. a transient KV outage) is NOT surfaced to
@@ -208,23 +298,25 @@ export function revalidateTag(...tags: string[]): void {
   }
   if (incapable > 0) warnPartialTagStore("revalidateTag", incapable);
 
+  markFreshReads(capable);
   const ctx = _getRequestContext();
+  // A build-time render drops background work (RequestContext.waitUntil), so
+  // it never ran this invalidation; keep it that way.
+  if (ctx?.build) return;
+  markInvalidated(valid);
+  // Started here, not in the waitUntil task, so each store masks the tags
+  // before this returns (#973, header above).
+  //
   // reportingAsync never rejects: it catches a failed durable write and routes
   // it through reportCacheError (loud log + onError). This is the only place a
   // revalidateTag failure can be observed, since it is not awaitable. Pass ctx
-  // explicitly - the run executes in a detached waitUntil where the ALS context
-  // is gone, so onError fires only if we hand it the captured context.
-  const run = () =>
-    reportingAsync(
-      () => invalidateAcross(capable, valid),
-      "cache-invalidate",
-      "[revalidateTag] background invalidation",
-      ctx,
-    );
-  if (ctx?.waitUntil) {
-    ctx.waitUntil(run);
-  } else {
-    // No request context (e.g. called outside ALS): best-effort background run.
-    void run();
-  }
+  // explicitly: the write can settle after the response, outside the
+  // request's ALS scope, and onError fires only with the captured context.
+  const pending = reportingAsync(
+    () => invalidateAcross(capable, valid),
+    "cache-invalidate",
+    "[revalidateTag] background invalidation",
+    ctx,
+  );
+  ctx?.waitUntil(() => pending);
 }

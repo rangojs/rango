@@ -8,6 +8,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, basename, join } from "node:path";
 import { jsonParseExpression } from "../utils/manifest-utils.js";
+import { compareStrings } from "../utils/compare-strings.js";
 import { VIRTUAL_ROUTES_MANIFEST_ID } from "./state.js";
 import type { DiscoveryState } from "./state.js";
 
@@ -23,6 +24,14 @@ import type { DiscoveryState } from "./state.js";
  * RANGO_MANIFEST_TEXT=1 bypasses it.
  */
 const MANIFEST_EXTERNALIZE_THRESHOLD = 512 * 1024;
+
+/**
+ * Strict transition({ when }) validation for the app's RSC realm: under the
+ * plugin a "use client" import is a client reference, so the render-time
+ * backstop (rsc/attach-transition-when.ts) can reject a server function. Off
+ * by default in the router, where unit-test projects cannot tell them apart.
+ */
+const TRANSITION_WHEN_VALIDATION = `enableTransitionWhenValidation();`;
 
 function devDiscoveryBootstrap(state: DiscoveryState): string[] {
   if (
@@ -44,6 +53,7 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
   const hasManifest =
     state.mergedRouteManifest &&
     Object.keys(state.mergedRouteManifest).length > 0;
+  const hasClientUrlModules = Boolean(state.clientUrlSourceByReferenceId?.size);
 
   if (hasManifest) {
     // Build gen file import statements for each router with a sourceFile.
@@ -79,10 +89,14 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
     }
 
     const serverImports = [
+      "enableTransitionWhenValidation",
       "setCachedManifest",
       "setRouterManifest",
       ...(state.isBuildMode ? ["registerRouterManifestLoader"] : []),
       "clearAllRouterData",
+      ...(hasClientUrlModules
+        ? ["clearClientUrlProjections", "setClientUrlProjection"]
+        : []),
     ];
     const lines = [
       `import { ${serverImports.join(", ")} } from "@rangojs/router/server";`,
@@ -93,7 +107,22 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
       // because it's not in the HMR invalidation chain. Without this clear, the
       // handler finds stale trie data and never rebuilds from updated urlpatterns.
       `clearAllRouterData();`,
+      TRANSITION_WHEN_VALIDATION,
     ];
+
+    if (hasClientUrlModules) {
+      lines.push(`clearClientUrlProjections();`);
+      // Sorted: the map fills in transform order, which varies between runs,
+      // and this module's bytes feed cache versions (build-versions.ts).
+      const projections = [...(state.clientUrlProjectionMap ?? [])].sort(
+        ([a], [b]) => compareStrings(a, b),
+      );
+      for (const [referenceId, projection] of projections) {
+        lines.push(
+          `setClientUrlProjection(${JSON.stringify(referenceId)}, ${jsonParseExpression(projection)});`,
+        );
+      }
+    }
 
     if (varIdx > 0) {
       lines.push(
@@ -168,7 +197,13 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
     return lines.join("\n");
   }
 
-  const lines: string[] = [];
+  const lines: string[] = [
+    `import { ${hasClientUrlModules ? "clearClientUrlProjections, " : ""}enableTransitionWhenValidation } from "@rangojs/router/server";`,
+    TRANSITION_WHEN_VALIDATION,
+  ];
+  if (hasClientUrlModules) {
+    lines.push(`clearClientUrlProjections();`);
+  }
   if (!state.isBuildMode) {
     const origin =
       state.devServerOrigin ||
@@ -181,7 +216,7 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
     }
   }
   lines.push(...devDiscoveryBootstrap(state));
-  return lines.join("\n") || `// Route manifest will be populated at runtime`;
+  return lines.join("\n");
 }
 
 /**

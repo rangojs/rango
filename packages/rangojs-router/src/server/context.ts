@@ -1,3 +1,4 @@
+import type { ServerRouteLocation } from "../types/segments.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ReactNode } from "react";
 import type {
@@ -12,6 +13,13 @@ import type {
 } from "../types";
 import { invariant, DslContextError } from "../errors";
 import type { DefaultRouteName } from "../types/global-namespace.js";
+import type { ContextVar } from "../context-var.js";
+import { PPR_LANE_HINT } from "../rsc/shell-capture-constants.js";
+import {
+  endIdentityExempt,
+  isInsideCacheExecScope,
+  isInsideIdentityExempt,
+} from "../cache/cache-exec-scope.js";
 
 // ============================================================================
 //  Performance Metrics Types
@@ -65,10 +73,23 @@ export type EntryPropCommon = {
   id: string;
   shortCode: string; // Short identifier for network efficiency (e.g., "L0", "P1", "R2")
   parent: EntryData | null;
+  /**
+   * Orphan siblings only (attachOrphanSibling in
+   * route-definition/dsl-helpers.ts): the entry whose `layout[]` holds this
+   * one. `parent` stays null on an orphan (matchError's matched-id stack in
+   * router/match-api.ts starts at the boundary-holding entry, possibly an
+   * orphan, and must stop there), so the boundary walkers in
+   * router/error-handling.ts follow this instead. A lookup that starts at an
+   * orphan (its loaders, an intercept it declares) then reaches the owner's
+   * boundaries and the owner's ancestors.
+   */
+  orphanOwner?: EntryData;
   /** Cache configuration for this entry (set by cache() DSL) */
   cache?: EntryCacheConfig;
   /** URL prefix from include() scope, used for MountContext on client */
   mountPath?: string;
+  /** clientUrls() group key (PathOptions.clientGroup); route entries only. */
+  clientGroup?: string;
 };
 
 /**
@@ -106,6 +127,25 @@ export type LoaderEntry = {
   revalidate: ShouldRevalidateFn<any, any>[];
   /** Cache config for this specific loader (loaders are NOT cached by default) */
   cache?: EntryCacheConfig;
+  /**
+   * Document renders await this loader before segment resolution returns
+   * (loader(Def, { ssr: false })), so its data, handle pushes, and
+   * thrown notFound()/redirect() deterministically precede first flush.
+   * Resolved at DSL-evaluation time from ctx.isSSR — entries are cached
+   * per-isSSR (router/manifest.ts cache key), so the flag is already
+   * request-mode-correct when resolveLoaders (fresh.ts) reads it and never
+   * appears on navigation-lane entries.
+   */
+  awaitBeforeFlush?: true;
+  /**
+   * loader(Def, { ssr: false }) on every DSL evaluation, document and
+   * navigation: the loader's PPR bake lane (loader-cache.ts
+   * resolveLoaderData). The bake/seed key rides on it, so a client
+   * navigation's shell replay pins exactly the loaders a document HIT pins,
+   * whatever the entry's loading(). awaitBeforeFlush cannot carry that: a
+   * navigation evaluation never has it.
+   */
+  bake?: true;
 };
 
 /**
@@ -125,20 +165,22 @@ export type InterceptSegmentsState = {
  * Context passed to intercept selector functions (when())
  * Contains navigation context to determine if interception should occur.
  *
+ * `from` / `to` have the shape transition({ when }) sees, without `state`:
+ * history state never reaches the server.
+ *
  * Note: when() is evaluated during route matching, BEFORE middleware runs.
  * So ctx.get()/ctx.use() are not available, but env (platform bindings) is.
  *
  * @internal This type is an implementation detail and may change without notice.
  */
 export type InterceptSelectorContext<TEnv = any> = {
-  from: URL; // Source URL (where user is coming from)
-  to: URL; // Destination URL (where user is navigating to)
-  params: Record<string, string>; // Matched route params
+  /** Where the navigation comes from: the intercept source while one is open. */
+  from: ServerRouteLocation;
+  /** The navigation target. */
+  to: ServerRouteLocation;
   request: Request; // The HTTP request object
   env: TEnv; // Platform bindings (Cloudflare env, etc.)
   segments: InterceptSegmentsState; // Client's current segments (where navigating FROM)
-  fromRouteName?: DefaultRouteName; // Named route being navigated away from (undefined for unnamed routes)
-  toRouteName?: DefaultRouteName; // Named route being navigated to (undefined for unnamed routes)
 };
 
 /**
@@ -175,9 +217,6 @@ export type InterceptEntry = {
   routeName: string; // e.g., "card"
   handler: ReactNode | Handler<any, any, any>;
   middleware: MiddlewareFn<any, any>[];
-  revalidate: ShouldRevalidateFn<any, any>[];
-  errorBoundary: (ReactNode | ErrorBoundaryHandler)[];
-  notFoundBoundary: (ReactNode | NotFoundBoundaryHandler)[];
   loader: LoaderEntry[];
   loading?: ReactNode | false;
   transition?: TransitionConfig;
@@ -520,7 +559,8 @@ export const getContext = (): {
           // the header guard's middleware exemption depends on the latch dying
           // with the funnel scope (see assertCachedHeaderWriteAllowed).
         },
-        callback,
+        // A funnel (its cache() scope) never runs exempt (runIdentityExempt).
+        () => endIdentityExempt(callback),
       );
     },
     run: <T>(
@@ -830,27 +870,28 @@ const loaderScopeALS: AsyncLocalStorage<{ active: true }> = ((
 // Purity-only scope: marks that a loader FUNCTION BODY is executing, regardless
 // of how the loader was invoked (DSL via runInsideLoaderScope, or handler-
 // invoked via ctx.use). Consulted by isInsideCacheScope() to exempt
-// request-scoped reads, by getCurrentLoaderBodyId() for guard-warning
-// attribution, and by isInsideHandlerInvokedLoaderBody() for the
-// consumption-lane rule (the shell-capture guard exemption). It deliberately
-// does NOT affect isInsideLoaderScope(), so rendered()/barrier/deadlock
-// gating (which must distinguish DSL from handler-invoked loaders) is
-// unchanged.
+// request-scoped reads, and by getCurrentLoaderBodyId() for guard-warning
+// attribution. It deliberately does NOT affect isInsideLoaderScope(), so
+// rendered()/barrier/deadlock gating (which must distinguish DSL from
+// handler-invoked loaders) is unchanged.
+interface LoaderBodyScope {
+  active: true;
+  loaderId?: string;
+  /** The body scope this one was entered from (a ctx.use(Loader) chain). */
+  parent?: LoaderBodyScope;
+  /** The tags this execution records (#964, cache-tag.ts "Recorded-tag sets"). */
+  tags?: Set<string>;
+}
 const LOADER_BODY_SCOPE_KEY = Symbol.for("rangojs-router:loader-body-scope");
-const loaderBodyScopeALS: AsyncLocalStorage<{
-  active: true;
-  loaderId?: string;
-  handlerInvoked?: boolean;
-}> = ((globalThis as any)[LOADER_BODY_SCOPE_KEY] ??= new AsyncLocalStorage<{
-  active: true;
-  loaderId?: string;
-  handlerInvoked?: boolean;
-}>());
+const loaderBodyScopeALS: AsyncLocalStorage<LoaderBodyScope> = ((
+  globalThis as any
+)[LOADER_BODY_SCOPE_KEY] ??= new AsyncLocalStorage<LoaderBodyScope>());
 
 /**
  * Check if the current execution is inside a cache() DSL boundary.
- * Returns false inside loader execution — loaders are always fresh
- * (never cached), so non-cacheable reads are safe.
+ * Returns false inside loader execution: a route cache() does not store
+ * loader values, so non-cacheable reads are safe. A loader bound with its own
+ * cache() stores its value; recordLoaderIdentityRead guards that.
  */
 export function isInsideCacheScope(): boolean {
   if (RangoContext.getStore()?.insideCacheScope !== true) return false;
@@ -864,6 +905,347 @@ export function isInsideCacheScope(): boolean {
   // write drops-and-throws because it has no baked-copy semantics on a HIT.
   if (isInsideAnyLoaderScope()) return false;
   return true;
+}
+
+/**
+ * What a refused identity read says (guardIdentityRead): its `verb`, and per
+ * refusing scope the text after "<surface> cannot be <verb> ...": why the
+ * value must not reach that scope, and what to do instead. `fix.warning` is
+ * the fix the capture's refusal warning gives (shell-capture.ts
+ * refuseOnCaptureGuard).
+ */
+export interface IdentityReadWording {
+  /** "called" for a function (cookies(), ctx.get()), "read" for a property (the theme getters). */
+  verb: LoaderIdentityReadVerb;
+  fix: {
+    useCache: string;
+    cacheScope: string;
+    capture: string;
+    warning: string;
+  };
+  /**
+   * False when the read is recorded later, by the returned view's read
+   * methods (cookies(), headers()): a view taken outside a loader and read
+   * inside one still counts, and a cookie write alone is not a read.
+   */
+  record?: false;
+}
+
+/**
+ * The one guard every request-identity read goes through: cookies(),
+ * headers(), the theme reads (cookie-store.ts readGuardedTheme), a
+ * non-cacheable ctx.get() (assertNonCacheableReadAllowed), and the raw reads
+ * `ctx.request.headers` and `getRequestContext().cookie()` / `.cookies()`
+ * (cookie-store.ts guardRequestHeaders, guardRawCookieRead; #976). Each surface keeps
+ * its own wording; the ladder and its exemptions are shared, so the surfaces
+ * refuse in exactly the same places:
+ *
+ * 0. A cache's own key(), store keyGenerator, condition() and tags(), and
+ *    onError, read freely and record nothing (runIdentityExempt,
+ *    cache/cache-exec-scope.ts): the value picks or labels the entry, or is
+ *    only observed; it is never rendered. A cached body, loader body or
+ *    funnel they start is guarded again.
+ * 1. A PPR shell capture (`ctx` is the capture's derived context,
+ *    `_shellCaptureRun`) trips first: the capture context is flagged (so a
+ *    caught throw still refuses the capture) and the read throws. The shell is
+ *    shared per host+URL, and every HIT replays what the capture read. There
+ *    is no loader-body exemption here: a bake-lane loader and a loader a
+ *    handler awaits both bake.
+ * 2. A "use cache" body throws: the key does not include the value, so the
+ *    first caller's would be stored and served to later callers. That holds
+ *    for a loader body entered inside the cached function too (`await
+ *    ctx.use(Loader)` there): its value is part of what the function returns.
+ *    Before, a non-cacheable ctx.get() there was exempt while cookies() threw,
+ *    and the entry stored the first request's value.
+ * 3. A cache() boundary throws, except inside a loader body
+ *    (isInsideCacheScope): a route cache() never stores loader values.
+ * 4. The read is allowed, and recorded on the current loader execution for a
+ *    loader cache() fill without key() (#972, recordLoaderIdentityRead)
+ *    unless `wording.record` defers it to the returned view.
+ *
+ * Outside these scopes every read is allowed, a live loader's included. The
+ * response directives (invalidateClientCache(), keepClientCache()) record
+ * nothing and are not captured reads: they take refuseInCacheScope alone.
+ */
+export function guardIdentityRead(
+  ctx: unknown,
+  surface: string,
+  wording: IdentityReadWording,
+): void {
+  if (isInsideIdentityExempt()) return;
+  const { verb, fix } = wording;
+  if (tripShellCaptureGuard(ctx, surface, fix.warning)) {
+    throw new Error(
+      `${surface} cannot be ${verb} while capturing a shared shell ` +
+        `(ppr shell capture). ${fix.capture}`,
+    );
+  }
+  refuseInCacheScope(surface, wording);
+  if (wording.record !== false) recordLoaderIdentityRead(surface, verb);
+}
+
+/**
+ * Steps 2 and 3 of guardIdentityRead: throw when a "use cache" body or a
+ * cache() boundary would store what `surface` produces.
+ */
+export function refuseInCacheScope(
+  surface: string,
+  { verb, fix }: IdentityReadWording,
+): void {
+  if (isInsideCacheExecScope()) {
+    throw new Error(
+      `${surface} cannot be ${verb} inside a "use cache" function. ${fix.useCache}`,
+    );
+  }
+  if (isInsideCacheScope()) {
+    throw new Error(
+      `${surface} cannot be ${verb} inside a cache() boundary. ${fix.cacheScope}`,
+    );
+  }
+}
+
+/**
+ * The capture refusal for a request-scoped read (cookies(), headers(), a
+ * { cache: false } variable): the message after the surface, and the fix the
+ * refusal warning gives. `what` names the data that would leak.
+ */
+export function requestReadCaptureFix(
+  what: string,
+): Pick<IdentityReadWording["fix"], "capture" | "warning"> {
+  return {
+    capture:
+      `The captured shell is served to every user of this URL, so ` +
+      `request-scoped data read here would leak one user's ${what} to ` +
+      `others. Read it inside a loader without ssr: false and consume it ` +
+      `with useLoader, e.g. createLoader(async () => ` +
+      `getUser(cookies().get("session")?.value)). ${PPR_LANE_HINT}`,
+    warning:
+      "Read it in a loader without ssr: false and consume it with useLoader " +
+      "under loading() or an inline <Suspense> (a live hole). A promise the " +
+      "handler passes or pushes does not help: the capture waits for it.",
+  };
+}
+
+/**
+ * True when `ctx` is the active capture render: the derived request context
+ * shell-capture.ts builds (`_shellCaptureRun`), which only the capture sets,
+ * so the foreground render reads identity normally to serve the real user.
+ * On true the capture context is flagged with the read (`surface`, e.g.
+ * "cookies()", "ctx.theme"), the fix the refusal warning gives, and the loader
+ * body (if any) that made the read, and the caller throws.
+ */
+function tripShellCaptureGuard(
+  ctx: unknown,
+  surface: string,
+  fix: string,
+): boolean {
+  if (
+    ctx === null ||
+    typeof ctx !== "object" ||
+    (ctx as { _shellCaptureRun?: unknown })._shellCaptureRun !== true
+  ) {
+    return false;
+  }
+  // Record WHICH loader body (if any) made the read, so the refusal warning
+  // can name the real source instead of hardcoding a lane (issue #672).
+  const flagged = ctx as {
+    _shellCaptureGuardTripped?: { surface: string; fix: string };
+    _shellCaptureGuardTrippedLoaderId?: string;
+  };
+  flagged._shellCaptureGuardTripped = { surface, fix };
+  flagged._shellCaptureGuardTrippedLoaderId = getCurrentLoaderBodyId();
+  return true;
+}
+
+const NON_CACHEABLE_READ: IdentityReadWording = {
+  verb: "called",
+  fix: {
+    useCache:
+      "The variable was created with { cache: false } or set with " +
+      "{ cache: false }, and the cache key does not include its value, so " +
+      "the first caller's value would be served to later callers. Read it " +
+      "before calling the cached function and pass the value in as an " +
+      "argument so it becomes part of the cache key.",
+    cacheScope:
+      "The variable was created with { cache: false } or set with " +
+      "{ cache: false }, and its value would be stale on cache hit. Move the " +
+      "read outside the cached scope.",
+    ...requestReadCaptureFix("per-request variables"),
+  },
+};
+
+/**
+ * Read guard for a non-cacheable variable (`createVar({ cache: false })` or a
+ * `ctx.set(..., { cache: false })` write), through guardIdentityRead.
+ * Callers check isNonCacheable() first so ordinary reads never reach the
+ * scope lookups. `requestCtx` is the ambient request context, whose capture
+ * flag the guard reads.
+ */
+export function assertNonCacheableReadAllowed(
+  keyOrVar: string | ContextVar<unknown>,
+  requestCtx?: unknown,
+): void {
+  const name = typeof keyOrVar === "string" ? ` "${keyOrVar}"` : "";
+  guardIdentityRead(
+    requestCtx,
+    `ctx.get() for a non-cacheable variable${name}`,
+    NON_CACHEABLE_READ,
+  );
+}
+
+/** How the identity error words a read: a function call or a property read. */
+export type LoaderIdentityReadVerb = "called" | "read";
+
+/** A request-identity read a loader execution made (recordLoaderIdentityRead). */
+export interface LoaderIdentityRead {
+  /**
+   * The read as the error names it: "cookies()", "headers()",
+   * `ctx.get() for a non-cacheable variable "x"`, "ctx.theme" or
+   * "getRequestContext().theme".
+   */
+  surface: string;
+  /** "called" for a function, "read" for a property (the theme getters). */
+  verb: LoaderIdentityReadVerb;
+  /** The loader body that made the read. */
+  bodyId: string | undefined;
+  /**
+   * The cached loader whose value carries a read another loader made
+   * (loader-cache.ts identity mark): its readers read it through `via`.
+   */
+  via?: string;
+}
+
+/**
+ * Where cache-tag.ts installs its recorder at module init (same key there):
+ * it owns the per-execution recorded sets, and importing it here would be a
+ * cycle.
+ */
+const IDENTITY_READ_RECORDER_KEY = Symbol.for(
+  "rangojs-router:identity-read-recorder",
+);
+
+/**
+ * Record a request-identity read (cookies(), headers(), a non-cacheable
+ * ctx.get()) on the current loader execution (#972).
+ *
+ * isInsideCacheScope() exempts loader bodies because a route cache() never
+ * stores their values. A loader bound with its own cache() does: with no key()
+ * and no store keyGenerator its entry is keyed by loader, host, path and
+ * params only, and an enclosing route cache() key does not partition it
+ * (#974). A cookies() read there stored the first visitor's session and served
+ * it to everyone for the TTL. The read is recorded on the execution, not
+ * thrown at the call: a reader that starts the loader before its binding does
+ * runs it outside any fill, and the binding's MISS then reuses that run. The
+ * fill checks what its execution recorded, through the same links as its tags
+ * (cache-tag.ts recordedIdentityRead), so both orders fail the same way.
+ * Response directives do not record: a key cannot make a skipped body's side
+ * effect reach a HIT.
+ *
+ * The read also lands on the execution's LoaderRunIdentity (#1011), which
+ * every execution has, from either loader runner (runInsideLoaderRun).
+ */
+export function recordLoaderIdentityRead(
+  surface: string,
+  verb: LoaderIdentityReadVerb = "called",
+): void {
+  if (isInsideIdentityExempt()) return;
+  const run = loaderRunALS.getStore();
+  if (run && run.read === undefined) {
+    run.read = { surface, verb, bodyId: run.loaderId };
+  }
+  const recorder = (globalThis as Record<symbol, unknown>)[
+    IDENTITY_READ_RECORDER_KEY
+  ] as ((surface: string, verb: LoaderIdentityReadVerb) => void) | undefined;
+  recorder?.(surface, verb);
+}
+
+/**
+ * One loader execution's request-identity record (#1011): the first identity
+ * read its body made, and the executions whose values it read with
+ * ctx.use(Loader). Every execution has one; the recorded-tag sets that carry
+ * the same reads for a loader cache() fill (cache-tag.ts) exist only in a
+ * request that binds one.
+ *
+ * A "use cache" function that reads a loader's value through the request
+ * memo (a handler, the route's loader() binding or a parent layout's started
+ * it first) does not run the body, so guardIdentityRead never sees the read.
+ * Scar: the entry, keyed without the cookie, stored the first visitor's value
+ * and served it to the next. cache-tag.ts readStartedLoaderValue refuses such
+ * a value through this record.
+ */
+export interface LoaderRunIdentity {
+  readonly loaderId: string;
+  read?: LoaderIdentityRead;
+  reads?: Set<LoaderRunIdentity>;
+}
+
+// Its own scope, not a LoaderBodyScope field: the request-context runner
+// (request-context.ts createUseFunction) records reads too, but does not
+// enter a loader body scope, whose cache() exemption it never had.
+const loaderRunALS: AsyncLocalStorage<LoaderRunIdentity> = ((globalThis as any)[
+  Symbol.for("rangojs-router:loader-run-identity")
+] ??= new AsyncLocalStorage<LoaderRunIdentity>());
+
+/**
+ * Run a loader body with `run` as its identity record: both loader runners
+ * (loader-resolution.ts createLoaderExecutor, request-context.ts
+ * createUseFunction) enter it around the loader function.
+ */
+export function runInsideLoaderRun<T>(run: LoaderRunIdentity, fn: () => T): T {
+  return loaderRunALS.run(run, fn);
+}
+
+/** The innermost loader execution's identity record (runInsideLoaderRun). */
+export function getLoaderRunIdentity(): LoaderRunIdentity | undefined {
+  return loaderRunALS.getStore();
+}
+
+/**
+ * The error a "use cache" function's read of a loader value fails with when
+ * the loader's execution, or one whose value it read, made `read` (#1011).
+ * Worded like guardIdentityRead's "use cache" refusal, naming the loaders.
+ */
+export function useCacheLoaderIdentityError(
+  read: LoaderIdentityRead,
+  loaderId: string,
+): Error {
+  const bodyId = read.bodyId ?? loaderId;
+  const source =
+    bodyId === loaderId
+      ? `Loader "${loaderId}" ${read.verb} it, and the cached function reads that loader's value`
+      : `Loader "${bodyId}" ${read.verb} it, and the cached function reads loader "${loaderId}", whose value is built from it`;
+  return new Error(
+    `${read.surface} cannot be ${read.verb} inside a "use cache" function. ` +
+      `${source}. The loader ran outside the function (a handler or a ` +
+      `loader() binding started it first), but its value becomes part of ` +
+      `what the function returns, and the cache key does not include it, so ` +
+      `the first caller's value would be stored and served to later callers. ` +
+      `Read the loader before calling the cached function and pass the value ` +
+      `in as an argument so it becomes part of the cache key.`,
+  );
+}
+
+/** The error a loader cache() fill with no declared key fails with (#972). */
+export function loaderCacheIdentityError(
+  read: LoaderIdentityRead,
+  cachedLoaderId: string,
+): Error {
+  const filling = `while filling its own cache() entry with no key()`;
+  const where =
+    read.via !== undefined && read.via !== cachedLoaderId
+      ? `inside loader "${read.bodyId}", which loader "${cachedLoaderId}" reads through another loader ("${read.via}") ${filling}`
+      : read.bodyId !== undefined && read.bodyId !== cachedLoaderId
+        ? `inside loader "${read.bodyId}", which loader "${cachedLoaderId}" reads ${filling}`
+        : `inside loader "${cachedLoaderId}", whose own cache() has no key()`;
+  return new Error(
+    `${read.surface} cannot be ${read.verb} ${where}. ` +
+      `The entry is keyed by loader, host, path and params only, so it is ` +
+      `shared across users: request-scoped data (cookies, headers, ` +
+      `non-cacheable variables) read here would be stored from one request ` +
+      `and served to everyone. Add a key that includes the value, or drop ` +
+      `the loader's cache():\n\n` +
+      `  cache({ ttl: 60, key: (ctx) => \`session:\${cookies().get("session")?.value}\` })`,
+  );
 }
 
 /**
@@ -894,7 +1276,7 @@ export function latchCachedHeaderScope(
 /** True inside ANY loader execution — DSL loader scope or a loader body
  *  (however invoked). The "loaders always re-run fresh" exemptions key off
  *  this. */
-function isInsideAnyLoaderScope(): boolean {
+export function isInsideAnyLoaderScope(): boolean {
   return (
     loaderScopeALS.getStore()?.active === true ||
     loaderBodyScopeALS.getStore()?.active === true
@@ -1045,23 +1427,42 @@ export function runInsideLoaderScope<T>(fn: () => T): T {
 
 /**
  * Run `fn` inside a loader BODY scope. Marks loader-function execution for the
- * cache-purity guard only (isInsideCacheScope), WITHOUT affecting
+ * cache() purity guard only (isInsideCacheScope), WITHOUT affecting
  * isInsideLoaderScope()/rendered() gating. Applied to every loader body (DSL
  * and handler-invoked via ctx.use) so request-scoped reads inside a loader
- * never trip the cache-scope guards — loaders always run fresh.
+ * never trip the cache() guard — a route cache() never stores loader values.
+ * A "use cache" body the loader was entered in still refuses them
+ * (guardIdentityRead); one that reads the value later refuses what the run
+ * recorded (runInsideLoaderRun, cache-tag.ts readStartedLoaderValue).
  */
 export function runInsideLoaderBodyScope<T>(
   fn: () => T,
   loaderId?: string,
-  handlerInvoked?: boolean,
+  tags?: Set<string>,
 ): T {
-  return loaderBodyScopeALS.run({ active: true, loaderId, handlerInvoked }, fn);
+  // A loader a key() starts with ctx.use() runs guarded (runIdentityExempt).
+  return endIdentityExempt(() =>
+    loaderBodyScopeALS.run(
+      {
+        active: true,
+        loaderId,
+        parent: loaderBodyScopeALS.getStore(),
+        tags,
+      },
+      fn,
+    ),
+  );
+}
+
+/** The innermost loader body's execution tag set (runInsideLoaderBodyScope). */
+export function getLoaderBodyTags(): Set<string> | undefined {
+  return loaderBodyScopeALS.getStore()?.tags;
 }
 
 /**
  * The $$id of the loader whose body is currently executing, or undefined
  * outside any loader body. Used by the shell-capture identity guard
- * (cookie-store.ts) so its refusal warning can name the loader that read
+ * (guardIdentityRead) so its refusal warning can name the loader that read
  * cookies()/headers() instead of blaming a lane it cannot see — the old
  * hardcoded "bake-lane loader" text misled a live-lane debugging session
  * (issue #672, secondary).
@@ -1071,16 +1472,34 @@ export function getCurrentLoaderBodyId(): string | undefined {
 }
 
 /**
- * True while a HANDLER-invoked loader body (`await ctx.use(Loader)` from a
- * handler, not the DSL segment funnel) is executing. The consumption-lane
- * rule keys off this: handler consumption yields a BAKED copy in every shared
- * artifact — cache(), "use cache", and the PPR shell — so the shell-capture
- * identity guard (cookie-store.ts) permits cookies()/headers() here, exactly
- * like the cache-purity guards do. DSL segment loaders (live lane masked at
- * capture, bake lane guarded) never set the flag.
+ * The innermost loader body running here, or around it through the
+ * ctx.use(Loader) chain, whose id `match` accepts (HandleStore.push, the
+ * shell capture's push funnel). A body `stop` accepts, and `match` does not,
+ * ends the walk: nothing around it is returned.
  */
-export function isInsideHandlerInvokedLoaderBody(): boolean {
-  return loaderBodyScopeALS.getStore()?.handlerInvoked === true;
+export function findEnclosingLoaderBody(
+  match: (loaderId: string) => boolean,
+  stop?: (loaderId: string) => boolean,
+): string | undefined {
+  for (let s = loaderBodyScopeALS.getStore(); s; s = s.parent) {
+    if (s.loaderId === undefined) continue;
+    if (match(s.loaderId)) return s.loaderId;
+    if (stop?.(s.loaderId)) return undefined;
+  }
+  return undefined;
+}
+
+/**
+ * True while `loaderId`'s body, or a loader it awaits via ctx.use at any
+ * depth, is executing. The loader-level cache records these pushes
+ * (loader-cache.ts): a HIT skips the cached body, so a dep that no other
+ * reader runs in that request only reaches the page through the replay.
+ */
+export function isInsideLoaderBody(loaderId: string): boolean {
+  for (let s = loaderBodyScopeALS.getStore(); s; s = s.parent) {
+    if (s.loaderId === loaderId) return true;
+  }
+  return false;
 }
 
 // Scope for handle PUSH CALLBACKS (push(() => ...), including async ones).

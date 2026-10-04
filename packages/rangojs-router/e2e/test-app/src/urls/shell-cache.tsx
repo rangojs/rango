@@ -1,6 +1,10 @@
 import { Suspense } from "react";
-import { urls, Meta, Breadcrumbs, nonce } from "@rangojs/router";
-import type { HandlerContext } from "@rangojs/router";
+import {
+  shellExecWhen,
+  shellLoadMoreWhen,
+} from "../components/transition-when.js";
+import { urls, Meta, Breadcrumbs, nonce, createVar } from "@rangojs/router";
+import type { HandlerContext, Middleware } from "@rangojs/router";
 import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 import {
   ShellPriceLoader,
@@ -15,30 +19,62 @@ import {
   ShellOutlinedBadgeLoader,
   shellExecCounters,
   ShellHandles,
+  ShellStaleReplayHandle,
   SlowMetaHandles,
   makeBakedHandlePush,
   makeNestedHandlePush,
   makeNestedFastHandlePush,
   makeSlowMetaParts,
   makePhysicsPromise,
+  makeShellStaleReplayData,
   getDriftStamp,
+  getSharedStamp,
+  ShellSharedBakedStampLoader,
+  ShellSharedStampLoader,
+  ShellHoleyDepLoader,
+  ShellLiveDepLoader,
+  bumpLiveDepGeneration,
   getCapStamp,
+  getShellLargeCatalog,
   outlinedRenderCounter,
   ShellBakeSlowLoader,
   ShellBakeHoleLoader,
+  ShellBakedNavLoader,
+  ShellBakedSiblingLoader,
+  ShellBakedOnlyLoader,
+  shellBakedOnlyRuns,
+  ShellStorefrontLoader,
+  ShellRestockLoader,
+  ShellFlightErrorLoader,
+  shellFlightErrorPasses,
+  shellLoadMoreItems,
+  ShellLoadMorePageLoader,
 } from "./shell-cache.defs.js";
+import { ShellJsxLoader, ShellJsxPage } from "./shell-cache-jsx.js";
+import {
+  ShellBakedView,
+  ShellBakedOnlyView,
+} from "../components/ShellBakedView.js";
+import { ShellSearchProbe } from "../components/ShellSearchProbe.js";
+import { ShellMarkerProbe } from "../components/ShellMarkerProbe.js";
 import { SlowMetaView } from "../components/SlowMetaView.js";
 import { ShellBadge } from "../components/ShellBadge.js";
 import { ShellSettledValue } from "../components/ShellSettledValue.js";
 import { ShellGuardValue } from "../components/ShellGuardValue.js";
 import { ShellCachePrice } from "../components/ShellCachePrice.js";
+import { ShellSharedStamp } from "../components/ShellSharedStamp.js";
+import { ShellLiveDepView } from "../components/ShellLiveDepView.js";
 import { ShellCacheStream } from "../components/ShellCacheStream.js";
 import { ShellCacheCounter } from "../components/ShellCacheCounter.js";
 import { ShellPhysicsValue } from "../components/ShellPhysicsValue.js";
 import { ShellHandleView } from "../components/ShellHandleView.js";
+import { ShellWarningsView } from "../components/ShellWarningsView.js";
 import { ShellExecMatrix } from "../components/ShellExecMatrix.js";
 import { ShellBakeSlow } from "../components/ShellBakeSlow.js";
+import { ShellStaleReplay } from "../components/ShellStaleReplay.js";
+import { ShellLoadMoreList } from "../components/ShellLoadMoreList.js";
 import { ThemeToggle } from "../components/ThemeToggle.js";
+import { onErrorLog } from "../error-log.js";
 
 // PPR shell caching demo (docs/design/ppr-shell-resume.md).
 //
@@ -50,26 +86,26 @@ import { ThemeToggle } from "../components/ThemeToggle.js";
 //   STRUCTURAL — the route loader behind loading(): masked at capture, the
 //     LoaderBoundary postpones, the fallback bakes into the shell as route
 //     structure (the LIVE lane).
-//   BAKE LANE — a loader WITHOUT loading() executes at capture: its settled
-//     container bakes (snapshot-pinned on HITs), nested pending promises hole
-//     at the consumer's own Suspense. /shell-cache/no-hole and the
-//     layout-loader routes exercise it (docs/design/loader-container-bake.md).
-//   PHYSICS — ShellPhysicsValue: a handler-created pending promise (~250ms)
-//     under the consumer's own Suspense. Real I/O cannot win the capture's
-//     task-quantized quiet window, so the boundary postpones — a hole.
-//   SHELL — static layout text, the interactive client island, handle reads,
-//     and the TOP-LEVEL pushed handle promise (ShellHandles "baked" item):
-//     awaited server-side before SSR, baked into the prelude.
-//   HANDLES ("nesting = liveness") — ShellHandleView renders the pair: the
-//     top-level promise push is baked; the container's NESTED promise streams
-//     into its own Suspense — a hole. A promise nested inside your data is never
-//     baked; the container settles.
+//   BAKE LANE — a loader flagged `ssr: false` executes at capture:
+//     its settled return bakes (snapshot-pinned on HITs), nested pending
+//     promises hole at the consumer's own Suspense. /shell-cache/baked and
+//     /shell-cache/baked-only exercise it; a PLAIN loader without loading()
+//     is live-masked and its boundary-less read REFUSES the capture
+//     (/shell-cache/no-hole). See docs/design/loader-container-bake.md.
+//   SHELL — everything the handler layer produces, however long it takes
+//     (bounded by ppr.captureTimeout): static layout text, the interactive
+//     client island, handle reads, ShellPhysicsValue's handler-created
+//     promise (~250ms) under the consumer's own Suspense, and every
+//     ShellHandles push, top-level promise and nested promises alike. The
+//     capture waits for them, bakes them into the prelude, and every HIT
+//     replays them from the doc record (no handler runs on a HIT).
 
 function ShellCacheLayout(ctx: HandlerContext) {
   ctx.use(Meta)({ title: "Shell Cache" });
   ctx.use(Breadcrumbs)({ label: "Shell Cache", href: "/shell-cache" });
 
-  // Handles pair: top-level promise (baked) + nested-in-container (hole).
+  // Handle pushes: a top-level promise and two nested-in-container promises,
+  // all baked.
   const pushShellHandle = ctx.use(ShellHandles);
   pushShellHandle(makeBakedHandlePush());
   pushShellHandle(makeNestedHandlePush());
@@ -100,8 +136,66 @@ function ShellCacheLayout(ctx: HandlerContext) {
   );
 }
 
-function ShellCachePricePage() {
-  return <ShellCachePrice loader={ShellPriceLoader} />;
+// The request URL's search as the handler reads it, and the rendered search
+// params (ShellMarkerProbe): the forced-MISS e2e asserts the reload marker
+// reaches neither.
+function ShellCachePricePage(ctx: { request: Request }) {
+  return (
+    <>
+      <p data-testid="shell-request-search">
+        {new URL(ctx.request.url).search}
+      </p>
+      <ShellMarkerProbe />
+      <ShellCachePrice loader={ShellPriceLoader} />
+    </>
+  );
+}
+
+function ShellBakedPage() {
+  return (
+    <ShellBakedView
+      navLoader={ShellBakedNavLoader}
+      siblingLoader={ShellBakedSiblingLoader}
+    />
+  );
+}
+
+function ShellBakedOnlyPage() {
+  return <ShellBakedOnlyView loader={ShellBakedOnlyLoader} />;
+}
+
+let shortRecordRenders = 0;
+
+/** Its render count: a HIT shows the capture's, a MISS a new one. */
+function ShellShortRecordPage() {
+  shortRecordRenders += 1;
+  return (
+    <p data-testid="shell-short-record">
+      {`short-record-render-${shortRecordRenders}`}
+    </p>
+  );
+}
+
+// A plain handler page: every HIT replays its doc record.
+function ShellWarningsPage() {
+  return (
+    <main data-testid="shell-warnings-page">
+      <p>Warnings static shell</p>
+      <ShellWarningsView />
+    </main>
+  );
+}
+
+// Static-part useSearchParams read above the live price hole: the probe's
+// markup freezes into the per-search shell (see ShellSearchProbe).
+function ShellSearchReadPage() {
+  return (
+    <section>
+      <h2 data-testid="shell-searchread-header">Shell search read</h2>
+      <ShellSearchProbe />
+      <ShellCachePrice loader={ShellPriceLoader} />
+    </section>
+  );
 }
 
 // Large SYNCHRONOUS Suspense-wrapped section: fizz outlines any boundary over
@@ -202,6 +296,67 @@ function ShellDriftLayout(ctx: HandlerContext) {
 
 function ShellDriftPricePage() {
   return <ShellCachePrice loader={ShellPriceLoader} />;
+}
+
+// Shared-key layout (issue #941): reads the same cached item as the page's live
+// hole. The shell keeps the capture-time stamp; the hole reads the store.
+async function ShellSharedLayout(ctx: HandlerContext) {
+  const stamp = await getSharedStamp(ctx.searchParams.get("probe") ?? "");
+  return (
+    <main data-testid="shell-shared-page">
+      <p data-testid="shell-shared-shell">{stamp}</p>
+      <Outlet />
+    </main>
+  );
+}
+
+function ShellSharedPage() {
+  return (
+    <>
+      <ShellSharedStamp
+        loader={ShellSharedBakedStampLoader}
+        testId="shell-shared-baked"
+      />
+      <ShellSharedStamp loader={ShellSharedStampLoader} />
+    </>
+  );
+}
+
+// Live-dep fixture page: the whole view is the hole under the route's
+// loading(), rendered on a HIT from that request's loader data and handles.
+function ShellLiveDepPage() {
+  return (
+    <main data-testid="shell-live-dep-page">
+      <ShellLiveDepView loader={ShellLiveDepLoader} />
+    </main>
+  );
+}
+
+// Large-shell fixture page (issue #941): a cached catalog rendered into a
+// prelude that spans several enqueue chunks, plus a live price hole under an
+// inline <Suspense> so the HIT resumes behind the chunked prelude.
+async function ShellLargePage() {
+  const items = await getShellLargeCatalog("large");
+  return (
+    <main data-testid="shell-large-page">
+      <ul>
+        {items.map((item) => (
+          <li key={item.id} data-item={item.id}>
+            <h2>{item.name}</h2>
+            <p>{item.description}</p>
+          </li>
+        ))}
+      </ul>
+      <p data-testid="shell-large-end">end of catalog</p>
+      <Suspense
+        fallback={
+          <div data-testid="shell-large-fallback">Loading price...</div>
+        }
+      >
+        <ShellCachePrice loader={ShellPriceLoader} />
+      </Suspense>
+    </main>
+  );
 }
 
 // Snapshot SIZE-CAP fixture layout (issue #651): same shape as the drift
@@ -317,22 +472,16 @@ function ShellSlotHomePage() {
   return <p data-testid="shell-slot-home">Slot home static content</p>;
 }
 
-// Consumption-lane rule (issue #672 / #674): server-side ctx.use consumption
-// during capture — the loader EXECUTES and its cookies() read is exempt from
-// the identity guard (the cache() precedent); no refusal, the routes flip
-// MISS->HIT. Two consumption shapes under one layout pin where the value
-// lands:
-// - @srvBadge: the slot HANDLER consumes a loader that is ALSO registered as
-//   a live-lane segment (loader()+loading()). The segment lane is unchanged
-//   by the rule — its masked loaderData pins the slot's boundary, so the
-//   slot stays a LIVE hole (fallback frozen, value fresh per serve).
-// - the chip: the LAYOUT handler consumes an UNREGISTERED loader and renders
-//   it straight into shell material — the capture-time value (seq + cookie
-//   identity) BAKES into the shared prelude, frozen across HITs and visitors
-//   (the rule's documented footgun; client-side useLoader is the live lane,
-//   see ShellSlotChromeLayout above).
-// Before the rule, the guard tripped on either shape and every route under
-// this layout stuck on x-rango-shell: MISS forever.
+// Handler consumption (issue #672 / #674): a loader a handler awaits
+// EXECUTES during capture and its value is handler output, baked and replayed
+// on every HIT (no HIT runs a handler). Two shapes under one layout:
+// - @srvBadge: the slot HANDLER awaits a loader that is ALSO registered as a
+//   live-lane segment (loader()+loading()) and renders its copy next to a
+//   useLoader read of the same loader. The copy is frozen; the useLoader read
+//   is the live lane (the slot's LoaderBoundary postpones at capture, the
+//   loader runs per HIT).
+// - the chip: the LAYOUT handler awaits an UNREGISTERED loader and renders it
+//   straight into shell material, frozen across HITs and visitors.
 async function ShellSrvSlotLayout(ctx: HandlerContext) {
   const chip = await ctx.use(ShellSrvChipLoader);
   return (
@@ -347,7 +496,60 @@ async function ShellSrvSlotLayout(ctx: HandlerContext) {
 
 async function ShellSrvBadgeSlot(ctx: HandlerContext) {
   const value = await ctx.use(ShellSrvBadgeLoader);
-  return <span data-testid="shell-srv-badge">{value}</span>;
+  return (
+    <>
+      <span data-testid="shell-srv-badge">{`copy-${value}`}</span>
+      <ShellBadge loader={ShellSrvBadgeLoader} testId="shell-srv-badge-live" />
+    </>
+  );
+}
+
+// A handler that awaits an identity loader: its cookies() read happens during
+// the capture and refuses it (the capturing request's cookie would bake into
+// every visitor's page), so every request stays a MISS and renders for the
+// real visitor.
+async function ShellIdentityUsePage(ctx: HandlerContext) {
+  const who = await ctx.use(ShellIdentityLoader);
+  return <p data-testid="shell-identity-use">{`identity-${who}`}</p>;
+}
+
+// A request-partitioned ppr route: its cache() key() reads the visitor's tier
+// header, so its record and its shell are per tier. The pages render
+// middleware's copy of the header: a handler read of ctx.request.headers
+// refuses the capture (issue #976), and the partition key is what keeps a
+// tier's content in that tier's shell.
+function shellTier(ctx: { request: Request }): string {
+  return ctx.request.headers.get("x-shell-tier") ?? "none";
+}
+
+const ShellTier = createVar<string>();
+
+const copyShellTier: Middleware = async (ctx, next) => {
+  ctx.set(ShellTier, shellTier(ctx));
+  return next();
+};
+
+function ShellTieredPage(ctx: HandlerContext) {
+  return <p data-testid="shell-tiered">{`tier-${ctx.get(ShellTier)}`}</p>;
+}
+
+function ShellTieredNestedPage(ctx: HandlerContext) {
+  return (
+    <>
+      <p data-testid="shell-tiered">{`tier-${ctx.get(ShellTier)}`}</p>
+      <p>shell-tiered-nested-route</p>
+    </>
+  );
+}
+
+// The layout between the keyed cache() and the nested one (issue #970).
+function ShellTieredLayout(ctx: HandlerContext) {
+  return (
+    <div data-testid="shell-tiered-layout">
+      <p>{`layout-tier-${ctx.get(ShellTier)}`}</p>
+      <Outlet />
+    </div>
+  );
 }
 
 function ShellSrvSlotHomePage() {
@@ -400,6 +602,43 @@ function ShellSettledPage() {
   return <ShellSettledValue loader={ShellSettledLoader} />;
 }
 
+function ShellStaleReplayPage(ctx: HandlerContext<{ id: string }>) {
+  const id = ctx.params.id;
+  const data = makeShellStaleReplayData(id);
+  const push = ctx.use(ShellStaleReplayHandle);
+  push({ yo: `yo-${id}` });
+  push(data.then((value) => ({ asd: value })));
+  ctx.use(Meta)(
+    data.then(async (value) => {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      return { title: `Stale replay ${id}: ${value}` };
+    }),
+  );
+
+  return (
+    <Suspense fallback={<div>Loading stale replay {id}...</div>}>
+      <ShellStaleReplay
+        data={data}
+        handle={ShellStaleReplayHandle}
+        search={ctx.url.search}
+      />
+    </Suspense>
+  );
+}
+
+// Issue #986: renders the page its URL names. Keyed by that page, so a server
+// render of another page starts a new list instead of merging into this one.
+function ShellLoadMorePage(ctx: HandlerContext) {
+  const page = Number(ctx.url.searchParams.get("page") ?? "1");
+  return (
+    <ShellLoadMoreList
+      key={page}
+      page={page}
+      items={shellLoadMoreItems(page)}
+    />
+  );
+}
+
 // Slow deferred-shell-material layout (issue #715, the storefront meta
 // pattern): three TOP-LEVEL pushes settling in parts — immediate, ~5.5s slow,
 // and a Meta title CHAINED off the slow promise (+1s, ~6.5s total). The
@@ -423,8 +662,51 @@ function ShellSlowMetaLayout(ctx: HandlerContext) {
   );
 }
 
+// Storefront shape (PPR navigation replay composed with an explicit cache()):
+// static layout chrome; the page embeds a per-execution stamp so a replayed
+// serve (frozen stamp) is distinguishable from a fresh handler run.
+function ShellScopedChromeLayout() {
+  return (
+    <main data-testid="shell-scoped-page">
+      <p data-testid="shell-scoped-chrome">Scoped chrome static content</p>
+      <Outlet />
+    </main>
+  );
+}
+
+let shellScopedExecution = 0;
+
+function ShellScopedHomePage() {
+  shellScopedExecution += 1;
+  return (
+    <p data-testid="shell-scoped-home">
+      scoped-home-execution-{shellScopedExecution}
+    </p>
+  );
+}
+
+function ShellScopedOptOutPage() {
+  return <p data-testid="shell-scoped-optout">Scoped opt-out static content</p>;
+}
+
+function ShellScopedConditionPage() {
+  return (
+    <p data-testid="shell-scoped-condition">Scoped condition static content</p>
+  );
+}
+
 export const shellCachePatterns = urls(
-  ({ path, layout, loader, loading, middleware, parallel }) => [
+  ({
+    path,
+    layout,
+    loader,
+    loading,
+    middleware,
+    parallel,
+    transition,
+    revalidate,
+    cache,
+  }) => [
     layout(ShellCacheLayout, () => [
       // ppr carries the WHOLE shell policy (ttl/swr/tags); no middleware exists.
       path(
@@ -438,6 +720,31 @@ export const shellCachePatterns = urls(
           ),
         ],
       ),
+      // ssr:false BAKE lane: the flagged loader executes at
+      // capture and its settled return is SHELL material even though the
+      // route declares loading(); the nested promise in that return and the
+      // unflagged sibling stay live holes at their own boundaries.
+      path(
+        "/shell-cache/baked",
+        ShellBakedPage,
+        { name: "shellCacheBaked", ppr: { ttl: 300, swr: 120 } },
+        () => [
+          loader(ShellBakedNavLoader, { ssr: false }),
+          loader(ShellBakedSiblingLoader),
+          loading(
+            <div data-testid="shell-baked-loading">Loading baked...</div>,
+          ),
+        ],
+      ),
+      // loading() is OPTIONAL when every loader is flagged: nothing masks at
+      // capture, so the shell captures complete instead of the boundary-less
+      // refusal that plain loaders hit.
+      path(
+        "/shell-cache/baked-only",
+        ShellBakedOnlyPage,
+        { name: "shellCacheBakedOnly", ppr: { ttl: 300, swr: 120 } },
+        () => [loader(ShellBakedOnlyLoader, { ssr: false })],
+      ),
       // Loader-carried promise WITH loading(): the loading() boundary is the hole.
       // On a HIT the resume streams three layers in one body — cached shell, then
       // the outer loader value + the inner Suspense fallback, then the
@@ -450,6 +757,22 @@ export const shellCachePatterns = urls(
           loader(ShellStreamLoader),
           loading(
             <div data-testid="shell-stream-fallback">Loading stream...</div>,
+          ),
+        ],
+      ),
+      // Static-part useSearchParams read: search is part of shell identity —
+      // the key embeds the sorted search and the capture render seeds that
+      // SAME string — so the probe's markup freezes into the per-search shell
+      // (distinct query strings = distinct shells) and a HIT hydrates clean.
+      // The price reader under loading() stays the live hole.
+      path(
+        "/shell-cache/search-read",
+        ShellSearchReadPage,
+        { name: "shellCacheSearchRead", ppr: { ttl: 300, swr: 120 } },
+        () => [
+          loader(ShellPriceLoader),
+          loading(
+            <div data-testid="shell-searchread-fallback">Loading price...</div>,
           ),
         ],
       ),
@@ -483,6 +806,48 @@ export const shellCachePatterns = urls(
         ],
       ),
     ]),
+    // Shared-key route (issue #941): the shell layout, an ssr: false loader
+    // and the live hole read the same "drift" item. The snapshot records no
+    // cache read, so after the item expires the hole shows a newer stamp than
+    // the shell and the ssr: false loader's pin.
+    layout(ShellSharedLayout, () => [
+      path(
+        "/shell-cache/shared-key",
+        ShellSharedPage,
+        { name: "shellCacheSharedKey", ppr: { ttl: 300, swr: 120 } },
+        () => [
+          loader(ShellSharedBakedStampLoader, { ssr: false }),
+          loader(ShellSharedStampLoader),
+          loading(
+            <p data-testid="shell-shared-hole-fallback">Loading stamp...</p>,
+          ),
+        ],
+      ),
+    ]),
+    // Live-dep route: the ssr: false loader runs on every HIT (its return holds
+    // a promise) and awaits the live loader declared after it, so the live
+    // loader's body runs inside the restored loader's body. Its push stays
+    // live on a HIT and a client navigation, like its data.
+    path(
+      "/shell-cache/live-dep",
+      ShellLiveDepPage,
+      { name: "shellCacheLiveDep", ppr: { ttl: 300, swr: 120 } },
+      () => [
+        loader(ShellHoleyDepLoader, { ssr: false }),
+        loader(ShellLiveDepLoader),
+        loading(
+          <p data-testid="shell-live-dep-fallback">Loading live dep...</p>,
+        ),
+      ],
+    ),
+    // Large-shell route (issue #941): a prelude over several 32 KB enqueue
+    // chunks with a live hole resumed behind it.
+    path(
+      "/shell-cache/large",
+      ShellLargePage,
+      { name: "shellCacheLarge", ppr: { ttl: 300, swr: 120 } },
+      () => [loader(ShellPriceLoader)],
+    ),
     // Snapshot SIZE-CAP route (issue #651): maxSnapshotBytes far below any real
     // snapshot → every capture skips the snapshot (over cap, stored WITHOUT it)
     // but the shell must still store and the HIT lane must serve + hydrate
@@ -592,6 +957,7 @@ export const shellCachePatterns = urls(
             ShellExecPage,
             { name: "shellCacheExecMatrix", ppr: { ttl: 300, swr: 120 } },
             () => [
+              transition({ when: shellExecWhen }),
               loader(ShellExecLoader),
               loading(
                 <div data-testid="shell-exec-fallback">
@@ -639,6 +1005,119 @@ export const shellCachePatterns = urls(
       { name: "shellCacheSettled", ppr: true },
       () => [loader(ShellSettledLoader)],
     ),
+    // Issue #888: the ssr:false loader awaits an unflagged loader that pushes
+    // a string handle. Outside ShellCacheLayout so a HIT takes the fast path
+    // (see ShellWarningsPage); the replayed record must not carry the push.
+    path(
+      "/shell-cache/warnings",
+      ShellWarningsPage,
+      { name: "shellCacheWarnings", ppr: { ttl: 300, swr: 120 } },
+      () => [loader(ShellStorefrontLoader, { ssr: false })],
+    ),
+    // Issue #929: the ssr:false loader pushes the string handle itself; the
+    // replayed record keeps it and the HIT restores it once.
+    path(
+      "/shell-cache/restock",
+      ShellWarningsPage,
+      { name: "shellCacheRestock", ppr: { ttl: 300, swr: 120 } },
+      () => [loader(ShellRestockLoader, { ssr: false })],
+    ),
+    // Issue #927: the capture's snapshot encode of the ssr:false loader value
+    // fails once per ?probe= (ShellFlightErrorLoader); that capture must not
+    // store, and a later clean capture must.
+    path(
+      "/shell-cache/flight-error",
+      ShellWarningsPage,
+      { name: "shellCacheFlightError", ppr: { ttl: 300, swr: 120 } },
+      () => [loader(ShellFlightErrorLoader, { ssr: false })],
+    ),
+    // Capture outcome for one ?probe=: `refused` when onError got the capture's
+    // cache-write report, `passes` from shellFlightErrorPasses. `stored` only
+    // ends the test's poll when nothing is refused; the next request's
+    // x-rango-shell MISS is what the test relies on. Its key mirrors
+    // buildShellKey for a single search param; router.js is imported
+    // dynamically (urls -> router cycle).
+    path.json(
+      "/shell-cache/flight-error-status",
+      async (
+        ctx,
+      ): Promise<{ stored: boolean; refused: boolean; passes: number }> => {
+        const url = new URL(ctx.request.url);
+        const probe = url.searchParams.get("probe") ?? "";
+        const { cacheStore } = await import("../router.js");
+        const key = `${url.host}/shell-cache/flight-error?probe=${probe}:shell`;
+        const marker = `(probe=${probe})`;
+        return {
+          passes: shellFlightErrorPasses.get(probe) ?? 0,
+          stored: (await cacheStore.getShell(key)) !== null,
+          refused: onErrorLog.some(
+            (e) =>
+              e.metadata?.category === "cache-write" &&
+              e.message.includes(marker),
+          ),
+        };
+      },
+      { name: "shellCacheFlightErrorStatus" },
+    ),
+    // Issue #942 fixture (shell-cache-jsx.tsx).
+    path(
+      "/shell-cache/jsx",
+      ShellJsxPage,
+      { ppr: { ttl: 300, swr: 120 } },
+      () => [loader(ShellJsxLoader, { ssr: false })],
+    ),
+    path("/shell-cache/stale-replay/:id", ShellStaleReplayPage, {
+      name: "shellCacheStaleReplay",
+      ppr: { ttl: 300, swr: 120 },
+    }),
+    // Issue #986: client-managed paging on a route with transition({ when }).
+    // revalidate() false keeps the client's accumulated list on a ?page
+    // navigation, whether the live path or a replay HIT serves it, whatever
+    // the predicate returns.
+    path(
+      "/shell-cache/load-more",
+      ShellLoadMorePage,
+      { name: "shellCacheLoadMore", ppr: { ttl: 300, swr: 120 } },
+      () => [
+        transition({ when: shellLoadMoreWhen }),
+        revalidate(({ currentUrl, nextUrl }) =>
+          currentUrl.pathname === nextUrl.pathname &&
+          nextUrl.searchParams.has("page")
+            ? false
+            : undefined,
+        ),
+        loader(ShellLoadMorePageLoader, { ssr: false }),
+      ],
+    ),
+    // Storefront shape: ppr routes under an ancestor cache() scope (the
+    // rsc-cloudflare-app diagnosis shape — an app-wide cache() wrapping the
+    // whole tree). Navigation replay COMPOSES with the explicit tier: the
+    // tier's own hit reports `explicit-cache-hit`; on its miss the shell
+    // snapshot's doc record supplies the match (`HIT`). Short ttl keeps the
+    // explicit tier's warm window test-controllable; long swr mirrors the
+    // storefront config.
+    cache({ ttl: 30, swr: 604_800 }, () => [
+      layout(ShellScopedChromeLayout, () => [
+        path("/shell-cache/scoped", ShellScopedHomePage, {
+          name: "shellCacheScoped",
+          ppr: { ttl: 300, swr: 120 },
+        }),
+      ]),
+      // Consumer opt-outs stay absolute on the replay path: cache(false) and
+      // a false condition() report `cache-disabled` before any shell read.
+      cache(false, () => [
+        path("/shell-cache/scoped-optout", ShellScopedOptOutPage, {
+          name: "shellCacheScopedOptOut",
+          ppr: { ttl: 300, swr: 120 },
+        }),
+      ]),
+      cache({ ttl: 30, condition: () => false }, () => [
+        path("/shell-cache/scoped-condition", ShellScopedConditionPage, {
+          name: "shellCacheScopedCondition",
+          ppr: { ttl: 300, swr: 120 },
+        }),
+      ]),
+    ]),
     // NAMELESS ppr route (issue #714): `name` is orthogonal to shell caching —
     // the DSL registers the entry under a synthesized $path_* manifest key with
     // the ppr option intact, so this route must engage (MISS -> HIT) exactly
@@ -698,7 +1177,7 @@ export const shellCachePatterns = urls(
         ],
       ),
     ]),
-    // Identity-guard negative: a bake-lane loader (no loading()) that reads
+    // Identity-guard negative: a bake-lane loader (ssr: false) that reads
     // cookies(). Capture refuses deterministically (guard flag) — MISS forever
     // — while axis 1 serves the per-user value normally.
     path(
@@ -708,7 +1187,7 @@ export const shellCachePatterns = urls(
         name: "shellCacheGuard",
         ppr: true,
       },
-      () => [loader(ShellIdentityLoader)],
+      () => [loader(ShellIdentityLoader, { ssr: false })],
     ),
     // Slot-hole escape: see ShellSlotChromeLayout above.
     layout(ShellSlotChromeLayout, () => [
@@ -754,17 +1233,57 @@ export const shellCachePatterns = urls(
         ppr: true,
       }),
     ]),
+    path("/shell-cache/identity-use", ShellIdentityUsePage, {
+      name: "shellCacheIdentityUse",
+      ppr: true,
+    }),
+    middleware(copyShellTier, () => [
+      cache({ ttl: 300, key: (ctx) => `tier:${shellTier(ctx)}` }, () => [
+        path("/shell-cache/tiered", ShellTieredPage, {
+          name: "shellCacheTiered",
+          ppr: true,
+        }),
+        // The same partition through a nested cache() without a key() of
+        // its own (issue #970): its record and its shell are per tier too,
+        // and its record, keyed by the tier and its own default key, never
+        // names /shell-cache/tiered's.
+        layout(ShellTieredLayout, () => [
+          cache({ ttl: 300 }, () => [
+            path("/shell-cache/tiered-nested", ShellTieredNestedPage, {
+              name: "shellCacheTieredNested",
+              ppr: true,
+            }),
+          ]),
+        ]),
+      ]),
+    ]),
+    // A shell never outlives its route cache() entry: it expires with this
+    // 5 s entry, well inside ppr's own ttl.
+    cache({ ttl: 5, swr: 0 }, () => [
+      path("/shell-cache/short-record", ShellShortRecordPage, {
+        name: "shellCacheShortRecord",
+        ppr: true,
+      }),
+    ]),
     // Test-only fault injector for the serve-gate hardening e2e: overwrites the
     // stored shell entry for `target` with a corrupted/version-skewed copy, so
     // the suite can pin that the gate degrades to a working MISS (never a
     // committed-200 dead page) and that the recapture heals the key.
     // `mode`: postponed (unparseable JSON) | prelude (undecodable base64) |
-    // build (stale buildVersion). The key mirrors buildShellKey for the
+    // build (stale buildVersion) | stale (rewrite with ttl=1) | record (drop
+    // the doc record from the snapshot while the entry still names it: the
+    // shape a truncated or unreadable snapshot leaves). The key mirrors buildShellKey for the
     // single-search-param URLs the suite uses (sorted search == raw search).
     // router.js is imported dynamically to avoid the urls -> router cycle.
     path.json(
       "/shell-cache/__corrupt",
-      async (ctx): Promise<{ ok: boolean; found: boolean }> => {
+      async (
+        ctx,
+      ): Promise<{
+        ok: boolean;
+        found: boolean;
+        segmentKeys?: string[];
+      }> => {
         const url = new URL(ctx.request.url);
         const target = url.searchParams.get("target") ?? "";
         const mode = url.searchParams.get("mode") ?? "postponed";
@@ -777,10 +1296,56 @@ export const shellCachePatterns = urls(
         if (mode === "postponed") entry.postponed = '{"truncated';
         else if (mode === "prelude") entry.prelude = "%%%not-base64%%%";
         else if (mode === "build") entry.buildVersion = "stale-build";
-        await cacheStore.putShell(key, entry, 300, 120);
-        return { ok: true, found: true };
+        else if (mode === "record") {
+          entry.snapshot = entry.snapshot?.filter(
+            (record) =>
+              !(record.family === "segment" && record.key === entry.docKey),
+          );
+        }
+        await cacheStore.putShell(key, entry, mode === "stale" ? 1 : 300, 120);
+        return {
+          ok: true,
+          found: true,
+          segmentKeys: entry.snapshot
+            ?.filter((record) => record.family === "segment")
+            .map((record) => record.key),
+        };
       },
       { name: "shellCacheCorrupt" },
+    ),
+    // Test-only: the debugShellCapture events (router.tsx) for one shell,
+    // `path` being the target's pathname + search. Lets a suite wait for a
+    // capture's actual outcome (stored / refused / no-shell).
+    path.json(
+      "/shell-cache/__capture-events",
+      async (
+        ctx,
+      ): Promise<{ events: Array<{ outcome: string; attempt?: number }> }> => {
+        const { shellCaptureEventsFor } =
+          await import("../shell-capture-events.js");
+        const target = new URL(ctx.request.url).searchParams.get("path") ?? "";
+        return {
+          events: shellCaptureEventsFor(target).map((event) => ({
+            outcome: event.outcome,
+            attempt: event.attempt,
+          })),
+        };
+      },
+      { name: "shellCacheCaptureEvents" },
+    ),
+    // Test-only: body runs of the /shell-cache/baked-only bake-lane loader.
+    path.json(
+      "/shell-cache/__baked-only-runs",
+      (): { runs: number } => ({ runs: shellBakedOnlyRuns() }),
+      { name: "shellCacheBakedOnlyRuns" },
+    ),
+    // Test-only: moves /shell-cache/live-dep's generation for one ?probe= on.
+    path.json(
+      "/shell-cache/__live-dep-bump",
+      (ctx): { generation: number } => ({
+        generation: bumpLiveDepGeneration(ctx.searchParams.get("probe") ?? ""),
+      }),
+      { name: "shellCacheLiveDepBump" },
     ),
   ],
 );

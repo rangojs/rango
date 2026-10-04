@@ -1,8 +1,8 @@
-# Testing a handle — collectHandle, plus the loader and client read paths
+# Testing a handle — collectHandle, plus the loader read/write and client read paths
 
 **Layer:** unit (node + DOM) · **Import:** `@rangojs/router/testing` (collectHandle), `@rangojs/router/testing/dom` (renderRoute) · **DSL it tests:** a handle e.g. Breadcrumbs/Meta (see `/handler-use`, `/breadcrumbs`)
 
-A handle's `collect`/accumulator (the `createHandle(collect)` argument that maps per-segment pushed values into one accumulated result) is otherwise unreachable — `createHandle` keeps it in a private registry keyed by `$$id`. These three primitives test it from different angles: `collectHandle` runs the REAL registered collect on per-segment values you SEED; `runLoader` seeds the POST-collect accumulated value a loader reads after the barrier; `renderRoute` seeds the RAW pushed values for a client component reading `useHandle`. None of them run the real push -> accumulate -> barrier wiring (that stays e2e).
+A handle's `collect`/accumulator (the `createHandle(collect)` argument that maps per-segment pushed values into one accumulated result) is otherwise unreachable — `createHandle` keeps it in a private registry keyed by `$$id`. These primitives test it from different angles: `collectHandle` runs the REAL registered collect on per-segment values you SEED; `runLoader` seeds the POST-collect accumulated value a loader READS (`ctx.get(handle)` after the barrier); `runLoaderResult(...).handlePushes` records what a loader WRITES (`ctx.use(SomeHandle)({...})`, in push order); `renderRoute` seeds the RAW pushed values for a client component reading `useHandle`. None of them run the real push -> accumulate -> barrier wiring (that stays e2e).
 
 ## API
 
@@ -17,16 +17,18 @@ A handle's `collect`/accumulator (the `createHandle(collect)` argument that maps
 
 ### runLoader option — `handles` — `src/testing/run-loader.ts`
 
-| Field      | Type                                        | Meaning                                                                                                                                                                                                                |
-| ---------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `handles`  | `ReadonlyArray<readonly [Handle, unknown]>` | Seeds the value `ctx.use(SomeHandle)` returns — the POST-collect **ACCUMULATED** value (singular `unknown`), what a loader reads after `await ctx.rendered()`. Matched by handle reference. Pair with `rendered`.      |
-| `rendered` | `boolean \| (() => void \| Promise<void>)`  | Mocks the `ctx.rendered()` barrier (throws by default). `true` resolves it immediately; a function controls timing/side effects. A `ctx.use(handle)` read before the barrier settles throws, exactly as in production. |
+| Field      | Type                                        | Meaning                                                                                                                                                                                                                                                                  |
+| ---------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `handles`  | `ReadonlyArray<readonly [Handle, unknown]>` | Seeds the value `ctx.get(SomeHandle)` returns — the POST-collect **ACCUMULATED** value (singular `unknown`), what a loader reads after `await ctx.rendered()`. Matched by handle reference. Pair with `rendered`.                                                        |
+| `rendered` | `boolean \| (() => void \| Promise<void>)`  | Mocks the `ctx.rendered()` barrier (throws by default). `true` resolves it immediately; a function controls timing/side effects. A `ctx.get(handle)` read before the barrier settles throws, exactly as in production. (`ctx.use(handle)` — the WRITE — is never gated.) |
 
 ### renderRoute option — `handles` — `src/testing/render-route.tsx`
 
 | Field     | Type                                          | Meaning                                                                                                                                                                                                                                                                   |
 | --------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `handles` | `ReadonlyArray<readonly [Handle, unknown[]]>` | Seeds the CLIENT read path for `useHandle(handle)` — the RAW **pushed values array** (`unknown[]`), the values a route's handlers would have pushed. Attached to the leaf route segment under the handle's `$$id`, so `useHandle` runs the handle's REAL collect on them. |
+
+`lateHandles` takes the same pairs for values that arrive after hydration (a late loader push): each replaces that handle's `handles` seed once the root has hydrated or mounted. With `hydrate: true` it pins that a reader hydrates with the document's values; see [`./client-components.md`](./client-components.md), "Hydration".
 
 **Shape contrast:** `renderRoute` feeds the barrier INPUT (the pushes, `unknown[]`); `runLoader` feeds its OUTPUT (the single accumulated value, `unknown`).
 
@@ -61,12 +63,12 @@ it("runs a custom 'last wins' collect", () => {
 ```ts
 // loader-reads-handle.test.ts — a loader reading accumulated handle data after the barrier
 import { it, expect } from "vitest";
-import { runLoader } from "@rangojs/router/testing";
+import { runLoader, type TestLoaderContext } from "@rangojs/router/testing";
 import { RenderedProducts } from "../src/handles"; // a createHandle(...)
 
-const livePricesBody = async (ctx) => {
+const livePricesBody = async (ctx: TestLoaderContext) => {
   await ctx.rendered(); // barrier: handle data is now readable
-  const ids = ctx.use(RenderedProducts) as string[];
+  const ids = ctx.get(RenderedProducts) as string[];
   return ids.map((id) => ({ id, price: 9.99 }));
 };
 
@@ -78,6 +80,30 @@ it("reads the accumulated handle value (seed the OUTPUT, mock the barrier)", asy
   expect(data).toEqual([
     { id: "widget-a", price: 9.99 },
     { id: "widget-b", price: 9.99 },
+  ]);
+});
+```
+
+```ts
+// loader-writes-handle.test.ts — a loader PUSHING meta/breadcrumbs (handler parity)
+import { it, expect } from "vitest";
+import {
+  runLoaderResult,
+  type TestLoaderContext,
+} from "@rangojs/router/testing";
+import { Meta } from "@rangojs/router";
+
+const productBody = async (ctx: TestLoaderContext) => {
+  const product = { name: "Widget", slug: "widget" };
+  ctx.use(Meta)({ title: `${product.name} — Shop` });
+  return product;
+};
+
+it("records loader handle writes in push order", async () => {
+  const { result, handlePushes } = await runLoaderResult(productBody);
+  expect(result?.name).toBe("Widget");
+  expect(handlePushes).toEqual([
+    { handle: Meta, value: { title: "Widget — Shop" } },
   ]);
 });
 ```
@@ -121,11 +147,12 @@ it("renders the seeded trail (seed the INPUT pushes, the collect runs)", async (
 
 - `collectHandle` tests the pure collect/accumulator in ISOLATION (parent -> child segment order, empty arrays filtered to match production). It does NOT run the real push -> accumulate -> barrier wiring — that stays e2e.
 - renderRoute `handles` seeds the CLIENT read path with the RAW pushed values array (`unknown[]`), attached to the leaf segment. Handle data accumulates GLOBALLY (not segment-scoped like loaders), so a LAYOUT reading the same handle sees the seeded values too, not just the leaf route.
-- runLoader `handles` seeds the POST-collect ACCUMULATED value (singular `unknown`) a loader reads after `await ctx.rendered()`; pair with `{ rendered: true }`. Shape contrast: renderRoute feeds the barrier INPUT (pushes[]), runLoader feeds its OUTPUT (the accumulated value).
+- runLoader `handles` seeds the POST-collect ACCUMULATED value (singular `unknown`) a loader reads via `ctx.get(handle)` after `await ctx.rendered()`; pair with `{ rendered: true }`. Shape contrast: renderRoute feeds the barrier INPUT (pushes[]), runLoader feeds its OUTPUT (the accumulated value).
+- Loader WRITES are the other direction: `ctx.use(SomeHandle)({...})` records into `runLoaderResult(...).handlePushes` (push order; a `.defer()` resolver's value is recorded when the resolver runs). Nothing to seed — assert the envelope.
 - The renderRoute path is the CLIENT tree only: it does NOT catch server/client boundary remount bugs, real Flight serialization errors, or loader execution.
 
 ## See also
 
 - `/handler-use`, `/breadcrumbs` — the DSL this tests
 - Siblings: `./loader.md`, `./client-components.md`, `./render-handler.md`
-- Long-form prose: [docs/testing.md](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/testing.md) — section "Testing a handle's collect/accumulator"
+- Long-form prose: [docs/testing.md](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/testing.md) — section "Testing a handle's collect/accumulator"

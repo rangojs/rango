@@ -24,7 +24,7 @@ devTest.describe("concurrent-navigation", () => {
       // The switchMap semantics should abort intermediate navigations.
       await page.locator('nav a:has-text("About")').click();
       await page.locator('nav a:has-text("Blog")').click();
-      await page.locator('nav a:has-text("Shop")').click();
+      await page.locator('nav a:text-is("Shop")').click();
 
       // The final destination (Shop) should win
       await expect(page).toHaveURL(/\/shop/, { timeout: 10000 });
@@ -82,7 +82,7 @@ devTest.describe("concurrent-navigation", () => {
       await page.locator('nav a:has-text("Blog")').click();
 
       // While blog navigation is in flight, click shop
-      await page.locator('nav a:has-text("Shop")').click();
+      await page.locator('nav a:text-is("Shop")').click();
 
       // The final destination should win
       await expect(page).toHaveURL(/\/shop/, { timeout: 10000 });
@@ -113,7 +113,7 @@ test.describe("concurrent-navigation (production)", () => {
     // The switchMap semantics should abort intermediate navigations.
     await page.locator('nav a:has-text("About")').click();
     await page.locator('nav a:has-text("Blog")').click();
-    await page.locator('nav a:has-text("Shop")').click();
+    await page.locator('nav a:text-is("Shop")').click();
 
     // The final destination (Shop) should win
     await expect(page).toHaveURL(/\/shop/, { timeout: 10000 });
@@ -169,7 +169,7 @@ test.describe("concurrent-navigation (production)", () => {
     await page.locator('nav a:has-text("Blog")').click();
 
     // While blog navigation is in flight, click shop
-    await page.locator('nav a:has-text("Shop")').click();
+    await page.locator('nav a:text-is("Shop")').click();
 
     // The final destination should win
     await expect(page).toHaveURL(/\/shop/, { timeout: 10000 });

@@ -3,22 +3,28 @@ import React from "react";
 import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 import type { ShellCacheEntry } from "@rangojs/router/cache";
 import {
+  assertPprReplayStatus,
   assertShellStatus,
+  PPR_REPLAY_STATUS_HEADER,
   shellCacheKey,
   SHELL_STATUS_HEADER,
 } from "@rangojs/router/testing";
 
 // Userland dogfood of the PPR shell STORE family + shell-status helpers through
 // the PUBLIC @rangojs/router/cache and @rangojs/router/testing surfaces.
-// Live MISS -> background capture -> HIT (x-rango-shell) needs the RSC/SSR
-// pipeline and stays e2e (test-app / cloudflare-basic, dev + production).
-// Unit layer: production shell key identity + getShell/putShell + header assert.
+// A live MISS -> background capture -> HIT (x-rango-shell) runs in a Flight
+// test through serveShellRequest (@rangojs/router/testing/flight); real HTML
+// stays e2e (test-app / cloudflare-basic, dev + production). This file covers
+// the store half: production shell key identity + getShell/putShell + header
+// assert.
 
 function entry(overrides: Partial<ShellCacheEntry> = {}): ShellCacheEntry {
   return {
     prelude: btoa("<html><body>SHELL</body></html>"),
     postponed: JSON.stringify({ hole: 1 }),
     reactVersion: React.version,
+    buildVersion: "mini-build",
+    snapshot: [],
     createdAt: Date.now(),
     ...overrides,
   };
@@ -58,5 +64,18 @@ describe("shell store family (mini dogfood, public surface)", () => {
       },
     });
     expect(() => assertShellStatus(res, "MISS")).not.toThrow();
+  });
+
+  it("assertPprReplayStatus distinguishes fresh, stale, and bounded bypass responses", () => {
+    for (const [value, expected] of [
+      ["HIT; freshness=fresh", { outcome: "HIT", freshness: "fresh" }],
+      ["HIT; freshness=stale", { outcome: "HIT", freshness: "stale" }],
+      ["BYPASS; reason=no-entry", { outcome: "BYPASS", reason: "no-entry" }],
+    ] as const) {
+      const response = new Response(null, {
+        headers: { [PPR_REPLAY_STATUS_HEADER]: value },
+      });
+      expect(() => assertPprReplayStatus(response, expected)).not.toThrow();
+    }
   });
 });

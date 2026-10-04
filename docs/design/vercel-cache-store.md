@@ -47,6 +47,22 @@ everywhere. So `VercelCacheStore` sits much closer to `MemorySegmentCacheStore`
 in size than to `CFCacheStore` — the platform does the distribution and the tag
 fan-out for us.
 
+One exception is the store's PPR shell memo (`memo.shellMs`, default 2000,
+`docs/design/shell-entry-layout.md` "The shell memo"): a memo hit does not read
+the entry, only rango's `tm` tag markers, and those are a regional
+`cache.set`. A region that memoized a shell before an invalidation issued in
+another region finds no marker and serves the shell until its window passes;
+without the memo, `expireTag` removed it within about 300 ms. In the region
+that invalidated, the invalidating process misses on its next request, and
+the region's other processes once their memoized marker refreshes (below). A
+platform `expireTag` issued outside rango (not through `invalidateTags`)
+writes no `tm` marker at all, so every memo that holds the shell serves it
+until its window passes. The shell
+reads' marker checks go through a per-process marker memo (300 ms fresh, 2 s
+max-stale), and the user whose request ran `updateTag()` /
+`revalidateTag()` carries the fresh-reads cookie, which skips both memos
+(`docs/design/shell-entry-layout.md` "The tag-marker memo").
+
 The store exists to supply the three things the raw primitive does _not_ give us.
 The rest of this doc is mostly those three.
 
@@ -111,14 +127,41 @@ write would clobber the first.
 So the store namespaces every key by family before it touches the cache:
 
 ```
-[v/{version}/]rg:{s|i|r}:{routerKey}
+[v/{version}/]rg:{s|i|r|h}:{routerKey}
+rg:tm:{tag}
 ```
 
-`s` = segment, `i` = item, `r` = response. `rg:` namespaces all Rango entries
-(so the project's Runtime Cache can hold non-Rango data too). The router's own
-semantic prefixes (`doc:`, `partial:`, `intercept:`, `use-cache:`) ride along as
-the `{routerKey}` suffix. This started as the obvious failure mode of a
-single-keyspace backend; the prefix is what prevents it.
+`s` = segment, `i` = item, `r` = response, `h` = PPR shell, `tm` = tag marker.
+`rg:` namespaces all Rango entries (so the project's Runtime Cache can hold
+non-Rango data too). The router's own semantic prefixes (`doc:`, `partial:`,
+`intercept:`, `use-cache:`) ride along as the `{routerKey}` suffix. This
+started as the obvious failure mode of a single-keyspace backend; the prefix
+is what prevents it.
+
+### Versions: the store reconciles deploys, the platform does not
+
+Vercel does not reconcile entries between deployments, so something in the
+key has to say which code may read an entry. That is the `v/{version}/`
+prefix, and by default it is the cache version of the router serving the
+request, the same rule `CFCacheStore` follows
+([per-app-cache-version.md](./per-app-cache-version.md)):
+
+- `s` and `i` take the router's **data version** (a hash of its server code),
+- `r` and `h` take its **document version** (that plus the SSR output and the
+  client asset names),
+- `tm` takes none, so a tag invalidation applies to every version, including
+  one that comes back in a rollback.
+
+The store reads them per operation from the request context; the factory
+builds it without knowing the router. A `version` option replaces both.
+
+You might remember this store as unversioned by default, with the advice to
+put the deployment id in the `getCache({ namespace })` handle. That cleared
+the cache on every deploy, and without it an old build's entries were served
+to changed code. Neither is needed now: a deploy that changes a router's code
+stops reading that router's entries, and one that does not keeps them. A
+deployment-scoped namespace still works if clearing on every deploy is what
+you want.
 
 ### Stale-while-revalidate, when the backend has none
 
@@ -168,6 +211,24 @@ per invalidated tag and compares shell generations against it:
   `invalidateTags(tags)` → `cache.expireTag(tags)`, one call for the batch.
 - shell path: reject a write whose capture generation predates a marker, and
   repeat the marker check on read to cover the check-to-write race.
+- the invalidating request (#973): before its first await, `invalidateTags`
+  records the tags and the time in the request's tag mask
+  (`request-tag-mask.ts`, shared with `CFCacheStore`).
+  For the rest of that request a segment, item or response hit carrying one
+  of the tags and written at or before that time (the envelope's `ta` stamp;
+  an entry without one counts as older) misses, and the shell checks treat
+  the tags as invalidated. `revalidateTag()` does not wait for the `tm`
+  writes or `expireTag`, and before this the action that called it rendered
+  the entries `expireTag` had not deleted yet. The map only turns that
+  request's hits into misses, so a failed `expireTag` costs it extra misses,
+  never a stale read.
+- data writes (#977): `expireTag` deletes what exists when it runs, so an
+  item, segment or response written by work that started before it would
+  land after it and serve its old value. Every writer asks
+  `isTagsInvalidatedSince(tags, start + 1)` before `setItem`/`set`/
+  `putResponse` (`predatesInvalidation` in `tag-invalidation.ts`), which
+  reads the `tm` markers, and skips the write when one is newer than the
+  execution's start.
 
 Markers use the same Runtime Cache handle, not a companion store. Tagged shell
 retention is capped at the marker lifetime so an invalidated shell cannot become
@@ -195,13 +256,13 @@ reporting a false success. That is the read-your-own-writes honesty rule from
 These are the limits that will silently cost you correctness or capacity if you
 forget them. The store handles each; this is what it is doing and why.
 
-| Limit                       | Value                                                             | What the store does                                                                                                                                                                                                                         |
-| --------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Max item size               | **2 MB** (writes above silently no-op)                            | Measures the serialized envelope; skips + reports a `cache-write` error above `VERCEL_MAX_ITEM_BYTES`. Large Flight payloads simply go uncached rather than vanishing without a trace.                                                      |
-| Tags per item               | **128**                                                           | Clamps to `VERCEL_MAX_TAGS_PER_ITEM` on write, with a warning. Does **not** clamp `invalidateTags` — an invalidation must reach every requested tag.                                                                                        |
-| Tag length                  | **256 bytes**, no commas                                          | Drops over-length or comma-bearing tags (commas are the header delimiter) on both write and invalidate, with a warning.                                                                                                                     |
-| Cross-deploy reconciliation | **none** — TTL/tag updates are not reconciled between deployments | Fold a build id into the key. Use the `version` option (`v/{version}/...` prefix) or, better, the `getCache({ namespace })` argument. Without it, an entry written by a prior deploy with a now-changed shape can be served after a deploy. |
-| Storage consistency         | **regional**                                                      | A write in region A is not visible to a read in region B until B warms. Plan for per-region cold starts; every `get` is best-effort regardless.                                                                                             |
+| Limit                       | Value                                                             | What the store does                                                                                                                                                                                                                                                         |
+| --------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Max item size               | **2 MB** (writes above silently no-op)                            | Measures the serialized envelope; skips + reports a `cache-write` error above `VERCEL_MAX_ITEM_BYTES`. Large Flight payloads simply go uncached rather than vanishing without a trace.                                                                                      |
+| Tags per item               | **128**                                                           | Clamps to `VERCEL_MAX_TAGS_PER_ITEM` on write, with a warning. Does **not** clamp `invalidateTags` — an invalidation must reach every requested tag.                                                                                                                        |
+| Tag length                  | **256 bytes**, no commas                                          | Drops over-length or comma-bearing tags (commas are the header delimiter) on both write and invalidate, with a warning.                                                                                                                                                     |
+| Cross-deploy reconciliation | **none** — TTL/tag updates are not reconciled between deployments | Prefixes every key with the serving router's cache version (`v/{version}/...`, see "Versions" above): a deploy that changes the router's code no longer reads its old entries, one that does not keeps them. `version` or a per-deploy `getCache({ namespace })` overrides. |
+| Storage consistency         | **regional**                                                      | A write in region A is not visible to a read in region B until B warms. Plan for per-region cold starts; every `get` is best-effort regardless.                                                                                                                             |
 
 The 2 MB cap is the one most likely to surprise you. On Cloudflare an oversized
 entry just fails the KV write; on Vercel the `set` resolves successfully and the
@@ -212,20 +273,25 @@ but only if you wired `onError` or read the console.
 ### Wiring it into a router
 
 The cache option is a factory so the store can be constructed per request with
-the platform's `waitUntil` and a deploy-scoped namespace:
+the platform's `waitUntil`:
 
 ```ts
 import { createRouter } from "@rangojs/router";
 import { VercelCacheStore } from "@rangojs/router/cache";
 import { getCache, waitUntil } from "@vercel/functions";
 
+// One handle per process: getCache() resolves the platform cache on every
+// call, and the store keeps its PPR shell and tag-marker memos per handle.
+// No deployment id in the namespace: the store's keys carry the router's
+// cache versions, so a deploy keeps what its code did not change. Add
+// `{ namespace: process.env.VERCEL_DEPLOYMENT_ID }` to clear on every deploy.
+const runtimeCache = getCache();
+
 export const router = createRouter({
   document: Document,
   cache: () => ({
     store: new VercelCacheStore({
-      // Bake the deployment id into the namespace so a deploy cannot serve
-      // stale-shaped entries (Vercel does not reconcile across deploys).
-      cache: getCache({ namespace: process.env.VERCEL_DEPLOYMENT_ID }),
+      cache: runtimeCache,
       waitUntil,
       defaults: { ttl: 60, swr: 300 },
     }),
@@ -252,7 +318,8 @@ On Vercel there is no per-request `env`/`ctx` argument — bindings are
 Pass `debug: true` to log each read outcome, or `debug: (event) => …` to capture
 the structured `VercelCacheReadDebugEvent` (`op`, `key`, `outcome`,
 `staleAt`/`expiresAt`, `shouldRevalidate`, `readMs`). Outcomes are
-`miss | fresh | stale-revalidate | expired | corrupt | error`. Write failures,
+`miss | memo-hit | fresh | stale-revalidate | expired | corrupt | error`
+(`memo-hit`: a `getShell` served from the shell memo). Write failures,
 oversized skips, dropped tags, and corrupt-entry evictions all route through
 `reportCacheError`, so they reach the router's `onError` as well as the console.
 
@@ -279,7 +346,7 @@ Rango apps deploy by writing the Build Output API v3 directory, `.vercel/output/
 └── functions/
     └── render.func/
         ├── .vc-config.json      # runtime: nodejs, supportsResponseStreaming: true
-        └── index.js + manifests # the bundled rsc (+ ssr) environment
+        └── index.js + manifests # bundled rsc/ssr, prerender, and PPR shell manifests
 ```
 
 `config.json` is the framework-less "static first, one function for the rest"
@@ -299,7 +366,7 @@ directly from the CDN; everything else rewrites to the single RSC/SSR function.
 
 ```json
 {
-  "runtime": "nodejs22.x",
+  "runtime": "nodejs24.x",
   "handler": "index.js",
   "launcherType": "Nodejs",
   "supportsResponseStreaming": true
@@ -387,9 +454,23 @@ There are no `.html`/`.rsc` files in `static/` that the CDN returns directly —
 prerender and static manifests are bundled _inside_ the function, which looks up
 the stored Flight payloads at runtime exactly as it would a cache hit. The browser
 cannot tell a prerendered route from a cached one. (Vercel's own Prerender
-Functions / ISR are a separate CDN-level mechanism; if we ever map Rango's
-prerendered routes onto them, that is an additive optimization, not a replacement
-for the runtime lookup.)
+Functions / ISR are a separate CDN-level mechanism.) `Prerender + ppr` build
+shells follow the same rule: `__ps-*.js` assets and `__shell-manifest.js` live in
+the function bundle, and the first function request serves them through the
+normal middleware-before-shell path.
+
+The preset does not map these entries onto Vercel's CDN-stitched response
+`chain`. Although Vercel's open-source Build Output parser accepts generic
+`chain` metadata, a CDN-first shell would be committed before Rango's global and
+route middleware can authorize, redirect, set headers, or call `ctx.dynamic()`.
+That violates the shipped request contract. See
+`packages/rangojs-router/docs/design/vercel-chain-ppr.md` and
+`packages/rangojs-router/skills/deployment-caching/SKILL.md`.
+
+Fully public, completely shared responses can independently use HTTP
+`s-maxage`/`stale-while-revalidate` at the Vercel CDN. That caches the completed
+response, not only the PPR shell, and CDN hits bypass the function and every
+Rango middleware.
 
 ## Cache-tag mapping caveat (if both cache layers are ever used)
 
@@ -419,8 +500,9 @@ Shipped:
   runs once after all environments build, unlike `closeBundle` which fires
   per-env and twice for ssr). `RangoVercelOptions` / `VercelPresetOptions` are
   exported from `@rangojs/router/vite`. `srvx` is a router dependency;
-  `@vercel/functions` is an optional peer; esbuild is resolved from the app's
-  Vite install (no new heavy router dep).
+  `@vercel/functions` is an optional peer; the launcher is bundled with
+  rolldown (a production dependency of Vite 8, resolved through the app's
+  vite install — no esbuild, no new router dep).
 - **`examples/vercel-basic`**: a Rango app on `preset: "vercel"`;
   `scripts/smoke.mjs` serves the assembled function over `node:http` and asserts
   rendering + static serving + a segment-cache hit, without deploying.

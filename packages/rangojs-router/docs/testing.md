@@ -19,7 +19,8 @@ behavior at the wrong layer is higher. The pyramid, bottom (fast, many) to top
 1. **Pure / context-isolated units** — `reverse`, a `revalidate` predicate, one
    loader's data logic, one middleware's branching. Milliseconds, node.
 2. **Client-tree component units** — a component reading router context, in a
-   DOM env, with seeded data. No server, no Flight.
+   DOM env, with seeded data. No server, no Flight. (`renderRoute`'s
+   `hydrate: true` adds an HTML pass of that client tree and hydrates it.)
 3. **In-process integration** — a request to a `Response` (`dispatch`), or a
    real Flight render (`renderToFlightString`). No browser.
 4. **End-to-end** — a real dev or production server, real navigation, real
@@ -47,29 +48,34 @@ Both are made structural by `parityDescribe` and `expectParity`, below.
 
 ## The testing surface, mapped to the API
 
-| You ship / consume…                              | Test that…                                                                          | Layer               | Primitive                                                                                                      | Skill                                    |
-| ------------------------------------------------ | ----------------------------------------------------------------------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| `reverse` / `useReverse` / `href`                | the URL is correct; misuse fails to compile                                         | unit + types        | call directly; `@ts-expect-error`                                                                              | `/typesafety`, `/links`                  |
-| a `loader()` body                                | data logic given params/env/vars/search                                             | unit (node)         | `runLoader` (handle or raw fn)                                                                                 | `/loader`                                |
-| a loader's cookie / header / redirect output     | `Set-Cookie`, response headers, `throw redirect()` (auth loaders)                   | unit (node)         | `runLoaderResult` (envelope: `{ result, thrown, response, cookies, headers, locationState, stateCookieName }`) | `/loader`                                |
-| `middleware()` (auth, logging)                   | ordering, short-circuit, cookie/header merge                                        | unit (node)         | `runMiddleware`                                                                                                | `/middleware`                            |
-| a client component reading router context        | it renders given params/loaderData/Outlet                                           | unit (DOM)          | `renderRoute`                                                                                                  | `/hooks`                                 |
-| a component reading `useLocationState`           | it renders the seeded location-state value                                          | unit (DOM)          | `renderRoute` (`locationState` option)                                                                         | `/hooks`                                 |
-| a component reading `useHandle` (Breadcrumbs)    | it renders the seeded handle output                                                 | unit (DOM)          | `renderRoute` (`handles` option)                                                                               | `/breadcrumbs`                           |
-| a handle's `collect`/accumulator                 | it maps per-segment pushes to the accumulated value                                 | unit (node)         | `collectHandle`                                                                                                | `/breadcrumbs`                           |
-| a component under an `include('/shop', …)` mount | `useMount`/`useHref`/`useReverse` resolve the prefix                                | unit (DOM)          | `renderRoute` (`mount` option)                                                                                 | `/composability`                         |
-| a server action's cookie / header / flash output | `Set-Cookie`, response headers, flash — even on `throw redirect()`                  | unit (node)         | `runInRequestContext` (`{ result, thrown, response, cookies, headers, locationState, stateCookieName }`)       | `/server-actions`                        |
-| a response route (`path.json/.text/...`)         | status, content-type, body, content negotiation                                     | integration         | `dispatch`                                                                                                     | `/response-routes`, `/mime-routes`       |
-| a redirect / `404` / middleware redirect         | the `Response` (status + `Location`)                                                | integration         | `dispatch`                                                                                                     | `/middleware`, `/route`                  |
-| a Server Component's Flight render (default)     | rendered props/host content, typed boundary props (`Date`/`Map`), inlined-vs-island | RSC unit            | `renderServerTree` + `findClientBoundaries`/`findElements`                                                     | `/route`                                 |
-| the exact Flight **wire payload** shape (niche)  | serializer row framing / a drift snapshot                                           | RSC unit            | `renderToFlightString` + `toMatchFlightSnapshot`                                                               | `/route`                                 |
-| a real route **handler** `(ctx) => rsc`          | what it renders given params/loaders/vars; its effects                              | RSC unit            | `renderHandler` (seeded `HandlerContext`)                                                                      | `/route`                                 |
-| a `"use server"` action + revalidation flow      | the mutate -> reload -> UI update, JS and no-JS                                     | e2e                 | `parityDescribe` + `expectParity`                                                                              | `/server-actions`                        |
-| navigation / hydration / view transitions        | no reload, no page error, correct pathname                                          | e2e                 | `parityDescribe`, `waitForHydration`, matchers                                                                 | `/hooks`, `/view-transitions`            |
-| `cache()` / `"use cache"` / loader cache         | hit/miss/stale across two requests                                                  | e2e + signal        | `assertCacheStatus` / telemetry sink                                                                           | `/caching`, `/use-cache`, `/cache-guide` |
-| `Prerender(...)` routes                          | served from a build-time artifact (a cache hit)                                     | e2e (prod) + signal | `assertCacheStatus(..., "prerendered")`                                                                        | `/prerender`                             |
-| `ppr` shell (axis 2)                             | `x-rango-shell` HIT/MISS; store key / getShell after flush                          | e2e + signal / unit | `assertShellStatus` / `shellCacheKey` + `MemorySegmentCacheStore` (live bake/serve = e2e)                      | `/ppr`                                   |
-| the generated `*.named-routes.gen.ts`            | it matches the runtime route map (drift in CI)                                      | unit (node)         | `assertGeneratedRoutesMatch`                                                                                   | `/typesafety`                            |
+| You ship / consume…                                    | Test that…                                                                          | Layer               | Primitive                                                                                                      | Skill                                    |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `reverse` / `useReverse` / `href`                      | the URL is correct; misuse fails to compile                                         | unit + types        | call directly; `@ts-expect-error`                                                                              | `/typesafety`, `/links`                  |
+| a `loader()` body                                      | data logic given params/env/vars/search                                             | unit (node)         | `runLoader` (handle or raw fn)                                                                                 | `/loader`                                |
+| a loader's cookie / header / redirect output           | `Set-Cookie`, response headers, `throw redirect()` (auth loaders)                   | unit (node)         | `runLoaderResult` (envelope: `{ result, thrown, response, cookies, headers, locationState, stateCookieName }`) | `/loader`                                |
+| `middleware()` (auth, logging)                         | ordering, short-circuit, cookie/header merge                                        | unit (node)         | `runMiddleware`                                                                                                | `/middleware`                            |
+| a client component reading router context              | it renders given params/loaderData/Outlet                                           | unit (DOM)          | `renderRoute`                                                                                                  | `/hooks`                                 |
+| a component reading `useLocationState`                 | it renders the seeded location-state value                                          | unit (DOM)          | `renderRoute` (`locationState` option)                                                                         | `/hooks`                                 |
+| a client component's hydration                         | its first client render matches its own server HTML (no recoverable error)          | unit (DOM)          | `renderRoute` (`hydrate` option)                                                                               | `/hooks`                                 |
+| a component reading `useHandle` (Breadcrumbs)          | it renders the seeded handle output                                                 | unit (DOM)          | `renderRoute` (`handles` option)                                                                               | `/breadcrumbs`                           |
+| a handle's `collect`/accumulator                       | it maps per-segment pushes to the accumulated value                                 | unit (node)         | `collectHandle`                                                                                                | `/breadcrumbs`                           |
+| a component under an `include('/shop', …)` mount       | `useMount`/`useHref`/`useReverse` resolve the prefix                                | unit (DOM)          | `renderRoute` (`mount` option)                                                                                 | `/composability`                         |
+| a server action's cookie / header / flash output       | `Set-Cookie`, response headers, flash — even on `throw redirect()`                  | unit (node)         | `runInRequestContext` (`{ result, thrown, response, cookies, headers, locationState, stateCookieName }`)       | `/server-actions`                        |
+| a response route (`path.json/.text/...`)               | status, content-type, body, content negotiation                                     | integration         | `dispatch`                                                                                                     | `/response-routes`, `/mime-routes`       |
+| a redirect / `404` / middleware redirect               | the `Response` (status + `Location`)                                                | integration         | `dispatch`                                                                                                     | `/middleware`, `/route`                  |
+| a Server Component's Flight render (default)           | rendered props/host content, typed boundary props (`Date`/`Map`), inlined-vs-island | RSC unit            | `renderServerTree` + `findClientBoundaries`/`findElements`                                                     | `/route`                                 |
+| the exact Flight **wire payload** shape (niche)        | serializer row framing / a drift snapshot                                           | RSC unit            | `renderToFlightString` + `toMatchFlightSnapshot`                                                               | `/route`                                 |
+| a real route **handler** `(ctx) => rsc`                | what it renders given params/loaders/vars; its effects                              | RSC unit            | `renderHandler` (seeded `HandlerContext`)                                                                      | `/route`                                 |
+| `transition({ when })` / `clientUrls()` `revalidate()` | the navigation holds / the loader re-runs, given `from`/`to` or URLs and params     | unit (node)         | `runTransitionWhen` / `runClientRevalidate`                                                                    | `/view-transitions`, `/client-urls`      |
+| a `"use server"` action + revalidation flow            | the mutate -> reload -> UI update, JS and no-JS                                     | e2e                 | `parityDescribe` + `expectParity`                                                                              | `/server-actions`                        |
+| navigation / hydration / view transitions              | no reload, no page error, correct pathname                                          | e2e                 | `parityDescribe`, `waitForHydration`, matchers                                                                 | `/hooks`, `/view-transitions`            |
+| a `"use cache"` function                               | hit/miss: the body runs once across two calls; the value round-trips                | RSC unit            | `renderHandler`/`runLoader` + seeded `cacheStore` + `rangoUseCacheTransform()` (rsc project)                   | `/use-cache`                             |
+| a loader's own `cache()`                               | hit/miss; `updateTag()` of a tag its body recorded drops the entry                  | RSC unit            | `runLoader` + `cache` + seeded `cacheStore` (rsc project)                                                      | `/loader`, `/caching`                    |
+| `cache()` / loader cache / `"use cache"` stale         | hit/miss/stale across two requests                                                  | e2e + signal        | `assertCacheStatus` / telemetry sink                                                                           | `/caching`, `/use-cache`, `/cache-guide` |
+| `Prerender(...)` routes                                | served from a build-time artifact (a cache hit)                                     | e2e (prod) + signal | `assertCacheStatus(..., "prerendered")`                                                                        | `/prerender`                             |
+| `ppr` shell (axis 2)                                   | MISS -> capture -> HIT: the frozen shell vs the live tail; tag eviction; replay     | RSC unit            | `serveShellRequest` (HTML step stubbed)                                                                        | `/ppr`                                   |
+| `ppr` shell (axis 2) in real HTML                      | document HIT/MISS; partial fresh/stale replay or bounded bypass                     | e2e + signal / unit | `assertShellStatus` / `assertPprReplayStatus` / `shellCacheKey` + `MemorySegmentCacheStore`                    | `/ppr`                                   |
+| the generated `*.named-routes.gen.ts`                  | it matches the runtime route map (drift in CI)                                      | unit (node)         | `assertGeneratedRoutesMatch`                                                                                   | `/typesafety`                            |
 
 ## What these primitives deliberately don't cover
 
@@ -85,15 +91,22 @@ nothing. Know these traps, and the seeds that close the easy ones:
 | `ctx.search` (typed search schema) in a loader                                                                                              | Defaults to `{}`; `opts.search` only sets the raw `ctx.searchParams`                                                                                                                                                                                                                                                                                  | Seed the typed object with **`searchData`** on `runLoader`                                                                                                                                                  |
 | `ctx.theme` / `ctx.setTheme` in a handler                                                                                                   | Always `undefined` — the real handler injects the theme config                                                                                                                                                                                                                                                                                        | Pass **`theme`** (the `createRouter({ theme })` shape) to `runLoader`/`runMiddleware`/`renderRoute`                                                                                                         |
 | `redirect()` basename prefixing                                                                                                             | Defaults to no prefix                                                                                                                                                                                                                                                                                                                                 | Seed **`basename`** on `runLoader`/`runMiddleware`; `dispatch` uses the router's own basename                                                                                                               |
-| a `middleware()` reading handle data (`ctx.use(Handle)` after `ctx.rendered()`)                                                             | Middleware runs **before** the render barrier, so it has no post-barrier handle access in production — `runMiddleware` has no `handles`/`rendered` by design (only `runLoader` does, because only loaders run after the barrier)                                                                                                                      | Read handle data in a **loader/handler** and seed it with `runLoader`'s `handles`/`rendered`                                                                                                                |
+| a `middleware()` reading handle data (`ctx.get(Handle)` after `ctx.rendered()`)                                                             | Middleware runs **before** the render barrier, so it has no post-barrier handle access in production — `runMiddleware` has no `handles`/`rendered` by design (only `runLoader` does, because only loaders run after the barrier)                                                                                                                      | Read handle data in a **loader/handler** and seed it with `runLoader`'s `handles`/`rendered`                                                                                                                |
 | your real `/m/:slug` **component-route** middleware chain (the guard stack)                                                                 | `dispatch` runs the real route-level middleware chain for **response** routes, but throws on component routes; `renderToFlightString`/`renderRoute` don't run route middleware                                                                                                                                                                        | Assert a component route's guard stack at **e2e**, or extract the middleware fn and unit-test it directly with `runMiddleware`                                                                              |
 | `dispatch(router, { request })` as a full request→response                                                                                  | Runs the real **global + route-level** middleware chain for **response** routes (so a guard stack IS exercised); throws on RSC/component routes; rejects actions; a `_rsc_partial` request to a response route runs global mw then returns `X-RSC-Reload` (route mw skipped, like prod); else response routes + redirects + 404 + content negotiation | Use `renderToFlightString` (Flight) or e2e for anything that renders                                                                                                                                        |
 | `renderToFlightString` of a realistic page                                                                                                  | Pure **leaf / server-only** — a client island emits an un-hydratable `I[...]` row                                                                                                                                                                                                                                                                     | Keep Flight tests to leaf server components; test full pages at e2e                                                                                                                                         |
 | streaming `use(promise)` Suspense content (e.g. async breadcrumb `content`) in `renderRoute`                                                | a plain resolving promise's Suspense **retry does not flush** in RTL — the DOM stays on the fallback                                                                                                                                                                                                                                                  | Assert the pending **fallback**; for the arrived state pass a **settled** promise (see the Catch under renderRoute), or use e2e                                                                             |
-| `"use cache"` / `cache()` hit/miss/stale in a loader or `dispatch`                                                                          | Without `cacheStore`/`cacheProfiles` seeded, `registerCachedFunction` **bypasses** — the fn runs **uncached**, so taint/profile/invalidation never fire and a green test proves nothing about caching                                                                                                                                                 | Real hit/miss/stale is **e2e + cache signal** (`assertCacheStatus`); seed `cacheStore`/`cacheProfiles` only to exercise the request-scope (NOCACHE) guard                                                   |
-| `ppr` shell MISS → capture → HIT via `dispatch` + `MemorySegmentCacheStore`                                                                 | `dispatch` is **RSC-free** — no Flight/SSR/`handleRscRendering`, so the shell serve/capture commit point never runs; seeding a store + `ppr: true` is a no-op for shells                                                                                                                                                                              | Unit: `shellCacheKey` + `getShell`/`putShell` + `assertShellStatus` helper; live bake/serve is **e2e** (`assertShellStatus` on document GETs). Never invent a HIT Response to fake capture                  |
+| `"use cache"` / `cache()` hit/miss/stale in a loader or `dispatch`                                                                          | Without `cacheStore`/`cacheProfiles` seeded, `registerCachedFunction` **bypasses** — the fn runs **uncached**, so taint/profile/invalidation never fire and a green test proves nothing about caching                                                                                                                                                 | `"use cache"` hit/miss: **RSC unit** (seeded store, react-server project). `cache()`/loader cache and `"use cache"` stale: **e2e + cache signal**. In node a store reaches only lookups + the NOCACHE guard |
+| `ppr` shell MISS → capture → HIT via `dispatch` + `MemorySegmentCacheStore`                                                                 | `dispatch` is **RSC-free** — no Flight/SSR/`handleRscRendering`, so the shell serve/capture commit point never runs; seeding a store + `ppr: true` is a no-op for shells                                                                                                                                                                              | Use **`serveShellRequest`** (RSC unit): the router's production handler with only the HTML step stubbed. Real HTML (prelude bytes, resume) stays **e2e**. Never invent a HIT Response to fake capture       |
 | importing your real **whole router file** (`import { router }`) into a bare test                                                            | the file's page modules may pull their own deps or plugin `virtual:` modules that need the rango plugin. (Handler `$$id` is NOT the blocker — `Prerender()` / `createLoader()` / `Static()` all construct via a runtime fallback id.)                                                                                                                 | Build the router from a focused **importable include** (e.g. your API routes) for `dispatch` / `assertGeneratedRoutesMatch`; run whole-router checks at **e2e** (see Setup → "Resolving `@rangojs/router`") |
 | a loader that `await`s `ctx.rendered()` then reads accumulated handles                                                                      | `runLoader` seeds handle pushes directly — it does **not** run the real push→accumulate→barrier chain, so a loader that crashes on **empty** post-barrier handles can pass when seeded but still fail in prod                                                                                                                                         | Seed the expected `rendered`/`handles` on `runLoader`; assert the full barrier wiring at **e2e**                                                                                                            |
+
+The first row has one carve-out: the held-navigation `useLoader().isLoading`
+flag. Give the spec that declares `transition()` a `transition` field and pass a
+pending Promise to `router.navigate(url, { loaders })`; navigate() then commits
+through production's `commitInTransition`, so a stale indicator is unit-testable
+(skill `testing/client-components.md`, "Held navigation").
+`useNavigation()`/`useLinkStatus()` still stay `idle`.
 
 The rango **cache-invalidation directives** are an exception worth calling out,
 because they used to look like a trap and no longer are. A handler/action/loader
@@ -119,11 +132,15 @@ available in-process via `renderServerTree` (assert a client boundary's typed
 props and inlined-vs-island — see below); what stays e2e is the **hydrate +
 click** half. An interactive, clickable `renderServer` (hydrate the deserialized
 tree and click it in the test) is a deliberate non-goal at the unit layer:
-hydrating in happy-dom re-tests React more than your app and misses the only
-hydration bug worth a dedicated test (server/client divergence needs a real
-browser). So "does my async Server Component render, hydrate, and respond to a
-click" is an **e2e** question by construction. For all of these, reach for
-`createRangoE2E` / `parityDescribe` / `assertCacheStatus`.
+hydrating a Flight tree in happy-dom re-tests React more than your app and
+misses the divergence that needs the real document (streaming order,
+client-reference identity, the browser's HTML parser). So "does my async Server
+Component render, hydrate, and respond to a click" is an **e2e** question by
+construction. For all of these, reach for `createRangoE2E` / `parityDescribe` /
+`assertCacheStatus`. The one hydration question that IS unit-reachable is a
+client component's own: does its first client render match what it rendered on
+the server? `renderRoute` with `hydrate: true` answers that (see "Hydrating a
+client component" below).
 
 There is one more boundary, and it is yours, not a layer ceiling: **platform
 bindings** (`env.DB`, Durable Objects, `env.R2`). The moment a loader/middleware/
@@ -207,7 +224,8 @@ export default defineConfig({
 `rangoTestConfig()` returns the resolve `alias` entries AND
 `server.deps.inline: [/@rangojs[/\\]router/]`, spread together into `test`. The
 aliases point the bare `@rangojs/router` at its real impls and stub the
-build-only `@rangojs/router:version` and `@vitejs/plugin-rsc/rsc` virtuals — so
+build-only `@rangojs/router:version` and `@vitejs/plugin-rsc/rsc`
+(`/rsc/server`, `/rsc/client`) virtuals — so
 you do **not** need a per-file `vi.mock("@vitejs/plugin-rsc/rsc")`.
 
 The `deps.inline` half is mandatory for an installed (node_modules) consumer:
@@ -236,25 +254,29 @@ its own deps) or plugin `virtual:` modules that need the rango plugin. For
 whole-router `dispatch` / drift checks, build from a focused include (e.g. your
 API routes), or run them at e2e.
 
-#### Quickstart: dispatch / drift-check your real routes
+#### Quickstart: dispatch your real routes
 
-The fastest reliable whole-app test does **not** import your `router.tsx`. Build
+The fastest reliable route test does **not** import your `router.tsx`. Build
 a router from a focused, importable include — typically your response/API routes,
 which pull no plugin `virtual:` page deps — then `dispatch` real requests through
-it and assert the generated route map has not drifted:
+it:
 
 ```ts
 import { createRouter } from "@rangojs/router";
-import { dispatch, assertGeneratedRoutesMatch } from "@rangojs/router/testing";
-import NamedRoutes from "../src/router.named-routes.gen";
+import { dispatch } from "@rangojs/router/testing";
 import { apiPatterns } from "../src/api/urls"; // path.json(...) routes, no page imports
 
 const router = createRouter().routes(apiPatterns);
 
 const res = await dispatch(router, { request: "/health" }); // real matching + middleware
 expect(res.status).toBe(200);
-assertGeneratedRoutesMatch(router, NamedRoutes); // drift check
 ```
+
+Keep the generated-route drift check separate. `assertGeneratedRoutesMatch`
+diffs the router you pass against the map you pass, so a focused router checked
+against the full `NamedRoutes` reports every route outside the include as
+missing. Run it against the whole router (see the drift test in the
+`/testing` skill's `reverse-and-types.md`), or at e2e.
 
 A router whose tree uses `Prerender()` / `Static()` / `createLoader()` /
 `createHandle()` **constructs fine** here (each falls back to a runtime `$$id`
@@ -292,6 +314,7 @@ import { defineConfig } from "vitest/config";
 import {
   rangoInlineDeps,
   rangoTestAliases,
+  rangoUseCacheTransform,
   rangoUseClientTransform,
 } from "@rangojs/router/testing/vitest";
 
@@ -305,8 +328,12 @@ export default defineConfig({
   // Applies the "use client" transform so renderServerTree resolves client
   // islands from a server tree's own imports — no clientComponents to pass.
   // Server components are untouched (renderToFlightString of leaf trees is
-  // unaffected). Omit it only if you don't use renderServerTree.
-  plugins: [rangoUseClientTransform()],
+  // unaffected). Omit it only if you don't use renderServerTree. The
+  // injected registerClientReference import is resolved from this package's
+  // @vitejs/plugin-rsc — the consumer does not need a direct plugin-rsc dep.
+  // rangoUseCacheTransform wraps "use cache" functions as the rango plugin does
+  // in dev (it transforms only its rsc environment; Vitest's is ssr).
+  plugins: [rangoUseClientTransform(), rangoUseCacheTransform()],
   resolve: {
     conditions: ["react-server"],
     // Bare @rangojs/router -> index.rsc.ts (real react-server impls), so a
@@ -385,9 +412,9 @@ you to import through the preset or pass the raw body.) Exporting the body
 separately is therefore optional — no longer a testability requirement:
 
 ```ts
-import { runLoader } from "@rangojs/router/testing";
-
 // loaders/product.ts
+import { createLoader } from "@rangojs/router";
+
 export const ProductLoader = createLoader(async (ctx) => {
   const product = await ctx.env.DB.get(ctx.params.id);
   if (!product) return { product: null };
@@ -395,6 +422,8 @@ export const ProductLoader = createLoader(async (ctx) => {
 });
 
 // product.test.ts — pass the registered handle directly (no body extraction)
+import { runLoader } from "@rangojs/router/testing";
+
 it("returns the product and a self link", async () => {
   const data = await runLoader(ProductLoader, {
     params: { id: "42" },
@@ -414,7 +443,8 @@ a response header, or a `throw redirect(...)` (the auth-loader pattern: validate
 set a session cookie, redirect) — reach for the sibling **`runLoaderResult`**.
 Same options, but it returns the same envelope `runInRequestContext` does
 (`{ result, thrown, response, cookies, headers, locationState, stateCookieName }`
-— `result` is the loader's data):
+— `result` is the loader's data) plus `handlePushes`, the handle writes the
+loader made via `ctx.use(SomeHandle)({...})`, in push order:
 
 ```ts
 import { runLoaderResult } from "@rangojs/router/testing";
@@ -437,10 +467,15 @@ a `createVar()` handle), `method`/`body`/`formData`, `routeMap`/`routeName`,
 `loaders` (seed `ctx.use(OtherLoader)` by reference as `[[OtherLoader, data]]`
 tuples — the same shape as `renderHandler`/`renderRoute`; checked before `use`),
 and `use` (a dynamic resolver for `ctx.use(OtherLoader)`; `loaders` wins when both
-match). Without either, `ctx.use` runs a dependency's own `fn` if it carries one. In the body, `ctx.reverse` accepts any
-name from `routeMap` and `ctx.get` accepts any string key or `createVar()` handle
-(both are driven by the options, so neither is bound to the app's global
-augmentation).
+match). Without either, `ctx.use` runs a dependency's own `fn` if it carries one.
+Also accepted: `request`, `basename`, `theme`, `cacheStore`/`cacheProfiles`,
+`cache` (the options a route binds the loader with — `loader(Loader, () =>
+[cache({...})])` — to run it through that loader cache; a HIT skips the body,
+and `updateTag()` of a tag the body recorded drops the entry; react-server
+project), `stateCookie`, and `rendered`/`handles` (below). In the body, `ctx.reverse`
+accepts any name from `routeMap` and `ctx.get` accepts any string key or
+`createVar()` handle (both are driven by the options, so neither is bound to the
+app's global augmentation).
 
 Unit-only limitations:
 
@@ -448,9 +483,10 @@ Unit-only limitations:
 - `ctx.isAction(...)` (action-render context) is unavailable — cover with e2e.
 - `ctx.rendered()` throws **by default** (the real render barrier only exists
   during a full match). For a loader that awaits the barrier then reads handle
-  data — `await ctx.rendered(); ctx.use(SomeHandle)` (the "rendered barrier"
-  pattern) — pass `{ rendered: true }` to mock the barrier and `{ handles:
-[[SomeHandle, accumulatedData]] }` to seed the handle read:
+  data — `await ctx.rendered(); ctx.get(SomeHandle)` (the "rendered barrier"
+  pattern) — pass `{ rendered: true }` to mock the barrier and
+  `{ handles: [[SomeHandle, accumulatedData]] }` to seed the handle read
+  (`rendered` also accepts a function to control the barrier's timing):
 
   ```ts
   const data = await runLoader(livePricesBody, {
@@ -492,11 +528,15 @@ it("sets a session cookie and passes through", async () => {
 
 `nextCalled` is `0` on short-circuit, `1` on pass-through. The result also carries
 `cookies`, `headers`, and `locationState` (a flash set via `setLocationState` or
-`redirect({ state })`) as effective views, parity with `runInRequestContext`. The
+`redirect({ state })`) as effective views, parity with `runInRequestContext`, and
+`dynamic` (whether the chain called `ctx.dynamic()`, the PPR shell opt-out; seed
+`build: true` to exercise a middleware that branches on the build-time shell
+capture pass). The
 returned `ctx` is the underlying `RequestContext`. The request the chain runs
 under is `opts.request`. Seed prior state with `vars`, model the downstream route
-with `next`, enable `ctx.reverse` with `routeMap` (map-only, matching production —
-`routeName` only feeds `ctx.routeName`, it does not scope `.name` reverse), pass
+with `next`, enable `ctx.reverse` with `routeMap` (map-only, matching production:
+global names only, and `.name` is a type error; `routeName` only feeds
+`ctx.routeName`, it does not scope `.name` reverse), pass
 an array to run several in order.
 
 ### Reverse and components
@@ -536,10 +576,11 @@ it("exposes navigation state and re-resolves on navigate()", async () => {
 });
 ```
 
-`RenderRouteSpec = { path, Component, layout?, loaderIds?, name? }`; the array is
+`RenderRouteSpec = { path, Component, layout?, loaderIds?, name?, transition? }`; the array is
 the layout chain root-to-leaf, last entry is the leaf. Seed `useLoader` reads via
 `options.loaderData` keyed by `$$id`; route them to a layout with that spec's
-`loaderIds`.
+`loaderIds`. Returned RTL queries are bound to `document.body`, so they also find
+modals, toasts, and other content rendered there with `createPortal`.
 
 Testing a component that reads `useLoader`: seed the loader BY REFERENCE via the
 `loaders` option, not `loaderData`. A real `createLoader(fn)` handle has
@@ -554,6 +595,13 @@ const { getByTitle } = await renderRoute(
 );
 ```
 
+For a component that reads `useOutlet()`, pass `outletPending: true` to seed the
+production `OutletProvider` shape alongside the synthetic child content. The
+default is `false`. This option does not run navigation, Suspense, loaders, or
+actions; it only makes the two render states directly assertable. The hydrated
+`clientUrls()` transition that toggles pending remains a dev + production e2e
+contract.
+
 Seed `useLocationState(def)` reads with the `locationState` option (`[def, value]`
 pairs), and `useHandle(handle)` reads (e.g. a client Breadcrumbs trail) with the
 `handles` option (`[handle, pushedValues[]]` pairs) — both seed by reference for
@@ -561,7 +609,77 @@ the same plugin-injected-id reason. Handle data is accumulated GLOBALLY (not
 scoped per segment like loaders), so a LAYOUT component reading a handle (a
 `DetailLayout`/`ActionToolbar`) sees the seeded values just as the leaf does. A
 component reading only `useParams` / `useReverse` / `useNavigation` needs no
-seeding.
+seeding. `lateHandles` takes the same pairs for handle values that reach the
+page after hydration (a loader push made after an `await`, any loader push on
+a PPR shell HIT): each replaces that handle's seed once the root has hydrated
+or mounted. With `hydrate: true` the server HTML is rendered from `handles`
+and a reader inside a `<Suspense>` hydrates after the update was applied, so
+`recoverableErrors` tells you whether it hydrated with the document's values.
+
+A location-state definition the component reads WITHOUT a seed needs a key:
+outside production an unkeyed definition throws on first use (the Vite plugin
+that injects keys does not run here). Call `withLocationStateKey(def, name?)`
+from `@rangojs/router/testing` once per definition. `useRouter().push/replace`
+and `<Link>` with `state: [Def(value)]` then write `history.state` through
+production's history path, and the provider hands it to readers with the
+navigation's tree, so `useLocationState(Def)` shows the new value in the
+commit that shows the destination; wait for it with RTL's `waitFor` (see the
+testing skill, `client-components.md` "Location state").
+
+A reader keeps the state of the entry on screen while a navigation is pending
+(#1029). To test that, hold the navigation's loader:
+`router.navigate(url, { state, loaders: [[Loader, pendingPromise]] })` on a
+`transition` spec writes the entry as `router.push(url, { state })` does and
+commits through production's `commitInTransition`, so the assertion between
+the call and the promise settling sees the page being left with its own state.
+A reader that mounts during that window reads the entry on screen too. A
+`popstate` event on `window` is a back/forward onto the entry `history.state`
+holds: readers take that entry as it is (the tree has one location, so no page
+is restored with it). `router.navigate()` writes history only for `state` or
+`replace: true`; `navigate(url)` and `navigate(url, { replace: false })` leave
+it alone. The skill's "State while a navigation is pending" has the worked
+example.
+
+`renderRoute` listens for `popstate` through the bridge's
+`registerLinkInterception`, the slot production's bridge uses, and both commit
+an entry with `EventController.commitLocationState(entryState)`. A component
+rendered without `renderRoute` has no provider, so `useLocationState` returns
+`undefined` there.
+
+`clearOnReload` does not change what you seed. The option lives in the slot's
+key, not in its value: the definition appends `~r` to whatever name you key it
+with, and `renderRoute` writes the plain value under that key. That gives you
+both sides of the option. Plain `renderRoute` is a client mount, the way a
+reader mounts during a navigation, so the seed is applied. `hydrate: true`
+(next section) is a document load of the seeded entry: before hydrating,
+`renderRoute` calls `clearLocationStateOnDocumentLoad`
+(`src/browser/history-state.ts`), the same function `initBrowserApp` calls at
+production start-up, so the slot is gone from `history.state` and the reader
+stays `undefined`.
+
+You may wonder where the app version went, since the browser drops location
+state another build wrote. A `renderRoute` tree has no app version (it never
+runs `initBrowserApp`, and `renderRoute` resets what an earlier one left), so a
+seed is written without one and reads back on a mount and on a `hydrate: true`
+load. The server primitives return `{ [Def.__rsc_ls_key]: value }` and nothing
+else: the client records its version when it stores the state in an entry.
+
+```tsx
+const routes = [{ path: "/products", Component: ProductList }];
+const seed = {
+  loaders: [[ProductsLoader, { page: 6, products: [] }]] as const, // this page's own: none
+  locationState: [[CarriedProducts, products]] as const,
+};
+
+const mounted = await renderRoute(routes, seed); // a client navigation
+expect(mounted.getAllByRole("listitem")).toHaveLength(products.length);
+mounted.unmount();
+
+const loaded = await renderRoute(routes, { ...seed, hydrate: true }); // a refresh
+expect(loaded.recoverableErrors).toEqual([]);
+expect(loaded.queryAllByRole("listitem")).toHaveLength(0);
+expect(CarriedProducts.read()).toBeUndefined(); // removed from history.state
+```
 
 Model an `include('/shop', …)` mount with the `mount` option: it wraps the
 segment chain in a MountContext exactly as production does, so `useMount()`
@@ -577,6 +695,32 @@ const { getByTestId } = await renderRoute(
 // useMount() -> "/shop"; useReverse({ product: "/c/:slug" })("product", { slug: "wine" }) -> "/shop/c/wine"
 ```
 
+To test the router-wide prefetch fallback, pass the same strategy through
+`defaultPrefetch`. `renderRoute` scopes it to that rendered tree and uses the
+production delegated-anchor registration, including basename/resource checks
+and individual or container-level opt-outs:
+
+```tsx
+const { getByTestId } = await renderRoute([{ path: "/", Component: DocsNav }], {
+  request: "/",
+  basename: "/app",
+  defaultPrefetch: "viewport",
+});
+// An unmarked <a data-testid="docs" href="/app/docs"> is observed.
+// /files/report.pdf and /sibling/docs are not observed.
+// <a href="/logout" data-prefetch="none"> is never observed (false also works).
+// <a href="/app/report.csv" data-prefetch="true"> is observed as a route.
+// Descendant Links and anchors under data-prefetch-scope="none" are never observed
+// (data-prefetch-scope="false" is equivalent).
+expect(getByTestId("docs")).not.toHaveAttribute("data-prefetch");
+```
+
+After the last mounted `renderRoute` tree is cleaned up, the helper also clears
+its cached `IntersectionObserver` and adaptive `matchMedia` query. Tests may
+install different browser stubs in successive cases without importing internal
+reset functions; concurrently mounted `renderRoute` trees continue sharing the
+same browser primitives until their final cleanup.
+
 Optional params vs an include mount — two different prefixes, don't confuse them.
 An optional param that is part of the matched PATTERN (`/:locale?/c/:group` at
 `/en/c/wine`) is auto-filled from the current match by `useReverse` exactly like
@@ -586,6 +730,96 @@ production: `reverse("group", { group: "food" })` returns `/en/c/food` (the
 mount like `include("/:locale?", …)`, which resolves to a concrete prefix you
 pass as `mount: "/en"`. (If a locale "drops" from a reversed URL in a test, the
 cause is usually a missing `mount` seed, not an auto-fill gap.)
+
+#### Hydrating a client component
+
+Everything above mounts with `createRoot`. That is the right default, and it has
+one blind spot: a component never runs its **hydration** render. On a document
+load React renders the component on the server, then renders it again in the
+browser against that HTML, and the two must agree. `useSyncExternalStore` reads
+`getServerSnapshot` for both, and only then switches to the client snapshot. A
+fresh mount skips all of that, so a hook can be correct under `renderRoute` and
+still mismatch in production. That is how #992 got through: `useLocationState`
+inside a `<Suspense>` boundary hydrated after the root had marked the page
+hydrated, read `history.state` during that hydration render, and disagreed with
+the server's `undefined`.
+
+Pass `hydrate: true` and `renderRoute` runs the document-load sequence. It
+renders the same element (same providers, same seeds, RTL's `reactStrictMode`)
+to HTML with `react-dom/server`'s `renderToString`, puts that HTML in the
+container, and hydrates it through RTL, so `cleanup()` still unmounts it. The
+result carries two extra fields: `serverHtml`, and `recoverableErrors`, the
+message of every error React recovered from. A hydration mismatch is exactly
+such an error, so an empty array is your "it hydrated as rendered" assertion.
+
+```tsx
+// A <Suspense> boundary hydrates after the root has marked the page hydrated,
+// as a streamed boundary does in production.
+function GridPage() {
+  return (
+    <Suspense fallback={null}>
+      <Grid />
+    </Suspense>
+  );
+}
+
+it("hydrates as the server rendered it, then shows the stored count", async () => {
+  const { serverHtml, recoverableErrors, getByTestId } = await renderRoute(
+    [{ path: "/grid", Component: GridPage }],
+    { hydrate: true, locationState: [[GridState, { count: 3 }]] },
+  );
+  expect(serverHtml).toContain('<p data-testid="count">0</p>'); // no history.state on the server
+  expect(recoverableErrors).toEqual([]); // the first client render matched it
+  expect(getByTestId("count").textContent).toBe("3"); // then the stored value
+});
+```
+
+That test needs no setup for "late". In production the root sets `data-hydrated`
+on `<html>` from its effect once it has hydrated, and a streamed boundary
+hydrates after that. `renderRoute` does the same in hydrate mode (and removes
+the attribute on unmount), and React hydrates a `<Suspense>` boundary in a later
+pass than the tree above it. Put the reader in a boundary and its hydration
+render is the late one by structure.
+
+You might wonder how a happy-dom test can have a "server" pass when `window` is
+right there. It cannot, unless the harness takes it away, so it does:
+`renderRoute` deletes `window` and `document` from the global scope for the
+synchronous server render and restores them before hydrating. Without that, a
+`typeof window !== "undefined"` branch would take its client side on the
+"server", produce the client HTML, and hydrate clean, hiding the first cause
+React lists for a mismatch. The flip side is faithful too: an unguarded
+`document.title` in render throws `ReferenceError` in the server pass, as it
+does in SSR.
+
+What to know before you rely on it:
+
+- **Suspense.** A `<Suspense>` whose content renders synchronously is in
+  `serverHtml`, and React hydrates it in a later pass than the tree above it,
+  after that tree's effects and before `renderRoute` resolves. That is the late
+  hydration a streamed boundary gets. Content that **suspends** in the server
+  pass (`lazy`, a pending or plain `use()` promise) cannot wait, because
+  `renderToString` is synchronous: `serverHtml` has the fallback, the client
+  renders the content instead of hydrating it, and React reports the boundary in
+  `recoverableErrors`. Nothing is hidden, but nothing inside that boundary is
+  hydration-tested either. With no `<Suspense>` above it, `renderRoute` rejects.
+  A settled promise (the `settled()` helper below) stays in the server HTML.
+- **Attribute-only mismatches are not recoverable errors.** For a differing
+  `className` or `href` React keeps the server attribute and logs
+  `console.error` in development. Assert that with `vi.spyOn(console, "error")`.
+- **Only `window` and `document` are removed.** This is the fidelity limit. A
+  hook that reads a global that stays defined in the server pass (`history`,
+  `localStorage`, `navigator`) outside a server snapshot renders the same in
+  both passes here and can still mismatch in real SSR.
+- **One realm, two passes.** Every component renders once in the server pass
+  before its hydration render, and module state written while rendering is
+  still there at hydration. Count renders accordingly.
+- **`@testing-library/react` 16.2.0 or newer.** 16.0 and 16.1 never pass
+  `onRecoverableError` to `hydrateRoot`, so a mismatch would be invisible.
+  `renderRoute` throws there instead of returning an empty array.
+
+It is still the client tree. The server pass runs no handler, loader,
+middleware, or Flight, and it is not the streamed document; those stay with
+`renderHandler` / `renderServerTree` and e2e.
 
 #### Catch: streaming `use(promise)` Suspense content
 
@@ -628,6 +862,7 @@ with `collectHandle(handle, segments)` — it runs your handle's REAL registered
 collect on the per-segment values you provide:
 
 ```ts
+import { createHandle } from "@rangojs/router";
 import { collectHandle } from "@rangojs/router/testing";
 
 const PageTitle = createHandle<string, string>(
@@ -654,6 +889,40 @@ Fidelity caveat: client tree only. It will NOT catch server/client boundary
 remount bugs, real Flight serialization, loader execution, middleware, or handler
 ordering — those need `renderToFlightString` or e2e. Loader data is seeded, never
 run.
+
+### Navigation predicates — runTransitionWhen and runClientRevalidate
+
+`transition({ when })` and a `clientUrls()` loader's `revalidate()` run in the
+browser, so you test them as plain functions, through the router's own
+evaluation code. Both primitives are synchronous and render nothing.
+
+`runTransitionWhen(when, { kind, from, to, action })` takes the predicate or a
+whole `transition()` config (one without `when` always applies), builds the
+context the browser builds, and returns `{ applied, gatedOff, context }`. A location is a
+URL string, a `URL`, or `{ url, params, routeName, state }`; `state` given as
+location-state entries is stored the way a push stores it, so `Def.read(to)`
+reads it back. A throw counts as `false`, as at navigation time:
+
+```ts
+import { runTransitionWhen } from "@rangojs/router/testing";
+
+const { applied } = runTransitionWhen(({ from }) => from.params.id !== "1", {
+  from: { url: "/photos/1", params: { id: "1" } },
+  to: "/photos/2",
+});
+expect(applied).toBe(false);
+```
+
+`runClientRevalidate(fn | fn[], { currentUrl, nextUrl, currentParams,
+nextParams, stale, action, actionRequest })` runs one predicate, or a chain in declaration
+order, through the production chain evaluator and returns the final `boolean`.
+Outside a built app an imported action carries no id, so pass the id string
+your predicate matches.
+
+Neither runs the Vite plugin's hoist or validation, so an invalid `when` is
+caught at dev startup, build and HMR, not here. Whether a view transition
+actually plays is e2e territory. Full option tables: the `/testing` skill's
+`predicates.md`.
 
 ### Type-level tests — make misuse fail to compile
 
@@ -704,7 +973,7 @@ is a comment.
 
 ## Integration
 
-### dispatch — request to Response, plus the vi.mock requirement
+### dispatch — request to Response
 
 `dispatch` runs the router's real matching + middleware (reusing
 `previewMatch`), with no RSC render. It covers redirects, 404s, response routes,
@@ -804,8 +1073,19 @@ const { result, thrown, response, cookies, headers, locationState } =
 expect(cookies.session).toBe("new-token"); // Set-Cookie, parsed
 expect(headers["cache-control"]).toBe("no-store"); // a header the handler set
 expect(headers.location).toBe("/app"); // the thrown redirect's target
-expect(locationState).toEqual({ flash: { text: "Welcome back" } });
+expect(locationState).toEqual({ __rsc_ls_Flash: { text: "Welcome back" } });
 ```
+
+That `locationState` key comes from `withLocationStateKey(Flash, "Flash")`,
+called once in the test file. A `createLocationState()` definition gets its key
+from the Vite plugin, and a unit-test project doesn't run it. Without a key,
+`Flash(value)` throws outside production (dev and test) before `redirect()`
+runs, so `thrown` holds that missing-key error instead of the redirect. In the
+react-server project (`NODE_ENV=production`) nothing throws and the value lands
+under `"undefined"`. The helper always adds the `__rsc_ls_` prefix, so assert
+`__rsc_ls_Flash`, or `{ [Flash.__rsc_ls_key]: value }` for any key. Prefer the
+second form once a definition sets `clearOnReload`: the option is part of the
+key (`__rsc_ls_Flash~r`), while the value stays what the handler passed.
 
 Reading **vars the handler set** is via the context, not the snapshot: pass
 `vars` to seed, and read with `ctx.get(token)` (the `fn` receives `ctx`, or use
@@ -863,7 +1143,7 @@ it("renders an async server component to Flight", async () => {
 `toMatchFlight(substring)` is containment on the normalized string (row framing
 is an internal detail). `toMatchFlightSnapshot()` snapshots the normalized
 payload. `renderToFlightString` options (`request`, `headers`, `env`, `params`,
-`routeName`, `vars`) set up the request context for a component that genuinely needs it
+`routeName`, `routeMap`, `vars`, `theme`) set up the request context for a component that genuinely needs it
 via internal imports — but a **consumer** importing those server APIs from the
 barrel hits the caveat below, so prefer props.
 
@@ -873,9 +1153,11 @@ snapshotting the payload shape with `toMatchFlight`. To inspect a client
 boundary's props as real values, or to detect inlined-vs-island, use
 `renderServerTree` (below). A fully interactive, clickable DOM `renderServer`
 (hydrated, with state and clicks) is intentionally NOT shipped: in-process
-happy-dom hydration re-tests React more than your app and misses the only
-hydration bug worth a dedicated test (server/client divergence, which needs a
-real browser). Test interactive behavior at e2e.
+happy-dom hydration of a Flight tree re-tests React more than your app and
+misses the divergence that needs the real document (streaming order,
+client-reference identity, the browser's HTML parser). Test interactive behavior
+at e2e. For a client component's own server/client divergence, use `renderRoute`
+with `hydrate: true`.
 
 ### renderServerTree — serialize then deserialize to an inspectable tree
 
@@ -1008,7 +1290,10 @@ import {
   renderHandler,
   findClientBoundaries,
 } from "@rangojs/router/testing/flight";
+import { Meta } from "@rangojs/router";
 import { ProductPage } from "../src/pages/product"; // the real handler: (ctx) => rsc
+import { ProductLoader } from "../src/loaders/product";
+import { Tenant } from "../src/vars"; // a createVar() token
 
 it("renders the product page for a tenant", async () => {
   const { tree, handles } = await renderHandler(ProductPage, {
@@ -1023,12 +1308,112 @@ it("renders the product page for a tenant", async () => {
 });
 ```
 
-Result: `{ tree, flight, thrown, response, cookies, headers, stateCookieName, locationState, handles }`.
+Result: `{ tree, flight, thrown, response, cookies, headers, stateCookieName, locationState, handles, dynamic }`.
 The handler's **effects** are surfaced (cookies/headers/flash) and a
 `throw redirect(...)` is captured on `thrown` (with `tree` undefined, since it
 produced a `Response`) — exactly like `runInRequestContext`, plus the rendered
 RSC. `handles` is a `Map<Handle, pushed[]>` of what the handler pushed via
-`ctx.use(Handle)`. An unseeded `ctx.use(loader)` rejects with a clear setup error.
+`ctx.use(Handle)`, and `dynamic` reports whether the handler called
+`ctx.dynamic()`. Beyond the options shown, `renderHandler` also takes
+`request`, `env`, `headers`, `routeName`, `build`, `clientComponents`,
+`stateCookie`, `cacheStore`, `cacheProfiles`, `inActionRevalidation`, and
+`theme`. An unseeded `ctx.use(loader)` rejects with a clear setup error.
+
+### serveShellRequest — a real PPR capture and HIT
+
+A `ppr` route's behavior lives in two requests: the MISS that captures the
+shell in the background, and the HIT that serves it and fills the holes.
+`renderHandler` runs one handler, and `dispatch` never renders, so neither
+reaches that. `serveShellRequest(router, url, options?)` serves one GET through
+your router's production request handler — built as `router.fetch` builds it,
+with your `nonce`, `version`, `cache` config and middleware — and settles every
+background task the request scheduled before it resolves. The first call is a
+MISS whose capture has already stored its shell; the next call with the same
+store is a HIT from it.
+
+```tsx
+import { MemorySegmentCacheStore } from "@rangojs/router/cache";
+import {
+  resetShellTestState,
+  serveShellRequest,
+} from "@rangojs/router/testing/flight";
+import { router } from "../src/product-router"; // a focused, importable router
+
+// A fresh worker's PPR state for every test (see below).
+beforeEach(() => resetShellTestState());
+
+it("keeps the shell and renders the stock hole live", async () => {
+  const cacheStore = new MemorySegmentCacheStore();
+
+  const miss = await serveShellRequest(router, "/product/1", { cacheStore });
+  expect(miss.shellStatus).toBe("MISS");
+  expect(await miss.readEntry()).not.toBeNull(); // the capture landed
+
+  const hit = await serveShellRequest(router, "/product/1", { cacheStore });
+  expect(hit.shellStatus).toBe("HIT");
+  expect(hit.prelude).toContain("Widget"); // the shell as captured
+  expect(hit.flight).toContain("in stock"); // the loader under loading(), live
+});
+```
+
+The one stub is the HTML step. `react-dom/server` does not load under the
+react-server condition, so the SSR module passes Flight through: a document
+body is its Flight payload, the capture stores the Flight text it rendered
+before going quiet as the prelude, and a HIT body is that prelude followed by
+the tail's Flight. So `prelude` shows what the shell froze and `flight` shows
+what this request rendered, both as Flight text. There is no structured
+`handles` map: a value the handler pushed (`ctx.use(Meta)(...)`) is text in the
+prelude and in every HIT's tail, and a live loader's data is text in the tail,
+so assert them with `toContain`. No public helper decodes a payload string.
+
+What the stub cannot reproduce stays e2e:
+
+- The real prelude HTML and its `<body` sanity gate: a route whose production
+  capture refuses for a root postpone (a live loader read with no boundary
+  above it) is captured here.
+- The capture deadline: when the handler output settled but the shell render
+  does not go quiet in what `ppr.captureTimeout` leaves, the stub returns no
+  shell, while production goes on to its abort and can still store the
+  prelude rendered by then.
+- SSR render errors: in production a fizz render error during the capture
+  refuses it (#915); the stub renders no HTML, so a shell whose client
+  component throws during SSR is stored here. A throwing server component
+  still refuses the capture.
+- Fizz resume of the holes and browser resume.
+
+The test process keeps the PPR state a worker keeps across requests: the
+capture's stampede guard and backoff (a refused capture backs its URL off for
+later tests too), the capture's and the serve path's once-per-key warnings,
+the build-shell manifest memo, and `CFCacheStore`'s isolate
+memos, which every `CFCacheStore` shares by namespace and URL, so one test's
+shell can be the next test's first HIT. `resetShellTestState()` clears it;
+call it in `beforeEach`, never while a request is in flight.
+`VercelCacheStore`'s memos live on the `cache` handle you pass it.
+
+Options: `cacheStore` (replaces the store your `cache` config returns; its
+`searchParams` still applies), `env`, `headers`, `partial` (`true` or
+`{ from, segments }`) to serve the navigation request the browser sends, whose
+decision is `replayStatus`. `key` is the shell key the serve path resolved
+for a document, request partition included (a route whose `cache({ key })`
+or store `keyGenerator` partitions its record partitions its shell too). Result: `{ response, body, shellStatus,
+replayStatus, prelude, flight, key, readEntry, readHandles }`. `readEntry()` reads the stored
+document entry through a passive `getShell`, which warms a shell memo like any
+read, so call it after the reads you count. `readHandles()` decodes the
+response's handle data as the browser reads it: `hydration` (what the document
+hydrates with, which on a HIT is what the stored shell was rendered from) and
+`late` (the states that arrive after hydration). A HIT's tail carries replayed
+segments as Flight fragments inside JSON strings, with escaped quotes, so match
+plain text. To evict by tag, call `updateTag()` through
+`runInRequestContext(fn, { cacheStore })` or your app's own endpoint via
+`dispatch`, then request again. A store refuses a capture that starts in the
+invalidation's millisecond, so each `serveShellRequest` starts its request in
+a later millisecond than the call. A capture that runs out of
+`ppr.captureTimeout` stores nothing and is not retried in place, so the call
+waits one deadline: give such a route a short `captureTimeout` in a test.
+
+A HIT runs no handler: it replays the handler output the capture baked. Count
+a handler's runs across the MISS and the HITs after it to pin that; only a
+loader under `loading()` runs again.
 
 ## E2E with dev/prod and PE parity
 
@@ -1104,6 +1489,7 @@ Two traps when grepping a single e2e:
    Grep a metacharacter-free fragment, or escape.
 
 ```bash
+# "production" is this repo's project name; use your own Playwright project names
 pnpm exec playwright test --project=production --no-deps --grep "add to cart parity"
 ```
 
@@ -1147,7 +1533,7 @@ parityDescribe("product page caches", (f) => {
 });
 ```
 
-Statuses: `hit | miss | stale | prerendered | passthrough`. v1 is COARSE
+Statuses: `hit | miss | stale | prerendered`. (`passthrough` is in the type union but never emitted: a passthrough route renders fresh and reports `miss`, `src/router/telemetry.ts` `deriveCacheStatus`.) v1 is COARSE
 (route-level, keyed by the route key — the route NAME, e.g. `product.detail`, NOT
 the URL pattern), not per-individual-segment. `parseCacheHeader` exposes the raw
 `{ routeKey: status }` map if you need it.
@@ -1208,8 +1594,8 @@ rangoInlineDeps: RegExp[];  // the server.deps.inline patterns, if wiring them y
 // Response; the render/run primitives -> an envelope (effect snapshot and/or tree).
 runMiddleware(
   mw: Middleware | Middleware[],
-  opts: { request?: Request | string; env?, params?, vars?, routeMap?, routeName?, basename?, theme?, next?: () => Promise<Response>, cacheStore?, cacheProfiles?, stateCookie? }, // request optional, defaults to http://localhost/
-): Promise<{ response: Response; ctx: RequestContext; nextCalled: number;
+  opts: { request?: Request | string; env?, params?, build?, vars?, routeMap?, routeName?, basename?, theme?, next?: () => Promise<Response>, cacheStore?, cacheProfiles?, stateCookie? }, // request optional, defaults to http://localhost/
+): Promise<{ response: Response; ctx: RequestContext; nextCalled: number; dynamic: boolean;
              cookies: Record<string, string>; headers: Record<string, string>;
              locationState: Record<string, unknown> }>;
 // `cookies`/`headers`/`locationState` are the effective views — assert what the chain set without the @internal ctx cast.
@@ -1218,13 +1604,14 @@ runMiddleware(
 runLoader<T>(
   loader: ((ctx) => T | Promise<T>) | LoaderDefinition<T>, // raw body OR a registered createLoader() handle
   opts?: { params?, search?, searchData?, env?, request?, vars?, routeMap?, routeName?, method?, body?,
-           formData?, loaders?: [loader, data][], use?, rendered?, handles?, basename?, theme?, cacheStore?, cacheProfiles?, stateCookie? },
+           formData?, loaders?: [loader, data][], use?, rendered?, handles?, basename?, theme?, cacheStore?, cacheProfiles?, cache?, stateCookie? },
 ): Promise<T>;
+// cache: the loader's own cache() options; runs it through the production loader cache (a HIT skips the body).
 // A createLoader() handle's fn is recovered from the registry (works through the server build / rangoTestConfig preset).
 // vars accepts an object ({ user: u }) or [key, value] tuples ([[userVar, u]]).
 // loaders: [[OtherLoader, data]] seeds ctx.use(OtherLoader) by reference (same shape as renderHandler/renderRoute); use = dynamic resolver.
 // In the body, ctx.reverse accepts any routeMap name and ctx.get any string/ContextVar.
-// rendered: true mocks ctx.rendered(); handles: [[H, accumulated]] seeds ctx.use(H) with the POST-collect value (NOT raw pushes; cf renderRoute).
+// rendered: true (or a fn) mocks ctx.rendered(); handles: [[H, accumulated]] seeds ctx.get(H) with the POST-collect value (NOT raw pushes; cf renderRoute).
 // const data = await runLoader(ProductLoader, { params: { id: "1" }, env }); // or runLoader(rawBody, ...)
 
 runLoaderResult<T>(                       // sibling of runLoader for EFFECT-setting loaders (same opts)
@@ -1232,8 +1619,10 @@ runLoaderResult<T>(                       // sibling of runLoader for EFFECT-set
   opts?: { /* identical to runLoader */ },
 ): Promise<{ result: T | undefined; thrown: unknown; response: Response;
              cookies: Record<string, string>; headers: Record<string, string>;
-             locationState: Record<string, unknown>; stateCookieName: string }>;
+             locationState: Record<string, unknown>; stateCookieName: string;
+             handlePushes: { handle: Handle; value: unknown }[] }>;
 // Use when the loader sets a cookie / header or `throw redirect(...)` (auth loaders) and you must assert that output.
+// handlePushes = the loader's ctx.use(SomeHandle)({...}) writes, in push order.
 // const { thrown, cookies } = await runLoaderResult(AuthLoader, { request: new Request(url) }); // thrown = the redirect Response
 
 // Component — @rangojs/router/testing/dom (DOM env + @testing-library/react)
@@ -1242,6 +1631,7 @@ renderRoute(                            // async; lazy-loads RTL at call time
   options?: {
     request?: Request | string,         // initial location (URL is read; client render)
     params?, routeMap?,
+    outletPending?: boolean,             // seed useOutlet().pending; context only, no lifecycle
     loaders?: [loader, data][],         // seed useLoader by REFERENCE (real handles)
     loaderData?: Record<$$id, data>,    // seed useLoader by explicit $$id
     locationState?: [def, value][],     // seed useLocationState by REFERENCE
@@ -1250,34 +1640,45 @@ renderRoute(                            // async; lazy-loads RTL at call time
     basename?,                          // createRouter({ basename }) value (Link/href/reverse prefixing)
     mount?,                             // include('/shop', …) prefix -> useMount/useHref/useReverse resolve it
     theme?,                             // createRouter({ theme }) shape (enables useTheme)
+    defaultPrefetch?,                   // createRouter({ defaultPrefetch }) value for Links / plain anchors
+    hydrate?: boolean,                  // render to HTML (no window/document), then hydrate it instead of mounting fresh;
+                                        // a document load: seeded clearOnReload slots are removed first
   },
-): Promise<RenderResult & { router }>;
+): Promise<RenderResult & { router }>; // + { serverHtml: string; recoverableErrors: string[] } when hydrate: true
 // const { getByTestId, router } = await renderRoute([{ path: "/p/:id", Component: P }], { request: "/p/1" });
 // useLoader:        renderRoute([{ path: "/c", Component: CartBadge }], { loaders: [[CartLoader, cart]] });
 // useLocationState: renderRoute([{ path: "/s", Component: FlashBanner }], { locationState: [[FlashMessage, { text: "Saved" }]] });
 // useHandle:        renderRoute([{ path: "/p", Component: Trail }], { handles: [[Breadcrumbs, [{ label: "Home", href: "/" }]]] });
 // useMount/include:  renderRoute([{ path: "/c/wine", Component: PDP }], { mount: "/shop" }); // useMount() -> "/shop"
+// hydration:        const { serverHtml, recoverableErrors } = await renderRoute([{ path: "/g", Component: Grid }], { hydrate: true });
 
 // Integration — @rangojs/router/testing
 dispatch(router: Rango, opts: { request: Request | string; env? }): Promise<Response>;
-// accepts your public router type (no cast); use rangoTestAliases() for setup.
+// accepts your public router type (no cast); use the rangoTestConfig() preset for setup.
 // const res = await dispatch(createRouter().routes(apiPatterns), { request: "/health" });
 
 // RSC — @rangojs/router/testing/flight, react-server vitest project only
-renderToFlightString(element, opts?: { request?: Request|string, headers?, env?, params?, routeName?, vars? }): Promise<string>;
+renderToFlightString(element, opts?: { request?: Request|string, headers?, env?, params?, routeName?, routeMap?, vars?, theme? }): Promise<string>;
 flightMatchers; // expect.extend -> toMatchFlight(substring), toMatchFlightSnapshot()
 // expect.extend(flightMatchers); expect(await renderToFlightString(<C/>)).toMatchFlight("hi");
 renderServerTree(element, opts?: { ...same, clientComponents? }): Promise<{ flight, tree }>;
-renderHandler(handler, opts?: { request?, params?, env?, vars?, loaders?, routeMap?, headers?, clientComponents?, stateCookie?, cacheStore?, cacheProfiles?, inActionRevalidation?, theme? }):
-  Promise<{ tree, flight, thrown, response, cookies, headers, stateCookieName, locationState, handles }>;
+renderHandler(handler, opts?: { request?, params?, env?, vars?, loaders?, routeMap?, routeName?, build?, headers?, clientComponents?, stateCookie?, cacheStore?, cacheProfiles?, inActionRevalidation?, theme? }):
+  Promise<{ tree, flight, thrown, response, cookies, headers, stateCookieName, locationState, handles, dynamic }>;
 // cacheStore (e.g. new MemorySegmentCacheStore()) + cacheProfiles exercise a "use cache" fn the handler
 // invokes; without cacheStore registerCachedFunction bypasses uncached (warns once under the runner).
 // inActionRevalidation: render as if inside a server action's revalidation render, so a stale "use cache"
 // entry whose profile sets foregroundOnAction:true re-executes in the FOREGROUND (fresh) instead of SWR.
+serveShellRequest(router, url: string | URL, opts?: { cacheStore?, env?, headers?, partial?: true | { from?, segments? } }):
+  Promise<{ response, body, shellStatus, replayStatus, prelude, flight, key, readEntry(): Promise<ShellCacheEntry | null>,
+    readHandles(): Promise<{ hydration: HandleData, late: HandleData[] } | undefined> }>;
+// One GET through the router's production handler, background capture settled. HTML step stubbed:
+// prelude = the capture's Flight text, flight = this request's Flight (a HIT's tail).
+resetShellTestState(): Promise<void>; // beforeEach: capture backoff/guards + CFCacheStore isolate memos
 findClientBoundaries(tree, selector?: string | { name?, testId?, props?, where? }): ClientBoundary[]; // {id,name,props,children,element}[] (props excludes children); [] if none
 findElements(tree, selector?: string | { tag?, testId?, props?, text?, where? }): FoundElement[]; // server/host elements {tag,props,children,text,element}[]
 textContent(node): string; // concatenated subtree text (use instead of JSON.stringify(tree).toContain)
 rangoUseClientTransform(); // Vite plugin for vitest.rsc.config.ts -> auto-discover islands
+rangoUseCacheTransform(); // Vite plugin for vitest.rsc.config.ts -> wrap "use cache" functions (dev ids)
 // react-server vitest project MUST also alias @rangojs/router -> index.rsc.ts (rangoTestAliases) or a
 // handler/component reading getRequestContext()/cookies() hits the throwing stub (tree: undefined).
 // renderServerTree renders an ELEMENT; renderHandler runs a route handler (ctx)=>rsc with a seeded ctx.
@@ -1290,7 +1691,7 @@ rangoUseClientTransform(); // Vite plugin for vitest.rsc.config.ts -> auto-disco
 
 // Cache / prerender
 assertCacheStatus(target: Response | { headers }, segment: string,
-  expected: "hit"|"miss"|"stale"|"prerendered"|"passthrough"): void; // needs the debug gate on
+  expected: "hit"|"miss"|"stale"|"prerendered"): void; // needs the debug gate on
 parseCacheHeader(value): Record<string, string>;
 createCacheSink(): { sink, events };   // wire via createRouter({ telemetry: sink })
 assertCacheDecision(events, routeKey: string, expected: same union): void; // telemetry counterpart of assertCacheStatus, zero prod surface
@@ -1301,9 +1702,10 @@ collectHandle(handle, segments: TData[][]): TAccumulated; // runs the handle's r
 // expect(collectHandle(PageTitle, [["a"],["b"]])).toBe("b"); // a "last wins" collect
 
 // Generated-route drift
-diffGeneratedRoutes(router, generatedMap?): { missing, extra, mismatch, ok };
-assertGeneratedRoutesMatch(router, generatedMap?): void;
-// import NamedRoutes from "./router.named-routes.gen"; assertGeneratedRoutesMatch(router, NamedRoutes);
+diffGeneratedRoutes(router, generatedMap?): Promise<{ missing, extra, mismatch, ok }>;
+assertGeneratedRoutesMatch(router, generatedMap?): Promise<void>; // throws a descriptive Error on drift
+// import { NamedRoutes } from "./router.named-routes.gen"; await assertGeneratedRoutesMatch(router, NamedRoutes);
+// generatedMap omitted -> the global route map is used as the generated side.
 // include()-using apps: lazy include()d routes are absent from router.routeMap
 // until first matched, so diffGeneratedRoutes force-expands them (via findMatch
 // on each generated pattern) before diffing — the whole-app drift check works in

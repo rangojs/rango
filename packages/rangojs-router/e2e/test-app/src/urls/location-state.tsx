@@ -1,4 +1,9 @@
+import { Suspense } from "react";
 import { urls, redirect } from "@rangojs/router";
+import {
+  LateSuspenseReader,
+  LateSuspenseWriter,
+} from "../components/LateSuspenseReader.js";
 import { Link } from "@rangojs/router/client";
 import {
   FlashMessage,
@@ -22,18 +27,41 @@ import {
   TypedJitLink,
   PlainJitLink,
   TypedJitTimingLink,
+  RouterPushStateButtons,
 } from "../components/LinkStateDisplay.js";
 import { StaticWriteWidget } from "../components/StaticWriteWidget.js";
+import { locationStateOptionsPatterns } from "./location-state-options.js";
 import {
   ActionInfoDisplay,
   ActionLocationStateControls,
 } from "../components/ActionLocationState.js";
 
+// #992 fixture. The boundary's server content is held until the e2e releases
+// its :gate (GET <page>/release), which it does after seeing the root hydrate.
+// The held render polls instead of awaiting a promise the release request
+// resolves, so only this Map crosses requests. It counts releases, and a
+// render waits for one made after it started: the test loads the page twice
+// under one gate.
+const lateSuspenseReleases = new Map<string, number>();
+
+async function LateSuspenseContent({ gate }: { gate: string }) {
+  const releasesAtStart = lateSuspenseReleases.get(gate) ?? 0;
+  // Safety timeout: a failed test must not hold the render.
+  const deadline = Date.now() + 15_000;
+  while (
+    (lateSuspenseReleases.get(gate) ?? 0) === releasesAtStart &&
+    Date.now() < deadline
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return <LateSuspenseReader />;
+}
+
 /**
  * Location state test routes - tests for redirect() with state,
  * ctx.setLocationState(), useLocationState(), and useLocationState()
  */
-export const locationStatePatterns = urls(({ path, middleware }) => [
+export const locationStatePatterns = urls(({ path, middleware, include }) => [
   // Index page with links to trigger different scenarios
   path(
     "/",
@@ -221,6 +249,7 @@ export const locationStatePatterns = urls(({ path, middleware }) => [
             <TypedJitTimingLink />
           </li>
         </ul>
+        <RouterPushStateButtons />
       </div>
     ),
     { name: "linkState" },
@@ -255,6 +284,33 @@ export const locationStatePatterns = urls(({ path, middleware }) => [
     ),
     { name: "linkStatePlainTarget" },
   ),
+
+  // #992: a persistent useLocationState reader inside a Suspense boundary
+  // that the e2e holds until the root has hydrated, then releases.
+  path(
+    "/late-suspense/:gate",
+    (ctx) => (
+      <div>
+        <LateSuspenseWriter />
+        <Suspense fallback={<div data-testid="late-ls-fallback">loading</div>}>
+          <LateSuspenseContent gate={ctx.params.gate} />
+        </Suspense>
+      </div>
+    ),
+    { name: "lateSuspense" },
+  ),
+  path.json(
+    "/late-suspense/:gate/release",
+    (ctx) => {
+      const releases = (lateSuspenseReleases.get(ctx.params.gate) ?? 0) + 1;
+      lateSuspenseReleases.set(ctx.params.gate, releases);
+      return { releases };
+    },
+    { name: "lateSuspenseRelease" },
+  ),
+
+  // /load-more and /app-version, under one layout.
+  include("/", locationStateOptionsPatterns, { name: "" }),
 
   // Static write/delete demo: drives LocationState.write() and .delete()
   // from the client and exposes both .read() and useLocationState() readers.

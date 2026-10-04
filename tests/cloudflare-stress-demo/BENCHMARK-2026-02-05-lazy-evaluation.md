@@ -85,10 +85,10 @@ cd examples/cloudflare-stress-demo
 pnpm build && pnpm wrangler deploy
 
 # Test root routes (should skip all includes)
-curl -s https://cloudflare-stress-demo.devcorner.workers.dev/bench/first | jq .matchStats
-curl -s https://cloudflare-stress-demo.devcorner.workers.dev/bench/last | jq .matchStats
+curl -s https://cloudflare-stress-demo.example.workers.dev/bench/first | jq .matchStats
+curl -s https://cloudflare-stress-demo.example.workers.dev/bench/last | jq .matchStats
 
 # Test API routes (only evaluates /api include)
-curl -s https://cloudflare-stress-demo.devcorner.workers.dev/api/bench/first | jq .matchStats
-curl -s https://cloudflare-stress-demo.devcorner.workers.dev/api/bench/last | jq .matchStats
+curl -s https://cloudflare-stress-demo.example.workers.dev/api/bench/first | jq .matchStats
+curl -s https://cloudflare-stress-demo.example.workers.dev/api/bench/last | jq .matchStats
 ```

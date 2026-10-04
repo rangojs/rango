@@ -45,7 +45,7 @@ export function escapeJsonForScript(json: string): string {
  * source; for untrusted dynamic data, JSON-encode it and read it back, rather than
  * inlining it as code.
  *
- * Used by the Script handle's <Scripts> renderer for inline `children`.
+ * Used by the Script handle's <Html.Scripts> renderer for inline `children`.
  */
 export function escapeScriptBody(js: string): string {
   return js.replace(/<!--/g, "<\\u0021--").replace(/<\/(script)/gi, "<\\/$1");

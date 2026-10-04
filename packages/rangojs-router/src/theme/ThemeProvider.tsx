@@ -114,8 +114,6 @@ export function ThemeProvider({
   initialTheme,
   children,
 }: ThemeProviderProps): React.ReactNode {
-  const [mounted, setMounted] = useState(false);
-
   // HYDRATION PARITY: this initializer is the server (SSR/resume) render AND
   // the client's hydration render — both must produce the same value. It must
   // NEVER read cookie/localStorage: whenever the payload's initialTheme
@@ -132,16 +130,16 @@ export function ThemeProvider({
   const [systemTheme, setSystemTheme] = useState<ResolvedTheme>("light");
 
   useEffect(() => {
-    setMounted(true);
     setSystemTheme(getSystemTheme());
     // Re-sync state from an EXPLICITLY stored theme after mount. initialTheme
     // comes from the payload and can legitimately differ from the visitor's
-    // stored theme — on a PPR shell HIT it is deliberately the CAPTURE's theme
-    // (the resume tree must match the frozen prelude; see
-    // ShellCacheEntry.initialTheme). The FOUC script already applied the stored
-    // theme to the document pre-paint; this brings the provider state (toggles,
-    // useTheme readers) in line with it, and is the ONLY place the provider
-    // reads storage (the initializer must not — see the parity note above).
+    // stored theme — on a PPR shell HIT it is deliberately the CAPTURE's
+    // initialTheme, the no-cookie default (the resume tree must match the
+    // frozen prelude; see ShellCacheEntry.initialTheme). The FOUC script
+    // already applied the stored theme to the document pre-paint; this brings
+    // the provider state (toggles, useTheme readers) in line with it, and is
+    // the ONLY place the provider reads storage (the initializer must not —
+    // see the parity note above).
     // Only an explicit cookie/localStorage value re-syncs — a defaultTheme
     // fallback must not override a server-provided initialTheme when the
     // visitor never chose a theme.
@@ -229,18 +227,16 @@ export function ThemeProvider({
     };
   }, [config]);
 
+  // No pre-mount special case: `theme` and `systemTheme` ("light" until the
+  // mount effect) are identical on the server and in the hydration render, so
+  // this is hydration-safe, and a concrete defaultTheme without an initialTheme
+  // no longer flips at mount.
   const resolvedTheme: ResolvedTheme = useMemo(() => {
-    if (!mounted) {
-      if (initialTheme && initialTheme !== "system") {
-        return initialTheme as ResolvedTheme;
-      }
-      return "light";
-    }
     if (theme === "system" && config.enableSystem) {
       return systemTheme;
     }
     return theme as ResolvedTheme;
-  }, [theme, systemTheme, config.enableSystem, mounted, initialTheme]);
+  }, [theme, systemTheme, config.enableSystem]);
 
   const themes = useMemo(() => {
     if (config.enableSystem) {
@@ -249,16 +245,23 @@ export function ThemeProvider({
     return config.themes;
   }, [config.themes, config.enableSystem]);
 
+  // Keyed on the exposed field values only: a NEW context object with
+  // unchanged fields propagates into every dehydrated Suspense boundary still
+  // streaming in (React cannot see their consumers) and makes React
+  // client-render those boundaries instead of adopting the server HTML their
+  // $RC script delivers. A field that genuinely changes at mount (dark system
+  // theme, stored override) must still publish; that case stays open
+  // (CHANGELOG).
   const contextValue: ThemeContextValue = useMemo(
     () => ({
       theme,
       setTheme,
       resolvedTheme,
-      systemTheme: mounted ? systemTheme : "light",
+      systemTheme,
       themes,
       config,
     }),
-    [theme, setTheme, resolvedTheme, systemTheme, themes, config, mounted],
+    [theme, setTheme, resolvedTheme, systemTheme, themes, config],
   );
 
   return (

@@ -682,4 +682,119 @@ describe("LoaderStore", () => {
       await expect(store.refreshGroups([])).resolves.toBeUndefined();
     });
   });
+
+  describe("navigation pending streams", () => {
+    const loaderSeg = (loaderId: string, loaderData: unknown) => ({
+      type: "loader",
+      loaderId,
+      loaderData,
+    });
+
+    it("registers a pending stream and releases it when it settles", async () => {
+      let resolve!: (v: unknown) => void;
+      const stream = new Promise((r) => (resolve = r));
+      store.announcePendingStreams([loaderSeg("product", stream)]);
+      expect(store.isStreamPending("product")).toBe(true);
+      resolve({ name: "p2" });
+      await flushMicrotasks();
+      expect(store.isStreamPending("product")).toBe(false);
+    });
+
+    it("releases on rejection too (aborted navigation stream)", async () => {
+      let reject!: (e: unknown) => void;
+      const stream = new Promise((_, r) => (reject = r));
+      store.trackPendingStream("product", stream);
+      reject(new Error("aborted"));
+      await flushMicrotasks();
+      expect(store.isStreamPending("product")).toBe(false);
+    });
+
+    it("ignores settled values, settled Flight chunks, and non-loader segments", () => {
+      const fulfilled = Object.assign(Promise.resolve(1), {
+        status: "fulfilled",
+      });
+      const resolvedModel = Object.assign(new Promise(() => {}), {
+        status: "resolved_model",
+      });
+      const rejected = Object.assign(Promise.reject(new Error("x")), {
+        status: "rejected",
+      });
+      rejected.catch(() => {});
+      store.announcePendingStreams([
+        loaderSeg("settled", { v: 1 }),
+        loaderSeg("chunk", fulfilled),
+        loaderSeg("model", resolvedModel),
+        loaderSeg("rejected", rejected),
+        { type: "route", loaderId: "route", loaderData: new Promise(() => {}) },
+      ]);
+      for (const id of ["settled", "chunk", "model", "rejected", "route"]) {
+        expect(store.isStreamPending(id)).toBe(false);
+      }
+    });
+
+    it("stays pending until the LAST overlapping stream settles", async () => {
+      let r1!: (v: unknown) => void;
+      let r2!: (v: unknown) => void;
+      const s1 = new Promise((r) => (r1 = r));
+      const s2 = new Promise((r) => (r2 = r));
+      store.trackPendingStream("product", s1);
+      store.trackPendingStream("product", s2);
+      store.trackPendingStream("product", s2); // duplicate registration is a no-op
+      r1(1);
+      await flushMicrotasks();
+      expect(store.isStreamPending("product")).toBe(true);
+      r2(2);
+      await flushMicrotasks();
+      expect(store.isStreamPending("product")).toBe(false);
+    });
+
+    it("announce fires onStreamPending on every bucket of a pending family only; settling is silent", async () => {
+      const product = vi.fn();
+      const productKeyed = vi.fn();
+      const cart = vi.fn();
+      store.subscribe("product", () => {}, {
+        loaderId: "product",
+        onStreamPending: product,
+      });
+      store.subscribe("product::k1", () => {}, {
+        loaderId: "product",
+        onStreamPending: productKeyed,
+      });
+      store.subscribe("cart", () => {}, {
+        loaderId: "cart",
+        onStreamPending: cart,
+      });
+      let resolve!: (v: unknown) => void;
+      const stream = new Promise((r) => (resolve = r));
+      store.announcePendingStreams([loaderSeg("product", stream)]);
+      expect(product).toHaveBeenCalledTimes(1);
+      expect(productKeyed).toHaveBeenCalledTimes(1);
+      expect(cart).not.toHaveBeenCalled();
+      resolve(1);
+      await flushMicrotasks();
+      // Settling is silent: the hook's optimistic pin reverts with the commit.
+      store.announcePendingStreams([]);
+      expect(product).toHaveBeenCalledTimes(1);
+    });
+
+    it("a subscriber without onStreamPending (ephemeral reader) is never called; unsubscribe removes the callback", () => {
+      const cb = vi.fn();
+      const off = store.subscribe("product", () => {}, {
+        loaderId: "product",
+        onStreamPending: cb,
+      });
+      store.subscribe("product", () => {}, { loaderId: "product" });
+      off();
+      store.announcePendingStreams([
+        loaderSeg("product", new Promise(() => {})),
+      ]);
+      expect(cb).not.toHaveBeenCalled();
+    });
+
+    it("reset() drops pending streams", () => {
+      store.trackPendingStream("product", new Promise(() => {}));
+      store.reset();
+      expect(store.isStreamPending("product")).toBe(false);
+    });
+  });
 });

@@ -41,9 +41,19 @@ vi.mock("react", async () => {
 });
 
 import { useContext } from "react";
+import { NavigationStoreContext } from "../browser/react/context.js";
 import { usePathname } from "../browser/react/use-pathname.js";
 
 const mockedUseContext = vi.mocked(useContext);
+
+// The hook reads two contexts: the navigation store and the clientUrls
+// optimistic-location override (null outside an optimistic branch). Resolve
+// by context identity so the stub does not hand the store to both reads.
+function mockNavigationContext(value: unknown): void {
+  mockedUseContext.mockImplementation((ctx: unknown) =>
+    ctx === NavigationStoreContext ? value : null,
+  );
+}
 
 function createMockEventController(pathname = "/products/123") {
   const location = new URL(`http://localhost${pathname}`);
@@ -66,7 +76,7 @@ describe("usePathname", () => {
 
   it("initializes pathname from event controller", () => {
     const ec = createMockEventController("/shop/items");
-    mockedUseContext.mockReturnValue({ eventController: ec } as any);
+    mockNavigationContext({ eventController: ec } as any);
 
     const result = usePathname();
     const setPathname = stateSlots[0][1];
@@ -80,7 +90,7 @@ describe("usePathname", () => {
 
   it("subscribes with empty dependency array", () => {
     const ec = createMockEventController();
-    mockedUseContext.mockReturnValue({ eventController: ec } as any);
+    mockNavigationContext({ eventController: ec } as any);
 
     usePathname();
 
@@ -94,7 +104,7 @@ describe("usePathname", () => {
     const unsub = vi.fn();
     const ec = createMockEventController();
     ec.subscribe.mockReturnValue(unsub);
-    mockedUseContext.mockReturnValue({ eventController: ec } as any);
+    mockNavigationContext({ eventController: ec } as any);
 
     usePathname();
 
@@ -106,7 +116,7 @@ describe("usePathname", () => {
 
   it("does not call setPathname when pathname is unchanged", () => {
     const ec = createMockEventController("/products/123");
-    mockedUseContext.mockReturnValue({ eventController: ec } as any);
+    mockNavigationContext({ eventController: ec } as any);
 
     usePathname();
     const setPathname = stateSlots[0][1];
@@ -128,7 +138,7 @@ describe("usePathname", () => {
 
   it("calls setPathname when pathname changes", () => {
     const ec = createMockEventController("/products/123");
-    mockedUseContext.mockReturnValue({ eventController: ec } as any);
+    mockNavigationContext({ eventController: ec } as any);
 
     usePathname();
     const setPathname = stateSlots[0][1];
@@ -148,7 +158,7 @@ describe("usePathname", () => {
   });
 
   it("does not subscribe when context is null (SSR)", () => {
-    mockedUseContext.mockReturnValue(null);
+    mockNavigationContext(null);
 
     const result = usePathname();
 

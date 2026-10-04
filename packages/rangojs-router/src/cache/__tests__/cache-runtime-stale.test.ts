@@ -14,12 +14,16 @@ import { NOCACHE_SYMBOL } from "../taint.js";
 
 // Mock @vitejs/plugin-rsc/rsc (virtual module, not resolvable in vitest)
 // encodeReply serializes args so different inputs produce different cache keys.
-vi.mock("@vitejs/plugin-rsc/rsc", () => ({
-  encodeReply: vi.fn((args: unknown[]) =>
-    Promise.resolve(JSON.stringify(args)),
-  ),
-  createClientTemporaryReferenceSet: vi.fn().mockReturnValue(new Set()),
-}));
+function pluginRscMock() {
+  return {
+    encodeReply: vi.fn((args: unknown[]) =>
+      Promise.resolve(JSON.stringify(args)),
+    ),
+    createClientTemporaryReferenceSet: vi.fn().mockReturnValue(new Set()),
+  };
+}
+vi.mock("@vitejs/plugin-rsc/rsc/server", pluginRscMock);
+vi.mock("@vitejs/plugin-rsc/rsc/client", pluginRscMock);
 
 // Mock request context. runWithRequestContext is exercised by the background
 // revalidation path (it re-establishes the request-context ALS so the cached
@@ -30,6 +34,9 @@ vi.mock("@vitejs/plugin-rsc/rsc", () => ({
 const mockGetRequestContext = vi.fn<() => any>(() => null);
 vi.mock("../../server/request-context.js", () => ({
   getRequestContext: () => mockGetRequestContext(),
+  // observePhase (instrument.ts) reads the underscore variant for the
+  // rango.background wrapper around the revalidation body.
+  _getRequestContext: () => mockGetRequestContext(),
   runWithRequestContext: <T>(ctx: unknown, fn: () => T): T => {
     const prev = mockGetRequestContext.getMockImplementation();
     mockGetRequestContext.mockImplementation(() => ctx);
@@ -50,10 +57,10 @@ vi.mock("../segment-codec.js", () => ({
 // Mock handle snapshot. encodeHandles/decodeHandles stand in for the Flight
 // codec: encode produces the stored string, decode reverses it. decode tolerates
 // a raw object too, so existing fixtures that set `handles` as a Record still
-// drive restoreHandles with the same reference.
-const mockRestoreHandles = vi.fn();
+// drive appendHandles with the same reference.
+const mockAppendHandles = vi.fn();
 vi.mock("../handle-snapshot.js", () => ({
-  restoreHandles: (...args: any[]) => mockRestoreHandles(...args),
+  appendHandles: (...args: any[]) => mockAppendHandles(...args),
   encodeHandles: vi.fn(async (h: any) => JSON.stringify(h)),
   decodeHandles: vi.fn(async (s: any) =>
     typeof s === "string" ? JSON.parse(s) : s,
@@ -76,18 +83,30 @@ describe("use cache stale revalidation handle preservation", () => {
     registerCachedFunction = mod.registerCachedFunction;
   });
 
+  // The caller ctx's per-request claim (setupLoaderAccess); a hit hands it
+  // to the replay so a loader's recorded pushes land once.
+  const claimLoaderPushes = () => true;
+
   function makeTaintedCtx() {
     return {
       [NOCACHE_SYMBOL]: true,
       params: { id: "1" },
       pathname: "/test",
       searchParams: new URLSearchParams(),
+      // The calling segment a hit replays into.
+      _currentSegmentId: "caller-seg",
+      _claimLoaderPushes: claimLoaderPushes,
     };
   }
 
   it("captures and persists handles during stale background revalidation", async () => {
     // Track waitUntil callbacks so we can run them synchronously
     const waitUntilFns: Array<() => Promise<void>> = [];
+    const { resolveTracing } = await import("../../router/tracing.js");
+    const spans: Array<{
+      name: string;
+      attributes: Record<string, unknown>;
+    }> = [];
 
     const mockStore = {
       getItem: vi.fn(),
@@ -107,6 +126,17 @@ describe("use cache stale revalidation handle preservation", () => {
       _cacheStore: mockStore,
       _cacheProfiles: { default: { ttl: 60, swr: 120 } },
       _handleStore: mockHandleStore,
+      _tracing: resolveTracing({
+        runner: (name, fn) => {
+          const record = { name, attributes: {} as Record<string, unknown> };
+          spans.push(record);
+          return fn({
+            setAttribute(key, value) {
+              record.attributes[key] = value;
+            },
+          });
+        },
+      }),
       waitUntil: (fn: () => Promise<void>) => {
         waitUntilFns.push(fn);
       },
@@ -137,11 +167,14 @@ describe("use cache stale revalidation handle preservation", () => {
     const result = await cached(taintedCtx);
     expect(result).toBe("stale-result");
 
-    // Verify stale handles were restored
-    expect(mockRestoreHandles).toHaveBeenCalledWith(
+    // Verify stale handles were replayed
+    expect(mockAppendHandles).toHaveBeenCalledWith(
       staleHandles,
       mockHandleStore,
+      "caller-seg",
+      claimLoaderPushes,
     );
+    expect(spans).toHaveLength(0);
 
     // Now run the background revalidation callback
     expect(waitUntilFns).toHaveLength(1);
@@ -157,6 +190,10 @@ describe("use cache stale revalidation handle preservation", () => {
     expect(setItemOptions.handles).toBeDefined();
     expect(setItemOptions.ttl).toBe(60);
     expect(setItemOptions.swr).toBe(120);
+    expect(spans.map((span) => span.name)).toEqual(["rango.background"]);
+    expect(spans[0].attributes["rango.background.kind"]).toBe(
+      "use-cache-revalidation",
+    );
   });
 
   it("re-tags the entry on stale background revalidation so it stays invalidatable (#7)", async () => {
@@ -353,6 +390,9 @@ describe("use cache stale revalidation handle preservation", () => {
       settled: Promise.resolve(),
       getDataForSegment: vi.fn().mockReturnValue({}),
     };
+    // The revalidation's capture wraps push; the original is what reaches
+    // the live store.
+    const livePush = liveHandleStore.push;
 
     const taintedCtx = makeTaintedCtx();
 
@@ -379,8 +419,9 @@ describe("use cache stale revalidation handle preservation", () => {
     });
     const fn = async (_ctx: any) => {
       // Push via the AMBIENT context, the way loader/handle plumbing reads
-      // the store (static-store.ts / loader-resolution.ts) — must resolve to
-      // the ISOLATED background store, never the live one.
+      // the store (static-store.ts / loader-resolution.ts): it lands in the
+      // request's store, where the revalidation's capture records it and
+      // keeps it out of the live data.
       mockGetRequestContext()._handleStore.push("test#H", "seg-bg", "bg-value");
       await gate;
       return "fresh-result";
@@ -398,16 +439,14 @@ describe("use cache stale revalidation handle preservation", () => {
     expect(requestCtxObj._handleStore).toBe(liveHandleStore);
     expect((taintedCtx as any)[INSIDE_CACHE_EXEC]).toBeUndefined();
 
-    // A foreground handle push inside the window reaches the LIVE store.
+    // A foreground handle push inside the window reaches the LIVE store; the
+    // background's push does not.
     requestCtxObj._handleStore.push("test#H", "seg-fg", "fg-value");
-    expect(liveHandleStore.push).toHaveBeenCalledWith(
-      "test#H",
-      "seg-fg",
-      "fg-value",
-    );
+    expect(livePush).toHaveBeenCalledWith("test#H", "seg-fg", "fg-value");
 
     releaseGate();
     await Promise.all(backgroundTasks);
+    expect(livePush).not.toHaveBeenCalledWith("test#H", "seg-bg", "bg-value");
 
     // The revalidated entry carries the background's push, not the
     // foreground's (no cross-contamination).
@@ -458,10 +497,12 @@ describe("use cache stale revalidation handle preservation", () => {
     const result = await cached(taintedCtx);
     expect(result).toBe("cached-result");
 
-    // Fresh hit restores handles
-    expect(mockRestoreHandles).toHaveBeenCalledWith(
+    // Fresh hit replays handles
+    expect(mockAppendHandles).toHaveBeenCalledWith(
       freshHandles,
       mockHandleStore,
+      "caller-seg",
+      claimLoaderPushes,
     );
 
     // No background revalidation should be queued
@@ -574,63 +615,6 @@ describe("use cache stale revalidation handle preservation", () => {
     // After both are done, the symbol should be fully cleaned up
     expect((taintedCtx as any)[INSIDE]).toBeUndefined();
     expect((requestCtxObj as any)[INSIDE]).toBeUndefined();
-  });
-
-  it("stale background revalidation uses isolated handle store, not the live request store", async () => {
-    const waitUntilFns: Array<() => Promise<void>> = [];
-
-    const mockStore = {
-      getItem: vi.fn(),
-      setItem: vi.fn().mockResolvedValue(undefined),
-    };
-
-    const liveHandleStore = {
-      push: vi.fn(),
-      settled: Promise.resolve(),
-      getDataForSegment: vi.fn().mockReturnValue({}),
-    };
-
-    const taintedCtx = makeTaintedCtx();
-
-    const requestCtxObj = {
-      _cacheStore: mockStore,
-      _cacheProfiles: { default: { ttl: 60, swr: 120 } },
-      _handleStore: liveHandleStore,
-      waitUntil: (fn: () => Promise<void>) => {
-        waitUntilFns.push(fn);
-      },
-    };
-    mockGetRequestContext.mockReturnValue(requestCtxObj);
-
-    // Return stale cache entry
-    mockStore.getItem.mockResolvedValueOnce({
-      value: JSON.stringify("stale-result"),
-      handles: {},
-      shouldRevalidate: true,
-    });
-
-    // Track whether the handle store was swapped during background execution
-    let bgHandleStoreIsLive: boolean | undefined;
-    const fn = async (_ctx: any) => {
-      // Check if the request context's handle store is the live one
-      const bgReqCtx = mockGetRequestContext();
-      bgHandleStoreIsLive = bgReqCtx._handleStore === liveHandleStore;
-      return "fresh-result";
-    };
-
-    const cached = registerCachedFunction(fn, "test-fn-iso", "default");
-    await cached(taintedCtx);
-
-    // Run the background revalidation
-    expect(waitUntilFns).toHaveLength(1);
-    await waitUntilFns[0]();
-
-    // During background execution, the handle store must have been replaced
-    // with an isolated one (not the live request's store)
-    expect(bgHandleStoreIsLive).toBe(false);
-
-    // After background execution, the original store must be restored
-    expect(requestCtxObj._handleStore).toBe(liveHandleStore);
   });
 
   it("reports stale background revalidation errors via _reportBackgroundError", async () => {
@@ -840,8 +824,15 @@ describe("use cache stale revalidation handle preservation", () => {
     expect(keyA).not.toBe(keyB);
   });
 
-  it("stamps RequestContext even when cached function has no tainted args", async () => {
+  it("guards ambient access via the exec ALS scope, never by stamping RequestContext", async () => {
+    // The ambient cookies()/headers()/ctx guards ride the AsyncLocalStorage
+    // scope entered around the cached body (cache-exec-scope.ts). The shared
+    // RequestContext must NEVER carry the INSIDE_CACHE_EXEC stamp: a property
+    // on that object poisoned every PARALLEL read on the request for the
+    // cached body's whole execution window (a 2s cached fetch made a sibling
+    // loader's cookies() throw).
     const INSIDE_CACHE_EXEC = Symbol.for("rango:inside-cache-exec");
+    const { isInsideCacheExecScope } = await import("../cache-exec-scope.js");
     const waitUntilFns: Array<() => Promise<void>> = [];
 
     const mockStore = {
@@ -859,19 +850,23 @@ describe("use cache stale revalidation handle preservation", () => {
     mockGetRequestContext.mockReturnValue(requestCtxObj);
 
     // No tainted args — plain string argument only
-    let stampedDuringExec = false;
+    let scopedDuringExec = false;
+    let ctxStampedDuringExec = false;
     const fn = async (locale: string) => {
-      stampedDuringExec = INSIDE_CACHE_EXEC in requestCtxObj;
+      scopedDuringExec = isInsideCacheExecScope();
+      ctxStampedDuringExec = INSIDE_CACHE_EXEC in requestCtxObj;
       return `theme-${locale}`;
     };
 
     const cached = registerCachedFunction(fn, "no-taint-fn", "default");
     await cached("en");
 
-    // The guard must have been active during execution
-    expect(stampedDuringExec).toBe(true);
+    // The guard must have been active during execution — chain-scoped only.
+    expect(scopedDuringExec).toBe(true);
+    expect(ctxStampedDuringExec).toBe(false);
 
-    // After execution completes, the stamp must be removed
+    // And inactive outside the cached body's chain.
+    expect(isInsideCacheExecScope()).toBe(false);
     expect(INSIDE_CACHE_EXEC in requestCtxObj).toBe(false);
   });
 

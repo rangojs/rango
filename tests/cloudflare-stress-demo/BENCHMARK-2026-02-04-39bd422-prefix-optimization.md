@@ -101,15 +101,15 @@ The optimization works when `include()` prefix is **fully static**:
 ```bash
 # First route (baseline)
 curl -w "TTFB: %{time_starttransfer}s\n" -so /dev/null \
-  https://cloudflare-stress-demo.devcorner.workers.dev/bench/first
+  https://cloudflare-stress-demo.example.workers.dev/bench/first
 
 # Last route (worst case)
 curl -w "TTFB: %{time_starttransfer}s\n" -so /dev/null \
-  https://cloudflare-stress-demo.devcorner.workers.dev/bench/last
+  https://cloudflare-stress-demo.example.workers.dev/bench/last
 
 # API route (skips 9000+ site routes)
 curl -w "TTFB: %{time_starttransfer}s\n" -so /dev/null \
-  https://cloudflare-stress-demo.devcorner.workers.dev/api/v1/resource1/test
+  https://cloudflare-stress-demo.example.workers.dev/api/v1/resource1/test
 ```
 
 ## Implementation

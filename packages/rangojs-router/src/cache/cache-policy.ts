@@ -8,6 +8,7 @@
 
 import type { CacheDefaults, SegmentCacheStore } from "./types.js";
 import { _getRequestContext } from "../server/request-context.js";
+import { runIdentityExempt } from "./cache-exec-scope.js";
 import type { RequestContext } from "../server/request-context.js";
 import { normalizeTags } from "./cache-tag.js";
 import { reportCacheError } from "./cache-error.js";
@@ -84,6 +85,28 @@ export function resolveSwrWindow(
 }
 
 /**
+ * Minimum age (ms) of a stale PPR shell before a HIT schedules its recapture.
+ * A shell capped to a route cache() record inside its swr window is stale
+ * from the start (rsc/shell-capture.ts capShellWindow), so without a floor
+ * every HIT of it recaptured, and a capture's store write is one KV write per
+ * key: Cloudflare KV accepts one per second per key. Inside the floor the
+ * stale shell is still served. Per isolate: each isolate's stale HIT past the
+ * floor can schedule one (stampede-guarded per isolate).
+ */
+export const SHELL_MIN_RECAPTURE_INTERVAL_MS = 1_000;
+
+/**
+ * Whether a stale shell HIT schedules its recapture (see the floor above).
+ * Fails open: an entry without a numeric `createdAt` recaptures.
+ */
+export function staleShellRecaptureDue(
+  entry: { readonly createdAt?: number },
+  now: number,
+): boolean {
+  return !(now - (entry.createdAt as number) < SHELL_MIN_RECAPTURE_INTERVAL_MS);
+}
+
+/**
  * Compute staleAt and expiresAt timestamps from TTL and SWR window.
  *
  * - staleAt: when the entry becomes stale (TTL boundary)
@@ -105,16 +128,18 @@ export async function resolveCacheKey(
   keyFn: ((ctx: RequestContext) => string | Promise<string>) | undefined,
   store: SegmentCacheStore | null,
   defaultKey: string,
-  _label: string,
 ): Promise<string> {
   const requestCtx = _getRequestContext();
 
+  // A key reads the request to partition the entry (runIdentityExempt): the
+  // identity guards let it through, a ppr capture included.
   if (keyFn && requestCtx) {
-    return await keyFn(requestCtx);
+    return await runIdentityExempt(() => keyFn(requestCtx));
   }
 
   if (store?.keyGenerator && requestCtx) {
-    return await store.keyGenerator(requestCtx, defaultKey);
+    const keyGenerator = store.keyGenerator;
+    return await runIdentityExempt(() => keyGenerator(requestCtx, defaultKey));
   }
 
   return defaultKey;
@@ -135,7 +160,9 @@ export function resolveTagsOption<TEnv>(
       return undefined;
     }
     try {
-      return normalizeTagList(tags(ctx));
+      // Tags label the entry, never render: identity reads pass
+      // (runIdentityExempt), a ppr capture's record write included.
+      return normalizeTagList(runIdentityExempt(() => tags(ctx)));
     } catch (error) {
       reportCacheError(
         error,

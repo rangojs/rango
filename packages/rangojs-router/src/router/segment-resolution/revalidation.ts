@@ -33,6 +33,7 @@ import {
   isTraceActive,
 } from "../logging.js";
 import { resolveLoaderData } from "./loader-cache.js";
+import { entryLoadingMasksLoaders } from "./loader-mask.js";
 import {
   handleHandlerResult,
   warnOnStreamedResponse,
@@ -44,7 +45,8 @@ import {
 } from "./helpers.js";
 import { applyViewTransitionDefault } from "./view-transition-default.js";
 import { getRouterContext } from "../router-context.js";
-import { observeEvent, observeHandler } from "../instrument.js";
+import { observeEvent, observeSegmentHandler } from "../instrument.js";
+import { runInSegmentTagScope } from "../../cache/cache-tag.js";
 import { observeStreamedHandler } from "./streamed-handler-telemetry.js";
 import {
   track,
@@ -128,6 +130,14 @@ export async function resolveLoadersWithRevalidation<TEnv>(
 
   const shortCode = shortCodeOverride ?? entry.shortCode;
 
+  // Pin `_currentSegmentId` to the OWNING entry before the kickoffs below —
+  // createLoaderExecutor captures it synchronously for ctx.use(Handle) push
+  // attribution. Same pin as resolveLoaders (fresh.ts); this REVALIDATION
+  // funnel is the navigation/action lane's kickoff site, where nothing else
+  // assigns the id first (pushes silently vanished: an id outside
+  // matched/segmentOrder is dropped by collectHandleData).
+  (ctx as InternalHandlerContext<any, TEnv>)._currentSegmentId = shortCode;
+
   const loaderMeta = loaderEntries.map((loaderEntry, i) => ({
     loaderEntry,
     loader: loaderEntry.loader,
@@ -206,6 +216,16 @@ export async function resolveLoadersWithRevalidation<TEnv>(
   // onError/loader.error. isPartial flags the reporting phase accordingly.
   const errorContext = { ...buildLoaderErrorContext(ctx), isPartial: true };
 
+  // PPR bake/seed key, same as fresh.ts (lane rule: see resolveLoaderData,
+  // loader-cache.ts). The key must thread through EVERY resolveLoaderData
+  // funnel — omitting it here made a capture-active context
+  // whole-container-mask every loader on this path (a never-settling promise
+  // for a loader that should have executed).
+  // Outside capture the key only activates the _shellLoaderSeed overlay,
+  // which serveShellHit seeds for a document HIT and the PPR partial replay
+  // (matchPartialWithPprReplay) seeds once its doc record hits.
+  const bakeLane = !entryLoadingMasksLoaders(entry.loading);
+
   const loadersToRun = revalidationChecks.filter((c) => c.shouldRun);
   const segments: ResolvedSegment[] = loadersToRun.map(
     ({ loaderEntry, loader, segmentId, index }) => ({
@@ -218,7 +238,15 @@ export async function resolveLoadersWithRevalidation<TEnv>(
       loaderId: loader.$$id,
       loaderData: deps.wrapLoaderPromise(
         runInsideLoaderScope(() =>
-          resolveLoaderData(loaderEntry, ctx, ctx.pathname),
+          resolveLoaderData(
+            loaderEntry,
+            ctx,
+            ctx.pathname,
+            // `bake`, not awaitBeforeFlush: a navigation evaluation never
+            // carries awaitBeforeFlush, and an ssr: false loader must pin
+            // here exactly as on the document HIT.
+            bakeLane || loaderEntry.bake === true ? segmentId : null,
+          ),
         ),
         entry,
         segmentId,
@@ -451,7 +479,9 @@ async function resolveParallelSlotComponent<TEnv>(args: {
       handlerRan = true;
       if (hasLoadingFallback) {
         const result =
-          typeof handler === "function" ? handler(context) : handler;
+          typeof handler === "function"
+            ? runInSegmentTagScope(parallelId, handler, context)
+            : handler;
         if (result instanceof Promise) {
           warnOnStreamedResponse(result, parallelId);
           const tracked = deps.trackHandler(result, {
@@ -472,7 +502,9 @@ async function resolveParallelSlotComponent<TEnv>(args: {
         }
       } else {
         component =
-          typeof handler === "function" ? await handler(context) : handler;
+          typeof handler === "function"
+            ? await runInSegmentTagScope(parallelId, handler, context)
+            : handler;
       }
     }
   }
@@ -590,7 +622,17 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
       // For non-empty client sets, consult user revalidate fns. When the slot
       // is unknown to the client, override the type-derived default so the
       // soft chain seeds with the right "new segment" / "parent-chain" value.
-      let defaultOverride: { value: boolean; reason: string } | undefined;
+      //
+      // A "new segment" seed is floored: the client has no cached copy of this
+      // slot, so a user `false` would render component:null and leave it blank
+      // rather than keep anything. Sibling resolvers (loaders, layout/route
+      // entries, orphan layouts) get the same guarantee by short-circuiting
+      // without consulting user fns at all; #482 made this path consult them so
+      // a "skip-parent-chain" seed could still be raised, so floor instead of
+      // short-circuiting — user fns run, and may only raise.
+      let defaultOverride:
+        | { value: boolean; reason: string; floor?: boolean }
+        | undefined;
       if (!clientSegmentIds.has(parallelId)) {
         const value =
           parentChainDefault === "force-render"
@@ -599,6 +641,7 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
         defaultOverride = {
           value,
           reason: value ? "new-segment" : "skip-parent-chain",
+          floor: value,
         };
       }
 
@@ -665,7 +708,6 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
       transition: applyViewTransitionDefault(
         parallelEntry.transition,
         deps.viewTransitionDefault,
-        parallelId,
       ),
       params,
       slot,
@@ -806,14 +848,19 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
           : routeEntry.handler;
       if (!routeEntry.loading) {
         const result = handleHandlerResult(
-          await observeHandler(entry.id, handler, context),
+          await observeSegmentHandler(
+            entry.shortCode,
+            entry.id,
+            handler,
+            context,
+          ),
         );
         doneHandler();
         return result;
       }
       if (!actionContext) {
         const result = handleHandlerResult(
-          observeHandler(entry.id, handler, context),
+          observeSegmentHandler(entry.shortCode, entry.id, handler, context),
         );
         if (result instanceof Promise) {
           warnOnStreamedResponse(result, routeEntry.id);
@@ -839,7 +886,12 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
         entryId: entry.id,
       });
       const actionResult = handleHandlerResult(
-        await observeHandler(entry.id, handler, context),
+        await observeSegmentHandler(
+          entry.shortCode,
+          entry.id,
+          handler,
+          context,
+        ),
       );
       doneHandler();
       return {
@@ -867,10 +919,10 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
     transition: applyViewTransitionDefault(
       entry.transition,
       deps.viewTransitionDefault,
-      entry.shortCode,
     ),
     params,
     belongsToRoute,
+    ...(entry.clientGroup ? { clientGroup: entry.clientGroup } : {}),
     ...(entry.type === "layout" || entry.type === "cache"
       ? { layoutName: entry.id }
       : {}),
@@ -897,6 +949,8 @@ export async function resolveSegmentWithRevalidation<TEnv>(
   deps: SegmentResolutionDeps<TEnv>,
   actionContext?: ActionContext,
   stale?: boolean,
+  /** The matched route's full chain; see ResolveSegmentOptions.chain (fresh.ts). */
+  chain?: readonly EntryData[],
 ): Promise<SegmentRevalidationResult> {
   const segments: ResolvedSegment[] = [];
   const matchedIds: string[] = [];
@@ -1029,6 +1083,7 @@ export async function resolveSegmentWithRevalidation<TEnv>(
     matchedIds.push(...parallelResult.matchedIds);
 
     for (const orphan of entry.layout) {
+      if (chain?.includes(orphan)) continue;
       const orphanResult = await resolveOrphanLayoutWithRevalidation(
         orphan,
         params,
@@ -1204,7 +1259,6 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
     transition: applyViewTransitionDefault(
       orphan.transition,
       deps.viewTransitionDefault,
-      orphan.shortCode,
     ),
     ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
   });
@@ -1237,6 +1291,27 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
   segments.push(...parallelResult.segments);
   matchedIds.push(...parallelResult.matchedIds);
 
+  // Nested routeless entries; see resolveOrphanLayout (fresh.ts).
+  for (const nested of orphan.layout) {
+    const nestedResult = await resolveOrphanLayoutWithRevalidation(
+      nested,
+      params,
+      context,
+      clientSegmentIds,
+      prevParams,
+      request,
+      prevUrl,
+      nextUrl,
+      routeKey,
+      belongsToRoute,
+      deps,
+      actionContext,
+      stale,
+    );
+    segments.push(...nestedResult.segments);
+    matchedIds.push(...nestedResult.matchedIds);
+  }
+
   return { segments, matchedIds };
 }
 
@@ -1259,6 +1334,8 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
   pathname: string,
   deps: SegmentResolutionDeps<TEnv>,
   stale?: boolean,
+  /** The matched route's full chain; see ResolveSegmentOptions.chain (fresh.ts). */
+  chain: readonly EntryData[] = entries,
 ): Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }> {
   const allSegments: ResolvedSegment[] = [];
   const matchedIds: string[] = [];
@@ -1288,7 +1365,8 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
     }
 
     const nonParallelEntry = entry as Exclude<EntryData, { type: "parallel" }>;
-    if (entry.type === "cache") {
+    // Same latch as resolveAllSegments (fresh.ts), route-level cache() included.
+    if (entry.cache) {
       const store = RangoContext.getStore();
       if (store) store.insideCacheScope = true;
       latchCachedHeaderScope("cache", routeKey);
@@ -1311,6 +1389,7 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
           deps,
           actionContext,
           stale,
+          chain,
         ),
       (seg) => ({ segments: [seg], matchedIds: [seg.id] }),
       deps,

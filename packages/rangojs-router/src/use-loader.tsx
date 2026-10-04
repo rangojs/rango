@@ -3,16 +3,20 @@
 import {
   isValidElement,
   startTransition,
+  use,
   useCallback,
   useContext,
   useEffect,
   useMemo,
+  useOptimistic,
   useRef,
   useState,
   type ReactNode,
 } from "react";
 import { OutletContext, type OutletContextValue } from "./outlet-context.js";
 import { loaderStore, type LoaderEntry } from "./loader-store.js";
+import { decodeLoaderEntry } from "./decode-loader-results.js";
+import { warnAwaitedSsrSuspension } from "./ssr-suspension-warning.js";
 import type { LoaderDefinition, LoadOptions } from "./types.js";
 
 function isShareableGet(options: LoadOptions | undefined): boolean {
@@ -34,18 +38,53 @@ let privateGroupBucketSeq = 0;
 
 const NOT_FOUND = Symbol("not-found");
 
+/**
+ * SPIKE (streaming useLoader): lookup results distinguish a synchronously
+ * available value from a still-streaming per-loader promise. A pending stream
+ * is `use()`d at the read site (implicit suspension); the promise identity is
+ * stable per commit (it comes from the provider's memoized context value /
+ * element props), which use() requires across replays.
+ */
+type LoaderLookup =
+  | typeof NOT_FOUND
+  | { value: unknown }
+  | { stream: Promise<unknown> };
+
+function lookupLoaderStreams(
+  loaderStreams: Record<string, unknown> | undefined,
+  loaderId: string,
+): LoaderLookup {
+  if (!loaderStreams || !(loaderId in loaderStreams)) return NOT_FOUND;
+  const entry = loaderStreams[loaderId];
+  // Within the loaderStreams channel a Promise always means "still streaming";
+  // settled entries are undecoded result values, never promises.
+  return entry instanceof Promise
+    ? { stream: entry }
+    : { value: decodeLoaderEntry(entry) };
+}
+
 function extractContentLoaderData(
   node: ReactNode,
   loaderId: string,
-): unknown | typeof NOT_FOUND {
+  awaitedAcc?: string[],
+): LoaderLookup {
   if (!isValidElement(node)) return NOT_FOUND;
   const props = node.props as Record<string, any> | undefined;
   if (!props) return NOT_FOUND;
 
+  // Collect BEFORE the lookups so ids on the element that owns the stream
+  // entry count for the SSR suspension diagnostic.
+  if (awaitedAcc && Array.isArray(props.awaitedLoaderIds)) {
+    awaitedAcc.push(...props.awaitedLoaderIds);
+  }
+
   // Direct OutletProvider with loaderData
   if (props.loaderData && loaderId in props.loaderData) {
-    return props.loaderData[loaderId];
+    return { value: props.loaderData[loaderId] };
   }
+
+  const streamed = lookupLoaderStreams(props.loaderStreams, loaderId);
+  if (streamed !== NOT_FOUND) return streamed;
 
   if (
     props.loaderIds &&
@@ -57,13 +96,15 @@ function extractContentLoaderData(
     if (idx !== -1) {
       const data = (props.loaderDataPromise as any[])[idx];
       if (data && typeof data === "object" && "ok" in data) {
-        return data.ok ? data.data : NOT_FOUND;
+        return data.ok ? { value: data.data } : NOT_FOUND;
       }
-      return data;
+      return { value: data };
     }
   }
 
-  if (props.children) return extractContentLoaderData(props.children, loaderId);
+  if (props.children) {
+    return extractContentLoaderData(props.children, loaderId, awaitedAcc);
+  }
   return NOT_FOUND;
 }
 
@@ -76,6 +117,14 @@ export type LoadFunction<T> = (options?: LoadOptions) => Promise<T>;
 
 export interface UseLoaderResult<T> {
   data: T;
+  /**
+   * True while this loader family (`loader.$$id`) is in flight: a `load()` /
+   * group refresh, or a held navigation still streaming a re-run of this
+   * loader. Family-keyed, not segment-keyed: a layout `useLoader` of the same
+   * `createLoader` the child route is re-running also reports true, even if
+   * the layout copy is not replaced. Not used for the initial streamed read
+   * (that suspends).
+   */
   isLoading: boolean;
   error: Error | null;
   load: LoadFunction<T>;
@@ -84,6 +133,7 @@ export interface UseLoaderResult<T> {
 
 export interface UseFetchLoaderResult<T> {
   data: T | undefined;
+  /** Same family-keyed contract as {@link UseLoaderResult.isLoading}. */
   isLoading: boolean;
   error: Error | null;
   load: LoadFunction<T>;
@@ -102,29 +152,73 @@ function useLoaderInternal<T>(
 ): UseFetchLoaderResult<T> {
   const context = useContext(OutletContext);
 
-  const { contextData, hasContextData } = useMemo((): {
+  const walk = useMemo((): {
     contextData: T | undefined;
     hasContextData: boolean;
+    pendingStream?: Promise<unknown>;
+    /** { ssr: false } loader ids seen on the chain up to (and including) the
+     *  level that owned the read — input for the dev SSR suspension warning. */
+    awaitedLoaderIds?: string[];
   } => {
+    const awaited: string[] = [];
     let current: OutletContextValue | null | undefined = context;
     while (current) {
+      if (current.awaitedLoaderIds) awaited.push(...current.awaitedLoaderIds);
       if (current.loaderData && loader.$$id in current.loaderData) {
         return {
           contextData: current.loaderData[loader.$$id] as T,
           hasContextData: true,
         };
       }
+      const streamed = lookupLoaderStreams(current.loaderStreams, loader.$$id);
+      if (streamed !== NOT_FOUND) {
+        if ("stream" in streamed) {
+          return {
+            contextData: undefined,
+            hasContextData: true,
+            pendingStream: streamed.stream,
+            awaitedLoaderIds: awaited,
+          };
+        }
+        return { contextData: streamed.value as T, hasContextData: true };
+      }
       const contentData = extractContentLoaderData(
         current.content,
         loader.$$id,
+        awaited,
       );
       if (contentData !== NOT_FOUND) {
-        return { contextData: contentData as T, hasContextData: true };
+        if ("stream" in contentData) {
+          return {
+            contextData: undefined,
+            hasContextData: true,
+            pendingStream: contentData.stream,
+            awaitedLoaderIds: awaited,
+          };
+        }
+        return { contextData: contentData.value as T, hasContextData: true };
       }
       current = current.parent;
     }
     return { contextData: undefined, hasContextData: false };
   }, [context, loader.$$id]);
+
+  // SPIKE (streaming useLoader): a pending per-loader stream suspends HERE —
+  // the implicit-suspense read. use() is exempt from hook-order rules, so the
+  // conditional call is legal; on replay after resolution it returns
+  // synchronously and the decoded value takes the contextData slot. Hooks
+  // below never run in a suspended render, so their order is stable across
+  // every COMPLETED render.
+  const { hasContextData } = walk;
+  let contextData = walk.contextData;
+  if (walk.pendingStream) {
+    warnAwaitedSsrSuspension(
+      loader.$$id,
+      walk.awaitedLoaderIds,
+      walk.pendingStream,
+    );
+    contextData = decodeLoaderEntry(use(walk.pendingStream)) as T;
+  }
 
   const loaderId = loader.$$id;
   const key = options?.key;
@@ -177,6 +271,13 @@ function useLoaderInternal<T>(
     }
   }, [loaderId, bucketKey]);
 
+  // Held-navigation pin: a transition commit whose stream for this loader is
+  // still pending announces it (loader-store.ts announcePendingStreams, which
+  // documents the lane discipline); this optimistic update renders urgently
+  // on the held content and React reverts it when that transition commits,
+  // i.e. together with the new data.
+  const [streamPending, setStreamPending] = useOptimistic(false);
+
   const [sharedState, setSharedState] = useState<{
     bucketKey: string;
     snapshot: LoaderEntry;
@@ -211,6 +312,9 @@ function useLoaderInternal<T>(
         ephemeral: !hasContextData,
         group: hasGroups ? groupList : undefined,
         refetch: hasGroups ? groupRefetch : undefined,
+        onStreamPending: hasContextData
+          ? () => startTransition(() => setStreamPending(true))
+          : undefined,
       },
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional:
@@ -278,7 +382,7 @@ function useLoaderInternal<T>(
     : sharedSnapshot.hasValue
       ? (sharedSnapshot.value as T | undefined)
       : contextData;
-  const isLoading = localIsLoading || sharedSnapshot.isLoading;
+  const isLoading = localIsLoading || sharedSnapshot.isLoading || streamPending;
   const error = localError ?? sharedSnapshot.error;
 
   const throwOnError = options?.throwOnError ?? true;
@@ -465,7 +569,7 @@ function useLoaderInternal<T>(
  * @example Basic usage - accessing route loader data
  * ```tsx
  * "use client";
- * import { useLoader } from "rsc-router/client";
+ * import { useLoader } from "@rangojs/router/client";
  * import { CartLoader } from "../loaders/cart";
  *
  * // In route definition: loader(CartLoader)
@@ -513,7 +617,7 @@ export function useLoader<T>(
  * @example On-demand fetching
  * ```tsx
  * "use client";
- * import { useFetchLoader } from "rsc-router/client";
+ * import { useFetchLoader } from "@rangojs/router/client";
  * import { SearchLoader } from "../loaders/search";
  *
  * export function SearchResults() {
@@ -575,7 +679,7 @@ export function useFetchLoader<T>(
  * @example
  * ```tsx
  * "use client";
- * import { useLoader, useRefreshLoaders } from "rsc-router/client";
+ * import { useLoader, useRefreshLoaders } from "@rangojs/router/client";
  *
  * function Profile() {
  *   const { data } = useLoader(ProfileLoader, { key: userId, refreshGroup: "account" });

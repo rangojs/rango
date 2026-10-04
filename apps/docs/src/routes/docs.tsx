@@ -5,8 +5,7 @@ import { getPage, pages, pageTree, type TreeNode } from "../content";
 import { mdxComponents } from "../mdx-components";
 
 // Base for the "Edit this page" link (repo + branch that holds the content).
-const GITHUB_EDIT_BASE =
-  "https://github.com/ivogt/rango-shop/blob/rango-docs/apps/docs";
+const GITHUB_EDIT_BASE = "https://github.com/rangojs/rango/blob/main/apps/docs";
 
 // Inline SVG — lucide-react icons resolve to `undefined` in Rango server components.
 function EditIcon({ className }: { className?: string }) {
@@ -47,7 +46,7 @@ async function renderDocsPage(ctx: BuildContext<{ "*"?: string }>) {
   if (!page) return notFound();
 
   const meta = ctx.use(Meta);
-  meta({ title: `${page.title} — Vercel Shop Docs` });
+  meta({ title: `${page.title} — Rango Docs` });
   if (page.description)
     meta({ content: page.description, name: "description" });
 

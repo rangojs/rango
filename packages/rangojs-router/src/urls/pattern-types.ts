@@ -59,30 +59,33 @@ export interface PartialPrerenderProps {
   /**
    * Operational tags attached to the captured shell entry for
    * `updateTag()`/`revalidateTag()`-driven eviction. UNIONED with the tags the
-   * capture render auto-collects (the shell's own non-loader request tags).
+   * capture collects: its doc record's tags (what the handler layer and the
+   * server components it rendered recorded) and its bake-lane loaders'.
    */
   tags?: string[];
   /**
-   * Upper bound (serialized UTF-8 bytes) on the capture data snapshot riding
-   * inside the shell entry. The snapshot duplicates every cache-store value
-   * the capture pinned, so a page over a large cache() segment can push the
-   * entry toward store value limits (Cloudflare KV caps a value at 25 MiB).
-   * Over the cap the snapshot is skipped: the shell is still stored and
-   * served, but pinned reads fall back to the live store, so drifted cached
-   * content can hydration-mismatch and be repaired client-side (the
-   * pre-snapshot behavior). Reported once per key. Defaults to 8 MiB.
+   * Upper bound (serialized UTF-8 bytes) on the loader pins in the capture
+   * data snapshot: the bake-lane loader records. The doc record (the handler
+   * layer every HIT replays) is exempt. Over the cap the pins are dropped: the
+   * shell is still stored and every HIT still replays the handler layer, but the
+   * pinned loaders read the live store, so drifted cached content can
+   * hydration-mismatch and be repaired client-side. Reported once per key.
+   * Defaults to 8 MiB. The whole entry is bounded separately by the store's
+   * value limit (Cloudflare KV: 25 MiB); an entry over it is refused.
    */
   maxSnapshotBytes?: number;
   /**
-   * Capture settle budget in MILLISECONDS (default 15000). Bounds the whole
-   * background capture: the wait for deferred shell material — top-level
-   * pushed handle promises (`ctx.use(Meta)(promise.then(...))` and friends)
-   * are AWAITED and their settled values baked into the stored shell — AND
-   * the fizz prerender deadline. Declare it to tighten the budget below the
-   * default or when a route's shell material takes longer than 15s to
-   * settle. A budget that expires with pushes still pending REFUSES the
-   * capture (the route stays MISS with the once-per-key warning) — a shell
-   * with missing head material is never stored. Capture is background work
+   * Capture settle budget in MILLISECONDS (default 15000). One deadline for
+   * the whole background capture: the match (the handlers, and the loaders
+   * they await), the wait for handler output (handle pushes and the promises
+   * nested in them, bake-lane loaders, and the doc record's encode, which
+   * awaits handler promises and async server components), AND the fizz
+   * prerender. Everything a handler produces is
+   * awaited and baked into the stored shell. Declare it to tighten the
+   * budget below the default or when a route's shell material takes longer
+   * than 15s to settle. A budget that expires before the doc record is
+   * written REFUSES the capture (the route stays MISS with the once-per-key
+   * warning): a shell with missing handler output is never stored. Capture is background work
    * (waitUntil), so a longer budget costs latency-to-HIT only, never a served
    * response; the platform waitUntil lifetime (workerd: ~30s past response
    * completion) is the physical ceiling — the default's derivation lives in
@@ -112,6 +115,9 @@ export interface PathOptions<
   trailingSlash?: TrailingSlashMode;
   /** Response type marker (set by path.json(), etc.) */
   [RESPONSE_TYPE]?: string;
+  /** @internal clientUrls() group key stamped by server-projection.ts; see
+   *  ResolvedSegment.clientGroup. */
+  clientGroup?: string;
 }
 
 /**

@@ -1,12 +1,15 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { returnToEvictedEntry, routerNavigate } from "@shared/e2e";
 import type { Fixture } from "./fixture";
 import { useFixture } from "./fixture";
 import {
   waitForHydration,
   expectNoPageError,
   getNumericContent,
+  goBack,
+  goForward,
 } from "./helper";
 
 /**
@@ -28,6 +31,15 @@ import {
  */
 
 const MINI_ROOT = "./e2e/mini";
+
+const readScrollY = (page: Page): Promise<number> =>
+  page.evaluate(() => Math.round(window.scrollY));
+
+/** Room to scroll on every page: an inline style on <html> survives navigations. */
+const makePagesTall = (page: Page): Promise<void> =>
+  page.evaluate(() => {
+    document.documentElement.style.paddingBottom = "4000px";
+  });
 
 function miniTests(f: Fixture) {
   test("home: SSR, global middleware header, loader, breadcrumb", async ({
@@ -443,7 +455,7 @@ function miniTests(f: Fixture) {
     );
   });
 
-  test("scroll restoration: ScrollRestoration sets manual mode", async ({
+  test("scroll restoration: the default document's Html.ScrollRestoration sets manual mode", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
@@ -452,6 +464,56 @@ function miniTests(f: Fixture) {
     await waitForHydration(page);
     const mode = await page.evaluate(() => window.history.scrollRestoration);
     expect(mode).toBe("manual");
+  });
+
+  // The cache-miss refetch used to replaceState a fresh history state and save
+  // the page being left under the returning entry's scroll key.
+  test("scroll restoration: back to an evicted entry keeps its location state and scroll", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/state"));
+    await waitForHydration(page);
+    await page.getByTestId("origin-link").click();
+    await expect(page.getByTestId("origin")).toHaveText("origin-link");
+    await makePagesTall(page);
+    await page.evaluate(() => window.scrollTo(0, 1500));
+    await expect.poll(() => readScrollY(page)).toBe(1500);
+    const key = await page.evaluate(() => window.history.state?.key);
+
+    await returnToEvictedEntry(page, (n) => f.url(`/?n=${n}`));
+
+    await expect(page).toHaveURL(f.url("/state"));
+    await expect(page.getByTestId("state-page")).toBeVisible();
+    await expect(page.getByTestId("origin")).toHaveText("origin-link");
+    await expect.poll(() => readScrollY(page)).toBe(1500);
+    expect(await page.evaluate(() => window.history.state?.key)).toBe(key);
+  });
+
+  test("scroll restoration: forward restores the position the page had when back left it", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/state"));
+    await waitForHydration(page);
+    await makePagesTall(page);
+    await page.evaluate(() => window.scrollTo(0, 300));
+    await expect.poll(() => readScrollY(page)).toBe(300);
+
+    await routerNavigate(page, f.url("/"));
+    // The navigation's own scroll-to-top has landed before B is scrolled.
+    await expect.poll(() => readScrollY(page)).toBe(0);
+    await page.evaluate(() => window.scrollTo(0, 900));
+    await expect.poll(() => readScrollY(page)).toBe(900);
+
+    await goBack(page);
+    await expect(page).toHaveURL(f.url("/state"));
+    await expect.poll(() => readScrollY(page)).toBe(300);
+    await goForward(page);
+    await expect(page).toHaveURL(f.url("/"));
+    await expect.poll(() => readScrollY(page)).toBe(900);
   });
 
   // -- clientChunks: per-route client splitting (dev + production) -----------
@@ -520,6 +582,44 @@ function miniTests(f: Fixture) {
     );
     expect(names.some((n) => /chart/i.test(n))).toBe(true);
     expect(names.some((n) => /widget/i.test(n))).toBe(false);
+  });
+
+  // app/-rooted layout (issue #1022, dev + production). src/app/routes/hero and
+  // src/app/routes/gallery used to share one app-routes group, and a group is
+  // the loading unit, so /app-root/hero downloaded Gallery's code. The check
+  // reads the source of every script the page loaded: in production that is
+  // the group chunks, in dev the individual modules.
+  test("clientChunks: app-rooted route does not download a sibling route's component", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/app-root/hero"));
+    await waitForHydration(page);
+    await expect(page.getByTestId("app-root-header")).toBeVisible();
+    await expect(page.getByTestId("app-gallery")).toHaveCount(0);
+    await page.getByTestId("app-hero-btn").click();
+    await expect(page.getByTestId("app-hero-btn")).toHaveText(
+      "app-hero count: 1",
+    );
+
+    const scripts = await page.evaluate(async () => {
+      const urls = performance
+        .getEntriesByType("resource")
+        .map((e) => e.name)
+        .filter(
+          (n) =>
+            n.startsWith(location.origin) &&
+            /\.m?[jt]sx?$/.test(new URL(n).pathname),
+        );
+      return Promise.all(urls.map(async (u) => (await fetch(u)).text()));
+    });
+    expect(scripts.some((code) => code.includes("mini-app-hero"))).toBe(true);
+    expect(scripts.some((code) => code.includes("mini-app-header"))).toBe(true);
+    expect(
+      scripts.filter((code) => code.includes("mini-app-gallery")),
+      "Gallery's code must not load on /app-root/hero",
+    ).toEqual([]);
   });
 
   // Prefetch warming (dev + production). /warm ships NONE of /widgets' client
@@ -759,5 +859,32 @@ test.describe("mini (production)", () => {
       expect(leaks, `${marker} must live ONLY in app-fallback`).toEqual([]);
     }
     expect(widgetsCode).not.toContain("mini-client-error");
+  });
+
+  // app/-rooted layout (issue #1022): app/ defers to the routes/ marker after
+  // it, so each route gets its own group; app/components keeps app-components.
+  test("clientChunks (production): app/routes/<id> splits per route", async () => {
+    const assetsDir = join(
+      import.meta.dirname,
+      "mini",
+      "dist",
+      "client",
+      "assets",
+    );
+    const js = readdirSync(assetsDir).filter((name) => name.endsWith(".js"));
+    const read = (name: string) => readFileSync(join(assetsDir, name), "utf8");
+    const holding = (marker: string) =>
+      js.filter((name) => read(name).includes(marker));
+
+    expect(js.filter((name) => /^app-routes-.*\.js$/.test(name))).toEqual([]);
+    expect(holding("mini-app-hero")).toEqual([
+      expect.stringMatching(/^app-hero-.*\.js$/),
+    ]);
+    expect(holding("mini-app-gallery")).toEqual([
+      expect.stringMatching(/^app-gallery-.*\.js$/),
+    ]);
+    expect(holding("mini-app-header")).toEqual([
+      expect.stringMatching(/^app-components-.*\.js$/),
+    ]);
   });
 });

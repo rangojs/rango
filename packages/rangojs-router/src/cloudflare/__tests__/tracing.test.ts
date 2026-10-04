@@ -139,6 +139,34 @@ describe("createCloudflareTracing", () => {
     expect(names).not.toContain("rango.loader");
   });
 
+  it("emits rango.response nested under the request; spans:{response:false} suppresses only it", () => {
+    // Parity with the OTel/Vercel runners: the response phase is a first-class
+    // toggleable phase on every platform.
+    const on = createFakeCfTracing();
+    const resolvedOn = resolveTracing(createCloudflareTracing());
+    withExecutionContext({ tracing: on.tracing }, () =>
+      traceSpan(resolvedOn, "request", "rango.request", () =>
+        traceSpan(resolvedOn, "response", "rango.response", () => "ok"),
+      ),
+    );
+    expect(on.spans.map((s) => [s.name, s.parent])).toEqual([
+      ["rango.request", undefined],
+      ["rango.response", "rango.request"],
+    ]);
+
+    const off = createFakeCfTracing();
+    const resolvedOff = resolveTracing(
+      createCloudflareTracing({ spans: { response: false } }),
+    );
+    const out = withExecutionContext({ tracing: off.tracing }, () =>
+      traceSpan(resolvedOff, "request", "rango.request", () =>
+        traceSpan(resolvedOff, "response", "rango.response", () => "ok"),
+      ),
+    );
+    expect(out).toBe("ok");
+    expect(off.spans.map((s) => s.name)).toEqual(["rango.request"]);
+  });
+
   it("falls through to the work when there is no execution context", () => {
     const resolved = resolveTracing(createCloudflareTracing());
     // No request context at all (outside runWithRequestContext).

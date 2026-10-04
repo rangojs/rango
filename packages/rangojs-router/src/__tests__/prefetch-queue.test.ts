@@ -345,20 +345,14 @@ describe("prefetch queue", () => {
     // Two prefetches for the same pathname, different user search params.
     // keepUrl has user params but no internal params. Only the prefetch
     // whose non-internal search params match should be kept.
-    enqueuePrefetch(
-      "v1:abc\0/search?q=apples&_rsc_partial=true&_rsc_segments=A0",
-      (signal) => {
-        signals.set("apples", signal);
-        return a.promise;
-      },
-    );
-    enqueuePrefetch(
-      "v1:abc\0/search?q=oranges&_rsc_partial=true&_rsc_segments=A0",
-      (signal) => {
-        signals.set("oranges", signal);
-        return b.promise;
-      },
-    );
+    enqueuePrefetch("v1:abc\0/search?q=apples&_rsc_partial=true", (signal) => {
+      signals.set("apples", signal);
+      return a.promise;
+    });
+    enqueuePrefetch("v1:abc\0/search?q=oranges&_rsc_partial=true", (signal) => {
+      signals.set("oranges", signal);
+      return b.promise;
+    });
 
     await flush();
     expect(signals.size).toBe(2);

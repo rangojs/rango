@@ -19,6 +19,18 @@ export function NavLayout() {
         <Link to={href("/counter")} data-testid="nav-counter">
           Counter
         </Link>
+        <Link to="/__client-urls" data-testid="nav-pure-client-routes">
+          Pure client routes
+        </Link>
+        <Link to="/mixed-client-routes" data-testid="nav-mixed-client-routes">
+          RSC layout + client pages
+        </Link>
+        <Link to="/cache-lab" data-testid="nav-cache-lab">
+          Cache Lab
+        </Link>
+        <Link to="/suspense-demo" data-testid="nav-suspense-demo">
+          Suspense Demo
+        </Link>
         <Link to={href("/api-demo")} data-testid="nav-api-demo">
           API Demo
         </Link>
@@ -73,11 +85,53 @@ export function NavLayout() {
           PPR navigation replay
         </Link>
         <Link
+          to="/ppr-shell/exec-matrix?transition=drop"
+          data-testid="nav-ppr-exec-drop"
+          prefetch="none"
+        >
+          PPR navigation replay without transition
+        </Link>
+        <Link
+          to="/ppr-shell/slot-hole?probe=fragment-prefetch-warm"
+          data-testid="nav-ppr-fragment-prefetch-warm"
+          prefetch="hover"
+        >
+          PPR fragment warm prefetch
+        </Link>
+        <Link
+          to="/ppr-shell/slot-hole?probe=fragment-prefetch-inflight"
+          data-testid="nav-ppr-fragment-prefetch-inflight"
+          prefetch="hover"
+        >
+          PPR fragment in-flight prefetch
+        </Link>
+        <Link
           to="/ppr-shell/inline-action?probe=ppr-inline-nav"
           data-testid="nav-ppr-inline-action"
           prefetch="none"
         >
           PPR inline action
+        </Link>
+        <Link
+          to="/ppr-shell/passthrough/baked?probe=ppp-action-nav"
+          data-testid="nav-prerender-ppr-action"
+          prefetch="none"
+        >
+          Prerender PPR action
+        </Link>
+        <Link
+          to="/pt-slow?prefetch-sequence=first"
+          data-testid="nav-prefetch-sequence-first"
+          prefetch="hover"
+        >
+          Prefetch sequence first
+        </Link>
+        <Link
+          to="/stream-test/1?prefetch-sequence=second"
+          data-testid="nav-prefetch-sequence-second"
+          prefetch="hover"
+        >
+          Prefetch sequence second
         </Link>
       </nav>
       <BreadcrumbNav />

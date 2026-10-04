@@ -110,8 +110,8 @@ if (options.manifestCache && router.urlpatterns) {
 pnpm build && pnpm wrangler deploy
 
 # Test endpoints
-curl -s https://cloudflare-stress-demo.devcorner.workers.dev/bench/first | jq .
-curl -s https://cloudflare-stress-demo.devcorner.workers.dev/api/bench/first | jq .
+curl -s https://cloudflare-stress-demo.example.workers.dev/bench/first | jq .
+curl -s https://cloudflare-stress-demo.example.workers.dev/api/bench/first | jq .
 
 # Watch logs for cache hits/misses
 pnpm wrangler tail --format json | jq '.logs[] | select(.message[0] | contains("route-manifest")) | .message[0]'
@@ -196,7 +196,7 @@ cd examples/cloudflare-stress-demo
 pnpm build && pnpm wrangler deploy
 
 # Verify href() works for lazy includes
-curl -s https://cloudflare-stress-demo.devcorner.workers.dev/bench/first | jq .testHref
+curl -s https://cloudflare-stress-demo.example.workers.dev/bench/first | jq .testHref
 # Output: "/api/bench/first"
 
 # Watch cache logs

@@ -19,18 +19,35 @@
  *     props crossing the RSC boundary), loader execution on the server,
  *     middleware, or handler ordering. Those are renderServerTree / renderHandler
  *     / e2e territory.
- *   - Loader data, location state, and handle output are SEEDED directly into
- *     client context (see the `loaders` / `locationState` / `handles` options) —
- *     nothing is executed on the server. This exercises the read path
- *     (useLoader / useLocationState / useHandle from context), not the run path.
- *   - navigate() commits synchronously, so it does NOT drive the navigation
- *     lifecycle: useNavigation().state, useLinkStatus().pending, and
- *     useAction().state stay "idle". Assert pending/loading/submitting transition
- *     states with renderServerTree / e2e instead (navigate() warns once if used).
+ *   - Loader data, location state, handle output, and outlet pending state are
+ *     SEEDED directly into client context (see the `loaders` / `locationState` /
+ *     `handles` / `outletPending` options) — nothing is executed on the server.
+ *     This exercises the context read path, not the run path.
+ *   - navigate() does NOT drive the navigation lifecycle: useNavigation().state,
+ *     useLinkStatus().pending, and useAction().state stay "idle". Assert
+ *     pending/loading/submitting transition states with renderServerTree / e2e
+ *     instead (navigate() warns once if used). The one pending state it does
+ *     model is the held-navigation useLoader().isLoading: a `transition` spec
+ *     plus a pending Promise seeded via navigate(url, { loaders }) commits
+ *     through production's commitInTransition (browser/partial-update.ts).
+ *   - A spec's transition({ when }) decides every commit with production's
+ *     browser decision: navigate() and useRouter().push model kind "push",
+ *     useRouter().replace kind "replace", refresh() kind "revalidate".
+ *     Back/forward, action and optimistic clientUrls() swap decisions are
+ *     e2e territory.
+ *   - Location state reaches readers the way it does in production:
+ *     NavigationProvider holds the committed entry's state next to the
+ *     payload, so a navigation whose loader the test holds keeps the entry
+ *     being left on screen with its own state. A `popstate` event is a
+ *     back/forward onto the entry history.state holds; the tree has one
+ *     location, so no page is restored with it. A server action's state, a
+ *     redirect's and an intercept's are e2e territory.
  * What it DOES cover: client hooks that read NavigationProvider /
  * OutletContext — useParams, useReverse, useHref, useMount, useNavigation,
- * useRouter, usePathname, useSearchParams, Outlet nesting, useLoader /
- * useFetchLoader (seeded data), useLocationState (seeded), and useHandle (seeded).
+ * useRouter, usePathname, useSearchParams, Outlet/useOutlet nesting and seeded
+ * descendant pending state, useLoader/useFetchLoader (seeded data),
+ * useLocationState (seeded, or written by a navigation), and useHandle
+ * (seeded).
  * Basename-mounted apps: pass the `basename` option so useRouter().basename,
  * <Link> prefixing, and useMount/useHref resolve against the mount prefix
  * (without it they resolve at the root "/"). For an include("/shop", ...)
@@ -38,7 +55,13 @@
  * (the segment chain is wrapped in a MountContext exactly as in production).
  */
 
-import type { ReactNode, ComponentType } from "react";
+import { decideTransitionGatedOff } from "../browser/transition-when.js";
+import {
+  StrictMode,
+  useEffect,
+  type ReactNode,
+  type ComponentType,
+} from "react";
 import type { RenderResult } from "@testing-library/react";
 import { renderSegments } from "../segment-system.js";
 import {
@@ -47,7 +70,17 @@ import {
 } from "../browser/navigation-store.js";
 import { createEventController } from "../browser/event-controller.js";
 import { resolveDeferredHandleValues } from "../handles/deferred-resolution.js";
-import type { NavigationStore, NavigationBridge } from "../browser/types.js";
+import {
+  commitInTransition,
+  shouldStartViewTransition,
+} from "../browser/partial-update.js";
+import type {
+  NavigateOptions,
+  NavigateOptionsInternal,
+  NavigationStore,
+  NavigationBridge,
+  UpdateSubscriber,
+} from "../browser/types.js";
 import type { EventController } from "../browser/event-controller.js";
 import type { ResolvedSegment, RscMetadata } from "../browser/types.js";
 import { NavigationProvider } from "../browser/react/NavigationProvider.js";
@@ -56,14 +89,34 @@ import {
   buildParamsFromMatch,
 } from "../router/pattern-matching.js";
 import { normalizeBasename } from "../router/basename.js";
-import type { LoaderDefinition } from "../types.js";
-import type { LocationStateDefinition } from "../browser/react/location-state-shared.js";
+import type {
+  LoaderDefinition,
+  TransitionConfig,
+  TransitionWhenKind,
+} from "../types.js";
+import {
+  setLocationStateVersion,
+  type LocationStateDefinition,
+} from "../browser/react/location-state-shared.js";
+import {
+  buildHistoryState,
+  clearLocationStateOnDocumentLoad,
+  pushHistoryWithIdx,
+  resolveNavigationState,
+} from "../browser/history-state.js";
+import { withLocationStateKey } from "./location-state-key.js";
 import type { Handle } from "../handle.js";
 import type { ThemeConfig } from "../theme/types.js";
 import { resolveThemeConfig } from "../theme/constants.js";
 import { isUnderTestRunner } from "../runtime-env.js";
+import { setupNavigationBridgeDelegatedPrefetch } from "../browser/navigation-bridge.js";
+import { resetAdaptiveStrategyForTesting } from "../browser/prefetch/default-strategy.js";
+import { resetPrefetchObserverForTesting } from "../browser/prefetch/observer.js";
+import type { PrefetchStrategy } from "../router/prefetch-default.js";
 
 const TEST_ORIGIN = "http://localhost";
+let activePrefetchRegistrations = 0;
+let pendingPrefetchReset: object | undefined;
 
 /**
  * Seed shape for `options.handle`, matching the handle wire format:
@@ -75,18 +128,15 @@ export type HandleDataSeed = Record<string, Record<string, unknown[]>>;
 const syntheticIds = new WeakMap<object, string>();
 let syntheticIdCounter = 0;
 
-function ensureSyntheticId(
-  handle: object,
-  field: "$$id" | "__rsc_ls_key",
-): string {
-  const existing = (handle as Record<string, string>)[field];
+function ensureSyntheticId(loader: object): string {
+  const existing = (loader as { $$id?: string }).$$id;
   if (existing) return existing;
-  let id = syntheticIds.get(handle);
+  let id = syntheticIds.get(loader);
   if (!id) {
     id = `__rango_test_id_${syntheticIdCounter++}`;
-    syntheticIds.set(handle, id);
+    syntheticIds.set(loader, id);
   }
-  (handle as Record<string, string>)[field] = id;
+  (loader as { $$id?: string }).$$id = id;
   return id;
 }
 
@@ -123,6 +173,14 @@ export interface RenderRouteSpec {
   loaderIds?: string[];
   /** Optional route name (informational; not used for matching). */
   name?: string;
+  /**
+   * The `transition()` config this node declares (`{}` for a bare
+   * `transition()`), attached to its segment as the DSL does. Puts the chain in
+   * a transition scope: param-agnostic keys (segment-system.tsx) and a held
+   * navigate() commit, so a pending loader seed passed to
+   * `router.navigate(url, { loaders })` pins `useLoader().isLoading`.
+   */
+  transition?: TransitionConfig;
 }
 
 /**
@@ -143,6 +201,15 @@ export interface RenderRouteOptions {
    * the read path is exercised without executing any loader.
    */
   loaderData?: Record<string, unknown>;
+  /**
+   * Descendant client-route pending state to seed into each synthetic segment's
+   * production OutletProvider, so `useOutlet().pending` can be tested alongside
+   * `useOutlet().content`. Defaults to false.
+   *
+   * This is a seeded outlet-context value only. It does not model arbitrary
+   * Suspense, navigation, or action pending state.
+   */
+  outletPending?: boolean;
   /**
    * Loaders to seed by REFERENCE — the robust way to test a component that calls
    * `useLoader(loader)`. A real `createLoader()` handle has an empty `$$id` in a
@@ -180,6 +247,8 @@ export interface RenderRouteOptions {
    * `useLocationState(StateDef)`. Like loaders, a real `createLocationState()`
    * handle has an empty injected key in a bare test, so pass `[def, value]`
    * pairs; renderRoute assigns a synthetic key and writes it to `history.state`.
+   * With `hydrate: true` a `clearOnReload` definition's seed is removed before
+   * hydration, as on a document load.
    *
    * @example
    * renderRoute([{ path: "/", Component: FlashBanner }], {
@@ -215,6 +284,24 @@ export interface RenderRouteOptions {
    * computes the segment id for you). Merged with `handles`.
    */
   handle?: HandleDataSeed;
+  /**
+   * Handle values a document delivers after hydration, as a loader's push
+   * that is not in the document's handle snapshot is (a push made after the
+   * handler output settled, or any loader push on a PPR shell HIT). Each
+   * entry is `[handle, values]`: the handle's values after the update, which
+   * replace its `handles` seed once the root has hydrated (or mounted). With
+   * `hydrate: true` the server HTML is rendered from `handles`, and a reader
+   * inside a `<Suspense>` boundary hydrates after the update was applied, as
+   * a boundary that hydrates after the root does in production.
+   *
+   * @example
+   * const { serverHtml, recoverableErrors } = await renderRoute(routes, {
+   *   hydrate: true,
+   *   handles: [[Notes, ["from-handler"]]],
+   *   lateHandles: [[Notes, ["from-handler", "from-loader"]]],
+   * });
+   */
+  lateHandles?: ReadonlyArray<readonly [Handle<any, any>, unknown[]]>;
   /**
    * Route name -> pattern map. Informational for parity with the server test
    * context; client useReverse takes its map directly as an argument, so this
@@ -268,6 +355,33 @@ export interface RenderRouteOptions {
    * expect(getByTestId("nonce").textContent).toBe("test-nonce");
    */
   nonce?: string;
+  /**
+   * Router default prefetch strategy scoped to this rendered tree. This mirrors
+   * `createRouter({ defaultPrefetch })` for Links and eligible plain anchors
+   * inside `basename`. `data-prefetch="false"`/`"none"` opts out; `"true"`
+   * allows an application route with a common static-resource suffix but does
+   * not override a `"none"` default.
+   */
+  defaultPrefetch?: PrefetchStrategy;
+  /**
+   * Hydrate instead of mounting fresh: the same element is rendered to HTML
+   * (react-dom/server `renderToString`), placed in the container and hydrated.
+   * The result gains `serverHtml` and `recoverableErrors`
+   * (RenderRouteHydrateResult). `data-hydrated` is set on `<html>` after
+   * hydration, as production's root does, and removed on unmount.
+   *
+   * Limits:
+   * - The server pass runs without `window` and `document`, and only those. A
+   *   hook that reads a global that stays defined there (`history`,
+   *   `localStorage`, `navigator`) outside a server snapshot renders the same
+   *   in both passes here and can still mismatch in real SSR.
+   * - Content that suspends in the server pass (`lazy`, a pending or untracked
+   *   `use()` promise) is emitted as its fallback and client-rendered, not
+   *   hydrated; React reports the boundary in `recoverableErrors`. Outside any
+   *   `<Suspense>` it rejects.
+   * - Needs @testing-library/react >= 16.2.0; throws on older versions.
+   */
+  hydrate?: boolean;
 }
 
 /**
@@ -279,8 +393,45 @@ export interface TestRouterHandle {
    * updates params + location, and re-renders the segment tree. This is a
    * client-only navigation: no server fetch occurs, so only the components in
    * `routes` can be reached.
+   *
+   * `options.loaders` seeds loader data for THIS navigation, merged over the
+   * render-time seeds (the data a real navigation's response would carry). A
+   * pending Promise suspends the read like a streaming Flight chunk. When a
+   * spec in the chain has `transition`, the commit goes through production's
+   * commitInTransition: the reader stays on screen with
+   * `useLoader().isLoading === true` until the promise settles. Settle it
+   * inside RTL's `act()` to flush the commit. Without `transition` the commit
+   * is urgent and the read suspends to the nearest Suspense boundary.
+   *
+   * @example
+   * await router.navigate("/products/2", { loaders: [[ProductLoader, next]] });
+   * // reader: isLoading true, old data
+   * await act(async () => resolve({ name: "Product 2" }));
+   * // reader: isLoading false, new data
+   *
+   * `options.transition: false` is the per-navigation opt-out
+   * (`router.push(url, { transition: false })`, `<Link transition={false}>`):
+   * the commit is urgent and no transition({ when }) predicate is called.
+   *
+   * `options.state` and `options.replace: true` write the history entry the
+   * way `useRouter().push(url, { state })` and `.replace(url, { state })` do,
+   * so a test can carry location state on a navigation whose loader it
+   * holds: `state` pushes an entry with it, `replace: true` replaces the
+   * current entry (with `state`, or with none, which drops the entry's
+   * location state as a production replace does). With neither, history is
+   * left alone and readers keep the state they have: `navigate(url)` and
+   * `navigate(url, { replace: false })` are the same call.
    */
-  navigate(url: string): Promise<void>;
+  navigate(
+    url: string,
+    options?: Pick<RenderRouteOptions, "loaders"> &
+      Pick<NavigateOptions, "state" | "replace" | "transition">,
+  ): Promise<void>;
+  /**
+   * Re-render the current location, as router.refresh() does: a spec's
+   * transition({ when }) decides it with kind "revalidate" (`to` is `from`).
+   */
+  refresh(): Promise<void>;
   /** The current committed pathname. */
   pathname(): string;
   /** The current committed params. */
@@ -294,9 +445,98 @@ export interface TestRouterHandle {
 /** Result of renderRoute: RTL's render result plus the router handle. */
 export type RenderRouteResult = RenderResult & { router: TestRouterHandle };
 
+/** Result of renderRoute with `hydrate: true`. */
+export type RenderRouteHydrateResult = RenderRouteResult & {
+  /** The HTML the server pass produced, as placed in the container. */
+  serverHtml: string;
+  /**
+   * Messages of the errors React recovered from (`onRecoverableError`): a
+   * hydration mismatch that made it re-render on the client, or a boundary the
+   * server pass could not finish. Empty means the tree hydrated as rendered.
+   * Live: React appends for as long as the root is mounted. An attribute-only
+   * mismatch is NOT here — React keeps the server attribute and only logs it
+   * with `console.error` in development.
+   */
+  recoverableErrors: string[];
+};
+
 interface ResolvedMatch {
   params: Record<string, string>;
   pathname: string;
+}
+
+function DelegatedPrefetchRegistration({
+  bridge,
+}: {
+  bridge: NavigationBridge;
+}): null {
+  useEffect(() => {
+    const unregister = bridge.registerDelegatedPrefetch();
+    pendingPrefetchReset = undefined;
+    activePrefetchRegistrations++;
+    return () => {
+      try {
+        unregister();
+      } finally {
+        activePrefetchRegistrations--;
+        if (activePrefetchRegistrations === 0) {
+          const reset = {};
+          pendingPrefetchReset = reset;
+          queueMicrotask(() => {
+            if (
+              pendingPrefetchReset !== reset ||
+              activePrefetchRegistrations !== 0
+            ) {
+              return;
+            }
+            pendingPrefetchReset = undefined;
+            resetPrefetchObserverForTesting();
+            resetAdaptiveStrategyForTesting();
+          });
+        }
+      }
+    };
+  }, [bridge]);
+  return null;
+}
+
+/**
+ * initBrowserApp calls the bridge's registerLinkInterception, which is where
+ * production listens for `popstate` (navigation-bridge.ts); a rendered tree
+ * has no initBrowserApp.
+ */
+function LinkInterceptionRegistration({
+  bridge,
+}: {
+  bridge: NavigationBridge;
+}): null {
+  useEffect(() => bridge.registerLinkInterception(), [bridge]);
+  return null;
+}
+
+/**
+ * The marker production's root sets from its effect after hydration
+ * (browser/rsc-router.tsx Rango), so a boundary that hydrates in a later pass
+ * finds it set, as in production. Removed on unmount: a test unmounts its
+ * root, production never does.
+ */
+function HydratedMarker(): null {
+  useEffect(() => {
+    document.documentElement.dataset.hydrated = "";
+    return () => document.documentElement.removeAttribute("data-hydrated");
+  }, []);
+  return null;
+}
+
+/**
+ * Applies `lateHandles` from an effect after the tree's: where production's
+ * root effect releases the document's late handle channel
+ * (browser/rsc-router.tsx hydrationCommitted). A boundary that hydrates in a
+ * later pass finds the update applied.
+ */
+function LateHandles({ apply }: { apply: () => void }): null {
+  useEffect(apply, [apply]);
+  return null;
 }
 
 function matchLeaf(
@@ -354,6 +594,7 @@ function buildSegments(
       belongsToRoute: true,
     };
     if (mount) node.mountPath = mount;
+    if (spec.transition) node.transition = spec.transition;
     if (isLeaf && spec.layout) {
       const Layout = spec.layout;
       node.layout = <Layout />;
@@ -383,6 +624,14 @@ function buildSegments(
   return segments;
 }
 
+export function renderRoute(
+  routes: RenderRouteSpec[],
+  options: RenderRouteOptions & { hydrate: true },
+): Promise<RenderRouteHydrateResult>;
+export function renderRoute(
+  routes: RenderRouteSpec[],
+  options?: RenderRouteOptions,
+): Promise<RenderRouteResult>;
 export async function renderRoute(
   routes: RenderRouteSpec[],
   options: RenderRouteOptions = {},
@@ -405,17 +654,30 @@ export async function renderRoute(
   const initialUrl = requestUrl ?? staticPrefix(leaf.path) ?? "/";
   const url = new URL(initialUrl, TEST_ORIGIN);
 
-  const loaderData: Record<string, unknown> = { ...(options.loaderData ?? {}) };
-  for (const [loader, data] of options.loaders ?? []) {
-    loaderData[ensureSyntheticId(loader as object, "$$id")] = data;
-  }
+  const seedLoaders = (
+    base: Record<string, unknown>,
+    loaders: RenderRouteOptions["loaders"],
+  ): Record<string, unknown> => {
+    const out = { ...base };
+    for (const [loader, data] of loaders ?? []) {
+      out[ensureSyntheticId(loader)] = data;
+    }
+    return out;
+  };
+  const loaderData = seedLoaders(options.loaderData ?? {}, options.loaders);
 
   if (typeof window !== "undefined") {
+    // The tree has no app version (its bridge reports none), so a seed needs
+    // none either. Reset what an initBrowserApp in the same file may have left.
+    setLocationStateVersion(undefined);
     const stateObj: Record<string, unknown> = {};
     for (const [def, value] of options.locationState ?? []) {
-      stateObj[ensureSyntheticId(def as object, "__rsc_ls_key")] = value;
+      stateObj[withLocationStateKey(def).__rsc_ls_key] = value;
     }
     window.history.replaceState(stateObj, "");
+    // Hydrate mode is a document load of the seeded entry: run start-up's
+    // step (initBrowserApp), not a copy of it.
+    if (options.hydrate) clearLocationStateOnDocumentLoad();
   }
 
   const resolve = (pathname: string): ResolvedMatch => {
@@ -429,6 +691,7 @@ export async function renderRoute(
 
   const historyKey = generateHistoryKey(url.href);
   const mount = normalizeBasename(options.mount);
+  const basename = normalizeBasename(options.basename);
   // Fail loud on a request that cannot resolve the leaf route (a typo, or the
   // mount-prefixed-vs-relative confusion) instead of silently rendering empty
   // params (matchLeaf -> null -> {}). renderRoute paths are include-RELATIVE and
@@ -480,61 +743,232 @@ export async function renderRoute(
 
   const eventController = createEventController({ initialLocation: url });
   eventController.setParams(initialMatch.params);
+  // The seeded entry, as initBrowserApp commits the document's.
+  eventController.commitLocationState(window.history.state);
   // Resolve-by-default: resolve any deferred (Promise) seeded handle values
   // before applying, so the seeded handles reach collect/useHandle resolved —
   // matching what the server/client do in a real app.
   const resolvedSeed = await resolveDeferredHandleValues(handleSeed);
-  eventController.setHandleData(
-    resolvedSeed,
-    initialSegments.map((s) => s.id),
-  );
+  const initialSegmentIds = initialSegments.map((s) => s.id);
+  eventController.setHandleData(resolvedSeed, initialSegmentIds);
+  // As initBrowserApp before hydrateRoot: what a hydrating reader reads.
+  eventController.freezeHydrationHandleState();
+  // A late update carries the full state: the seed with these handles' values
+  // replaced, resolved as the browser resolves a late yield before applying.
+  let applyLateHandles: (() => void) | undefined;
+  if (options.lateHandles && leafRouteSegmentId !== undefined) {
+    const lateSeed = cloneHandleSeed(resolvedSeed);
+    for (const [handle, values] of options.lateHandles) {
+      const id = (handle as unknown as { $$id: string }).$$id;
+      (lateSeed[id] ??= {})[leafRouteSegmentId] = values;
+    }
+    const lateState = await resolveDeferredHandleValues(lateSeed);
+    // Flushed, not left to the notify timer: renderRoute's act() has
+    // returned by then.
+    applyLateHandles = () => {
+      eventController.setHandleData(lateState, initialSegmentIds);
+      eventController.flushRouteState();
+    };
+  }
 
   let warnedNavLifecycle = false;
-  const navigate = async (target: string): Promise<void> => {
-    // renderRoute commits navigations synchronously (no server fetch, no Flight
-    // stream), so it never drives the navigation lifecycle. The transition state
-    // useNavigation()/useLinkStatus()/useAction() read stays "idle" — asserting a
-    // pending/loading/submitting state here proves nothing. Warn once (per render)
-    // under the test runner so that false-confidence trap is loud, not silent.
+  const navigate = async (
+    target: string,
+    navOptions?: Pick<RenderRouteOptions, "loaders"> & {
+      history?: Pick<
+        NavigateOptionsInternal,
+        "state" | "replace" | "transition"
+      >;
+      kind?: TransitionWhenKind;
+      transition?: boolean;
+    },
+  ): Promise<void> => {
+    // A useRouter().push/replace or <Link> navigation (`history`) writes its
+    // entry the way production does (navigation-bridge.ts navigate ->
+    // navigation-transaction.ts commit): the dev state check, typed entries
+    // spread onto history.state, the idx stamp, and the entry state committed
+    // on the event controller, which the provider takes with the payload.
+    // The URL stays put: renderRoute tracks location on the event
+    // controller, not window.location. router.navigate() without `state` or
+    // `replace: true`, and refresh(), leave history alone.
+    const history = navOptions?.history;
+    const historyState = history
+      ? buildHistoryState(
+          history.state !== undefined
+            ? resolveNavigationState(history.state)
+            : undefined,
+        )
+      : undefined;
+    // No server fetch, so the navigation lifecycle never starts: the state
+    // useNavigation()/useLinkStatus()/useAction() read stays "idle" — asserting
+    // a pending/loading/submitting state here proves nothing. Warn once (per
+    // render) under the test runner so that false-confidence trap is loud.
     if (isUnderTestRunner() && !warnedNavLifecycle) {
       warnedNavLifecycle = true;
       console.warn(
-        "renderRoute: navigate()/useRouter().push commit synchronously and do " +
-          "NOT drive the navigation lifecycle. useNavigation().state, " +
-          'useLinkStatus().pending, and useAction().state stay "idle" here. ' +
-          "Assert params/pathname/content after navigate(); use renderServerTree " +
-          "or e2e to assert pending/loading/submitting transition states.",
+        "renderRoute: navigate()/useRouter().push do NOT drive the navigation " +
+          "lifecycle. useNavigation().state, useLinkStatus().pending, and " +
+          'useAction().state stay "idle" here. Assert params/pathname/content ' +
+          "after navigate(); use renderServerTree or e2e to assert " +
+          "pending/loading/submitting transition states. A held " +
+          "useLoader().isLoading is modeled: see navigate(url, { loaders }).",
       );
     }
     const nextUrl = new URL(target, TEST_ORIGIN);
     const match = resolve(nextUrl.pathname);
-    const segments = buildSegments(routes, match.params, loaderData, mount);
+    const segments = buildSegments(
+      routes,
+      match.params,
+      seedLoaders(loaderData, navOptions?.loaders),
+      mount,
+    );
     const metadata = makeMetadata(nextUrl.pathname, segments, match.params);
-    const root = await renderSegments(segments);
+    // Production's browser-run transition({ when }) decision
+    // (browser/partial-update.ts): the committed location is the source.
+    const kind: TransitionWhenKind =
+      navOptions?.kind ?? (history?.replace ? "replace" : "push");
+    // `transition: false` gates off without calling a predicate
+    // (navigation-bridge.ts navigate).
+    const transitionOptOut =
+      (navOptions?.transition ?? history?.transition) === false;
+    const gatedOff =
+      transitionOptOut ||
+      decideTransitionGatedOff(segments, () => ({
+        kind,
+        from: {
+          url: eventController.getLocation().href,
+          params: eventController.getParams(),
+          routeName: leaf.name,
+          state: window.history.state,
+        },
+        to: {
+          url: nextUrl,
+          params: match.params,
+          routeName: leaf.name,
+          state: historyState ?? null,
+        },
+      }));
+    const root = await renderSegments(segments, {
+      outletPending: options.outletPending,
+      transitionGatedOff: gatedOff,
+    });
     eventController.setLocation(nextUrl);
     eventController.setParams(match.params);
     store.setCurrentUrl(nextUrl.href);
     store.setSegmentIds(segments.map((s) => s.id));
+    if (history) {
+      pushHistoryWithIdx(
+        historyState ?? null,
+        window.location.href,
+        history.replace ?? false,
+      );
+      eventController.commitLocationState(historyState);
+    }
+    const emit: UpdateSubscriber = (update) => store.emitUpdate(update);
     await act(async () => {
-      store.emitUpdate({ root, metadata });
+      // Production's transition() lane (browser/partial-update.ts). Its
+      // same-structure / fully-prefetched / optimistic hold lanes are not
+      // modeled: without transition() the commit stays urgent.
+      if (shouldStartViewTransition(segments, gatedOff)) {
+        commitInTransition(emit, segments, { root, metadata }, ["navigation"]);
+      } else {
+        emit({ root, metadata });
+      }
     });
   };
 
+  const refresh = (): Promise<void> => {
+    const current = new URL(eventController.getLocation().href);
+    return navigate(current.pathname + current.search, { kind: "revalidate" });
+  };
+
+  let prefetchRoot: HTMLElement | undefined;
   const bridge: NavigationBridge = {
-    navigate: (target) => navigate(target),
-    refresh: () => navigate(url.pathname + url.search),
-    handlePopstate: async () => {},
-    registerLinkInterception: () => () => {},
+    navigate: (target, navigateOptions) =>
+      navigate(target, { history: navigateOptions ?? {} }),
+    refresh: () => refresh(),
+    // Back/forward onto the entry history.state holds. The tree has one
+    // location, so nothing is restored: a treeless commit of that entry, as
+    // production's traversal that keeps every segment
+    // (navigation-transaction.ts commit). Flushed, not left to the notify
+    // timer: the dispatching test's act() has returned by then.
+    handlePopstate: async () => {
+      eventController.commitLocationState(window.history.state, true);
+      eventController.flushRouteState();
+    },
+    registerLinkInterception: () => {
+      const onPopstate = (): void => void bridge.handlePopstate();
+      window.addEventListener("popstate", onPopstate);
+      return () => window.removeEventListener("popstate", onPopstate);
+    },
+    registerDelegatedPrefetch: () =>
+      setupNavigationBridgeDelegatedPrefetch(
+        store,
+        eventController,
+        () => undefined,
+        {
+          defaultPrefetch: options.defaultPrefetch,
+          root: prefetchRoot,
+          basename,
+        },
+      ),
     getVersion: () => undefined,
     updateVersion: () => {},
   };
 
-  const initialMetadata = makeMetadata(
-    url.pathname,
-    initialSegments,
-    initialMatch.params,
+  const initialMetadata = {
+    ...makeMetadata(url.pathname, initialSegments, initialMatch.params),
+    defaultPrefetch: options.defaultPrefetch,
+  };
+  const initialTree = await renderSegments(initialSegments, {
+    outletPending: options.outletPending,
+  });
+
+  // The marker sits after the provider so its effect runs after the tree's,
+  // like the effect of production's root component.
+  const ui = (
+    <>
+      <NavigationProvider
+        store={store}
+        eventController={eventController}
+        initialPayload={{ root: initialTree, metadata: initialMetadata }}
+        bridge={bridge}
+        basename={basename}
+        themeConfig={
+          options.theme === undefined ? null : resolveThemeConfig(options.theme)
+        }
+        nonce={options.nonce}
+      />
+      <DelegatedPrefetchRegistration bridge={bridge} />
+      <LinkInterceptionRegistration bridge={bridge} />
+      {options.hydrate && <HydratedMarker />}
+      {applyLateHandles && <LateHandles apply={applyLateHandles} />}
+    </>
   );
-  const initialTree = await renderSegments(initialSegments);
+
+  let serverHtml: string | undefined;
+  const recoverableErrors: string[] = [];
+  if (options.hydrate) {
+    // RTL forwards onRecoverableError to hydrateRoot from 16.2.0. 16.0-16.1
+    // are inside the peer range and drop it (their render() never names the
+    // option), which would leave `recoverableErrors` empty on a real mismatch.
+    if (!String(render).includes("onRecoverableError")) {
+      throw new Error(
+        "renderRoute: `hydrate` needs @testing-library/react >= 16.2.0. Older " +
+          "versions do not pass onRecoverableError to hydrateRoot, so a " +
+          "hydration mismatch would go unreported.",
+      );
+    }
+    const { getConfig } = await import("@testing-library/react");
+    const { renderToString } = await import("react-dom/server");
+    // RTL wraps the hydrated element the same way.
+    const serverUi = getConfig().reactStrictMode ? (
+      <StrictMode>{ui}</StrictMode>
+    ) : (
+      ui
+    );
+    serverHtml = withoutBrowserGlobals(() => renderToString(serverUi));
+  }
 
   // Wrap render in an awaited async act so a tree that suspends (async loaders,
   // loading states, deferred handle entries that arrive as a Promise) settles its
@@ -542,31 +976,68 @@ export async function renderRoute(
   // suspended inside an act scope, but the act call was not awaited") and the
   // resolved content never reaches the asserted DOM.
   let result!: Awaited<ReturnType<typeof render>>;
+  const container = document.body.appendChild(document.createElement("div"));
+  prefetchRoot = container;
+  if (serverHtml !== undefined) container.innerHTML = serverHtml;
   await act(async () => {
-    result = render(
-      <NavigationProvider
-        store={store}
-        eventController={eventController}
-        initialPayload={{ root: initialTree, metadata: initialMetadata }}
-        bridge={bridge}
-        basename={normalizeBasename(options.basename)}
-        themeConfig={
-          options.theme === undefined ? null : resolveThemeConfig(options.theme)
-        }
-        nonce={options.nonce}
-      />,
-    );
+    result = render(ui, {
+      baseElement: document.body,
+      container,
+      ...(serverHtml !== undefined && {
+        hydrate: true,
+        onRecoverableError: (error: unknown) => {
+          recoverableErrors.push(
+            error instanceof Error ? error.message : String(error),
+          );
+        },
+      }),
+    });
   });
 
   const router: TestRouterHandle = {
-    navigate,
+    navigate: (target, navOptions) =>
+      navigate(target, {
+        loaders: navOptions?.loaders,
+        transition: navOptions?.transition,
+        history:
+          navOptions?.state !== undefined || navOptions?.replace
+            ? navOptions
+            : undefined,
+      }),
+    refresh,
     pathname: () => new URL(eventController.getLocation().href).pathname,
     params: () => eventController.getParams(),
     store,
     eventController,
   };
 
-  return Object.assign(result, { router });
+  if (serverHtml === undefined) return Object.assign(result, { router });
+  return Object.assign(result, { router, serverHtml, recoverableErrors });
+}
+
+/**
+ * Runs the server pass without `window` and `document`, the two globals
+ * SSR-aware code probes. A DOM test environment defines both, so with them in
+ * place a `typeof window` branch takes its client side, renders the client
+ * HTML, and the mismatch it causes in production hydrates clean. `fn` must be
+ * synchronous (renderToString, not a streaming entry): nothing else may run
+ * while they are gone.
+ */
+function withoutBrowserGlobals<T>(fn: () => T): T {
+  const scope = globalThis as { window?: unknown; document?: unknown };
+  const windowDescriptor = Object.getOwnPropertyDescriptor(scope, "window")!;
+  const documentDescriptor = Object.getOwnPropertyDescriptor(
+    scope,
+    "document",
+  )!;
+  try {
+    delete scope.window;
+    delete scope.document;
+    return fn();
+  } finally {
+    Object.defineProperty(scope, "window", windowDescriptor);
+    Object.defineProperty(scope, "document", documentDescriptor);
+  }
 }
 
 function makeMetadata(

@@ -6,6 +6,15 @@ import devtoolsJson from "vite-plugin-devtools-json";
 import { analyze } from "../../../../tools/bundle-analyze";
 import { productionDefines } from "../../../../tools/vite-define";
 
+function testHeadScripts(): "preload" | undefined {
+  const value = process.env.RANGO_E2E_HEAD_SCRIPTS;
+  if (!value) return;
+  if (value === "preload") return value;
+  throw new Error(`Invalid RANGO_E2E_HEAD_SCRIPTS value: ${value}`);
+}
+
+const headScripts = testHeadScripts();
+
 // A third-party-style resolver: maps the "@parity/*" specifier to ./src/parity/*
 // via a resolveId hook, deliberately WITHOUT a matching resolve.alias entry.
 // This mirrors how vite-tsconfig-paths resolves tsconfig `paths` (issue #500)
@@ -35,7 +44,7 @@ export default defineConfig(({ command }) => ({
   plugins: [
     parityAliasPlugin(),
     react(),
-    rango(),
+    rango(headScripts ? { headScripts } : undefined),
     devtoolsJson(),
     poke(),
     ...analyze(),
@@ -46,7 +55,8 @@ export default defineConfig(({ command }) => ({
       // Several e2e routes intentionally throw to verify router error payloads.
       // Vite's dev overlay is broadcast to connected clients and can block
       // unrelated parallel tests that are running against the shared dev server.
-      overlay: false,
+      // route-types-hmr's isolated server turns it on to assert the overlay.
+      overlay: process.env.RANGO_E2E_HMR_OVERLAY === "1",
     },
   },
   oxc: {

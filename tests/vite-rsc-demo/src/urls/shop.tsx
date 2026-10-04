@@ -191,9 +191,19 @@ export const shopPatterns = urls(
             loader(ProductLoader, () => [revalidate(() => false), cache()]),
             loader(RelatedProductsLoader, () => [revalidate(() => false)]),
             revalidate(productDetailRevalidation),
-            parallel({
-              "@related": (ctx) => <RelatedProducts slug={ctx.params.slug} />,
-            }),
+            // Same named contract as the route: without it the slot revalidates
+            // on ANY query change (belongsToRoute default), and having no
+            // loading() of its own, its refresh suspends at the route's
+            // loading(<ProductDetailSkeleton/>) — flashing the whole-page
+            // skeleton on ?tab= navigation. A bare revalidate(() => false)
+            // would instead go stale on slug changes (old product's related
+            // list kept), so the slot must share the route's predicate.
+            parallel(
+              {
+                "@related": (ctx) => <RelatedProducts slug={ctx.params.slug} />,
+              },
+              () => [revalidate(productDetailRevalidation)],
+            ),
           ],
         ),
 

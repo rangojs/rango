@@ -13,7 +13,12 @@ import { createLoader } from "@rangojs/router";
 // _rsc_loader endpoint at runtime. Dev resolves the loader by parsing its id
 // into a file path; production must rely on the manifest. If the manifest is
 // not bundled into the worker, this loader cannot be resolved in production.
+// Its implementation imports an RSC-only boundary to verify non-RSC analysis
+// receives the loader stub rather than scanning the server callback.
 export const OrphanFetchableLoader = createLoader(async (ctx) => {
+  // plugin-rsc provides this virtual boundary module during Vite builds.
+  // @ts-expect-error "server-only" has no standalone type declaration.
+  await import("server-only");
   const id = ctx.params.id ?? "orphan-default";
   return { message: "Orphan fetchable loaded!", id };
 }, true);

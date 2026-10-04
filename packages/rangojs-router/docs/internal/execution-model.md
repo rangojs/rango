@@ -75,14 +75,152 @@ global middleware
 - Loaders are live by default unless explicitly cached via `cache()` in their
   use params: `loader(Fn, () => [cache({ ttl })])`. Pinned by the `[C1]`/`[C2]`
   semantic matrix rows.
-- Under PPR shell capture, `loading()` selects the loader lane
-  (docs/design/loader-container-bake.md): present = live lane (masked at
-  capture, fresh on every serve); absent = bake lane (the loader EXECUTES at
-  capture, its settled container bakes into the shell and is snapshot-pinned
-  on HITs, promises nested in the container stay live at the consumer's own
-  Suspense). Identity reads inside a bake-lane loader refuse the capture.
-  Axis 1 is unchanged in both lanes.
+- A loader-cache HIT skips only the cached body. It replays the handle pushes
+  of that body and of the loaders it awaited via `ctx.use` on the MISS, each
+  loader's pushes at most once per request: a dependency that a sibling loader
+  or the handler already ran keeps its live pushes, and a dependency that
+  runs after the replay replaces its replayed values with its live pushes,
+  in their position (handle output stays live like the data). The order is
+  the push order of the run that produced the value, whether an entry
+  replays it or a run replaces copies: a loader that pushes, awaits a
+  dependency that pushes, and pushes again shows `[own, dependency, own]`
+  on both. A stale hit's
+  background refresh runs on its own loader executor, so it never takes the
+  page's run of a dependency. Source: `replayLoaderHandles` in
+  `loader-cache.ts`, `appendHandles` in `handle-snapshot.ts`,
+  `_claimLoaderPushes` in `loader-resolution.ts`
+  (`setupLoaderAccess`), `pushReplayed` in `handle-store.ts`; pinned by
+  `loader-cache-handles.test.ts` and `handle-store.test.ts`.
+- One value per loader per request: once a loader's `cache()` binding
+  started (`overrides.set` at kickoff in `executeLoaderData`), every
+  `ctx.use` of it, from a handler or from another loader's body, gets the
+  binding's value, a HIT included; the bound body never runs a second time
+  for a reader. A reader that ran before the binding started got the value
+  of its own run, as it does on main. A stale refresh reads its loaders on
+  its own executor, never through the page's bindings, so it is not rebuilt
+  from another stale entry. Source: `_loaderCacheOverrides` in
+  `loader-cache.ts` (the handler interceptor), `useLoader` and
+  `_runLoaderIsolated` in `loader-resolution.ts`; pinned by
+  `loader-cache-tags.test.ts` and `loader-cache-handles.test.ts` (#964).
+- A loader's own `cache()` is keyed only by what the binding declares
+  (`key()`, else the store `keyGenerator`, else loader id, host, path and
+  params); it does not inherit an enclosing route `cache()` key (#974). With
+  no declared identity, a fill whose execution read `cookies()`, `headers()`
+  or a non-cacheable `ctx.get()`, in the body or in a loader value it read via
+  `ctx.use` (a keyed cached loader's HIT included, through its entry's
+  identity mark), fails and stores nothing: on the MISS, on its stale refresh,
+  and when a reader (a parent layout's handler) started the loader before the
+  binding and the MISS reused that run. A read that settles after the value
+  only refuses the write. A live loader running beside it is
+  unaffected. Source: `executeLoaderData` in `loader-cache.ts`,
+  `recordLoaderIdentityRead` in `server/context.ts`, `recordedIdentityRead`
+  in `cache/cache-tag.ts`; pinned by `loader-cache-identity-guard.test.ts`
+  (#972).
+- A loader's data and the settled handle values it pushed come from one
+  source on every replay of a PPR shell: the entry's pin, the loader's own
+  `cache()` entry, or a run in this request. The shell record holds the
+  settled pushes of each loader body the capture ran (an `ssr: false`
+  loader's own and those of the loaders it awaits), and a replay restores
+  them by where it takes each loader's data from, which the loader seed
+  answers for both (`servedPins` / `loaderPins` in `loader-cache.ts`, the
+  seed keyed by loader id), not the request's type:
+  - A loader served from its pin: its pushes go through `pushRestored` and
+    stand, unclaimed. A promise-free `ssr: false` loader does not run on the
+    replay, so they are the only copy; a loader that does run (a
+    hole-carrying `ssr: false` loader) reads the store, and its settled
+    pushes, and those made anywhere inside its body (a `"use cache"` hit
+    replaying a dependency's push), are dropped, while its deferred ones are
+    added; its own `cache()` HIT replays the same way. The record is the
+    whole of that loader's settled pushes, so this holds when it has no copy
+    too: a push the capture's run did not make is not shown next to the
+    pinned data. This holds on a
+    document HIT, a client navigation and a prefetch that replay the shell,
+    and on the seeded fallback after an explicit route `cache()` miss (#1001,
+    #1003).
+  - Any other loader is a hole: one the route runs on the live lane, or an
+    `ssr: false` loader the entry has no pin for (a navigation-only entry,
+    pins dropped by `maxSnapshotBytes`). Its pushes are restored through
+    `pushPlaceholder`, unclaimed. Its run replaces them in place
+    (#936), even when a running pinned loader awaits it (a hole's body ends
+    the search for an enclosing restored loader); a run that settles without
+    a push drops them (`settleLoaderRun`); and its own `cache()` HIT delivers
+    the pushes the entry recorded, none when it recorded none, in their
+    place, for itself and for the dependencies the entry recorded
+    (`replacePlaceholders`).
+  - A dependency the route registers on neither lane is credited at capture
+    to the first registered loader around it: under a live-lane loader its
+    pushes are that hole's; run only under a bake-lane loader, they are
+    recorded under its own id and stand while every `ssr: false` loader of
+    the route is pinned (the record does not name the loader that ran it).
+
+  A route `cache()` record a capture wrote has no pins, so every owner in it
+  is a placeholder: the loader's run or its own `cache()` entry replaces the
+  copy. Owned values a capture restores from such a record keep their owner
+  in the shell record too. A PPR partial replay whose doc record hits serves
+  the same loader pins as the document HIT, by each loader's own `ssr: false`
+  flag (`LoaderEntry.bake`), whatever `loading()` sits on its entry. Not
+  covered: a reader that starts a cached loader before its binding (by
+  design: the reader runs it live while the binding serves its entry, so the
+  loader's data and its push can come from different runs on that request;
+  declare the cached loader first or read it from the handler), and a pinned
+  loader whose capture pushed nothing
+  (`docs/design/handle-push-ownership.md`). Source: `restoreHandles` in
+  `handle-snapshot.ts` (`CachedEntryData.handleOwners`, written from the
+  capture's push wrapper in `shell-capture.ts`), `withCacheLookup` in
+  `cache-lookup.ts`, `matchPartialWithPprReplay` in `rsc-rendering.ts`;
+  pinned by `serve-shell-request-push-ownership.rsc-test.tsx`,
+  `cache-lookup-owned-pushes.test.ts`, `cache-record-loader-pushes.test.ts`
+  and `serve-shell-request.rsc-test.tsx`.
+
+- Under PPR shell capture, of the DSL `loader()` registrations only
+  `loader(Def, { ssr: false })` executes and bakes; every other registration
+  is masked and live, whatever its `loading()`
+  ([`/ppr` → The loader lane rule](../../skills/ppr/SKILL.md#the-loader-lane-rule);
+  source: `resolveLoaderData` in `loader-cache.ts`). A loader a handler
+  awaits (`await ctx.use(Loader)`) is handler output, whatever its
+  registration: it executes at capture and bakes. Identity reads inside a
+  bake-lane loader or a handler-awaited loader refuse the capture. Axis 1 is
+  unchanged in both lanes.
+- A `"use cache"` HIT appends the function's own pushes to the calling
+  segment, and replays the pushes of loaders it read via `ctx.use` under the
+  loader-cache HIT rule above: skipped when the loader already ran or was
+  replayed in this request, replaced in place when it runs after the replay.
+  Its stale refresh reads loaders on its own executor and does not claim.
+  Records written before owner keys replay in full. Source: `appendHandles` in
+  `handle-snapshot.ts`, `useCacheRecordKey` in `handle-capture.ts`,
+  `refreshView` in `cache-runtime.ts`; pinned by
+  `use-cache-handle-capture.test.ts` (#928).
 - Route-level `cache()` does not cache loader segments; loaders remain live.
+- Route-level `cache()` stores only its boundary's subtree. The entries above
+  the outermost enabled `cache()` entry of the chain are never written to the
+  entry, and a hit (document or partial) resolves them as an uncached render
+  would: their handlers, parallels and loaders run, their `ctx.set()` values
+  reach the loaders below, and their header writes land (`CacheScope.covers`,
+  `withCacheLookup`). A `ppr` route is the exception: its scope covers the whole
+  chain, which bakes into the shell. Pinned by
+  `match-middleware/__tests__/cache-outer-layout.test.ts` and
+  `e2e/cache-outer-live.test.ts` (test-app and cloudflare-basic).
+- A `cache()` among a path's children sets that route entry's own `cache`
+  config (`cache()` in `dsl-helpers.ts`), so the route is its boundary: the
+  route segment and its own layouts and parallels are stored and replayed, and
+  every entry above the route stays live. The header and non-cacheable-var
+  guards latch at the route (`entry.cache` in `resolveAllSegments` and
+  `resolveAllSegmentsWithRevalidation`). Pinned by
+  `match-middleware/__tests__/cache-path-children.test.ts` and
+  `e2e/cache-path-children.test.ts`. A `cache()` inside a routeless
+  `layout()`/`middleware()`/`transition()` wrapper in a path configures that
+  path the same way (`enclosingRoute()` in `dsl-helpers.ts`).
+- An orphan renders the routeless entries in its own `layout[]` after its
+  handler and parallels (`resolveOrphanLayout`,
+  `resolveOrphanLayoutWithRevalidation`), so a `layout()` after a bare
+  `cache()` marker wraps every route of the enclosing layout. The marker is
+  also the chain parent of the routes after it; for those routes it is
+  resolved and its middleware collected once, at its chain position, never as
+  its layout's orphan (`ResolveSegmentOptions.chain`, `collectRouteMiddleware`).
+  A hit's live pass gets the full chain, so the marker's subtree comes only
+  from the record. Pinned by
+  `match-middleware/__tests__/orphan-nested-layouts.test.ts` and
+  `e2e/cache-orphan-nested.test.ts`.
 - A response route wrapped in `cache()` returns the same payload on a
   follow-up request; an uncached response route re-executes on every request
   and its payload changes. Pinned by the `[RC1]`/`[RC2]` semantic matrix rows.
@@ -118,6 +256,39 @@ global middleware
     segment order, waiter/deadlock state, and the post-settle handle snapshot in
     the same context as tail matching. Otherwise `ctx.rendered()` can inherit a
     premature non-streaming snapshot and miss handles pushed behind `loading()`.
+  - **A shell HIT hydrates with its record's handle data.** The prelude was
+    rendered at capture from the handle pushes the record keeps (a capture's
+    payload carries no other: `resolvedHandleStream` `recordedOnly`), so the
+    document's pre-hydration snapshot (`metadata.handles`) is the record as
+    restored, standing copies and placeholders alike. `serveShellHit` freezes
+    the handle store's document lane when the tail's render barrier resolves
+    (`HandleStore.freezeDocumentSnapshot`): the record is replayed and no
+    loader has run. Everything the request's loaders then push, replace or
+    drop (a live-lane push, a placeholder's replacement, a deferred push, a
+    `cache()` entry's replay) rides `metadata.handlesLate`, whether or not it
+    beat the handler barrier, and the client applies it after the root
+    hydrates. A document MISS, a route without `ppr` and a navigation replay
+    are unchanged: there the snapshot is the store at the handler barrier.
+    Pinned by "a shell HIT hydrates from its record" in
+    `serve-shell-request-push-ownership.rsc-test.tsx`,
+    `handle-store.test.ts`, and `expectShellHitHydratesFromRecord` in both
+    apps (#1035).
+  - **A `useHandle` reader hydrates with the document's handle data, on
+    every document.** "After hydration" above is after the ROOT hydrates.
+    A reader in a boundary that hydrates later (a live loader's `loading()`,
+    a streamed `<Suspense>`) reads, in its hydrating render, the handle state
+    `initBrowserApp` froze before `hydrateRoot`
+    (`EventController.freezeHydrationHandleState` /
+    `getHydrationHandleState`), and its mount effect moves it on to the live
+    state. `useHandle` gets it as `useSyncExternalStore`'s server snapshot;
+    it is `undefined` while the live state is still the frozen one, and the
+    client snapshot is a constant `undefined`, so a reader that hydrated
+    with nothing late renders once and no handle update is a store change to
+    React. Before, the reader took the live state, late updates included, and
+    mismatched its HTML: a loader push after an `await` on any document.
+    Pinned by `use-handle-hydration.test.tsx`,
+    `render-route-hydrate.test.tsx` (`lateHandles`), and
+    `expectLateBoundaryHandleReaderHydratesClean` in both apps (#1035).
   - **`ctx.dynamic()` is the request-level opt-out on this axis.** Runtime
     middleware calls it BEFORE the commit point, so it forces the request onto
     axis 1 — the shell lookup/HIT/MISS-capture is skipped even when a valid
@@ -136,34 +307,149 @@ global middleware
   context; middleware may `ctx.dynamic()` there to skip baking a URL's shell.
   Within the
   capture, `cache()`d segments replay from the segment cache and UNCACHED
-  segments execute their handlers fresh (the `cookies()`/`headers()` capture
-  guard is load-bearing for handler/render code and bake-lane segment loaders;
-  handler-INVOKED loader bodies are exempt — the consumption-lane rule below);
-  live-lane segment loaders are masked — they are the structural holes.
-  Holes are render-defined: `loading()` subtrees (structural), pending promises
-  in handed-over data under the consumer's Suspense (physics), everything else
-  is shell — including TOP-LEVEL pushed handle promises, which are awaited
-  before SSR ("a promise nested inside your data is never baked; the container
-  settles").
+  segments execute their handlers fresh. Everything the handler layer
+  produces is shell material, exactly as under `cache()`: promises a handler
+  passes to a component under `<Suspense>`, async server components (with or
+  without a boundary above them), promises nested in a handler's handle push,
+  top-level pushed promises, and loaders a handler awaits. The capture waits
+  for all of it before it freezes anything (`settleCaptureRecord` in
+  `src/rsc/shell-capture.ts`), bounded by the one `ppr.captureTimeout`
+  deadline; output that does not settle in time stores no shell. The capture
+  guard (the first step of `guardIdentityRead` in `src/server/context.ts`,
+  the one guard every identity read goes through: `cookies()`, `headers()`, a
+  `{ cache: false }` variable read, the theme reads `ctx.theme` /
+  `getRequestContext().theme` through `readGuardedTheme`, #971, and the raw
+  reads `ctx.request.headers` / `getRequestContext().cookie()` / `.cookies()`
+  through `guardRequestHeaders` / `guardRawCookieRead`, #976; a cache's own
+  `key()`, `keyGenerator`, `condition()` and `tags()`, and `onError`, run
+  exempt under `runIdentityExempt`, and a cached body, loader body or funnel
+  they start is guarded again) covers
+  everything the
+  capture waits for — handler and render code, bake-lane segment loaders, and
+  handler-invoked loader bodies (no exemption on this tier; the
+  consumption-lane rule below). `ctx.dynamic()` called anywhere the capture
+  waits refuses it too. Live-lane segment loaders are
+  masked — they are the structural holes. Holes come from loaders only:
+  `loading()` or inline-Suspense subtrees over a live-lane loader read
+  (structural), and promises nested in an `ssr: false` loader's return value
+  (masked by shape). Everything else is shell.
 - **Serve-time guarding is guaranteed on every serve.** Every serve — MISS and
-  HIT — runs middleware and fresh loaders. Eligible shell snapshots replay the
-  captured handler segments instead of re-running those handlers; handler-live
-  holes and conditional transition gates decline that fast path. Pinned by
-  the `[PPR2]` semantic matrix row.
-- **Partial navigations reuse the same captured segment shell without a client
-  protocol.** A normal-route partial request may seed the snapshot's canonical
+  HIT — runs the full middleware chain and the live loaders. A MISS renders
+  like axis 1, handlers included; a HIT replays the handler layer from the
+  shell's own doc record and never runs a handler (see "PPR HIT: no handler
+  runs" below). `transition({ when })` never runs on the server, on a PPR
+  route or any other: the predicate is a browser function the payload carries
+  as a client reference (attached from the route definition right before
+  Flight, `rsc/attach-transition-when.ts`, so no stored record holds it), and
+  the browser decides at the navigation's first commit. Pinned by the
+  `[PPR2]` row ("a HIT runs the full middleware chain and live loaders; no
+  handler runs") and the `[PPR4]` row (a HIT carries the predicate, handlers
+  replay). Location state middleware sets still reaches the predicate's
+  `to.state` on a partial replay HIT: `attachLocationStateIfPresent` runs
+  after the replayed match (`requestRenderPlan` in `rsc/rsc-rendering.ts`),
+  pinned by the cloudflare-basic exec-matrix navigation e2e (`ppr-shell.test.ts`,
+  dev + production). A handler's location state is absent there, because the
+  HIT runs no handler.
+- **Partial navigations cache and reuse the PPR handler layer without changing
+  the Flight payload or client runtime.** A normal-route partial request first
+  tries to seed the snapshot's canonical
   `doc:` segment record into `matchPartial()`. Existing client segment ids,
-  revalidation rules, and diff collection decide what is returned; loaders run
-  fresh, and captured item/response/loader pins are excluded. The overlay is the
+  revalidation rules, and diff collection decide what is returned; captured
+  item pins are excluded. Live loaders run fresh. When the doc record hits in a
+  shell a document request captured, the replay arms the bake-lane loader seed
+  (`matchPartialWithPprReplay`'s `onHit`), so `ssr: false` loaders are served
+  from their pins as on a document HIT; a navigation-only capture carries no
+  loader pins, and its replay runs them fresh. The overlay is the
   implicit scope's explicit store, not the request's app store, so route-authored
   `cache()` scopes retain their freshness semantics and request effects stay on
   the original render-barrier context. Overlay segment misses and mutations are
-  isolated from the real `doc:` namespace. Intercepts remain source-resolved,
-  while handler-live holes and `transition({ when })` re-run the ordinary handler
-  path. Production may use the local build manifest; dev never blocks navigation
-  on `/__rsc_shell`. The browser and prefetch lock see the same partial payload as
-  before. Pinned in both apps by the `partial navigation replays the PPR segment
-shell` dev+production e2e.
+  isolated from the real `doc:` namespace. Without a usable snapshot, a cold
+  partial renders normally and schedules a navigation-only shell capture. The
+  capture settles the handler output and runs the capture guards before it
+  writes the doc record, so a request-scoped read refuses the snapshot instead
+  of recording it; a direct segment write from the partial pipeline cannot
+  safely replace it. The capture rebinds its request identity to the stripped
+  target document URL, so route-authored `cache()` scopes use `doc:` keys and
+  document completeness guards remain armed.
+  Intercepts remain source-resolved. A replay HIT carries each segment's
+  `transition({ when })` reference exactly as the live path does; the browser
+  decides over every committed segment, kept ones included (#989), so no
+  segment is re-sent to carry a decision: a segment the client holds that its
+  `revalidate()` (or the default) does not re-render is omitted on a replay
+  HIT exactly as on the live path, `transition({ when })` or not (#986;
+  `keepClientSegment` in `match-middleware/cache-lookup.ts`, pinned by
+  `serve-shell-request-replay-revalidate.rsc-test.tsx` and the dev+production
+  load-more e2e in both apps). Production may use
+  a fresh local build manifest; dev never blocks navigation on `/__rsc_shell`. Fresh
+  and stale-within-SWR runtime generations replay via a non-claiming passive
+  read; those usable reads never schedule recapture. Missing, invalid-version,
+  corrupt, stale-build, and hard-expired artifacts schedule a navigation-only
+  capture. Navigation snapshots use a separate shell key, so they cannot replace
+  a document-safe shell when captures finish out of order. Document serving
+  never reads the navigation namespace, and navigation entries store no
+  document half (prelude/postponed dropped at putShell — replay consumes only
+  the segment snapshot). The cross-key capture queue remains
+  serialized, but waiting document-shell captures run before queued
+  navigation-only captures (the active capture is never preempted), so viewport
+  prefetch cannot starve a cold document through its 15-second queue budget.
+  `x-rango-ppr-replay` distinguishes an actually consumed fresh/stale
+  record from a bounded bypass reason. HIT is reported only after the seeded
+  segment decodes and supplies the match; an explicit route `cache()` scope that
+  wins does not produce a false HIT. The browser and prefetch lock see the same
+  partial payload as before. Pinned by `[PPR4]` and in both apps by the fresh
+  replay, fresh transition-decision, and `stale SWR navigation replays the
+captured handler promise, top-level handles, and Meta` dev+production e2e
+  cases, plus `[PPR5]` for cold partial capture and prefetch replay.
+- **Replay composes with route-derived `cache()` scopes, explicit tier first.**
+  A ppr route under a `cache()` scope (including one inherited from an
+  ancestor — the app-wide storefront shape) still replays. The consumer's tier
+  is ALWAYS consulted first and serves under its own key/ttl/swr/tags/condition
+  semantics, reported as `BYPASS; reason=explicit-cache-hit`; ONLY a true miss
+  of that tier lets the shell snapshot's canonical doc segment record supply
+  the match (the replay HIT). A `bypass` (cache(false), a false `condition()`,
+  no store) or `error` outcome of the explicit lookup never falls back —
+  opt-outs are absolute, and an errored read (throwing consumer `key()`, a
+  store failure, or a built-in store's internally swallowed backend error,
+  signaled via `CACHE_READ_ERROR`) keeps its render-uncached contract instead
+  of serving across a key partition the tier never resolved
+  (`CacheScope.lookupRouteDetailed` outcomes). To make composition
+  possible, a capture of such a route records the canonical doc segment record
+  into the shell snapshot IN ADDITION to the scope's normal store write
+  (snapshot-only — never the real store), and stamps its key on the entry
+  (`ShellCacheEntry.docKey`); replay eligibility requires that exact record.
+  Three decisions bypass before any shell-store read: a partial without
+  navigation context (`no-navigation-context`: no `X-RSC-Router-Client-Path`
+  and no same-origin `Referer`, the predicate `getNavigationContextHeader`
+  shares with `resolveNavigation`), a route whose baked prerender
+  artifact EXISTS (`prerender-store` — probed through the memoized prerender
+  store, because the trie's `pr` flag alone is not a serve guarantee for
+  `Passthrough(Prerender())` params that render live), and a STATICALLY
+  disabled scope (`cache(false)` → `cache-disabled`). The probe is a fast
+  path, not the truth: it reads only the non-intercept artifact, and whether
+  the navigation IS an intercept — and therefore which artifact variant the
+  middleware reads — is resolved DURING the match (`findInterceptForRoute`;
+  the `X-RSC-Router-Intercept-Source` header proves nothing in either
+  direction). The match pipeline stamps one ordered post-match reason on the
+  request context (`_pprReplayPostMatchReason`): the match context supplies
+  `intercept`, then an actual prerender serve overwrites it with
+  `prerender-store` because that is the response source. Every BYPASS is
+  reclassified from it (`reclassifyReplayStatus`): a prerender
+  serve reports `prerender-store`, an intercept resolution reports
+  `intercept`, and both suppress the heal capture (a prerender capture
+  records no doc record; an intercept never consults replay). A `condition()`
+  predicate is deliberately NOT pre-decided — evaluating it at the gate and
+  again at the lookup would let a false-then-true flap report cache-disabled
+  while the explicit tier serves; the lookup's own refusal is reported
+  post-match as the same `cache-disabled` (marker `onExplicitBypass`).
+  The reverse flap heals: an entry captured while `condition()` was false
+  legitimately lacks a snapshot (`no-segment-snapshot`), and a later request
+  whose lookup did NOT refuse schedules the navigation-only heal capture —
+  the capture derives from that request's context, so its doc record records
+  and replay becomes available without waiting for a document recapture. Pinned
+  by `[PPR6]`, the storefront-shape dev+production e2e cases in both apps
+  (`shell-cache`, `ppr-shell`), the passthrough existence-probe cases in
+  `prerender-ppr` and `ppr-shell`, and the
+  `cache-lookup-shell-replay-fallback` / `cache-store-shell-doc-record` units.
 - **Capture-generation invalidation is observable.** Built-in shell stores return
   `invalidated` when a tag marker rejects a capture that started before the
   invalidation. The capture emits a `refused` event with
@@ -173,22 +459,101 @@ shell` dev+production e2e.
 - **The consumption-lane rule.** For every shared-artifact capture — `cache()`,
   `"use cache"`, and the PPR shell — HOW a loader is consumed decides its lane:
   - Server-side handler consumption (`await ctx.use(loader)`) is the BAKED
-    lane: the loader executes during capture and identity reads
-    (`cookies()`/`headers()`) are PERMITTED there (the shell guard exempts
-    handler-invoked loader bodies, exactly like the cache-purity guards). The
-    value freezes as a capture-time copy wherever it renders as unshielded
-    shell/cache material — a documented footgun, consistent across all three
-    artifact tiers.
+    lane: the loader executes during capture and its value freezes as a
+    capture-time copy, like the rest of the handler output. That holds even
+    for a loader also registered live-lane on the route: the handler's own
+    read bakes, and only the registration's `useLoader` read stays a hole.
+  - The tiers split on identity reads (`cookies()`, `headers()`, a
+    `{ cache: false }` variable) inside that loader. `cache()` still PERMITS
+    them (`isInsideCacheScope` exempts any loader body): the value bakes as a
+    shared copy — a documented footgun. `"use cache"` REFUSES them: a loader
+    body entered inside the cached function runs in its exec scope, and its
+    value is part of what the function returns. The order does not matter
+    (#1011): when a handler or a `loader()` binding started the loader
+    first, the cached function's `ctx.use` (or `getRequestContext().use`)
+    read of the memo rejects once the
+    value settles if that run (or a run it read) recorded an identity read
+    (`LoaderRunIdentity`, `readStartedLoaderValue` in `cache/cache-tag.ts`),
+    and a read that settles after the value fails the entry's write
+    (`assertLoaderReadsClean`). A PPR capture REFUSES them
+    too (`guardIdentityRead` trips the capture before any loader-body
+    exemption), so nothing is stored and the route serves axis 1. Why the
+    split: while a PPR HIT re-ran handlers, a slot handler's `ctx.use` of an
+    identity loader rendered per visitor on the HIT, so exempting it was safe.
+    Every HIT now replays the capture's copy, and the exemption would bake the
+    capturing request's cookie into every visitor's page. A `cache()` HIT is a
+    separate tier and keeps its old contract.
   - Client-side consumption (`useLoader` in a `"use client"` component) is the
-    LIVE lane: fresh per request, per visitor.
-  - DSL `loader()` segments follow their lane machinery: renderable
-    `loading()` = live (masked at capture — and the mask also keeps a
-    same-loader handler consumption's subtree a live hole when it sits under
-    that boundary), otherwise bake (executes at capture WITH the identity
-    guard active).
-    Pinned by the `[PPR3]` semantic matrix row and
-    `e2e/shell-cache.test.ts` (slot-use cases); cache()-tier precedent pinned
-    by the blog-cache suites (frozen sidebar on ring-3 hits).
+    LIVE lane: fresh per request, per visitor. A slot-owned identity loader
+    under PPR is registered live-lane (`loader()` without `ssr: false`, the
+    slot's `loading()` as its boundary) and read client-side.
+  - DSL `loader()` segments follow their PPR lane (lane rule above; the bake
+    lane runs WITH the identity guard active).
+    Pinned by the `[PPR3]` semantic matrix row ("handler consumption of a
+    loader bakes; an identity read in it refuses the capture; a registered
+    live-lane slot loader read client-side stays a live hole") and
+    `src/rsc/__tests__/shell-handlers-baked.rsc-test.tsx` ("cookies() in a
+    loader the handler awaits") and `e2e/shell-cache.test.ts` ("handler
+    ctx.use of a loader (...): the handler's copy is frozen, the slot's
+    useLoader read stays live"; "a handler-awaited loader reading cookies()
+    refuses the capture"); cache()-tier precedent pinned by the blog-cache
+    suites (frozen sidebar on ring-3 hits).
+
+### PPR HIT: no handler runs
+
+A PPR document HIT commits the stored prelude and then renders a tail behind
+it. The invariant: that tail never runs a route handler, layout handler, or
+parallel-slot handler. The handler layer comes from the shell entry's own doc
+segment record — the same record the capture rendered its prelude from — so
+the prelude and the hydration payload cannot disagree, and nothing that
+depends on handler timing can drift between them. What still runs on a HIT:
+the full middleware chain (before the commit) and the loaders (live-lane
+holes, and `ssr: false` loaders re-running against their pinned reads).
+
+How the tail is held to it: `serveShellHit` (`src/rsc/rsc-rendering.ts`) arms
+the `_shellImplicitCache` marker with `docTail: true` and
+`fixedDocKey: entry.docKey`. `resolveShellImplicitCacheScope`
+(`src/cache/cache-scope.ts`) then returns the implicit doc scope even for a
+route with its own `cache()` scope, and that scope looks the record up by the
+entry's key, so a store `keyGenerator`, a route `key()`, or a build-time
+capture host cannot send the lookup elsewhere. When the lookup does not hit,
+`withCacheLookup` (`src/router/match-middleware/cache-lookup.ts`) throws
+`ShellRecordUnavailableError` instead of resolving segments, and the match
+pipeline's catch (`src/router/match-handlers.ts`) rethrows it without an
+`onError` report.
+
+The gate before the commit (`shellServePlan`) decides the cases a replay could
+not honor:
+
+| Case                                                                                               | Outcome                                                                   |
+| -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| The route's own `cache()` refuses this request: `cache(false)`, or a `condition()` returning false | Axis 1 like a cache miss: no `x-rango-shell` header, no capture scheduled |
+| Document entry without `docKey`, non-Prerender route                                               | MISS, recaptured                                                          |
+| Document entry without `docKey`, Prerender route (`matched.pr`)                                    | HIT; the tail takes the handler layer from the prerender store            |
+| Entry with `docKey`                                                                                | HIT; the tail replays the doc record                                      |
+
+The degrade, when the record fails anyway (it did not decode, or the entry
+lost it): `serveShellHit` catches `ShellRecordUnavailableError` and calls
+`degradeUnreplayableShell` for a broken entry. It overwrites the entry with a
+tombstone (a `navigationOnly` entry with no document half and no snapshot,
+which document serving treats as a MISS; the store has no shell delete),
+drops the isolate's memo (`dropShellMemo`), and schedules a recapture. A
+snapshot read that was only slow (`snapshotFailure: "unavailable"`) leaves
+the entry alone. Either way the response ends with a script that reloads once
+with the forced-MISS marker `_rsc_shell=miss`. The handler strips the marker
+from the request on entry (`withoutShellMissMarker`) and keeps only the flag
+(`RequestContext._shellForcedMiss`), which the serve gate renders on axis 1
+(no shell read, no capture), so the reload cannot degrade again and nothing
+downstream reads the marker. No
+handler runs behind the committed prelude at any point.
+
+Pinned by `src/rsc/__tests__/shell-handlers-baked.rsc-test.tsx` (`PPR handlers
+baked: no HIT runs a handler`: a route `cache()` whose explicit tier lost its
+record, a route `key()` resolving another key, a store `keyGenerator`, and
+`cache(false)` rendering axis 1), `src/rsc/__tests__/shell-snapshot-prune.rsc-test.tsx`
+(the `condition()` genuine MISS, the corrupt-record degrade and its tombstone),
+and `src/rsc/__tests__/rsc-rendering-shell-ppr.test.ts` (the degrade through
+the sentinel).
 
 ## Handler Loading Contract
 
@@ -350,7 +715,8 @@ render path. Direct navigation to the same target route does not execute
 intercept middleware. Pinned by the `[I2]` semantic matrix row.
 
 Soft navigation triggers the intercept only when the route's `when()`
-predicate returns true for the navigation origin; when it returns false, the
+selector returns true for the navigation's `from`/`to` locations
+(`{ url, params, routeName }`); when it returns false, the
 soft navigation renders the full target page with no intercept. Pinned by the
 `[I1]`/`[W1]` semantic matrix rows.
 
@@ -412,7 +778,24 @@ by `$$id`) so a route-context reset can clear them together.
 | `load({ method: non-GET })` / `body` | local to the calling hook                       | local to the calling hook          |
 | loader not in route context          | local to the calling hook                       | shared by `$$id + key` (ephemeral) |
 
-`isLoading` and `error` follow the bucket. `throwOnError: true` render-throws are
+`isLoading` and `error` follow the bucket, with one navigation-driven addition:
+a route-context reader whose content is HELD on screen by a transition commit
+(browser/partial-update.ts) while its loader is still streaming reports
+`isLoading: true` until that commit lands. Every transition commit goes through
+`commitInTransition` (browser/partial-update.ts; `renderRoute`'s navigate() in
+testing/render-route.tsx reuses it for a `transition()` chain), which calls
+`loaderStore.announcePendingStreams(segments)` INSIDE its `startTransition`:
+that registers each loader segment whose data is still a pending promise
+(settled Flight chunks — cached/reused segments, forceAwait lanes — are skipped
+via `unwrapsSynchronously`, thenable-status.ts) and fires each route-context
+subscriber's `onStreamPending`; the hook answers with a `useOptimistic` pin —
+React renders it urgently and reverts it in the commit that brings the new
+data, so the flag never flashes `false` on the old data (the stream settles a
+beat before React commits, and a suspended navigation lane is excluded from a
+transition batch, which rules out a timed release). Urgent commits (cold nav
+mounting new segments) skip the announce: nothing is held there. Ephemeral
+readers subscribe without `onStreamPending` and are never pinned.
+`throwOnError: true` render-throws are
 scoped to the **originating** hook: a shared error is thrown only by the hook
 whose `load()` produced it (matched on the bucket's `requestId`); co-bucket
 siblings expose it via `error` without throwing. A successful follow-up `load()`
@@ -502,7 +885,32 @@ stored value is non-cacheable.
 cache-safety metadata alongside the value but does not throw. When `ctx.get()`
 is called inside a cache scope (detected via ALS — same mechanism as the
 existing `"use cache"` guards), it checks the stored metadata and throws if
-the value is non-cacheable.
+the value is non-cacheable. The guard is `assertNonCacheableReadAllowed` in
+`server/context.ts`, a one-line wrapper over `guardIdentityRead`, the same
+guard `cookies()`, `headers()` and the theme reads go through, so a
+non-cacheable read refuses in exactly the places they do. The request,
+handler, loader and response-route `ctx.get()` call it once `isNonCacheable()`
+matches (a middleware `ctx.get()` only inside a `"use cache"` body). In order:
+
+- During a PPR shell capture it flags the capture context (read from the
+  ambient request context) and throws, so a caught throw still refuses the
+  capture. A non-cacheable read anywhere the capture waits — a handler, a
+  promise it passes or pushes, an async server component, a bake-lane loader,
+  a loader a handler awaits — refuses the capture. There is no loader-body
+  exemption here.
+- Inside a `"use cache"` body (the exec scope in `cache/cache-exec-scope.ts`)
+  it throws, and that includes a loader body entered inside the cached
+  function (`await ctx.use(Loader)` there): the loader's value is part of
+  what the function returns, and the cache key does not include its value.
+  Before, that loader body was exempt while `cookies()` threw there, and the
+  entry stored the first request's value.
+- Inside a `cache()` boundary (`isInsideCacheScope()`) it throws, except
+  inside a loader body: a route `cache()` never stores loader values.
+
+A cacheable (normal) variable is not guarded at capture and bakes with the
+capturing request's value: shell
+material is shared per host+URL and request partition (the route's
+`cache({ key })` or the store's `keyGenerator`, `resolveShellPartition`).
 
 - `ctx.get(cacheableVar)` inside cache scope: allowed.
 - `ctx.get(nonCacheableVar)` inside cache scope: throws.
@@ -520,9 +928,15 @@ the value is non-cacheable.
 DSL loaders (registered with `loader()`) and handler-called loaders
 (`ctx.use(Loader)`) have different cache-safety guarantees:
 
-- **DSL `loader()` + client `useLoader()`** — the recommended path. DSL
-  loaders are always resolved fresh (never cached), even inside `cache()`
-  boundaries. Because they always re-execute:
+- **DSL `loader()` + client `useLoader()`** — the recommended path. A
+  segment `cache()` never stores DSL loader data: DSL loaders re-execute on
+  every request, even inside `cache()` boundaries. The one opt-in is the
+  binding's own `cache()`, `loader(Def, () => [cache({ ttl })])`, which reads
+  through the loader store (`executeLoaderData` in
+  `segment-resolution/loader-cache.ts`). A hit skips the loader body and
+  replays its recorded handle pushes. It applies on every DSL loader path —
+  fresh, revalidation and intercept (#884) — and never to a handler's
+  `ctx.use(Loader)` read. Because a segment cache never captures them:
   - `ctx.get()` bypasses non-cacheable read guards (unguarded context).
   - Global helpers that touch the response (`cookies().set()`,
     `cookies().delete()`, `headers()`) are allowed inside loader
@@ -549,7 +963,12 @@ DSL loaders (registered with `loader()`) and handler-called loaders
   consume it with `useLoader()` in a client component instead** (a fresh,
   never-cached segment). Non-cacheable variable reads in the handler
   itself still throw via the normal read guard. Response-level side
-  effects in handler code throw normally.
+  effects in handler code throw normally. A PPR shell capture and a
+  `"use cache"` body are stricter than `cache()` here: `guardIdentityRead`
+  has no loader-body exemption in either, so the request-scoped read inside
+  the handler-awaited loader throws instead of baking the leak. A capture
+  refuses (the route serves axis 1); a `"use cache"` function stores
+  nothing.
   Note: when a loader is registered via both DSL `loader()` and called
   via `ctx.use()` in the same route, the DSL registration starts the
   loader in loader scope before the handler runs. The handler's
@@ -582,6 +1001,27 @@ should not be treated as equivalent.
   when narrowing with a hard `false` predicate or when the producer is an
   outer entry. The consumer-facing ladder is documented in
   `skills/rango/SKILL.md` ("Passing data down the tree").
+
+- **First-render guarantee (client-knowledge seed).** A segment absent from the
+  request's client-segment set (`_rsc_segments`) always renders. The client has
+  no cached copy of it, so a `false` decision would emit `component: null` and
+  leave a hole rather than keep anything on screen. Predicates may raise that
+  decision, never lower it. All four resolvers in
+  `router/segment-resolution/revalidation.ts` honour it, in two shapes:
+
+  | Resolver                                                   | Shape                                                        |
+  | ---------------------------------------------------------- | ------------------------------------------------------------ |
+  | loaders, layout/route entries, orphan-layout entries       | early return `true`; user predicates never run               |
+  | parallel slots (`resolveParallelSegmentsWithRevalidation`) | `defaultOverride.floor` — predicates run, but can only raise |
+
+  The parallel path differs deliberately. PR #482 made it consult predicates
+  even for an unknown slot, so a `skip-parent-chain` seed (`false`) could still
+  be raised to `true`, and so a predicate that throws a `Response`
+  (`throw redirect(...)`) still performs control flow. Flooring instead of
+  early-returning keeps both of those while restoring the guarantee. Regressing
+  it blanks the slot on the navigation that first introduces it while a direct
+  load looks fine — pinned by `parallel-revalidate-fns-invocation.test.ts`
+  ("new-segment floor") and three dev+production e2e specs.
 
 - During partial action revalidation:
   - only revalidated segments recompute

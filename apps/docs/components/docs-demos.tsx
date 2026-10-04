@@ -82,7 +82,7 @@ export const TreeToPageDemo = () => (
         </div>
       ))}
     </div>
-    <BrowserChrome url="rango.dev/shop/espresso-cup">
+    <BrowserChrome url="rangojs.dev/shop/espresso-cup">
       <Region label="layout(<ShopLayout />)" tone="static">
         <div className="mb-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -120,7 +120,7 @@ export const TreeToPageDemo = () => (
 /* ------------------------------------------------------------------ */
 
 export const LoaderLanesDemo = () => (
-  <BrowserChrome url="rango.dev/shop/espresso-cup">
+  <BrowserChrome url="rangojs.dev/shop/espresso-cup">
     <Region label="shell — rendered with the handler" tone="static">
       <div className="mb-3 grid grid-cols-[1fr_1.4fr] gap-3">
         <ImagePlaceholder className="aspect-square rounded-md" />
@@ -160,7 +160,7 @@ export const LoaderLanesDemo = () => (
 /* ------------------------------------------------------------------ */
 
 export const CacheHitDemo = () => (
-  <BrowserChrome url="rango.dev/products">
+  <BrowserChrome url="rangojs.dev/products">
     <Region
       label="cache({ ttl: 600 }) — HIT, streamed from the store"
       tone="static"
@@ -254,7 +254,7 @@ export const NegotiationDemo = () => (
       <p className="mb-2 font-mono text-xs text-fd-muted-foreground">
         Accept: text/html → the RSC page
       </p>
-      <BrowserChrome url="rango.dev/products/espresso-cup">
+      <BrowserChrome url="rangojs.dev/products/espresso-cup">
         <Region label='path("/products/:id", ProductPage)' tone="static">
           <div className="grid grid-cols-[1fr_1.4fr] gap-3">
             <ImagePlaceholder className="aspect-square rounded-md" />
@@ -276,7 +276,7 @@ export const NegotiationDemo = () => (
           $ curl -H &quot;Accept: application/json&quot; \
         </p>
         <p className="mb-2 text-gray-500">
-          {"    "}rango.dev/products/espresso-cup
+          {"    "}rangojs.dev/products/espresso-cup
         </p>
         <p>{"{"}</p>
         <p>
@@ -348,7 +348,7 @@ export const MetaLayersDemo = () => (
 
 export const TwoTabsDemo = () => (
   <div className="not-prose mb-6 grid gap-4 sm:grid-cols-2">
-    <BrowserChrome url="rango.dev/cart — tab A">
+    <BrowserChrome url="rangojs.dev/cart — tab A">
       <div className="flex flex-col gap-2">
         <Bar className="h-3 w-2/5" />
         <Bar className="h-2 w-3/5" />
@@ -361,7 +361,7 @@ export const TwoTabsDemo = () => (
         </div>
       </div>
     </BrowserChrome>
-    <BrowserChrome url="rango.dev/cart — tab B">
+    <BrowserChrome url="rangojs.dev/cart — tab B">
       <div className="flex flex-col gap-2">
         <Bar className="h-3 w-2/5" />
         <Bar className="h-2 w-3/5" />

@@ -142,13 +142,48 @@ describe("generatePerRouterModule — cloudflare Text module channel", () => {
   });
 });
 
-describe("generateRoutesManifestModule — per-router loaders are build-only", () => {
-  function makeManifestState(isBuildMode: boolean): DiscoveryState {
-    const s = makeState("node", { isBuildMode, trie: SMALL });
-    s.mergedRouteManifest = { home: "/" };
-    return s;
-  }
+function makeManifestState(isBuildMode: boolean): DiscoveryState {
+  const s = makeState("node", { isBuildMode, trie: SMALL });
+  s.mergedRouteManifest = { home: "/" };
+  return s;
+}
 
+describe("generateRoutesManifestModule — client URL projections", () => {
+  it("clears stale client URL projections after the last definition is removed", () => {
+    const s = makeManifestState(false);
+    s.clientUrlSourceByReferenceId = new Map([
+      ["/src/removed.tsx#default", "/src/removed.tsx"],
+    ]);
+    s.clientUrlProjectionMap = new Map();
+    s.mergedRouteManifest = null;
+    s.perRouterManifests = [];
+
+    const code = generateRoutesManifestModule(s);
+
+    expect(code).toContain("clearClientUrlProjections();");
+    expect(code).not.toContain('setClientUrlProjection("');
+  });
+
+  // The map fills in transform order, which differs between two builds of the
+  // same source, and this module's bytes feed the cache version of every
+  // router bundled with it (build-versions.ts).
+  it("emits the projections in one order, whatever order they were recorded in", () => {
+    const projection = { version: 1 as const, routes: [] };
+    const codeFor = (ids: string[]) => {
+      const s = makeManifestState(true);
+      s.clientUrlSourceByReferenceId = new Map(ids.map((id) => [id, id]));
+      s.clientUrlProjectionMap = new Map(ids.map((id) => [id, projection]));
+      return generateRoutesManifestModule(s);
+    };
+    const code = codeFor(["ref-c", "ref-a", "ref-b"]);
+    expect(code).toBe(codeFor(["ref-b", "ref-c", "ref-a"]));
+    expect(
+      [...code.matchAll(/setClientUrlProjection\("([^"]+)"/g)].map((m) => m[1]),
+    ).toEqual(["ref-a", "ref-b", "ref-c"]);
+  });
+});
+
+describe("generateRoutesManifestModule — per-router loaders are build-only", () => {
   it("build: registers the lazy per-router manifest loader", () => {
     const code = generateRoutesManifestModule(makeManifestState(true));
     expect(code).toContain('registerRouterManifestLoader("r1"');

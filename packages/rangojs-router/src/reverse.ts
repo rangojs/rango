@@ -208,6 +208,43 @@ export type ScopedReverseFunction<
 };
 
 /**
+ * Reverse function that resolves global route names only: no include() scope,
+ * no param auto-fill.
+ *
+ * This is the `ctx.reverse` of middleware (`MiddlewareContext`) and
+ * response-route handlers (`ResponseHandlerContext`). On a live request both
+ * get `createReverseFunction(routeMap)` with no route name or params (the
+ * middleware callers in rsc/handler.ts and rsc/loader-fetch.ts,
+ * handleResponseRoute, router/intercept-resolution.ts; mirrored by
+ * testing/run-middleware.ts and testing/dispatch.ts), so a dot-local `.name`
+ * has no scope to resolve against and throws `Unknown route`. Build-time PPR
+ * shell capture (prerender/build-shell-capture.ts) gives global and route
+ * middleware the same global-only reverse.
+ *
+ * - Route map with a string index signature (no generated map, the permissive
+ *   `Record<string, string>` fallback): any name except a dot-prefixed literal.
+ *   `Exclude` is required because `keyof` collapses to `string` there, so the
+ *   global overloads of `ScopedReverseFunction` would accept `.name` too.
+ * - Concrete route map: the global overloads of `ScopedReverseFunction`, with
+ *   name and param validation. The empty local map (`{}`) leaves no dot-prefixed
+ *   overload that can match.
+ *
+ * @example
+ * ```typescript
+ * reverse("blog.post", { slug: "hello" }) // ok: global route + params
+ * reverse(".post", { slug: "hello" })     // compile error: no include() scope
+ * ```
+ */
+export type GlobalReverseFunction<TGlobalRoutes> =
+  string extends keyof TGlobalRoutes
+    ? <TName extends string>(
+        name: Exclude<TName, `.${string}`>,
+        params?: Record<string, string>,
+        search?: Record<string, unknown>,
+      ) => string
+    : ScopedReverseFunction<{}, TGlobalRoutes>;
+
+/**
  * Extract local routes type from UrlPatterns
  * Used with scopedReverse() to get the routes type from patterns
  */
@@ -290,11 +327,14 @@ export type { RouteResponse } from "./urls.js";
  * Get a locally-typed reverse function from ctx.reverse for composable modules.
  *
  * This is a type-only cast - ctx.reverse already resolves names at runtime.
- * Provides type safety: `.name` validates against local routes,
- * `name` validates against global named-routes.
+ * Only the module's LOCAL routes are typed: `.name` and bare `name` both
+ * validate against the local map (the global map parameter defaults to it).
+ * Always dot-prefix local names — a bare name type-checks against the local
+ * map but resolves as a global name at runtime. For global names, call
+ * ctx.reverse directly.
  *
  * @param reverse - The ctx.reverse function from HandlerContext
- * @returns The same reverse function, typed with local + global routes
+ * @returns The same reverse function, typed with the module's local routes
  *
  * @example
  * ```typescript
@@ -305,7 +345,7 @@ export type { RouteResponse } from "./urls.js";
  *
  *     reverse(".index");              // ✓ Local route
  *     reverse(".post", { slug: "x" }); // ✓ Local with params
- *     reverse("shop.cart");           // ✓ Global route
+ *     ctx.reverse("shop.cart");       // Global route: use ctx.reverse
  *
  *     return <BlogIndex />;
  *   }, { name: "index" }),

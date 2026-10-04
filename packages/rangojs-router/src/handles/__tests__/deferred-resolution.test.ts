@@ -18,7 +18,7 @@ describe("root accumulation across layouts + parallel slots", () => {
   // The user-facing concern: handle values accumulate from EVERY segment in the
   // matched chain — root layout, nested layouts, the leaf, AND parallel slots
   // (each slot keys into its OWN bucket `parent.@slot`, see fresh.ts). A consumer
-  // reading the handle at the root (e.g. <MetaTags/>) collects the whole chain.
+  // reading the handle at the root (e.g. <Html.Meta />) collects the whole chain.
   // With resolve-by-default, a DEFERRED push from any of those segments must be
   // resolved before that root read — including one pushed from a parallel slot.
   it("a deferred value pushed from a parallel slot is resolved before the root collects the whole chain", async () => {
@@ -217,5 +217,45 @@ describe("resolvedHandleStream (full-render drop-in for handleStore.stream())", 
     expect(() => store.push("H", "seg1", "late")).toThrow(
       /pushed after handle collection completed/,
     );
+  });
+
+  // Issue #1035: a PPR shell capture renders its prelude from the handle
+  // data its record keeps, so a HIT that restores the record hydrates clean.
+  // The store tags the pushes a record leaves out (HandleStore.push
+  // `loaderPush`): a capture tags a deferred loader push.
+  describe("recordedOnly (a shell capture's render)", () => {
+    function captureStore() {
+      const store = createHandleStore();
+      store.push("H", "seg1", "handler");
+      store.push("H", "seg1", "settled-loader", false, "Loader");
+      store.push("H", "seg1", Promise.resolve("deferred-loader"), true);
+      store.push("H", "seg2", "tagged-only", true);
+      store.push("H", "seg3", Promise.resolve("deferred-handler"));
+      return store;
+    }
+
+    it("leaves out every push the record does not keep, and resolves the rest", async () => {
+      const value = (await resolvedHandleStream(captureStore(), true).next())
+        .value;
+
+      expect(value).toEqual({
+        H: {
+          seg1: ["handler", "settled-loader"],
+          seg3: ["deferred-handler"],
+        },
+      });
+    });
+
+    it("is off by default: a document render carries every push", async () => {
+      const value = (await resolvedHandleStream(captureStore()).next()).value;
+
+      expect(value).toEqual({
+        H: {
+          seg1: ["handler", "settled-loader", "deferred-loader"],
+          seg2: ["tagged-only"],
+          seg3: ["deferred-handler"],
+        },
+      });
+    });
   });
 });

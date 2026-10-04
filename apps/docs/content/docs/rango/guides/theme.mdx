@@ -4,7 +4,13 @@ description: Opt-in light/dark mode with FOUC prevention, persisted on the serve
 type: guide
 ---
 
-You need a light/dark toggle that remembers the user's choice and never flashes the wrong theme on first paint. Rango ships an opt-in theme system that covers the whole loop: an inline script that applies the stored theme before anything renders, server-side reads in loaders and middleware, and a client hook for the toggle.
+You need a light/dark toggle that remembers the user's choice and never flashes the wrong theme on first paint. Rango ships an opt-in theme system that covers the whole loop:
+
+- an inline script (rendered by `<Html.Meta />`) that applies the stored theme to `<html>` before first paint;
+- `ctx.theme` / `ctx.setTheme()` in handlers and middleware;
+- the `useTheme()` hook in client components (the provider is added for you).
+
+The theme is stored in a cookie, so the server can read it during SSR, and in localStorage.
 
 ## Enable it
 
@@ -13,7 +19,7 @@ Turn the system on in `createRouter`:
 ```ts
 import { createRouter } from "@rangojs/router";
 
-const router = createRouter<Env>({
+export const router = createRouter<Env>({
   document: Document,
   urls: urlpatterns,
   theme: true,
@@ -23,40 +29,59 @@ const router = createRouter<Env>({
 `theme: true` enables everything with defaults. Pass an object instead to customize:
 
 ```ts
-const router = createRouter<Env>({
+export const router = createRouter<Env>({
   document: Document,
   urls: urlpatterns,
   theme: {
     defaultTheme: "system", // "light" | "dark" | "system"
     themes: ["light", "dark"],
-    attribute: "class", // or "data-theme"
-    storageKey: "theme",
+    attribute: "class", // or any "data-*" attribute, e.g. "data-theme"
+    storageKey: "theme", // cookie and localStorage key
+    enableSystem: true, // resolve "system" via prefers-color-scheme
+    enableColorScheme: true, // set style="color-scheme: ..." on <html>
+    value: { dark: "theme-dark" }, // optional attribute value per theme
   },
 });
 ```
 
-| Option         | Values                              | What it controls                                |
-| -------------- | ----------------------------------- | ----------------------------------------------- |
-| `defaultTheme` | `"light"` \| `"dark"` \| `"system"` | The theme before the user picks one             |
-| `themes`       | `string[]`                          | The set of selectable themes                    |
-| `attribute`    | `"class"` or `"data-theme"`         | How the active theme is written to the document |
-| `storageKey`   | `string`                            | The key the choice is persisted under           |
+| Option              | Default             | What it controls                                                                 |
+| ------------------- | ------------------- | -------------------------------------------------------------------------------- |
+| `defaultTheme`      | `"system"`          | The theme before the user picks one: `"light"`, `"dark"`, or `"system"`          |
+| `themes`            | `["light", "dark"]` | The set of selectable themes                                                     |
+| `attribute`         | `"class"`           | How the active theme is written to `<html>`: `"class"` or any `data-*` attribute |
+| `storageKey`        | `"theme"`           | The cookie and localStorage key the choice is persisted under                    |
+| `enableSystem`      | `true`              | Whether `"system"` is a valid theme, resolved through `prefers-color-scheme`     |
+| `enableColorScheme` | `true`              | Whether `color-scheme` is set on `<html>`, so form controls and scrollbars match |
+| `value`             | none                | A map from theme name to the attribute value written, when they should differ    |
+
+With `attribute: "class"` the resolved theme is added as a class on `<html>` (`<html class="dark">`); with a `data-*` attribute it is set as that attribute's value (`<html data-theme="dark">`). `"system"` resolves to `"light"` or `"dark"` before it is applied. With `enableSystem: false`, `"system"` is not a valid theme and a `"system"` default falls back to the first entry in `themes`.
 
 ## Wire up your Document
 
 Two things your document component must do:
 
-1. Render `<MetaTags />` in the head. It auto-renders the inline script that applies the stored theme before first paint — that script is the FOUC prevention, so skipping it brings the flash back. See [Metadata & Handles](/docs/rango/features/metadata) for `<MetaTags />` itself.
-2. Add `suppressHydrationWarning` to `<html>`, since the inline script sets the theme before React hydrates.
+1. Render `<Html.Meta />` in the head. It emits the FOUC-prevention script first, before the meta tags — skipping it brings the flash back. See [Metadata & Handles](/docs/rango/features/metadata) for `<Html.Meta />` itself. The default Document already does this.
+2. Add `suppressHydrationWarning` to `<html>`, since the inline script changes its `class`/`style` before React hydrates.
 
 ```tsx
-<html lang="en" suppressHydrationWarning>
-  <head>
-    <MetaTags />
-  </head>
-  <body>{children}</body>
-</html>
+// document.tsx
+"use client";
+import type { ReactNode } from "react";
+import { Html } from "@rangojs/router/client";
+
+export function Document({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <Html.Meta />
+      </head>
+      <body>{children}</body>
+    </html>
+  );
+}
 ```
+
+A Document that does not render `<Html.Meta />` can place `<ThemeScript />` from `@rangojs/router/theme` in `<head>` instead. It takes the resolved config (`config: ResolvedThemeConfig`) and an optional `nonce`.
 
 ## Toggle it on the client
 
@@ -64,50 +89,116 @@ Two things your document component must do:
 
 ```tsx
 "use client";
-import { useTheme } from "@rangojs/router/theme";
+import { useTheme, type Theme } from "@rangojs/router/theme";
 
-function ThemeToggle() {
-  const { theme, setTheme, resolvedTheme, systemTheme, themes } = useTheme();
+export function ThemeToggle() {
+  const { theme, setTheme, resolvedTheme, themes } = useTheme();
 
   return (
-    <select value={theme} onChange={(e) => setTheme(e.target.value)}>
-      <option value="system">System</option>
-      <option value="light">Light</option>
-      <option value="dark">Dark</option>
-    </select>
+    <label>
+      Theme ({resolvedTheme})
+      <select value={theme} onChange={(e) => setTheme(e.target.value as Theme)}>
+        {themes.map((t) => (
+          <option key={t} value={t}>
+            {t}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 ```
 
-Alongside `theme` and `setTheme`, the hook exposes `resolvedTheme`, `systemTheme`, and the configured `themes` list.
+`useTheme()` returns:
+
+- `theme` — the stored setting (`"light" | "dark" | "system"`);
+- `setTheme(theme)` — updates the theme and writes the cookie and localStorage;
+- `resolvedTheme` — what is actually shown, with `"system"` resolved;
+- `systemTheme` — the current OS preference (`"light" | "dark"`);
+- `themes` — the configured themes, with `"system"` first when `enableSystem` is on.
+
+`useTheme()` throws when `theme` is not enabled in `createRouter()`.
 
 ## Read and set it on the server
 
-The theme persists in localStorage plus a cookie; the cookie is what makes the value visible during SSR. `ctx.theme` reads it, `ctx.setTheme()` writes it:
+Handlers and middleware get `ctx.theme` and `ctx.setTheme()`, and any server code can read `getRequestContext().theme`. `ctx.theme` is the stored theme, or `defaultTheme` when there is none. `ctx.setTheme(theme)` sets the theme cookie on the response; invalid values are rejected with a console warning. Both are typed optional because they exist only when `theme` is configured, so call the setter as `ctx.setTheme?.()`.
 
-```ts
-import { createLoader } from "@rangojs/router";
+The theme is the visitor's cookie, so a handler reads it only on a route whose output is rendered per request (see [On `ppr` and `cache()` routes](#on-ppr-and-cache-routes)):
+
+```tsx
 import type { Middleware } from "@rangojs/router";
 
-// In a loader
-export const SettingsLoader = createLoader(async (ctx) => {
-  const currentTheme = ctx.theme; // read from cookie
-  return { theme: currentTheme };
+// In a handler on a route without ppr or cache()
+path("/settings", (ctx) => {
+  const currentTheme = ctx.theme; // "light" | "dark" | "system" | undefined
+  return <SettingsPage theme={currentTheme} />;
 });
 
-// In middleware
-export const themeMiddleware: Middleware = async (ctx, next) => {
-  // Set theme based on user preference
-  ctx.setTheme("dark");
+// In middleware: apply a theme chosen through a query param
+export const themeFromQuery: Middleware = async (ctx, next) => {
+  const requested = ctx.url.searchParams.get("theme");
+  if (requested === "light" || requested === "dark") {
+    ctx.setTheme?.(requested);
+  }
   await next();
 };
 ```
 
-Setting the theme in [middleware](/docs/rango/features/middleware) is the right spot when the preference lives in your user record rather than the browser.
+Setting the theme in [middleware](/docs/rango/features/middleware) is also the right spot when the preference lives in your user record rather than the browser.
+
+### On `ppr` and `cache()` routes
+
+A [`ppr`](/docs/rango/guides/ppr) shell and a `cache()` entry are shared by every visitor, so a handler there must not read the visitor's theme. `ctx.theme` (handler and middleware) and `getRequestContext().theme` are guarded like `cookies()`:
+
+| Where the theme is read                                    | What happens                                                                                          |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| a handler on a `ppr` route                                 | The shell capture is refused (warned once per URL); every request stays a MISS                        |
+| inside a `cache()` boundary                                | Throws on a cache miss, like `cookies()`                                                              |
+| inside a `"use cache"` function (handler or middleware)    | Throws; read it outside and pass it in as an argument                                                 |
+| after `ctx.dynamic()` on `ppr`                             | Allowed: that render is never captured                                                                |
+| middleware `ctx.set()` of the theme, read by a handler     | Not guarded: the first visitor's theme bakes into the shell or `cache()` entry, like a session object |
+| a route with no `ppr` or `cache()` above it, or middleware | Allowed: rendered per request                                                                         |
+| a loader with its own `cache()` and no `key()`             | The miss fails and stores nothing, like a `cookies()` read there; key the theme (below)               |
+| a handler on a document-cached route (`s-maxage`)          | Not guarded: the stored document shows that visitor's theme to everyone                               |
+
+The theme getters are read-only and non-enumerable: `{ ...ctx }` and `Object.assign({}, ctx)` do not carry `theme`, and assigning it throws. `ctx.setTheme()` throws in a handler on these routes too, like any response write there; call it from middleware.
+
+Read the theme where it is per request instead:
+
+- `useTheme()` in a client component. The `<html>` class is right before paint (the theme script sets it). A render that other visitors may be served starts `useTheme()` at the no-cookie default (`defaultTheme`), whoever rendered it: a `ppr` shell, and a page whose response opted in to the [document cache](/docs/rango/guides/document-cache) before `next()`. A visitor with no stored theme sees the default, and one with a stored theme sees it after hydration. Any other render, a 404 included, starts at the visitor's own theme.
+- A live loader (no `ssr: false`), below.
+
+### In a loader
+
+Loaders do not get `ctx.theme` or `ctx.setTheme`. A loader that needs the theme reads the cookie directly. A live loader runs on every request, `ppr` HITs included, and on a `ppr` route needs `loading()` or an inline `<Suspense>` above its reader. A bake-lane loader (`ssr: false`) runs at capture, where this `cookies()` read refuses the capture:
+
+```ts
+import { cookies, createLoader } from "@rangojs/router";
+
+export const ThemedLoader = createLoader(async () => {
+  const theme = cookies().get("theme")?.value ?? "system"; // storageKey
+  return loadThemedAssets(theme);
+});
+```
+
+Bound with its own `cache()`, the loader's entry is shared across users, so a miss fails unless it has a `key()`. Any `key()` switches that check off, so make it include the theme:
+
+```ts
+loader(ThemedLoader, () => [
+  cache({
+    ttl: 300,
+    key: () => `themed:${cookies().get("theme")?.value ?? "system"}`,
+  }),
+]);
+```
 
 ## Pitfalls
 
-| Symptom                                         | Fix                                                                                |
-| ----------------------------------------------- | ---------------------------------------------------------------------------------- |
-| Page flashes the wrong theme on load            | Render `<MetaTags />` in the document head — it carries the FOUC-prevention script |
-| React hydration warning on the `<html>` element | Add `suppressHydrationWarning` to `<html>`                                         |
+| Symptom                                              | Fix                                                                                                                                                  |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Page flashes the wrong theme on load                 | Render `<Html.Meta />` (or `<ThemeScript />`) in the document head — it carries the FOUC-prevention script                                           |
+| React hydration warning on the `<html>` element      | Add `suppressHydrationWarning` to `<html>`                                                                                                           |
+| No `ctx.theme` in a loader                           | Loaders don't get it; read the cookie with `cookies().get(storageKey)`                                                                               |
+| A `cache()` route that reads `ctx.theme` answers 500 | The read throws inside a `cache()` boundary, like `cookies()`; read the theme with `useTheme()` or in a loader                                       |
+| A `ppr` route that reads `ctx.theme` never HITs      | The capture is refused (a once-per-URL `Shell capture ... was refused` warning names the read); read the theme with `useTheme()` or in a live loader |
+| Tailwind `dark:` follows the OS, not the toggle      | Add `@custom-variant dark` to your CSS so the variant reads the class (see [Tailwind](/docs/rango/guides/tailwind))                                  |

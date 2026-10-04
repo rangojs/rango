@@ -7,6 +7,9 @@ import {
   persistToSessionStorage,
   getSavedScrollPosition,
   getScrollKey,
+  handleNavigationEnd,
+  ensureHistoryKey,
+  handleTraversalStart,
 } from "../browser/scroll-restoration.js";
 
 const SCROLL_STORAGE_KEY = "rsc-router-scroll-positions";
@@ -59,6 +62,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup?.();
   cleanup = null;
+  window.history.scrollRestoration = "auto";
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -243,5 +247,135 @@ describe("scroll-restoration custom getKey", () => {
     const key = getScrollKey();
     expect(typeof key).toBe("string");
     expect(getSavedScrollPosition(key)).toBe(55);
+  });
+});
+
+describe("scroll-restoration traversal", () => {
+  it("saves the page being left under its own key, then tracks the destination", () => {
+    currentKey = "A";
+    cleanup = initScrollRestoration({ getKey: () => currentKey });
+    setScrollY(700);
+
+    // popstate: history (and so the scroll key) already belongs to B.
+    currentKey = "B";
+    handleTraversalStart();
+    expect(getSavedScrollPosition("A")).toBe(700);
+    expect(getSavedScrollPosition("B")).toBeUndefined();
+
+    setScrollY(120);
+    currentKey = "A";
+    handleTraversalStart();
+    expect(getSavedScrollPosition("B")).toBe(120);
+  });
+
+  it("tracks the entry a router push lands on", () => {
+    currentKey = "A";
+    cleanup = initScrollRestoration({ getKey: () => currentKey });
+
+    currentKey = "C";
+    ensureHistoryKey();
+    setScrollY(40);
+    currentKey = "A";
+    handleTraversalStart();
+
+    expect(getSavedScrollPosition("C")).toBe(40);
+  });
+
+  it("keeps the destination's position when it shares the page left's key", () => {
+    // getKey by pathname: /products?page=1 and ?page=2 share one slot.
+    currentKey = "/products";
+    cleanup = initScrollRestoration({ getKey: () => currentKey });
+    setScrollY(800);
+    saveCurrentScrollPosition();
+
+    setScrollY(200);
+    handleTraversalStart();
+
+    expect(getSavedScrollPosition("/products")).toBe(800);
+  });
+
+  it("does nothing without <Html.ScrollRestoration>", () => {
+    currentKey = "B";
+    setScrollY(700);
+    handleTraversalStart();
+    expect(getSavedScrollPosition("B")).toBeUndefined();
+  });
+});
+
+describe("scroll-restoration handleNavigationEnd", () => {
+  const spyScrollTo = () =>
+    vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+
+  const nextFrame = (): Promise<void> =>
+    new Promise((resolve) => requestAnimationFrame(() => resolve()));
+
+  it("does not scroll on back/forward without <Html.ScrollRestoration> (the browser restores)", () => {
+    window.history.scrollRestoration = "auto";
+    const scrollTo = spyScrollTo();
+
+    handleNavigationEnd({ restore: true });
+
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
+
+  it("still scrolls to top on a forward navigation without <Html.ScrollRestoration>", () => {
+    window.history.scrollRestoration = "auto";
+    const scrollTo = spyScrollTo();
+
+    handleNavigationEnd({});
+
+    expect(scrollTo).toHaveBeenCalledWith(0, 0);
+  });
+
+  it("scrolls to top on back/forward in manual mode when nothing restores", () => {
+    window.history.scrollRestoration = "manual";
+    const scrollTo = spyScrollTo();
+
+    handleNavigationEnd({ restore: true });
+
+    expect(scrollTo).toHaveBeenCalledWith(0, 0);
+  });
+
+  it("leaves an auto entry to the browser even with <Html.ScrollRestoration> (entry predates it)", () => {
+    cleanup = initScrollRestoration({ getKey: () => currentKey });
+    window.history.scrollRestoration = "auto";
+    const scrollTo = spyScrollTo();
+
+    handleNavigationEnd({ restore: true });
+
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
+
+  it("restores the saved position on back/forward with <Html.ScrollRestoration>", async () => {
+    cleanup = initScrollRestoration({ getKey: () => currentKey });
+    setScrollY(640);
+    saveCurrentScrollPosition();
+    const scrollTo = spyScrollTo();
+
+    handleNavigationEnd({ restore: true });
+    await nextFrame();
+
+    expect(scrollTo).toHaveBeenCalledWith(0, 640);
+  });
+});
+
+describe("scroll-restoration bfcache", () => {
+  const pageTransition = (type: string, persisted: boolean): Event =>
+    Object.assign(new Event(type), { persisted });
+
+  it("takes scroll back to manual after a bfcache restore", () => {
+    cleanup = initScrollRestoration();
+    window.dispatchEvent(pageTransition("pagehide", true));
+    expect(window.history.scrollRestoration).toBe("auto");
+
+    window.dispatchEvent(pageTransition("pageshow", true));
+
+    expect(window.history.scrollRestoration).toBe("manual");
+  });
+
+  it("leaves the mode alone after a bfcache restore without <Html.ScrollRestoration>", () => {
+    window.dispatchEvent(pageTransition("pageshow", true));
+
+    expect(window.history.scrollRestoration).toBe("auto");
   });
 });

@@ -3,24 +3,27 @@
  *
  * Owns the single response-cache contract — cache-scope resolution from the
  * matched entry tree, condition eval, key resolution (route key() > store
- * keyGenerator > default), tag resolution, pre-handler-callback timing, and the
- * fresh-hit / SWR-revalidate / miss-write branches — for BOTH the production
+ * keyGenerator > default, CacheScope.resolveKeyFrom), tag resolution,
+ * pre-handler-callback timing, and the fresh-hit / SWR-revalidate /
+ * miss-write branches — for BOTH the production
  * response-route handler (rsc/response-route-handler.ts) and the dispatch testing
  * primitive (testing/dispatch.ts), so the two can never drift.
  *
  * Plugin-rsc hazard: cache-scope.ts pulls @vitejs/plugin-rsc (via segment-codec),
  * which the non-Vite unit-test runner cannot resolve, and this module is on the
- * testing barrel's EAGER graph (dispatch imports it). So `createCacheScope` and
- * `resolveCacheTags` are NOT imported here at runtime — they are INJECTED by the
- * caller (production imports them statically; dispatch lazy-imports them only once
- * a response route matches). The only runtime imports here are plugin-rsc-free
+ * testing barrel's EAGER graph (dispatch imports it). So `createCacheScope` is
+ * NOT imported here at runtime — it is INJECTED by the caller (production
+ * imports it statically; dispatch lazy-imports it only once a response route
+ * matches). The only runtime imports here are plugin-rsc-free
  * (helpers' isCacheableStatus/finalizeResponse, traverseBack); cache-scope is a
  * type-only import (erased at build).
  */
 
 import type { CacheScope } from "../cache/cache-scope.js";
-import type { PartialCacheOptions } from "../types.js";
-import type { RequestContext } from "../server/request-context.js";
+import {
+  _getRequestContext,
+  type RequestContext,
+} from "../server/request-context.js";
 import type { SegmentCacheStore } from "../cache/types.js";
 import type { EntryCacheConfig, EntryData } from "../server/context.js";
 import { traverseBack } from "../router/pattern-matching.js";
@@ -31,18 +34,19 @@ import {
 } from "./helpers.js";
 import { reportCacheError } from "../cache/cache-error.js";
 import { cacheKeyBase } from "../cache/cache-key-utils.js";
+import {
+  executionStart,
+  predatesInvalidation,
+  type ExecutionStart,
+} from "../cache/tag-invalidation.js";
 import { hasPerClientSignal } from "../browser/cookie-name.js";
 
-/** Injected cache-scope builders (kept off this module's runtime import graph). */
+/** Injected cache-scope builder (kept off this module's runtime import graph). */
 export interface CacheScopeDeps {
   createCacheScope: (
     config: EntryCacheConfig | undefined,
     parent?: CacheScope | null,
   ) => CacheScope | null;
-  resolveCacheTags: (
-    config: PartialCacheOptions | false,
-    ctx: RequestContext | undefined,
-  ) => string[] | undefined;
 }
 
 export interface ServeResponseRouteWithCacheArgs {
@@ -60,8 +64,12 @@ export interface ServeResponseRouteWithCacheArgs {
  * applies (no scope, disabled, condition false, or store lacks get/putResponse)
  * so the caller falls through to a plain `executeHandler()` run.
  *
- * Must run inside runWithRequestContext (reads the ambient request context via
- * the helpers and reqCtx.waitUntil for background writes).
+ * Must run inside runWithRequestContext for `reqCtx` (reads the ambient
+ * request context via the helpers and reqCtx.waitUntil for background writes).
+ * Outside it, the route runs uncached: the scope resolves `key()`, a store
+ * keyGenerator and `condition()` against the ambient context, and without
+ * it a keyGenerator was skipped and the entry landed on the broad default
+ * key.
  */
 export async function serveResponseRouteWithCache(
   args: ServeResponseRouteWithCacheArgs,
@@ -75,6 +83,7 @@ export async function serveResponseRouteWithCache(
   if (method !== "GET" && method !== "HEAD") {
     return undefined;
   }
+  if (_getRequestContext() !== reqCtx) return undefined;
 
   let cacheScope: CacheScope | null = null;
   for (const entry of traverseBack(manifestEntry)) {
@@ -83,30 +92,26 @@ export async function serveResponseRouteWithCache(
     }
   }
 
-  if (!cacheScope?.enabled) return undefined;
-
-  // Evaluate condition — skip the response cache when condition returns false.
-  let conditionPassed = true;
-  if (cacheScope.config !== false && cacheScope.config.condition) {
-    try {
-      conditionPassed = !!cacheScope.config.condition(reqCtx);
-    } catch {
-      conditionPassed = false;
-    }
-  }
+  // Skip the response cache when a condition() of the scope, or of any
+  // cache() enclosing it (#974), refuses this request.
+  if (!cacheScope?.allowsCache("read")) return undefined;
 
   const store = cacheScope.getStore() ?? reqCtx._cacheStore;
-  if (!conditionPassed || !store?.getResponse || !store?.putResponse) {
+  if (!store?.getResponse || !store?.putResponse) {
     return undefined;
   }
 
   // Default key: response:{type}: + host-namespaced base (sorted search, reserved
   // _rsc*/__* params excluded). Same composition as document/segment tiers so
   // the host-namespacing and search-normalization rules cannot drift.
-  let cacheKey = `response:${responseType}:${cacheKeyBase(url.host, url.pathname, url.searchParams)}`;
+  let cacheKey = `response:${responseType}:${cacheKeyBase(url.host, url.pathname, url.searchParams, undefined, reqCtx._searchParamsFilter)}`;
 
-  // Priority 1: route-level key() (full override). Priority 2: store-level
-  // keyGenerator (modifies the default key).
+  // Keyed like the segment record (CacheScope.resolveKeyFrom): with key()
+  // results on the cache() chain (a full override, namespaced, #975) or an
+  // enclosing scope on another store whose keyGenerator partitions (#974),
+  // `response:` plus the composed key, so a nested cache() never shares an
+  // entry across the enclosing partitions (#970); otherwise the store's
+  // keyGenerator result (it modifies the default key), else the default key.
   //
   // A CONFIGURED key()/keyGenerator that THROWS must DEGRADE TO A MISS, not fall
   // back to the broad default key. The default key is intentionally broad; if the
@@ -114,46 +119,27 @@ export async function serveResponseRouteWithCache(
   // would cache PERSONALIZED output under it and serve it cross-user (cache
   // poisoning). Mirrors the segment-cache behavior (cache-scope.ts lookupRoute):
   // a throwing key degrades to a cache miss, never a collision onto the default
-  // slot. The no-key default path is left untouched (the broad key is correct
-  // when no key is configured).
-  let keyResolutionFailed = false;
-  if (cacheScope.config !== false && cacheScope.config.key) {
-    try {
-      const customKey = await cacheScope.config.key(reqCtx);
-      cacheKey = `response:${customKey}`;
-    } catch (error) {
-      keyResolutionFailed = true;
-      reportCacheError(
-        error,
-        "cache-read",
-        "[ResponseCache] Key resolution failed",
-        reqCtx,
-      );
-    }
-  } else if (store.keyGenerator) {
-    try {
-      cacheKey = await store.keyGenerator(reqCtx, cacheKey);
-    } catch (error) {
-      keyResolutionFailed = true;
-      reportCacheError(
-        error,
-        "cache-read",
-        "[ResponseCache] keyGenerator failed",
-        reqCtx,
-      );
-    }
-  }
-
-  // Degrade to a MISS: return undefined so the caller runs the route UNCACHED.
-  // This early-returns BEFORE _onResponseCallbacks is saved/cleared below, so the
-  // pre-handler onResponse callbacks are still intact for the uncached run.
-  if (keyResolutionFailed) {
+  // slot, and so does a key() with no ambient request context to run in
+  // (resolveKeyFrom rejects).
+  try {
+    cacheKey = await cacheScope.resolveKeyFrom(cacheKey, "response:");
+  } catch (error) {
+    reportCacheError(
+      error,
+      "cache-read",
+      "[ResponseCache] Key resolution failed",
+      reqCtx,
+    );
+    // Degrade to a MISS: the caller runs the route UNCACHED. This returns
+    // BEFORE _onResponseCallbacks is saved/cleared below, so the pre-handler
+    // onResponse callbacks are still intact for the uncached run.
     return undefined;
   }
 
-  // Resolve cache tags for this document entry (static or dynamic) while the
-  // request context is available, so the stored entry is tag-invalidatable.
-  const responseTags = deps.resolveCacheTags(cacheScope.config, reqCtx);
+  // Resolve cache tags for this entry (static or dynamic, the enclosing
+  // scopes' included, #974) while the request context is available, so the
+  // stored entry is tag-invalidatable.
+  const responseTags = cacheScope.resolveTags(reqCtx);
 
   // Pre-handler callbacks (registered by app-level middleware before the cache
   // block) are saved and the live array is cleared:
@@ -180,17 +166,26 @@ export async function serveResponseRouteWithCache(
   const canServeCached = (response: Response): boolean =>
     isCacheableStatus(response.status) && !hasPerClientSignal(response.headers);
 
-  const putFresh = (
+  // A handler run that started before one of the entry's tags was
+  // invalidated is not written (#977, predatesInvalidation).
+  const putFresh = async (
     store2: SegmentCacheStore,
     fresh: Response,
-  ): Promise<void> =>
-    store2.putResponse!(
+    start: ExecutionStart,
+  ): Promise<void> => {
+    if (await predatesInvalidation(store2, responseTags, start)) {
+      // Nothing reads the copy now: release it (a tee branch buffers).
+      await fresh.body?.cancel();
+      return;
+    }
+    await store2.putResponse!(
       cacheKey,
-      fresh.clone(),
+      fresh,
       cacheScope!.ttl,
       cacheScope!.swr,
       responseTags,
     );
+  };
 
   try {
     const cached = await store.getResponse(cacheKey);
@@ -201,8 +196,9 @@ export async function serveResponseRouteWithCache(
       // Stale hit (SWR): return cached, revalidate in background.
       reqCtx.waitUntil(async () => {
         try {
+          const start = executionStart();
           const fresh = finalizeResponse(await executeHandler());
-          if (canStore(fresh)) await putFresh(store, fresh);
+          if (canStore(fresh)) await putFresh(store, fresh, start);
         } catch (error) {
           reportCacheError(
             error,
@@ -224,6 +220,7 @@ export async function serveResponseRouteWithCache(
   }
 
   // Cache miss: execute the handler and cache the result when storeable.
+  const start = executionStart();
   const response = finalizeResponse(await executeHandler());
   if (canStore(response)) {
     // Clone SYNCHRONOUSLY here, before returning. The original `response` is
@@ -238,13 +235,7 @@ export async function serveResponseRouteWithCache(
     const toCache = response.clone();
     reqCtx.waitUntil(async () => {
       try {
-        await store.putResponse!(
-          cacheKey,
-          toCache,
-          cacheScope!.ttl,
-          cacheScope!.swr,
-          responseTags,
-        );
+        await putFresh(store, toCache, start);
       } catch (error) {
         reportCacheError(
           error,

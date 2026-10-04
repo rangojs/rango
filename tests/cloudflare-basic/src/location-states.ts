@@ -36,6 +36,17 @@ export interface ConcurrentSlotState {
 export const ConcurrentSlotA = createLocationState<ConcurrentSlotState>();
 export const ConcurrentSlotB = createLocationState<ConcurrentSlotState>();
 
+export interface ListState {
+  label: string;
+  loaded: number;
+}
+
+/**
+ * ListLocationState - "load more" list state written by router.push() /
+ * router.replace() as a typed entry (`[ListLocationState(value)]`).
+ */
+export const ListLocationState = createLocationState<ListState>();
+
 export interface NonSerializableStateShape {
   text: string;
   bad: unknown;
@@ -50,3 +61,71 @@ export interface NonSerializableStateShape {
  */
 export const NonSerializableState =
   createLocationState<NonSerializableStateShape>();
+
+export interface TxWhenStateShape {
+  animate: boolean;
+}
+
+/**
+ * transition({ when }) reads it from the destination
+ * (TxWhenState.read(ctx.to)): a Link carrying { animate: false } gates its
+ * navigation off (src/components/transition-when.ts).
+ */
+export const TxWhenState = createLocationState<TxWhenStateShape>();
+
+export interface PprExecMarkShape {
+  middleware: number;
+}
+
+/**
+ * Set by the exec-matrix middleware on every request. A partial navigation
+ * carries it to the browser as metadata.locationState, where the route's
+ * transition({ when }) reads it from `to.state`, a PPR replay HIT included.
+ */
+export const PprExecMark = createLocationState<PprExecMarkShape>();
+
+// Persistent slot read by a useLocationState reader inside a Suspense boundary
+// that hydrates after the root (#992).
+export const LateSuspenseState = createLocationState<{ label: string }>();
+
+/**
+ * #994 "load more": the items of the pages already on screen ride along on
+ * the Link. The server renders only the page its URL names, so the slot must
+ * not come back after a document load.
+ */
+export const CarriedItems = createLocationState<string[]>({
+  clearOnReload: true,
+});
+
+/**
+ * Written by the same Link without options: survives a document load. The e2e
+ * reads it to know the client snapshots are applied before it asserts that
+ * another slot stayed empty.
+ */
+export const ListSort = createLocationState<{ order: string }>();
+
+/**
+ * Set by the load-more handler on every request (ctx.setLocationState). A
+ * document response carries no location state, so it reaches the client only
+ * with a client navigation's payload, after start-up removed the stale slot.
+ */
+export const ServerPageStamp = createLocationState<{ page: number }>({
+  clearOnReload: true,
+});
+
+export interface GridSnapshot {
+  order: "asc" | "desc";
+  page: number;
+}
+
+/**
+ * #994: no options. The e2e rewrites the app version its entry records, the
+ * way an entry an older build wrote would carry another one.
+ */
+export const GridState = createLocationState<GridSnapshot>();
+
+/**
+ * #1029: carried on the Links of the slow clientUrls group
+ * (src/client-urls/slow.tsx), read inside and outside the optimistic branch.
+ */
+export const SlowNote = createLocationState<{ value: string }>();

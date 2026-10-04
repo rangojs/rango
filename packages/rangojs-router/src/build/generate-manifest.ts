@@ -11,12 +11,20 @@
 import type { UrlPatterns } from "../urls.js";
 import type { AllUseItems } from "../route-types.js";
 import { extractStaticPrefix } from "../router/pattern-matching.js";
-import { RangoContext, runWithPrefixes } from "../server/context.js";
+import {
+  getParallelSlotEntries,
+  RangoContext,
+  runWithPrefixes,
+} from "../server/context.js";
 import type { EntryData, TrackedInclude } from "../server/context.js";
 import type { TrailingSlashMode } from "../types.js";
 import { createRouteHelpers } from "../route-definition.js";
 import MapRootLayout from "../server/root-layout.js";
 import { collectFallbackClientRefs } from "./collect-fallback-refs.js";
+import {
+  createTransitionWhenError,
+  transitionWhenProblem,
+} from "../transition-when-ref.js";
 import {
   isIncludeProvider,
   resolveIncludeModule,
@@ -59,6 +67,57 @@ export interface GeneratedManifest {
   responseTypeRoutes?: Record<string, string>;
   /** Route name -> search schema descriptor for typed URL helpers */
   routeSearchSchemas?: Record<string, Record<string, string>>;
+}
+
+/**
+ * Fail discovery on an invalid transition({ when }) anywhere in the entry
+ * chains of the evaluated routes: the route itself, its ancestors, their
+ * orphan layouts, parallel slots and intercepts. Strict: a plain function is
+ * rejected, because discovery evaluates the tree in the react-server graph
+ * where a "use client" import is a client reference (transition-when-ref.ts).
+ * The error names the first route found through the entry.
+ */
+function validateTransitionWhens(
+  manifest: Map<string, EntryData>,
+  patterns: Map<string, string>,
+): void {
+  const seen = new Set<object>();
+  for (const [routeName, routeEntry] of manifest) {
+    const route = {
+      routeName,
+      pattern:
+        patterns.get(routeName) ??
+        (routeEntry.type === "route" ? routeEntry.pattern : undefined),
+    };
+    const check = (when: unknown, entryType: string): void => {
+      const problem = transitionWhenProblem(when, true);
+      if (problem) {
+        throw createTransitionWhenError(when, problem, {
+          ...route,
+          entryType,
+        });
+      }
+    };
+    const visit = (entry: EntryData): void => {
+      if (seen.has(entry)) return;
+      seen.add(entry);
+      check(entry.transition?.when, entry.type);
+      for (const orphan of entry.layout) visit(orphan);
+      for (const { entry: slot } of getParallelSlotEntries(entry.parallel)) {
+        visit(slot);
+      }
+      for (const intercept of entry.intercept) {
+        check(intercept.transition?.when, "intercept");
+      }
+    };
+    for (
+      let entry: EntryData | null | undefined = routeEntry;
+      entry;
+      entry = entry.parent ?? entry.orphanOwner
+    ) {
+      visit(entry);
+    }
+  }
 }
 
 /**
@@ -119,6 +178,7 @@ async function buildPrefixTreeNode(
   responseTypeRoutes?: Record<string, string>,
   routeSearchSchemas?: Record<string, Record<string, string>>,
   routerId?: string,
+  validateTransitionWhen?: boolean,
 ): Promise<PrefixTreeNode> {
   // Resolve an async include provider (`() => import("./routes")`) so its routes
   // are walked into the build-time manifest/types/href. Runtime matching still
@@ -176,6 +236,8 @@ async function buildPrefixTreeNode(
         });
       },
     );
+
+    if (validateTransitionWhen) validateTransitionWhens(manifest, patternsMap);
 
     // Collect route names defined in this include (routes have prefixes applied)
     const routes = [...patternsMap.keys()];
@@ -241,6 +303,7 @@ async function buildPrefixTreeNode(
         responseTypeRoutes,
         routeSearchSchemas,
         routerId,
+        validateTransitionWhen,
       ),
     );
 
@@ -324,6 +387,14 @@ export async function generateManifestFull<TEnv>(
      * EntryData map built below is local; this is the only seam that surfaces it.
      */
     collectClientFallbackRef?: (refKey: string) => void;
+    /**
+     * Fail on an invalid transition({ when }): a non-function, or a plain
+     * (server) function where a client reference is required. Only the Vite
+     * plugin's discovery passes it: it evaluates the tree in the react-server
+     * graph, the one place a "use client" import is told apart from a server
+     * function (transition-when-ref.ts).
+     */
+    validateTransitionWhen?: boolean;
   },
 ): Promise<FullManifest> {
   const routeManifest: Record<string, string> = {};
@@ -361,6 +432,10 @@ export async function generateManifestFull<TEnv>(
       });
     },
   );
+
+  if (options?.validateTransitionWhen) {
+    validateTransitionWhens(manifest, patternsMap);
+  }
 
   // Surface the "use client" components registered as error/notFound fallbacks
   // (route-tree errorBoundary()/notFoundBoundary() helpers, stored on EntryData).
@@ -429,6 +504,7 @@ export async function generateManifestFull<TEnv>(
       responseTypeRoutes,
       routeSearchSchemas,
       options?.routerId,
+      options?.validateTransitionWhen,
     ),
   );
 

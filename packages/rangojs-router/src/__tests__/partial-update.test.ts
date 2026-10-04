@@ -2,12 +2,22 @@ import { afterEach, describe, it, expect, vi } from "vitest";
 import type { ResolvedSegment } from "../browser/types";
 import { ServerRedirect } from "../errors";
 
-// Mock startTransition to run callbacks synchronously
+// Mock startTransition to run callbacks synchronously, recording whether a
+// callback is currently executing so tests can assert which commit lane
+// (transition vs urgent) an onUpdate call happened in.
+const transitionState = vi.hoisted(() => ({ inTransition: false }));
 vi.mock("react", async () => {
   const actual = await vi.importActual<typeof import("react")>("react");
   return {
     ...actual,
-    startTransition: (fn: () => void) => fn(),
+    startTransition: (fn: () => void) => {
+      transitionState.inTransition = true;
+      try {
+        fn();
+      } finally {
+        transitionState.inTransition = false;
+      }
+    },
   };
 });
 
@@ -18,6 +28,7 @@ vi.mock("../browser/segment-structure-assert.js", () => ({
 }));
 
 import { createPartialUpdater } from "../browser/partial-update";
+import { loaderStore } from "../loader-store";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -60,6 +71,8 @@ function createMockStore(opts?: {
     setHistoryKey: vi.fn((k: string) => {
       currentHistoryKey = k;
     }),
+    rememberDisplayedEntry: vi.fn(),
+    getHistoryEntryMemory: vi.fn(() => undefined),
     getCachedSegments: vi.fn((key: string) => cache.get(key)),
     getSegmentState: vi.fn(() => ({
       path: "/",
@@ -194,11 +207,11 @@ describe("partial-update", () => {
         "new-route",
       );
 
-      // tx.commit called with all segment IDs
+      // tx.commit called with all segment IDs (and the payload's route name)
       expect(tx.commit).toHaveBeenCalledWith(
         ["L0", "L0R0"],
         expect.any(Array),
-        undefined,
+        { routeName: undefined },
       );
 
       // onUpdate called with rendered tree
@@ -347,6 +360,141 @@ describe("partial-update", () => {
     });
   });
 
+  describe("commit lane (same-structure content-hold)", () => {
+    function runNav(opts: {
+      cached: ResolvedSegment[];
+      matched: string[];
+      diff: string[];
+      serverSegments: ResolvedSegment[];
+      mode?: any;
+    }) {
+      const store = createMockStore({ cachedSegments: opts.cached });
+      const { client } = createMockClient({
+        metadata: {
+          isPartial: true,
+          segments: opts.serverSegments,
+          matched: opts.matched,
+          diff: opts.diff,
+        },
+      });
+      const commitLanes: boolean[] = [];
+      const onUpdate = vi.fn(() => {
+        commitLanes.push(transitionState.inTransition);
+      });
+      const updater = createPartialUpdater({
+        getVersion: () => undefined,
+        store: store as any,
+        client: client as any,
+        onUpdate,
+        renderSegments: vi.fn(async () => "tree"),
+      });
+      return {
+        commitLanes,
+        onUpdate,
+        run: () =>
+          updater(
+            "http://localhost/page?f=1",
+            opts.matched,
+            false,
+            undefined,
+            createMockTx() as any,
+            opts.mode,
+          ),
+      };
+    }
+
+    it("commits a same-structure nav (every rendered id already on screen) in a transition", async () => {
+      // The PLP filter-change shape: same route, search changed, the route
+      // segment re-rendered with a still-streaming loader. An urgent commit
+      // would re-suspend the revealed boundary and flash its fallback.
+      const { commitLanes, onUpdate, run } = runNav({
+        cached: [seg("L0", { type: "layout" }), seg("L0R0")],
+        matched: ["L0", "L0R0"],
+        diff: ["L0R0"],
+        serverSegments: [seg("L0R0", { component: "refreshed" })],
+      });
+      await run();
+      expect(onUpdate).toHaveBeenCalledTimes(1);
+      expect(commitLanes).toEqual([true]);
+    });
+
+    it("a transition commit announces the committed tree's loader segments (held readers pin isLoading)", async () => {
+      const announce = vi.spyOn(loaderStore, "announcePendingStreams");
+      const pending = new Promise(() => {});
+      const { commitLanes, run } = runNav({
+        cached: [
+          seg("L0", { type: "layout" }),
+          seg("L0R0"),
+          seg("L0R0D0.p", { type: "loader", loaderId: "p", loaderData: 1 }),
+        ],
+        matched: ["L0", "L0R0", "L0R0D0.p"],
+        diff: ["L0R0", "L0R0D0.p"],
+        serverSegments: [
+          seg("L0R0", { component: "refreshed" }),
+          seg("L0R0D0.p", {
+            type: "loader",
+            loaderId: "p",
+            loaderData: pending,
+          }),
+        ],
+      });
+      try {
+        await run();
+        expect(commitLanes).toEqual([true]);
+        expect(announce).toHaveBeenCalledTimes(1);
+        expect(announce.mock.calls[0]![0]).toContainEqual(
+          expect.objectContaining({ id: "L0R0D0.p", loaderData: pending }),
+        );
+        expect(loaderStore.isStreamPending("p")).toBe(true);
+      } finally {
+        announce.mockRestore();
+        loaderStore.reset();
+      }
+    });
+
+    it("an urgent commit announces nothing (nothing is held)", async () => {
+      const announce = vi.spyOn(loaderStore, "announcePendingStreams");
+      const { commitLanes, run } = runNav({
+        cached: [seg("L0", { type: "layout" }), seg("L0R0")],
+        matched: ["L0", "L0R1"],
+        diff: ["L0R1"],
+        serverSegments: [seg("L0R1")],
+      });
+      try {
+        await run();
+        expect(commitLanes).toEqual([false]);
+        expect(announce).not.toHaveBeenCalled();
+      } finally {
+        announce.mockRestore();
+      }
+    });
+
+    it("commits a nav that mounts a new segment urgently (fallbacks stream like a first load)", async () => {
+      const { commitLanes, onUpdate, run } = runNav({
+        cached: [seg("L0", { type: "layout" }), seg("L0R0")],
+        matched: ["L0", "L0R1"],
+        diff: ["L0R1"],
+        serverSegments: [seg("L0R1")],
+      });
+      await run();
+      expect(onUpdate).toHaveBeenCalledTimes(1);
+      expect(commitLanes).toEqual([false]);
+    });
+
+    it("commits leave-intercept urgently even when same-structure (modal close must not be held)", async () => {
+      const { commitLanes, onUpdate, run } = runNav({
+        cached: [seg("L0", { type: "layout" }), seg("L0R0")],
+        matched: ["L0", "L0R0"],
+        diff: ["L0R0"],
+        serverSegments: [seg("L0R0", { component: "restored" })],
+        mode: { type: "leave-intercept" },
+      });
+      await run();
+      expect(onUpdate).toHaveBeenCalledTimes(1);
+      expect(commitLanes).toEqual([false]);
+    });
+  });
+
   describe("empty diff handling", () => {
     it("skips UI update when diff is empty (same-route revalidation)", async () => {
       const cached = seg("R0");
@@ -377,6 +525,13 @@ describe("partial-update", () => {
       // Should commit but NOT call onUpdate (no UI change)
       expect(tx.commit).toHaveBeenCalled();
       expect(onUpdate).not.toHaveBeenCalled();
+      // No payload follows, and the commit says so: the entry's location
+      // state has no tree to wait for (#1029).
+      expect(tx.commit).toHaveBeenCalledWith(
+        ["R0"],
+        [cached],
+        expect.objectContaining({ treeless: true }),
+      );
     });
 
     it("renders cached segments when navigating with targetCacheSegments", async () => {
@@ -503,6 +658,80 @@ describe("partial-update", () => {
 
       const fetchCall = (client.fetchPartial as any).mock.calls[0][0];
       expect(fetchCall.previousUrl).toBe("http://localhost/shop/product/42");
+    });
+
+    // #1030: back/forward to an entry the history cache no longer holds. The
+    // popstate event moved window.location to the target before the
+    // transaction was created, so tx.currentUrl names the target. Sent as the
+    // page the client is on, the server compares the target with itself:
+    // on the same route nothing revalidates, the diff is empty, and the
+    // commit below keeps the page being left on screen under the target's URL.
+    describe("the page the server is told the client is on", () => {
+      const route = seg("R0");
+      const noChanges = {
+        metadata: {
+          isPartial: true,
+          segments: [],
+          matched: ["R0"],
+          diff: [],
+        },
+      };
+      const sentFrom = async (
+        tx: ReturnType<typeof createMockTx> & { traversal?: boolean },
+        mode?: Parameters<ReturnType<typeof createPartialUpdater>>[5],
+      ): Promise<string> => {
+        const store = createMockStore({
+          cachedSegments: [route],
+          segmentIds: ["R0"],
+          // The entry on screen: the one being left.
+          currentUrl: "http://localhost/list?page=6",
+        });
+        const { client } = createMockClient(noChanges);
+        const updater = createPartialUpdater({
+          getVersion: () => undefined,
+          store: store as any,
+          client: client as any,
+          onUpdate: vi.fn(),
+          renderSegments: vi.fn(async () => "tree"),
+        });
+        await updater(
+          "http://localhost/list?page=3",
+          undefined,
+          false,
+          undefined,
+          tx,
+          mode,
+        );
+        return (client.fetchPartial as any).mock.calls[0][0].previousUrl;
+      };
+
+      it("a back/forward fetch names the entry on screen, not the target the URL bar already shows", async () => {
+        expect(
+          await sentFrom({
+            ...createMockTx("http://localhost/list?page=3"),
+            traversal: true,
+          }),
+        ).toBe("http://localhost/list?page=6");
+      });
+
+      it("a back/forward onto an intercept entry still names the intercept's source", async () => {
+        expect(
+          await sentFrom(
+            {
+              ...createMockTx("http://localhost/list?page=3"),
+              traversal: true,
+            },
+            { type: "navigate", interceptSourceUrl: "http://localhost/shop" },
+          ),
+        ).toBe("http://localhost/shop");
+      });
+
+      it("a push or replace names the URL it started from", async () => {
+        // window.location has not moved: the transaction's URL is the page.
+        expect(
+          await sentFrom(createMockTx("http://localhost/list?page=6#top")),
+        ).toBe("http://localhost/list?page=6#top");
+      });
     });
   });
 
@@ -1017,10 +1246,14 @@ describe("partial-update", () => {
       await updater("http://localhost/new", [], false, undefined, tx);
 
       // Should render ALL segments (not merge with cache)
-      expect(renderSegments).toHaveBeenCalledWith(serverSegments);
+      expect(renderSegments).toHaveBeenCalledWith(serverSegments, {
+        transitionGatedOff: false,
+      });
 
       // Commit with segment IDs from server
-      expect(tx.commit).toHaveBeenCalledWith(["L0", "L0R0"], serverSegments);
+      expect(tx.commit).toHaveBeenCalledWith(["L0", "L0R0"], serverSegments, {
+        routeName: undefined,
+      });
 
       expect(onUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1299,19 +1532,22 @@ describe("partial-update", () => {
   });
 
   /**
-   * Fully-prefetched commit branch (#622 follow-up, HIGH).
+   * Fully-prefetched commit branch.
    *
    * A fully-prefetched navigation must render with `forceAwait` (so the
    * already-resolved ROUTER loader data lands with no fallback frame) AND commit
-   * NORMALLY — never inside startTransition. Committing in a transition would
-   * hold the OLD UI until ALL suspense in the new tree settled, including a
-   * CLIENT component that suspends on mount (post-commit), retaining the previous
-   * page indefinitely with no fallback. A normal commit shows the new route's
-   * fallback for client-initiated suspense while router data never flashes.
+   * inside a bare startTransition (no addTransitionType) so the current UI is
+   * held across the synchronous resolution — no fallback flash anywhere.
+   * Deliberate trade-off (#622 introduced this, #624 reverted it for client
+   * mount-suspense, then reinstated): a client component that suspends during
+   * its first render under an already-revealed boundary holds the old content
+   * until it resolves — it renders pre-commit inside the transition, so its
+   * effects cannot run first.
    *
-   * A cold/partial nav (fullyPrefetched=false) must NOT forceAwait, so its
-   * fallbacks stream like a cold load. An explicit transition() route still
-   * holds content via startTransition + addTransitionType.
+   * A cold/partial nav (fullyPrefetched=false) must NOT forceAwait and commits
+   * normally, so its fallbacks stream like a cold load. An explicit transition()
+   * route still commits via the hasTransition branch (addTransitionType
+   * "navigation").
    */
   describe("fully-prefetched commit branch (#622 follow-up)", () => {
     it("renders with forceAwait when fullyPrefetched=true", async () => {
@@ -1348,7 +1584,7 @@ describe("partial-update", () => {
       );
     });
 
-    it("commits NORMALLY (no startTransition, no addTransitionType) when fullyPrefetched=true", async () => {
+    it("commits inside a bare startTransition when fullyPrefetched=true", async () => {
       const captured: Array<(...args: any[]) => any> = [];
       const React = await import("react");
       const spy = vi.spyOn(React, "startTransition").mockImplementation(((
@@ -1386,9 +1622,10 @@ describe("partial-update", () => {
           type: "navigate",
         });
 
-        // Normal commit: onUpdate ran, but NOT through startTransition.
+        // Transition commit: onUpdate ran exactly once, wrapped in
+        // startTransition (the spy captures the callback before running it).
         expect(onUpdate).toHaveBeenCalledOnce();
-        expect(captured.length).toBe(0);
+        expect(captured.length).toBe(1);
       } finally {
         spy.mockRestore();
       }
@@ -2171,6 +2408,247 @@ describe("partial-update", () => {
       ).resolves.toBeUndefined();
 
       expect(onUpdate).toHaveBeenCalledOnce();
+    });
+  });
+});
+
+describe("partial-update transition({ when })", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /**
+   * A same-structure navigation (every id on screen) on a transition() route:
+   * without a decision it commits held (transition lane).
+   */
+  function runWhenNav(opts: {
+    when: (ctx: any) => boolean;
+    tx?: Record<string, unknown>;
+    mode?: any;
+    metadata?: Record<string, unknown>;
+    memory?: { routeName?: string; state?: unknown };
+    /** History keys getHistoryKey returns, in call order (the last repeats). */
+    historyKeys?: string[];
+  }) {
+    vi.stubGlobal("window", {
+      location: {
+        href: "http://localhost/items/1",
+        origin: "http://localhost",
+      },
+      history: { state: { key: "k-from", __rsc_ls_s: "from-state" } },
+    });
+    const route = seg("L0R0", {
+      params: { id: "1" },
+      transition: { when: opts.when },
+    } as any);
+    const store = {
+      ...createMockStore({
+        cachedSegments: [seg("L0", { type: "layout" }), route],
+        currentUrl: "http://localhost/items/1",
+      }),
+      getHistoryEntryMemory: vi.fn(() => ({
+        routeName: opts.memory?.routeName ?? "items.detail",
+        state: opts.memory?.state ?? { key: "k-from", mark: "memory" },
+      })),
+    };
+    if (opts.historyKeys) {
+      const entry = store.getCachedSegments(store.getHistoryKey());
+      store.getCachedSegments = vi.fn(() => entry);
+      const keys = [...opts.historyKeys];
+      store.getHistoryKey = vi.fn(() =>
+        keys.length > 1 ? keys.shift()! : keys[0]!,
+      );
+    }
+    const { client } = createMockClient({
+      metadata: {
+        isPartial: true,
+        segments: [
+          seg("L0R0", {
+            component: "refreshed",
+            params: { id: "2" },
+            transition: { when: opts.when },
+          } as any),
+        ],
+        matched: ["L0", "L0R0"],
+        diff: ["L0R0"],
+        params: { id: "2" },
+        routeName: "items.detail",
+        ...opts.metadata,
+      },
+    });
+    const commitLanes: boolean[] = [];
+    const onUpdate = vi.fn(() => {
+      commitLanes.push(transitionState.inTransition);
+    });
+    const renderSegments = vi.fn(async (..._args: any[]) => "tree");
+    const tx = { ...createMockTx("http://localhost/items/1"), ...opts.tx };
+    const updater = createPartialUpdater({
+      getVersion: () => undefined,
+      store: store as any,
+      client: client as any,
+      onUpdate,
+      renderSegments,
+    });
+    return {
+      commitLanes,
+      renderSegments,
+      tx,
+      run: () =>
+        updater(
+          "http://localhost/items/2",
+          ["L0", "L0R0"],
+          false,
+          undefined,
+          tx as any,
+          opts.mode,
+        ),
+    };
+  }
+
+  it("decides once with the committed source and the destination the commit leaves, and false commits urgently", async () => {
+    const seen: any[] = [];
+    const when = vi.fn((ctx: any) => {
+      seen.push(ctx);
+      return false;
+    });
+    const nav = runWhenNav({
+      when,
+      tx: { state: { __rsc_ls_s: "pushed" } },
+      metadata: { locationState: { __rsc_ls_srv: "server" } },
+    });
+    await nav.run();
+
+    expect(when).toHaveBeenCalledTimes(1);
+    const ctx = seen[0];
+    expect(ctx.kind).toBe("push");
+    expect(ctx.from.url.href).toBe("http://localhost/items/1");
+    expect(ctx.from.params).toEqual({ id: "1" });
+    expect(ctx.from.routeName).toBe("items.detail");
+    // Push: the live entry is still the source's.
+    expect(ctx.from.state).toEqual({ key: "k-from", __rsc_ls_s: "from-state" });
+    expect(ctx.to.url.href).toBe("http://localhost/items/2");
+    expect(ctx.to.params).toEqual({ id: "2" });
+    expect(ctx.to.routeName).toBe("items.detail");
+    expect(ctx.to.state).toEqual({
+      __rsc_ls_s: "pushed",
+      __rsc_ls_srv: "server",
+    });
+    // Gated off: urgent commit (no hold), render told to "none" every class.
+    expect(nav.commitLanes).toEqual([false]);
+    expect(nav.renderSegments.mock.calls[0]![1]).toMatchObject({
+      transitionGatedOff: true,
+    });
+  });
+
+  it("true holds the same-structure transition() commit", async () => {
+    const nav = runWhenNav({ when: () => true });
+    await nav.run();
+    expect(nav.commitLanes).toEqual([true]);
+    expect(nav.renderSegments.mock.calls[0]![1]).toMatchObject({
+      transitionGatedOff: false,
+    });
+  });
+
+  it("reuses the decision the optimistic swap carried on the transaction", async () => {
+    const when = vi.fn(() => true);
+    const nav = runWhenNav({ when, tx: { transitionGatedOff: true } });
+    await nav.run();
+    expect(when).not.toHaveBeenCalled();
+    expect(nav.commitLanes).toEqual([false]);
+  });
+
+  it.each([
+    ["a stale revalidation", { type: "stale-revalidation" }],
+    ["a refresh()", { type: "navigate", refresh: true }],
+  ])(
+    "%s gated off commits urgently, so a re-suspending segment streams its loading()",
+    async (_label, mode) => {
+      const off = runWhenNav({ when: () => false, mode });
+      await off.run();
+      expect(off.commitLanes).toEqual([false]);
+      const on = runWhenNav({ when: () => true, mode });
+      await on.run();
+      expect(on.commitLanes).toEqual([true]);
+    },
+  );
+
+  it("a stale revalidation the user navigated away from never calls when", async () => {
+    // Stale Back, then a shallow push moves the history key before the
+    // background response lands: the UI update is discarded, so no decision.
+    const when = vi.fn(() => true);
+    const nav = runWhenNav({
+      when,
+      mode: { type: "stale-revalidation" },
+      historyKeys: ["/items/1", "/items/1?tab=b"],
+    });
+    await nav.run();
+    expect(when).not.toHaveBeenCalled();
+    expect(nav.commitLanes).toEqual([]);
+  });
+
+  it("reports kind revalidate for a refresh, with to === from", async () => {
+    const seen: any[] = [];
+    const nav = runWhenNav({
+      when: (ctx) => {
+        seen.push(ctx);
+        return true;
+      },
+      tx: { replace: true },
+      mode: { type: "navigate", refresh: true },
+    });
+    await nav.run();
+    expect(seen[0].kind).toBe("revalidate");
+    expect(seen[0].to).toBe(seen[0].from);
+  });
+
+  it("reports kind pop on a traversal, reading the entry left from memory", async () => {
+    const seen: any[] = [];
+    const nav = runWhenNav({
+      when: (ctx) => {
+        seen.push(ctx);
+        return true;
+      },
+      tx: { traversal: true },
+      memory: { routeName: "items.detail", state: { mark: "left" } },
+    });
+    await nav.run();
+    expect(seen[0].kind).toBe("pop");
+    expect(seen[0].from.state).toEqual({ mark: "left" });
+    // The destination is the entry the browser restored.
+    expect(seen[0].to.state).toEqual({
+      key: "k-from",
+      __rsc_ls_s: "from-state",
+    });
+  });
+
+  it("passes the action fields on an action refetch commit", async () => {
+    const seen: any[] = [];
+    const addToCart = Object.assign(() => {}, { $$id: "cart#add" });
+    const formData = new FormData();
+    const nav = runWhenNav({
+      when: (ctx) => {
+        seen.push(ctx);
+        return false;
+      },
+      mode: {
+        type: "action",
+        actionId: "cart#add",
+        action: { formData, result: { ok: true } },
+      },
+    });
+    await nav.run();
+    expect(seen[0].kind).toBe("action");
+    expect(seen[0].isAction(addToCart)).toBe(true);
+    expect(seen[0].action).toEqual({
+      id: "cart#add",
+      formData,
+      result: { ok: true },
+      error: undefined,
+    });
+    // false: urgent, like every other gated-off commit.
+    expect(nav.commitLanes).toEqual([false]);
+    expect(nav.renderSegments.mock.calls[0]![1]).toMatchObject({
+      transitionGatedOff: true,
     });
   });
 });

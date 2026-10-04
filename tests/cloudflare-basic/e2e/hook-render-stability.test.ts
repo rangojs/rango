@@ -22,6 +22,7 @@ const PROBES = [
   "search",
   "segments",
   "navigation",
+  "locationState",
 ] as const;
 
 interface RenderSnapshot {
@@ -127,6 +128,9 @@ function defineStabilitySuite(opts: SuiteOpts) {
         "pathname",
         "params",
         "segments",
+        // Hears the push's location-state commit and bails out: the entry
+        // carries no state, like the one before it.
+        "locationState",
       ]) {
         expect(delta(probe), `commit delta[${probe}]`).toBe(0);
       }
@@ -158,6 +162,7 @@ function defineStabilitySuite(opts: SuiteOpts) {
         "params",
         "search",
         "segments",
+        "locationState",
       ]) {
         expect(delta(probe), `remount delta[${probe}]`).toBe(
           opts.remountCommits,
@@ -170,12 +175,13 @@ function defineStabilitySuite(opts: SuiteOpts) {
   });
 }
 
-// Dev: StrictMode on by default -> hydration render runs twice; a client remount
-// runs effects twice.
+// Dev: StrictMode on by default -> hydration render runs twice, hydration
+// effects run twice (React 19.3+, react#35961), and a client remount runs
+// effects twice.
 defineStabilitySuite({
   mode: "dev",
   mountRenders: 2,
-  mountCommits: 1,
+  mountCommits: 2,
   remountCommits: 2,
 });
 

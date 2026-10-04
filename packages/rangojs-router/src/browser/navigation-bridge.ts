@@ -1,6 +1,7 @@
 import type {
   NavigationBridge,
   NavigationBridgeConfig,
+  NavigationStore,
   NavigateOptionsInternal,
   ResolvedSegment,
 } from "./types.js";
@@ -17,6 +18,7 @@ import { buildHistoryState, pushHistoryWithIdx } from "./history-state.js";
 import {
   handleNavigationStart,
   handleNavigationEnd,
+  handleTraversalStart,
   ensureHistoryKey,
 } from "./scroll-restoration.js";
 
@@ -24,8 +26,15 @@ import {
 const addTransitionType: ((type: string) => void) | undefined =
   "addTransitionType" in React ? (React as any).addTransitionType : undefined;
 
-import { setupLinkInterception } from "./link-interceptor.js";
-import { createPartialUpdater } from "./partial-update.js";
+import {
+  setupDelegatedLinkPrefetch,
+  setupLinkInterception,
+} from "./link-interceptor.js";
+import {
+  createPartialUpdater,
+  shouldStartViewTransition,
+} from "./partial-update.js";
+import { decideCommitGatedOff, mergeSegmentParams } from "./transition-when.js";
 import { generateHistoryKey } from "./navigation-store.js";
 import type { EventController } from "./event-controller.js";
 import { isInterceptOnlyCache } from "./intercept-utils.js";
@@ -38,6 +47,13 @@ import {
 import { debugLog } from "./logging.js";
 import { ServerRedirect } from "../errors.js";
 import { validateRedirectOrigin } from "./validate-redirect-origin.js";
+import {
+  prefetchDirect,
+  prefetchQueued,
+  schedulePrefetchWhenRouterIdle,
+} from "./prefetch/loader.js";
+import type { PrefetchStrategy } from "../router/prefetch-default.js";
+import { beginClientUrlNavigation } from "../client-urls/navigation.js";
 
 // Polyfill Symbol.dispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -53,6 +69,48 @@ export interface NavigationBridgeConfigWithController extends NavigationBridgeCo
   eventController: EventController;
   /** RSC version from initial payload metadata. */
   version?: string;
+  /** Server-resolved default used by both Links and delegated anchors. */
+  defaultPrefetch?: PrefetchStrategy;
+  /** Canonical router basename used to scope delegated anchor prefetch. */
+  basename?: string;
+}
+
+export interface NavigationBridgeDelegatedPrefetchOptions {
+  defaultPrefetch?: PrefetchStrategy;
+  root?: HTMLElement;
+  basename?: string;
+}
+
+/** Register delegated anchor prefetch with the production bridge wiring. */
+export function setupNavigationBridgeDelegatedPrefetch(
+  store: NavigationStore,
+  eventController: EventController,
+  getVersion: () => string | undefined,
+  options: NavigationBridgeDelegatedPrefetchOptions = {},
+): () => void {
+  return setupDelegatedLinkPrefetch(
+    (url, priority) => {
+      const trigger = () => {
+        const segmentState = store.getSegmentState();
+        const prefetch =
+          priority === "direct" ? prefetchDirect : prefetchQueued;
+        prefetch(
+          url,
+          segmentState.currentSegmentIds,
+          getVersion(),
+          store.getRouterId?.(),
+        );
+      };
+
+      if (priority === "direct") {
+        trigger();
+        return;
+      }
+
+      return schedulePrefetchWhenRouterIdle(eventController, trigger);
+    },
+    { eventController, ...options },
+  );
 }
 
 /**
@@ -71,7 +129,15 @@ export interface NavigationBridgeConfigWithController extends NavigationBridgeCo
 export function createNavigationBridge(
   config: NavigationBridgeConfigWithController,
 ): NavigationBridge {
-  const { store, client, eventController, onUpdate, renderSegments } = config;
+  const {
+    store,
+    client,
+    eventController,
+    onUpdate,
+    renderSegments,
+    defaultPrefetch,
+    basename,
+  } = config;
   let version = config.version;
 
   // Create shared partial updater
@@ -150,8 +216,7 @@ export function createNavigationBridge(
         // Save current scroll position before changing URL
         handleNavigationStart();
 
-        // Snapshot old state before pushState/replaceState overwrites it
-        const oldState = window.history.state;
+        const shallowRouteName = store.getHistoryEntryMemory()?.routeName;
 
         // Update browser URL (carry intercept context into history state)
         const historyState = buildHistoryState(
@@ -166,20 +231,10 @@ export function createNavigationBridge(
 
         // Ensure new history entry has a scroll restoration key
         ensureHistoryKey();
-
-        // Notify useLocationState() hooks when state changes
-        const hasOldState =
-          oldState &&
-          typeof oldState === "object" &&
-          ("state" in oldState ||
-            Object.keys(oldState).some((k) => k.startsWith("__rsc_ls_")));
-        const hasNewState =
-          historyState &&
-          ("state" in historyState ||
-            Object.keys(historyState).some((k) => k.startsWith("__rsc_ls_")));
-        if (hasOldState || hasNewState) {
-          window.dispatchEvent(new Event("__rsc_locationstate"));
-        }
+        // Same route, new entry (transition({ when }) back/forward source).
+        store.rememberDisplayedEntry(shallowRouteName);
+        // Treeless: readers take the entry's state with setLocation below.
+        eventController.commitLocationState(historyState, true);
 
         // Update store history key so future navigations reference the right cache
         store.setHistoryKey(historyKey);
@@ -282,6 +337,47 @@ export function createNavigationBridge(
         state: resolvedState,
         skipLoadingState: false,
       });
+      // A cross-route clientUrls() navigation presents its destination
+      // optimistically at once: transition({ when }) decides THERE (the first
+      // presentation), over the destination route's predicate and those of
+      // the segments the navigation keeps (everything outside the group's
+      // route segment), and the canonical commit reuses the decision.
+      // `transition: false` gates the navigation off without calling any
+      // predicate, on both the optimistic swap and the canonical commit.
+      const transitionOptOut = options?.transition === false;
+      const clientUrlPresentation = beginClientUrlNavigation(
+        targetUrl,
+        tx.handle.signal,
+        // The entry the commit will push, without what the server adds.
+        () => buildHistoryState(resolvedState),
+        transitionOptOut
+          ? () => true
+          : (destination) =>
+              decideCommitGatedOff(
+                store,
+                (
+                  store.getCachedSegments(store.getHistoryKey())?.segments ?? []
+                ).filter((segment) => segment.clientGroup === undefined),
+                options?.replace ? "replace" : "push",
+                {
+                  to: (from) => {
+                    // Mount (include prefix) params carry over; the origin
+                    // route's own params do not.
+                    const params = { ...from.params };
+                    for (const name of destination.originLocalParamNames) {
+                      delete params[name];
+                    }
+                    return {
+                      url: targetUrl,
+                      params: { ...params, ...destination.params },
+                      routeName: destination.routeName,
+                      state: destination.state,
+                    };
+                  },
+                  extra: destination.when,
+                },
+              ),
+      );
 
       // REVALIDATE: Fetch fresh data from server
       try {
@@ -299,16 +395,22 @@ export function createNavigationBridge(
             replace: options?.replace,
             scroll: options?.scroll,
             state: resolvedState,
+            transitionGatedOff: transitionOptOut
+              ? true
+              : clientUrlPresentation?.transitionGatedOff,
           }),
-          hasUsableCache
-            ? {
+          isLeavingIntercept
+            ? { type: "leave-intercept" as const }
+            : {
                 type: "navigate" as const,
-                targetCacheSegments: cachedSegments,
-                targetCacheHandleData: cachedHandleData,
-              }
-            : isLeavingIntercept
-              ? { type: "leave-intercept" as const }
-              : undefined,
+                ...(hasUsableCache
+                  ? {
+                      targetCacheSegments: cachedSegments,
+                      targetCacheHandleData: cachedHandleData,
+                    }
+                  : {}),
+                optimisticPresented: clientUrlPresentation !== null,
+              },
         );
       } catch (error) {
         // Server-side redirect with location state: the current transaction's
@@ -325,6 +427,7 @@ export function createNavigationBridge(
           return this.navigate(redirectUrl, {
             state: error.state,
             replace: options?.replace,
+            transition: options?.transition,
             _skipCache: true,
           } as NavigateOptionsInternal);
         }
@@ -362,6 +465,7 @@ export function createNavigationBridge(
         console.error("[Browser] Unprocessable navigation response:", error);
         emitNavigationError(onUpdate, error, url);
       } finally {
+        clientUrlPresentation?.clear();
         tx[Symbol.dispose]();
       }
     },
@@ -387,6 +491,7 @@ export function createNavigationBridge(
           false,
           tx.handle.signal,
           tx.with({ url: window.location.href, replace: true, scroll: false }),
+          { type: "navigate", refresh: true },
         );
       } catch (error) {
         // Aborted or superseded: bail without rendering a boundary (see navigate()).
@@ -427,6 +532,7 @@ export function createNavigationBridge(
     async handlePopstate(): Promise<void> {
       // Abort any pending navigation to prevent race conditions
       eventController.abortNavigation();
+      handleTraversalStart();
 
       const url = window.location.href;
 
@@ -465,9 +571,6 @@ export function createNavigationBridge(
         historyKey,
       );
 
-      // Update location in event controller
-      eventController.setLocation(new URL(url));
-
       // If this is an intercept, restore the intercept context
       if (isIntercept && interceptSourceUrl) {
         store.setInterceptSourceUrl(interceptSourceUrl);
@@ -496,6 +599,26 @@ export function createNavigationBridge(
       const isStale = (cached?.stale ?? false) || isActionFenceActive();
 
       if (cachedSegments && cachedSegments.length > 0) {
+        // transition({ when }) decides the restore (kind "pop") against the
+        // entry being left, so before the store moves to the restored entry.
+        // The decision the entry was committed with is not reused: it was
+        // made for a different source. A restore that opens or closes an
+        // intercept never holds or animates (hasTransition below), so it is
+        // not decided, like every intercept commit.
+        const cachedParams = mergeSegmentParams(cachedSegments);
+        const gatedOff =
+          !isIntercept &&
+          !isLeavingIntercept &&
+          decideCommitGatedOff(store, cachedSegments, "pop", {
+            to: () => ({
+              url,
+              params: cachedParams,
+              routeName: store.getHistoryEntryMemory(historyState?.key)
+                ?.routeName,
+              state: historyState,
+            }),
+          });
+
         // Update store to point to this history entry
         store.setHistoryKey(historyKey);
         store.setSegmentIds(cachedSegments.map((s) => s.id));
@@ -512,15 +635,19 @@ export function createNavigationBridge(
         try {
           const root = await renderSegments(cachedSegments, {
             forceAwait: true,
+            transitionGatedOff: gatedOff,
           });
-          // Merge params from cached segments for useParams restoration.
-          // Set params on event controller before onUpdate so both location
-          // and params are current when the debounced notify() fires.
-          const cachedParams: Record<string, string> = {};
-          for (const s of cachedSegments) {
-            if (s.params) Object.assign(cachedParams, s.params);
-          }
+          store.rememberDisplayedEntry();
+          // The restored entry's location and params, set before onUpdate so
+          // the hooks take both in the batch that renders its tree. Not at
+          // the popstate event: the page being left is on screen until here
+          // (#1031). A restore that has to fetch gets its location from
+          // tx.commit() instead (navigation-transaction.ts).
+          eventController.setLocation(new URL(url));
           eventController.setParams(cachedParams);
+          // The entry this handler found at the event, which the cached tree
+          // was built for: history may have moved during the render above.
+          eventController.commitLocationState(historyState);
 
           const popstateUpdate = {
             root,
@@ -542,7 +669,7 @@ export function createNavigationBridge(
           const hasTransition =
             !isIntercept &&
             !isLeavingIntercept &&
-            cachedSegments.some((s) => s.transition);
+            shouldStartViewTransition(cachedSegments, gatedOff);
           if (hasTransition) {
             startTransition(() => {
               if (addTransitionType) {
@@ -629,7 +756,7 @@ export function createNavigationBridge(
           tx.handle.signal,
           tx.with({
             url,
-            replace: true,
+            traversal: true,
             scroll: false,
             intercept: isIntercept,
             interceptSourceUrl,
@@ -652,6 +779,32 @@ export function createNavigationBridge(
           debugLog("[Browser] Popstate navigation aborted or superseded");
           return;
         }
+
+        // The browser is already on the entry that redirected. Replacing makes
+        // that entry the redirect target, so Back from the target reaches the
+        // entry before it; a push would leave the redirecting entry in history
+        // and Back would hit the redirect again. Before setLocation below, or
+        // the hooks would report the redirecting URL first.
+        if (error instanceof ServerRedirect) {
+          const redirectUrl = validateRedirectOrigin(
+            error.url,
+            window.location.origin,
+          );
+          if (!redirectUrl) {
+            return;
+          }
+          return this.navigate(redirectUrl, {
+            state: error.state,
+            replace: true,
+            _skipCache: true,
+          } as NavigateOptionsInternal);
+        }
+
+        // tx.commit() never ran, so the location is still the page being
+        // left. The error boundary below replaces that page, and history is
+        // already on the entry that failed: the hooks report that entry, in
+        // the boundary's batch.
+        eventController.setLocation(new URL(url));
 
         const networkError = toNetworkError(error, {
           url,
@@ -702,9 +855,6 @@ export function createNavigationBridge(
             "[Browser] Page restored from bfcache, resetting navigation state",
           );
           eventController.abortNavigation();
-          // pagehide flips scrollRestoration to "auto" for bfcache compat;
-          // restore "manual" so the router controls scroll on SPA navigations.
-          window.history.scrollRestoration = "manual";
         }
       };
 
@@ -722,6 +872,15 @@ export function createNavigationBridge(
         window.removeEventListener("popstate", handlePopstate);
         window.removeEventListener("pageshow", handlePageShow);
       };
+    },
+
+    registerDelegatedPrefetch(): () => void {
+      return setupNavigationBridgeDelegatedPrefetch(
+        store,
+        eventController,
+        () => version,
+        { defaultPrefetch, basename },
+      );
     },
 
     getVersion(): string | undefined {

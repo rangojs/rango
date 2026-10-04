@@ -15,7 +15,6 @@ export type TodosData = {
  * Simulates network latency for realistic demo
  */
 export const TodosLoader = createLoader(async (_ctx) => {
-  "use server";
   // Simulate network latency
   await new Promise((resolve) => setTimeout(resolve, 5000));
 
@@ -37,7 +36,6 @@ export const TodosLoader = createLoader(async (_ctx) => {
  * TodoDetailLoader - fetches a single todo by ID
  */
 export const TodoDetailLoader = createLoader(async (ctx) => {
-  "use server";
   await new Promise((resolve) => setTimeout(resolve, 3000));
 
   const id = ctx.params.id;

@@ -54,8 +54,20 @@ export function ShopLayout() {
         </header>
         <LoadingSpinner />
         <DebugSegmentWrapper type="outlet" name="Shop Outlet">
-          {/* Route components handle their own parallel outlets */}
-          <Outlet />
+          {/* Layout-declared pending UI: the fallback lives where the hole
+              renders. A child route's own loading() boundary sits closer to
+              the suspension and wins for its content; this outer fallback
+              catches whatever the child leaves unhandled. */}
+          <Outlet
+            fallback={
+              <div
+                data-testid="shop-outlet-fallback"
+                style={{ padding: "2rem", color: "#888" }}
+              >
+                Loading shop content…
+              </div>
+            }
+          />
         </DebugSegmentWrapper>
         {/* Intercept slot - shows modal during soft navigation to product */}
         <Outlet name="@modal" />

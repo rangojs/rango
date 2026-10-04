@@ -199,8 +199,11 @@ export function resolvePrerenderError(
   throw error;
 }
 
+/** Build scratch space, relative to the project root. Never shipped. */
+export const RANGO_BUILD_DIR = "node_modules/.rangojs-router-build";
+
 function getStagedAssetDir(projectRoot: string): string {
-  return resolve(projectRoot, "node_modules/.rangojs-router-build/rsc-assets");
+  return resolve(projectRoot, RANGO_BUILD_DIR, "rsc-assets");
 }
 
 export function resetStagedBuildAssets(projectRoot: string): void {

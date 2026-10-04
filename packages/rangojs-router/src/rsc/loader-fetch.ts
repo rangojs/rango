@@ -11,8 +11,9 @@
  * has already extracted params from it.
  */
 
+import { requestHeaders } from "../server/request-headers.js";
 import { getLoaderLazy } from "../server/loader-registry.js";
-import { DataNotFoundError } from "../errors.js";
+import { isDataNotFoundError } from "../errors.js";
 import { executeLoaderMiddleware } from "../router/middleware.js";
 import { getRequestContext } from "../server/request-context.js";
 import { observePhase, PHASES } from "../router/instrument.js";
@@ -144,7 +145,7 @@ export async function handleLoaderFetch<TEnv>(
 
   if (isBodyMethod) {
     try {
-      const contentType = request.headers.get("content-type") || "";
+      const contentType = requestHeaders(request).get("content-type") || "";
       if (contentType.includes("multipart/form-data")) {
         // FormData body — sent by load() when body is a FormData instance.
         // Preserves File objects and binary data.
@@ -289,7 +290,7 @@ export async function handleLoaderFetch<TEnv>(
     // so it does not match the branch above. Map it to a 404 before the generic
     // 500 coercion so a no-middleware fetchable loader's notFound() is honored
     // (the with-middleware path resolves it through the notFoundBoundary).
-    if (error instanceof DataNotFoundError) {
+    if (isDataNotFoundError(error)) {
       return finalizeResponse(
         createResponseWithMergedHeaders(null, { status: 404 }),
       );

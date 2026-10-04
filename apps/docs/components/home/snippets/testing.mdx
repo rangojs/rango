@@ -1,0 +1,9 @@
+```ts
+const { tree } = await renderHandler(ProductPage, {
+  params: { slug: "widget" },
+  loaders: [[ProductLoader, { name: "Widget" }]],
+});
+
+const [heading] = findElements(tree, { tag: "h1" });
+expect(heading.text).toContain("Widget");
+```

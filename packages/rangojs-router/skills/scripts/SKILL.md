@@ -6,33 +6,38 @@ argument-hint: "[vendor]"
 
 # Scripts
 
-Inject `<script>` tags into the document the idiomatic Rango way: push a config
-from a **server** route/layout handler with `ctx.use(Script)(config)`, and render
-them with the built-in **`<Scripts />`** component (the `Meta` / `<MetaTags>`
-pair, but for scripts). The request CSP **nonce is applied automatically to
-document-rendered scripts** — you never read or pass it. (The one exception is an
-async script first encountered on a soft navigation; see the nonce caveat under
-"Execution contract".)
+Push a script config from a **server** route/layout handler (or a loader) with
+`ctx.use(Script)(config)`; the built-in **`<Html.Scripts />`** component renders it.
+It is the `Meta` / `<Html.Meta>` pair, but for scripts. The request CSP **nonce
+is applied automatically to document-rendered scripts**; you never read or pass
+it. (The one exception is an async script first encountered on a soft
+navigation; see the nonce caveat under "Execution contract".)
+
+Read "Execution contract" before choosing a shape: inline and ordered scripts
+run only on a hard (document) load, never on a soft navigation.
 
 ## Setup
 
-`<Scripts />` is a client component; place it in your Document (which is
+`<Html.Scripts />` is a client component; place it in your Document (which is
 `"use client"`). The default Document already includes both sites; a custom one
-adds them next to `<MetaTags />`:
+adds them next to `<Html.Meta />`:
 
 ```tsx
-// document.tsx ("use client")
-import { MetaTags, Scripts } from "@rangojs/router/client";
+// document.tsx
+"use client";
+import type { ReactNode } from "react";
+import { Html } from "@rangojs/router/client";
 
-export function Document({ children }) {
+export function Document({ children }: { children: ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <MetaTags />
-        <Scripts /> {/* renders position: "head" scripts (the default) */}
+        <Html.Meta />
+        <Html.Scripts /> {/* renders position: "head" scripts (the default) */}
       </head>
       <body>
-        <Scripts position="body" /> {/* renders position: "body" scripts */}
+        <Html.Scripts position="body" />{" "}
+        {/* renders position: "body" scripts */}
         {children}
       </body>
     </html>
@@ -40,7 +45,7 @@ export function Document({ children }) {
 }
 ```
 
-## Push from a handler
+## Push from a handler (or loader)
 
 `ScriptConfig` is a discriminated union — exactly one of three shapes, so invalid
 combinations are compile errors:
@@ -60,7 +65,7 @@ ctx.use(Script)({
   attributes: { "data-domain": "example.com" },
 });
 
-// 3. INLINE — `id` REQUIRED, raw JS body (escaped against </script> by <Scripts>).
+// 3. INLINE — `id` REQUIRED, raw JS body (escaped against </script> by <Html.Scripts>).
 //    For GTM/GA4/Segment let the body self-inject its loader (see below).
 ctx.use(Script)({ id: "gtm", children: gtmBootstrap("GTM-XXXX") });
 ```
@@ -80,7 +85,8 @@ ctx.use(Script)({ id: "gtm", children: gtmBootstrap("GTM-XXXX") });
 - `type` — free string: `"module"`, `"application/ld+json"`, `"text/partytown"`, …
 - `attributes` — React-cased (`crossOrigin`, not `crossorigin`) and React-typed
   (`data-*`, `integrity`, `referrerPolicy`, …). Excluded: the fields the handle
-  manages (`id`/`src`/`async`/`defer`/`type`/`children`/`nonce`) and all `on*`
+  manages (`id`/`src`/`async`/`defer`/`type`/`children`/`nonce`/
+  `dangerouslySetInnerHTML`) and all `on*`
   handlers (`onLoad`/`onError`/… — a config is serialized to the client, so a
   function can't survive; use a `"use client"` component for callbacks).
 
@@ -95,11 +101,23 @@ innerHTML, which the HTML spec never executes). So:
 | External ordered (`defer`/plain) | Yes                            | **No** — document-load only                           |
 | External `async`                 | Yes                            | **Yes** — React loads the resource on first encounter |
 
-`<Scripts>` enforces this honestly: after hydration it **freezes** the inline +
+`<Html.Scripts>` enforces this: after hydration it **freezes** the inline +
 ordered set to what was in the initial HTML, so a navigation never inserts an
 inert (silently dead) `<script>`. Async configs stay reactive. Reusing an `id`
 shapes the INITIAL document output (last-push-wins) — it does not re-run a script
 during navigation.
+
+> **Loader pushes meet the freeze.** A LOADER push to the Script handle
+> follows the delivery race (`/loader`): it is in the initial HTML only if it
+> settles before the handler barrier. A push that lands after a slow fetch
+> arrives post-hydration — and for an inline/ordered script the frozen set
+> means it is silently dropped. If a loader must contribute an inline script
+> to the document, register it `loader(Def, { ssr: false })` so the
+> document render awaits the push; otherwise push from a handler (or use an
+> `async` config, which stays reactive). On a `ppr` route a loader without
+> `ssr: false` never runs during the shell capture, so its inline/ordered
+> script is dropped on every shell HIT; with `ssr: false` the push bakes into
+> the shell.
 
 **Nonce caveat for soft-nav async.** The "nonce is applied automatically" claim
 holds for DOCUMENT-RENDERED scripts (they carry the nonce in the SSR HTML). An
@@ -124,9 +142,14 @@ the loader could run before the bootstrap. Instead let the bootstrap inject its
 own loader (Google's snippet does exactly this):
 
 ```ts
-function gtmBootstrap(id: string): string {
+// `initial` is pushed into dataLayer before the GTM start event, so tags that
+// fire on the first page_view can read it (see per-route tagging below).
+function gtmBootstrap(id: string, initial?: Record<string, string>): string {
   return [
     "window.dataLayer=window.dataLayer||[];",
+    // <Html.Scripts> escapes the body against </script> breakout, so plain
+    // JSON.stringify is enough here.
+    initial ? `window.dataLayer.push(${JSON.stringify(initial)});` : "",
     'window.dataLayer.push({"gtm.start":new Date().getTime(),event:"gtm.js"});',
     `(function(d,s,i){var j=d.createElement(s);j.async=true;j.src="https://www.googletagmanager.com/gtm.js?id="+encodeURIComponent(i);var f=d.getElementsByTagName(s)[0];f.parentNode.insertBefore(j,f);})(document,"script",${JSON.stringify(id)});`,
   ].join("");
@@ -143,12 +166,12 @@ per-route data into the FIRST (hard-load) page_view server-side — the Script
 handle is collected after handlers run (parent → child, last-wins):
 
 ```ts
-// root layout: generic bootstrap
+// root layout: generic bootstrap (handler push — always pre-barrier)
 ctx.use(Script)({ id: "gtm", children: gtmBootstrap("GTM-XXXX") });
 // a route: same id, with content_group baked in
 ctx.use(Script)({
   id: "gtm",
-  children: gtmBootstrapWith({ content_group: "blog" }),
+  children: gtmBootstrap("GTM-XXXX", { content_group: "blog" }),
 });
 ```
 
@@ -165,6 +188,10 @@ Otherwise allow the vendor hosts. For GTM/GA4 (Google's wildcards): `script-src
 `frame-src https://*.googletagmanager.com` for the GTM `<noscript>` iframe. See
 [Google's CSP guide](https://developers.google.com/tag-platform/security/guides/csp).
 
+A per-request nonce also takes a `ppr` route off its shell: a shared shell
+cannot carry one request's nonce, so the route renders normally (no shell) and
+warns once per key. See `/ppr` → "What always renders without a shell".
+
 ## Not covered (do it yourself)
 
 - **`onLoad` / `onReady` / `onError`** — callbacks can't cross the server handle
@@ -176,4 +203,5 @@ Otherwise allow the vendor hosts. For GTM/GA4 (Google's wildcards): `script-src
   `type: "text/partytown"` and wire Partytown's own nonce config manually.
 
 A full GTM + GA4-style integration (page_view on first render + soft nav, nonce,
-ecommerce events) lives in `tests/vite-rsc-demo`.
+ecommerce events) lives in the router repository's `tests/vite-rsc-demo` app
+(not shipped in this package).

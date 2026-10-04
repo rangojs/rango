@@ -1,0 +1,20 @@
+name: Question
+description: How do I… / is this expected. Not a bug and not an RFC.
+labels: [question]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For a contract mismatch, use the Bug template. For a new API, use RFC.
+        Security reports go to [SECURITY.md](https://github.com/rangojs/rango/blob/main/SECURITY.md).
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: What you already tried
+      description: Relevant route tree, docs, or skill you read.

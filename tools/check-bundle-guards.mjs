@@ -12,6 +12,7 @@
  *     chunk stays under ROUTER_CHUNK_GZIP_MAX — catches client-runtime creep
  *     the rejected-optimizations list (AGENTS.md Bundle hygiene) exists to
  *     prevent. Baseline measured 2026-07-10: 33.2KB gzip; budget 50-60KB.
+ *     Re-baselined 2026-07-26 at 42.4KB for clientUrls() — see the constant.
  *  3. EAGER MANIFEST CEILING (cloudflare-stress-demo): the eager
  *     `virtual:rsc-router/routes-manifest` module stays tiny in the RSC
  *     metafile. Measured 284B gzip at 26k routes; the regression mode is
@@ -41,7 +42,63 @@ import {
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-const ROUTER_CHUNK_GZIP_MAX = 40 * 1024;
+// Raised 40KB -> 43KB on 2026-07-26 for clientUrls() (PR #812), measured at
+// 42443B on cloudflare-basic. This was a DELIBERATE call, not a red-check
+// silencing: the runtime is still well inside the 50-60KB budget above, and the
+// ratchet fired exactly as intended — it forced the decision below.
+//
+// What the +4.3KB buys, and the known wart: the clientUrls() runtime
+// (client-urls/client-urls.ts ~11.7KB rendered, plus router/trie-matching.ts
+// and router/route-trie-builder.ts, whose ONLY client-graph consumer it is)
+// lands in the eager router chunk, so every page of every app pays for it —
+// including apps that never call clientUrls(). In cloudflare-basic the feature
+// is two routes behind a separate router at /__client-urls.
+//
+// Why it is not simply chunk-split: `manualChunks` returning undefined does not
+// move it (measured: 42443B -> 41878B, only client-root.tsx relocates). The
+// implementation is pinned by the static re-export at client.tsx:262, and both
+// public barrels (src/client.tsx AND src/index.ts) sit in the eager chunk, so
+// re-homing the export does not help either. The real fix is a dedicated
+// `@rangojs/router/client-urls` subpath whose only importer is the consumer's
+// "use client" definition module — a public API change, tracked separately.
+// Do NOT raise this again to absorb that; land the split instead.
+//
+// Re-baselined 43KB -> 44KB on 2026-09-11 (PR #848). Main had crept to 44031B
+// (1B under the limit) through work landed since #812, so the ratchet was
+// tripping on chunk-shape noise: #848 adds no client runtime — the chunk diff
+// vs main is plugin-rsc's client-reference registration order shifting because
+// a "use client" module gained a second include() mount (+4B raw, +5B gzip).
+// The clientUrls() split above is still the real fix for the eager cost.
+//
+// Raised 44KB -> 45KB on 2026-09-28 (PR #948), measured 45002B -> 45348B
+// (+346B gzip, +1.14KB raw). A deliberate call: the default document now
+// renders Html.ScrollRestoration, and components/DefaultDocument.tsx is in
+// every app's client build (router.ts imports it as the `document` fallback),
+// so initScrollRestoration lands in the eager router chunk even for apps whose
+// own document never renders it. Keeping it out would mean lazy-loading the
+// init out of browser/scroll-restoration.ts, whose module state the
+// navigation bridge shares; judged not worth a chunk request for ~0.35KB.
+//
+// Raised 45KB -> 46KB on 2026-09-30 (PR #1006), measured 45375B -> 46805B
+// (+1430B gzip). A deliberate call: transition({ when }) moved from the server
+// to the browser, so its decision runs in the router chunk — the per-history-
+// entry memory pop reads `from` from, the one decision helper and its five
+// commit sites (navigation, clientUrls() optimistic swap, pop, action,
+// revalidate), the RouteLocation/context builders and Def.read(location).
+// None of it can load lazily: the decision is made synchronously at commit.
+// Predicate modules themselves land in the entry chunk, not here.
+//
+// Raised 46KB -> 47KB on 2026-10-04 (issue #1029), measured 47077B -> 47262B
+// (+185B gzip). A deliberate call: useLocationState reads the location state
+// of the entry on screen from React state NavigationProvider holds next to
+// the payload, instead of reading history.state itself, so a value can only
+// render with its entry's tree. What grew: the snapshot every commit site
+// records (location-state-shared.ts locationStateSnapshot), its holder on the
+// event controller and the provider's context; the hook itself shrank. None
+// of it can load lazily: the snapshot is recorded in the commit and read
+// during render. The step is a whole KB because main sat 27B under the old
+// limit: a smaller one would leave the ratchet tripping on the next change.
+const ROUTER_CHUNK_GZIP_MAX = 47 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

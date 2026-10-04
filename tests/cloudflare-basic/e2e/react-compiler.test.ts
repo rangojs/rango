@@ -8,11 +8,10 @@ import { waitForHydration, expectNoPageError, testId } from "./helper";
  * React Compiler verification for the cloudflare-basic app — the Cloudflare
  * path, where @cloudflare/vite-plugin (not rango) supplies @vitejs/plugin-rsc.
  *
- * The compiler is wired exactly like the @vitejs/plugin-rsc example: a
- * top-level @rolldown/plugin-babel running reactCompilerPreset(), ordered after
- * react() and before rango()/cloudflare() (see cloudflare-basic/vite.config.ts).
- * This suite confirms the compiler transforms components in BOTH dev and
- * production even when the RSC plugin is contributed by the Cloudflare plugin.
+ * The compiler is plugin-react's native `compiler` option, backed by
+ * oxc-transform-react (see cloudflare-basic/vite.config.ts). This suite
+ * confirms the compiler transforms components in BOTH dev and production even
+ * when the RSC plugin is contributed by the Cloudflare plugin.
  *
  * Marker: React Compiler reads each memo-cache slot back with a strict
  * comparison `$[i] === Symbol.for("react.memo_cache_sentinel")`. That triple-`=`
@@ -94,10 +93,16 @@ test.describe("react compiler (cloudflare-basic)", () => {
     await waitForHydration(page);
     await Promise.all(pending);
     // At least one loaded client module carries the universal compiler
-    // signature — the react/compiler-runtime allocator import. (Asserted over
-    // what the browser actually fetched, which sidesteps workerd dev's opaque
-    // module URLs.)
-    expect(jsBodies.some((b) => b.includes("compiler-runtime"))).toBe(true);
+    // signature — the react/compiler-runtime allocator import — together with
+    // the Fast Refresh registration, which the same native pass emits (Vite's
+    // own refresh injection is off while `compiler` is on). Asserted over what
+    // the browser actually fetched, which sidesteps workerd dev's opaque module
+    // URLs.
+    expect(
+      jsBodies.some(
+        (b) => b.includes("compiler-runtime") && b.includes("$RefreshReg$("),
+      ),
+    ).toBe(true);
   });
 
   test("dev: compiled client component is interactive", async ({ page }) => {

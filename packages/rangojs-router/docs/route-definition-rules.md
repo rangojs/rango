@@ -1,42 +1,85 @@
 # Route Definition Rules
 
 Constraints enforced at definition time by `urls()`, `layout()`, `path()`, and
-other route helpers. Violations throw an `Invariant` error immediately when
-the route tree is built.
+other route helpers. Violations throw immediately when the route tree is built:
+nesting and naming violations throw an `Error` whose message starts with
+`Invariant:` (from `invariant()` in `src/errors.ts`), and calling any helper
+outside an active `urls()` builder throws a `DslContextError`
+("`<helper>() must be called inside urls()`").
+
+Guard locations below are relative to `src/`: `path()` guards live in
+`urls/path-helper.ts`; the other helpers live in
+`route-definition/dsl-helpers.ts`.
 
 ## Nesting Rules
 
-### path() (href)
+### path()
 
-| Rule                                        | Example                                                   | Guard location            |
-| ------------------------------------------- | --------------------------------------------------------- | ------------------------- |
-| Cannot be inside `parallel()`               | `parallel({ "@slot": path(...) })`                        | `urls.ts`                 |
-| Cannot be nested inside another `path()`    | `path("/a", A, () => [path("/b", B)])`                    | `urls.ts` (ancestor walk) |
-| Ancestor walk catches intermediate wrappers | `path("/a", A, () => [layout(L, () => [path("/b", B)])])` | `urls.ts` (ancestor walk) |
-| Same through cache boundaries               | `path("/a", A, () => [cache(c, () => [path("/b", B)])])`  | `urls.ts` (ancestor walk) |
+| Rule                                        | Example                                                   | Guard location                        |
+| ------------------------------------------- | --------------------------------------------------------- | ------------------------------------- |
+| Cannot be inside `parallel()`               | `parallel({ "@slot": path(...) })`                        | `urls/path-helper.ts`                 |
+| Cannot be nested inside another `path()`    | `path("/a", A, () => [path("/b", B)])`                    | `urls/path-helper.ts` (ancestor walk) |
+| Ancestor walk catches intermediate wrappers | `path("/a", A, () => [layout(L, () => [path("/b", B)])])` | `urls/path-helper.ts` (ancestor walk) |
+| Same through cache boundaries               | `path("/a", A, () => [cache(c, () => [path("/b", B)])])`  | `urls/path-helper.ts` (ancestor walk) |
 
 ### layout()
 
-| Rule                                                 | Example                                                  | Guard location        |
-| ---------------------------------------------------- | -------------------------------------------------------- | --------------------- |
-| Cannot be inside `parallel()`                        | `layout(L)` inside parallel callback                     | `route-definition.ts` |
-| Orphan layout cannot contain other layouts           | `layout(A, () => [layout(B)])` where A has no routes     | `route-definition.ts` |
-| Orphan layout at non-root level needs parent         | Orphan layout floating without route/layout/cache parent | `route-definition.ts` |
-| Orphan layout parent must be route, layout, or cache | Orphan layout inside parallel or intercept               | `route-definition.ts` |
+| Rule                                                 | Example                                                  | Guard location                    |
+| ---------------------------------------------------- | -------------------------------------------------------- | --------------------------------- |
+| Cannot be inside `parallel()`                        | `layout(L)` inside parallel callback                     | `route-definition/dsl-helpers.ts` |
+| Orphan layout cannot contain other layouts           | `layout(A, () => [layout(B)])` where A has no routes     | `route-definition/dsl-helpers.ts` |
+| Orphan layout at non-root level needs parent         | Orphan layout floating without route/layout/cache parent | `route-definition/dsl-helpers.ts` |
+| Orphan layout parent must be route, layout, or cache | Orphan layout inside parallel or intercept               | `route-definition/dsl-helpers.ts` |
+
+### middleware()
+
+| Rule                                                         | Example                                                           | Guard location                    |
+| ------------------------------------------------------------ | ----------------------------------------------------------------- | --------------------------------- |
+| Wrapper form with no routes inside cannot contain `layout()` | `path("/a", A, () => [middleware(fn, () => [layout(L)])])`        | `route-definition/dsl-helpers.ts` |
+| Same in a layout's children                                  | `layout(R, () => [middleware(fn, () => [layout(L)]), path(...)])` | `route-definition/dsl-helpers.ts` |
+
+A wrapper with no routes inside is an orphan of the enclosing entry, so its
+middleware runs for every route of that entry (`collectRouteMiddleware` walks
+orphans) and the wrapper scopes nothing. The error points to the flat form,
+`middleware(fn), layout(L)`, which behaves the same. Before issue #918 the
+nested `layout()` was dropped at render while the middleware still ran. A
+wrapper with routes inside may hold a `layout()`, and a routeless wrapper
+without one (`middleware(fn, () => [loader(L)])`) stays valid.
 
 ### parallel()
 
-| Rule                                         | Example                             | Guard location        |
-| -------------------------------------------- | ----------------------------------- | --------------------- |
-| Cannot be nested inside another `parallel()` | `parallel({ "@a": parallel(...) })` | `route-definition.ts` |
-| Needs a parent entry                         | `parallel()` at root level          | `route-definition.ts` |
+| Rule                                         | Example                             | Guard location                    |
+| -------------------------------------------- | ----------------------------------- | --------------------------------- |
+| Cannot be nested inside another `parallel()` | `parallel({ "@a": parallel(...) })` | `route-definition/dsl-helpers.ts` |
+| Needs a parent entry                         | `parallel()` at root level          | `route-definition/dsl-helpers.ts` |
 
 ### intercept()
 
-| Rule                          | Example                              | Guard location        |
-| ----------------------------- | ------------------------------------ | --------------------- |
-| Cannot be inside `parallel()` | `parallel({ "@a": intercept(...) })` | `route-definition.ts` |
-| Needs a parent entry          | `intercept()` at root level          | `route-definition.ts` |
+| Rule                                                                                                          | Example                                                    | Guard location                                                                                     |
+| ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Cannot be inside `parallel()`                                                                                 | `parallel({ "@a": intercept(...) })`                       | `route-definition/dsl-helpers.ts`                                                                  |
+| Needs a parent entry                                                                                          | `intercept()` at root level                                | `route-definition/dsl-helpers.ts`                                                                  |
+| `use()` and the handler's `.use` hold only `middleware`, `loader`, `loading`, `layout`, `route`, `transition` | `intercept(s, r, H, () => [revalidate(fn)])`               | `route-definition/resolve-handler-use.ts` (`validateInterceptUseItems`, called from `intercept()`) |
+| A nested `layout()` is the modal chrome only: no `use()` items of its own                                     | `intercept(s, r, H, () => [layout(C, () => [loader(L)])])` | `route-definition/resolve-handler-use.ts`                                                          |
+
+Each rejected item gets a pointer to where it goes instead:
+
+- `revalidate()`: on the intercept's loader, `loader(Def, () => [revalidate(fn)])`.
+- `errorBoundary()` / `notFoundBoundary()`: on the layout or path that
+  declares the intercept (or an ancestor). Errors and `notFound()` from the
+  intercept's handler (since #878) and from its loaders resolve there, as the
+  modal slot's content; the intercepted target route's boundaries are not
+  consulted. When the declaring layout has no routes of its own (an orphan),
+  the lookup continues at the layout that holds it and that layout's
+  ancestors (see "How orphan layouts work").
+- `cache()`: on the target route (an intercept navigation gets its own
+  `intercept:` cache key under the target route's scope), or `"use cache"` in
+  the handler. A `cache()` called in the scope is rejected even when it is not
+  returned.
+
+`intercept()`'s temporary parent points every field a rejected helper writes
+to at a throwaway, so a helper called but not returned from `use()` never
+lands on the enclosing layout.
 
 ### `when` (intercept config)
 
@@ -44,20 +87,36 @@ The match-time selector is the `when` field of the `intercept()` config object
 (4th argument), not a standalone DSL helper. It is a single predicate or an
 array of predicates (AND logic); omit it to always activate.
 
-| Rule                                             | Example                                                     | Guard location        |
-| ------------------------------------------------ | ----------------------------------------------------------- | --------------------- |
-| Only valid on `intercept()` (no standalone form) | `intercept(slot, route, Comp, { when: ({ from }) => ... })` | `route-definition.ts` |
+| Rule                                             | Example                                                         | Guard location                    |
+| ------------------------------------------------ | --------------------------------------------------------------- | --------------------------------- |
+| Only valid on `intercept()` (no standalone form) | `intercept(slot, route, Comp, { when: ({ from, to }) => ... })` | `route-definition/dsl-helpers.ts` |
+
+### `when` (transition config)
+
+`transition({ when })` is a browser predicate, so in a server `urls()` it must
+reach the browser as a client reference. An invalid value fails dev startup,
+the build and HMR re-discovery with the route name and pattern
+(`TransitionWhenError`); a route discovery did not see throws the same error
+at render.
+
+| Rule                                                                 | Example                                                                   | Guard location                                                                     |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| A function (definition time, every environment)                      | `transition({ when: true })` is a `TypeError`                             | `route-definition/dsl-helpers.ts` (`assertTransitionWhenShape`)                    |
+| An inline literal is hoisted; it may not capture server bindings     | `const limit = 3; transition({ when: ({ to }) => +to.params.n < limit })` | `vite/plugins/transition-when-hoist.ts`                                            |
+| A name must be a `"use client"` export, not a server function        | `transition({ when: serverFn })`                                          | `build/generate-manifest.ts` (discovery), `rsc/attach-transition-when.ts` (render) |
+| `clientUrls()`: inline, no hoist (the definition is a client module) | `transition({ when: ({ from }) => ... })`                                 | `client-urls/client-urls.ts`                                                       |
 
 ### Route names
 
-| Rule                                        | Example                                    | Guard location                   |
-| ------------------------------------------- | ------------------------------------------ | -------------------------------- |
-| Must be unique across the entire route tree | Two `path()` calls with `{ name: "home" }` | `urls.ts`, `route-definition.ts` |
+| Rule                                        | Example                                    | Guard location                                           |
+| ------------------------------------------- | ------------------------------------------ | -------------------------------------------------------- |
+| Must be unique across the entire route tree | Two `path()` calls with `{ name: "home" }` | `urls/path-helper.ts`, `route-definition/dsl-helpers.ts` |
 
 ## Orphan Layout Behavior
 
 An **orphan layout** is a layout with no route children (directly or through
-nested caches/includes). Orphan layouts are composable wrappers that attach to
+nested `cache()`, `middleware()`, wrapper-form `transition()` blocks, or
+includes). Orphan layouts are composable wrappers that attach to
 their parent's `layout[]` array.
 
 ### What orphan layouts CAN have as children
@@ -67,20 +126,52 @@ their parent's `layout[]` array.
 - `loader()` -- data loader for the layout segment
 - `errorBoundary()` -- error boundary wrapping the layout
 - `notFoundBoundary()` -- not-found boundary wrapping the layout
-- `cache()` (orphan, without children) -- cache config
+- `cache()` -- inside a `path()`, configures that path (see "Orphan Cache
+  Behavior"). In a layout's children an orphan layout has no routes, so a
+  `cache()` in it caches nothing
 - `parallel()` -- parallel slots
 
 ### What orphan layouts CANNOT have as children
 
-- Other `layout()` calls (nested orphan layout chains are broken at render time)
+- Other `layout()` calls, directly or through a routeless `middleware()`
+  wrapper. List sibling layouts instead: they render the same nesting
 
 ### How orphan layouts work
 
-1. During definition, `hasRoutesInItem()` determines if a layout is orphan
-2. Orphan layouts get `parent = null` and are pushed to `parent.layout[]`
-3. At runtime, `resolveOrphanLayout()` creates segments for each orphan layout
+1. During definition, `hasRoutesInItem()` determines if a layout is orphan. It
+   recurses through every wrapper item that carries `uses` — `cache`, `layout`,
+   `middleware` and wrapper-form `transition` — so
+   `layout(Shell, () => [transition(cfg, () => [path(...)])])` is NOT an orphan
+   (scar tissue: before the `transition` case existed, that shape was pushed
+   onto the parent's `layout[]` and Shell wrapped every sibling route)
+2. Orphan layouts get `parent = null` and are pushed to `parent.layout[]`.
+   `orphanOwner` records that parent (`attachOrphanSibling`), and only the
+   boundary walkers in `router/error-handling.ts` follow it: an error lookup
+   that starts at the orphan (its own loaders, an intercept it declares)
+   continues at the owner and the owner's ancestors. Before issue #898 that
+   walk stopped at the orphan, so an ancestor's `errorBoundary()` never
+   handled those errors. `parent` itself stays null: `matchError`'s
+   matched-id stack (`router/match-api.ts`) starts at the entry that holds
+   the boundary, which can be an orphan, and must stop there
+3. At runtime, `resolveOrphanLayout()` creates segments for each orphan layout,
+   then for the routeless entries in its own `layout[]` (a `layout()` after a
+   bare `cache()` marker, a wrapper inside a routeless wrapper). Before issue
+   #918 it rendered one level only and dropped those
 4. `collectRouteMiddleware()` recursively processes orphan layouts for middleware
 5. The segment system renders orphan layout components as wrappers around route content
+6. The lookups that scan orphans walk the nested ones too, through
+   `findInOrphans()` in `router/error-handling.ts`: the boundary walkers,
+   `matchError` (`router/match-api.ts`), `findInterceptForRoute()` and
+   `collectInterceptTargetNames()` (`router/intercept-resolution.ts`), and the
+   build's intercept scan (`router/prerender-match.ts`). At each entry of the
+   walk the order is the entry itself, then its orphans depth-first in render
+   order, then the parent (`parent ?? orphanOwner` in the boundary walkers).
+   A bare `cache()` marker in the chain is also in its layout's `layout[]`;
+   the walk skips it there, so the build does not pre-render its intercepts
+   twice. Before issue #926 these lookups read one level, so an
+   `errorBoundary()`, `notFoundBoundary()` or `intercept()` in a layout after
+   a bare `cache()` marker (for the routes before the marker) or in a
+   routeless `transition()` / `cache()` wrapper was never found
 
 ### Sibling orphan layouts vs nested
 
@@ -114,8 +205,67 @@ layout(RootLayout, () => [
 ]);
 ```
 
+The entry is also pushed to the parent's `layout[]`, so the non-route siblings
+after it (`layout()`, `middleware()`, `loader()`, `parallel()`) wrap every
+route of the parent, including the routes before the marker. Only the routes
+after it are in its cache scope:
+
+```typescript
+layout(<AppShell />, () => [
+  path("/a", PageA, { name: "a" }), // PromoBanner renders live
+  cache({ ttl: 60 }),
+  layout(<PromoBanner />),
+  path("/b", PageB, { name: "b" }), // PromoBanner cached with PageB
+]);
+```
+
+For a route after the marker the entry is both an orphan of the parent and a
+chain entry. It resolves once, as the chain entry (`ResolveSegmentOptions.chain`
+in `segment-resolution/fresh.ts`, `collectRouteMiddleware` in
+`router/middleware.ts`), below the `cache()` header latch and never in a hit's
+live pass. Before issue #918 a `layout()` after the marker never rendered on
+the routes before it, and on the routes after it a `parallel()` after the
+marker ran twice on a miss and once, discarded, on a hit, and a
+`middleware()` after it ran twice.
+
 A cache **with** children callback but no routes among its children is treated
-like an orphan layout and pushed to `parent.layout[]`.
+like an orphan layout and pushed to `parent.layout[]`. With no route in its
+scope it caches nothing; its children render as the parent's orphans.
+
+Inside a `loader()` use callback, `cache()` is not a structural entry: it sets
+that loader's own cache config (`loader(Def, () => [cache({ ttl: 60 })])`) and
+does not change `ctx.parent`. A `cache()` **with** children is rejected there.
+
+Among a `path()`'s children, `cache()` is not a structural entry either: both
+forms set the route entry's own `cache` config and leave `ctx.parent` on the
+route, and the wrapper form's children attach to the route as if listed after
+it. The route then carries its own cache scope with itself as the boundary
+(`buildEntriesAndCacheScope` in `router/route-snapshot.ts`), so the route
+segment and its own layouts and parallels are the cached unit. Before issue
+#912 it created an orphan cache entry here. That entry was never an ancestor
+of the route, so no scope was built, and a `layout()` declared after it nested
+under the entry, where `resolveOrphanLayout()` never rendered it.
+
+The same holds for a `cache()` inside a routeless `layout()`, `middleware()`
+or `transition()` wrapper in a path (`enclosingRoute()` in
+`route-definition/dsl-helpers.ts`): it configures the path, and its siblings
+stay on the wrapper. A route's cache record is all-or-nothing, so the path is
+the only unit such a `cache()` can cover:
+
+```typescript
+path("/products/:id", ProductPage, { name: "product" }, () => [
+  layout(<ProductChrome />, () => [cache({ ttl: 300 })]), // caches the path
+]);
+// same as
+path("/products/:id", ProductPage, { name: "product" }, () => [
+  cache({ ttl: 300 }),
+  layout(<ProductChrome />),
+]);
+```
+
+Before issue #918 it created an orphan cache entry inside the layout and
+cached nothing. A `cache()` in an `intercept()` use() inside that layout stays
+rejected: the walk stops at the intercept's temporary parent.
 
 ## include() Behavior
 
@@ -153,7 +303,10 @@ the included patterns.
   middleware to the parent entry.
 - **Wrapping mode** — `middleware(fn, () => [...])` or
   `middleware([fn1, fn2], () => [...])` creates a transparent layout that
-  scopes middleware to the children callback only.
+  scopes middleware to the routes in the children callback. With no routes
+  inside, the wrapper is an orphan of the enclosing entry and its middleware
+  runs for every route of that entry; such a wrapper cannot contain `layout()`
+  (see the `middleware()` table above).
 
 ```text
 // Wrapping: authMw only applies to /admin and /admin/settings
@@ -179,11 +332,11 @@ The `name` option determines child route visibility:
 - **`{ name: "blog" }`** — children are prefixed (`blog.index`, `blog.post`).
   Visible in generated route types, globally reversible.
 - **`{ name: "" }`** — children merge into the parent namespace with no prefix.
-  Equivalent to defining those routes inline. Both global `reverse("child")` and
-  dot-local `reverse(".child")` work (routes are at root scope).
+  Equivalent to defining those routes inline. Both global `ctx.reverse("child")`
+  and dot-local `ctx.reverse(".child")` work (routes are at root scope).
 - **Omitted** — children get a private `$prefix_N` scope. Hidden from the
-  generated route map and global `reverse()`. Only dot-local reverse
-  (`reverse(".child")`) works from handlers inside the mounted module.
+  generated route map and global reverse. Only dot-local reverse
+  (`ctx.reverse(".child")`) works from handlers inside the mounted module.
 
 Without a name, `include()` is a composition mechanism for URL mounting
 without polluting the global route namespace. To make child names available
@@ -211,14 +364,24 @@ inside `layout` inside `path`) are NOT caught because the direct child
 - `when` is the `intercept()` config field (`InterceptConfig`), not a use-item — it cannot appear in any use callback
 - `parallel()` is not in `ParallelUseItem` — cannot nest
 - `intercept()` is not in `ParallelUseItem` — cannot be inside parallel
+- `revalidate()` is not in `InterceptUseItem` — direct revalidate-in-intercept caught
+- `errorBoundary()` / `notFoundBoundary()` are not in `InterceptUseItem` — direct boundary-in-intercept caught
+- `cache()` is not in `InterceptUseItem` — direct cache-in-intercept caught
 
 ### Runtime-only guards (TS cannot catch)
 
 - `path()` inside `layout()` inside `path()` — direct child is `LayoutItem` (valid)
 - `path()` inside `cache()` inside `path()` — direct child is `CacheItem` (valid)
 - Orphan layout containing another orphan layout — both are `LayoutItem` (valid)
+- `layout()` inside a routeless `middleware()` wrapper — `LayoutItem` is a
+  valid child of the wrapper
 - `layout()` inside `parallel()` — `LayoutItem` is not in `ParallelUseItem` at
   the type level, but the runtime guard provides the error message
+- `revalidate()`, `errorBoundary()`, `notFoundBoundary()` or `cache()` from a
+  handler's `.use` mounted via `intercept()` — `.use` is typed
+  `HandlerUseItem`, which is mount-agnostic
+- A `layout()` with its own `use()` items inside `intercept()` — `LayoutItem`
+  is a valid `InterceptUseItem`
 
 Runtime guards use ancestor walks and context checks to catch these nested
 violations at route tree build time.

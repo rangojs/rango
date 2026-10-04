@@ -1,3 +1,4 @@
+import { withOptimisticCommitNone } from "../browser/optimistic-commit.js";
 // @vitest-environment happy-dom
 import { describe, it, expect, vi } from "vitest";
 import { createElement, type ReactNode, type ReactElement } from "react";
@@ -12,6 +13,9 @@ function MockLoaderBoundary(props: any) {
 }
 function MockRouteContentWrapper(props: any) {
   return null;
+}
+function MockStreamedLoaderErrorBoundary(props: any) {
+  return props.children;
 }
 function MockMountContextProvider(props: any) {
   return props.children;
@@ -31,6 +35,7 @@ vi.mock("../browser/react/mount-context.js", () => ({
 vi.mock("../route-content-wrapper.js", () => ({
   RouteContentWrapper: MockRouteContentWrapper,
   LoaderBoundary: MockLoaderBoundary,
+  StreamedLoaderErrorBoundary: MockStreamedLoaderErrorBoundary,
 }));
 
 vi.mock("../root-error-boundary.js", () => ({
@@ -38,6 +43,11 @@ vi.mock("../root-error-boundary.js", () => ({
 }));
 
 import { renderSegments } from "../segment-system";
+import { LoaderRedirect } from "../loader-redirect";
+import {
+  decodeLoaderEntry,
+  LOADER_ERROR_FALLBACK,
+} from "../decode-loader-results";
 
 // Helper to create a minimal segment
 function seg(
@@ -238,7 +248,47 @@ describe("segment-system", () => {
         expect(collectByType(tree, MockRouteContentWrapper)).toHaveLength(1);
       });
 
-      it("uses OutletProvider with awaited data when loaders exist but no loading", async () => {
+      it("keys clientUrls() group routes by the group and gives them one wrapper shape", async () => {
+        // Two routes of one group: different ids, params, and loading()
+        // presence — same React key (group) and same wrapper chain, so an
+        // in-group navigation reconciles instead of remounting.
+        const findOutletElement = (node: ReactNode): ReactElement | null => {
+          if (!node || typeof node !== "object") return null;
+          const el = node as ReactElement;
+          if (el.type === MockOutletProvider) return el;
+          const props = el.props as Record<string, unknown>;
+          for (const child of [
+            props.children,
+            props.content,
+            props.outletContent,
+          ]) {
+            const found = findOutletElement(child as ReactNode);
+            if (found) return found;
+          }
+          return null;
+        };
+        const withLoading = seg({
+          id: "R0",
+          type: "route",
+          clientGroup: "/shop",
+          params: { id: "1" },
+          loading: createElement("p", null, "Loading"),
+        });
+        const plain = seg({ id: "R1", type: "route", clientGroup: "/shop" });
+
+        for (const segment of [withLoading, plain]) {
+          const result = await renderSegments([segment]);
+          const tree = toTreeNode(result);
+          expect(collectByType(tree, MockLoaderBoundary)).toHaveLength(0);
+          expect(collectByType(tree, MockRouteContentWrapper)).toHaveLength(0);
+          expect(
+            collectByType(tree, MockStreamedLoaderErrorBoundary),
+          ).toHaveLength(1);
+          expect(findOutletElement(result)?.key).toBe("cg:/shop");
+        }
+      });
+
+      it("streams per-loader entries through OutletProvider.loaderStreams when loaders exist but no loading", async () => {
         const segments: ResolvedSegment[] = [
           seg({ id: "R0", type: "route" }),
           seg({
@@ -254,9 +304,182 @@ describe("segment-system", () => {
 
         // No LoaderBoundary because loading is undefined
         expect(collectByType(tree, MockLoaderBoundary)).toHaveLength(0);
-        // Uses OutletProvider with loaderData injected
+        // Streaming lanes no longer block the tree build: the UNDECODED
+        // per-loader entry rides loaderStreams and useLoader decodes (and
+        // suspends, when pending) at the read site.
         const outlets = collectByType(tree, MockOutletProvider);
         expect(outlets).toHaveLength(1);
+        expect(outlets[0].props.loaderData).toBeUndefined();
+        expect(outlets[0].props.loaderStreams).toEqual({
+          "my-loader": { value: 42 },
+        });
+      });
+
+      it("delivers { ssr: false } loaders as SETTLED values in loaderStreams; unflagged siblings keep the promise", async () => {
+        // The SSR-completeness contract must hold by construction, not by the
+        // read site's use() winning a Flight-chunk scheduling race: a flagged
+        // segment's stream entry is the awaited result (decoded synchronously
+        // at the read site), the sibling stays a pending promise, and the
+        // flagged id rides awaitedLoaderIds for the dev diagnostic.
+        const pendingSibling = new Promise(() => {});
+        const segments: ResolvedSegment[] = [
+          seg({ id: "R0", type: "route" }),
+          seg({
+            id: "R0D0.flagged",
+            type: "loader",
+            loaderId: "flagged-loader",
+            awaitBeforeFlush: true,
+            loaderData: Promise.resolve({ ok: true, data: "settled" }),
+          }),
+          seg({
+            id: "R0D1.plain",
+            type: "loader",
+            loaderId: "plain-loader",
+            loaderData: pendingSibling,
+          }),
+        ];
+
+        const result = await renderSegments(segments);
+        const tree = toTreeNode(result);
+
+        const outlets = collectByType(tree, MockOutletProvider);
+        expect(outlets).toHaveLength(1);
+        const streams = outlets[0].props.loaderStreams;
+        expect(streams["flagged-loader"]).toEqual({
+          ok: true,
+          data: "settled",
+        });
+        expect(streams["flagged-loader"]).not.toBeInstanceOf(Promise);
+        expect(streams["plain-loader"]).toBe(pendingSibling);
+        expect(outlets[0].props.awaitedLoaderIds).toEqual(["flagged-loader"]);
+      });
+
+      it("delivers { ssr: false } loaders as SETTLED values through the LoaderBoundary streams too", async () => {
+        const segments: ResolvedSegment[] = [
+          seg({ id: "R0", type: "route", loading: "Loading..." }),
+          seg({
+            id: "R0D0.flagged",
+            type: "loader",
+            loaderId: "flagged-loader",
+            awaitBeforeFlush: true,
+            loaderData: Promise.resolve({ ok: true, data: "settled" }),
+          }),
+        ];
+
+        const result = await renderSegments(segments);
+        const tree = toTreeNode(result);
+
+        const boundaries = collectByType(tree, MockLoaderBoundary);
+        expect(boundaries).toHaveLength(1);
+        expect(boundaries[0].props.loaderStreams["flagged-loader"]).toEqual({
+          ok: true,
+          data: "settled",
+        });
+        expect(boundaries[0].props.awaitedLoaderIds).toEqual([
+          "flagged-loader",
+        ]);
+      });
+
+      it("resolves a settled { ssr: false } redirect() to LoaderRedirect and replaces the whole page", async () => {
+        // Document lane: the flagged result is settled before the tree is
+        // built, and a read-site throw would land in the Fizz shell. The
+        // redirect carrier replaces every segment (an ancestor reading the
+        // loader would otherwise still throw); no OutletProvider renders.
+        const segments: ResolvedSegment[] = [
+          seg({ id: "L0", type: "layout" }),
+          seg({ id: "R0", type: "route" }),
+          seg({
+            id: "R0D0.flagged",
+            type: "loader",
+            loaderId: "flagged-loader",
+            awaitBeforeFlush: true,
+            loaderData: Promise.resolve({
+              __loaderResult: true,
+              ok: false,
+              redirect: { to: "/login", state: { flash: "hi" } },
+              error: { message: "Loader redirected to /login", name: "Error" },
+              fallback: null,
+            }),
+          }),
+        ];
+
+        const tree = toTreeNode(await renderSegments(segments));
+        const redirects = collectByType(tree, LoaderRedirect);
+        expect(redirects).toHaveLength(1);
+        expect(redirects[0].props).toEqual({
+          to: "/login",
+          state: { flash: "hi" },
+        });
+        expect(collectByType(tree, MockOutletProvider)).toHaveLength(0);
+      });
+
+      it("resolves a settled { ssr: false } notFound() to its fallback at the owning segment", async () => {
+        const segments: ResolvedSegment[] = [
+          seg({ id: "R0", type: "route" }),
+          seg({
+            id: "R0D0.flagged",
+            type: "loader",
+            loaderId: "flagged-loader",
+            awaitBeforeFlush: true,
+            loaderData: Promise.resolve({
+              __loaderResult: true,
+              ok: false,
+              notFound: true,
+              error: { message: "gone", name: "DataNotFoundError" },
+              fallback: "not-found-ui",
+            }),
+          }),
+        ];
+
+        const tree = toTreeNode(await renderSegments(segments));
+        const outlets = collectByType(tree, MockOutletProvider);
+        expect(outlets).toHaveLength(1);
+        expect(outlets[0].props.children).toBe("not-found-ui");
+        expect(collectByType(tree, LoaderRedirect)).toHaveLength(0);
+      });
+
+      it("resolves a settled { ssr: false } redirect() through the LoaderBoundary branch too", async () => {
+        const segments: ResolvedSegment[] = [
+          seg({ id: "R0", type: "route", loading: "Loading..." }),
+          seg({
+            id: "R0D0.flagged",
+            type: "loader",
+            loaderId: "flagged-loader",
+            awaitBeforeFlush: true,
+            loaderData: Promise.resolve({
+              __loaderResult: true,
+              ok: false,
+              redirect: { to: "/login" },
+              error: { message: "Loader redirected to /login", name: "Error" },
+              fallback: null,
+            }),
+          }),
+        ];
+
+        const tree = toTreeNode(await renderSegments(segments));
+        expect(collectByType(tree, LoaderRedirect)).toHaveLength(1);
+        expect(collectByType(tree, MockLoaderBoundary)).toHaveLength(0);
+      });
+
+      it("awaits and decodes loader data on forceAwait lanes (no loading)", async () => {
+        // popstate / stale-revalidation / fully-prefetched commits must stay
+        // whole: the awaited lane still provides DECODED loaderData and no
+        // stream channel, so nothing suspends at the read site.
+        const segments: ResolvedSegment[] = [
+          seg({ id: "R0", type: "route" }),
+          seg({
+            id: "R0D0.data",
+            type: "loader",
+            loaderId: "my-loader",
+            loaderData: { value: 42 },
+          }),
+        ];
+
+        const result = await renderSegments(segments, { forceAwait: true });
+        const tree = toTreeNode(result);
+        const outlets = collectByType(tree, MockOutletProvider);
+        expect(outlets).toHaveLength(1);
+        expect(outlets[0].props.loaderStreams).toBeUndefined();
         expect(outlets[0].props.loaderData).toEqual({
           "my-loader": { value: 42 },
         });
@@ -394,14 +617,14 @@ describe("segment-system", () => {
         const tree = toTreeNode(result);
         const outlets = collectByType(tree, MockOutletProvider);
 
-        // Layout L0 gets the loader data (parent of "L0D0.products" is "L0")
+        // Layout L0 gets the loader stream (parent of "L0D0.products" is "L0")
         const layoutOutlet = outlets.find((o) => o.props.segment.id === "L0")!;
-        expect(layoutOutlet.props.loaderData).toEqual({
+        expect(layoutOutlet.props.loaderStreams).toEqual({
           "products-loader": { products: ["a", "b"] },
         });
       });
 
-      it("resolves LoaderDataResult success wrapper", async () => {
+      it("streams the LoaderDataResult success wrapper undecoded; the read site unwraps it", async () => {
         const segments: ResolvedSegment[] = [
           seg({ id: "R0", type: "route" }),
           seg({
@@ -420,13 +643,24 @@ describe("segment-system", () => {
         const tree = toTreeNode(result);
         const outlets = collectByType(tree, MockOutletProvider);
 
-        // Should unwrap LoaderDataResult to get the inner data
-        expect(outlets[0].props.loaderData).toEqual({
-          "my-loader": { value: 42 },
+        // The wrapper crosses the stream channel intact; decodeLoaderEntry
+        // (useLoader's read-site decode) unwraps it.
+        const entry = outlets[0].props.loaderStreams["my-loader"];
+        expect(entry).toEqual({
+          __loaderResult: true,
+          ok: true,
+          data: { value: 42 },
         });
+        expect(decodeLoaderEntry(entry)).toEqual({ value: 42 });
       });
 
-      it("renders error fallback for LoaderDataResult with error+fallback", async () => {
+      it("streams an error entry; the thrown error carries the boundary fallback for StreamedLoaderErrorBoundary", async () => {
+        // Read-site error routing: the build no longer swaps children for the
+        // errorBoundary() fallback — the undecoded error entry streams to the
+        // read site, decodeLoaderEntry throws with the fallback riding the
+        // error via LOADER_ERROR_FALLBACK, and the router-owned
+        // StreamedLoaderErrorBoundary (wrapped around every loader-bearing
+        // segment's children) renders it.
         const errorFallback = createElement("div", null, "Error occurred");
 
         const segments: ResolvedSegment[] = [
@@ -448,11 +682,27 @@ describe("segment-system", () => {
         const tree = toTreeNode(result);
         const outlets = collectByType(tree, MockOutletProvider);
 
-        // The OutletProvider children should be the error fallback
-        expect(outlets[0].props.children).toBe(errorFallback);
+        // Children are NOT replaced at build time; the boundary wrapper is in
+        // place and the error entry rides the stream.
+        expect(outlets[0].props.children).not.toBe(errorFallback);
+        expect(
+          collectByType(tree, MockStreamedLoaderErrorBoundary),
+        ).toHaveLength(1);
+        const entry = outlets[0].props.loaderStreams["my-loader"];
+        let thrown: unknown;
+        try {
+          decodeLoaderEntry(entry);
+        } catch (e) {
+          thrown = e;
+        }
+        expect((thrown as Error).message).toBe("Failed");
+        expect((thrown as any)[LOADER_ERROR_FALLBACK]).toBe(errorFallback);
       });
 
-      it("throws for LoaderDataResult with error but no fallback", async () => {
+      it("no longer rejects the tree build for a loader error; the error surfaces at the read site", async () => {
+        // Error TIMING moved: the build used to await + throw here. Streaming
+        // lanes complete the build and the reconstructed error (name/stack/
+        // code preserved) throws from decodeLoaderEntry during render.
         const segments: ResolvedSegment[] = [
           seg({ id: "R0", type: "route" }),
           seg({
@@ -467,7 +717,11 @@ describe("segment-system", () => {
           }),
         ];
 
-        await expect(renderSegments(segments)).rejects.toThrow("Loader failed");
+        const result = await renderSegments(segments);
+        const tree = toTreeNode(result);
+        const outlets = collectByType(tree, MockOutletProvider);
+        const entry = outlets[0].props.loaderStreams["my-loader"];
+        expect(() => decodeLoaderEntry(entry)).toThrow("Loader failed");
       });
     });
 
@@ -600,7 +854,7 @@ describe("segment-system", () => {
         const outlets = collectByType(tree, MockOutletProvider);
 
         const layoutOutlet = outlets.find((o) => o.props.segment.id === "L0")!;
-        expect(layoutOutlet.props.loaderData).toEqual({
+        expect(layoutOutlet.props.loaderStreams).toEqual({
           "modal-loader": { modal: true },
         });
       });
@@ -631,7 +885,7 @@ describe("segment-system", () => {
         const outlets = collectByType(tree, MockOutletProvider);
 
         const layoutOutlet = outlets.find((o) => o.props.segment.id === "L0")!;
-        expect(layoutOutlet.props.loaderData).toEqual({
+        expect(layoutOutlet.props.loaderStreams).toEqual({
           "detail-loader": { detail: true },
         });
       });
@@ -680,10 +934,62 @@ describe("segment-system", () => {
           // VT lives in the layout's `content` channel (what <Outlet /> renders),
           // not its `children` channel (the layout component itself).
           expect(findVTIn(layoutOutlet.props.content)).not.toBeNull();
-          expect(findVTIn(layoutOutlet.props.content)?.props.default).toBe(
-            "fade",
+          expect(findVTIn(layoutOutlet.props.content)?.props.default).toEqual(
+            withOptimisticCommitNone("fade"),
           );
           expect(findVTIn(layoutOutlet.props.children)).toBeNull();
+        } finally {
+          vi.doUnmock("react");
+          vi.resetModules();
+        }
+      });
+
+      it("a transition({ when }) gated-off commit keeps the same ViewTransition element with every class none (#995)", async () => {
+        function MockViewTransition(props: any) {
+          return props.children;
+        }
+        const actualReact = await vi.importActual<any>("react");
+        vi.doMock("react", () => ({
+          ...actualReact,
+          ViewTransition: MockViewTransition,
+          default: { ...actualReact, ViewTransition: MockViewTransition },
+        }));
+        vi.resetModules();
+        try {
+          const { renderSegments: renderSegmentsFresh } =
+            await import("../segment-system");
+          const when = () => false;
+          const route = seg({
+            id: "L0R0",
+            type: "route",
+            transition: { default: "fade", name: "hero", when } as any,
+          });
+
+          const held = findFirst(
+            toTreeNode(await renderSegmentsFresh([route])),
+            MockViewTransition,
+          );
+          const gated = findFirst(
+            toTreeNode(
+              await renderSegmentsFresh([route], { transitionGatedOff: true }),
+            ),
+            MockViewTransition,
+          );
+
+          // Same element type either way: the decision never remounts.
+          expect(held?.type).toBe(MockViewTransition);
+          expect(gated?.type).toBe(MockViewTransition);
+          expect(held?.props.when).toBeUndefined();
+          expect(gated?.props.name).toBe("hero");
+          // Every class resolves to "none" for every transition type.
+          for (const phase of ["enter", "exit", "update", "share", "default"]) {
+            const value = gated?.props[phase];
+            const classes =
+              typeof value === "string" ? [value] : Object.values(value);
+            expect(new Set(classes), phase).toEqual(new Set(["none"]));
+          }
+          expect(gated?.props.when).toBeUndefined();
+          expect(gated?.props.viewTransition).toBeUndefined();
         } finally {
           vi.doUnmock("react");
           vi.resetModules();
@@ -735,9 +1041,9 @@ describe("segment-system", () => {
           expect(toTreeNode(normalOuterOutlet.props.content)?.type).toBe(
             MockOutletProvider,
           );
-          expect(findVTIn(normalInnerOutlet.props.content)?.props.default).toBe(
-            "outer-fade",
-          );
+          expect(
+            findVTIn(normalInnerOutlet.props.content)?.props.default,
+          ).toEqual(withOptimisticCommitNone("outer-fade"));
 
           const interceptResult = await renderSegmentsFresh(
             [outer, inner, route],
@@ -757,7 +1063,7 @@ describe("segment-system", () => {
           );
           expect(
             findVTIn(interceptInnerOutlet.props.content)?.props.default,
-          ).toBe("outer-fade");
+          ).toEqual(withOptimisticCommitNone("outer-fade"));
         } finally {
           vi.doUnmock("react");
           vi.resetModules();
@@ -826,10 +1132,10 @@ describe("segment-system", () => {
 
           expect(
             findVTIn(beforeAction.inner.props.content)?.props.default,
-          ).toBe("outer-fade");
-          expect(findVTIn(afterAction.inner.props.content)?.props.default).toBe(
-            "outer-fade",
-          );
+          ).toEqual(withOptimisticCommitNone("outer-fade"));
+          expect(
+            findVTIn(afterAction.inner.props.content)?.props.default,
+          ).toEqual(withOptimisticCommitNone("outer-fade"));
 
           expect(beforeAction.inner.props.parallel).toHaveLength(1);
           expect(afterAction.inner.props.parallel).toHaveLength(1);
@@ -883,8 +1189,8 @@ describe("segment-system", () => {
 
           // Route has no outlet content; the VT wraps nodeContent (children).
           expect(findVTIn(routeOutlet.props.children)).not.toBeNull();
-          expect(findVTIn(routeOutlet.props.children)?.props.default).toBe(
-            "fade",
+          expect(findVTIn(routeOutlet.props.children)?.props.default).toEqual(
+            withOptimisticCommitNone("fade"),
           );
         } finally {
           vi.doUnmock("react");
@@ -1051,8 +1357,8 @@ describe("segment-system", () => {
         // (loaders from parallels are merged into parent's loaders)
         const layoutOutlet = outlets.find((o) => o.props.segment.id === "L0")!;
         // The sidebar loader is grouped under the parallel "L0.@sidebar"
-        // which is a child of L0, so it gets included in L0's loaders
-        expect(layoutOutlet.props.loaderData).toBeDefined();
+        // which is a child of L0, so it gets included in L0's loader streams
+        expect(layoutOutlet.props.loaderStreams).toBeDefined();
       });
 
       it("reconstructs missing parallel loader markers for layout-owned parallels", async () => {
@@ -1235,6 +1541,126 @@ describe("segment-system", () => {
         resolveLoader({ sidebar: true });
         await firstPromise;
       });
+
+      it("does not attach loaderStreams to a parallel slot — mixed flagged/unflagged stays on the aggregate promise", async () => {
+        const pendingSibling = new Promise(() => {});
+        const loadingSkeleton = createElement("div", null, "Loading sidebar");
+        const segments: ResolvedSegment[] = [
+          seg({ id: "L0", type: "layout" }),
+          seg({
+            id: "L0.@sidebar",
+            namespace: "parallel.sidebar",
+            type: "parallel",
+            slot: "@sidebar",
+            loading: loadingSkeleton,
+          }),
+          seg({
+            id: "L0D0.flagged",
+            namespace: "parallel.sidebar",
+            type: "loader",
+            loaderId: "flagged-loader",
+            awaitBeforeFlush: true,
+            loaderData: Promise.resolve({ ok: true, data: "settled" }),
+          }),
+          seg({
+            id: "L0D1.plain",
+            namespace: "parallel.sidebar",
+            type: "loader",
+            loaderId: "plain-loader",
+            loaderData: pendingSibling,
+          }),
+          seg({ id: "L0R0", type: "route" }),
+        ];
+
+        const result = await renderSegments(segments);
+        const tree = toTreeNode(result);
+        const outlets = collectByType(tree, MockOutletProvider);
+        const layoutOutlet = outlets.find((o) => o.props.segment.id === "L0")!;
+        const parallel = layoutOutlet.props.parallel[0] as ResolvedSegment;
+
+        // Streams would skip use(aggregate) and bake the slot handler
+        // (PPR3 live-lane hole). The pending sibling keeps the aggregate
+        // a Promise so LoaderBoundary still suspends.
+        expect(parallel.loaderStreams).toBeUndefined();
+        expect(parallel.awaitedLoaderIds).toBeUndefined();
+        expect(parallel.loaderDataPromise).toBeInstanceOf(Promise);
+      });
+
+      it("settles an all-flagged parallel slot into a decoded aggregate (no streams)", async () => {
+        const loadingSkeleton = createElement("div", null, "Loading sidebar");
+        const segments: ResolvedSegment[] = [
+          seg({ id: "L0", type: "layout" }),
+          seg({
+            id: "L0.@sidebar",
+            namespace: "parallel.sidebar",
+            type: "parallel",
+            slot: "@sidebar",
+            loading: loadingSkeleton,
+          }),
+          seg({
+            id: "L0D0.flagged",
+            namespace: "parallel.sidebar",
+            type: "loader",
+            loaderId: "flagged-loader",
+            awaitBeforeFlush: true,
+            loaderData: Promise.resolve({ ok: true, data: "settled" }),
+          }),
+          seg({ id: "L0R0", type: "route" }),
+        ];
+
+        const result = await renderSegments(segments);
+        const tree = toTreeNode(result);
+        const outlets = collectByType(tree, MockOutletProvider);
+        const layoutOutlet = outlets.find((o) => o.props.segment.id === "L0")!;
+        const parallel = layoutOutlet.props.parallel[0] as ResolvedSegment;
+
+        expect(parallel.loaderStreams).toBeUndefined();
+        expect(Array.isArray(parallel.loaderDataPromise)).toBe(true);
+        expect(parallel.loaderDataPromise).toEqual([
+          { ok: true, data: "settled" },
+        ]);
+      });
+
+      it.each([{ isAction: true }, { forceAwait: true }])(
+        "clears stale parallel loaderStreams when %j so the aggregate is used",
+        async (opts) => {
+          const loadingSkeleton = createElement("div", null, "Loading cart");
+          const segments: ResolvedSegment[] = [
+            seg({ id: "L0", type: "layout" }),
+            seg({
+              id: "L0.@cart",
+              namespace: "parallel.cart",
+              type: "parallel",
+              slot: "@cart",
+              loading: loadingSkeleton,
+              loaderStreams: {
+                "cart-loader": { ok: true, data: { count: 0 } },
+              },
+              awaitedLoaderIds: ["cart-loader"],
+            }),
+            seg({
+              id: "L0D0.cart",
+              namespace: "parallel.cart",
+              type: "loader",
+              loaderId: "cart-loader",
+              loaderData: Promise.resolve({ ok: true, data: { count: 1 } }),
+            }),
+            seg({ id: "L0R0", type: "route" }),
+          ];
+
+          const result = await renderSegments(segments, opts);
+          const tree = toTreeNode(result);
+          const outlets = collectByType(tree, MockOutletProvider);
+          const layoutOutlet = outlets.find(
+            (o) => o.props.segment.id === "L0",
+          )!;
+          const slot = layoutOutlet.props.parallel[0] as ResolvedSegment;
+
+          expect(slot.loaderStreams).toBeUndefined();
+          expect(slot.awaitedLoaderIds).toBeUndefined();
+          expect(Array.isArray(slot.loaderDataPromise)).toBe(true);
+        },
+      );
     });
 
     describe("layout/route loader memoization", () => {

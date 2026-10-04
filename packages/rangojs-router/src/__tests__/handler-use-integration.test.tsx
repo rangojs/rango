@@ -11,6 +11,7 @@ import {
   intercept,
   revalidate,
   errorBoundary,
+  notFoundBoundary,
   cache,
 } from "../route-definition.js";
 import { createLoader } from "../loader.rsc.js";
@@ -626,8 +627,8 @@ describe("handler.use integration", () => {
 
     it("handler.use items reach the intercept entry via runtime merging", () => {
       // A redundant but explicit assertion that intercept() walks the full
-      // resolveHandlerUse → mergeHandlerUse path for loaders/revalidate too,
-      // not just middleware.
+      // resolveHandlerUse → mergeHandlerUse path for loaders (and their own
+      // revalidate()) too, not just middleware.
       const revalidateFn = () => true;
       const loaderDef = {
         __brand: "loader" as const,
@@ -637,7 +638,9 @@ describe("handler.use integration", () => {
       const InterceptHandler: Handler = Object.assign(
         () => <div>Intercept</div>,
         {
-          use: () => [loader(loaderDef as any), revalidate(revalidateFn)],
+          use: () => [
+            loader(loaderDef as any, () => [revalidate(revalidateFn)]),
+          ],
         },
       );
 
@@ -658,8 +661,112 @@ describe("handler.use integration", () => {
         layoutEntry = layoutEntry.parent;
       }
       const interceptEntry = layoutEntry?.intercept?.[0];
-      expect(interceptEntry!.revalidate).toContain(revalidateFn);
       expect(interceptEntry!.loader.map((l) => l.loader)).toContain(loaderDef);
+      expect(interceptEntry!.loader[0].revalidate).toContain(revalidateFn);
+    });
+
+    it("handler.use revalidate() throws when mounted via intercept", () => {
+      // Intercepts only evaluate their loaders' revalidate(); an
+      // intercept-level one used to be stored and never read.
+      const InterceptHandler: Handler = Object.assign(
+        () => <div>Intercept</div>,
+        { use: () => [revalidate(() => false)] },
+      );
+
+      const urlPatterns = urls(({ path }) => [
+        layout(
+          () => <div>Layout</div>,
+          () => [
+            path("/", () => <div>Home</div>, { name: "home" }),
+            intercept("@modal", "home", InterceptHandler),
+          ],
+        ),
+      ]);
+
+      expect(() => runInContext(ctx, () => urlPatterns.handler())).toThrow(
+        /revalidate\(\) is not valid inside intercept\("@modal", "home"\) use\(\).*loader\(YourLoader, \(\) => \[revalidate\(\.\.\.\)\]\)/,
+      );
+    });
+
+    it("the same handler.use revalidate() is still accepted when mounted via path()", () => {
+      const revalidateFn = () => false;
+      const PageHandler: Handler = Object.assign(() => <div>Page</div>, {
+        use: () => [revalidate(revalidateFn)],
+      });
+
+      const urlPatterns = urls(({ path }) => [
+        path("/", PageHandler, { name: "home" }),
+      ]);
+
+      runInContext(ctx, () => urlPatterns.handler());
+      expect(ctx.manifest.get("home")!.revalidate).toContain(revalidateFn);
+    });
+
+    // Why intercept() rejects these items: see intercept() in
+    // route-definition/dsl-helpers.ts.
+    it.each([
+      [
+        "errorBoundary()",
+        () => errorBoundary(<div>Modal error</div>),
+        "put it on the enclosing layout or path",
+      ],
+      [
+        "notFoundBoundary()",
+        () => notFoundBoundary(<div>Modal not found</div>),
+        "put it on the enclosing layout or path",
+      ],
+      ["cache()", () => cache(), "put cache() on the target route"],
+      [
+        "layout() with its own use() items",
+        () => layout(<div>Chrome</div>, () => [loading(<div>...</div>)]),
+        "put the modal chrome in the layout component",
+      ],
+    ] as const)(
+      "handler.use %s throws when mounted via intercept",
+      (what, makeItem, hint) => {
+        const InterceptHandler: Handler = Object.assign(
+          () => <div>Intercept</div>,
+          { use: () => [makeItem()] },
+        );
+
+        const urlPatterns = urls(({ path }) => [
+          layout(
+            () => <div>Layout</div>,
+            () => [
+              path("/", () => <div>Home</div>, { name: "home" }),
+              intercept("@modal", "home", InterceptHandler),
+            ],
+          ),
+        ]);
+
+        const escape = (text: string) =>
+          text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        expect(() => runInContext(ctx, () => urlPatterns.handler())).toThrow(
+          new RegExp(
+            `^${escape(what)} is not valid inside ${escape('intercept("@modal", "home") use()')}.*${escape(hint)}`,
+          ),
+        );
+      },
+    );
+
+    it("the same handler.use boundaries are still accepted when mounted via path()", () => {
+      const errorFallback = <div>Page error</div>;
+      const notFoundFallback = <div>Page not found</div>;
+      const PageHandler: Handler = Object.assign(() => <div>Page</div>, {
+        use: () => [
+          errorBoundary(errorFallback),
+          notFoundBoundary(notFoundFallback),
+        ],
+      });
+
+      const urlPatterns = urls(({ path }) => [
+        path("/", PageHandler, { name: "home" }),
+      ]);
+
+      runInContext(ctx, () => urlPatterns.handler());
+      const entry = ctx.manifest.get("home")!;
+      expect(entry.errorBoundary).toContain(errorFallback);
+      expect(entry.notFoundBoundary).toContain(notFoundFallback);
     });
 
     it("merges handler.use before explicit use in intercept", () => {

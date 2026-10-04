@@ -272,7 +272,7 @@ export const alsScopePatterns = urls(
               </div>
             );
           },
-          { when: ({ from }) => from.pathname.startsWith("/als-scope") },
+          { when: ({ from }) => from.url.pathname.startsWith("/als-scope") },
           () => [
             middleware(async (ctx, next) => {
               ctx.set(AlsInterceptMark, "applied");

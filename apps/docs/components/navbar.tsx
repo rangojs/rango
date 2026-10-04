@@ -15,8 +15,12 @@ const NAV = [
     label: "Docs",
     prefetch: "render" as const,
   },
-  { external: true, href: "https://template.vercel.shop", label: "Demo" },
-  { external: true, href: "https://github.com/vercel/shop", label: "GitHub" },
+  {
+    external: true,
+    href: "https://github.com/rangojs/templates",
+    label: "Templates",
+  },
+  { external: true, href: "https://github.com/rangojs/rango", label: "GitHub" },
 ];
 
 export function Navbar() {
