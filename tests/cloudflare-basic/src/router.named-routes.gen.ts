@@ -10,6 +10,8 @@ export const NamedRoutes = {
   "articles.detail": "/articles/:slug",
   "articles.index": "/articles",
   "articles.list": "/articles/page/:page",
+  "authRedirect.protected": "/auth-redirect/protected",
+  "authRedirect.target": "/auth-redirect",
   blog: "/blog",
   blogPost: "/blog/:slug",
   "buildEnv.index": "/build-env",
