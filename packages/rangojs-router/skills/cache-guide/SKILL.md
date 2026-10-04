@@ -166,24 +166,87 @@ exemption there). The route then serves uncached; see `/ppr`.
 
 ### Cross-deploy safety: version-segmented store keys
 
-`CFCacheStore` prefixes every **physical** store key (the CF Cache API URL and
-the KV key) with the build version — auto-generated from the
-`@rangojs/router:version` virtual module, overridable via the store's `version`
-option. A new deploy reads under a new prefix, so it can **never** read a
-previous build's entries: no cross-deploy shape drift, and no dead client-chunk
-references baked into cached RSC.
+`CFCacheStore` and `VercelCacheStore` prefix every **physical** store key with a
+version, so a build only reads entries that code like its own wrote. The version
+is a hash of the code, computed per `createRouter()` by `vite build`, not the
+build time. Each router has two:
 
-The tradeoff to know: **loader/data caches use the same store**, so they're
-version-segmented too. Every deploy is therefore a _cold data cache_ — SWR can't
-soften it, because no stale entry exists under the new key. For high-traffic,
-frequently-deploying, data-bound apps that's a deploy-time origin warm-up. Decide
-deliberately: accept it (correctness over hit-rate), or split the policy — let
-the render/edge cache auto-version while a separate data store gets a stable
-`version` so its entries survive deploys. (Per-process stores like
-`MemorySegmentCacheStore` are cold on every restart anyway; this matters for
-persistent stores.) `VercelCacheStore` does not version automatically: pass a
-per-deploy `getCache({ namespace })` or its `version` option (see `/vercel`).
-See `/caching` for store setup.
+- The **data version** (a hash of the router's server code) keys cached RSC
+  data: segment entries from `cache()`, `"use cache"` values, loader data.
+- The **document version** (the data version plus the SSR output, the client
+  asset file names, `base`, and the router's `Prerender` payloads) keys stored
+  HTML (PPR shells, document-cache responses). It is also sent to the browser,
+  and a mismatch with the tab's `_rsc_v` reloads the tab.
+
+Same code builds to the same versions, so a rebuild or redeploy of unchanged
+code keeps the cache, and a deploy that changes app A keeps app B's cache.
+
+| Deploy                                | Cached data         | Stored HTML           | Open tabs               |
+| ------------------------------------- | ------------------- | --------------------- | ----------------------- |
+| Rebuild, no code change               | kept                | kept                  | untouched               |
+| Server code of app A changes          | cleared for A only  | cleared for A only    | A's tabs reload         |
+| Client code of any app changes        | kept for every app  | cleared for every app | every app's tabs reload |
+| Server code shared by A and B changes | cleared for A and B | cleared for A and B   | A's and B's tabs reload |
+
+"Server code" is everything the app's server can run: its own modules, the
+dependencies it imports (bundled, or on the node preset left external and
+resolved from `node_modules`), and a stylesheet its server code links
+(`import "./x.css"` in a server component, or `import href from "./x.css?url"`
+for a document `<link>`): the stylesheet's hashed URL is in what the server
+renders, so a change to the compiled CSS clears that app's cached data. A
+`clientUrls()` module is client code that also tells the server what to run:
+changing which loaders a route declares, its `loading` or its transition
+counts as a server change; changing the components it renders does not. Under
+a host router, apps are independent when the host mounts them lazily
+(`.lazy(() => import(...))`); routers one module imports statically share
+that module's code.
+
+The key families: `CFCacheStore` keys segment entries and `fn:` items with the
+data version and `doc:` responses and `shell2:` shells with the document
+version. `VercelCacheStore` does the same by default (families `s`, `i` data;
+`r`, `h` document). `MemorySegmentCacheStore` has no version; the process is its
+scope.
+
+Tag invalidation markers are stored without a version, so `updateTag()` and
+`revalidateTag()` apply to entries of every version, including a version that
+comes back in a rollback.
+
+- **Force a clear:** change `version` (`createRouter({ version })`,
+  `createRSCHandler({ version })`, `new CFCacheStore({ version })` or
+  `new VercelCacheStore({ version })` all use that exact value for both
+  versions), or invalidate tags.
+- **Keep the old "every deploy clears the cache" behavior:** set `version` to a
+  per-deploy value (a build id), or on Vercel keep a deployment-scoped
+  `getCache({ namespace: process.env.VERCEL_DEPLOYMENT_ID })`.
+- **Separate environments:** two deployments built from the same code have the
+  same versions. If they share a store (the same KV namespace), they share
+  entries. Give each environment its own KV namespace or cache namespace, or its
+  own `version`.
+
+Two things give a router a new version on every build, and with it a cold
+cache on every deploy:
+
+- **No stable encryption key.** The key that encrypts inline server-action
+  bound arguments is part of the version of every router whose code encrypts
+  with it. Pass `rango({ encryptionKey: process.env.RANGO_ENCRYPTION_KEY })`
+  (see `/use-cache`); the build prints a note when a router needs it.
+- **A `Prerender` or `Static()` handler whose output differs per build**: a
+  timestamp, a random id, or an inline action with bound arguments rendered at
+  build time (its arguments are encrypted with a random IV, stable key or not).
+- **An import the server build leaves external and cannot read**: a package
+  that is not in `node_modules` at build time, a path that does not resolve, a
+  URL. The build names it.
+
+Every build prints each router's versions and writes what they were computed
+from to `node_modules/.rangojs-router-build/cache-versions.json`. Diff that
+file between two builds to see which chunk or payload moved a version; its
+`unownedFiles` lists the server files in no router's version (the host entry
+of lazily mounted apps), where a change keeps every app's cache.
+
+A custom persistent store keys the same way with `getCacheVersions()` from
+`@rangojs/router/cache`, called per operation inside the request: `data` for
+segment entries and items, `document` for responses and shells, no version on
+its tag-invalidation records. See `/caching` for store setup.
 
 ### Client cache: forward/back is mutation-aware
 
@@ -226,8 +289,9 @@ recompute for a merely-aging entry.
   `/document-cache`. A platform CDN may independently consume the same header
   and bypass the function on hits; see `/deployment-caching`.
 
-SWR softens normal TTL expiry, **not** a cross-deploy cold cache — a new build
-has no stale entry to serve (see version-segmented store keys above).
+SWR softens normal TTL expiry, **not** a version change — a deploy that changes
+a router's code reads under a new version and has no stale entry to serve (see
+version-segmented store keys above).
 
 Store support is layer-specific. `CFCacheStore` and `VercelCacheStore` support
 SWR for segment, document/response, item (`"use cache"` and cached loaders), and

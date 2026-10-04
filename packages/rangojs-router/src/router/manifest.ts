@@ -38,6 +38,8 @@ const MODULE_LOAD_FAILURE = Symbol.for("rango.moduleLoadFailure");
 // LP1 in docs/internal/matching-and-lazy-discovery.md. VERSION comes from the
 // @rangojs/router:version virtual module which Vite invalidates on RSC module HMR.
 // When VERSION changes, this module re-evaluates and the cache is recreated empty.
+// Dev module generation only: in production VERSION is constant per process, so
+// the per-router cache versions play no part in this cache.
 const manifestModuleCache = new Map<string, Map<string, EntryData>>();
 
 /**

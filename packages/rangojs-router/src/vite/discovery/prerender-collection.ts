@@ -7,6 +7,7 @@
  */
 
 import { contextSet, hasContextVars } from "../../context-var.js";
+import { sha256 } from "./build-versions.js";
 import {
   encodePathParam,
   substituteRouteParams,
@@ -20,6 +21,27 @@ import type { DiscoveryState } from "./state.js";
 import { createRangoDebugger, NS } from "../debug.js";
 
 const debug = createRangoDebugger(NS.prerender);
+
+/**
+ * Note a payload the build rendered and will ship as an asset module, for the
+ * owning router's cache version (build-versions.ts). The handler that produced
+ * it is evicted from the bundle, so the payload is the only thing left in the
+ * server output that changes when the handler or its build-time data does.
+ */
+function recordBuildData(
+  state: DiscoveryState,
+  kind: "prerender" | "static",
+  key: string,
+  value: string,
+  owner: { routerId?: string; moduleId?: string },
+): void {
+  state.buildData.push({
+    kind,
+    key,
+    digest: sha256(value),
+    ...owner,
+  });
+}
 
 /**
  * Expand prerender routes into concrete URLs and render them via the
@@ -248,7 +270,7 @@ export async function expandPrerenderRoutes(
       group.concurrency,
       async (entry) => {
         const startUrl = performance.now();
-        for (const [, routerInstance] of registry) {
+        for (const [routerId, routerInstance] of registry) {
           if (!routerInstance.matchForPrerender) continue;
           try {
             const result = await routerInstance.matchForPrerender(
@@ -281,6 +303,9 @@ export async function expandPrerenderRoutes(
               "__pr",
               mainValue,
             );
+            recordBuildData(state, "prerender", mainKey, mainValue, {
+              routerId,
+            });
             // Prerender + ppr composition: flag the URL as a build-time shell
             // candidate for the post-build capture phase (producer B, #699).
             // The payload JSON is retained in memory so that phase can seed an
@@ -309,6 +334,15 @@ export async function expandPrerenderRoutes(
                 state.projectRoot,
                 "__pr",
                 interceptValue,
+              );
+              recordBuildData(
+                state,
+                "prerender",
+                interceptKey,
+                interceptValue,
+                {
+                  routerId,
+                },
               );
             }
             const elapsed = (performance.now() - startUrl).toFixed(0);
@@ -447,6 +481,9 @@ export async function renderStaticHandlers(
               "__st",
               exportValue,
             );
+            recordBuildData(state, "static", def.$$id, exportValue, {
+              moduleId,
+            });
             const elapsed = (performance.now() - startHandler).toFixed(0);
             console.log(`[rango]   OK   ${name.padEnd(40)} (${elapsed}ms)`);
             staticDone++;

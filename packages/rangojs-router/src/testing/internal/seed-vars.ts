@@ -8,6 +8,7 @@
  */
 import { contextSet, type ContextVar } from "../../context-var.js";
 import { resolveStateCookieName } from "../../router/state-cookie-name.js";
+import { uniformVersions, type RouterVersions } from "../../router-versions.js";
 
 export interface StateCookieSeed {
   /**
@@ -22,14 +23,25 @@ export interface StateCookieSeed {
    */
   routerId?: string;
   /**
-   * Build version used as the rotated value's prefix (`{version}:{timestamp}`).
-   * Defaults to `"0"` (resolved inside createRequestContext).
+   * The app's version, as `createRouter({ version })` would set it: the
+   * rotated value's prefix (`{version}:{timestamp}`) and the version a cache
+   * store keys with. Defaults to `"0"` for the prefix (resolved inside
+   * createRequestContext) and to the build versions for the store.
    */
   version?: string;
 }
 
 export function resolveSeededStateCookieName(seed?: StateCookieSeed): string {
   return resolveStateCookieName(seed?.prefix, seed?.routerId ?? "router_0");
+}
+
+/** The request context's `versions` for a seeded `stateCookie.version`. */
+export function seededVersions(
+  seed?: StateCookieSeed,
+): RouterVersions | undefined {
+  return seed?.version === undefined
+    ? undefined
+    : uniformVersions(seed.version);
 }
 
 export type VarsInit =

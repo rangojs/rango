@@ -244,13 +244,24 @@ export interface ProdServerOptions {
    * caller's first fetch is the worker's genuine first request (cold start).
    */
   cold?: boolean;
+  /**
+   * Listen on this port instead of a free one. A cache key carries the request
+   * host, so a run that reads one server's entries from the next server needs
+   * both on the same port (bench/retention.ts).
+   */
+  port?: number;
 }
 
 export async function startProdServer(
   cwd: string,
   options: ProdServerOptions = {},
 ): Promise<Server> {
-  const command = [binPath(cwd, "wrangler"), "dev", "--port", "0"];
+  const command = [
+    binPath(cwd, "wrangler"),
+    "dev",
+    "--port",
+    String(options.port ?? 0),
+  ];
   const srv = spawnServer(command, cwd, "prod");
   const port = await srv.findPort();
   if (options.cold) {

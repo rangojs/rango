@@ -24,6 +24,14 @@ import { join, resolve } from "node:path";
 import { jsonParseExpression } from "../utils/manifest-utils.js";
 import { writeBuildAssetModule } from "../utils/prerender-utils.js";
 import { buildShellManifestKey } from "../../prerender/shell-manifest-key.js";
+import {
+  resolveVersionsFrom,
+  type RouterVersionsTable,
+} from "../../router-versions.js";
+import {
+  environmentOutDir,
+  type BuilderLike,
+} from "./router-versions-phase.js";
 // Type-only: the producer stages exactly the record shape the runtime
 // read-through consumes, so the contract cannot drift (the KEY half of that
 // contract is shell-manifest-key.ts). No runtime coupling — the RSC-runtime
@@ -35,30 +43,22 @@ import { createRangoDebugger, NS } from "../debug.js";
 const debug = createRangoDebugger(NS.prerender);
 
 /**
- * Minimal builder surface the phase reads: resolved plugins (for the main
- * build's version plugin) and per-environment outDirs.
+ * @param versionsTable The versions the shipped build serves with
+ *   (router-versions-phase.ts), `undefined` outside a build. Never the temp
+ *   server's own version-plugin stamp, which is a dev Date.now() and would
+ *   fail the serve-side isValidShellHit gate forever.
  */
-interface BuilderLike {
-  config?: {
-    base?: string;
-    plugins?: readonly unknown[];
-  };
-  environments?: Record<
-    string,
-    { config?: { build?: { outDir?: string } } } | undefined
-  >;
-}
-
 export async function runShellPrerenderPhase(
   s: DiscoveryState,
   builder: BuilderLike | undefined,
+  versionsTable: RouterVersionsTable | undefined,
 ): Promise<void> {
   // The kept temp server (and the buildEnv deferred with it) is OWNED by the
   // callers — the buildApp post hook's finally on success, buildEnd on an
   // aborted build — so this function stays a pure producer: it only tears
   // down the globals it installs itself.
   const tempServer = s.shellPhaseTempServer;
-  if (!s.isBuildMode || !s.shellCandidates?.length || !tempServer) return;
+  if (!versionsTable || !s.shellCandidates?.length || !tempServer) return;
 
   const candidates: ShellPrerenderCandidate[] = s.shellCandidates;
   const startTotal = performance.now();
@@ -83,21 +83,6 @@ export async function runShellPrerenderPhase(
         "[rango] shell prerender: temp server runners unavailable " +
           `(rsc=${String(!!rscEnv?.runner)}, ssr=${String(!!ssrEnv?.runner)}); ` +
           "skipping — routes keep runtime shell capture.",
-      );
-      return;
-    }
-
-    // The MAIN build's version (the value folded into the shipped worker) —
-    // never the temp server's own version-plugin stamp, which is a different
-    // Date.now() and would fail the serve-side isValidShellHit gate forever.
-    const versionPlugin = (builder?.config?.plugins ?? []).find(
-      (p: any) => p?.name === "@rangojs/router:version",
-    ) as { api?: { getBuildVersion?: () => string } } | undefined;
-    const buildVersion = versionPlugin?.api?.getBuildVersion?.();
-    if (!buildVersion) {
-      console.warn(
-        "[rango] shell prerender: main build version unavailable; skipping — " +
-          "routes keep runtime shell capture.",
       );
       return;
     }
@@ -130,9 +115,7 @@ export async function runShellPrerenderPhase(
     );
 
     // Built client bootstrap: the prelude must embed the BUILT entry URL.
-    const clientOutDir =
-      builder?.environments?.client?.config?.build?.outDir ??
-      resolve(s.projectRoot, "dist/client");
+    const clientOutDir = environmentOutDir(builder, s.projectRoot, "client");
     const clientAssetsDir = join(clientOutDir, "assets");
     const entryFile = existsSync(clientAssetsDir)
       ? readdirSync(clientAssetsDir).find((f) => /^index-.*\.js$/.test(f))
@@ -245,8 +228,14 @@ export async function runShellPrerenderPhase(
       const mainKey = `${cand.routeName}/${cand.paramHash}`;
       let handled = false;
       const mismatches: string[] = [];
-      for (const [, routerInstance] of registry) {
+      for (const [routerId, routerInstance] of registry) {
         if (typeof routerInstance.match !== "function") continue;
+        // The build's table always holds the whole-build pair.
+        const versions = resolveVersionsFrom(
+          versionsTable,
+          routerId,
+          routerInstance.version,
+        )!;
         try {
           const res = await captureMod.captureShellForBuild({
             router: routerInstance,
@@ -259,7 +248,7 @@ export async function runShellPrerenderPhase(
             maxSnapshotBytes: policy.maxSnapshotBytes,
             captureTimeout: policy.captureTimeout,
             buildEnv: s.resolvedBuildEnv,
-            buildVersion,
+            versions,
             captureShellHTML,
             debug: !!debug,
           });
@@ -323,10 +312,11 @@ export async function runShellPrerenderPhase(
     }
 
     if (staged.length > 0) {
-      const rscOutDir =
-        builder?.environments?.rsc?.config?.build?.outDir ??
-        resolve(s.projectRoot, "dist/rsc");
-      writeShellManifest(s, rscOutDir, staged);
+      writeShellManifest(
+        s,
+        environmentOutDir(builder, s.projectRoot, "rsc"),
+        staged,
+      );
     }
 
     const totalElapsed = (performance.now() - startTotal).toFixed(0);

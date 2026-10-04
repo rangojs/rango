@@ -98,6 +98,9 @@ export type {
   ShellStatusTarget,
 } from "./shell-status.js";
 
+export { setBuildVersions } from "./build-versions.js";
+export type { BuildVersions, RouterVersions } from "./build-versions.js";
+
 export { collectHandle } from "./collect-handle.js";
 
 export { withLocationStateKey } from "./location-state-key.js";

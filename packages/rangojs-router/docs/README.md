@@ -78,6 +78,10 @@ Read these before changing the corresponding subsystem.
   Vite transform, the runtime, and embedded server actions
 - [Segment caching design](../../../docs/design/caching.md) - the canonical
   runtime segment-cache design; read before changing caching
+- [Per-app cache versions](../../../docs/design/per-app-cache-version.md) -
+  proposal, not built: a data version and a document version per
+  `createRouter()`, so a release keeps the cache of apps whose server code did
+  not change
 - [Cache tags flow](../../../docs/design/cache-tags-flow.md) - tag
   invalidation end to end: `updateTag()`/`revalidateTag()`, tag markers, and
   the read-latency budgets

@@ -14,6 +14,11 @@ import type { SSRStreamMode } from "../router/router-options.js";
 
 export interface HandlerContext<TEnv = unknown> {
   router: RangoInternal<TEnv, any>;
+  /**
+   * The router's DOCUMENT version (router-versions.ts): payload metadata, the
+   * `_rsc_v` reload check, and PPR shell stamping and gating. The data version
+   * is not here; cache stores read it from the request context.
+   */
   version: string;
   devDiscoveryEpoch?: number;
   renderToReadableStream: RSCDependencies["renderToReadableStream"];

@@ -206,8 +206,12 @@ export function resolveClientChunks(
   return option;
 }
 
+/** @vitejs/plugin-rsc's client-reference map; its group modules sit under it. */
+export const CLIENT_REFERENCES_MODULE_ID =
+  "\0virtual:vite-rsc/client-references";
+
 /** Module-id prefix of the per-group virtual module @vitejs/plugin-rsc emits. */
-const CLIENT_GROUP_PREFIX = "\0virtual:vite-rsc/client-references/group/";
+const CLIENT_GROUP_PREFIX = `${CLIENT_REFERENCES_MODULE_ID}/group/`;
 
 /**
  * Build-end group report under `DEBUG=rango:chunks`: one line per client

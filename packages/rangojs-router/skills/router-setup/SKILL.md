@@ -170,7 +170,7 @@ interface RangoOptions<TEnv> {
     request: Request,
     env: TEnv,
   ) => string | boolean | Promise<string | boolean>;
-  version?: string; // Client/server version string; defaults to the build VERSION
+  version?: string; // Cache version and client/server version; replaces both computed versions (data and document); defaults to the versions `vite build` computes per router
   originCheck?:
     | boolean
     | ((
@@ -215,6 +215,7 @@ rango({
   headScripts: "preinit", // "preinit" (executing head module scripts) | "preload" (modulepreload hints only)
   prerender: { onError: "fail" }, // "fail" | "warn" when a Prerender/Static render throws (/prerender)
   buildEnv: false, // Build-time ctx.env for Prerender/Static handlers (/prerender)
+  encryptionKey: process.env.RANGO_ENCRYPTION_KEY, // Stable server-action encryption key (see Notes)
 });
 ```
 
@@ -254,6 +255,19 @@ Notes:
   renders and PPR shell capture. Unset, documents whose route has a
   `loader(Def, { ssr: false })` raise it automatically so that content stays
   in place; see `/loader`.
+- `encryptionKey` is the key that encrypts inline server-action bound
+  arguments: base64-encoded 32 bytes (`openssl rand -base64 32`). Pass it as
+  `rango({ encryptionKey: process.env.RANGO_ENCRYPTION_KEY })`, never as a
+  literal. It is validated when `rango()` is called (invalid base64 or a wrong
+  size throws). `undefined` falls back to the `RANGO_ENCRYPTION_KEY`
+  environment variable, then to a key generated per build. The key is part of
+  the cache version of every router whose server code encrypts inline-action
+  bound arguments, so without a stable key those routers get a new version (and
+  a cleared cache) on every build; the build prints one note when that applies.
+  A router that renders no such action keeps its cache without one (`/use-cache`,
+  `/cache-guide`).
+- `createRouter({ version })` takes effect on every preset, including `node`
+  and `vercel`. It replaces both computed cache versions with that exact value.
 - `@rangojs/router/vite` also exports `poke()`, a dev-server plugin: type `e`
   then Enter (or Ctrl+R where the terminal passes it through) to full-reload
   the browser.

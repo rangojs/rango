@@ -13,7 +13,7 @@ import { waitForHydration, expectNoPageError, testId } from "./helper";
  * the loader manifest directly — both before and after the fix. So this suite is
  * a CONTRACT GUARD for the virtual-entry path (it would catch getVirtualEntryRSC
  * dropping the loader-manifest import), NOT the red-before-green pin for the
- * version-injector regression. The regression itself — a custom worker entry
+ * entry-bootstrap-injector regression. The regression itself — a custom worker entry
  * missing the loader-manifest import — is pinned by
  * tests/cloudflare-basic/e2e/orphan-fetchable.test.ts. Both dev and production
  * are covered here, per the dev+prod e2e mandate.

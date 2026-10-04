@@ -239,6 +239,34 @@ interface RangoBaseOptions {
   prerender?: {
     onError?: "fail" | "warn";
   };
+
+  /**
+   * The key inline server actions encrypt their bound arguments with:
+   * base64-encoded 32 bytes (`openssl rand -base64 32`). Pass it from the
+   * environment, never as a literal in the config file:
+   *
+   * ```ts
+   * rango({ encryptionKey: process.env.RANGO_ENCRYPTION_KEY })
+   * ```
+   *
+   * Why set it: the key is part of the cache version of every router whose
+   * server code encrypts with it, because a payload cached under one key
+   * carries arguments another key cannot decrypt. Without a stable key rango
+   * generates one per build, so those routers get a new version, and a cleared
+   * cache, on every deploy. With a stable key their cache survives a deploy
+   * that does not change their server code. It also lets a build decrypt
+   * arguments an earlier build encrypted (a cached or prerendered payload, an
+   * open tab).
+   *
+   * Validated when `rango()` is called: a value that is not base64 or does not
+   * decode to an AES key size (16, 24 or 32 bytes) throws. `undefined` (the
+   * variable is unset) falls back to the `RANGO_ENCRYPTION_KEY` environment
+   * variable, then to a generated key. Rotating the key clears the cache of
+   * the routers that use it.
+   *
+   * @default process.env.RANGO_ENCRYPTION_KEY, else a key generated per build
+   */
+  encryptionKey?: string;
 }
 
 /**

@@ -2,7 +2,10 @@ import { type PluginOption } from "vite";
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { exposeActionId } from "./plugins/expose-action-id.js";
-import { defineEncryptionKeyExpr } from "./encryption-key.js";
+import {
+  configureEncryptionKey,
+  defineEncryptionKeyExpr,
+} from "./encryption-key.js";
 import {
   createLoaderDirectiveGuardPlugin,
   createLoaderScanStubPlugin,
@@ -12,6 +15,7 @@ import {
 import { useCacheTransform } from "./plugins/use-cache-transform.js";
 import { transitionWhenHoistPlugin } from "./plugins/transition-when-hoist.js";
 import { clientRefDedup } from "./plugins/client-ref-dedup.js";
+import { stableRscOutput } from "./plugins/stable-rsc-output.js";
 import { VIRTUAL_IDS } from "./plugins/virtual-entries.js";
 import {
   getExcludeDeps,
@@ -43,7 +47,7 @@ import type {
 } from "./plugin-types.js";
 import { createVercelOutputPlugin } from "./plugins/vercel-output.js";
 import { printBanner, rangoVersion } from "./utils/banner.js";
-import { createVersionInjectorPlugin } from "./plugins/version-injector.js";
+import { createEntryBootstrapInjectorPlugin } from "./plugins/entry-bootstrap-injector.js";
 import { createCjsToEsmPlugin } from "./plugins/cjs-to-esm.js";
 import { createRouterDiscoveryPlugin } from "./router-discovery.js";
 import { performanceTracksPlugin } from "./plugins/performance-tracks.js";
@@ -75,6 +79,20 @@ const debugConfig = createRangoDebugger(NS.config);
  * Node < 24 would need to downlevel it itself. See issue #729.
  */
 const SERVER_BUILD_TARGET = "esnext";
+
+/**
+ * Entry-signature mode for the node/vercel RSC build, the one
+ * `@cloudflare/vite-plugin` forces on its worker entry.
+ *
+ * Vite's default for a server build, "allow-extension", lets the bundler park
+ * modules shared with lazy chunks in the entry chunk. Under a host router that
+ * put the router runtime (80 modules, measured on e2e/test-app/.host-fixture
+ * and examples/vercel-multi-router) and every sub-app's route names into
+ * `index.js`, which every sub-app chunk imported back and which names each
+ * sub-app chunk by its content hash: no router's cache version was independent
+ * of the others (discovery/build-versions.ts hashes a router's chunks).
+ */
+const RSC_ENTRY_SIGNATURES = "strict";
 
 // The leading-directive 'use client' sniff is shared with version-plugin's
 // getClientModuleSignature so the two cannot drift. Imported for local use by the
@@ -111,6 +129,9 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
   const rangoStart = performance.now();
   const resolvedOptions: RangoOptions = options ?? { preset: "node" };
   const preset = resolvedOptions.preset ?? "node";
+  // Before any plugin-rsc instance (this build's, the discovery temp server's)
+  // reads the key, and so an invalid key fails the config load.
+  configureEncryptionKey(resolvedOptions.encryptionKey);
   const showBanner = resolvedOptions.banner ?? true;
   const clientChunksOption = resolvedOptions.clientChunks ?? true;
   const useBuiltInClientChunks = clientChunksOption === true;
@@ -467,6 +488,9 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
               ...(vercelServerEnv ?? {}),
               build: {
                 target: SERVER_BUILD_TARGET,
+                rollupOptions: {
+                  preserveEntrySignatures: RSC_ENTRY_SIGNATURES,
+                },
               },
               optimizeDeps: {
                 entries: [VIRTUAL_IDS.rsc],
@@ -539,6 +563,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
     plugins.push(clientRefDedup());
   }
   plugins.push(clientChunksReport());
+  plugins.push(stableRscOutput());
 
   plugins.push({
     name: "@rangojs/router:client-component-hmr",
@@ -583,7 +608,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
   const discoveryRouterRef = preset !== "cloudflare" ? routerRef : undefined;
 
   if (preset === "cloudflare") {
-    plugins.push(createVersionInjectorPlugin(undefined));
+    plugins.push(createEntryBootstrapInjectorPlugin(undefined));
   }
 
   plugins.push(createCjsToEsmPlugin());

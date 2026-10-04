@@ -97,8 +97,9 @@ pnpm dlx vercel deploy --prebuilt --archive=tgz
 
 On the platform `process.env.VERCEL` is set, so the router switches to
 `VercelCacheStore` backed by `getCache()`; tag invalidation uses `expireTag`
-(global, ~300ms). The deployment id is folded into the cache namespace so a
-redeploy does not serve stale-shaped entries.
+(global, ~300ms). `VercelCacheStore` versions its keys per router from the
+built code, so a redeploy that changes the router reads under new keys and one
+that does not keeps its entries; the namespace carries no deployment id.
 
 ## What needs the real platform to verify
 

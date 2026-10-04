@@ -10,6 +10,7 @@ import {
 } from "../request-context.js";
 import { invalidateClientCache } from "../cookie-store.js";
 import { runWithCacheExecScope } from "../../cache/cache-exec-scope.js";
+import { uniformVersions } from "../../router-versions.js";
 
 function makeCtx(
   opts: {
@@ -28,7 +29,8 @@ function makeCtx(
     url: new URL("https://example.com"),
     variables: {},
     stateCookieName: opts.stateCookieName,
-    version: opts.version,
+    versions:
+      opts.version === undefined ? undefined : uniformVersions(opts.version),
   });
 }
 
