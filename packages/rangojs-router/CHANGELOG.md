@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.21.0 (2026-10-04)
 
 ### Fixed: Back/Forward to an entry the server now redirects follows the redirect ([#1047](https://github.com/rangojs/rango/issues/1047))
 
