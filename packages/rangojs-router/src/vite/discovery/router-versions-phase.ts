@@ -25,14 +25,11 @@ import {
 import { RANGO_BUILD_DIR } from "../utils/prerender-utils.js";
 import {
   computeRouterVersions,
-  digestDocumentInputs,
-  externalPackage,
   fillRouterVersions,
-  isSourceMap,
   portableModuleId,
   sha256,
   type BuildDataRecord,
-  type RouterVersionDetail,
+  type ComputedRouterVersions,
 } from "./build-versions.js";
 import { createInstalledPackageDescriber } from "./installed-packages.js";
 import type { DiscoveryState } from "./state.js";
@@ -144,12 +141,12 @@ function clientUrlRecords(s: DiscoveryState): BuildDataRecord[] {
  */
 function writeVersionsReport(
   projectRoot: string,
-  details: readonly RouterVersionDetail[],
+  computed: ComputedRouterVersions,
   sourceOf: ReadonlyMap<string, string>,
 ): void {
-  const report: Record<string, unknown> = {};
-  for (const detail of details) {
-    report[detail.routerId] = {
+  const routers: Record<string, unknown> = {};
+  for (const detail of computed.details) {
+    routers[detail.routerId] = {
       source: sourceOf.get(detail.routerId) ?? "",
       data: detail.data,
       document: detail.document,
@@ -157,6 +154,20 @@ function writeVersionsReport(
       documentInputs: Object.fromEntries(detail.documentInputs),
     };
   }
+  // Listed once, not per router. `ssrAndClient`: what the `ssr-and-client`
+  // input of every document version is a digest of. `unownedFiles`: server
+  // files in no router's version but the whole build's (the host entry, the
+  // registries); a change there keeps every app's cache.
+  const report = {
+    routers,
+    ssrAndClient: {
+      base: computed.ssrAndClient.base,
+      ssr: Object.fromEntries(computed.ssrAndClient.ssr),
+      externals: Object.fromEntries(computed.ssrAndClient.externals),
+      client: computed.ssrAndClient.client,
+    },
+    unownedFiles: computed.unownedFiles,
+  };
   try {
     const path = resolve(projectRoot, VERSIONS_REPORT_FILE);
     mkdirSync(dirname(path), { recursive: true });
@@ -166,17 +177,32 @@ function writeVersionsReport(
   }
 }
 
+/**
+ * Compute the versions, write them into the built version module and return
+ * the table (`undefined` outside a build). Fails the build when an input was
+ * not recorded or cannot be read: a version computed without it would stay
+ * the same when it changes.
+ */
 export function runRouterVersionsPhase(
   s: DiscoveryState,
   builder: BuilderLike | undefined,
-): void {
-  if (!s.isBuildMode) return;
-  const server = s.serverBuildGraph;
+): RouterVersionsTable | undefined {
+  if (!s.isBuildMode) return undefined;
+  const { serverBuildGraph: server, clientBuildGraph: client } = s;
+  const ssr = s.ssrBundle;
+  const rscVersionFiles = s.versionModuleFiles.get("rsc") ?? [];
   // The built version module holds a placeholder only this phase replaces: a
   // build that skipped it would throw a ReferenceError on its first import.
-  if (!server) {
+  if (!server || !client || !ssr || rscVersionFiles.length === 0) {
+    const missing = [
+      !server && "the RSC bundle",
+      !client && "the client bundle",
+      !ssr && "the SSR bundle",
+      rscVersionFiles.length === 0 &&
+        "the RSC chunk that holds the version module",
+    ].filter(Boolean);
     throw new Error(
-      "[rango] The RSC build did not record its bundle, so the cache versions cannot be computed. " +
+      `[rango] The build did not record ${missing.join(", ")}, so the cache versions cannot be computed. ` +
         "This is a bug in @rangojs/router; please report it.",
     );
   }
@@ -185,66 +211,51 @@ export function runRouterVersionsPhase(
   const rscOutDir = environmentOutDir(builder, s.projectRoot, "rsc");
   const ssrOutDir = environmentOutDir(builder, s.projectRoot, "ssr");
 
-  let table: RouterVersionsTable;
-  let details: readonly RouterVersionDetail[];
-  // A dependency the build cannot find cannot be shown unchanged: it is
-  // described by a value unique to this build, so the routers importing it
-  // get a new version, and the build says which packages (below).
-  const notFound = new Set<string>();
-  const describeInstalled = createInstalledPackageDescriber(s.projectRoot);
-  const buildId = randomUUID();
-  const describeExternal = (name: string): string => {
-    const installed = describeInstalled(name);
-    if (installed !== undefined) return installed;
-    notFound.add(name);
-    return `not found, build ${buildId}`;
-  };
+  let computed: ComputedRouterVersions;
   try {
-    const ssrFiles: Array<{ fileName: string; source: Uint8Array }> = [];
-    for (const fileName of new Set([
-      ...(s.ssrBundle?.fileNames ?? []),
-      ASSETS_MANIFEST_FILE,
-    ])) {
-      if (isSourceMap(fileName)) continue;
-      const source = readIfPresent(join(ssrOutDir, fileName));
-      if (source !== undefined) ssrFiles.push({ fileName, source });
-    }
-    const ssrExternals: Array<[string, string]> = [];
-    for (const name of new Set(
-      (s.ssrBundle?.externalImports ?? []).flatMap(
-        (specifier) => externalPackage(specifier) ?? [],
-      ),
-    )) {
-      ssrExternals.push([name, describeExternal(name)]);
-    }
     const assetsManifest = readIfPresent(join(rscOutDir, ASSETS_MANIFEST_FILE));
-    ({ table, details } = computeRouterVersions({
+    if (assetsManifest === undefined) {
+      throw new Error(
+        `${ASSETS_MANIFEST_FILE} is not in the RSC output directory, so the stylesheets ` +
+          `server components link cannot be read`,
+      );
+    }
+    computed = computeRouterVersions({
       projectRoot: s.projectRoot,
       server,
-      client: s.clientBuildGraph ?? undefined,
+      client,
+      // plugin-rsc writes its manifest next to the SSR bundle, not into it.
+      ssr: {
+        chunks: ssr.chunks,
+        assets: [
+          ...ssr.assets.filter(
+            (asset) => asset.fileName !== ASSETS_MANIFEST_FILE,
+          ),
+          { fileName: ASSETS_MANIFEST_FILE, name: ASSETS_MANIFEST_FILE },
+        ],
+      },
       routers: s.perRouterManifests.map((entry) => ({
         id: entry.id,
         moduleId: entry.sourceFile,
       })),
       buildData: [...s.buildData, ...clientUrlRecords(s)],
       readServerFile: (fileName) => readIfPresent(join(rscOutDir, fileName)),
-      documentDigest: digestDocumentInputs({
-        ssrFiles,
-        clientFileNames: s.clientBuildGraph?.fileNames ?? [],
-        base: builder?.config?.base ?? "/",
-        ssrExternals,
-      }),
-      serverResources: assetsManifest
-        ? readServerResources(assetsManifest.toString("utf-8"))
-        : undefined,
-      describeExternal,
-    }));
+      readSsrFile: (fileName) => readIfPresent(join(ssrOutDir, fileName)),
+      base: builder?.config?.base ?? "/",
+      serverResources: readServerResources(assetsManifest.toString("utf-8")),
+      externals: {
+        describePackage: createInstalledPackageDescriber(s.projectRoot),
+        readFile: readIfPresent,
+        buildId: randomUUID(),
+      },
+    });
   } catch (err: any) {
     throw new Error(
       `[rango] Could not compute the cache versions: ${err?.message ?? err}`,
       { cause: err },
     );
   }
+  const { table, details } = computed;
 
   for (const [environment, fileNames] of s.versionModuleFiles) {
     const outDir = environmentOutDir(builder, s.projectRoot, environment);
@@ -260,14 +271,13 @@ export function runRouterVersionsPhase(
       writeFileSync(path, next);
       filled++;
     }
-    if (environment === "rsc" && fileNames.length > 0 && filled === 0) {
+    if (environment === "rsc" && filled === 0) {
       throw new Error(
         `[rango] Could not write the cache versions into the server build: no placeholder in ${fileNames.join(", ")} under ${outDir}. ` +
           `The build would fail to start. This is a bug in @rangojs/router; please report it.`,
       );
     }
   }
-  s.routerVersions = table;
 
   const elapsed = (performance.now() - start).toFixed(1);
   const sourceOf = new Map(
@@ -300,13 +310,14 @@ export function runRouterVersionsPhase(
     elapsed,
     table,
   );
-  writeVersionsReport(s.projectRoot, details, sourceOf);
+  writeVersionsReport(s.projectRoot, computed, sourceOf);
 
-  if (notFound.size > 0) {
+  if (computed.undetermined.length > 0) {
     console.log(
-      `[rango] ${notFound.size} package(s) the server build leaves external are not installed where the build ` +
-        `can find them (${[...notFound].sort().join(", ")}). What they resolve to at run time is unknown, so the ` +
-        `routers importing them get a new cache version on every build.`,
+      `[rango] ${computed.undetermined.length} import(s) the server build leaves external could not be read ` +
+        `at build time (${computed.undetermined.join(", ")}): a package that is not installed where the build ` +
+        `can find it, a path that does not resolve, or a URL. What they resolve to at run time is unknown, so ` +
+        `the routers importing them get a new cache version on every build.`,
     );
   }
 
@@ -321,4 +332,5 @@ export function runRouterVersionsPhase(
         `with a base64 32-byte key (openssl rand -base64 32).`,
     );
   }
+  return table;
 }

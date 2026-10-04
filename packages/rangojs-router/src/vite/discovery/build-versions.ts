@@ -15,9 +15,12 @@
  *    that followed them would put every router's code in every router's set.
  * 2. Hashing ({@link computeRouterVersions}): the bytes on disk of the chunks
  *    holding those modules, read AFTER postprocessBundle rewrote them, with
- *    chunk file names replaced by content-independent tokens. Without that
- *    replacement a file name's content hash carries one router's change into
- *    every chunk that names it.
+ *    everything taken out that says where or how the build ran instead of what
+ *    it built ({@link digestBundle}).
+ *
+ * One rule covers what the build cannot determine (a file it lists and cannot
+ * read, an import it cannot resolve): the build fails, or the version changes
+ * on every build. A version never silently stays the same.
  */
 
 import { createHash } from "node:crypto";
@@ -65,11 +68,15 @@ export interface BuildAsset {
   readonly name: string;
 }
 
-/** The RSC environment's bundle, from its real (not scan) build pass. */
-export interface ServerBuildGraph {
-  readonly modules: ReadonlyMap<string, BuildModuleEdges>;
+/** The files one environment's bundle emits. */
+export interface BundleFiles {
   readonly chunks: readonly BuildChunk[];
   readonly assets: readonly BuildAsset[];
+}
+
+/** The RSC environment's bundle, from its real (not scan) build pass. */
+export interface ServerBuildGraph extends BundleFiles {
+  readonly modules: ReadonlyMap<string, BuildModuleEdges>;
 }
 
 /** The client environment's module graph and emitted file names. */
@@ -98,6 +105,9 @@ export interface RouterSource {
  *   route group from: its loaders, loading states, transitions and route ids.
  *   It ships in the routes registry (virtual-module-codegen.ts), which a
  *   lazily mounted app's chunks do not include. DATA version.
+ * - A server component's stylesheet URLs are read at run time from plugin-rsc's
+ *   assets manifest and rendered as `<link>`s into the router's Flight, so
+ *   they are in cached payloads while no server chunk holds them. DATA version.
  * - A Prerender payload is served from the build's own store and never
  *   written to the segment cache (withCacheLookup returns before the cache
  *   scope, match-middleware/cache-lookup.ts). Only stored HTML holds it: a PPR
@@ -105,17 +115,20 @@ export interface RouterSource {
  *   DOCUMENT version only.
  */
 export interface BuildDataRecord {
-  readonly kind: "prerender" | "static" | "client-urls";
-  /** Prerender manifest key, Static handler id, or clientUrls() module. */
+  readonly kind: "prerender" | "static" | "client-urls" | "server-css";
+  /**
+   * Prerender manifest key, Static handler id, clientUrls() module, or the
+   * module a `serverResources` entry is keyed by.
+   */
   readonly key: string;
-  /** sha256 of the payload, or of the projection. */
+  /** sha256 of the payload, the projection, or the entry. */
   readonly digest: string;
   /** Router that rendered it (prerender). */
   readonly routerId?: string;
   /**
    * Module the data belongs to (static: the handler's; client-urls: the
-   * clientUrls() module). The routers that reach it own the record; one no
-   * router reaches is every router's.
+   * clientUrls() module; server-css: the module that renders the links).
+   * Owned by {@link ownersOf}.
    */
   readonly moduleId?: string;
 }
@@ -151,14 +164,36 @@ type OutputBundleLike = Record<
   }
 >;
 
-/**
- * plugin-rsc imports its encryption runtime into every `"use server"` module
- * it transforms and calls this function only where an inline action closes
- * over a value (its `encode` hook). Importing the runtime is therefore not a
- * sign that a module encrypts; the call is.
- */
+function identifier(name: string): RegExp {
+  return new RegExp(`(?<![\\w$.])${escapeRegExp(name)}(?![\\w$])`, "g");
+}
+
 const ENCRYPTION_RUNTIME_ID = "/utils/encryption-runtime";
-const ENCRYPT_CALL = "encryptActionBoundArgs(";
+/** plugin-rsc 0.5.35 imports its encryption runtime as a namespace. */
+const ENCRYPTION_RUNTIME_IMPORT =
+  /import\s*\*\s*as\s+([A-Za-z_$][\w$]*)\s+from\s*["'][^"'\n]*\/utils\/encryption-runtime[^"'\n]*["']/;
+
+/**
+ * Whether a module that imports plugin-rsc's encryption runtime uses it.
+ *
+ * plugin-rsc prepends the import to every `"use server"` module it transforms
+ * and calls the runtime only where an inline action closes over a value, so
+ * the import alone is not a sign that a module encrypts. The test is any use
+ * of the namespace the import binds, not the name of the function called: a
+ * rename in plugin-rsc must not take the key out of the versions. A module
+ * whose code or import this cannot read counts as using it.
+ */
+function usesEncryptionRuntime(code: string | null | undefined): boolean {
+  if (code == null) return true;
+  const local = code.match(ENCRYPTION_RUNTIME_IMPORT)?.[1];
+  if (local === undefined) return true;
+  // The import statement itself is the first occurrence.
+  let occurrences = 0;
+  for (const _ of code.matchAll(identifier(local))) {
+    if (++occurrences > 1) return true;
+  }
+  return false;
+}
 
 function recordModuleEdges(
   context: ModuleGraphContext,
@@ -167,11 +202,10 @@ function recordModuleEdges(
   for (const id of context.getModuleIds()) {
     const info = context.getModuleInfo(id);
     const imports = info?.importedIds ?? [];
-    // `code` is read only for the few modules that import the runtime. One
-    // whose code the bundler does not hand out is counted as encrypting.
+    // `code` is read only for the few modules that import the runtime.
     const encryptsBoundArgs =
       imports.some((imported) => imported.includes(ENCRYPTION_RUNTIME_ID)) &&
-      (info?.code == null || info.code.includes(ENCRYPT_CALL));
+      usesEncryptionRuntime(info?.code);
     modules.set(id, {
       imports,
       dynamicImports: info?.dynamicallyImportedIds ?? [],
@@ -181,36 +215,8 @@ function recordModuleEdges(
   return modules;
 }
 
-/** Every file a bundle emits, chunks and assets. */
-export function recordBundleFileNames(bundle: OutputBundleLike): string[] {
-  return Object.values(bundle).map((file) => file.fileName);
-}
-
-/** What the chunks of a bundle import from outside it, as written. */
-export function recordExternalImports(bundle: OutputBundleLike): string[] {
-  const external = new Set<string>();
-  for (const file of Object.values(bundle)) {
-    for (const specifier of externalImportsOf(file, bundle)) {
-      external.add(specifier);
-    }
-  }
-  return [...external];
-}
-
-function externalImportsOf(
-  file: OutputBundleLike[string],
-  bundle: OutputBundleLike,
-): string[] {
-  return [...(file.imports ?? []), ...(file.dynamicImports ?? [])].filter(
-    (specifier) => !Object.hasOwn(bundle, specifier),
-  );
-}
-
-/** Call from the RSC environment's generateBundle. */
-export function recordServerGraph(
-  context: ModuleGraphContext,
-  bundle: OutputBundleLike,
-): ServerBuildGraph {
+/** The chunks and assets of a bundle. Call from generateBundle. */
+export function recordBundleFiles(bundle: OutputBundleLike): BundleFiles {
   const chunks: BuildChunk[] = [];
   const assets: BuildAsset[] = [];
   for (const file of Object.values(bundle)) {
@@ -219,7 +225,10 @@ export function recordServerGraph(
         fileName: file.fileName,
         name: file.name ?? file.fileName,
         moduleIds: file.moduleIds ?? [],
-        externalImports: externalImportsOf(file, bundle),
+        externalImports: [
+          ...(file.imports ?? []),
+          ...(file.dynamicImports ?? []),
+        ].filter((specifier) => !Object.hasOwn(bundle, specifier)),
       });
     } else {
       assets.push({
@@ -228,7 +237,15 @@ export function recordServerGraph(
       });
     }
   }
-  return { modules: recordModuleEdges(context), chunks, assets };
+  return { chunks, assets };
+}
+
+/** Call from the RSC environment's generateBundle. */
+export function recordServerGraph(
+  context: ModuleGraphContext,
+  bundle: OutputBundleLike,
+): ServerBuildGraph {
+  return { modules: recordModuleEdges(context), ...recordBundleFiles(bundle) };
 }
 
 /** Call from the client environment's generateBundle. */
@@ -238,7 +255,7 @@ export function recordClientGraph(
 ): ClientBuildGraph {
   return {
     modules: recordModuleEdges(context),
-    fileNames: recordBundleFileNames(bundle),
+    fileNames: Object.values(bundle).map((file) => file.fileName),
   };
 }
 
@@ -252,7 +269,8 @@ const VERSION_MODULE = "\0" + VIRTUAL_IDS.version;
 /**
  * plugin-rsc writes the key to this file next to the RSC entry and has chunks
  * import it at run time (its `rsc:encryption-key` renderChunk), so the key is
- * in no chunk and in no bundle graph.
+ * in no chunk and in no bundle graph. The file exists only when a rendered
+ * chunk reads the key.
  */
 export const ENCRYPTION_KEY_FILE = "__vite_rsc_encryption_key.js";
 
@@ -310,12 +328,32 @@ function registryTargets(server: ServerBuildGraph): Set<string> {
   return targets;
 }
 
+/**
+ * The one ownership rule for everything a router's version covers that its
+ * own walk does not hand it: a registry target, a build-rendered payload, a
+ * clientUrls() projection, a server component's stylesheets, the encryption
+ * key. Each has subject modules. It belongs to the routers that reach one of
+ * them, and to EVERY router when none does: what no router can be shown to
+ * run can still be run through any of them (an action only the browser entry
+ * imports, a handler the graph does not show).
+ *
+ * Returns the owning router ids, or `undefined` for every router.
+ */
+function ownersOf(
+  subjects: readonly string[],
+  reachOf: ReadonlyMap<string, ReadonlySet<string>>,
+): ReadonlySet<string> | undefined {
+  const owners = new Set<string>();
+  for (const [routerId, reached] of reachOf) {
+    if (subjects.some((id) => reached.has(id))) owners.add(routerId);
+  }
+  return owners.size > 0 ? owners : undefined;
+}
+
 /** What one router's walk has covered so far, in each graph. */
 interface Reach {
   readonly server: Set<string>;
   readonly client: Set<string>;
-  /** Server modules already used as roots of the client walk. */
-  readonly seeded: Set<string>;
 }
 
 /**
@@ -325,9 +363,10 @@ interface Reach {
  * with reference proxies), so a server action or loader that only client code
  * imports is not reachable from the router's module there. It is reachable in
  * the CLIENT graph, where the same file imports it as a proxy. So: take every
- * reached module that also exists in the client graph, walk the client graph
- * from it, and add the registry targets found. Repeat until nothing is added,
- * since an action's own imports can render more client components.
+ * reached module that also exists in the client graph and the client walk has
+ * not covered, walk the client graph from it, and add the registry targets
+ * found. Repeat until nothing is added, since an action's own imports can
+ * render more client components.
  */
 function extendReach(
   server: ServerBuildGraph,
@@ -342,10 +381,7 @@ function extendReach(
   for (;;) {
     const seeds: string[] = [];
     for (const id of reach.server) {
-      if (!reach.seeded.has(id) && client.modules.has(id)) {
-        reach.seeded.add(id);
-        seeds.push(id);
-      }
+      if (!reach.client.has(id) && client.modules.has(id)) seeds.push(id);
     }
     if (seeds.length === 0) return;
     walk(client.modules, seeds, reach.client);
@@ -417,7 +453,7 @@ export function resolveRouterMembers(
 ): Map<string, RouterMembers> {
   const targets = registryTargets(server);
   const importers = staticImporters(server.modules);
-  const roots = new Map<string, Set<string>>();
+  const reachByRouter = new Map<string, Reach>();
   for (const router of routers) {
     const moduleId =
       router.moduleId !== undefined
@@ -432,34 +468,19 @@ export function resolveRouterMembers(
       climbed.add(id);
       for (const importer of importers.get(id) ?? []) stack.push(importer);
     }
-    roots.set(router.id, climbed);
-  }
-
-  const reachByRouter = new Map<string, Reach>();
-  for (const [routerId, routerRoots] of roots) {
-    const reach: Reach = {
-      server: new Set(),
-      client: new Set(),
-      seeded: new Set(),
-    };
-    extendReach(server, client, targets, reach, routerRoots);
-    reachByRouter.set(routerId, reach);
+    const reach: Reach = { server: new Set(), client: new Set() };
+    extendReach(server, client, targets, reach, climbed);
+    reachByRouter.set(router.id, reach);
   }
 
   // A registry target no router reaches (an action only the browser entry
-  // imports, a loader nothing imports) can still be called through any router's
-  // action or loader endpoint. It belongs to every router.
-  const unattributed: string[] = [];
-  for (const target of targets) {
-    let claimed = false;
-    for (const reach of reachByRouter.values()) {
-      if (reach.server.has(target)) {
-        claimed = true;
-        break;
-      }
-    }
-    if (!claimed) unattributed.push(target);
-  }
+  // imports, a loader nothing imports) is every router's: ownersOf.
+  const serverReach = new Map(
+    [...reachByRouter].map(([routerId, reach]) => [routerId, reach.server]),
+  );
+  const unattributed = [...targets].filter(
+    (target) => ownersOf([target], serverReach) === undefined,
+  );
   if (unattributed.length > 0) {
     for (const reach of reachByRouter.values()) {
       extendReach(server, client, targets, reach, unattributed);
@@ -499,11 +520,40 @@ function isAbsolutePath(path: string): boolean {
 }
 
 /**
+ * A pnpm store directory with its peer suffix:
+ * `.pnpm/@vitejs+plugin-rsc@0.5.35_react@19.3.0_<hash>`. The suffix names what
+ * the package was installed against, peers of peers included, so bumping any
+ * of those (TypeScript is an optional peer of many) renames the directory
+ * while the package's own files stay the same.
+ */
+const PNPM_PEER_SUFFIX = /(\/\.pnpm\/[^/]+?@[^/_]+)_[^/]+(?=\/)/g;
+
+/**
+ * plugin-rsc names a client-reference group after the facade module of its
+ * server chunk, made relative to the root with `path.relative`. For a virtual
+ * facade (@cloudflare/vite-plugin's worker entry) that resolves the id
+ * against the WORKING directory first, so the group's module id carries the
+ * way from the root to wherever vite was started:
+ * `…/group/facade:__/__/\0virtual:cloudflare/worker-entry` from a repository
+ * root, `…/group/facade:\0virtual:cloudflare/worker-entry` in the app. Measured
+ * on tests/cloudflare-stress-demo: the SSR chunk holding that module got
+ * another identity, and the document version with it.
+ */
+function withoutWorkingDirectory(id: string): string {
+  const kind = /(?:facade|shared):/.exec(id);
+  const virtual = id.indexOf("\0");
+  if (!kind || virtual === -1) return id;
+  const facade = kind.index + kind[0].length;
+  return virtual < facade ? id : id.slice(0, facade) + id.slice(virtual);
+}
+
+/**
  * A module id without the build machine's checkout directory: root-relative
  * inside the project, and from the outermost node_modules for an installed
  * package. The outermost, not the innermost: two installed versions of one
  * package differ only in the directories between (`.pnpm/foo@1…/node_modules/foo`,
- * a nested `a/node_modules/foo`), and must not get the same id.
+ * a nested `a/node_modules/foo`), and must not get the same id. A pnpm store
+ * directory is reduced to `name@version` ({@link PNPM_PEER_SUFFIX}).
  *
  * A virtual id can carry a file path in its query. plugin-rsc's server CSS
  * module is `virtual:vite-rsc/css?type=rsc&id=<URI-encoded absolute importer>`,
@@ -512,91 +562,30 @@ function isAbsolutePath(path: string): boolean {
 export function portableModuleId(id: string, projectRoot: string): string {
   const path = id.startsWith("\0") ? id.slice(1) : id;
   const nodeModules = path.indexOf("/node_modules/");
-  if (nodeModules !== -1) return path.slice(nodeModules + 1);
+  if (nodeModules !== -1) {
+    return path.slice(nodeModules + 1).replace(PNPM_PEER_SUFFIX, "$1");
+  }
   if (isAbsolutePath(path)) {
     return relative(projectRoot, path).replaceAll("\\", "/");
   }
-  return path.replace(/([?&][^=&]+=)([^&]+)/g, (whole, name, value) => {
-    let decoded: string;
-    try {
-      decoded = decodeURIComponent(value);
-    } catch {
-      return whole;
-    }
-    return isAbsolutePath(decoded)
-      ? name + portableModuleId(decoded, projectRoot)
-      : whole;
-  });
-}
-
-/**
- * The bundler's region comment for a virtual module, as printed in an
- * unminified chunk (`\0` is two characters there). It prints a virtual id
- * verbatim, so an absolute path in the id's query puts the checkout directory
- * in the chunk; a file module's region is already root-relative.
- */
-const VIRTUAL_REGION = /^\/\/#region \\0(.*)$/gm;
-/** plugin-rsc's server CSS module, as a portable id; captures the importer. */
-const SERVER_CSS_MODULE = /^virtual:vite-rsc\/css\?type=rsc&id=([^&]+)/;
-const VIRTUAL_REGION_MARK = "//#region \\0";
-
-/** `source` with the ids in its virtual-module region comments made portable. */
-export function portableRegions(source: string, projectRoot: string): string {
-  if (!source.includes(VIRTUAL_REGION_MARK)) return source;
-  return source.replace(
-    VIRTUAL_REGION,
-    (_line, id: string) =>
-      VIRTUAL_REGION_MARK + portableModuleId(id, projectRoot),
+  return withoutWorkingDirectory(path).replace(
+    /([?&][^=&]+=)([^&]+)/g,
+    (whole, name, value) => {
+      let decoded: string;
+      try {
+        decoded = decodeURIComponent(value);
+      } catch {
+        return whole;
+      }
+      return isAbsolutePath(decoded)
+        ? name + portableModuleId(decoded, projectRoot)
+        : whole;
+    },
   );
 }
 
-interface ServerFile {
-  readonly fileName: string;
-  /**
-   * What the file is, independent of its content: the un-hashed name plus, for
-   * a chunk, a digest of the module ids inside it. Replaces the file's hashed
-   * name wherever a router that owns the file refers to it.
-   */
-  readonly identity: string;
-  /**
-   * The file name carries a content hash. Only those names are replaced; a
-   * fixed name such as the entry's "index.js" is the same in every build.
-   */
-  readonly hashedName: boolean;
-  /** The chunk holds plugin-rsc's server-reference map. */
-  readonly holdsServerReferences: boolean;
-}
-
-function describeServerFiles(
-  server: ServerBuildGraph,
-  projectRoot: string,
-): ServerFile[] {
-  const files: ServerFile[] = [];
-  for (const chunk of server.chunks) {
-    const ids = chunk.moduleIds
-      .map((id) => portableModuleId(id, projectRoot))
-      .sort();
-    const ext = posix.extname(chunk.fileName);
-    files.push({
-      fileName: chunk.fileName,
-      identity: `${chunk.name}~${sha256(ids.join("\n")).slice(0, 8)}${ext}`,
-      hashedName: baseName(chunk.fileName) !== chunk.name + ext,
-      holdsServerReferences: chunk.moduleIds.includes(
-        SERVER_REFERENCES_MODULE_ID,
-      ),
-    });
-  }
-  for (const asset of server.assets) {
-    if (isSourceMap(asset.fileName)) continue;
-    files.push({
-      fileName: asset.fileName,
-      identity: asset.name,
-      hashedName: baseName(asset.fileName) !== baseName(asset.name),
-      holdsServerReferences: false,
-    });
-  }
-  return files;
-}
+/** plugin-rsc's server CSS module, as a portable id; captures the importer. */
+const SERVER_CSS_MODULE = /^virtual:vite-rsc\/css\?type=rsc&id=([^&]+)/;
 
 /** A sourcemap describes a file; it is not code the server runs. */
 export function isSourceMap(fileName: string): boolean {
@@ -632,105 +621,336 @@ export function stripServerReferenceMap(source: string): string {
   return source.slice(0, bodyStart) + source.slice(end);
 }
 
-/** A file's text, split at every reference to another bundle file. */
-interface FileTemplate {
-  readonly parts: ReadonlyArray<string | ServerFile>;
-  /** The distinct files `parts` refers to. */
-  readonly targets: readonly ServerFile[];
-  /** Digest per ownership of `targets`: routers that own the same ones share it. */
-  readonly digests: Map<string, string>;
+const REGION_LINE = /^\/\/#region .*$/gm;
+
+/**
+ * Take the module paths out of a chunk's region comments.
+ *
+ * The bundler prints one before each module's code, and the path says where
+ * the build ran, not what it built: it is relative to the directory `vite
+ * build` was started from (`vite build apps/web` from a repository root
+ * prints other paths than `vite build` in the app), it holds the pnpm store
+ * directory with its peer suffix, and a virtual id is printed verbatim,
+ * absolute paths in its query included. The code under the comment is hashed
+ * either way.
+ */
+export function stripRegionPaths(source: string): string {
+  return source.replace(REGION_LINE, "//#region");
 }
 
-/** Token for a reference to a file outside the router's set. */
+/** One thing a version is a hash of: its name and the digest of its bytes. */
+export type VersionInput = readonly [name: string, digest: string];
+
+/** One bundle file, digested once for every router. */
+export interface DigestedFile {
+  readonly fileName: string;
+  /**
+   * What the file is, independent of its content: the un-hashed name plus, for
+   * a chunk, a digest of the module ids inside it. Stands in for the file's
+   * hashed name wherever a router that owns the file refers to it.
+   */
+  readonly identity: string;
+  /**
+   * Digest of the file's bytes with every reference to a bundle file replaced
+   * by one token ({@link FILE_REFERENCE}), so a content hash in a file name
+   * never reaches it.
+   */
+  readonly base: string;
+  /** The files those references named, in order of appearance. */
+  readonly references: readonly string[];
+  /** Specifiers the file imports that the bundle does not contain. */
+  readonly externalImports: readonly string[];
+}
+
+/**
+ * Stands for a file name in the text a chunk's `base` is a digest of. A NUL:
+ * no chunk has one in its text, so a reference cannot be confused with code
+ * around it (a `~` operator, say).
+ */
+const FILE_REFERENCE = "\0";
+/** Stands for a reference to a file outside the router's set. */
 const FOREIGN_FILE = "~";
 
 /**
- * Digest one file as one router sees it.
+ * Digest every file of a bundle, as it is on disk.
  *
- * Each reference to a bundle file is replaced before hashing: by the target's
- * identity when the router owns it, by one fixed token when it does not. So a
- * change to a chunk the router does not own cannot reach its hash through a
- * file name, and neither can the content hashes the bundler put in the names.
+ * Three things are taken out of a chunk's text first, each because it says
+ * where or how the build ran: the server-reference map's body
+ * ({@link stripServerReferenceMap}), the paths in region comments
+ * ({@link stripRegionPaths}), and the hashed names of bundle files. A name
+ * carries the content hash of its file, and every chunk importing the file
+ * has the name in its bytes, so one router's change would otherwise move the
+ * digest of every chunk naming its chunk. Only names with a content hash are
+ * replaced; a fixed name such as the entry's "index.js" is the same in every
+ * build. An asset is data (a route manifest staged as a text module can be
+ * megabytes): hashed as bytes, never scanned.
+ *
+ * Throws when the bundle lists a file that is not on disk: its bytes would
+ * silently drop out of every version.
  */
-function digestFile(
-  template: FileTemplate,
-  owned: ReadonlySet<string>,
-): string {
-  let ownership = "";
-  for (const target of template.targets) {
-    ownership += owned.has(target.fileName) ? "1" : "0";
+export function digestBundle(
+  bundle: BundleFiles,
+  projectRoot: string,
+  read: (fileName: string) => Uint8Array | undefined,
+  label: string,
+): DigestedFile[] {
+  const named: Array<{
+    fileName: string;
+    identity: string;
+    hashedName: boolean;
+    chunk?: BuildChunk;
+  }> = [];
+  for (const chunk of bundle.chunks) {
+    const ids = chunk.moduleIds
+      .map((id) => portableModuleId(id, projectRoot))
+      .sort();
+    const ext = posix.extname(chunk.fileName);
+    named.push({
+      fileName: chunk.fileName,
+      identity: `${chunk.name}~${sha256(ids.join("\n")).slice(0, 8)}${ext}`,
+      hashedName: baseName(chunk.fileName) !== chunk.name + ext,
+      chunk,
+    });
   }
-  let digest = template.digests.get(ownership);
-  if (digest === undefined) {
-    const hash = createHash("sha256");
-    for (const part of template.parts) {
-      hash.update(
-        typeof part === "string"
-          ? part
-          : owned.has(part.fileName)
-            ? part.identity
-            : FOREIGN_FILE,
+  for (const asset of bundle.assets) {
+    if (isSourceMap(asset.fileName)) continue;
+    named.push({
+      fileName: asset.fileName,
+      identity: asset.name,
+      hashedName: baseName(asset.fileName) !== baseName(asset.name),
+    });
+  }
+
+  const fileOfBaseName = new Map<string, string>();
+  for (const file of named) {
+    if (file.hashedName) {
+      fileOfBaseName.set(baseName(file.fileName), file.fileName);
+    }
+  }
+  const reference =
+    fileOfBaseName.size > 0
+      ? new RegExp(
+          [...fileOfBaseName.keys()]
+            .sort((a, b) => b.length - a.length)
+            .map(escapeRegExp)
+            .join("|"),
+          "g",
+        )
+      : undefined;
+
+  const decoder = new TextDecoder();
+  return named.map(({ fileName, identity, chunk }) => {
+    const bytes = read(fileName);
+    if (bytes === undefined) {
+      throw new Error(
+        `the ${label} bundle lists ${fileName}, which is not in its output directory`,
       );
     }
-    digest = hash.digest("hex");
-    template.digests.set(ownership, digest);
+    if (!chunk) {
+      return {
+        fileName,
+        identity,
+        base: sha256(bytes),
+        references: [],
+        externalImports: [],
+      };
+    }
+    const references: string[] = [];
+    const text = stripRegionPaths(
+      stripServerReferenceMap(decoder.decode(bytes)),
+    );
+    const blanked = reference
+      ? text.replace(reference, (name) => {
+          references.push(fileOfBaseName.get(name)!);
+          return FILE_REFERENCE;
+        })
+      : text;
+    return {
+      fileName,
+      identity,
+      base: sha256(blanked),
+      references,
+      externalImports: chunk.externalImports ?? [],
+    };
+  });
+}
+
+/**
+ * A file's digest as the owner of `owned` sees it: each reference becomes the
+ * target's identity when the owner has the target, one fixed token when it
+ * does not. A change to a chunk a router does not own cannot reach its hash
+ * through a file name.
+ */
+function digestAsOwned(
+  file: DigestedFile,
+  identityOf: ReadonlyMap<string, string>,
+  owned: ReadonlySet<string>,
+): string {
+  if (file.references.length === 0) return file.base;
+  return sha256(
+    JSON.stringify([
+      file.base,
+      ...file.references.map((name) =>
+        owned.has(name) ? identityOf.get(name)! : FOREIGN_FILE,
+      ),
+    ]),
+  );
+}
+
+/** How the build reads what the bundles leave external. */
+export interface ExternalResolver {
+  /**
+   * What is installed for a package: `name@version` of the package and of
+   * everything it depends on (installed-packages.ts). The chunk only says
+   * `from "pkg"`, whichever version that is. `undefined` when the package
+   * cannot be found.
+   */
+  readonly describePackage: (name: string) => string | undefined;
+  /** The bytes of a file at an absolute path; `undefined` when it is absent. */
+  readonly readFile: (path: string) => Uint8Array | undefined;
+  /** Unique to this build: the digest of an input that cannot be determined. */
+  readonly buildId: string;
+}
+
+export type ExternalImport =
+  | { readonly kind: "provided" }
+  | { readonly kind: "package"; readonly name: string }
+  | { readonly kind: "file" }
+  | { readonly kind: "unknown" };
+
+/** What the runtime itself provides: nothing a build could install or change. */
+const RUNTIME_SCHEME = /^(?:node|cloudflare|workerd|bun):/;
+/**
+ * Specifiers another plugin replaces when it renders the chunk, for a file
+ * the versions already cover:
+ *
+ * - @cloudflare/vite-plugin imports a text, data or wasm module as
+ *   `__CLOUDFLARE_MODULE__<type>__<path>__CLOUDFLARE_MODULE__`; the file it
+ *   emits is a bundle asset the chunk names, hashed as one
+ *   ({@link digestBundle}).
+ * - plugin-rsc resolves `virtual:vite-rsc/assets-manifest` as external and
+ *   writes the manifest after every bundle. A data version covers what a
+ *   router's server code renders from it, entry by entry (`server-css`
+ *   records); the document version covers the client asset names.
+ */
+const REPLACED_MARKER =
+  /^(?:__CLOUDFLARE_MODULE__.*__CLOUDFLARE_MODULE__|virtual:vite-rsc\/assets-manifest)$/;
+/** A name npm accepts: no leading `.` or `_`. */
+const PACKAGE_NAME = /^(?:@[\w.~-]+\/)?[A-Za-z0-9~-][\w.~-]*$/;
+
+/**
+ * What an import a bundle leaves external is. THE rule for all of them, and
+ * the only place it is decided:
+ *
+ * - `provided`: the version does not cover it. A runtime builtin (`node:fs`,
+ *   bare `fs`, `cloudflare:workers`, `bun:sqlite`), a `data:` URL (its content
+ *   is the specifier, which is in the chunk), or a marker of another plugin
+ *   whose file is a bundle output the hash already covers.
+ * - `package`: an installed package. The version covers what is installed.
+ * - `file`: a relative or absolute path. The version covers the file's bytes.
+ * - `unknown`: anything else (`https:`, `npm:`, a name npm would reject).
+ *
+ * A package that is not installed, a path that does not resolve and every
+ * `unknown` import get a value unique to the build, and the build names them:
+ * the routers importing them get a new version on every build. Nothing the
+ * build cannot read is left out of a version.
+ */
+export function classifyExternal(specifier: string): ExternalImport {
+  if (/^[./\\]/.test(specifier) || isAbsolutePath(specifier)) {
+    return { kind: "file" };
   }
-  return digest;
+  if (
+    RUNTIME_SCHEME.test(specifier) ||
+    specifier.startsWith("data:") ||
+    isBuiltin(specifier) ||
+    REPLACED_MARKER.test(specifier)
+  ) {
+    return { kind: "provided" };
+  }
+  if (specifier.includes(":")) return { kind: "unknown" };
+  const parts = specifier.split("/");
+  const name = specifier.startsWith("@")
+    ? parts.slice(0, 2).join("/")
+    : parts[0]!;
+  return PACKAGE_NAME.test(name)
+    ? { kind: "package", name }
+    : { kind: "unknown" };
+}
+
+interface ExternalContext {
+  readonly projectRoot: string;
+  readonly externals: ExternalResolver;
+  /** Read a file of the output directory the importing chunk is in. */
+  readonly read: (fileName: string) => Uint8Array | undefined;
+  /** Imports the build could not determine, as the build names them. */
+  readonly undetermined: Set<string>;
+}
+
+/** The version inputs for what one chunk leaves external ({@link classifyExternal}). */
+function externalInputs(
+  file: DigestedFile,
+  context: ExternalContext,
+): VersionInput[] {
+  const { externals, undetermined } = context;
+  const inputs: VersionInput[] = [];
+  const add = (name: string, value: string | Uint8Array | undefined): void => {
+    if (value === undefined) undetermined.add(name);
+    inputs.push([
+      `external ${name}`,
+      sha256(value ?? `undetermined ${externals.buildId}`),
+    ]);
+  };
+  for (const specifier of file.externalImports) {
+    const external = classifyExternal(specifier);
+    if (external.kind === "package") {
+      add(external.name, externals.describePackage(external.name));
+    } else if (external.kind === "file") {
+      if (isAbsolutePath(specifier)) {
+        // Named root-relative inside the project. Outside it the path is the
+        // same on every checkout, and a relative one would count the
+        // directories between.
+        const inProject = portableModuleId(specifier, context.projectRoot);
+        add(
+          inProject.startsWith("..") ? specifier : inProject,
+          externals.readFile(specifier),
+        );
+      } else {
+        // As written in the chunk: relative to the chunk's own directory.
+        const fileName = posix.join(
+          posix.dirname(file.fileName),
+          specifier.replaceAll("\\", "/"),
+        );
+        add(fileName, context.read(fileName));
+      }
+    } else if (external.kind === "unknown") {
+      add(specifier, undefined);
+    }
+  }
+  return inputs;
 }
 
 export interface ComputeRouterVersionsInput {
   readonly projectRoot: string;
   readonly server: ServerBuildGraph;
-  readonly client: ClientBuildGraph | undefined;
+  readonly client: ClientBuildGraph;
+  /** The SSR environment's bundle, with the files plugin-rsc writes next to it. */
+  readonly ssr: BundleFiles;
   readonly routers: readonly RouterSource[];
   readonly buildData: readonly BuildDataRecord[];
   /** Read a file of the RSC output directory; undefined when it is absent. */
   readonly readServerFile: (fileName: string) => Uint8Array | undefined;
-  /**
-   * Digest of what stored HTML depends on besides the router's server code:
-   * the SSR output and the client asset names ({@link digestDocumentInputs}).
-   */
-  readonly documentDigest: string;
+  /** Read a file of the SSR output directory; undefined when it is absent. */
+  readonly readSsrFile: (fileName: string) => Uint8Array | undefined;
+  /** Vite's `base`, a prefix of every asset URL in stored HTML. */
+  readonly base: string;
   /**
    * plugin-rsc's `serverResources` from the built assets manifest: the
    * root-relative id of a server module that imports CSS, to the text of its
-   * entry (the stylesheet URLs). The module's wrapper reads that entry at run
-   * time and renders the URLs as `<link>`s into the router's Flight, so they
-   * are in cached payloads while no server chunk holds them.
+   * entry (the stylesheet URLs).
    */
   readonly serverResources?: ReadonlyMap<string, string>;
-  /**
-   * What is installed for a package the bundle leaves external: `name@version`
-   * of the package and of everything it depends on. The chunk only says
-   * `from "pkg"`, whichever version that is. `undefined` when the package
-   * cannot be found.
-   */
-  readonly describeExternal?: (packageName: string) => string | undefined;
+  readonly externals: ExternalResolver;
 }
-
-/** A name npm accepts: no leading `.` or `_`. */
-const PACKAGE_NAME = /^(?:@[\w.~-]+\/)?[A-Za-z0-9~-][\w.~-]*$/;
-
-/**
- * The package a specifier the bundle left external names, or `undefined` for
- * what is not an installed package: a path, a builtin, a platform scheme
- * (`node:`, `cloudflare:`), or a marker another plugin replaces when it
- * renders the chunk. @cloudflare/vite-plugin imports a text or wasm module as
- * `__CLOUDFLARE_MODULE__<type>__<path>__CLOUDFLARE_MODULE__` and emits its
- * content as a bundle asset, which is hashed as a file.
- */
-export function externalPackage(specifier: string): string | undefined {
-  if (/^[./\\]/.test(specifier) || specifier.includes(":")) return undefined;
-  if (isBuiltin(specifier)) return undefined;
-  const parts = specifier.split("/");
-  const name = specifier.startsWith("@")
-    ? parts.slice(0, 2).join("/")
-    : parts[0]!;
-  return PACKAGE_NAME.test(name) ? name : undefined;
-}
-
-/** One thing a version is a hash of: its name and the digest of its bytes. */
-export type VersionInput = readonly [name: string, digest: string];
 
 export interface RouterVersionDetail {
   readonly routerId: string;
@@ -739,10 +959,10 @@ export interface RouterVersionDetail {
   /**
    * Everything the data version is a hash of, in hashed order: `file
    * <identity>` for a server file, `static <id>` for a Static payload,
-   * `server-css <module>` for a server component's stylesheets, `external
-   * <package>` for an installed dependency the bundle left external,
-   * `encryption-key` for the key. Two builds' lists differ exactly where the
-   * version's inputs differ.
+   * `client-urls <module>` for a clientUrls() projection, `server-css
+   * <module>` for a server component's stylesheets, `external <import>` for
+   * what the bundle left external, `encryption-key` for the key. Two builds'
+   * lists differ exactly where the version's inputs differ.
    */
   readonly dataInputs: readonly VersionInput[];
   /**
@@ -751,14 +971,42 @@ export interface RouterVersionDetail {
    * Prerender payload.
    */
   readonly documentInputs: readonly VersionInput[];
-  /** The router's code encrypts inline-action bound arguments. */
+  /** The key is part of the router's data version. */
   readonly usesEncryptionKey: boolean;
+}
+
+/**
+ * What stored HTML depends on besides a router's server code, one set for the
+ * build (the SSR output is not split by router). Hashed as the
+ * `ssr-and-client` input of every document version.
+ */
+export interface SsrAndClientInputs {
+  /** Vite's `base`, a prefix of every asset URL in stored HTML. */
+  readonly base: string;
+  /**
+   * The SSR output, file by file ({@link digestBundle}). It renders the HTML,
+   * and its own code can change without the client's.
+   */
+  readonly ssr: readonly VersionInput[];
+  /** What the SSR output leaves external ({@link classifyExternal}). */
+  readonly externals: readonly VersionInput[];
+  /**
+   * The client asset names. A prelude and an open tab both hold them, and the
+   * names carry the bundler's content hashes.
+   */
+  readonly client: readonly string[];
 }
 
 export interface ComputedRouterVersions {
   readonly table: RouterVersionsTable;
   /** One entry per attributed router, then the whole-build entry. */
   readonly details: readonly RouterVersionDetail[];
+  /** What every document version covers besides its router's data version. */
+  readonly ssrAndClient: SsrAndClientInputs;
+  /** Server files no attributed router owns, by identity. */
+  readonly unownedFiles: readonly string[];
+  /** Imports the build could not determine ({@link classifyExternal}). */
+  readonly undetermined: readonly string[];
 }
 
 /** Length of a version string: 64 bits of the digest, in hex. */
@@ -767,6 +1015,14 @@ const VERSION_HEX_LENGTH = 16;
 /** By name, then digest: a total order, whatever order the bundle listed. */
 function byName(a: VersionInput, b: VersionInput): number {
   return compareStrings(a[0], b[0]) || compareStrings(a[1], b[1]);
+}
+
+/** `inputs` in hashed order, each one once (two chunks can import one package). */
+function distinct(inputs: readonly VersionInput[]): VersionInput[] {
+  const sorted = [...inputs].sort(byName);
+  return sorted.filter(
+    (item, index) => index === 0 || byName(item, sorted[index - 1]!) !== 0,
+  );
 }
 
 function hashInputs(label: string, inputs: readonly VersionInput[]): string {
@@ -778,214 +1034,184 @@ function hashInputs(label: string, inputs: readonly VersionInput[]): string {
   );
 }
 
+/** A version input that is not a file: owned by {@link ownersOf}. */
+interface OwnedInput {
+  readonly input: VersionInput;
+  readonly version: "data" | "document";
+  /** Owning routers; `undefined`: every router. */
+  readonly owners: ReadonlySet<string> | undefined;
+}
+
+/**
+ * The records for a build's `serverResources`. The links of an entry are
+ * rendered by plugin-rsc's CSS module for it
+ * (`virtual:vite-rsc/css?type=rsc&id=<module the entry is keyed by>`), which
+ * is what a router has to reach. With an explicit
+ * `import.meta.viteRsc.loadCss("./other")` that is not the keyed module.
+ */
+function serverCssRecords(
+  server: ServerBuildGraph,
+  projectRoot: string,
+  serverResources: ReadonlyMap<string, string>,
+): BuildDataRecord[] {
+  if (serverResources.size === 0) return [];
+  const moduleOf = new Map<string, string>();
+  for (const id of server.modules.keys()) {
+    const key = portableModuleId(id, projectRoot).match(SERVER_CSS_MODULE)?.[1];
+    if (key !== undefined) moduleOf.set(key, id);
+  }
+  return [...serverResources].map(([key, entry]) => ({
+    kind: "server-css",
+    key,
+    digest: sha256(entry),
+    moduleId: moduleOf.get(key),
+  }));
+}
+
 /**
  * Compute every router's data and document version, and the whole-build pair.
  *
  * A router's data version covers: its chunk files, the bundle assets those
- * files name (a route manifest staged as a text module), the build-rendered
- * payloads it owns, and the encryption key when its code encrypts with it.
- * Its document version is the data version plus `documentDigest`.
+ * files name (a route manifest staged as a text module), what those files
+ * leave external, and the inputs it owns that no chunk holds
+ * ({@link ownersOf}). Its document version is the data version plus the SSR
+ * output, the client asset names, `base` and its Prerender payloads.
  */
 export function computeRouterVersions(
   input: ComputeRouterVersionsInput,
 ): ComputedRouterVersions {
   const { server, projectRoot } = input;
-  const files = describeServerFiles(server, projectRoot);
+  const undetermined = new Set<string>();
 
-  const identityByBaseName = new Map<string, ServerFile>();
-  for (const file of files) {
-    if (file.hashedName) identityByBaseName.set(baseName(file.fileName), file);
-  }
-  const reference =
-    identityByBaseName.size > 0
-      ? new RegExp(
-          [...identityByBaseName.keys()]
-            .sort((a, b) => b.length - a.length)
-            .map(escapeRegExp)
-            .join("|"),
-          "g",
-        )
-      : undefined;
-
-  // What to hash per file. A digest that no router's view can change (an
-  // asset, a chunk that names no other file) is computed once; a chunk with
-  // references is hashed once per distinct ownership of them (digestFile).
-  const hashable = new Map<string, string | FileTemplate>();
-  const assetsNamedBy = new Map<string, string[]>();
+  const files = digestBundle(server, projectRoot, input.readServerFile, "RSC");
+  const identityOf = new Map(
+    files.map((file) => [file.fileName, file.identity]),
+  );
   const assetFiles = new Set(server.assets.map((asset) => asset.fileName));
-  const decoder = new TextDecoder();
-  for (const file of files) {
-    const onDisk = input.readServerFile(file.fileName);
-    if (onDisk === undefined) continue;
-    if (assetFiles.has(file.fileName)) {
-      // Data, not code: a route manifest staged as a text module can be
-      // megabytes. Hashed as bytes, never scanned.
-      hashable.set(file.fileName, sha256(onDisk));
-      continue;
-    }
-    const text = portableRegions(decoder.decode(onDisk), projectRoot);
-    const source = file.holdsServerReferences
-      ? stripServerReferenceMap(text)
-      : text;
-    const parts: Array<string | ServerFile> = [];
-    const targets = new Set<ServerFile>();
-    let last = 0;
-    if (reference) {
-      for (const match of source.matchAll(reference)) {
-        const target = identityByBaseName.get(match[0])!;
-        parts.push(source.slice(last, match.index), target);
-        last = match.index + match[0].length;
-        targets.add(target);
-      }
-    }
-    if (parts.length === 0) {
-      hashable.set(file.fileName, sha256(source));
-      continue;
-    }
-    parts.push(source.slice(last));
-    hashable.set(file.fileName, {
-      parts,
-      targets: [...targets],
-      digests: new Map(),
-    });
-    const named = [...targets]
-      .filter((target) => assetFiles.has(target.fileName))
-      .map((target) => target.fileName);
-    if (named.length > 0) assetsNamedBy.set(file.fileName, named);
-  }
+  const externalContext: ExternalContext = {
+    projectRoot,
+    externals: input.externals,
+    read: input.readServerFile,
+    undetermined,
+  };
+  const externalsOf = new Map(
+    files.map((file) => [file.fileName, externalInputs(file, externalContext)]),
+  );
 
-  const keyFile = input.readServerFile(ENCRYPTION_KEY_FILE);
   const members = resolveRouterMembers(server, input.client, input.routers);
+  const reachOf = new Map(
+    [...members].map(([routerId, member]) => [routerId, member.modules]),
+  );
 
-  // A Static payload or a clientUrls() projection belongs to every router
-  // that reaches its module; one whose module no router reaches belongs to
-  // all of them.
-  const claimedByModule = new Set<BuildDataRecord>();
-  for (const record of input.buildData) {
-    if (record.kind === "prerender" || record.moduleId === undefined) continue;
-    for (const member of members.values()) {
-      if (member.modules.has(record.moduleId)) {
-        claimedByModule.add(record);
-        break;
-      }
-    }
-  }
-  const ownsBuildData = (
-    record: BuildDataRecord,
-    routerId: string,
-    member: RouterMembers,
-  ): boolean => {
-    if (record.kind === "prerender") {
-      return record.routerId === undefined || record.routerId === routerId;
-    }
-    return (
-      !claimedByModule.has(record) ||
-      (record.moduleId !== undefined && member.modules.has(record.moduleId))
+  const owned = [
+    ...input.buildData,
+    ...serverCssRecords(
+      server,
+      projectRoot,
+      input.serverResources ?? new Map(),
+    ),
+  ].map(
+    (record): OwnedInput => ({
+      input: [`${record.kind} ${record.key}`, record.digest],
+      version: record.kind === "prerender" ? "document" : "data",
+      owners:
+        record.routerId !== undefined
+          ? new Set([record.routerId])
+          : ownersOf(
+              record.moduleId === undefined ? [] : [record.moduleId],
+              reachOf,
+            ),
+    }),
+  );
+
+  // The key belongs to the routers whose code encrypts with it. A key file
+  // with no module recognised as encrypting means the recognition failed
+  // (the file is written only when a chunk reads the key): every router's.
+  const encrypting = [...server.modules]
+    .filter(([, edges]) => edges.encryptsBoundArgs)
+    .map(([id]) => id);
+  const keyFile = input.readServerFile(ENCRYPTION_KEY_FILE);
+  if (keyFile !== undefined) {
+    owned.push({
+      input: ["encryption-key", sha256(keyFile)],
+      version: "data",
+      owners: ownersOf(encrypting, reachOf),
+    });
+  } else if (encrypting.length > 0) {
+    throw new Error(
+      `${encrypting.length} server module(s) encrypt action arguments ` +
+        `(${portableModuleId(encrypting[0]!, projectRoot)}), but ${ENCRYPTION_KEY_FILE} is not in the RSC ` +
+        `output directory, so the key cannot be made part of their cache version. The installed ` +
+        `@vitejs/plugin-rsc keeps the key somewhere @rangojs/router does not know. Report it ` +
+        `with the plugin-rsc version.`,
     );
-  };
-
-  // A server component's stylesheets belong to every router that can run the
-  // component; an entry whose module no router reaches belongs to all of them.
-  const serverResources = input.serverResources ?? new Map<string, string>();
-  const resourcesOf = new Map<string, Set<string>>();
-  const claimedResources = new Set<string>();
-  if (serverResources.size > 0) {
-    // The links are rendered by plugin-rsc's CSS module for the entry
-    // (`virtual:vite-rsc/css?type=rsc&id=<module the entry is keyed by>`),
-    // which is what a router has to reach. With an explicit
-    // `import.meta.viteRsc.loadCss("./other")` that is not the keyed module.
-    const resourceOfModule = new Map<string, string>();
-    for (const id of server.modules.keys()) {
-      const key = portableModuleId(id, projectRoot).match(
-        SERVER_CSS_MODULE,
-      )?.[1];
-      if (key !== undefined && serverResources.has(key)) {
-        resourceOfModule.set(id, key);
-      }
-    }
-    for (const [routerId, member] of members) {
-      const keys = new Set<string>();
-      for (const [id, key] of resourceOfModule) {
-        if (member.modules.has(id)) {
-          keys.add(key);
-          claimedResources.add(key);
-        }
-      }
-      resourcesOf.set(routerId, keys);
-    }
   }
+  const keyInput = owned.find((item) => item.input[0] === "encryption-key");
 
-  const externalsOf = new Map<string, string[]>();
-  for (const chunk of server.chunks) {
-    const packages = (chunk.externalImports ?? [])
-      .map(externalPackage)
-      .filter((name) => name !== undefined);
-    if (packages.length > 0) externalsOf.set(chunk.fileName, packages);
-  }
-
-  const encrypts = (modules: Iterable<string>): boolean => {
-    for (const id of modules) {
-      if (server.modules.get(id)?.encryptsBoundArgs) return true;
-    }
-    return false;
+  // What stored HTML depends on besides a router's server code. One digest
+  // for the build: the SSR output is not split by router.
+  const ssrFiles = digestBundle(
+    input.ssr,
+    projectRoot,
+    input.readSsrFile,
+    "SSR",
+  );
+  const ssrIdentityOf = new Map(
+    ssrFiles.map((file) => [file.fileName, file.identity]),
+  );
+  const everySsrFile = new Set(ssrFiles.map((file) => file.fileName));
+  const ssrAndClient: SsrAndClientInputs = {
+    base: input.base,
+    ssr: distinct(
+      ssrFiles.map((file) => [
+        file.identity,
+        digestAsOwned(file, ssrIdentityOf, everySsrFile),
+      ]),
+    ),
+    externals: distinct(
+      ssrFiles.flatMap((file) =>
+        externalInputs(file, { ...externalContext, read: input.readSsrFile }),
+      ),
+    ),
+    client: [...input.client.fileNames].sort(),
   };
+  const documentDigest = sha256(JSON.stringify(ssrAndClient));
 
   const table: Record<string, readonly [string, string]> = {};
   const details: RouterVersionDetail[] = [];
-  const add = (
-    routerId: string,
-    chunkFiles: Iterable<string>,
-    usesEncryptionKey: boolean,
-    buildData: readonly BuildDataRecord[],
-  ): void => {
-    const owned = new Set(chunkFiles);
-    for (const fileName of [...owned]) {
-      for (const asset of assetsNamedBy.get(fileName) ?? []) owned.add(asset);
+  const ownedByARouter = new Set<string>();
+  /** `chunkFiles`: the router's, or `undefined` for the whole build. */
+  const add = (routerId: string, chunkFiles?: ReadonlySet<string>): void => {
+    const whole = chunkFiles === undefined;
+    const ownedFiles = new Set(
+      chunkFiles ?? files.map((file) => file.fileName),
+    );
+    for (const file of files) {
+      if (!ownedFiles.has(file.fileName)) continue;
+      for (const name of file.references) {
+        if (assetFiles.has(name)) ownedFiles.add(name);
+      }
     }
 
-    const dataInputs: VersionInput[] = [];
-    const externals = new Set<string>();
+    const inputs: Record<"data" | "document", VersionInput[]> = {
+      data: [],
+      document: [["ssr-and-client", documentDigest]],
+    };
     for (const file of files) {
-      const content = hashable.get(file.fileName);
-      if (content === undefined || !owned.has(file.fileName)) continue;
-      dataInputs.push([
-        `file ${file.identity}`,
-        typeof content === "string" ? content : digestFile(content, owned),
-      ]);
-      for (const name of externalsOf.get(file.fileName) ?? []) {
-        externals.add(name);
+      if (!ownedFiles.has(file.fileName)) continue;
+      if (!whole) ownedByARouter.add(file.fileName);
+      inputs.data.push(
+        [`file ${file.identity}`, digestAsOwned(file, identityOf, ownedFiles)],
+        ...externalsOf.get(file.fileName)!,
+      );
+    }
+    for (const item of owned) {
+      if (whole || item.owners === undefined || item.owners.has(routerId)) {
+        inputs[item.version].push(item.input);
       }
     }
-    for (const name of externals) {
-      const installed = input.describeExternal?.(name);
-      if (installed !== undefined) {
-        dataInputs.push([`external ${name}`, sha256(installed)]);
-      }
-    }
-    const ownResources = resourcesOf.get(routerId);
-    for (const [key, entry] of serverResources) {
-      if (
-        routerId === DEFAULT_ROUTER_VERSIONS_KEY ||
-        ownResources?.has(key) ||
-        !claimedResources.has(key)
-      ) {
-        dataInputs.push([`server-css ${key}`, sha256(entry)]);
-      }
-    }
-    if (usesEncryptionKey && keyFile !== undefined) {
-      dataInputs.push(["encryption-key", sha256(keyFile)]);
-    }
-    const documentInputs: VersionInput[] = [
-      ["ssr-and-client", input.documentDigest],
-    ];
-    for (const record of buildData) {
-      (record.kind === "prerender" ? documentInputs : dataInputs).push([
-        `${record.kind} ${record.key}`,
-        record.digest,
-      ]);
-    }
-    dataInputs.sort(byName);
-    documentInputs.sort(byName);
+    const dataInputs = distinct(inputs.data);
+    const documentInputs = distinct(inputs.document);
 
     const data = hashInputs("rango-data-version", dataInputs);
     const document = hashInputs(
@@ -999,66 +1225,29 @@ export function computeRouterVersions(
       document,
       dataInputs,
       documentInputs,
-      usesEncryptionKey,
+      usesEncryptionKey:
+        keyInput !== undefined &&
+        (whole ||
+          keyInput.owners === undefined ||
+          keyInput.owners.has(routerId)),
     });
   };
 
   for (const router of input.routers) {
     const member = members.get(router.id);
-    if (!member) continue;
-    add(
-      router.id,
-      member.chunkFiles,
-      encrypts(member.modules),
-      input.buildData.filter((record) =>
-        ownsBuildData(record, router.id, member),
-      ),
-    );
+    if (member) add(router.id, member.chunkFiles);
   }
-  add(
-    DEFAULT_ROUTER_VERSIONS_KEY,
-    files.map((file) => file.fileName),
-    encrypts(server.modules.keys()),
-    input.buildData,
-  );
-  return { table, details };
-}
-
-/**
- * Digest of what stored HTML depends on besides a router's server code: the
- * SSR output (it renders the HTML, and its own code can change without the
- * client's) and the client asset names (a prelude and an open tab both hold
- * them, and the names carry the bundler's content hashes).
- */
-export function digestDocumentInputs(input: {
-  /** SSR output files, path relative to the SSR output directory. */
-  readonly ssrFiles: ReadonlyArray<{ fileName: string; source: Uint8Array }>;
-  readonly clientFileNames: readonly string[];
-  readonly base: string;
-  /**
-   * Packages the SSR output leaves external, with what is installed for each
-   * ({@link ComputeRouterVersionsInput.describeExternal}).
-   */
-  readonly ssrExternals?: ReadonlyArray<readonly [name: string, text: string]>;
-}): string {
-  const hash = createHash("sha256");
-  hash.update(`base\0${input.base}`);
-  hash.update(
-    `\0externals\0${JSON.stringify([...(input.ssrExternals ?? [])].sort(byName))}`,
-  );
-  const ssrFiles = [...input.ssrFiles].sort((a, b) =>
-    compareStrings(a.fileName, b.fileName),
-  );
-  for (const file of ssrFiles) {
-    // Length-prefixed: file bytes are arbitrary, so a separator alone could
-    // not tell one file's end from the next entry's header.
-    hash.update(`\0ssr\0${file.fileName}\0${file.source.byteLength}\0`);
-    hash.update(file.source);
-  }
-  for (const fileName of [...input.clientFileNames].sort()) {
-    hash.update(`\0client\0${fileName}`);
-  }
-  return hash.digest("hex");
+  add(DEFAULT_ROUTER_VERSIONS_KEY);
+  return {
+    table,
+    details,
+    ssrAndClient,
+    unownedFiles: files
+      .filter((file) => !ownedByARouter.has(file.fileName))
+      .map((file) => file.identity)
+      .sort(),
+    undetermined: [...undetermined].sort(),
+  };
 }
 
 /**

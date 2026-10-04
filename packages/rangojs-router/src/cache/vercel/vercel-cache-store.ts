@@ -175,7 +175,11 @@ const REVALIDATION_LOCK_MS = 30_000;
  *  the suffix; `rg:` namespaces every Rango entry. `h` is the PPR shell tier. */
 type CacheFamily = "s" | "i" | "r" | "h" | "tm";
 
-/** Which of the serving router's versions each family's keys carry. */
+/**
+ * Which of the serving router's versions each family's keys carry
+ * (versionKeyPrefix). A tag marker carries none: an invalidation applies to
+ * every version, including one a rollback brings back.
+ */
 const FAMILY_VERSION: Record<CacheFamily, KeyVersion> = {
   s: "data",
   i: "data",
@@ -1493,16 +1497,6 @@ export class VercelCacheStore<
   // large live-key count a same-family collision can serve the wrong body and a
   // cross-family one reads as corrupt. See the class doc for passing a wider
   // hash (sha256) when many keys are live.
-  //
-  // The version prefix depends on the family: segments (`s`) and items (`i`)
-  // are cached RSC data and take the serving router's DATA version; responses
-  // (`r`) and shells (`h`) are stored HTML or carry the handler version in
-  // their bytes and take its DOCUMENT version; tag markers (`tm`) take none,
-  // so an invalidation applies to every version, including one that comes back
-  // in a rollback (isTagsInvalidatedSince only compares times). A store-level
-  // `version` is used for every versioned family. The router's versions are
-  // read from the request context per operation: the cache factory builds the
-  // store without knowing the router.
   private toStoreKey(key: string, family: CacheFamily): string {
     return `${versionKeyPrefix(this.explicitVersion, FAMILY_VERSION[family])}rg:${family}:${key}`;
   }

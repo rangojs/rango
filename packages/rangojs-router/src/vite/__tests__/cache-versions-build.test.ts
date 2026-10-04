@@ -28,6 +28,19 @@ const scenarios = {
   baseline: {},
   // Same source, same directory name, different parent directory.
   otherDirectory: {},
+  // Same source, built with `vite build app` from the parent directory.
+  otherWorkingDirectory: { fromParentDirectory: true },
+  // Two more lines above app A's createRouter(): nothing the build ships
+  // changes, and the router keeps its id.
+  linesAboveRouterInA: {
+    edits: {
+      "src/apps/a/router.tsx": (source: string) =>
+        source.replace(
+          "export const router = createRouter",
+          "// One more note.\n\nexport const router = createRouter",
+        ),
+    },
+  },
   serverTextInA: {
     edits: {
       "src/apps/a/urls.tsx": (source: string) =>
@@ -56,6 +69,17 @@ const scenarios = {
     },
   },
   otherEncryptionKey: { encryptionKey: OTHER_ENCRYPTION_KEY },
+  // No inline action that closes over a value anywhere: file-level actions
+  // only, which import plugin-rsc's encryption runtime and never call it.
+  noBoundArguments: {
+    edits: {
+      "src/apps/a/note.tsx": (source: string) =>
+        source.replace(
+          'console.log("saved note", id);',
+          'console.log("saved");',
+        ),
+    },
+  },
   // An action only a client component imports: the server graph of app A
   // never reaches actions.ts.
   clientOnlyActionBodyInA: {
@@ -184,6 +208,24 @@ describe("per-router cache versions of a real build", () => {
     expect(builds.otherDirectory.table).toEqual(builds.baseline.table);
   });
 
+  // The bundler prints module paths relative to the directory vite was
+  // started from, into region comments and so into the content hashes in
+  // chunk names, of the RSC and the SSR output alike.
+  it("builds the same source from another working directory to the same versions", () => {
+    expect(builds.otherWorkingDirectory.output).not.toContain("could not be");
+    expect(builds.otherWorkingDirectory.table).toEqual(builds.baseline.table);
+  });
+
+  // The report names the server files in no router's version: here the host
+  // entry, and the RSC build's copy of a server component's stylesheet, which
+  // a router's version covers through the URL it renders (`server-css`).
+  it("leaves only the host entry and a stylesheet copy out of every router's version", () => {
+    expect(builds.baseline.unownedFiles).toEqual([
+      expect.stringMatching(/^index~[0-9a-f]{8}\.mjs$/),
+      "note.css",
+    ]);
+  });
+
   it("writes the table into the built version module and nothing else varies", () => {
     const assets = join(builds.baseline.root, "dist/rsc/assets");
     const holders = readdirSync(assets).filter((file) =>
@@ -226,6 +268,12 @@ describe("per-router cache versions of a real build", () => {
         .filter((key) => key !== "*")
         .sort(),
     ).toEqual([...builtIds].sort());
+  });
+
+  // The id was a hash of the call's line: this edit renamed the router, its
+  // state cookie and its route manifest chunk, and moved its versions.
+  it("keeps the router id and every version when lines are added above createRouter()", () => {
+    expect(builds.linesAboveRouterInA.table).toEqual(builds.baseline.table);
   });
 
   it("ships a root-relative $$sourceFile, not the build directory", () => {
@@ -288,6 +336,18 @@ describe("per-router cache versions of a real build", () => {
     expect(versionsOf("otherEncryptionKey", B)).toEqual(
       versionsOf("baseline", B),
     );
+  });
+
+  // plugin-rsc writes no key file for such a build. The key is in no
+  // version, and the build does not fail looking for it.
+  it("puts no key in the versions of a build that does not encrypt", () => {
+    const { root, routers, whole } = builds.noBoundArguments;
+    expect(() =>
+      readFileSync(join(root, "dist/rsc/__vite_rsc_encryption_key.js")),
+    ).toThrow(/ENOENT/);
+    for (const entry of [routers[A]!, routers[B]!, whole]) {
+      expect(Object.keys(entry.dataInputs)).not.toContain("encryption-key");
+    }
   });
 
   it("counts a server action only a client component imports as its app's code", () => {

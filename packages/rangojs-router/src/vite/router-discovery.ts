@@ -67,9 +67,8 @@ import {
 import { runShellPrerenderPhase } from "./discovery/shell-prerender-phase.js";
 import { runRouterVersionsPhase } from "./discovery/router-versions-phase.js";
 import {
-  recordBundleFileNames,
+  recordBundleFiles,
   recordClientGraph,
-  recordExternalImports,
   recordServerGraph,
   recordVersionModuleFiles,
 } from "./discovery/build-versions.js";
@@ -2287,8 +2286,11 @@ export function createRouterDiscoveryPlugin(
       order: "post",
       async handler(builder) {
         try {
-          runRouterVersionsPhase(s, builder as any);
-          await runShellPrerenderPhase(s, builder as any);
+          await runShellPrerenderPhase(
+            s,
+            builder as any,
+            runRouterVersionsPhase(s, builder as any),
+          );
         } finally {
           if (s.isBuildMode) {
             const tempServer = s.shellPhaseTempServer;
@@ -2416,10 +2418,7 @@ export function createRouterDiscoveryPlugin(
         } else if (envName === "client") {
           s.clientBuildGraph = recordClientGraph(this, bundle);
         } else if (envName === "ssr") {
-          s.ssrBundle = {
-            fileNames: recordBundleFileNames(bundle),
-            externalImports: recordExternalImports(bundle),
-          };
+          s.ssrBundle = recordBundleFiles(bundle);
         }
       }
       if (this.environment?.name !== "rsc") return;

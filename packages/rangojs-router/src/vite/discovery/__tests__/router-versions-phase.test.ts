@@ -43,6 +43,8 @@ const write = (file: string, content: string) => {
 };
 const read = (file: string) => readFileSync(join(root, file), "utf-8");
 
+const EMPTY_MANIFEST = `export default {\n  "serverResources": {}\n}`;
+
 const edges = (
   imports: string[] = [],
   dynamicImports: string[] = [],
@@ -62,9 +64,13 @@ function makeBuild(
     "dist/rsc/assets/app-AAAAAAAA.js",
     `${options.routerBody ?? "router();"}\nvar ROUTER_VERSIONS = ${PLACEHOLDER};\nvar VERSION = ROUTER_VERSIONS["*"][1];`,
   );
-  write("dist/rsc/__vite_rsc_encryption_key.js", `export default "k";\n`);
+  // plugin-rsc writes the key file only when a chunk reads the key.
+  if (options.usesKey) {
+    write("dist/rsc/__vite_rsc_encryption_key.js", `export default "k";\n`);
+  }
+  write("dist/rsc/__vite_rsc_assets_manifest.js", EMPTY_MANIFEST);
   write("dist/ssr/index.js", "ssr();");
-  write("dist/ssr/__vite_rsc_assets_manifest.js", "export default {};");
+  write("dist/ssr/__vite_rsc_assets_manifest.js", EMPTY_MANIFEST);
 
   const state = createDiscoveryState(undefined, { preset: "node" });
   state.projectRoot = root;
@@ -99,8 +105,8 @@ function makeBuild(
     fileNames: ["assets/index-11111111.js"],
   };
   state.ssrBundle = {
-    fileNames: ["index.js", "index.js.map"],
-    externalImports: [],
+    chunks: [{ fileName: "index.js", name: "index", moduleIds: [] }],
+    assets: [{ fileName: "index.js.map", name: "index.js.map" }],
   };
   state.versionModuleFiles = new Map([["rsc", ["assets/app-AAAAAAAA.js"]]]);
   return state;
@@ -184,13 +190,13 @@ describe("readServerResources", () => {
 
 describe("runRouterVersionsPhase", () => {
   it("writes the table into the built version module", () => {
-    const state = makeBuild();
-    runRouterVersionsPhase(state, builder());
+    // Returned for the shell capture phase, which stamps its entries with it.
+    const returned = runRouterVersionsPhase(makeBuild(), builder());
 
     const table = builtTable();
     expect(Object.keys(table)).toEqual(["router-1", "*"]);
     expect(read("dist/rsc/assets/app-AAAAAAAA.js")).not.toContain(PLACEHOLDER);
-    expect(state.routerVersions).toEqual(table);
+    expect(returned).toEqual(table);
   });
 
   it("computes the same versions for the same output", () => {
@@ -248,18 +254,22 @@ describe("runRouterVersionsPhase", () => {
     expect(VERSIONS_REPORT_FILE.startsWith("node_modules/")).toBe(true);
     const report = JSON.parse(read(VERSIONS_REPORT_FILE));
     const [data, document] = builtTable()["router-1"]!;
-    expect(report["router-1"]).toMatchObject({
+    expect(report.routers["router-1"]).toMatchObject({
       source: "src/router.tsx",
       data,
       document,
     });
-    expect(Object.keys(report["router-1"].dataInputs)).toEqual([
+    expect(Object.keys(report.routers["router-1"].dataInputs)).toEqual([
       expect.stringMatching(/^file app~[0-9a-f]{8}\.js$/),
     ]);
-    expect(Object.keys(report["router-1"].documentInputs)).toEqual([
+    expect(Object.keys(report.routers["router-1"].documentInputs)).toEqual([
       "ssr-and-client",
     ]);
-    expect(Object.keys(report)).toEqual(["router-1", "*"]);
+    expect(Object.keys(report.routers)).toEqual(["router-1", "*"]);
+    // The entry chunk: in the whole-build pair and in no router's version.
+    expect(report.unownedFiles).toEqual([
+      expect.stringMatching(/^index~[0-9a-f]{8}\.js$/),
+    ]);
   });
 
   describe("encryption key note", () => {
@@ -306,7 +316,7 @@ describe("runRouterVersionsPhase", () => {
     expect(after[0]).not.toBe(before[0]);
     expect(
       Object.keys(
-        JSON.parse(read(VERSIONS_REPORT_FILE))["router-1"].dataInputs,
+        JSON.parse(read(VERSIONS_REPORT_FILE)).routers["router-1"].dataInputs,
       ),
     ).toContain("server-css src/router.tsx");
   });
@@ -348,11 +358,24 @@ describe("runRouterVersionsPhase", () => {
     const first = build();
     expect(build()[0]).not.toBe(first[0]);
     expect(
-      logs.filter((line) => line.includes("not installed where the build")),
+      logs.filter((line) => line.includes("could not be read at build time")),
     ).toHaveLength(2);
     expect(logs.join("\n")).toMatch(
-      /1 package\(s\) the server build leaves external .*\(ghost-pkg\)/,
+      /1 import\(s\) the server build leaves external could not be read at build time \(ghost-pkg\)/,
     );
+  });
+
+  it("digests a file a chunk imports by path", () => {
+    const build = (bytes: string) => {
+      const state = makeBuild({ externalImports: ["../native.node"] });
+      write("dist/rsc/native.node", bytes);
+      runRouterVersionsPhase(state, builder());
+      return builtTable()["router-1"]!;
+    };
+    const before = build("v1");
+    expect(build("v2")[0]).not.toBe(before[0]);
+    expect(build("v1")).toEqual(before);
+    expect(logs.join("\n")).not.toContain("could not be read at build time");
   });
 
   // A workspace package the config left external: its version does not fix
@@ -451,7 +474,7 @@ describe("runRouterVersionsPhase", () => {
     expect(build("loader-b")[0]).not.toBe(before[0]);
     expect(
       Object.keys(
-        JSON.parse(read(VERSIONS_REPORT_FILE))["router-1"].dataInputs,
+        JSON.parse(read(VERSIONS_REPORT_FILE)).routers["router-1"].dataInputs,
       ).filter((name) => name.startsWith("client-urls ")),
     ).toEqual(["client-urls src/pages.tsx"]);
   });
@@ -460,8 +483,15 @@ describe("runRouterVersionsPhase", () => {
     const build = (version: string) => {
       const state = makeBuild();
       state.ssrBundle = {
-        fileNames: ["index.js"],
-        externalImports: ["ssr-lib"],
+        chunks: [
+          {
+            fileName: "index.js",
+            name: "index",
+            moduleIds: [],
+            externalImports: ["ssr-lib"],
+          },
+        ],
+        assets: [],
       };
       write(
         "node_modules/ssr-lib/package.json",
@@ -496,11 +526,59 @@ describe("runRouterVersionsPhase", () => {
     expect(read("dist/rsc/assets/app-AAAAAAAA.js")).toContain(PLACEHOLDER);
   });
 
-  it("fails the build when the RSC bundle was never recorded", () => {
+  // A version computed without one of these would stay the same when it
+  // changes: the client asset names, the SSR bytes, every server file.
+  it("fails the build when a bundle was never recorded", () => {
+    const without = (clear: (state: DiscoveryState) => void) => () => {
+      const state = makeBuild();
+      clear(state);
+      runRouterVersionsPhase(state, builder());
+    };
+    expect(without((state) => (state.serverBuildGraph = null))).toThrow(
+      /did not record the RSC bundle, so the cache versions cannot be computed/,
+    );
+    expect(without((state) => (state.clientBuildGraph = null))).toThrow(
+      /did not record the client bundle/,
+    );
+    expect(without((state) => (state.ssrBundle = null))).toThrow(
+      /did not record the SSR bundle/,
+    );
+  });
+
+  // Without it nothing is filled, and the build would throw a ReferenceError
+  // at its first import instead.
+  it("fails the build when no RSC chunk was recorded as holding the version module", () => {
     const state = makeBuild();
-    state.serverBuildGraph = null;
+    state.versionModuleFiles = new Map();
     expect(() => runRouterVersionsPhase(state, builder())).toThrow(
-      /RSC build did not record its bundle/,
+      /did not record the RSC chunk that holds the version module/,
+    );
+    expect(read("dist/rsc/assets/app-AAAAAAAA.js")).toContain(PLACEHOLDER);
+  });
+
+  it("fails the build when a listed file is not in its output directory", () => {
+    const rsc = makeBuild();
+    rmSync(join(root, "dist/rsc/index.js"));
+    expect(() => runRouterVersionsPhase(rsc, builder())).toThrow(
+      /Could not compute the cache versions: the RSC bundle lists index\.js, which is not in its output directory/,
+    );
+    const ssr = makeBuild();
+    rmSync(join(root, "dist/ssr/__vite_rsc_assets_manifest.js"));
+    expect(() => runRouterVersionsPhase(ssr, builder())).toThrow(
+      /the SSR bundle lists __vite_rsc_assets_manifest\.js, which is not in its output directory/,
+    );
+    const manifest = makeBuild();
+    rmSync(join(root, "dist/rsc/__vite_rsc_assets_manifest.js"));
+    expect(() => runRouterVersionsPhase(manifest, builder())).toThrow(
+      /__vite_rsc_assets_manifest\.js is not in the RSC output directory/,
+    );
+  });
+
+  it("fails the build when a router encrypts and the key file is missing", () => {
+    const state = makeBuild({ usesKey: true });
+    rmSync(join(root, "dist/rsc/__vite_rsc_encryption_key.js"));
+    expect(() => runRouterVersionsPhase(state, builder())).toThrow(
+      /Could not compute the cache versions: 1 server module\(s\) encrypt action arguments \(src\/router\.tsx\), but __vite_rsc_encryption_key\.js is not in the RSC output directory/,
     );
   });
 

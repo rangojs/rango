@@ -36,7 +36,6 @@ function createMinimalState(
     ssrBundle: null,
     versionModuleFiles: new Map(),
     buildData: [],
-    routerVersions: null,
     handlerChunkInfoMap: new Map(),
     staticHandlerChunkInfoMap: new Map(),
     rscEntryFileName: "index.js",

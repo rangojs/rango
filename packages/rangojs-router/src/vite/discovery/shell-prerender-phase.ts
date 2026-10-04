@@ -24,7 +24,10 @@ import { join, resolve } from "node:path";
 import { jsonParseExpression } from "../utils/manifest-utils.js";
 import { writeBuildAssetModule } from "../utils/prerender-utils.js";
 import { buildShellManifestKey } from "../../prerender/shell-manifest-key.js";
-import { resolveVersionsFrom } from "../../router-versions.js";
+import {
+  resolveVersionsFrom,
+  type RouterVersionsTable,
+} from "../../router-versions.js";
 import {
   environmentOutDir,
   type BuilderLike,
@@ -39,16 +42,23 @@ import { createRangoDebugger, NS } from "../debug.js";
 
 const debug = createRangoDebugger(NS.prerender);
 
+/**
+ * @param versionsTable The versions the shipped build serves with
+ *   (router-versions-phase.ts), `undefined` outside a build. Never the temp
+ *   server's own version-plugin stamp, which is a dev Date.now() and would
+ *   fail the serve-side isValidShellHit gate forever.
+ */
 export async function runShellPrerenderPhase(
   s: DiscoveryState,
   builder: BuilderLike | undefined,
+  versionsTable: RouterVersionsTable | undefined,
 ): Promise<void> {
   // The kept temp server (and the buildEnv deferred with it) is OWNED by the
   // callers — the buildApp post hook's finally on success, buildEnd on an
   // aborted build — so this function stays a pure producer: it only tears
   // down the globals it installs itself.
   const tempServer = s.shellPhaseTempServer;
-  if (!s.isBuildMode || !s.shellCandidates?.length || !tempServer) return;
+  if (!versionsTable || !s.shellCandidates?.length || !tempServer) return;
 
   const candidates: ShellPrerenderCandidate[] = s.shellCandidates;
   const startTotal = performance.now();
@@ -75,17 +85,6 @@ export async function runShellPrerenderPhase(
           "skipping — routes keep runtime shell capture.",
       );
       return;
-    }
-
-    // The versions the shipped build serves with (router-versions-phase.ts) —
-    // never the temp server's own version-plugin stamp, which is a dev
-    // Date.now() and would fail the serve-side isValidShellHit gate forever.
-    const versionsTable = s.routerVersions;
-    if (!versionsTable) {
-      throw new Error(
-        "[rango] shell prerender ran before the cache versions were computed. " +
-          "This is a bug in @rangojs/router; please report it.",
-      );
     }
 
     // In-realm prerender store over the retained phase-A payloads, so the
@@ -231,12 +230,12 @@ export async function runShellPrerenderPhase(
       const mismatches: string[] = [];
       for (const [routerId, routerInstance] of registry) {
         if (typeof routerInstance.match !== "function") continue;
+        // The build's table always holds the whole-build pair.
         const versions = resolveVersionsFrom(
           versionsTable,
           routerId,
           routerInstance.version,
-        );
-        if (!versions) continue;
+        )!;
         try {
           const res = await captureMod.captureShellForBuild({
             router: routerInstance,

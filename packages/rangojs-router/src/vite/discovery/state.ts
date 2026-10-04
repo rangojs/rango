@@ -156,16 +156,11 @@ export interface DiscoveryState {
    */
   serverBuildGraph: import("./build-versions.js").ServerBuildGraph | null;
   clientBuildGraph: import("./build-versions.js").ClientBuildGraph | null;
-  ssrBundle: { fileNames: string[]; externalImports: string[] } | null;
+  ssrBundle: import("./build-versions.js").BundleFiles | null;
   /** Per environment, the chunk files holding the version module. */
   versionModuleFiles: Map<string, string[]>;
   /** Prerender and Static payloads the build rendered, by content digest. */
   buildData: import("./build-versions.js").BuildDataRecord[];
-  /**
-   * The versions the buildApp post hook computed and wrote into the built
-   * version module. The shell capture phase stamps its entries with them.
-   */
-  routerVersions: import("../../router-versions.js").RouterVersionsTable | null;
   handlerChunkInfoMap: Map<string, ChunkInfo>;
   staticHandlerChunkInfoMap: Map<string, ChunkInfo>;
   rscEntryFileName: string | null;
@@ -228,7 +223,6 @@ export function createDiscoveryState(
     ssrBundle: null,
     versionModuleFiles: new Map(),
     buildData: [],
-    routerVersions: null,
     handlerChunkInfoMap: new Map(),
     staticHandlerChunkInfoMap: new Map(),
     rscEntryFileName: null,

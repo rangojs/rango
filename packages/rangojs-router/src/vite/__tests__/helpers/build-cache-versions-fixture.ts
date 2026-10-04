@@ -20,7 +20,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -50,6 +50,8 @@ export interface FixtureBuild {
   whole: FixtureVersions;
   /** The table as the built version module holds it. */
   table: Record<string, [string, string]>;
+  /** Server files in no router's version, by identity. */
+  unownedFiles: string[];
   output: string;
 }
 
@@ -60,6 +62,11 @@ export interface FixtureScenario {
   encryptionKey?: string | null;
   /** Extra rango() options, as source text spread into the call. */
   rangoOptions?: string;
+  /**
+   * Run `vite build <root>` from the directory above the root, the way a
+   * monorepo script does, instead of `vite build` in the root.
+   */
+  fromParentDirectory?: boolean;
 }
 
 function run(
@@ -204,7 +211,13 @@ export async function buildFixture(
     dirname(require.resolve("vite/package.json")),
     "bin/vite.js",
   );
-  const { code, output } = await run(process.execPath, [vite, "build"], root);
+  const { code, output } = scenario.fromParentDirectory
+    ? await run(
+        process.execPath,
+        [vite, "build", basename(root)],
+        dirname(root),
+      )
+    : await run(process.execPath, [vite, "build"], root);
   if (code !== 0) {
     throw new Error(`vite build failed in ${root} (exit ${code}):\n${output}`);
   }
@@ -214,12 +227,22 @@ export async function buildFixture(
       join(root, "node_modules/.rangojs-router-build/cache-versions.json"),
       "utf-8",
     ),
-  ) as Record<string, FixtureVersions & { source: string }>;
+  ) as {
+    routers: Record<string, FixtureVersions & { source: string }>;
+    unownedFiles: string[];
+  };
   const routers: Record<string, FixtureVersions> = {};
   const table: Record<string, [string, string]> = {};
-  for (const [id, entry] of Object.entries(report)) {
+  for (const [id, entry] of Object.entries(report.routers)) {
     table[id] = [entry.data, entry.document];
     if (id !== "*") routers[entry.source] = entry;
   }
-  return { root, routers, whole: report["*"]!, table, output };
+  return {
+    root,
+    routers,
+    whole: report.routers["*"]!,
+    table,
+    unownedFiles: report.unownedFiles,
+    output,
+  };
 }

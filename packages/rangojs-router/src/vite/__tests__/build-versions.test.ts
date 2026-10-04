@@ -13,23 +13,25 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  classifyExternal,
   computeRouterVersions,
-  digestDocumentInputs,
+  digestBundle,
   ENCRYPTION_KEY_FILE,
-  externalPackage,
   fillRouterVersions,
   portableModuleId,
-  portableRegions,
+  recordBundleFiles,
   recordClientGraph,
-  recordExternalImports,
   recordServerGraph,
   recordVersionModuleFiles,
   resolveRouterMembers,
+  stripRegionPaths,
   stripServerReferenceMap,
   type BuildDataRecord,
   type BuildModuleEdges,
+  type BundleFiles,
   type ClientBuildGraph,
   type ComputeRouterVersionsInput,
+  type ExternalResolver,
   type ServerBuildGraph,
 } from "../discovery/build-versions.js";
 import { ROUTER_VERSIONS_PLACEHOLDER } from "../plugins/virtual-entries.js";
@@ -188,25 +190,75 @@ function serverFiles(): Record<string, string> {
   };
 }
 
+const ASSETS_MANIFEST = "__vite_rsc_assets_manifest.js";
+
+/** The SSR bundle: its entry, a chunk the entry imports, plugin-rsc's manifest. */
+function ssrBundle(root = ROOT): BundleFiles {
+  return {
+    chunks: [
+      {
+        fileName: "index.js",
+        name: "index",
+        moduleIds: [`${root}/src/entry.ssr.tsx`],
+      },
+      {
+        fileName: "assets/html-TTTTTTTT.js",
+        name: "html",
+        moduleIds: [`${root}/src/html.tsx`],
+      },
+    ],
+    assets: [{ fileName: ASSETS_MANIFEST, name: ASSETS_MANIFEST }],
+  };
+}
+
+function ssrFiles(): Record<string, string> {
+  return {
+    "index.js": `import "./assets/html-TTTTTTTT.js"; renderHtml();`,
+    "assets/html-TTTTTTTT.js": `html();`,
+    [ASSETS_MANIFEST]: `export default { clientEntryUrl: "/assets/index-11111111.js" };`,
+  };
+}
+
+/** Nothing is installed and no path resolves, unless a test says so. */
+const EXTERNALS: ExternalResolver = {
+  describePackage: () => undefined,
+  readFile: () => undefined,
+  buildId: "build-1",
+};
+
 function compute(
   overrides: Partial<ComputeRouterVersionsInput> & {
     files?: Record<string, string>;
+    ssrSources?: Record<string, string>;
   } = {},
 ) {
-  const files = overrides.files ?? serverFiles();
+  const {
+    files = serverFiles(),
+    ssrSources = ssrFiles(),
+    ...input
+  } = overrides;
   const encoder = new TextEncoder();
+  const reader =
+    (sources: Record<string, string>) =>
+    (fileName: string): Uint8Array | undefined =>
+      fileName in sources ? encoder.encode(sources[fileName]) : undefined;
   return computeRouterVersions({
     projectRoot: ROOT,
     server: serverGraph(),
     client: clientGraph(),
+    ssr: ssrBundle(),
     routers: ROUTERS,
     buildData: [],
-    readServerFile: (fileName) =>
-      fileName in files ? encoder.encode(files[fileName]) : undefined,
-    documentDigest: "doc-1",
-    ...overrides,
+    readServerFile: reader(files),
+    readSsrFile: reader(ssrSources),
+    base: "/",
+    externals: EXTERNALS,
+    ...input,
   });
 }
+
+const detailOf = (computed: ReturnType<typeof compute>, routerId: string) =>
+  computed.details.find((detail) => detail.routerId === routerId)!;
 
 /** Rename a chunk the way a content change does: new hash, new references. */
 function withRenamedChunk(
@@ -426,6 +478,7 @@ describe("computeRouterVersions", () => {
     const there = compute({
       projectRoot: "/elsewhere/checkout",
       server: movedGraph,
+      ssr: ssrBundle("/elsewhere/checkout"),
       client: {
         modules: new Map(
           [...clientGraph().modules].map(([id, edge]) => [
@@ -549,13 +602,106 @@ describe("computeRouterVersions", () => {
     expect(after["*"]![0]).not.toBe(before["*"]![0]);
   });
 
-  it("puts the document digest in the document version only", () => {
-    const before = compute().table;
-    const after = compute({ documentDigest: "doc-2" }).table;
-    for (const id of ["router-a", "router-b", "*"]) {
-      expect(after[id]![0]).toBe(before[id]![0]);
-      expect(after[id]![1]).not.toBe(before[id]![1]);
-    }
+  describe("what stored HTML depends on besides the server code", () => {
+    const documentOnly = (after: ReturnType<typeof compute>): void => {
+      const before = compute().table;
+      for (const id of ["router-a", "router-b", "*"]) {
+        expect(after.table[id]![0]).toBe(before[id]![0]);
+        expect(after.table[id]![1]).not.toBe(before[id]![1]);
+      }
+    };
+
+    it("puts the SSR output in every document version and in no data version", () => {
+      documentOnly(
+        compute({
+          ssrSources: { ...ssrFiles(), "assets/html-TTTTTTTT.js": `html2();` },
+        }),
+      );
+    });
+
+    it("puts the client asset names and the base there too", () => {
+      documentOnly(
+        compute({
+          client: { ...clientGraph(), fileNames: ["assets/index-22222222.js"] },
+        }),
+      );
+      documentOnly(compute({ base: "/app/" }));
+    });
+
+    // The SSR output goes through digestBundle like the RSC output: an SSR
+    // chunk's name is a content hash of bytes that include region comments.
+    it("is not moved by an SSR chunk's file name or by its region comments", () => {
+      const renamed: BundleFiles = {
+        ...ssrBundle(),
+        chunks: ssrBundle().chunks.map((chunk) =>
+          chunk.name === "html"
+            ? { ...chunk, fileName: "assets/html-UUUUUUUU.js" }
+            : chunk,
+        ),
+      };
+      expect(
+        compute({
+          ssr: renamed,
+          ssrSources: {
+            "index.js": `import "./assets/html-UUUUUUUU.js"; renderHtml();`,
+            "assets/html-UUUUUUUU.js": `//#region apps/web/src/html.tsx\nhtml();`,
+            [ASSETS_MANIFEST]: ssrFiles()[ASSETS_MANIFEST]!,
+          },
+        }).table,
+      ).toEqual(
+        compute({
+          ssrSources: {
+            ...ssrFiles(),
+            "assets/html-TTTTTTTT.js": `//#region src/html.tsx\nhtml();`,
+          },
+        }).table,
+      );
+    });
+
+    it("covers what the SSR output leaves external", () => {
+      const ssr: BundleFiles = {
+        ...ssrBundle(),
+        chunks: ssrBundle().chunks.map((chunk) => ({
+          ...chunk,
+          externalImports: ["react-dom", "node:stream"],
+        })),
+      };
+      const at = (version: string) =>
+        compute({
+          ssr,
+          externals: {
+            ...EXTERNALS,
+            describePackage: (name) => `${name}@${version}`,
+          },
+        });
+      const before = at("19.3.0").table;
+      const after = at("19.3.1").table;
+      for (const id of ["router-a", "router-b", "*"]) {
+        expect(after[id]![0]).toBe(before[id]![0]);
+        expect(after[id]![1]).not.toBe(before[id]![1]);
+      }
+    });
+  });
+
+  // A file the bundle lists and the output directory does not have would drop
+  // out of every version without a word.
+  it("throws when a listed RSC or SSR file is not on disk", () => {
+    const { "assets/shared-SSSSSSSS.js": _shared, ...withoutShared } =
+      serverFiles();
+    expect(() => compute({ files: withoutShared })).toThrow(
+      "the RSC bundle lists assets/shared-SSSSSSSS.js, which is not in its output directory",
+    );
+    const { [ASSETS_MANIFEST]: _manifest, ...withoutManifest } = ssrFiles();
+    expect(() => compute({ ssrSources: withoutManifest })).toThrow(
+      `the SSR bundle lists ${ASSETS_MANIFEST}, which is not in its output directory`,
+    );
+  });
+
+  // The host entry of lazily mounted apps: in the whole-build pair only.
+  it("names the server files no router owns", () => {
+    const { unownedFiles } = compute();
+    expect(unownedFiles).toHaveLength(1);
+    expect(unownedFiles[0]).toMatch(/^index~[0-9a-f]{8}\.js$/);
   });
 
   describe("build-rendered payloads", () => {
@@ -651,6 +797,13 @@ describe("computeRouterVersions", () => {
       ...serverFiles(),
       [ENCRYPTION_KEY_FILE]: `export default ${JSON.stringify(key)};\n`,
     });
+    const usesKey = (computed: ReturnType<typeof compute>) =>
+      Object.fromEntries(
+        computed.details.map((detail) => [
+          detail.routerId,
+          detail.usesEncryptionKey,
+        ]),
+      );
 
     it("is part of the version of a router whose code encrypts with it, and of no other", () => {
       const before = compute({
@@ -666,57 +819,88 @@ describe("computeRouterVersions", () => {
       );
       expect(after.table["router-b"]).toEqual(before.table["router-b"]);
       expect(after.table["*"]![0]).not.toBe(before.table["*"]![0]);
-      expect(
-        Object.fromEntries(
-          before.details.map((detail) => [
-            detail.routerId,
-            detail.usesEncryptionKey,
-          ]),
-        ),
-      ).toEqual({ "router-a": true, "router-b": false, "*": true });
+      expect(usesKey(before)).toEqual({
+        "router-a": true,
+        "router-b": false,
+        "*": true,
+      });
     });
 
-    it("is ignored when no code encrypts with it", () => {
-      expect(compute({ files: filesWithKey("key-1") }).table).toEqual(
-        compute({ files: filesWithKey("key-2") }).table,
+    it("is in no version of a build that does not encrypt", () => {
+      const computed = compute();
+      expect(usesKey(computed)).toEqual({
+        "router-a": false,
+        "router-b": false,
+        "*": false,
+      });
+      expect(
+        detailOf(computed, "*").dataInputs.map(([name]) => name),
+      ).not.toContain("encryption-key");
+    });
+
+    // plugin-rsc writes the key file only when a chunk reads the key. A file
+    // with no module recognised as encrypting means the recognition failed (a
+    // rename in plugin-rsc): leaving the key out would serve cached payloads
+    // the next key cannot decrypt.
+    it("is every router's when the key file exists and no module is recognised as using it", () => {
+      const before = compute({ files: filesWithKey("key-1") });
+      const after = compute({ files: filesWithKey("key-2") });
+      for (const id of ["router-a", "router-b", "*"]) {
+        expect(after.table[id]![0]).not.toBe(before.table[id]![0]);
+      }
+      expect(usesKey(before)).toEqual({
+        "router-a": true,
+        "router-b": true,
+        "*": true,
+      });
+    });
+
+    it("fails the build when code encrypts and the key file cannot be found", () => {
+      expect(() => compute({ server: keyedGraph() })).toThrow(
+        /1 server module\(s\) encrypt action arguments \(src\/a\/actions\.ts\), but __vite_rsc_encryption_key\.js is not in the RSC output directory/,
       );
     });
   });
 
-  describe("dependencies the bundle leaves external", () => {
+  describe("what the bundle leaves external", () => {
     // Router B's chunk imports a package and a subpath of a scoped one; what
     // is installed for them is not in any chunk.
-    function graphWithExternals(): ServerBuildGraph {
+    function graphWithExternals(specifiers: string[]): ServerBuildGraph {
       const graph = serverGraph();
       return {
         ...graph,
         chunks: graph.chunks.map((chunk) =>
           chunk.fileName === "assets/handler-BBBBBBBB.js"
-            ? {
-                ...chunk,
-                externalImports: [
-                  "marked",
-                  "@scope/db/client",
-                  "node:fs",
-                  "fs",
-                  "cloudflare:workers",
-                  "../__vite_rsc_assets_manifest.js",
-                ],
-              }
+            ? { ...chunk, externalImports: specifiers }
             : chunk,
         ),
       };
     }
+    const PACKAGES = [
+      "marked",
+      "@scope/db/client",
+      "node:fs",
+      "fs",
+      "cloudflare:workers",
+      "virtual:vite-rsc/assets-manifest",
+    ];
     const installed =
       (versions: Record<string, string>) =>
       (name: string): string | undefined =>
         name in versions ? `${name}@${versions[name]}` : undefined;
+    const externalNames = (computed: ReturnType<typeof compute>, id: string) =>
+      detailOf(computed, id)
+        .dataInputs.map(([name]) => name)
+        .filter((name) => name.startsWith("external "));
 
     it("puts what is installed in the data version of the routers importing it", () => {
       const at = (marked: string) =>
         compute({
-          server: graphWithExternals(),
-          describeExternal: installed({ marked, "@scope/db": "2.0.0" }),
+          server: graphWithExternals(PACKAGES),
+          externals: {
+            ...EXTERNALS,
+            describePackage: installed({ marked, "@scope/db": "2.0.0" }),
+          },
         });
       const before = at("1.0.0");
       const after = at("1.0.1");
@@ -725,50 +909,154 @@ describe("computeRouterVersions", () => {
       );
       expect(after.table["router-a"]).toEqual(before.table["router-a"]);
       expect(after.table["*"]![0]).not.toBe(before.table["*"]![0]);
+      expect(before.undetermined).toEqual([]);
     });
 
-    it("names packages, not specifiers, and skips builtins, schemes and paths", () => {
-      const b = compute({
-        server: graphWithExternals(),
-        describeExternal: installed({ marked: "1.0.0", "@scope/db": "2.0.0" }),
-      }).details.find((detail) => detail.routerId === "router-b")!;
+    it("names packages, not specifiers, and leaves out what the runtime provides", () => {
       expect(
-        b.dataInputs
-          .map(([name]) => name)
-          .filter((name) => name.startsWith("external ")),
+        externalNames(
+          compute({
+            server: graphWithExternals(PACKAGES),
+            externals: {
+              ...EXTERNALS,
+              describePackage: installed({
+                marked: "1.0.0",
+                "@scope/db": "2.0.0",
+              }),
+            },
+          }),
+          "router-b",
+        ),
       ).toEqual(["external @scope/db", "external marked"]);
     });
 
-    it("leaves out a package that is not installed", () => {
-      expect(
+    // Left out, a lockfile bump of that package would change what the server
+    // renders and no version.
+    it("gives a package that is not installed a value unique to the build, and names it", () => {
+      const at = (buildId: string) =>
         compute({
-          server: graphWithExternals(),
-          describeExternal: () => undefined,
-        }).table,
-      ).toEqual(compute().table);
+          server: graphWithExternals(PACKAGES),
+          externals: { ...EXTERNALS, buildId },
+        });
+      const first = at("build-1");
+      const second = at("build-2");
+      expect(second.table["router-b"]![0]).not.toBe(
+        first.table["router-b"]![0],
+      );
+      expect(second.table["router-a"]).toEqual(first.table["router-a"]);
+      expect(at("build-1").table).toEqual(first.table);
+      expect(first.undetermined).toEqual(["@scope/db", "marked"]);
     });
 
-    it("splits a specifier into its package", () => {
-      expect(externalPackage("marked")).toBe("marked");
-      expect(externalPackage("marked/lib/x.js")).toBe("marked");
-      expect(externalPackage("@scope/db/client")).toBe("@scope/db");
-      expect(externalPackage("node:fs")).toBeUndefined();
-      expect(externalPackage("fs")).toBeUndefined();
-      expect(externalPackage("cloudflare:workers")).toBeUndefined();
-      expect(externalPackage("./local.js")).toBeUndefined();
-      expect(externalPackage("/abs/file.js")).toBeUndefined();
+    it("digests a file a chunk imports by path, relative to the chunk or absolute", () => {
+      const at = (native: string, absolute: string) =>
+        compute({
+          server: graphWithExternals(["../native.node", "/project/lib/a.node"]),
+          files: { ...serverFiles(), "native.node": native },
+          externals: {
+            ...EXTERNALS,
+            readFile: (path) =>
+              path === "/project/lib/a.node"
+                ? new TextEncoder().encode(absolute)
+                : undefined,
+          },
+        });
+      const before = at("n1", "a1");
+      expect(externalNames(before, "router-b")).toEqual([
+        "external lib/a.node",
+        "external native.node",
+      ]);
+      expect(before.undetermined).toEqual([]);
+      expect(at("n2", "a1").table["router-b"]![0]).not.toBe(
+        before.table["router-b"]![0],
+      );
+      expect(at("n1", "a2").table["router-b"]![0]).not.toBe(
+        before.table["router-b"]![0],
+      );
+      expect(at("n1", "a1").table).toEqual(before.table);
     });
 
-    // @cloudflare/vite-plugin's marker for a text module it emits as an asset.
-    // Taken for a package, it is one nobody can find: a new version per build.
-    it("does not take another plugin's import marker for a package", () => {
-      expect(
-        externalPackage(
-          "__CLOUDFLARE_MODULE__Text__/app/dist/rsc/manifest.txt__CLOUDFLARE_MODULE__",
-        ),
-      ).toBeUndefined();
-      expect(externalPackage("_private")).toBeUndefined();
-      expect(externalPackage("@scope/_private")).toBeUndefined();
+    it("names a file outside the project by its path, whatever the checkout's depth", () => {
+      const names = (projectRoot: string) =>
+        externalNames(
+          compute({
+            projectRoot,
+            server: graphWithExternals(["/opt/lib/native.node"]),
+            externals: {
+              ...EXTERNALS,
+              readFile: () => new TextEncoder().encode("bytes"),
+            },
+          }),
+          "*",
+        );
+      expect(names(ROOT)).toEqual(["external /opt/lib/native.node"]);
+      expect(names("/a/much/deeper/checkout")).toEqual(names(ROOT));
+    });
+
+    it("treats a path that does not resolve and a URL like a missing package", () => {
+      const at = (buildId: string) =>
+        compute({
+          server: graphWithExternals([
+            "./gone.node",
+            "https://esm.sh/x",
+            "_private",
+          ]),
+          externals: { ...EXTERNALS, buildId },
+        });
+      expect(at("build-1").undetermined).toEqual([
+        "_private",
+        "assets/gone.node",
+        "https://esm.sh/x",
+      ]);
+      expect(at("build-2").table["router-b"]![0]).not.toBe(
+        at("build-1").table["router-b"]![0],
+      );
+    });
+
+    it("classifies a specifier", () => {
+      const kind = (specifier: string) => classifyExternal(specifier);
+      expect(kind("marked")).toEqual({ kind: "package", name: "marked" });
+      expect(kind("marked/lib/x.js")).toEqual({
+        kind: "package",
+        name: "marked",
+      });
+      expect(kind("@scope/db/client")).toEqual({
+        kind: "package",
+        name: "@scope/db",
+      });
+      for (const provided of [
+        "node:fs",
+        "fs",
+        "cloudflare:workers",
+        "workerd:unsafe",
+        "bun:sqlite",
+        "data:text/javascript,export default 1",
+        // plugin-rsc's manifest: covered entry by entry (server-css).
+        "virtual:vite-rsc/assets-manifest",
+        // @cloudflare/vite-plugin's marker for a module it emits as an asset.
+        // Taken for a package, it is one nobody can find: 6 different
+        // versions in 6 builds of the stress demo.
+        "__CLOUDFLARE_MODULE__Text__/app/dist/rsc/manifest.txt__CLOUDFLARE_MODULE__",
+      ]) {
+        expect(kind(provided), provided).toEqual({ kind: "provided" });
+      }
+      for (const file of [
+        "./local.js",
+        "../x.node",
+        "/abs/file.js",
+        "C:\\x.node",
+      ]) {
+        expect(kind(file), file).toEqual({ kind: "file" });
+      }
+      for (const unknown of [
+        "https://esm.sh/x",
+        "npm:x@1",
+        "virtual:other",
+        "_private",
+        "@scope/_private",
+      ]) {
+        expect(kind(unknown), unknown).toEqual({ kind: "unknown" });
+      }
     });
   });
 
@@ -847,53 +1135,53 @@ describe("computeRouterVersions", () => {
     });
   });
 
-  it("does not depend on the directory in a virtual module's region comment", () => {
-    const withCss = (root: string): ReturnType<typeof compute> => {
-      const id = `\0virtual:vite-rsc/css?type=rsc&id=${encodeURIComponent(`${root}/src/a/urls.tsx`)}&lang.js`;
-      const graph = serverGraph();
-      const rooted = (value: string) => value.replaceAll(ROOT, root);
-      return computeRouterVersions({
-        projectRoot: root,
-        server: {
-          ...graph,
-          modules: new Map(
-            [...graph.modules].map(([key, value]) => [
-              rooted(key),
-              {
-                imports: value.imports.map(rooted),
-                dynamicImports: value.dynamicImports.map(rooted),
-              },
-            ]),
-          ),
-          chunks: graph.chunks.map((chunk) => ({
-            ...chunk,
-            moduleIds: [
-              ...chunk.moduleIds.map(rooted),
-              ...(chunk.fileName === "assets/handler-AAAAAAAA.js" ? [id] : []),
-            ],
-          })),
+  // The bundler prints a module's path above its code. The path says where the
+  // build ran: relative to the directory vite was started from, through the
+  // pnpm store directory with its peer suffix, or (a virtual id) with an
+  // absolute path in its query.
+  it("does not depend on the paths in a chunk's region comments", () => {
+    const handler = (regions: [string, string, string]) => ({
+      ...serverFiles(),
+      "assets/handler-AAAAAAAA.js": [
+        `//#region ${regions[0]}`,
+        `import "./shared-SSSSSSSS.js"; import "./runtime-RRRRRRRR.js"; a();`,
+        "//#endregion",
+        `//#region ${regions[1]}`,
+        "dep();",
+        "//#endregion",
+        `//#region ${regions[2]}`,
+        `import("./lazy-LLLLLLLL.js");`,
+        "//#endregion",
+      ].join("\n"),
+    });
+    const css = (root: string) =>
+      `\\0virtual:vite-rsc/css?type=rsc&id=${encodeURIComponent(`${root}/src/a/urls.tsx`)}&lang.js`;
+    const fromTheApp = compute({
+      files: handler([
+        "src/a/handler.ts",
+        "../../node_modules/.pnpm/dep@1.0.0_typescript@5.8.3/node_modules/dep/index.js",
+        css("/home/ci/checkout"),
+      ]),
+    });
+    const fromTheRepoRoot = compute({
+      files: handler([
+        "apps/web/src/a/handler.ts",
+        "node_modules/.pnpm/dep@1.0.0_typescript@5.9.2/node_modules/dep/index.js",
+        css("/Users/dev/project"),
+      ]),
+    });
+    expect(fromTheRepoRoot.table).toEqual(fromTheApp.table);
+  });
+
+  it("still hashes the code under a region comment", () => {
+    const withCode = (code: string) =>
+      compute({
+        files: {
+          ...serverFiles(),
+          "assets/handler-AAAAAAAA.js": `//#region src/a/handler.ts\n${code}\n//#endregion`,
         },
-        client: undefined,
-        routers: ROUTERS.map((router) => ({
-          ...router,
-          moduleId: rooted(router.moduleId),
-        })),
-        buildData: [],
-        readServerFile: (fileName) => {
-          const files: Record<string, string> = {
-            ...serverFiles(),
-            "assets/handler-AAAAAAAA.js": `//#region \\0${id.slice(1)}\nvar Resources = 1;\n//#endregion\na();`,
-          };
-          return fileName in files
-            ? new TextEncoder().encode(files[fileName])
-            : undefined;
-        },
-        documentDigest: "doc-1",
-      });
-    };
-    expect(withCss("/home/ci/checkout").table).toEqual(
-      withCss("/Users/dev/project").table,
-    );
+      }).table["router-a"]![0];
+    expect(withCode("a2();")).not.toBe(withCode("a1();"));
   });
 
   it("adds a bundle asset a router's chunk names, as bytes", () => {
@@ -925,19 +1213,19 @@ describe("computeRouterVersions", () => {
   });
 
   it("lists what each version was computed from", () => {
-    const { details } = compute({
+    const computed = compute({
       buildData: [
         { kind: "prerender", key: "p/1", digest: "d", routerId: "router-b" },
       ],
     });
-    const b = details.find((detail) => detail.routerId === "router-b")!;
+    const b = detailOf(computed, "router-b");
     expect(b.dataInputs.map(([name]) => name)).toEqual(
       [...b.dataInputs.map(([name]) => name)].sort(),
     );
     expect(b.dataInputs.every(([name]) => name.startsWith("file "))).toBe(true);
     expect(b.documentInputs).toEqual([
       ["prerender p/1", "d"],
-      ["ssr-and-client", "doc-1"],
+      ["ssr-and-client", expect.stringMatching(/^[0-9a-f]{64}$/)],
     ]);
   });
 });
@@ -967,46 +1255,37 @@ describe("stripServerReferenceMap", () => {
   });
 });
 
-describe("digestDocumentInputs", () => {
-  const input = () => ({
-    ssrFiles: [
-      { fileName: "index.js", source: new TextEncoder().encode("ssr();") },
-      { fileName: "assets/a.js", source: new TextEncoder().encode("a();") },
-    ],
-    clientFileNames: ["assets/index-11111111.js", "assets/react-22222222.js"],
-    base: "/",
+describe("what the ssr-and-client input is a digest of", () => {
+  it("lists the base, the SSR files, the SSR externals and the client names", () => {
+    const { ssrAndClient } = compute();
+    expect(ssrAndClient).toEqual({
+      base: "/",
+      ssr: [
+        [ASSETS_MANIFEST, expect.stringMatching(/^[0-9a-f]{64}$/)],
+        [
+          expect.stringMatching(/^html~[0-9a-f]{8}\.js$/),
+          expect.stringMatching(/^[0-9a-f]{64}$/),
+        ],
+        [
+          expect.stringMatching(/^index~[0-9a-f]{8}\.js$/),
+          expect.stringMatching(/^[0-9a-f]{64}$/),
+        ],
+      ],
+      externals: [],
+      client: ["assets/index-11111111.js"],
+    });
   });
 
   it("is independent of the order files are listed in", () => {
-    const base = input();
-    expect(
-      digestDocumentInputs({
-        ...base,
-        ssrFiles: [...base.ssrFiles].reverse(),
-        clientFileNames: [...base.clientFileNames].reverse(),
-      }),
-    ).toBe(digestDocumentInputs(base));
-  });
-
-  it("changes with the SSR output, a client asset name, or the base", () => {
-    const base = input();
-    const digest = digestDocumentInputs(base);
-    expect(
-      digestDocumentInputs({
-        ...base,
-        ssrFiles: [
-          base.ssrFiles[0]!,
-          { fileName: "assets/a.js", source: new TextEncoder().encode("b();") },
-        ],
-      }),
-    ).not.toBe(digest);
-    expect(
-      digestDocumentInputs({
-        ...base,
-        clientFileNames: ["assets/index-33333333.js", base.clientFileNames[1]!],
-      }),
-    ).not.toBe(digest);
-    expect(digestDocumentInputs({ ...base, base: "/app/" })).not.toBe(digest);
+    const client = {
+      ...clientGraph(),
+      fileNames: ["assets/b-22222222.js", "assets/a-11111111.js"],
+    };
+    const reversed = compute({
+      client: { ...client, fileNames: [...client.fileNames].reverse() },
+      ssr: { ...ssrBundle(), chunks: [...ssrBundle().chunks].reverse() },
+    });
+    expect(reversed.table).toEqual(compute({ client }).table);
   });
 });
 
@@ -1098,6 +1377,58 @@ describe("portableModuleId", () => {
     expect(portableModuleId("\0virtual:thing", ROOT)).toBe("virtual:thing");
   });
 
+  // pnpm names a store directory after the package AND what it was installed
+  // against, peers of peers included. Bumping one of those (TypeScript is an
+  // optional peer of many) renames the directory of a package whose own files
+  // did not change, and with it the identity of every chunk holding its code.
+  it("reduces a pnpm store directory to name@version", () => {
+    const store = (dir: string) =>
+      portableModuleId(
+        `/project/node_modules/.pnpm/${dir}/node_modules/@vitejs/plugin-rsc/dist/rsc.js`,
+        ROOT,
+      );
+    const reduced =
+      "node_modules/.pnpm/@vitejs+plugin-rsc@0.5.35/node_modules/@vitejs/plugin-rsc/dist/rsc.js";
+    expect(
+      store(
+        "@vitejs+plugin-rsc@0.5.35_react-dom@19.3.0_react@19.3.0__react@19.3.0_vite@8.0.16_@type_e0720fd81c074701e9e6cec54ec82ff5",
+      ),
+    ).toBe(reduced);
+    expect(
+      store("@vitejs+plugin-rsc@0.5.35_react@19.3.0_typescript@5.9.2"),
+    ).toBe(reduced);
+    expect(store("@vitejs+plugin-rsc@0.5.35")).toBe(reduced);
+    // Another version of the package is another package.
+    expect(store("@vitejs+plugin-rsc@0.5.36_react@19.3.0")).not.toBe(reduced);
+    // An unscoped name, and a version with a prerelease tag.
+    expect(
+      portableModuleId(
+        "/project/node_modules/.pnpm/react-dom@19.3.0-rc.1_react@19.3.0/node_modules/react-dom/server.js",
+        ROOT,
+      ),
+    ).toBe(
+      "node_modules/.pnpm/react-dom@19.3.0-rc.1/node_modules/react-dom/server.js",
+    );
+  });
+
+  // plugin-rsc's group id for a chunk whose facade is a virtual module holds
+  // the relative path from the root to the directory vite was started in.
+  it("drops the working directory from a client-reference group of a virtual facade", () => {
+    const group = (facade: string) =>
+      portableModuleId(
+        `\0virtual:vite-rsc/client-references/group/facade:${facade}`,
+        ROOT,
+      );
+    const inTheApp = group("\0virtual:cloudflare/worker-entry");
+    expect(group("__/__/\0virtual:cloudflare/worker-entry")).toBe(inTheApp);
+    expect(group("__/other/\0virtual:cloudflare/worker-entry")).toBe(inTheApp);
+    // A file facade is root-relative already and keeps its path.
+    expect(group("src/pages/home.tsx")).toBe(
+      "virtual:vite-rsc/client-references/group/facade:src/pages/home.tsx",
+    );
+    expect(group("__/ui/button.tsx")).not.toBe(group("ui/button.tsx"));
+  });
+
   it("makes a file path in a virtual id's query portable", () => {
     const id = (root: string) =>
       `\0virtual:vite-rsc/css?type=rsc&id=${encodeURIComponent(`${root}/src/note.tsx`)}&lang.js`;
@@ -1110,46 +1441,139 @@ describe("portableModuleId", () => {
   });
 });
 
-describe("portableRegions", () => {
-  it("rewrites a virtual module's region comment and nothing else", () => {
+describe("stripRegionPaths", () => {
+  it("takes the path out of every region comment and leaves the code", () => {
     const source = [
       `//#region \\0virtual:vite-rsc/css?type=rsc&id=${encodeURIComponent("/project/src/note.tsx")}&lang.js`,
       `var a = "/project/src/kept.ts";`,
       "//#endregion",
-      "//#region src/note.tsx",
+      "//#region ../../node_modules/.pnpm/x@1_y@2/node_modules/x/i.js",
+      `var b = "//#region not at the start of a line";`,
       "//#endregion",
     ].join("\n");
-    expect(portableRegions(source, ROOT)).toBe(
+    expect(stripRegionPaths(source)).toBe(
       [
-        "//#region \\0virtual:vite-rsc/css?type=rsc&id=src/note.tsx&lang.js",
+        "//#region",
         `var a = "/project/src/kept.ts";`,
         "//#endregion",
-        "//#region src/note.tsx",
+        "//#region",
+        `var b = "//#region not at the start of a line";`,
         "//#endregion",
       ].join("\n"),
     );
   });
 
-  it("returns a source without virtual regions as it is", () => {
-    const source = "//#region src/a.ts\na();\n//#endregion";
-    expect(portableRegions(source, ROOT)).toBe(source);
+  it("returns a source without regions (a minified chunk) as it is", () => {
+    const source = "a();b();";
+    expect(stripRegionPaths(source)).toBe(source);
+  });
+});
+
+describe("digestBundle", () => {
+  const bundle: BundleFiles = {
+    chunks: [
+      { fileName: "index.js", name: "index", moduleIds: ["/project/src/e.ts"] },
+      {
+        fileName: "assets/dep-AAAAAAAA.js",
+        name: "dep",
+        moduleIds: ["/project/src/dep.ts"],
+        externalImports: ["marked"],
+      },
+    ],
+    assets: [
+      { fileName: "assets/data-BBBBBBBB.txt", name: "data.txt" },
+      { fileName: "assets/dep-AAAAAAAA.js.map", name: "dep.js.map" },
+    ],
+  };
+  const read =
+    (files: Record<string, string>) =>
+    (fileName: string): Uint8Array | undefined =>
+      fileName in files ? new TextEncoder().encode(files[fileName]) : undefined;
+  const files = {
+    "index.js": `import "./assets/dep-AAAAAAAA.js"; import t from "./assets/data-BBBBBBBB.txt"; import "./assets/dep-AAAAAAAA.js";`,
+    "assets/dep-AAAAAAAA.js": "dep();",
+    "assets/data-BBBBBBBB.txt": "dep-AAAAAAAA.js is only text here",
+  };
+
+  it("digests each file once, with its references to hashed file names taken out and listed", () => {
+    const digested = digestBundle(bundle, ROOT, read(files), "RSC");
+    expect(digested.map((file) => file.fileName)).toEqual([
+      "index.js",
+      "assets/dep-AAAAAAAA.js",
+      "assets/data-BBBBBBBB.txt",
+    ]);
+    const [index, dep, data] = digested;
+    expect(index!.references).toEqual([
+      "assets/dep-AAAAAAAA.js",
+      "assets/data-BBBBBBBB.txt",
+      "assets/dep-AAAAAAAA.js",
+    ]);
+    expect(dep!.identity).toMatch(/^dep~[0-9a-f]{8}\.js$/);
+    expect(dep!.externalImports).toEqual(["marked"]);
+    // An asset is data: hashed as bytes, never scanned.
+    expect(data).toMatchObject({ identity: "data.txt", references: [] });
+
+    // The same bundle under other content hashes digests the same.
+    const renamed = digestBundle(
+      {
+        chunks: bundle.chunks.map((chunk) => ({
+          ...chunk,
+          fileName: chunk.fileName.replace("AAAAAAAA", "CCCCCCCC"),
+        })),
+        assets: [bundle.assets[0]!],
+      },
+      ROOT,
+      read({
+        "index.js": files["index.js"].replaceAll("AAAAAAAA", "CCCCCCCC"),
+        "assets/dep-CCCCCCCC.js": "dep();",
+        "assets/data-BBBBBBBB.txt": files["assets/data-BBBBBBBB.txt"],
+      }),
+      "RSC",
+    );
+    expect(renamed.map((file) => file.base)).toEqual(
+      digested.map((file) => file.base),
+    );
+  });
+
+  // The token standing for a file name is not text a chunk can hold: with a
+  // printable one, moving a reference past the same character in the code
+  // left the digest as it was.
+  it("tells a file reference from the code around it", () => {
+    const base = (index: string) =>
+      digestBundle(
+        bundle,
+        ROOT,
+        read({ ...files, "index.js": index }),
+        "RSC",
+      )[0]!.base;
+    // The same text around the name in both, the name in another place.
+    expect(base(`load("dep-AAAAAAAA.js", "~");`)).not.toBe(
+      base(`load("~", "dep-AAAAAAAA.js");`),
+    );
+  });
+
+  it("throws for a listed file the output directory does not have", () => {
+    const { "assets/data-BBBBBBBB.txt": _data, ...missing } = files;
+    expect(() => digestBundle(bundle, ROOT, read(missing), "SSR")).toThrow(
+      "the SSR bundle lists assets/data-BBBBBBBB.txt, which is not in its output directory",
+    );
   });
 });
 
 describe("graph recording", () => {
   const RUNTIME = "/n/@vitejs/plugin-rsc/dist/utils/encryption-runtime.js";
+  const IMPORT = `import * as __vite_rsc_encryption_runtime from "${RUNTIME}";\n`;
   const code: Record<string, string | null> = {
-    "/a.ts": `registerServerReference(save).bind(null, __vite_rsc_encryption_runtime.encryptActionBoundArgs([id]))`,
-    "/file-level-action.ts": `registerServerReference(ping, "id", "ping")`,
+    "/a.ts": `${IMPORT}registerServerReference(save).bind(null, __vite_rsc_encryption_runtime.encryptActionBoundArgs([id]))`,
+    "/file-level-action.ts": `${IMPORT}registerServerReference(ping, "id", "ping")`,
+    // plugin-rsc renamed the function it calls.
+    "/renamed-call.ts": `${IMPORT}registerServerReference(save).bind(null, __vite_rsc_encryption_runtime.sealBoundArgs([id]))`,
+    // plugin-rsc imports the runtime another way.
+    "/other-import.ts": `import { sealBoundArgs } from "${RUNTIME}";\nregisterServerReference(ping, "id", "ping")`,
     "/no-code.ts": null,
   };
   const context = {
-    getModuleIds: () => [
-      "/a.ts",
-      "/b.ts",
-      "/file-level-action.ts",
-      "/no-code.ts",
-    ],
+    getModuleIds: () => ["/a.ts", "/b.ts", ...Object.keys(code).slice(1)],
     getModuleInfo: (id: string) =>
       id === "/b.ts"
         ? null
@@ -1182,14 +1606,8 @@ describe("graph recording", () => {
       names: ["m.txt"],
     },
   };
-
-  it("records the server graph: modules, chunks and assets", () => {
-    const graph = recordServerGraph(context, bundle);
-    expect(graph.modules.get("/b.ts")).toEqual({
-      imports: [],
-      dynamicImports: [],
-    });
-    expect(graph.chunks).toEqual([
+  const FILES: BundleFiles = {
+    chunks: [
       {
         fileName: "index.js",
         name: "index",
@@ -1202,15 +1620,26 @@ describe("graph recording", () => {
         moduleIds: ["/b.ts"],
         externalImports: [],
       },
-    ]);
-    expect(graph.assets).toEqual([
-      { fileName: "assets/m-HASH.txt", name: "m.txt" },
-    ]);
+    ],
+    assets: [{ fileName: "assets/m-HASH.txt", name: "m.txt" }],
+  };
+
+  it("records a bundle's chunks, with what each imports from outside it, and its assets", () => {
+    expect(recordBundleFiles(bundle)).toEqual(FILES);
+  });
+
+  it("records the server graph: the modules and the bundle's files", () => {
+    const graph = recordServerGraph(context, bundle);
+    expect(graph.modules.get("/b.ts")).toEqual({
+      imports: [],
+      dynamicImports: [],
+    });
+    expect({ chunks: graph.chunks, assets: graph.assets }).toEqual(FILES);
   });
 
   // plugin-rsc imports its encryption runtime into every "use server" module;
-  // only a module that calls the encrypt function depends on the key.
-  it("marks a module that encrypts bound arguments, not one that only imports the runtime", () => {
+  // only a module that uses it depends on the key.
+  it("marks a module that uses the encryption runtime, not one that only imports it", () => {
     const { modules } = recordServerGraph(context, bundle);
     expect(modules.get("/a.ts")).toEqual({
       imports: ["/b.ts", RUNTIME],
@@ -1220,12 +1649,19 @@ describe("graph recording", () => {
     expect(modules.get("/file-level-action.ts")!.encryptsBoundArgs).toBe(
       undefined,
     );
-    // No code to look at: counted as encrypting.
-    expect(modules.get("/no-code.ts")!.encryptsBoundArgs).toBe(true);
   });
 
-  it("records what a bundle imports from outside it", () => {
-    expect(recordExternalImports(bundle)).toEqual(["marked", "node:fs", "pg"]);
+  // The key must not drop out of the versions because plugin-rsc renamed a
+  // function or changed how it imports the runtime.
+  it("does not depend on the name of the function plugin-rsc calls", () => {
+    const { modules } = recordServerGraph(context, bundle);
+    expect(modules.get("/renamed-call.ts")!.encryptsBoundArgs).toBe(true);
+  });
+
+  it("counts a module it cannot read as using the runtime", () => {
+    const { modules } = recordServerGraph(context, bundle);
+    expect(modules.get("/other-import.ts")!.encryptsBoundArgs).toBe(true);
+    expect(modules.get("/no-code.ts")!.encryptsBoundArgs).toBe(true);
   });
 
   it("records the client graph: modules and every emitted file name", () => {
@@ -1235,6 +1671,6 @@ describe("graph recording", () => {
       "assets/dep-HASH.js",
       "assets/m-HASH.txt",
     ]);
-    expect(graph.modules.size).toBe(4);
+    expect(graph.modules.size).toBe(6);
   });
 });
