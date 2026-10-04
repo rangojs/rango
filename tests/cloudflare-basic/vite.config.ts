@@ -40,7 +40,7 @@ function parityAliasPlugin(): Plugin {
   };
 }
 
-export default defineConfig({
+export default defineConfig(({ isPreview }) => ({
   cacheDir: process.env.RANGO_E2E_VITE_CACHE_DIR ?? "node_modules/.vite",
   // Inline the render-timeout e2e flag at build/transform time. The worker runs
   // in workerd, whose `process.env` is populated from wrangler vars/bindings —
@@ -86,7 +86,13 @@ export default defineConfig({
       configPath: "./wrangler.json",
       viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
       inspectorPort: false,
+      // The e2e dev and preview servers run side by side locally. Sharing one
+      // KV state let a dev test's updateTag() marker evict the production
+      // build-time shell of the same tag (ppr-shell.test.ts, the evict test).
+      persistState: {
+        path: isPreview ? ".wrangler/state-preview" : ".wrangler/state",
+      },
     }),
     ...analyze(),
   ],
-});
+}));
