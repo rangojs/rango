@@ -6,6 +6,7 @@ import {
   expectReplayDeliversDeferredPush,
   expectReplayKeepsCapturedPushWithPinnedData,
   expectShellHitHydratesFromRecord,
+  expectSlowDeferredPushDoesNotBlockCapture,
   type PushOwnershipFixture,
 } from "@shared/e2e";
 
@@ -28,6 +29,7 @@ function describePprPushOwnership(mode: "dev" | "build") {
       pinnedUrl: f.url("/ppr-push/pinned"),
       cappedUrl: f.url("/ppr-push/capped"),
       deferredUrl: f.url("/ppr-push/deferred"),
+      slowUrl: f.url("/ppr-push/slow"),
       liveUrl: f.url("/ppr-push/live"),
       bumpUrl: f.url("/__test/ppr-push-bump"),
       homeUrl: f.url("/"),
@@ -55,6 +57,12 @@ function describePprPushOwnership(mode: "dev" | "build") {
       page,
     }) => {
       await expectShellHitHydratesFromRecord(page, fixture());
+    });
+
+    test("a deferred push slower than ppr.captureTimeout does not block the shell capture (#1035)", async ({
+      page,
+    }) => {
+      await expectSlowDeferredPushDoesNotBlockCapture(page, fixture());
     });
 
     test("a useHandle reader inside a live loader's loading boundary hydrates clean on a document MISS and on a shell HIT (#1035)", async ({

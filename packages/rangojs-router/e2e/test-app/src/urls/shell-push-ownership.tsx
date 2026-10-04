@@ -2,7 +2,9 @@ import { urls } from "@rangojs/router";
 import {
   ShellPushDeferredLoader,
   ShellPushLiveLoader,
+  SHELL_PUSH_SLOW_CAPTURE_TIMEOUT_MS,
   ShellPushPinnedLoader,
+  ShellPushSlowLoader,
   bumpShellPushGeneration,
 } from "./shell-push-ownership.defs.js";
 import { ShellPushView } from "../components/ShellPushView.js";
@@ -24,6 +26,14 @@ function ShellPushDeferredPage() {
   return (
     <main data-testid="shell-push-deferred-page">
       <ShellPushView loader={ShellPushDeferredLoader} />
+    </main>
+  );
+}
+
+function ShellPushSlowPage() {
+  return (
+    <main data-testid="shell-push-slow-page">
+      <ShellPushView loader={ShellPushSlowLoader} />
     </main>
   );
 }
@@ -70,6 +80,21 @@ export const shellPushOwnershipPatterns = urls(
           cache({ ttl: 300 }),
         ]),
       ],
+    ),
+    // The deferred push settles after ppr.captureTimeout: the record leaves
+    // it out, so the capture does not wait for it.
+    path(
+      "/shell-push/slow",
+      ShellPushSlowPage,
+      {
+        name: "shellPushSlow",
+        ppr: {
+          ttl: 300,
+          swr: 120,
+          captureTimeout: SHELL_PUSH_SLOW_CAPTURE_TIMEOUT_MS,
+        },
+      },
+      () => [loader(ShellPushSlowLoader, { ssr: false })],
     ),
     // #1035: a live loader that pushes after an await, read (data and handle)
     // inside its loading() boundary, which hydrates after the root.

@@ -788,6 +788,9 @@ identifiers — served to anonymous visitors.)
 - `ctx.use(H)(promise)` from a handler — a TOP-LEVEL pushed promise is awaited
   at capture and BAKED into the shell (bounded by `ppr.captureTimeout`, 15s by
   default).
+- A promise pushed from a LOADER is never in the shell and the capture does not
+  wait for it: however slow it is (or if it never settles), the shell is still
+  stored, and the HIT's own loader run delivers the value after hydration.
 - `ctx.use(H)({ x: promise })` from a HANDLER — also baked. The capture waits
   for every promise nested in a handler's push, at any depth of plain objects,
   arrays and JSX props, before it records the handles every HIT replays. Keep
