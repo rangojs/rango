@@ -27,6 +27,12 @@
  * capture refuses for a root postpone (a live loader read with no boundary
  * above it) or an SSR render error is captured here.
  *
+ * A `Prerender` route serves its handler layer from the artifact
+ * `router.matchForPrerender` bakes for the URL (on its first request, kept
+ * until resetShellTestState), through the production prerender store. Its
+ * first `ppr` request is a MISS with a runtime capture, as a URL without a
+ * build-time shell is in production; build-time shells are e2e-only.
+ *
  * Must run under the `react-server` condition (the rsc Vitest project), with
  * `rangoTestAliases()` resolving `@vitejs/plugin-rsc/rsc/server` to the stub
  * that carries the Flight runtime.
@@ -249,6 +255,79 @@ async function decodePayloadHandles(
 }
 
 /**
+ * Each router's Prerender artifacts by manifest key, as `vite build` bakes
+ * them (router.matchForPrerender), baked on a URL's first request the way the
+ * dev server's /__rsc_prerender endpoint bakes them (`devMode`: a Passthrough
+ * route keeps getParams()). `baked` holds the pathnames already tried, one
+ * that baked nothing (ctx.passthrough()) included.
+ */
+let prerenderArtifacts = new WeakMap<
+  object,
+  { payloads: Map<string, string>; baked: Set<string> }
+>();
+
+/**
+ * Serve a Prerender route's handler layer from its build-time artifact, as
+ * production does: through the store the built worker reads
+ * (createPrerenderStore over globalThis.__loadPrerenderManifestModule,
+ * installed as shell-prerender-phase.ts installs it for build-time shells).
+ * `env` stands in for the build's `buildEnv`. Returns the undo, or undefined
+ * when `pathname` matches no Prerender route.
+ */
+async function servePrerenderArtifacts(
+  router: Rango<any, any>,
+  pathname: string,
+  env: unknown,
+): Promise<(() => void) | undefined> {
+  const internal = toInternal(router);
+  const matched = await internal.findMatch(pathname);
+  if (!matched?.pr) return undefined;
+  let artifacts = prerenderArtifacts.get(router);
+  if (!artifacts) {
+    prerenderArtifacts.set(
+      router,
+      (artifacts = { payloads: new Map(), baked: new Set() }),
+    );
+  }
+  const { payloads, baked } = artifacts;
+  if (!baked.has(pathname)) {
+    const result = await internal.matchForPrerender(
+      pathname,
+      {},
+      undefined,
+      matched.pt === true,
+      env,
+      true,
+    );
+    const { hashParams } = await import("../prerender/param-hash.js");
+    baked.add(pathname);
+    if (result && !result.passthrough) {
+      payloads.set(
+        `${result.routeName}/${hashParams(result.params)}`,
+        JSON.stringify({ segments: result.segments, handles: result.handles }),
+      );
+    }
+  }
+  const [{ createPrerenderStore }, { setPrerenderStoreForTests }] =
+    await Promise.all([
+      import("../prerender/store.js"),
+      import("../router/match-middleware/cache-lookup.js"),
+    ]);
+  const previousLoader = globalThis.__loadPrerenderManifestModule;
+  globalThis.__loadPrerenderManifestModule = async () => ({
+    default: Object.fromEntries([...payloads.keys()].map((key) => [key, key])),
+    loadPrerenderAsset: async (key) => ({
+      default: JSON.parse(payloads.get(key)!),
+    }),
+  });
+  const previousStore = setPrerenderStoreForTests(createPrerenderStore());
+  return () => {
+    globalThis.__loadPrerenderManifestModule = previousLoader;
+    setPrerenderStoreForTests(previousStore);
+  };
+}
+
+/**
  * Handlers per router, keyed by the `cacheStore` override or the router. A
  * handler resolves its router's versions when it is created, so an entry is
  * reused only while the router would still resolve the versions it was made
@@ -327,13 +406,15 @@ function buildRequest(url: URL, options: ServeShellRequestOptions): Request {
  * starts as a fresh worker would: the capture's stampede guard, its backoff
  * (a refused capture backs its URL off for later tests too), the shell path's
  * once-per-key warnings, the build-shell manifest memo, the "use cache"
- * in-flight leaders and warnings, and CFCacheStore's isolate memos (shells,
+ * in-flight leaders and warnings, CFCacheStore's isolate memos (shells,
  * tag markers, tag hints) and warnings, which every CFCacheStore in the
- * process shares by namespace and URL. Call it in `beforeEach`, never while
- * a request is in flight. VercelCacheStore's memos live on the `cache`
- * handle it is given: a new handle starts empty.
+ * process shares by namespace and URL, and the Prerender artifacts baked so
+ * far. Call it in `beforeEach`, never while a request is in flight.
+ * VercelCacheStore's memos live on the `cache` handle it is given: a new
+ * handle starts empty.
  */
 export async function resetShellTestState(): Promise<void> {
+  prerenderArtifacts = new WeakMap();
   const [capture, serve, buildShells, cf, cacheRuntime] = await Promise.all([
     import("../rsc/shell-capture.js"),
     import("../rsc/shell-serve.js"),
@@ -399,6 +480,11 @@ export async function serveShellRequest<TEnv = any>(
     passThroughOnException() {},
   };
   const recorder: Recorder = {};
+  const unservePrerender = await servePrerenderArtifacts(
+    router,
+    target.pathname,
+    options.env,
+  );
   while (Date.now() === called) await macrotask();
 
   const { response, body } = await recorders.run(recorder, async () => {
@@ -410,6 +496,7 @@ export async function serveShellRequest<TEnv = any>(
       return { response, body: await response.text() };
     } finally {
       await settle(tasks);
+      unservePrerender?.();
     }
   });
 

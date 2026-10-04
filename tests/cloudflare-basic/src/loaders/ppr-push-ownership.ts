@@ -54,6 +54,18 @@ export const PprPushDeferredLoader = createLoader(
 );
 
 /**
+ * Promise-free, without cache(): a shell HIT serves its pin and does not run
+ * it, so its settled push reaches the page from the shell only (#1057).
+ */
+export const PprPushSettledLoader = createLoader(
+  async (ctx): Promise<PprPushData> => {
+    const generation = generationOf(ctx.searchParams.get("probe") ?? "");
+    ctx.use(PprPushNotes)(`settled-only@g${generation}`);
+    return { value: `settled@g${generation}` };
+  },
+);
+
+/**
  * A live-lane loader (no `ssr: false`), read under loading(): it pushes
  * after an await, so its push is never in the document's handle snapshot
  * and reaches the client after the root has hydrated (#1035).

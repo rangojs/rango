@@ -1,12 +1,14 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   RecordingShellStore,
+  SHELL_HANDLES_RECORD_KEY,
   SeededShellStore,
   getRecordingStore,
   buildShellLoaderSeed,
   countSnapshotFamilies,
   hasDocRecord,
   pruneShellSnapshot,
+  shellPrerenderHandles,
 } from "../shell-snapshot.js";
 
 // buildShellLoaderSeed lazily imports the Flight codec; the real module pulls
@@ -470,5 +472,37 @@ describe("snapshot pruning helpers", () => {
         "doc:host/p",
       ),
     ).toBe(false);
+  });
+});
+
+// A prerender-served entry keeps its loader-owned pushes in a `handles`
+// record (issue #1057). It is no doc record, so it changes neither which
+// layer a HIT serves the handler layer from nor replay eligibility.
+describe("the handles record of a prerender-served entry", () => {
+  const HANDLES: ShellSnapshotRecord = {
+    family: "handles",
+    key: SHELL_HANDLES_RECORD_KEY,
+    value: { handles: "encoded", handleOwners: { R0: { notes: ["Bake"] } } },
+  };
+  const LOADER: ShellSnapshotRecord = {
+    family: "loader",
+    key: "M0L0D0.Bake",
+    value: { value: "{}", holes: 0, runs: 0 },
+  };
+
+  it("shellPrerenderHandles reads it, and nothing from an entry written without it", () => {
+    expect(shellPrerenderHandles([LOADER, HANDLES])).toEqual(HANDLES.value);
+    expect(shellPrerenderHandles([LOADER])).toBeUndefined();
+    expect(shellPrerenderHandles([])).toBeUndefined();
+  });
+
+  it("is not a doc record, not a pin, and not a segment the HIT's doc scope serves", async () => {
+    expect(hasDocRecord([HANDLES], undefined)).toBe(false);
+    expect(hasDocRecord([HANDLES], SHELL_HANDLES_RECORD_KEY)).toBe(false);
+    expect(await buildShellLoaderSeed([HANDLES])).toBeUndefined();
+    const seeded = new SeededShellStore(new MemorySegmentCacheStore(), [
+      HANDLES,
+    ]);
+    expect(await seeded.get(SHELL_HANDLES_RECORD_KEY)).toBeNull();
   });
 });

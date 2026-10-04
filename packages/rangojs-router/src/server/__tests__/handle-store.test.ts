@@ -599,6 +599,18 @@ describe("HandleStore loader-push tagging (cache() record exclusion)", () => {
     expect(store.getRecordOwners("seg2")).toBeUndefined();
   });
 
+  it("getOwnedSegmentIds lists the segments getRecordOwners reports", () => {
+    const store = createHandleStore();
+    store.push("crumbs", "seg1", "handler");
+    store.push("crumbs", "seg1", "baked", false, "L");
+    store.push("meta", "seg1", "baked-meta", false, "L");
+    store.push("crumbs", "seg2", "handler-only");
+    store.push("crumbs", "seg3", "other", false, "M");
+
+    expect(store.getOwnedSegmentIds().sort()).toEqual(["seg1", "seg3"]);
+    expect(createHandleStore().getOwnedSegmentIds()).toEqual([]);
+  });
+
   it("replayed values are untagged; a later loader push is tagged", () => {
     const store = createHandleStore();
     runInsideLoaderScope(() => store.push("crumbs", "seg1", "stale-loader"));

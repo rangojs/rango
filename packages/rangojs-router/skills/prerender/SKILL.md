@@ -354,6 +354,16 @@ string (after `cache.searchParams` filtering). A URL with search params has its
 own shell identity and is captured at runtime. The runtime shell store is read
 first, so a runtime capture supersedes the baked entry once it exists.
 
+Handle values behave as on any `ppr` shell (`/ppr` → "Handles on a shell
+HIT"): a value an `ssr: false` loader pushes settled is in the shell's HTML and
+in the data a HIT hydrates with, and one it pushes as a promise arrives after
+hydration. The prerendered payload holds only the handler's pushes (loaders
+never run at build), so the shell entry keeps the loader pushes its HTML
+rendered, on a build-baked shell and on one captured at runtime alike. A shell
+stored by router 0.21 or earlier lacks them, and a promise-free `ssr: false`
+loader's settled push fails hydration on its HITs until the shell is replaced
+(#1057).
+
 ### Freshness of a build shell
 
 A build-baked shell is not on a wall clock the way a pure runtime `ppr` shell is.

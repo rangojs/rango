@@ -124,7 +124,9 @@ route was pre-rendered.
 When a prerender store entry is found:
 
 1. Deserialize segments from serialized Flight payloads
-2. Replay handle data into the request's HandleStore
+2. Replay handle data into the request's HandleStore. On a `Prerender` + `ppr`
+   shell HIT, then restore the shell entry's `handles` record (see
+   [Handle pushes on a shell HIT](#handle-pushes-on-a-shell-hit))
 3. Set `state.cacheHit = true` and `state.cachedMatchedIds`
 4. For partial navigation: nullify components the client already has
 5. Yield cached segments
@@ -398,6 +400,44 @@ owned by runtime capture), `reactVersion`/`buildVersion` validity, payload
 integrity, and tag markers (below). The runtime store is always read FIRST, so
 a captured entry supersedes the baked one as soon as it lands.
 
+### Handle pushes on a shell HIT
+
+A plain `ppr` shell keeps everything its prelude rendered from in one place,
+the doc record: the handler layer, and the handle values the handlers and the
+`ssr: false` loaders pushed (`CachedEntryData.handles`, with `handleOwners`
+naming the loader of each loader push). A HIT restores that record before any
+loader runs, and the document hydrates with exactly that (#1035).
+
+A `Prerender` + `ppr` shell has no doc record. Its capture's match is served
+by the prerender store (`settleCaptureRecord` returns `prerender`), and every
+HIT takes the handler layer from the same store, so storing it again would
+only duplicate the build artifact. That artifact was written at build time,
+though, when no loader runs, so it holds the handlers' pushes and none of the
+loaders'. Yet the prelude rendered the settled pushes of the `ssr: false`
+loaders, and a promise-free one is served from its pin on the HIT and does not
+run. Until #1057 those values were in the HTML and nowhere else: every HIT
+hydrated without them (React #418), and they never arrived.
+
+So the capture stores them itself. `captureAndStoreShell` writes a `handles`
+record into the snapshot of a capture without a doc record: the handle arrays
+that hold a loader-owned push, each whole, in the doc record's format
+(`ShellSnapshotHandlesValue`, built by `captureOwnedHandles`). It is written
+even when it is empty, and it is exempt from `ppr.maxSnapshotBytes`, like the
+doc record it stands in for. `serveShellHit` passes it on the tail's marker
+(`prerenderHandles`), and `yieldFromStore` restores it right after the
+prerender store's handles, the way `CacheScope.lookupRouteDetailed` restores a
+doc record's: `setRecordAuthority(loaderPins(...))`, then `restoreHandles`
+with the owners. A pinned loader's copy stands, a loader without a pin gets a
+placeholder its run replaces, and all of it is in place before the render
+barrier freezes the document snapshot. Only the source of the data differs
+from a plain `ppr` shell, not the guarantee.
+
+Nothing about which layer serves the handler output changes: the prerender
+store still does, and the record is not a doc record (`hasDocRecord` is false
+for it, so navigation replay eligibility is untouched). An entry written
+before the record existed has none, and its HIT restores the prerender store's
+handles only, as it did.
+
 `ctx.dynamic()` is the per-request opt-out. If middleware calls it, the PPR
 commit point does not read stored shells and the request stays on axis 1. If a
 handler calls it later during an axis-1 MISS render, the response is still axis 1
@@ -433,6 +473,16 @@ version. The endpoint is policy-free: the serve gate sends the resolved
 (production's exact candidate set), and a `/__rsc_prerender` pre-flight
 refuses non-prerenderable routes so a live-handler render can never be served
 as a baked shell. First dev request: `x-rango-shell: HIT`, same as production.
+
+The capture must replay the prerender store, as the build phase's does. On the
+Node preset the virtual module sets `__PRERENDER_DEV_URL` in the process the
+capture runs in. On Cloudflare the capture runs in the temp Node server, which
+never evaluates that module, so the plugin sets the global for it when it
+records `devServerOrigin` (`router-discovery.ts`, the Cloudflare branch of
+`discover`). Before #1057 it did not: the capture found no prerender store,
+rendered the `Prerender` handler live into a doc record, and the worker's HIT
+served the handler layer from the prerender store and lost the loader pushes
+the prelude had rendered.
 
 ---
 
@@ -668,7 +718,9 @@ remain live at invocation. Dev and production coverage lives in
 
 Values pushed via `ctx.use()` during pre-rendering are baked into the Flight
 payload. They are replayed into the HandleStore on cache hit via
-`handleStore.replaySegmentData()`.
+`handleStore.replaySegmentData()`. Loader pushes are never in that payload;
+on a `Prerender` + `ppr` shell HIT the ones the shell rendered come from the
+shell entry's `handles` record ([Handle pushes on a shell HIT](#handle-pushes-on-a-shell-hit)).
 
 ---
 
