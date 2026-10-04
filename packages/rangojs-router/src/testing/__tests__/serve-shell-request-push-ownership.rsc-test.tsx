@@ -30,6 +30,7 @@ import {
   resetShellTestState,
   type ServeShellRequestOptions,
   type ServeShellRequestResult,
+  type ShellRequestHandles,
 } from "../flight.entry.js";
 import {
   createHandle,
@@ -187,6 +188,43 @@ async function SchReadingPage(ctx: HandlerContext): Promise<React.ReactNode> {
   return <p>{`page-${sch}`}</p>;
 }
 
+/**
+ * A promise-free `ssr: false` loader without cache(): its body runs at
+ * capture, and again on a HIT for the deferred push (#1035).
+ */
+const PlainDeferred = createLoader(async (ctx) => {
+  ctx.use(Notes)(`plain-settled@g${source.generation}`);
+  ctx.use(Notes)(Promise.resolve(`plain-deferred@g${source.generation}`));
+  return { plain: `plain@g${source.generation}` };
+});
+
+/** A promise-free `ssr: false` loader that pushes a value holding a promise. */
+const NestedNoted = createLoader(async (ctx) => {
+  ctx.use(Notes)({
+    label: `nested@g${source.generation}`,
+    later: Promise.resolve("nested-later"),
+  } as unknown as string);
+  return { nested: `nested@g${source.generation}` };
+});
+
+/** A live-lane loader (no `ssr: false`) that pushes before its first await. */
+const LiveNoted = createLoader(async (ctx) => {
+  ctx.use(Notes)(`live-note@g${source.generation}`);
+  return { live: `live@g${source.generation}` };
+});
+
+/** A live-lane loader that pushes after an await. */
+const SlowLiveNoted = createLoader(async (ctx) => {
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  ctx.use(Notes)(`slow-live-note@g${source.generation}`);
+  return { slow: `slow@g${source.generation}` };
+});
+
+function NotedPage(ctx: HandlerContext): React.ReactNode {
+  ctx.use(Notes)("handler-note");
+  return <p>noted</p>;
+}
+
 /** The pins are over the cap: the entry keeps its doc record only. */
 const NO_PINS = { maxSnapshotBytes: 1 };
 
@@ -316,6 +354,27 @@ function makeRouter() {
         ],
       ),
       path(
+        "/deferred-plain",
+        () => <p>deferred plain</p>,
+        { name: "deferredPlain", ppr: true },
+        () => [loader(PlainDeferred, { ssr: false })],
+      ),
+      path(
+        "/nested-noted",
+        () => <p>nested noted</p>,
+        { name: "nestedNoted", ppr: true },
+        () => [loader(NestedNoted, { ssr: false })],
+      ),
+      path("/live-noted", NotedPage, { name: "liveNoted", ppr: true }, () => [
+        loader(LiveNoted),
+        loader(SlowLiveNoted),
+        loading(<p>loading live</p>),
+      ]),
+      path("/plain-noted", NotedPage, { name: "plainNoted" }, () => [
+        loader(LiveNoted),
+        loader(PlainDeferred, { ssr: false }),
+      ]),
+      path(
         "/sch",
         () => <p>sch</p>,
         { name: "sch", ppr: true },
@@ -400,6 +459,43 @@ function distinct(flight: string | undefined, pattern: RegExp): string[] {
 function final(flight: string | undefined, pattern: RegExp): string[] {
   const rows = (flight ?? "").split("\n").filter((row) => row.match(pattern));
   return rows.at(-1)?.match(pattern) ?? [];
+}
+
+/**
+ * A document's handle values, in push order, as the browser gets them: what
+ * its shell was rendered from (a HIT), what the client hydrates with, and
+ * the state the late channel leaves it in after hydration (undefined when
+ * nothing arrived late). A value that holds a promise reads as its `label`.
+ */
+async function handleValues(result: ServeShellRequestResult): Promise<{
+  shell: unknown[] | undefined;
+  hydration: unknown[];
+  afterHydration: unknown[] | undefined;
+}> {
+  const handles = (await result.readHandles())!;
+  const values = (data: ShellRequestHandles["hydration"] | undefined) =>
+    data &&
+    Object.values(data)
+      .flatMap((bySegment) => Object.values(bySegment).flat())
+      .map(
+        (value) => (value as { label?: unknown } | undefined)?.label ?? value,
+      );
+  return {
+    shell: values(handles.prelude),
+    hydration: values(handles.hydration)!,
+    afterHydration: values(handles.late.at(-1)),
+  };
+}
+
+/** What the client received of {@link handleValues}, without the shell. */
+function delivered(values: Awaited<ReturnType<typeof handleValues>>): {
+  hydration: unknown[];
+  afterHydration: unknown[] | undefined;
+} {
+  return {
+    hydration: values.hydration,
+    afterHydration: values.afterHydration,
+  };
 }
 
 /** The segment ids a response matched, as the client then holds them. */
@@ -992,6 +1088,104 @@ describe("one run per loader: a route cache() record's copy of a loader push nev
       '"owned":"owned@g2"',
     ]);
     expect(final(miss.flight, /owned-note@g\d/g)).toEqual(["owned-note@g2"]);
+  });
+});
+
+// Issue #1035. A document served from a shell hydrates with the handle data
+// the shell's HTML was rendered from, which is the record's. Whatever this
+// request's loaders push, replace or drop reaches the client after
+// hydration, on the late channel. Before, a HIT's hydration data was the
+// store at the handler barrier plus whatever a loader had pushed by the
+// stream's first read, and the capture rendered pushes its record left out.
+describe("a shell HIT hydrates from its record (#1035)", () => {
+  /** Capture `path` at generation 1, then serve its HIT at generation 2. */
+  async function hitAfterCapture(path: string) {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { serve } = setup();
+    expect((await serve(path)).shellStatus).toBe("MISS");
+    source.generation = 2;
+    const hit = await serve(path);
+    expect(hit.shellStatus).toBe("HIT");
+    return { serve, hit, values: await handleValues(hit) };
+  }
+
+  describe("what does not change", () => {
+    it("a HIT whose loader pushes settled values only delivers nothing after hydration", async () => {
+      const { values } = await hitAfterCapture("/eb");
+
+      expect(values).toEqual({
+        shell: ["eb-after@g1"],
+        hydration: ["eb-after@g1"],
+        afterHydration: undefined,
+      });
+    });
+
+    it("a document MISS carries every push in its hydration data, a deferred one resolved", async () => {
+      const { serve } = setup();
+
+      const deferred = await serve("/deferred-plain");
+      const live = await serve("/live-noted");
+
+      expect(deferred.shellStatus).toBe("MISS");
+      expect(await handleValues(deferred)).toEqual({
+        shell: undefined,
+        hydration: ["plain-settled@g1", "plain-deferred@g1"],
+        afterHydration: undefined,
+      });
+      // A live-lane push made after an await is late on a MISS too.
+      expect(await handleValues(live)).toEqual({
+        shell: undefined,
+        hydration: ["live-note@g1", "handler-note"],
+        afterHydration: ["live-note@g1", "handler-note", "slow-live-note@g1"],
+      });
+    });
+
+    it("a navigation replay streams one handle state: nothing is late without a hydration", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const { serve } = setup();
+      for (const path of ["/deferred-plain", "/eb-capped", "/live-noted"]) {
+        expect((await serve(path)).shellStatus).toBe("MISS");
+      }
+      source.generation = 2;
+      const nav = (path: string) =>
+        serve(path, { partial: { from: "/about" } }).then(handleValues);
+
+      expect(await nav("/deferred-plain")).toEqual({
+        shell: undefined,
+        hydration: ["plain-settled@g1", "plain-deferred@g2"],
+        afterHydration: undefined,
+      });
+      expect(await nav("/eb-capped")).toEqual({
+        shell: undefined,
+        hydration: ["eb-after@g2"],
+        afterHydration: undefined,
+      });
+      expect(await nav("/live-noted")).toEqual({
+        shell: undefined,
+        hydration: ["handler-note", "live-note@g2", "slow-live-note@g2"],
+        afterHydration: undefined,
+      });
+    });
+
+    it("a document without ppr carries every push in its hydration data", async () => {
+      const { serve } = setup();
+      await serve("/plain-noted");
+      source.generation = 2;
+
+      const second = await serve("/plain-noted");
+
+      expect(second.shellStatus).toBe(null);
+      expect(await handleValues(second)).toEqual({
+        shell: undefined,
+        hydration: [
+          "live-note@g2",
+          "plain-settled@g2",
+          "plain-deferred@g2",
+          "handler-note",
+        ],
+        afterHydration: undefined,
+      });
+    });
   });
 });
 
