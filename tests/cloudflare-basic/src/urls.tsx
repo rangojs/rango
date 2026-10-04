@@ -21,6 +21,7 @@ import {
 import {
   AppVersionPanel,
   LoadMoreList,
+  SharedCarriedCount,
 } from "./components/LocationStateOptions.js";
 import { StreamTest } from "./components/StreamTest.js";
 import { NavLayout } from "./components/NavLayout.js";
@@ -29,6 +30,7 @@ import { FeatureLoading } from "./components/FeatureLoading.js";
 import { BlogSidebarLoader } from "./loaders/blog.js";
 import { CookieOverlayLoader } from "./loaders/cookie-overlay.js";
 import { FeatureLoader, FeatureShellLoader } from "./loaders/feature.js";
+import { LoadMoreLoader } from "./loaders/location-state.js";
 import {
   DepCrumbProductLoader,
   DepCrumbSiblingLoader,
@@ -322,6 +324,15 @@ function ClientUrlsSlowParent(): ReactNode {
       <SlowChrome />
       <Outlet />
     </section>
+  );
+}
+
+function LocationStateOptionsShell(): ReactNode {
+  return (
+    <div>
+      <SharedCarriedCount />
+      <Outlet />
+    </div>
   );
 }
 
@@ -2256,37 +2267,36 @@ export const urlpatterns = urls(
           { name: "locationStateLateSuspenseRelease" },
         ),
 
-        // #994 clearOnReload: a "load more" list. The handler renders the page
-        // the URL names; the earlier pages ride along as location state on
-        // the Link. It also sets state of its own on every request, document
-        // loads included.
-        path(
-          "/location-state-load-more",
-          (ctx) => {
-            const page = Number(ctx.searchParams.get("page") ?? "1");
-            ctx.setLocationState(ServerPageStamp({ page }));
-            return (
-              <LoadMoreList
-                basePath="/location-state-load-more"
-                page={page}
-                items={[1, 2, 3].map((item) => `p${page}-${item}`)}
-              />
-            );
-          },
-          { name: "locationStateLoadMore" },
-        ),
-
-        // #994 app version: readers of a typed slot and of plain state.
-        path(
-          "/location-state-app-version",
-          (ctx) => (
-            <AppVersionPanel
-              basePath="/location-state-app-version"
-              step={ctx.searchParams.get("step") ?? "start"}
-            />
+        // The two fixtures below share a layout whose reader stays mounted
+        // across a navigation between them (#1029).
+        layout(<LocationStateOptionsShell />, () => [
+          // #994 clearOnReload, #1029: a "load more" list. LoadMoreLoader
+          // loads the page the URL names; the earlier pages ride along as
+          // location state on the Link. The handler sets state of its own on
+          // every request, document loads included.
+          path(
+            "/location-state-load-more",
+            (ctx) => {
+              const page = Number(ctx.searchParams.get("page") ?? "1");
+              ctx.setLocationState(ServerPageStamp({ page }));
+              return <LoadMoreList basePath="/location-state-load-more" />;
+            },
+            { name: "locationStateLoadMore" },
+            () => [loader(LoadMoreLoader)],
           ),
-          { name: "locationStateAppVersion" },
-        ),
+
+          // #994 app version: readers of a typed slot and of plain state.
+          path(
+            "/location-state-app-version",
+            (ctx) => (
+              <AppVersionPanel
+                basePath="/location-state-app-version"
+                step={ctx.searchParams.get("step") ?? "start"}
+              />
+            ),
+            { name: "locationStateAppVersion" },
+          ),
+        ]),
 
         // Action location state test route (non-redirect flow)
         path("/action-location-state", ActionLocationStatePage, {

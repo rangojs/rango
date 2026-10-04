@@ -8,7 +8,6 @@ import { Link } from "@rangojs/router/client";
 import {
   FlashMessage,
   ServerInfo,
-  ServerPageStamp,
   SlowProductLocationState,
 } from "../location-states.js";
 import {
@@ -31,10 +30,7 @@ import {
   RouterPushStateButtons,
 } from "../components/LinkStateDisplay.js";
 import { StaticWriteWidget } from "../components/StaticWriteWidget.js";
-import {
-  AppVersionPanel,
-  LoadMoreList,
-} from "../components/LocationStateOptions.js";
+import { locationStateOptionsPatterns } from "./location-state-options.js";
 import {
   ActionInfoDisplay,
   ActionLocationStateControls,
@@ -65,7 +61,7 @@ async function LateSuspenseContent({ gate }: { gate: string }) {
  * Location state test routes - tests for redirect() with state,
  * ctx.setLocationState(), useLocationState(), and useLocationState()
  */
-export const locationStatePatterns = urls(({ path, middleware }) => [
+export const locationStatePatterns = urls(({ path, middleware, include }) => [
   // Index page with links to trigger different scenarios
   path(
     "/",
@@ -313,36 +309,8 @@ export const locationStatePatterns = urls(({ path, middleware }) => [
     { name: "lateSuspenseRelease" },
   ),
 
-  // #994 clearOnReload: a "load more" list. The handler renders the page the
-  // URL names; the earlier pages ride along as location state on the Link.
-  // It also sets state of its own on every request, document loads included.
-  path(
-    "/load-more",
-    (ctx) => {
-      const page = Number(ctx.searchParams.get("page") ?? "1");
-      ctx.setLocationState(ServerPageStamp({ page }));
-      return (
-        <LoadMoreList
-          basePath="/location-state/load-more"
-          page={page}
-          items={[1, 2, 3].map((item) => `p${page}-${item}`)}
-        />
-      );
-    },
-    { name: "loadMore" },
-  ),
-
-  // #994 app version: readers of a typed slot and of plain state.
-  path(
-    "/app-version",
-    (ctx) => (
-      <AppVersionPanel
-        basePath="/location-state/app-version"
-        step={ctx.searchParams.get("step") ?? "start"}
-      />
-    ),
-    { name: "appVersion" },
-  ),
+  // /load-more and /app-version, under one layout.
+  include("/", locationStateOptionsPatterns, { name: "" }),
 
   // Static write/delete demo: drives LocationState.write() and .delete()
   // from the client and exposes both .read() and useLocationState() readers.

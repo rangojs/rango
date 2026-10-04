@@ -226,8 +226,14 @@ export function createPartialUpdater(
       segments = segmentIds ?? segmentState.currentSegmentIds;
     }
 
+    // The page the client is on, which the server diffs the target against.
+    // tx.currentUrl is window.location when the transaction was created: on
+    // a back/forward the popstate event had already moved it to the target,
+    // and a server told the target is also the source revalidates nothing on
+    // the same route, so the page being left stayed on screen (#1030). The
+    // store's URL is the committed entry's until tx.commit().
     const previousUrl =
-      mode.type === "leave-intercept"
+      mode.type === "leave-intercept" || (tx.traversal && !interceptSourceUrl)
         ? segmentState.currentUrl || tx.currentUrl
         : interceptSourceUrl || tx.currentUrl || segmentState.currentUrl;
 
@@ -500,6 +506,7 @@ export function createPartialUpdater(
         );
         tx.commit(matchedIds, existingSegments, {
           routeName: payload.metadata.routeName,
+          treeless: true,
         });
         debugLog("[Browser] Navigation complete (no re-render)");
         return;

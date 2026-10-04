@@ -1,10 +1,11 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useEffect } from "react";
 import {
   clientUrls,
   Link,
   useLoader,
+  useLocationState,
   useOutlet,
   useParams,
   usePathname,
@@ -13,20 +14,44 @@ import {
   ClientUrlsSlowLoader,
   ClientUrlsSlowRedirectLoader,
 } from "./loader.js";
+import { SlowNote } from "../location-states.js";
 
 // Group behind a 5s server middleware (urls.tsx) — optimistic destination
 // contract, see e2e/client-urls-slow.test.ts.
 
+/**
+ * #1029 probe: a SlowNote reader next to the identity of the tree it sits in
+ * (a pathname or a param). Each (identity, note) pair it commits is appended
+ * to `window.__cusStateCommits` as `<where>|<identity>|<note>`, so the e2e
+ * sees a pair that was on screen for one frame too.
+ */
+function SlowState({ where, identity }: { where: string; identity: string }) {
+  const note = useLocationState(SlowNote)?.value ?? "none";
+  const commit = `${where}|${identity}|${note}`;
+  useEffect(() => {
+    ((window as { __cusStateCommits?: string[] }).__cusStateCommits ??=
+      []).push(commit);
+  }, [commit]);
+  return <p data-testid={`cus-${where}-note`}>{note}</p>;
+}
+
 /** Chrome OUTSIDE the group (rendered by the server parent layout): its route
  *  hooks keep the COMMITTED location during the optimistic window. */
 export function SlowChrome() {
-  return <p data-testid="cus-chrome-pathname">{usePathname()}</p>;
+  const pathname = usePathname();
+  return (
+    <>
+      <p data-testid="cus-chrome-pathname">{pathname}</p>
+      <SlowState where="chrome" identity={pathname} />
+    </>
+  );
 }
 
 function SlowLayout() {
   const { content, pending } = useOutlet();
   return (
     <section data-testid="cus-layout" data-pending={String(pending)}>
+      <SlowState where="layout" identity={usePathname()} />
       {content}
     </section>
   );
@@ -35,12 +60,21 @@ function SlowLayout() {
 function SlowA() {
   return (
     <div data-testid="cus-a">
+      <SlowState where="a" identity="a" />
       <Link
         to="/client-urls-slow/b/first"
         prefetch="none"
         data-testid="cus-a-to-b"
       >
         To B
+      </Link>
+      <Link
+        to="/client-urls-slow/b/first"
+        state={[SlowNote({ value: "for-first" })]}
+        prefetch="none"
+        data-testid="cus-a-to-b-note"
+      >
+        To B with a note
       </Link>
     </div>
   );
@@ -67,6 +101,7 @@ function SlowB() {
       <h2>Page B</h2>
       <p data-testid="cus-b-param">{tag}</p>
       <p data-testid="cus-b-pathname">{usePathname()}</p>
+      <SlowState where="b" identity={tag} />
       {/* Local state typed during the optimistic window must survive the
           canonical commit (group-keyed segment keeps this instance). */}
       <input data-testid="cus-b-input" defaultValue="" />
@@ -75,6 +110,24 @@ function SlowB() {
       </Suspense>
       <Link to="/client-urls-slow/c" prefetch="hover" data-testid="cus-b-to-c">
         To C
+      </Link>
+      {/* Same route record, another param: the content is held. */}
+      <Link
+        to="/client-urls-slow/b/second"
+        state={[SlowNote({ value: "for-second" })]}
+        prefetch="none"
+        data-testid="cus-b-to-b-note"
+      >
+        To B second with a note
+      </Link>
+      {/* E suspends with no boundary: B stays until E commits. */}
+      <Link
+        to="/client-urls-slow/e"
+        state={[SlowNote({ value: "for-e" })]}
+        prefetch="none"
+        data-testid="cus-b-to-e-note"
+      >
+        To E with a note
       </Link>
     </div>
   );
@@ -111,7 +164,12 @@ function SlowD() {
 // transition lane, so the current page stays until the canonical commit.
 function SlowE() {
   const { data } = useLoader(ClientUrlsSlowLoader);
-  return <div data-testid="cus-e">{data}</div>;
+  return (
+    <>
+      <div data-testid="cus-e">{data}</div>
+      <SlowState where="e" identity="e" />
+    </>
+  );
 }
 
 export default clientUrls(({ layout, path, loader }) => [

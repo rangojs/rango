@@ -1312,6 +1312,97 @@ describe("createEventController", () => {
       expect(handleListener).toHaveBeenCalledOnce();
     });
 
+    // #1029: the controller records the committed entry's location state and
+    // notifies nobody. NavigationProvider takes it with the payload; only a
+    // commit marked treeless rides the state notification.
+    it("a location-state commit records the entry's state and notifies only when it is treeless", () => {
+      const ctrl = createController();
+      const listener = vi.fn();
+      ctrl.subscribe(listener);
+      expect(ctrl.getLocationState()).toBeUndefined();
+      expect(ctrl.takeTreelessLocationState()).toBe(false);
+
+      // A commit a payload follows: recorded, no notification scheduled.
+      ctrl.commitLocationState({ state: { from: "list" }, idx: 1 });
+      expect(ctrl.getLocationState()).toEqual({ state: { from: "list" } });
+      vi.advanceTimersByTime(0);
+      expect(listener).not.toHaveBeenCalled();
+      expect(ctrl.takeTreelessLocationState()).toBe(false);
+
+      // A treeless one: the notification is the provider's cue, taken once.
+      ctrl.commitLocationState({ state: { from: "tab" }, idx: 2 }, true);
+      expect(listener).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(0);
+      expect(listener).toHaveBeenCalledOnce();
+      expect(ctrl.takeTreelessLocationState()).toBe(true);
+      expect(ctrl.takeTreelessLocationState()).toBe(false);
+      expect(ctrl.getLocationState()).toEqual({ state: { from: "tab" } });
+
+      // flushRouteState delivers it at once, as for location and params.
+      ctrl.commitLocationState(null, true);
+      ctrl.flushRouteState();
+      expect(listener).toHaveBeenCalledTimes(2);
+      expect(ctrl.getLocationState()).toBeUndefined();
+    });
+
+    it("the recorded state keeps its identity while every slot holds the value readers already have", () => {
+      const ctrl = createController();
+      ctrl.commitLocationState({
+        __rsc_ls_filter: { colors: ["red"] },
+        __rsc_ls_note: "a",
+        idx: 1,
+        key: "k1",
+      });
+      const first = ctrl.getLocationState()!;
+      expect(first).toEqual({
+        __rsc_ls_filter: { colors: ["red"] },
+        __rsc_ls_note: "a",
+      });
+
+      // Another entry (idx, key) carrying the reader's own object forward and
+      // an equal primitive: nothing a reader holds changed.
+      ctrl.commitLocationState({
+        __rsc_ls_filter: first.__rsc_ls_filter,
+        __rsc_ls_note: "a",
+        idx: 2,
+        key: "k2",
+      });
+      expect(ctrl.getLocationState()).toBe(first);
+
+      // One slot changes: a new snapshot, the other slot's value kept.
+      ctrl.commitLocationState({
+        __rsc_ls_filter: first.__rsc_ls_filter,
+        __rsc_ls_note: "b",
+      });
+      const second = ctrl.getLocationState()!;
+      expect(second).not.toBe(first);
+      expect(second.__rsc_ls_filter).toBe(first.__rsc_ls_filter);
+
+      // An equal object that is not the one readers hold is a new value: a
+      // link clicked twice announces its state twice.
+      ctrl.commitLocationState({
+        __rsc_ls_filter: { colors: ["red"] },
+        __rsc_ls_note: "b",
+      });
+      const third = ctrl.getLocationState()!;
+      expect(third.__rsc_ls_filter).toEqual(second.__rsc_ls_filter);
+      expect(third.__rsc_ls_filter).not.toBe(second.__rsc_ls_filter);
+
+      // A slot removed.
+      ctrl.commitLocationState({ __rsc_ls_note: "b" });
+      expect(ctrl.getLocationState()).toEqual({ __rsc_ls_note: "b" });
+    });
+
+    it("a new value is a copy of what the commit passed", () => {
+      const ctrl = createController();
+      const passed = { colors: ["red"] };
+      ctrl.commitLocationState({ __rsc_ls_filter: passed });
+      passed.colors.push("blue");
+      expect(ctrl.getLocationState()).toEqual({
+        __rsc_ls_filter: { colors: ["red"] },
+      });
+    });
+
     it("aggregates every state-listener error after fan-out", () => {
       const ctrl = createController();
       const firstError = new Error("first state listener failed");

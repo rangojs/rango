@@ -84,6 +84,56 @@ definition:
 const state = useLocationState<{ from?: string }>(); // { from?: string } | undefined
 ```
 
+### When a reader sees an entry's state
+
+A reader sees a history entry's location state together with that entry's
+page, never before it. The router keeps the state of the entry on screen next
+to the page it renders and changes both in one React commit. While a
+navigation is pending (its loader still streaming, a `transition()` holding
+the page) what is on screen keeps the state of the entry being left. That
+holds for every reader in it, including one that mounts during the wait: it
+reads the entry on screen, not the one `history.state` already holds.
+Back/forward and state the server sets on a navigation
+(`ctx.setLocationState()`, `redirect(url, { state })`) follow the same rule.
+
+| What changes the state                                       | A reader gets it                                                 |
+| ------------------------------------------------------------ | ---------------------------------------------------------------- |
+| `<Link state>`, `router.push()` / `router.replace()`         | in the commit that shows the destination                         |
+| back/forward                                                 | in the commit that restores the entry (cached or refetched)      |
+| the server, on a navigation (`setLocationState`, a redirect) | in the commit that shows the destination                         |
+| a navigation the server answers with nothing to re-render    | with the new location: the page on screen is the entry's         |
+| `router.push(url, { revalidate: false })` (no server fetch)  | with the new location: the page does not change                  |
+| a server action's `setLocationState` (no navigation)         | when the action's response arrives, added to what readers show   |
+| `Def.write()` / `Def.delete()`                               | when the entry is next restored: back/forward to it, or a reload |
+
+Three consequences:
+
+- A value keeps its identity until the entry's state changes it. A navigation
+  that carries no state re-renders no reader. One that does re-renders each
+  reader once, in the commit that already renders the page; a reader of a
+  slot the navigation carried forward unchanged (the value it got from the
+  hook, passed back) or of a slot a server action did not touch gets the same
+  object again, so its effects and memoized children do not run. Any other
+  object is a new value, equal content included: a link clicked twice
+  announces its state twice. A value is always a copy of what was passed.
+- `Def.write()` and `Def.delete()` change the history entry and nothing a
+  reader shows, whether it is mounted or mounts later. `Def.read()` returns
+  the written value at once.
+- Outside the router's provider (a second React root, a component rendered
+  bare in a test) a reader has no entry and returns `undefined`. Test with
+  `renderRoute` (see `/testing`).
+
+A reader that mounts with the destination reads the destination's state on
+its first render. Inside an optimistically rendered `clientUrls()` destination
+that is the state the navigation carries, before the server has answered (see
+`/client-urls`, "Pitfalls").
+
+**Limit (issue #1031):** on back/forward, `usePathname()` and
+`useSearchParams()` still change at the `popstate` event, before the restored
+page commits when it has to be fetched. For that window the page on screen
+reads the destination's URL from those two hooks and its own entry's location
+state from `useLocationState`. Push and replace navigations are not affected.
+
 ### State on router.push() / router.replace()
 
 The same `state` option exists on `router.push()` / `router.replace()` (see
@@ -201,9 +251,11 @@ Flash behavior is determined by the definition (`{ flash: true }`), not by which
 hook reads it. `useLocationState` reads the value during render (on the
 hydration render it returns `undefined` and reads in a post-mount effect, so
 SSR and hydration agree), then clears it from `history.state` via
-`replaceState` in a `useEffect`. Multiple components reading the same flash
-definition all see the value. Pressing back/forward will not re-show the flash
-since it was cleared.
+`replaceState` in a `useEffect`. Every component reading the same flash
+definition sees the value, whenever it mounts, until the next navigation or
+back/forward commits its entry's state: an entry that carries no flash shows
+none. A server action's state does not end it. Pressing back/forward will not
+re-show the flash since it was cleared.
 
 Set flash state from the server via `redirect()` with state (from a handler,
 middleware, or server action). Import the definition from the shared module so
@@ -309,11 +361,7 @@ import { CarriedProducts } from "./location-states";
 export function ProductList() {
   const { data } = useLoader(ProductsLoader);
   const carried = useLocationState(CarriedProducts) ?? [];
-  const carriedIds = new Set(carried.map((product) => product.id));
-  const products = [
-    ...carried,
-    ...data.products.filter((product) => !carriedIds.has(product.id)),
-  ];
+  const products = [...carried, ...data.products];
 
   return (
     <>
@@ -334,12 +382,10 @@ export function ProductList() {
 }
 ```
 
-The `carriedIds` filter is a workaround, not part of the pattern. Today a
-navigation applies the destination entry's location state to a mounted reader
-as soon as the entry is pushed, before the destination's loader data commits,
-so until that data lands `carried` already contains the page still on screen.
-This is a known router ordering defect; once location state commits together
-with the page it belongs to, the filter is unnecessary.
+The list is a plain concatenation. After "Load more" the next page's loader
+streams while the current page stays on screen, and `carried` stays the
+current entry's until that page lands: the carried products and the loader's
+page change in one commit, so no product is ever listed twice.
 
 Without the option, a refresh of `?page=6` renders 50 products on the server
 and then inserts the stored 250 above them. With it, the refreshed page stays
@@ -410,9 +456,11 @@ Static counterparts to `.read()`. Both mutate the current history entry's
 bookkeeping, other location state slots). Both are client-only; they throw
 when called on the server.
 
-Neither dispatches an event, so components reading via `useLocationState`
-will NOT re-render until the next navigation/popstate. Pair with `.read()`
-(or a fresh mount via back/forward/reload) instead.
+Neither changes what a `useLocationState` reader shows, mounted or mounting
+later: readers get the entry's state as it was committed (see "When a reader
+sees an entry's state"). The written value is there for `.read()` at once,
+and for readers when the entry is next restored (back/forward to it, or a
+reload).
 
 ```tsx
 "use client";
@@ -421,7 +469,7 @@ import { ProductState } from "./state";
 // Persisted across hard refresh and back/forward of this entry.
 ProductState.write({ name: "Widget", price: 9.99 });
 
-// Read later (or on next mount).
+// Read later.
 const current = ProductState.read();
 
 // Manually clear the slot. Idempotent if it isn't set.

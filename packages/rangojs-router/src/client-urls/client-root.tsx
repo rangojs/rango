@@ -172,6 +172,7 @@ export function ClientUrlsRoot({
               params: presented.params,
               pathname: presented.pathname,
               search: presented.search,
+              state: presented.state,
             },
           }
         : null,

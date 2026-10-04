@@ -11,6 +11,7 @@ import React, {
   type ReactNode,
 } from "react";
 import {
+  LocationStateContext,
   NavigationStoreContext,
   type NavigationStoreContextValue,
 } from "./context.js";
@@ -315,6 +316,11 @@ export function NavigationProvider({
 }: NavigationProviderProps): ReactNode {
   // Track current payload for rendering (this triggers re-renders)
   const [payload, setPayload] = useState(initialPayload);
+  // The location state of the entry `payload` renders (LocationStateContext).
+  // Only ever set next to setPayload, or for a commit that has no payload.
+  const [locationState, setLocationState] = useState(
+    eventController.getLocationState,
+  );
 
   /**
    * Navigate to a URL (delegates to bridge)
@@ -373,6 +379,19 @@ export function NavigationProvider({
     return startConnectionWarmup();
   }, [warmupEnabled]);
 
+  // A commit no payload follows (a shallow navigation, a commit that keeps
+  // every segment, merged server-set state): the tree on screen is already
+  // the entry's, so its state is taken with the commit's notification.
+  useEffect(
+    () =>
+      eventController.subscribe(() => {
+        if (eventController.takeTreelessLocationState()) {
+          setLocationState(eventController.getLocationState());
+        }
+      }),
+    [eventController],
+  );
+
   // Cancel non-matching prefetches when navigation starts.
   // Frees connections so the navigation fetch isn't competing with
   // speculative prefetches. The prefetch matching the navigation target
@@ -421,6 +440,9 @@ export function NavigationProvider({
         root: update.root,
         metadata: update.metadata,
       });
+      // The state of the entry this payload renders, as its commit recorded
+      // it: one update, so one lane, so one React commit with the tree.
+      setLocationState(eventController.getLocationState());
 
       // Update route params. Only reset when the server actually sends a params
       // map — an absent `params` field means "no change" (e.g., legacy action
@@ -506,7 +528,9 @@ export function NavigationProvider({
 
   return (
     <NavigationStoreContext.Provider value={contextValue}>
-      {content}
+      <LocationStateContext.Provider value={locationState}>
+        {content}
+      </LocationStateContext.Provider>
     </NavigationStoreContext.Provider>
   );
 }
