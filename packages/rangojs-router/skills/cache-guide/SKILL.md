@@ -233,10 +233,15 @@ cache on every deploy:
 - **A `Prerender` or `Static()` handler whose output differs per build**: a
   timestamp, a random id, or an inline action with bound arguments rendered at
   build time (its arguments are encrypted with a random IV, stable key or not).
+- **An import the server build leaves external and cannot read**: a package
+  that is not in `node_modules` at build time, a path that does not resolve, a
+  URL. The build names it.
 
 Every build prints each router's versions and writes what they were computed
 from to `node_modules/.rangojs-router-build/cache-versions.json`. Diff that
-file between two builds to see which chunk or payload moved a version.
+file between two builds to see which chunk or payload moved a version; its
+`unownedFiles` lists the server files in no router's version (the host entry
+of lazily mounted apps), where a change keeps every app's cache.
 
 A custom persistent store keys the same way with `getCacheVersions()` from
 `@rangojs/router/cache`, called per operation inside the request: `data` for

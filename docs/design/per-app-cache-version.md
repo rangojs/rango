@@ -183,10 +183,15 @@ points to belongs to a router only if the router reaches it another way:
   registry targets it finds. It repeats until nothing is added.
 
 A registry target no router reaches belongs to every router: it can still be
-called through any router's action or loader endpoint.
+called through any router's action or loader endpoint. That default is not
+special to registries. It is the one ownership rule (`ownersOf`), and it
+applies to every input below that is not a chunk the walk reaches: an input
+has subject modules, it belongs to the routers that reach one of them, and to
+EVERY router when none does. What nobody can be shown to run is not safe to
+leave out.
 
 Five things a router's output depends on are in none of its chunks. Each is
-added explicitly:
+added explicitly, and all but the first through that rule:
 
 - **Its lazy route manifest** (`virtual:rsc-router/routes-manifest/<routerId>`),
   loaded through the registry by `ensureRouterManifest`.
@@ -197,40 +202,72 @@ added explicitly:
   in the routes registry (the host entry's chunk), the client module is a
   reference proxy in the server graph, and the route trie holds none of it, so
   a route that switched loaders changed nothing a lazily mounted app hashed.
-  Each projection is added, as `client-urls <module>`, for the routers that
-  reach the module.
+  Each projection is added as `client-urls <module>`; its subject is the
+  client module.
 - **The encryption key.** plugin-rsc writes it to
   `__vite_rsc_encryption_key.js` next to the RSC entry and has chunks import
-  that file at run time. It is added for a router with a module that encrypts,
-  and only for those. "Encrypts" means the module calls
-  `encryptActionBoundArgs(`, which plugin-rsc emits only for an inline action
-  that closes over a value. Reaching the key module is not the test:
-  plugin-rsc imports its encryption runtime into every `"use server"` module,
-  so that would be nearly every router.
+  that file at run time; it writes the file only when a rendered chunk reads
+  the key. The key's subjects are the modules that encrypt. Importing
+  plugin-rsc's encryption runtime is not the test: plugin-rsc prepends that
+  import to every `"use server"` module, so it would be nearly every router,
+  and without a stable key nearly every app would get new versions on every
+  build. The test is whether the module USES the namespace the import binds
+  (`usesEncryptionRuntime`), which plugin-rsc emits only for an inline action
+  that closes over a value. It is deliberately not the name of the function
+  called, and it fails closed three ways:
+  - a module whose code or whose import of the runtime cannot be read counts
+    as encrypting;
+  - a key file with no module recognised as encrypting means the recognition
+    failed (a rename in plugin-rsc), so the key is every router's;
+  - a module that encrypts while the key file is missing fails the build.
+
+  An app that does not encrypt has neither, and no key in any version.
+
 - **The stylesheets of its server components.** The wrapper plugin-rsc puts
   around a server component that imports CSS reads the URLs at run time from
   `__vite_rsc_assets_manifest.js` (`serverResources["<module>"]`), a file
   written after all bundles. A CSS-only change therefore left every server
   chunk identical while cached Flight kept linking the old file. Each entry is
-  added, as `server-css <module>`, for the routers that reach the module
-  plugin-rsc generates to render its links
+  added as `server-css <module>`; its subject is the module plugin-rsc
+  generates to render its links
   (`virtual:vite-rsc/css?type=rsc&id=<module>`).
-- **Dependencies the bundle leaves external.** The Cloudflare and Vercel
-  presets bundle everything. The node preset bundles only what needs the React
-  server condition; any other dependency stays `from "pkg"` in the chunk,
-  whichever version is installed. For each package a router's chunks import
-  that way, the `name@version` of the package and of everything it depends on,
-  as installed at build time, is added as `external <pkg>`
-  (`src/vite/discovery/installed-packages.ts`). A registry package's code is
-  fixed by its version. A linked workspace package is not; Vite bundles those
-  unless the config lists one in `resolve.external`, and then its files are
-  digested: every file in its directory but `node_modules` and `.git`,
-  symlinks followed, so a build artifact in there that differs from build to
-  build (a log, a `.tsbuildinfo`) moves the version, and a file that cannot be
-  read fails the build. A package the build cannot find at all (no `node_modules`, a
-  runtime-provided module) is described by a value unique to the build: the
-  routers importing it get a new version every time, and the build names the
-  packages.
+- **What the bundle leaves external.** This one is owned through the chunk
+  that imports it, not through `ownersOf`: an import is an attribute of a file
+  the walk reached, and "every router when none owns it" would hand a
+  dependency of the host entry to every app. The rule for what an external
+  import is, is in one place (`classifyExternal`):
+
+  | The import is                                                                                          | The version covers                                                               |
+  | ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+  | provided by the runtime: `node:fs`, bare `fs`, `cloudflare:workers`, `workerd:`, `bun:`, a `data:` URL | nothing; a build cannot install or change it                                     |
+  | another plugin's marker for a file the hash already covers                                             | nothing more; see below                                                          |
+  | a package (`pkg`, `@scope/pkg/sub`)                                                                    | what is installed: `name@version` of the package and of everything it depends on |
+  | a relative or absolute path                                                                            | the file's bytes                                                                 |
+  | anything else (`https:`, `npm:`, a name npm would reject)                                              | nothing the build can read                                                       |
+
+  A package that is not installed where the build can find it, a path that
+  does not resolve and every import of the last kind get a value unique to
+  the build: the routers importing them get a new version on every build, and
+  the build names them. They are never left out. Left out, a lockfile bump of
+  that package changes what the server renders and no version.
+
+  The Cloudflare and Vercel presets bundle everything, so this is mostly the
+  node preset, which bundles only what needs the React server condition; any
+  other dependency stays `from "pkg"` in the chunk, whichever version is
+  installed (`src/vite/discovery/installed-packages.ts`). A registry
+  package's code is fixed by its version. A linked workspace package is not;
+  Vite bundles those unless the config lists one in `resolve.external`, and
+  then its files are digested: every file in its directory but
+  `node_modules` and `.git`, symlinks followed, so a build artifact in there
+  that differs from build to build (a log, a `.tsbuildinfo`) moves the
+  version, and a file that cannot be read fails the build.
+
+  The two markers: @cloudflare/vite-plugin imports a text or wasm module as
+  `__CLOUDFLARE_MODULE__<type>__<path>__CLOUDFLARE_MODULE__` and emits the
+  file as a bundle asset the chunk names, which is hashed as one; plugin-rsc
+  resolves `virtual:vite-rsc/assets-manifest` as external, and that manifest
+  is covered entry by entry (`server-css`) and, for the client asset names,
+  by the document version.
 
 The host entry is not part of a lazily mounted app. Nothing the app runs
 imports it; it is to the app what the platform is. The consequence is in "What
@@ -245,32 +282,72 @@ Prerender and Static handler code. A chunk is hashed whole, so a router's
 version also covers whatever the bundler placed next to its code. That is the
 conservative direction.
 
-Four things are done to the bytes first, each for one measured reason:
+A chunk's bytes say two kinds of things: what was built, and where and how the
+build ran. Only the first belongs in a version, so three things are taken out
+before hashing (`digestBundle`), each for a measured reason:
 
-- **Chunk file names are replaced.** A chunk's file name carries its content
-  hash, and every chunk that imports it has the name in its bytes. So one
-  router's change renamed its chunk and moved the hash of every chunk naming
-  it, including shared ones. Each reference becomes the target's identity
-  (its un-hashed name plus a digest of the module ids inside it) when the
-  router owns the target, and one fixed token when it does not.
-- **The server-reference map's body is skipped** (`stripServerReferenceMap`).
-  It lists every action export of the build and sits in a chunk every router
-  runs. Hashed as is, adding an action to one app changed every app's version.
-  Each module it names is hashed by the routers that reach it, so nothing is
-  lost. This works on the bundler's region comments; a minified server build
-  has none and keeps the map in the hash, which clears more, never less.
-- **Bundle assets are hashed as bytes**, not scanned: a large route manifest
-  is staged as a `.txt` text module on Cloudflare (3.47 MB in the stress demo).
-- **Virtual-module region comments are made root-relative**
-  (`portableRegions`). The bundler prints a file module's region comment as a
-  relative path, but a virtual id verbatim, and plugin-rsc's server CSS module
-  has its importer's absolute path in the id
-  (`virtual:vite-rsc/css?type=rsc&id=<encoded path>`). Left as is, the same
-  source in two checkout directories built to two versions. The relative
-  paths the bundler prints are relative to the directory the build runs from,
-  not to the Vite root: `vite build` run from the app directory and
-  `vite build apps/web` run from the repository root print different comments
-  and give different versions. Build your deploys the same way each time.
+- **The hashed names of bundle files.** A chunk's file name carries its
+  content hash, and every chunk that imports it has the name in its bytes. So
+  one router's change renamed its chunk and moved the hash of every chunk
+  naming it, including shared ones. Each file is digested once with every
+  such name replaced by one token (a NUL, which no chunk's text holds, so a
+  reference cannot be mistaken for the code around it), and the files those
+  names referred to are kept as an ordered list. What a router hashes for the file is that digest
+  plus the list, each entry as the target's identity (its un-hashed name plus
+  a digest of the module ids inside it) when the router owns the target, and
+  as one fixed token when it does not. No chunk is hashed twice.
+- **The server-reference map's body** (`stripServerReferenceMap`). It lists
+  every action export of the build and sits in a chunk every router runs.
+  Hashed as is, adding an action to one app changed every app's version. Each
+  module it names is hashed by the routers that reach it, so nothing is lost.
+  This works on the bundler's region comments; a minified server build has
+  none and keeps the map in the hash, which clears more, never less.
+- **The paths in region comments** (`stripRegionPaths`). The bundler prints
+  each module's path above its code, and that path is about the build, not
+  the code:
+  - it is relative to the directory `vite build` was started from, not to
+    the Vite root, so `vite build` in the app and `vite build apps/web` from
+    the repository root printed different comments and gave different
+    versions;
+  - for a dependency it runs through the pnpm store directory, whose name
+    ends in the peers the package was installed against
+    (`.pnpm/@vitejs+plugin-rsc@0.5.35_react@19.3.0_<hash>/`). Bumping any
+    package in that peer set (TypeScript is an optional peer of many) renamed
+    the directory and moved every version with no change in bundled code;
+  - a virtual module's id is printed verbatim, and plugin-rsc's server CSS
+    module has its importer's absolute path in the id, so two checkout
+    directories built to two versions.
+
+  The code under the comment is hashed either way. Setting rolldown's `cwd`
+  would have fixed the first of the three and changed the bytes that ship;
+  changing the hash input fixes all three and ships the same bytes.
+
+Module ids need the same care, because a chunk's identity is derived from the
+ids of the modules inside it (`portableModuleId`): the pnpm store directory is
+reduced to `name@version` there too, and so is one id that carries the working
+directory. plugin-rsc names a client-reference group after the facade module
+of its server chunk, made relative to the root; for a virtual facade
+(@cloudflare/vite-plugin's worker entry) `path.relative` resolves the id
+against the working directory first, and the group's module id became
+`…/group/facade:__/__/\0virtual:cloudflare/worker-entry` when vite was started
+two directories up. That was found by building one app from two directories,
+not by a test: the fixture has no virtual facade.
+
+**Bundle assets are hashed as bytes**, not scanned: a large route manifest is
+staged as a `.txt` text module on Cloudflare (3.47 MB in the stress demo).
+
+The SSR output gets exactly this treatment, through the same function. It is
+unminified too, its chunks are named by content hashes of bytes that include
+region comments, and the document version covers it. Hashed raw, with its file
+names, it made the document version depend on the working directory even after
+the RSC side was fixed.
+
+What remains tied to how the build ran is the client build: its file names
+are part of the document version as they are, because stored HTML and open
+tabs hold exactly those names. They are content hashes of minified code, which
+has no region comments. A client build with `build.minify: false` does have
+them, and then the document version depends on the working directory and the
+pnpm store layout again.
 
 Build-rendered payloads are not in any chunk the router keeps (the handler is
 evicted, the payload ships as an asset module), so they are counted by digest,
@@ -286,9 +363,7 @@ recorded when they are rendered (`recordBuildData` in
   version only.
 
 A version is the first 16 hex characters of a sha256 over the sorted list of
-those inputs, each a name and a digest. A chunk whose bytes name no other file
-is digested once; one that does is digested once per distinct ownership of the
-files it names, so routers that own the same ones share the work.
+those inputs, each a name and a digest.
 
 ### 3. Handing the versions to the code they were computed from
 
@@ -310,28 +385,49 @@ whole-build document version. The token is replaced in every environment's
 output that holds the module, not only the RSC one: a second worker that
 imports a cache store bundles it too.
 
-There is one way to get versions and no stand-in for it:
+There is one way to get versions and no stand-in for it. The rule, for every
+input: when the build cannot determine it, the build fails, or the version
+changes on every build. A version never silently stays the same, because that
+is the one outcome nobody notices until a stale entry is served.
 
-- If the versions cannot be computed (the RSC bundle was not recorded, a file
-  exists and cannot be read), the build fails. A fallback stamp would quietly
-  bring back "every deploy clears the cache", and nobody reads a warning in a
-  build log.
-- An unreplaced token is a free identifier, so the module throws a
-  `ReferenceError` when it evaluates. A build that skipped the step cannot
-  serve with a version that never changes.
+| The build cannot determine                                                                                    | What happens                                                                 |
+| ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| a bundle: the RSC, SSR or client build did not record its files                                               | the build fails                                                              |
+| a file a bundle lists that is not in its output directory, or that cannot be read                             | the build fails                                                              |
+| plugin-rsc's assets manifest: missing, or `serverResources` is not where it was                               | the build fails                                                              |
+| which chunk holds the version module, or the placeholder in it                                                | the build fails                                                              |
+| the encryption key file, while a module encrypts                                                              | the build fails                                                              |
+| which module encrypts, while there is a key file                                                              | the key is in every router's version                                         |
+| what an external import resolves to: a package that is not installed, a path that does not resolve, a URL     | a value unique to the build for the routers importing it; the build names it |
+| which router runs a registry target, a payload's handler, a `clientUrls()` module or a server component's CSS | it is in every router's version                                              |
+
+A fallback stamp would quietly bring back "every deploy clears the cache",
+and nobody reads a warning in a build log. An unreplaced token is a free
+identifier, so even a build that somehow skipped the step throws a
+`ReferenceError` when the module evaluates; it cannot serve with a version
+that never changes.
 
 A router the build cannot attribute (its module is not in the server bundle)
 is not an error: it serves with the whole-build pair, which any change moves,
 and the build log marks its line `(whole build)`.
 
-The same hook then runs the build-time PPR shell capture
-(`runShellPrerenderPhase`), which stamps each shell with the document version
-of the router that owns it, from the table just computed.
+The phase returns the table, and the same hook hands it to the build-time PPR
+shell capture (`runShellPrerenderPhase`), which stamps each shell with the
+document version of the router that owns it.
 
 Every build prints the versions, and leaves what each one was computed from in
 `node_modules/.rangojs-router-build/cache-versions.json`. A version is one
 hash, so a changed version says nothing about what changed; diffing two
-builds' files names the chunk, payload or key that did.
+builds' files names the chunk, payload or key that did. The file also lists,
+once each:
+
+- `ssrAndClient`: what the `ssr-and-client` input of every document version
+  is a digest of (`base`, the SSR files, what they leave external, the client
+  asset names), so a moved document version can be traced to a file as well;
+- `unownedFiles`: the server files no router owns, which is the host entry
+  of lazily mounted apps and whatever else is in the whole-build pair only.
+  If a file you expected an app to depend on is there, a change to it keeps
+  that app's cache.
 
 ```
 [rango] Cache versions for 2 router(s), data / document (13.5ms):
@@ -353,6 +449,31 @@ the HTML a tab holds. The data version is only a cache-key prefix, so it
 travels to the stores on the request context (`_versions`), read per operation
 by `getCacheVersions()` the same way `CFCacheStore` already resolved its base
 URL. The cache factory builds a store per request without knowing the router.
+
+That makes the request context load-bearing for every cache write, and most
+writes are deferred: `cacheRoute` calls `store.set` inside
+`ctx.waitUntil()`, and so does the document cache on a MISS. Deployed workerd
+runs a deferred `waitUntil` task outside the request's async context. Node
+and miniflare keep it, which is why the use-cache revalidation bug of the same
+shape could never be reproduced locally. A store that builds its key there
+reads no router and falls back to the whole-build pair, and an entry under the
+whole-build pair is one no router with its own version ever reads: caching
+would silently never hit. So `ctx.waitUntil()` re-enters the context a task
+was scheduled under, once, where every task is scheduled
+(`src/server/request-context.ts`). The test produces the loss by scheduling
+from an async scope outside any request
+(`src/cache/__tests__/background-write-versions.rsc-test.tsx`); without the
+re-entry the document write lands under the whole-build version and the
+segment write does not happen at all, because `cacheRoute` needs the request
+context before it reaches the store. That second half is true on `main` as
+well, and so is the host in `CFCacheStore`'s key, so the exposure was not new
+with the version; the version would have made it permanent.
+
+What cannot be tested locally is whether some other path loses the context.
+For that there is a log line: `getCacheVersions()` warns, once per process,
+when it falls back to the whole-build pair in a build whose routers have
+versions of their own. If that line shows up in a production log, a store
+operation ran outside a request, and the entries it wrote are not being read.
 
 Every consumer of a version, and which one it uses:
 
@@ -492,6 +613,9 @@ runs. So the question is only what goes into the hashed bytes.
 | A pipeline run changes                                                       | Cached data | Stored HTML |
 | ---------------------------------------------------------------------------- | ----------- | ----------- |
 | CI config, runner, deploy steps, the checkout directory                      | kept        | kept        |
+| The directory `vite build` is started from                                   | kept        | kept        |
+| Which peers pnpm installed a bundled dependency against                      | kept        | kept        |
+| A blank line or a comment above `createRouter()` (the router id)             | kept        | kept        |
 | Runtime environment: bindings, secrets read from `ctx.env`                   | kept        | kept        |
 | Docs, tests, files no router imports                                         | kept        | kept        |
 | The host entry (the file creating the host router), for a lazily mounted app | kept        | kept        |
@@ -591,8 +715,11 @@ the implementation contradicted it.
 - **Which routers depend on the key.** The first implementation asked whether
   a router reaches plugin-rsc's key module. plugin-rsc imports its encryption
   runtime into every server action module, so nearly every router did, and a
-  build without a stable key would have cleared nearly every cache. The test
-  is now whether a module of the router calls the encrypt function.
+  build without a stable key would have cleared nearly every cache. The second
+  asked whether a module calls `encryptActionBoundArgs(`, which was right
+  until plugin-rsc renames it, and then put the key in no version without a
+  word. The test is now any use of the runtime's namespace, with the key file
+  as a second, independent signal ("Which code is a router's").
 - **"No chunk file name is stored in a payload."** True for JS. A server
   component's stylesheet URL is stored, and it comes from a manifest read at
   run time, so no server chunk changes when the CSS does.
@@ -615,9 +742,15 @@ the implementation contradicted it.
   would have registered its versions) under an id no running router had.
   Measured before the fix: `e2e/test-app`, `tests/cloudflare-basic`, and one
   of the four routers of `examples/cloudflare-multi-router`, which fell back
-  to building their trie at run time. The line now comes from the file on
-  disk (`routerCallLines` in `src/vite/plugins/expose-ids/router-transform.ts`).
-  Router ids change once with this release for routers written that way.
+  to building their trie at run time. A first fix took the line from the file
+  on disk, which made the two agree and kept the other half of the problem: a
+  blank line or a comment added above the call still changed the id, and with
+  it the state cookie name, the route manifest chunk name and the router's
+  versions. Nothing else reads the line, so the id is now a hash of the
+  root-relative path and the call's position among the file's
+  `createRouter()` calls (`routerId` in
+  `src/vite/plugins/expose-ids/router-transform.ts`). Every router's id
+  changes once with this release.
 - **`$$sourceFile`** is root-relative in a build, as proposed. It stays
   absolute on a dev server, where discovery and the CLI read it.
 - **The build-shell verdict memo** (`validatedManifestRecord` in
@@ -653,12 +786,13 @@ the implementation contradicted it.
 - **Shared client chunks.** Client assets are one set for the whole build, so
   a client change in one app replaces every app's stored HTML. Per-app client
   asset sets would need the client-reference map out of the shared chunk.
-- **Store operations outside a request.** A store builds its key from the
-  request context, as `CFCacheStore` already did for the host. An operation
-  that has lost the context keys with the whole-build pair: it misses, it
-  never reads another version's entry. Whether a `waitUntil` continuation on
-  deployed workerd can lose it for a cache write is not something a local run
-  can show.
+- **Store operations outside a request, other than through `ctx.waitUntil()`.**
+  That path re-enters the request context ("At run time"). `CFCacheStore`
+  also hands work to the platform's own `waitUntil` (KV-to-L1 promotion,
+  evictions), started inside the request; three of those build a key after an
+  `await`. They depended on the context for the key's host before this work,
+  so the version adds no new dependency there, and they were left alone. The
+  once-per-process warning in `getCacheVersions()` is what would show a loss.
 - **Linked packages left external.** Their whole directory is digested, build
   artifacts included, because nothing says which files an import can reach.
   Reading `files` and `exports` from the package's manifest would narrow it;
@@ -678,19 +812,25 @@ the implementation contradicted it.
 
 - `src/vite/__tests__/build-versions.test.ts`: membership and hashing on
   hand-built graphs.
-- `src/vite/__tests__/cache-versions-build.test.ts`: fifteen real
+- `src/vite/__tests__/cache-versions-build.test.ts`: eighteen real
   `vite build` runs of a two-app host fixture on the node preset, one per kind
   of change: server text, a route, a client component, a shared module, the
-  key, an action only a client component imports, a new action, the host
+  key, no bound action arguments at all, an action only a client component
+  imports, a new action, the host
   entry, code only the mounted handler reaches, a `clientUrls()` route that
   declares another loader, a server component's stylesheet, an external
-  dependency and one of its dependencies, and the same source in a second
-  directory.
+  dependency and one of its dependencies, lines added above
+  `createRouter()`, the same source in a second directory, and the same
+  source built from a second working directory (`vite build app` from the
+  parent).
 - `src/vite/discovery/__tests__/installed-packages.test.ts` and
   `router-versions-phase.test.ts`: the phase against files on disk.
 - `src/cache/cf/__tests__/cf-cache-store-versions.test.ts` and
   `src/cache/vercel/__tests__/vercel-cache-store-versions.test.ts`: key per
   family, and the rollback case.
+- `src/cache/__tests__/background-write-versions.rsc-test.tsx`: a segment
+  write and a document write deferred with `waitUntil`, run outside the
+  request's async context, are keyed with the serving router's versions.
 - `src/testing/__tests__/build-versions.rsc-test.tsx`: through the public
   primitives, with `setBuildVersions` standing in for a build.
 - `packages/rangojs-router/e2e/cache-version.test.ts` and
@@ -706,8 +846,10 @@ deploy that did not change its app, what does the build pay for it, and did
 anything move at run time. "Before" is the commit this work sits on; the
 retention baseline is from router 0.20.0 (`69c89c20`). Retention, the
 determinism samples, build time and the bundle guards were measured on
-2026-10-04; the retention baseline and the run-time numbers on 2026-10-03,
-before the second review's fixes, none of which touched the key-building path.
+2026-10-04, on the code as it ships; the retention baseline and the run-time
+numbers on 2026-10-03, before the review fixes. The path those run-time
+numbers measure, a key built inside a request, is the same today: one read of
+the request context.
 One machine: Apple M4, 10 cores, macOS 26.6, Node 24.12, Vite 8.0.16, rolldown
 1.0.3, `@vitejs/plugin-rsc` 0.5.35.
 
@@ -733,11 +875,11 @@ when a row does not match its expectation):
 
 | Step                                              | Versions (data / document)            | Rendered-at     | Result |
 | ------------------------------------------------- | ------------------------------------- | --------------- | ------ |
-| First request                                     | `55f401d8c3ea1e69 / 8fe8fdcefdea82ef` | `1791066825848` | stored |
-| Second request, same server                       | `55f401d8c3ea1e69 / 8fe8fdcefdea82ef` | `1791066825848` | hit    |
-| Server restarted, same build                      | `55f401d8c3ea1e69 / 8fe8fdcefdea82ef` | `1791066825848` | hit    |
-| Rebuilt with no source change, first request      | `55f401d8c3ea1e69 / 8fe8fdcefdea82ef` | `1791066825848` | hit    |
-| Rebuilt after a server-code change, first request | `4b76203e5f92d8f2 / abf3b482d9f9f55d` | `1791066833568` | miss   |
+| First request                                     | `23fd2fe84aa30f37 / 177c32dc85db47af` | `1791079052649` | stored |
+| Second request, same server                       | `23fd2fe84aa30f37 / 177c32dc85db47af` | `1791079052649` | hit    |
+| Server restarted, same build                      | `23fd2fe84aa30f37 / 177c32dc85db47af` | `1791079052649` | hit    |
+| Rebuilt with no source change, first request      | `23fd2fe84aa30f37 / 177c32dc85db47af` | `1791079052649` | hit    |
+| Rebuilt after a server-code change, first request | `4b809141ff8ccf94 / fcb123fd8c934060` | `1791079059626` | miss   |
 
 The stress demo is one router. Isolation between apps, the client-only
 deploy, stored HTML and open tabs are covered by the cache-version e2e
@@ -762,7 +904,8 @@ covered at build level (below) and through `VercelCacheStore`'s unit tests.
 ### Same source, same versions
 
 A version is only as stable as the build output, so this was sampled rather
-than assumed.
+than assumed, and sampled again after every change to what is hashed. The
+counts below are from the code as it ships.
 
 | Build                                                                        | Runs | Distinct version tables |
 | ---------------------------------------------------------------------------- | ---- | ----------------------- |
@@ -770,74 +913,73 @@ than assumed.
 | `examples/vercel-multi-router` (2 routers), sequential                       | 10   | 1                       |
 | `tests/cloudflare-stress-demo`, sequential                                   | 6    | 1                       |
 | Test fixture (node preset, 2 routers), concurrent, each in its own directory | 44   | 1                       |
-| The same fixture before `stableRscOutput` renamed the manifest import        | 10   | 2                       |
-| The stress demo while its Text-module import counted as an unknown package   | 6    | 6                       |
 
-The last two rows are scar tissue. One fixture build in ten came out with a
-different local name for one import, which is why the rename exists. And the
-stress demo is the only app in the first three rows whose route manifest is
-large enough to ship as a workerd Text module: @cloudflare/vite-plugin imports
-it through a marker specifier that looked like a package nobody had installed,
-and a package the build cannot find gets a per-build value on purpose
-(`externalPackage` in `src/vite/discovery/build-versions.ts` now rejects a
-name npm would). No unit test or e2e saw it; this sample did. The Cloudflare
-cache-version e2e now builds with `RANGO_MANIFEST_TEXT=1` so CI does.
+And from two working directories, `vite build` in the app against
+`vite build <app>` from the repository root:
+
+| Build                              | Same table from both directories     |
+| ---------------------------------- | ------------------------------------ |
+| `examples/vercel-multi-router`     | yes                                  |
+| `examples/cloudflare-multi-router` | yes                                  |
+| `tests/cloudflare-stress-demo`     | yes                                  |
+| Test fixture, in the build test    | yes (`cache-versions-build.test.ts`) |
+
+What the samples caught on the way, which is the reason to keep taking them:
+
+| Sample                                                                     | Runs | Distinct tables |
+| -------------------------------------------------------------------------- | ---- | --------------- |
+| The fixture before `stableRscOutput` renamed the manifest import           | 10   | 2               |
+| The stress demo while its Text-module import counted as an unknown package | 6    | 6               |
+| `vercel-multi-router` from two directories, region paths still hashed      | 2    | 2               |
+| The stress demo from two directories, the group id still carrying the path | 2    | 2 (document)    |
+
+One fixture build in ten came out with a different local name for one import,
+which is why the rename exists. The stress demo is the only app in the first
+table whose route manifest is large enough to ship as a workerd Text module:
+@cloudflare/vite-plugin imports it through a marker specifier that looked
+like a package nobody had installed, and a package the build cannot find gets
+a per-build value on purpose (`classifyExternal` now knows the marker). The
+last two rows are the working directory, in region comments and then in one
+module id ("What is hashed"). No unit test saw any of the four; each has one
+now, and the Cloudflare cache-version e2e builds with `RANGO_MANIFEST_TEXT=1`.
 
 `packages/rangojs-router/e2e/test-app` and `tests/cloudflare-basic` are not in
-this table on purpose. Both render `Date.now()` in `Static()` and `Prerender`
-handlers, so their main router gets a new version on every build, as it
-should.
+these tables on purpose. Both render `Date.now()` in `Static()` and
+`Prerender` handlers, so their main router gets a new version on every build,
+as it should. `tests/cloudflare-basic` also does not build from another
+working directory at all: its build-time prerender of `/build-env` fails
+there (`Cannot read properties of undefined (reading 'put')`), before the
+versions are computed.
 
 ### Build time
 
-Five `vite build` runs per app, wall-clock, median with the range. The base
-commit and this branch were measured back to back, base first, on AC power
-with a 1-minute load average between 2.7 and 3.5 from other work on the
-machine. Same method as the proposal's baseline script (spawn `vite build`,
-take the median); the step time is the phase's own timer, printed by the
-build.
+Wall-clock time of `vite build`, measured interleaved: seven rounds, the base
+commit and then this branch in each round, one build per app per side, so a
+drift in machine load lands on both. AC power, 1-minute load average 1.0 to
+3.9. The step time is the phase's own timer, printed by the build.
 
-| App                                            | Before                | After                 | Change  | Version step (median, range) |
-| ---------------------------------------------- | --------------------- | --------------------- | ------- | ---------------------------- |
-| `tests/cloudflare-stress-demo` (26k routes)    | 2.46 s (2.45 to 2.76) | 2.47 s (2.46 to 2.52) | +0.01 s | 19.1 ms (18.8 to 20.5)       |
-| `examples/cloudflare-multi-router` (4 routers) | 1.71 s (1.70 to 2.02) | 1.68 s (1.68 to 1.72) | -0.03 s | 10.9 ms (10.6 to 12.7)       |
-| `tests/cloudflare-basic`                       | 3.82 s (3.79 to 3.92) | 3.82 s (3.79 to 3.84) | 0       | 19.2 ms (18.6 to 19.3)       |
-| `packages/rangojs-router/e2e/test-app` (node)  | 3.92 s (3.88 to 4.35) | 3.91 s (3.88 to 3.99) | -0.01 s | 21.1 ms (20.3 to 21.2)       |
+| App                                            | Before, median (range) | After, median (range) | Median of the 7 paired differences | Version step (median, range) |
+| ---------------------------------------------- | ---------------------- | --------------------- | ---------------------------------- | ---------------------------- |
+| `tests/cloudflare-stress-demo` (26k routes)    | 2.46 s (2.40 to 2.48)  | 2.46 s (2.45 to 2.47) | -1 ms                              | 23.6 ms (23.3 to 24.5)       |
+| `examples/cloudflare-multi-router` (4 routers) | 1.67 s (1.66 to 2.04)  | 1.70 s (1.69 to 1.70) | +24 ms                             | 15.0 ms (14.8 to 16.1)       |
+| `tests/cloudflare-basic`                       | 3.77 s (3.73 to 3.82)  | 3.81 s (3.81 to 3.83) | +36 ms                             | 22.0 ms (21.8 to 33.5)       |
+| `packages/rangojs-router/e2e/test-app` (node)  | 3.87 s (3.86 to 4.22)  | 3.89 s (3.88 to 3.91) | +19 ms                             | 28.6 ms (28.5 to 29.2)       |
 
-The proposal's pass mark was "every median within the base run's range". No
-median is above its base range. Read the "Change" column as noise, not as a
-speed-up: an earlier session of the same measurement, on the code before the
-second review's fixes, had every app 30 to 70 ms slower (1.0% to 1.9%) and
-`test-app` 30 ms above its base maximum. The two sessions bracket zero.
+The proposal's pass mark was "every median within the base run's range". All
+four meet it. The build is between unchanged and 1.4% slower. A first run of
+the same measurement, three small edits earlier, gave -4, +24, +49 and +1 ms.
 
-That table is from the quietest session, and it was measured before the last
-two rounds of fixes (the name test on an external import, symlinks in a linked
-package, the root-relative `outDir`). Every later back-to-back session ran
-while other e2e suites loaded the machine (load up to 20, base ranges up to
-1.7 s wide) and said more about the machine than the code. So the final
-commits were measured another way: seven rounds, the base commit and then the
-branch in each round, one build per app per side, so that a drift in load
-lands on both. Load was 3.7 to 6.7.
+The proposal projected under 5 ms for the hashing; that was the cost of one
+sha256 over the server output. The step that shipped takes 15 to 29 ms, 0.6%
+to 1.0% of a build: it reads the RSC and the SSR output, takes region paths
+and file names out of every chunk, makes module ids portable and describes
+the installed externals. Outside the step, the module graph is recorded in
+`generateBundle` and one more transform plugin runs.
 
-| App                                    | Before, median (range) | After, median (range) | Median of the 7 paired differences |
-| -------------------------------------- | ---------------------- | --------------------- | ---------------------------------- |
-| `tests/cloudflare-stress-demo`         | 2.59 s (2.46 to 2.85)  | 2.52 s (2.45 to 3.64) | -23 ms                             |
-| `examples/cloudflare-multi-router`     | 1.78 s (1.69 to 2.12)  | 1.72 s (1.68 to 1.90) | -10 ms                             |
-| `tests/cloudflare-basic`               | 4.10 s (3.78 to 4.19)  | 4.06 s (3.89 to 4.49) | +71 ms                             |
-| `packages/rangojs-router/e2e/test-app` | 4.03 s (3.86 to 4.61)  | 4.34 s (3.90 to 4.92) | +35 ms                             |
-
-Single pairs ranged from 446 ms faster to 1071 ms slower, so this bounds the
-effect at tens of milliseconds and does not resolve it further. A number for
-a release note needs an idle machine; this one never was.
-
-What does not move between sessions is the step's own timer: 19.4, 11.2, 21.5
-and 21.1 ms on the final commits (median of 5), 0.5% to 0.8% of a build. The
-proposal projected under 5 ms for the hashing; that was the cost of one sha256
-over the server output. The step that shipped also reads the SSR output, makes
-module ids portable, scans every chunk for file names, digests a shared chunk
-once per distinct ownership and describes the installed externals. Outside
-the step, the module graph is recorded in `generateBundle` and one more
-transform plugin runs.
+Earlier sessions of this measurement, back to back instead of interleaved,
+ran while other e2e suites loaded the machine (load up to 20, base ranges up
+to 1.7 s wide) and said more about the machine than the code. They are not
+reported.
 
 ### Bundle guards
 

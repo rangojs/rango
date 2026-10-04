@@ -99,19 +99,43 @@ What changes for you:
   the components it renders does not.
 - **On the node preset, the version covers what is installed.** For each
   dependency the server build leaves external, the installed `name@version`
-  of the package and of its dependencies is part of the version. A package the
-  build cannot find in `node_modules` gives the routers importing it a new
-  version on every build, and the build names it.
-- **Router ids changed for some routers.** The generated id is a hash of the
-  file path and the line of the `createRouter()` call. The line was taken from
-  the transformed code, where a build drops comments and a dev server keeps
-  them, so build-time route discovery and the bundle disagreed on the id of any
-  router with a comment above the call: the build registered that router's
-  lazy route data under an id the running router did not have, and the router
-  rebuilt its route trie at run time instead. The line now comes from the file
-  as written. The rango state cookie is named after the router id, so clients
-  of an affected router start one new state cookie; a router with an explicit
-  `id` is unaffected.
+  of the package and of its dependencies is part of the version. A file the
+  server build imports by path and leaves external is covered by its bytes.
+- **What the build cannot read gives a new version on every build, or fails
+  the build.** A package it cannot find in `node_modules`, a path that does
+  not resolve and an import by URL give the routers importing them a new
+  version on every build, and the build names them. A build output file it
+  cannot read, a missing plugin-rsc assets manifest and a missing encryption
+  key file (when your code encrypts action arguments) fail the build. A
+  version never stays the same because an input could not be read.
+- **Where and how you build does not change the versions.** The same source
+  gives the same versions in any checkout directory, whether you run
+  `vite build` in the app or `vite build apps/web` from the repository root,
+  and whatever peers pnpm installed a bundled dependency against. One
+  exception: with `build.minify: false` on the client build, the client asset
+  names depend on the working directory, and the document version with them.
+- **Every router's generated id changed.** The id is now a hash of the
+  router's file path and its position among the `createRouter()` calls in that
+  file. It was a hash of the path and the call's line, taken from the
+  transformed code, where a build drops comments and a dev server keeps them:
+  build-time route discovery and the bundle disagreed on the id of any router
+  with a comment above the call, so the build registered that router's lazy
+  route data under an id the running router did not have and the router
+  rebuilt its route trie at run time. And a blank line or a comment added
+  above the call changed the id, the state cookie name and the router's cache
+  versions. The rango state cookie is named after the router id, so clients
+  start one new state cookie; a router with an explicit `id` is unaffected.
+- **A task scheduled with `ctx.waitUntil()` runs inside the request context.**
+  It re-enters the context it was scheduled under, so a task that writes to a
+  cache store, or calls `getRequestContext()`, no longer relies on the
+  platform carrying the request's async context into deferred work. Node and
+  miniflare do; deployed workerd was seen not to (the `"use cache"`
+  revalidation fix). A cache store builds its key in such a task from the
+  serving router's versions and the request host.
+- **A cache key built outside a request is logged, once per process.** A store
+  operation with no request context keys with the whole-build version; when
+  routers have versions of their own, that entry is not read by them. The
+  warning names it.
 - **`createRouter({ version })` is honored on the node and vercel presets.**
   The generated entry passed the build version over it.
 - **`import { VERSION } from "@rangojs/router:version"`** is the whole-build
