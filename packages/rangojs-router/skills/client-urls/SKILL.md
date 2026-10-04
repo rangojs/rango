@@ -376,6 +376,22 @@ a hard load of the target URL renders the full route.
   throwers in the client `ErrorBoundary`; `useFetchLoader` works unchanged
   (route-independent lane; `revalidate()` deliberately not consulted).
   Pinned in the router repo's client-urls hook-probe e2e.
+- **Location state follows the same split as the route hooks.** Inside the
+  optimistic branch (the destination and the group's client layouts)
+  `useLocationState` reads the state the navigation carries (`<Link state>`,
+  `router.push(url, { state })`) from the first optimistic render, before the
+  server answers: a product page can show the name its link carried while
+  its loader streams. Chrome outside the group, and content a navigation
+  keeps on screen (a same-route navigation, a destination that suspends with
+  no boundary), keep the committed entry's state until the canonical commit.
+  State a redirect carries arrives with that commit (an action's
+  `setLocationState` without a redirect is applied when its response
+  arrives), and a navigation that is superseded or cancelled leaves none
+  behind. A `flash` slot read in the branch is cleared from history once the
+  navigation commits, not before. In the branch the value is the object the
+  navigation passed; from the commit on it is the entry's copy (a structured
+  clone), so an object-valued slot is a new, equal object at that point.
+  Do not key an effect on its identity across the two.
 - **Editing the module in dev:** projections refresh via HMR discovery; if a
   route-shape edit ever serves stale routes, restart dev — and if you are
   developing the router itself, rebuild the router dist before `pnpm dev`

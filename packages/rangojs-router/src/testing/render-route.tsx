@@ -35,11 +35,19 @@
  *     useRouter().replace kind "replace", refresh() kind "revalidate".
  *     Back/forward, action and optimistic clientUrls() swap decisions are
  *     e2e territory.
+ *   - Location state reaches readers the way it does in production:
+ *     NavigationProvider holds the committed entry's state next to the
+ *     payload, so a navigation whose loader the test holds keeps the entry
+ *     being left on screen with its own state. A `popstate` event is a
+ *     back/forward onto the entry history.state holds; the tree has one
+ *     location, so no page is restored with it. A server action's state, a
+ *     redirect's and an intercept's are e2e territory.
  * What it DOES cover: client hooks that read NavigationProvider /
  * OutletContext — useParams, useReverse, useHref, useMount, useNavigation,
  * useRouter, usePathname, useSearchParams, Outlet/useOutlet nesting and seeded
  * descendant pending state, useLoader/useFetchLoader (seeded data),
- * useLocationState (seeded), and useHandle (seeded).
+ * useLocationState (seeded, or written by a navigation), and useHandle
+ * (seeded).
  * Basename-mounted apps: pass the `basename` option so useRouter().basename,
  * <Link> prefixing, and useMount/useHref resolve against the mount prefix
  * (without it they resolve at the root "/"). For an include("/shop", ...)
@@ -67,6 +75,7 @@ import {
   shouldStartViewTransition,
 } from "../browser/partial-update.js";
 import type {
+  NavigateOptions,
   NavigateOptionsInternal,
   NavigationStore,
   NavigationBridge,
@@ -92,7 +101,6 @@ import {
 import {
   buildHistoryState,
   clearLocationStateOnDocumentLoad,
-  hasLocationState,
   pushHistoryWithIdx,
   resolveNavigationState,
 } from "../browser/history-state.js";
@@ -386,10 +394,20 @@ export interface TestRouterHandle {
    * `options.transition: false` is the per-navigation opt-out
    * (`router.push(url, { transition: false })`, `<Link transition={false}>`):
    * the commit is urgent and no transition({ when }) predicate is called.
+   *
+   * `options.state` and `options.replace: true` write the history entry the
+   * way `useRouter().push(url, { state })` and `.replace(url, { state })` do,
+   * so a test can carry location state on a navigation whose loader it
+   * holds: `state` pushes an entry with it, `replace: true` replaces the
+   * current entry (with `state`, or with none, which drops the entry's
+   * location state as a production replace does). With neither, history is
+   * left alone and readers keep the state they have: `navigate(url)` and
+   * `navigate(url, { replace: false })` are the same call.
    */
   navigate(
     url: string,
-    options?: Pick<RenderRouteOptions, "loaders"> & { transition?: boolean },
+    options?: Pick<RenderRouteOptions, "loaders"> &
+      Pick<NavigateOptions, "state" | "replace" | "transition">,
   ): Promise<void>;
   /**
    * Re-render the current location, as router.refresh() does: a spec's
@@ -461,6 +479,20 @@ function DelegatedPrefetchRegistration({
       }
     };
   }, [bridge]);
+  return null;
+}
+
+/**
+ * initBrowserApp calls the bridge's registerLinkInterception, which is where
+ * production listens for `popstate` (navigation-bridge.ts); a rendered tree
+ * has no initBrowserApp.
+ */
+function LinkInterceptionRegistration({
+  bridge,
+}: {
+  bridge: NavigationBridge;
+}): null {
+  useEffect(() => bridge.registerLinkInterception(), [bridge]);
   return null;
 }
 
@@ -682,6 +714,8 @@ export async function renderRoute(
 
   const eventController = createEventController({ initialLocation: url });
   eventController.setParams(initialMatch.params);
+  // The seeded entry, as initBrowserApp commits the document's.
+  eventController.commitLocationState(window.history.state);
   // Resolve-by-default: resolve any deferred (Promise) seeded handle values
   // before applying, so the seeded handles reach collect/useHandle resolved —
   // matching what the server/client do in a real app.
@@ -706,10 +740,11 @@ export async function renderRoute(
     // A useRouter().push/replace or <Link> navigation (`history`) writes its
     // entry the way production does (navigation-bridge.ts navigate ->
     // navigation-transaction.ts commit): the dev state check, typed entries
-    // spread onto history.state, the idx stamp, and the __rsc_locationstate
-    // event when the old or new entry carries location state. The URL stays
-    // put: renderRoute tracks location on the event controller, not
-    // window.location. router.navigate() and refresh() leave history alone.
+    // spread onto history.state, the idx stamp, and the entry state committed
+    // on the event controller, which the provider takes with the payload.
+    // The URL stays put: renderRoute tracks location on the event
+    // controller, not window.location. router.navigate() without `state` or
+    // `replace: true`, and refresh(), leave history alone.
     const history = navOptions?.history;
     const historyState = history
       ? buildHistoryState(
@@ -775,16 +810,13 @@ export async function renderRoute(
     eventController.setParams(match.params);
     store.setCurrentUrl(nextUrl.href);
     store.setSegmentIds(segments.map((s) => s.id));
-    let notifyLocationState = false;
     if (history) {
-      notifyLocationState =
-        hasLocationState(window.history.state) ||
-        hasLocationState(historyState);
       pushHistoryWithIdx(
         historyState ?? null,
         window.location.href,
         history.replace ?? false,
       );
+      eventController.commitLocationState(historyState);
     }
     const emit: UpdateSubscriber = (update) => store.emitUpdate(update);
     await act(async () => {
@@ -795,9 +827,6 @@ export async function renderRoute(
         commitInTransition(emit, segments, { root, metadata }, ["navigation"]);
       } else {
         emit({ root, metadata });
-      }
-      if (notifyLocationState) {
-        window.dispatchEvent(new Event("__rsc_locationstate"));
       }
     });
   };
@@ -812,8 +841,20 @@ export async function renderRoute(
     navigate: (target, navigateOptions) =>
       navigate(target, { history: navigateOptions ?? {} }),
     refresh: () => refresh(),
-    handlePopstate: async () => {},
-    registerLinkInterception: () => () => {},
+    // Back/forward onto the entry history.state holds. The tree has one
+    // location, so nothing is restored: a treeless commit of that entry, as
+    // production's traversal that keeps every segment
+    // (navigation-transaction.ts commit). Flushed, not left to the notify
+    // timer: the dispatching test's act() has returned by then.
+    handlePopstate: async () => {
+      eventController.commitLocationState(window.history.state, true);
+      eventController.flushRouteState();
+    },
+    registerLinkInterception: () => {
+      const onPopstate = (): void => void bridge.handlePopstate();
+      window.addEventListener("popstate", onPopstate);
+      return () => window.removeEventListener("popstate", onPopstate);
+    },
     registerDelegatedPrefetch: () =>
       setupNavigationBridgeDelegatedPrefetch(
         store,
@@ -853,6 +894,7 @@ export async function renderRoute(
         nonce={options.nonce}
       />
       <DelegatedPrefetchRegistration bridge={bridge} />
+      <LinkInterceptionRegistration bridge={bridge} />
       {options.hydrate && <HydratedMarker />}
     </>
   );
@@ -906,7 +948,15 @@ export async function renderRoute(
   });
 
   const router: TestRouterHandle = {
-    navigate,
+    navigate: (target, navOptions) =>
+      navigate(target, {
+        loaders: navOptions?.loaders,
+        transition: navOptions?.transition,
+        history:
+          navOptions?.state !== undefined || navOptions?.replace
+            ? navOptions
+            : undefined,
+      }),
     refresh,
     pathname: () => new URL(eventController.getLocation().href).pathname,
     params: () => eventController.getParams(),

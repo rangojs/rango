@@ -15,6 +15,10 @@ import {
   filterRouteSegmentIds,
 } from "./react/filter-segment-order.js";
 import { notifyListeners } from "./notify-listeners.js";
+import {
+  locationStateSnapshot,
+  type LocationStateSnapshot,
+} from "./react/location-state-shared.js";
 
 // Polyfill Symbol.dispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -269,6 +273,21 @@ export interface EventController {
   setParams(params: Record<string, string>): void;
   getParams(): Record<string, string>;
 
+  /**
+   * Record the committed history entry's location state from `entryState`:
+   * the state object the commit pushed, restored or merged into the entry,
+   * so the entry and its readers have one source. Notifies nobody:
+   * NavigationProvider takes the snapshot with the entry's payload
+   * (LocationStateContext). `treeless` marks a commit no payload follows (a
+   * shallow navigation, a commit that keeps every segment, an action's
+   * state): the provider takes it with this commit's state notification, in
+   * the batch of the location.
+   */
+  commitLocationState(entryState: unknown, treeless?: boolean): void;
+  getLocationState(): LocationStateSnapshot;
+  /** True once after a `treeless` commit. */
+  takeTreelessLocationState(): boolean;
+
   // Direct state access for advanced use
   getCurrentNavigation(): NavigationEntry | null;
   getInflightActions(): Map<string, ActionEntry>;
@@ -462,6 +481,9 @@ export function createEventController(
   let routeSegmentIds: string[] = [];
 
   let routeParams: Record<string, string> = {};
+
+  let locationState: LocationStateSnapshot;
+  let treelessLocationState = false;
 
   const stateListeners = new Set<StateListener>();
   const actionListeners = new Map<string, Set<ActionStateListener>>();
@@ -1094,6 +1116,20 @@ export function createEventController(
     return routeParams;
   }
 
+  function commitLocationState(entryState: unknown, treeless?: boolean): void {
+    locationState = locationStateSnapshot(entryState, locationState);
+    if (treeless) {
+      treelessLocationState = true;
+      notify();
+    }
+  }
+
+  function takeTreelessLocationState(): boolean {
+    const taken = treelessLocationState;
+    treelessLocationState = false;
+    return taken;
+  }
+
   // ========================================================================
   // Return Controller
   // ========================================================================
@@ -1121,6 +1157,11 @@ export function createEventController(
     // Params
     setParams,
     getParams,
+
+    // Location state
+    commitLocationState,
+    getLocationState: () => locationState,
+    takeTreelessLocationState,
 
     // Subscriptions
     subscribe,

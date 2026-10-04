@@ -2,9 +2,13 @@ import { expect, test } from "@playwright/test";
 import {
   expectClearOnReloadDropsCarriedState,
   expectClearOnReloadDropsStateOnTraversalLoad,
+  expectEvictedSameRouteTraversalRestoresItsPage,
+  expectHeldLoadMoreShowsNoItemTwice,
   expectLateSuspenseReaderHydratesClean,
+  expectLoadMoreTraversalRestoresEntryWithItsPage,
   expectOtherVersionLocationStateDroppedOnLoad,
   expectOtherVersionLocationStateDroppedOnTraversal,
+  expectReaderMountedDuringHeldNavigationReadsEntryOnScreen,
   returnToEvictedEntry,
 } from "@shared/e2e";
 import { useFixture } from "./fixture";
@@ -321,9 +325,60 @@ function describeOptions(mode: "dev" | "build") {
   });
 }
 
+// #1029: a reader sees an entry's location state together with that entry's
+// tree. The load-more list concatenates carried items and the loader's page,
+// so the wrong pairing is an item on screen twice.
+function describeCommit(mode: "dev" | "build") {
+  const label = mode === "build" ? "production" : "dev";
+  test.describe(`location-state.commit (${label})`, () => {
+    const f = useFixture({ root: ".", mode });
+    test.setTimeout(90_000);
+
+    test("a load-more navigation held by its loader shows no item twice", async ({
+      page,
+    }) => {
+      await expectHeldLoadMoreShowsNoItemTwice(
+        page,
+        f.url("/location-state-load-more"),
+      );
+    });
+
+    test("a reader that mounts during a held navigation reads the entry on screen", async ({
+      page,
+    }) => {
+      await expectReaderMountedDuringHeldNavigationReadsEntryOnScreen(
+        page,
+        f.url("/location-state-load-more"),
+      );
+    });
+
+    test("back/forward restores an entry's carried items with its page, cached and refetched", async ({
+      page,
+    }) => {
+      await expectLoadMoreTraversalRestoresEntryWithItsPage(
+        page,
+        f.url("/location-state-load-more"),
+        f.url("/location-state-app-version"),
+      );
+    });
+
+    // #1030
+    test("back/forward to an evicted entry of the same route restores that entry's page", async ({
+      page,
+    }) => {
+      await expectEvictedSameRouteTraversalRestoresItsPage(
+        page,
+        f.url("/location-state-load-more"),
+      );
+    });
+  });
+}
+
 describeLocationState("dev");
 describeLocationState("build");
 describeLateSuspense("dev");
 describeLateSuspense("build");
 describeOptions("dev");
 describeOptions("build");
+describeCommit("dev");
+describeCommit("build");

@@ -1,4 +1,9 @@
 import { expect, test } from "@playwright/test";
+import {
+  expectHeldClientUrlNavigationKeepsLocationState,
+  expectOptimisticDestinationReadsItsLocationState,
+  expectUncommittedClientUrlNavigationLeavesNoLocationState,
+} from "@shared/e2e";
 import { useFixture } from "./fixture";
 import { expectNoPageError, testId, waitForHydration } from "./helper";
 
@@ -163,6 +168,39 @@ function clientUrlsSlowTests(f: ReturnType<typeof useFixture>): void {
     await expect(testId(page, "cus-c")).toHaveCount(0);
 
     expect(dataAt).toBeGreaterThanOrEqual(MIDDLEWARE_MS - 500);
+  });
+
+  // #1029: location state follows the same split as the route hooks above.
+  // Inside the optimistic branch a reader has the entry the navigation will
+  // push; outside it, and in content the navigation holds, the committed one.
+  test("location state: the optimistic destination reads the state its navigation carries, chrome keeps the committed entry's", async ({
+    page,
+  }) => {
+    test.setTimeout(90_000);
+    await expectOptimisticDestinationReadsItsLocationState(
+      page,
+      f.url("/client-urls-slow"),
+    );
+  });
+
+  test("location state: content a navigation holds (same route, or no boundary) keeps its entry's state until the commit", async ({
+    page,
+  }) => {
+    test.setTimeout(90_000);
+    await expectHeldClientUrlNavigationKeepsLocationState(
+      page,
+      f.url("/client-urls-slow"),
+    );
+  });
+
+  test("location state: a superseded or cancelled navigation leaves none behind", async ({
+    page,
+  }) => {
+    test.setTimeout(90_000);
+    await expectUncommittedClientUrlNavigationLeavesNoLocationState(
+      page,
+      f.url("/client-urls-slow"),
+    );
   });
 }
 

@@ -51,6 +51,30 @@ mode) both call. Key injection is the Vite plugin's
 [`testing/location-state-key.ts`](../../src/testing/location-state-key.ts) is
 its stand-in for unit tests.
 
+What a reader shows is owned by
+[`browser/react/NavigationProvider.tsx`](../../src/browser/react/NavigationProvider.tsx),
+not by the hook: the provider holds the location state of the entry on screen
+as React state next to the payload, sets both in one update, and provides it
+through `LocationStateContext`
+([`browser/react/context.ts`](../../src/browser/react/context.ts)); the hook
+reads that context (#1029). The value is a snapshot
+(`locationStateSnapshot` in `location-state-shared.ts`) the event controller
+records ([`browser/event-controller.ts`](../../src/browser/event-controller.ts),
+`commitLocationState(entryState)` / `getLocationState`) from the entry state a
+commit site pushed, restored or merged. Those sites are
+[`browser/navigation-transaction.ts`](../../src/browser/navigation-transaction.ts)
+(push, replace, back/forward refetch),
+[`browser/navigation-bridge.ts`](../../src/browser/navigation-bridge.ts)
+(a `revalidate: false` navigation, a back/forward restore from the history
+cache), [`browser/server-action-bridge.ts`](../../src/browser/server-action-bridge.ts)
+(an action's state), [`browser/rsc-router.tsx`](../../src/browser/rsc-router.tsx)
+(the document's entry) and
+[`testing/render-route.tsx`](../../src/testing/render-route.tsx) (its seed,
+its navigations, and a `popstate` event as a back/forward). Inside an
+optimistic `clientUrls()` branch the hook reads
+[`client-urls/optimistic-location.ts`](../../src/client-urls/optimistic-location.ts)
+(`OptimisticLocation.state`) instead.
+
 Delegated prefetch eligibility, parked location-dependent anchors,
 container-scope lookup, and shared subtree-only DOM re-evaluation are owned by
 [`browser/link-interceptor.ts`](../../src/browser/link-interceptor.ts), strategy

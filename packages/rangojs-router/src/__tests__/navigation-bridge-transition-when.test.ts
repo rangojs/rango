@@ -62,6 +62,7 @@ function eventController() {
     getHandleState: vi.fn(() => ({ data: {} })),
     setLocation: vi.fn(),
     setParams: vi.fn(),
+    commitLocationState: vi.fn(),
     getState: vi.fn(() => ({ isStreaming: false })),
   };
 }
@@ -119,17 +120,39 @@ describe("navigation-bridge transition({ when })", () => {
       getInterceptSourceUrl: vi.fn(() => null),
       setInterceptSourceUrl: vi.fn(),
     };
-    const onUpdate = vi.fn();
-    const renderSegments = vi.fn(async (..._args: any[]) => "tree");
+    const order: string[] = [];
+    const onUpdate = vi.fn(() => void order.push("onUpdate"));
+    const renderSegments = vi.fn(async (..._args: any[]) => {
+      order.push("renderSegments");
+      return "tree";
+    });
+    const controller = eventController();
+    controller.commitLocationState.mockImplementation(
+      () => void order.push("commitLocationState"),
+    );
     const bridge = createNavigationBridge({
       store: store as any,
       client: {} as any,
-      eventController: eventController() as any,
+      eventController: controller as any,
       onUpdate,
       renderSegments,
     });
 
     await bridge.handlePopstate();
+
+    // #1029: history.state belongs to the restored entry since the popstate
+    // event, but readers take it with the restored tree: the entry state the
+    // handler found at the event is committed once the tree is built, right
+    // before the update that renders it.
+    expect(order).toEqual([
+      "renderSegments",
+      "commitLocationState",
+      "onUpdate",
+    ]);
+    expect(controller.commitLocationState).toHaveBeenCalledExactlyOnceWith({
+      key: "entry-a",
+      __rsc_ls_s: "a-state",
+    });
 
     expect(when).toHaveBeenCalledTimes(1);
     expect(seen[0].kind).toBe("pop");

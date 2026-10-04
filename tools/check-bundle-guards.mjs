@@ -87,7 +87,18 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // revalidate), the RouteLocation/context builders and Def.read(location).
 // None of it can load lazily: the decision is made synchronously at commit.
 // Predicate modules themselves land in the entry chunk, not here.
-const ROUTER_CHUNK_GZIP_MAX = 46 * 1024;
+//
+// Raised 46KB -> 47KB on 2026-10-04 (issue #1029), measured 47077B -> 47262B
+// (+185B gzip). A deliberate call: useLocationState reads the location state
+// of the entry on screen from React state NavigationProvider holds next to
+// the payload, instead of reading history.state itself, so a value can only
+// render with its entry's tree. What grew: the snapshot every commit site
+// records (location-state-shared.ts locationStateSnapshot), its holder on the
+// event controller and the provider's context; the hook itself shrank. None
+// of it can load lazily: the snapshot is recorded in the commit and read
+// during render. The step is a whole KB because main sat 27B under the old
+// limit: a smaller one would leave the ratchet tripping on the next change.
+const ROUTER_CHUNK_GZIP_MAX = 47 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

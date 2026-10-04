@@ -616,9 +616,30 @@ outside production an unkeyed definition throws on first use (the Vite plugin
 that injects keys does not run here). Call `withLocationStateKey(def, name?)`
 from `@rangojs/router/testing` once per definition. `useRouter().push/replace`
 and `<Link>` with `state: [Def(value)]` then write `history.state` through
-production's history path, so `useLocationState(Def)` re-reads after the click;
-wait for it with RTL's `waitFor` (see the testing skill,
-`client-components.md` "Location state").
+production's history path, and the provider hands it to readers with the
+navigation's tree, so `useLocationState(Def)` shows the new value in the
+commit that shows the destination; wait for it with RTL's `waitFor` (see the
+testing skill, `client-components.md` "Location state").
+
+A reader keeps the state of the entry on screen while a navigation is pending
+(#1029). To test that, hold the navigation's loader:
+`router.navigate(url, { state, loaders: [[Loader, pendingPromise]] })` on a
+`transition` spec writes the entry as `router.push(url, { state })` does and
+commits through production's `commitInTransition`, so the assertion between
+the call and the promise settling sees the page being left with its own state.
+A reader that mounts during that window reads the entry on screen too. A
+`popstate` event on `window` is a back/forward onto the entry `history.state`
+holds: readers take that entry as it is (the tree has one location, so no page
+is restored with it). `router.navigate()` writes history only for `state` or
+`replace: true`; `navigate(url)` and `navigate(url, { replace: false })` leave
+it alone. The skill's "State while a navigation is pending" has the worked
+example.
+
+`renderRoute` listens for `popstate` through the bridge's
+`registerLinkInterception`, the slot production's bridge uses, and both commit
+an entry with `EventController.commitLocationState(entryState)`. A component
+rendered without `renderRoute` has no provider, so `useLocationState` returns
+`undefined` there.
 
 `clearOnReload` does not change what you seed. The option lives in the slot's
 key, not in its value: the definition appends `~r` to whatever name you key it
