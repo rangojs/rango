@@ -174,6 +174,30 @@ export const POST_QUIESCE_TASK_HOPS = 16;
 export const SHELL_CAPTURE_TASK_HARD_CAP_MS = 25_000;
 
 /**
+ * Why a capture attempt refused to store its shell
+ * (ShellCaptureDebugEvent.refusal, `caches.refusal` on a `router.prerender()`
+ * result): `identity` (a request-scoped read: cookies(), headers(), the
+ * theme, a `{ cache: false }` variable), `dynamic` (`ctx.dynamic()`),
+ * `loader` (a `{ ssr: false }` loader rejected, or settled with
+ * redirect()/notFound()), `no-record` (no doc record: the route's cache()
+ * refused the write, or the handler output failed), `handles` (a pushed
+ * handle value did not finish encoding), `size` (over the store's value
+ * limit), `record-expired` (the route cache() record the capture wrote ran
+ * out first), `invalidated` (a tag of the shell was invalidated after the
+ * capture started), `uncacheable` (the store cannot hold the entry).
+ */
+export type ShellCaptureRefusal =
+  | "identity"
+  | "dynamic"
+  | "loader"
+  | "no-record"
+  | "handles"
+  | "size"
+  | "record-expired"
+  | "invalidated"
+  | "uncacheable";
+
+/**
  * Shared PPR loader-lane hint, appended to every capture warning or error
  * whose fix depends on the lane (shell-capture.ts warnings, the cookie-store.ts
  * capture guard). Lives in this import-free leaf so cookie-store.ts can import

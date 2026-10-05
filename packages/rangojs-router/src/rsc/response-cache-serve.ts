@@ -34,6 +34,7 @@ import {
 } from "./helpers.js";
 import { reportCacheError } from "../cache/cache-error.js";
 import { cacheKeyBase } from "../cache/cache-key-utils.js";
+import { isWarmReplace, noteWarmWrite } from "../prerender/warm-request.js";
 import {
   executionStart,
   predatesInvalidation,
@@ -185,10 +186,14 @@ export async function serveResponseRouteWithCache(
       cacheScope!.swr,
       responseTags,
     );
+    noteWarmWrite(reqCtx, "response");
   };
 
   try {
-    const cached = await store.getResponse(cacheKey);
+    // A router.prerender() warm takes the miss branch and replaces the entry.
+    const cached = isWarmReplace(reqCtx)
+      ? null
+      : await store.getResponse(cacheKey);
     if (cached && canServeCached(cached.response)) {
       if (!cached.shouldRevalidate) {
         return applyPreHandlerCallbacks(cached.response);

@@ -50,7 +50,14 @@ import { createLoader } from "../../loader.rsc.js";
 import { createHandle } from "../../handle.js";
 import { buildRouterTrieFromUrlpatterns } from "../manifest-init.js";
 import { handleRscRendering } from "../rsc-rendering.js";
-import { scheduleShellCapture } from "../shell-capture.js";
+import {
+  scheduleShellCapture,
+  type ShellCaptureDebugEvent,
+} from "../shell-capture.js";
+import {
+  createWarmRecord,
+  type PrerenderWarmRecord,
+} from "../../prerender/warm-request.js";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
 import {
   hasBuildShell,
@@ -3772,5 +3779,456 @@ describe("handleRscRendering — no PPR flags is byte-identical axis 1", () => {
     );
     expect(response.headers.has("x-rango-shell")).toBe(false);
     expect(response.status).toBe(200);
+  });
+});
+
+// A router.prerender() warm through the shell serve path (shellServePlan).
+// The handler puts the warm's record on the request context
+// (RequestContext._prerenderWarm, prerender/warm-request.ts). In `replace`
+// mode the request renders without reading a shell and its capture is forced;
+// in `fill` mode (`onlyIfStale`) it reads as a visitor's request does and the
+// record only reports. docs/design/prerender-every-route.md, "PPR document
+// shell".
+describe("handleRscRendering — integrated PPR serve: a router.prerender() warm", () => {
+  /** A warm's record, and the `arm` that puts it on the request context. */
+  function warm(
+    mode: PrerenderWarmRecord["mode"],
+    also?: (reqCtx: RequestContext<unknown>) => void,
+  ) {
+    const record = createWarmRecord(mode, {
+      store: new MemorySegmentCacheStore(),
+    });
+    const arm = (reqCtx: RequestContext<unknown>): void => {
+      reqCtx._prerenderWarm = record;
+      also?.(reqCtx);
+    };
+    return { record, arm };
+  }
+
+  /** The descriptor of the one capture the request scheduled. */
+  function scheduledDescriptor() {
+    expect(scheduleMock).toHaveBeenCalledTimes(1);
+    return scheduleMock.mock.calls[0]![6];
+  }
+
+  const partitionedStore = () =>
+    Object.assign(new MemorySegmentCacheStore(), {
+      keyGenerator: (_ctx: RequestContext, defaultKey: string) =>
+        `${defaultKey}|segment`,
+    });
+
+  describe("replace mode", () => {
+    it("does not read a stored shell: the request is a MISS and its capture is forced", async () => {
+      const store = new MemorySegmentCacheStore();
+      await store.putShell(KEY, shellEntry(), 300, 30);
+      const getShell = vi.spyOn(store, "getShell");
+      const ssrModule = fullSsrModule();
+      const { record, arm } = warm("replace");
+
+      const { response } = await run({ ssrModule, ppr: true, store, arm });
+
+      expect(getShell).not.toHaveBeenCalled();
+      expect(response.headers.get("x-rango-shell")).toBe("MISS");
+      expect(ssrModule.renderHTML).toHaveBeenCalledTimes(1);
+      expect(ssrModule.resumeShellHTML).not.toHaveBeenCalled();
+      const descriptor = scheduledDescriptor();
+      expect(descriptor.key).toBe(KEY);
+      expect(descriptor.store).toBe(store);
+      expect(descriptor.force).toBe(true);
+      // No sequence: a capture another request stored meanwhile must not
+      // cancel the warm's own (skip-stored).
+      expect(descriptor.storedSeqAtRead).toBeUndefined();
+      // Stands until the capture reports.
+      expect(record.shell).toBe("not-eligible");
+
+      // Control: a visitor's request serves that entry.
+      scheduleMock.mockClear();
+      const visitor = await run({
+        ssrModule: fullSsrModule(),
+        ppr: true,
+        store,
+      });
+      expect(visitor.response.headers.get("x-rango-shell")).toBe("HIT");
+      await readAll(visitor.response.body!);
+      expect(getShell).toHaveBeenCalledTimes(1);
+    });
+
+    // CFCacheStore is read through readShellDocument (rsc-rendering.ts
+    // readShellEntry), so a getShell spy would not see its read.
+    it("reads nothing from a CFCacheStore that holds the shell (no Cache API or KV read)", async () => {
+      try {
+        const cf = createCfShellFixture();
+        await cf.store.putShell(KEY, shellEntry(), 300, 30);
+        await cf.drain();
+        const matches = cf.counts.matches;
+        const kvGet = vi.spyOn(cf.kv, "get");
+        const readShellDocument = vi.spyOn(cf.store, "readShellDocument");
+        const ssrModule = fullSsrModule();
+        const { arm } = warm("replace");
+
+        const { response } = await run({
+          ssrModule,
+          ppr: true,
+          store: cf.store,
+          arm,
+        });
+
+        expect(response.headers.get("x-rango-shell")).toBe("MISS");
+        expect(ssrModule.resumeShellHTML).not.toHaveBeenCalled();
+        expect(readShellDocument).not.toHaveBeenCalled();
+        expect(cf.counts.matches).toBe(matches);
+        expect(kvGet).not.toHaveBeenCalled();
+        expect(scheduledDescriptor().force).toBe(true);
+
+        // Control: a visitor's request reads that shell from the Cache API.
+        const visitor = await run({
+          ssrModule: fullSsrModule(),
+          ppr: true,
+          store: cf.store,
+        });
+        expect(visitor.response.headers.get("x-rango-shell")).toBe("HIT");
+        await readAll(visitor.response.body!);
+        expect(readShellDocument).toHaveBeenCalledTimes(1);
+        expect(cf.counts.matches).toBe(matches + 1);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("the record learns each capture event before the router's debugShellCapture sink receives it", async () => {
+      const ssrModule = fullSsrModule();
+      const { record, arm } = warm("replace");
+      const seenByRouter: Array<{
+        event: ShellCaptureDebugEvent;
+        shell: PrerenderWarmRecord["shell"];
+      }> = [];
+      const router = {
+        ...makeCtx(ssrModule, "stream").ctx.router,
+        debugShellCapture: (event: ShellCaptureDebugEvent) => {
+          seenByRouter.push({ event, shell: record.shell });
+        },
+      } as unknown as HandlerContext<unknown>["router"];
+
+      await run({ ssrModule, ppr: true, router, arm });
+      const sink = scheduledDescriptor().debugSink!;
+      // A cold first attempt, then the in-place retry that stores.
+      const cold: ShellCaptureDebugEvent = {
+        key: KEY,
+        outcome: "no-shell",
+        attempt: 1,
+      };
+      const stored: ShellCaptureDebugEvent = {
+        key: KEY,
+        outcome: "stored",
+        attempt: 2,
+      };
+      sink(cold);
+      expect(record.shell).toBe("no-shell");
+      // captureAndStoreShell counts the write before the event is published.
+      record.writes.shell = 1;
+      sink(stored);
+
+      expect(record.shell).toBe("stored");
+      expect(seenByRouter).toEqual([
+        { event: cold, shell: "no-shell" },
+        { event: stored, shell: "stored" },
+      ]);
+      // The capture's own event objects, not copies.
+      expect(seenByRouter[0]!.event).toBe(cold);
+      expect(seenByRouter[1]!.event).toBe(stored);
+    });
+
+    it("the record learns a refused capture's reason, with no router sink configured", async () => {
+      const { record, arm } = warm("replace");
+
+      await run({ ssrModule: fullSsrModule(), ppr: true, arm });
+      scheduledDescriptor().debugSink!({
+        key: KEY,
+        outcome: "refused",
+        attempt: 1,
+        refusal: "identity",
+      });
+
+      expect(record.shell).toBe("refused");
+      expect(record.refusal).toBe("identity");
+    });
+
+    it("control: a visitor's capture keeps the router's sink as it is", async () => {
+      const ssrModule = fullSsrModule();
+      const debugShellCapture = vi.fn();
+      const router = {
+        ...makeCtx(ssrModule, "stream").ctx.router,
+        debugShellCapture,
+      } as unknown as HandlerContext<unknown>["router"];
+
+      await run({ ssrModule, ppr: true, router });
+
+      const descriptor = scheduledDescriptor();
+      expect(descriptor.debugSink).toBe(debugShellCapture);
+      expect(descriptor.force).toBeUndefined();
+    });
+  });
+
+  describe("a route with a build shell", () => {
+    let loadManifest: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      resetBuildShellManifestForTests();
+      resetShellServeStateForTests();
+      vi.mocked(hasBuildShell).mockClear();
+      loadManifest = vi.fn(async () => ({
+        default: { "/p": "/p" },
+        loadShellAsset: async () => ({
+          default: {
+            entry: shellEntry({ docKey: undefined }),
+            ttl: 300,
+            routeName: "p",
+          },
+        }),
+      }));
+      (globalThis as any).__loadShellManifestModule = loadManifest;
+    });
+    afterEach(() => {
+      delete (globalThis as any).__loadShellManifestModule;
+      resetBuildShellManifestForTests();
+    });
+
+    it("replace mode: the build shell is not looked up; the request is a MISS with a forced capture", async () => {
+      const ssrModule = fullSsrModule();
+      const { arm } = warm("replace");
+
+      const { response } = await run({ ssrModule, ppr: true, arm });
+
+      expect(response.headers.get("x-rango-shell")).toBe("MISS");
+      expect(ssrModule.resumeShellHTML).not.toHaveBeenCalled();
+      // A build-shell lookup loads the manifest (shell-build-manifest.ts
+      // lookupBuildShell); the fill-mode HIT below is the control.
+      expect(loadManifest).not.toHaveBeenCalled();
+      expect(scheduledDescriptor().force).toBe(true);
+    });
+
+    it("replace mode: a partitioned request does not probe for the build shell", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const store = partitionedStore();
+        const { arm } = warm("replace");
+
+        const { response } = await run({
+          ssrModule: fullSsrModule(),
+          ppr: true,
+          store,
+          arm,
+        });
+
+        expect(response.headers.get("x-rango-shell")).toBe("MISS");
+        expect(hasBuildShell).not.toHaveBeenCalled();
+        expect(loadManifest).not.toHaveBeenCalled();
+
+        // Control: a fill-mode warm of the same partition probes like a
+        // visitor's request.
+        await run({
+          ssrModule: fullSsrModule(),
+          ppr: true,
+          store,
+          arm: warm("fill").arm,
+        });
+        expect(hasBuildShell).toHaveBeenCalledTimes(1);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("fill mode: the build shell serves a HIT and the record reports fresh", async () => {
+      const ssrModule = fullSsrModule();
+      const { record, arm } = warm("fill");
+
+      const { response } = await run({ ssrModule, ppr: true, arm });
+
+      expect(response.headers.get("x-rango-shell")).toBe("HIT");
+      await readAll(response.body!);
+      expect(loadManifest).toHaveBeenCalledTimes(1);
+      expect(record.shell).toBe("fresh");
+      expect(scheduleMock).not.toHaveBeenCalled();
+    });
+  });
+
+  // The record of a ppr route says why no shell was written: the stamp set
+  // once resolvePprConfig returned a config stands for every gate that
+  // passes after it.
+  describe("a gate that passes on the shell reports not-eligible", () => {
+    const gates: Array<[string, Partial<RunOpts>]> = [
+      [
+        "a provider nonce",
+        { nonce: "abc123", url: "http://localhost/warm-nonce-provider" },
+      ],
+      [
+        "a nonce set through the token",
+        {
+          url: "http://localhost/warm-nonce-token",
+          arm: (reqCtx) =>
+            contextSet(reqCtx._variables, nonceToken, "tok-nonce"),
+        },
+      ],
+      [
+        "a store without the shell family",
+        { store: {}, url: "http://localhost/warm-no-shell-family" },
+      ],
+      [
+        "the route's cache(false) opt-out",
+        {
+          arm: (reqCtx) => {
+            (reqCtx._classifiedRoute as any).manifestEntry.cache = {
+              options: false,
+            };
+          },
+        },
+      ],
+      [
+        "a partition key that failed to resolve",
+        {
+          store: Object.assign(new MemorySegmentCacheStore(), {
+            keyGenerator: async (): Promise<string> => {
+              throw new Error("key boom");
+            },
+          }),
+        },
+      ],
+      ["a buffered (allReady) response", { streamMode: "allReady" }],
+      [
+        "a request flagged forced-MISS",
+        {
+          arm: (reqCtx) => {
+            reqCtx._shellForcedMiss = true;
+          },
+        },
+      ],
+      [
+        // Middleware called ctx.dynamic() before the shell plan ran.
+        "a request already marked dynamic",
+        {
+          arm: (reqCtx) => {
+            reqCtx._dynamic = true;
+          },
+        },
+      ],
+    ];
+
+    it.each(gates)("%s", async (_label, gate) => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      // The failed partition key is reported (reportCacheError).
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        for (const mode of ["replace", "fill"] as const) {
+          scheduleMock.mockClear();
+          const { record, arm } = warm(mode, gate.arm);
+
+          const { response } = await run({
+            ssrModule: fullSsrModule(),
+            ppr: true,
+            ...gate,
+            arm,
+          });
+
+          expect(response.headers.has("x-rango-shell"), mode).toBe(false);
+          expect(scheduleMock, mode).not.toHaveBeenCalled();
+          expect(record.shell, mode).toBe("not-eligible");
+        }
+      } finally {
+        warnSpy.mockRestore();
+        errorSpy.mockRestore();
+      }
+    });
+  });
+
+  it.each([
+    ["no ppr option", undefined],
+    ["ppr: false", false],
+  ] as const)(
+    "a route with %s leaves record.shell undefined",
+    async (_label, ppr) => {
+      for (const mode of ["replace", "fill"] as const) {
+        const store = new MemorySegmentCacheStore();
+        await store.putShell(KEY, shellEntry(), 300, 30);
+        const { record, arm } = warm(mode);
+
+        const { response } = await run({
+          ssrModule: fullSsrModule(),
+          ppr,
+          store,
+          arm,
+        });
+
+        expect(response.headers.has("x-rango-shell"), mode).toBe(false);
+        expect(record.shell, mode).toBeUndefined();
+        expect(scheduleMock, mode).not.toHaveBeenCalled();
+      }
+    },
+  );
+
+  describe("fill mode (onlyIfStale)", () => {
+    it("a servable stored shell is a HIT read from the store, and the record reports fresh", async () => {
+      const store = new MemorySegmentCacheStore();
+      await store.putShell(KEY, shellEntry(), 300, 30);
+      const getShell = vi.spyOn(store, "getShell");
+      const ssrModule = fullSsrModule();
+      const { record, arm } = warm("fill");
+
+      const { response } = await run({ ssrModule, ppr: true, store, arm });
+
+      expect(response.headers.get("x-rango-shell")).toBe("HIT");
+      expect(await readAll(response.body!)).toBe(`${PRELUDE_HTML}RESUMED-HOLE`);
+      expect(getShell).toHaveBeenCalledTimes(1);
+      expect(record.shell).toBe("fresh");
+      expect(scheduleMock).not.toHaveBeenCalled();
+    });
+
+    it("a stale (SWR) hit reports fresh, then what its unforced recapture ends with", async () => {
+      const store = new MemorySegmentCacheStore();
+      // Stale at once, servable for 300 s, past the minimum recapture interval.
+      await store.putShell(
+        KEY,
+        shellEntry({ createdAt: Date.now() - 2_000 }),
+        0,
+        300,
+      );
+      await new Promise((r) => setTimeout(r, 5));
+      const { record, arm } = warm("fill");
+
+      const { response } = await run({
+        ssrModule: fullSsrModule(),
+        ppr: true,
+        store,
+        arm,
+      });
+
+      expect(response.headers.get("x-rango-shell")).toBe("HIT");
+      await readAll(response.body!);
+      expect(record.shell).toBe("fresh");
+      const descriptor = scheduledDescriptor();
+      expect(descriptor.force).toBeUndefined();
+      record.writes.shell = 1;
+      descriptor.debugSink!({ key: KEY, outcome: "stored", attempt: 1 });
+      expect(record.shell).toBe("stored");
+    });
+
+    it("a MISS reads the store and schedules its capture without force", async () => {
+      const store = new MemorySegmentCacheStore();
+      const getShell = vi.spyOn(store, "getShell");
+      const ssrModule = fullSsrModule();
+      const { record, arm } = warm("fill");
+
+      const { response } = await run({ ssrModule, ppr: true, store, arm });
+
+      expect(response.headers.get("x-rango-shell")).toBe("MISS");
+      expect(getShell).toHaveBeenCalledTimes(1);
+      const descriptor = scheduledDescriptor();
+      expect(descriptor.force).toBeUndefined();
+      // The sequence a visitor's MISS takes, so skip-stored still applies.
+      expect(typeof descriptor.storedSeqAtRead).toBe("number");
+      expect(record.shell).toBe("not-eligible");
+      record.writes.shell = 1;
+      descriptor.debugSink!({ key: KEY, outcome: "stored", attempt: 1 });
+      expect(record.shell).toBe("stored");
+    });
   });
 });

@@ -95,6 +95,10 @@ import {
 } from "./shell-build-manifest.js";
 import { contextGet } from "../context-var.js";
 import {
+  isWarmReplace,
+  noteWarmShellEvent,
+} from "../prerender/warm-request.js";
+import {
   resolveSwrWindow,
   staleShellRecaptureDue,
 } from "../cache/cache-policy.js";
@@ -466,6 +470,13 @@ function* shellServePlan<TEnv>(
 ): RoutinePlan<ShellServeOutcome> {
   const { ctx, request, env, url, isPartial, handleStore, nonce, reqCtx } =
     input;
+  const manifestEntry = reqCtx._classifiedRoute?.manifestEntry;
+
+  // A router.prerender() warm (prerender/warm-request.ts) reports the shell of
+  // a ppr route: "not-eligible" stands for every gate below that passes, until
+  // a HIT or a capture event overwrites it.
+  const warm = reqCtx._prerenderWarm;
+  if (warm && resolvePprConfig(manifestEntry)) warm.shell ??= "not-eligible";
 
   if (
     isPartial ||
@@ -475,9 +486,11 @@ function* shellServePlan<TEnv>(
   ) {
     return { kind: "pass" };
   }
-  const manifestEntry = reqCtx._classifiedRoute?.manifestEntry;
   const pprConfig = resolvePprConfig(manifestEntry);
   if (!pprConfig) return { kind: "pass" };
+  // In replace mode the request is a MISS without reading a shell, and its
+  // capture is forced (ShellCaptureDescriptor.force).
+  const warmReplace = isWarmReplace(reqCtx);
   // A degraded HIT's reload (shellReloadScript) renders like a cache miss:
   // no shell read, no capture, so it can never degrade again. The handler
   // stripped the marker from the request and left this flag.
@@ -552,12 +565,16 @@ function* shellServePlan<TEnv>(
   // A MISS schedules its capture after rendering: taken before the read, this
   // lets that capture skip itself when another request's capture stored the
   // shell in between (ShellCaptureDescriptor.storedSeqAtRead).
-  const storedSeqAtRead = lastStoredCaptureSeq(key);
+  // A warm's capture is its own: one another request stored meanwhile does
+  // not cancel it, so it takes no sequence.
+  const storedSeqAtRead = warmReplace ? undefined : lastStoredCaptureSeq(key);
   // SSR setup starts before route handling, so read the shell before joining it
   // to overlap the remaining setup work with cache I/O.
-  const cached = yield* step("shell-read", () =>
-    readShellEntry(store, key, reqCtx, pprConfig.tags),
-  );
+  const cached = warmReplace
+    ? null
+    : yield* step("shell-read", () =>
+        readShellEntry(store, key, reqCtx, pprConfig.tags),
+      );
 
   // allReady (ssr.resolveStreaming) bypasses PPR entirely: buffering defeats
   // streaming, so bots/SEO crawlers get one complete axis-1 document. These
@@ -580,6 +597,15 @@ function* shellServePlan<TEnv>(
     pprConfig,
     store,
   );
+  if (warm) {
+    // The warm learns its capture's outcome from the capture's own events,
+    // ahead of the router's debugShellCapture sink.
+    const routerSink = descriptor.debugSink;
+    descriptor.debugSink = (event) => {
+      noteWarmShellEvent(warm, event);
+      routerSink?.(event);
+    };
+  }
   // MISS (no entry, invalid reactVersion, a tombstone, or store read
   // failure): axis 1 + a background capture scheduled once the response is
   // known servable.
@@ -588,6 +614,10 @@ function* shellServePlan<TEnv>(
     descriptor: { ...descriptor, storedSeqAtRead },
     ssrModule,
   };
+  // Neither the stored shell nor the build shell is read: a warm renders.
+  if (warmReplace) {
+    return { ...miss, descriptor: { ...descriptor, force: true } };
+  }
 
   // A HIT replays the handler layer from the entry's doc record (`docKey`),
   // or, for a Prerender route, from the prerender store. An entry that has
@@ -613,6 +643,9 @@ function* shellServePlan<TEnv>(
         "[ShellServe] getShell",
       );
     } else {
+      // An onlyIfStale warm found a servable shell; a recapture scheduled
+      // below overwrites this through the capture's events.
+      if (warm) warm.shell = "fresh";
       // Stale (SWR) hit: serve the stale shell now, recapture in the
       // background (stampede-guarded + backoff inside scheduleShellCapture),
       // at most once per SHELL_MIN_RECAPTURE_INTERVAL_MS of the shell's age.
@@ -706,6 +739,7 @@ function* shellServePlan<TEnv>(
     ? openShellDocumentMetered(reqCtx, { entry: buildHit.entry })
     : null;
   if (buildHit && buildDocument) {
+    if (warm) warm.shell = "fresh";
     // Past ppr.ttl: still serve the baked entry, recapture upgrades it.
     if (buildHit.stale) {
       yield* handoff("shell-recapture", () =>

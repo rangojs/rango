@@ -15,6 +15,7 @@ import { invariant, DslContextError } from "../errors";
 import type { DefaultRouteName } from "../types/global-namespace.js";
 import type { ContextVar } from "../context-var.js";
 import { PPR_LANE_HINT } from "../rsc/shell-capture-constants.js";
+import { noteWarmIdentityRead } from "../prerender/warm-request.js";
 import {
   endIdentityExempt,
   isInsideCacheExecScope,
@@ -975,10 +976,15 @@ export function guardIdentityRead(
   if (isInsideIdentityExempt()) return;
   const { verb, fix } = wording;
   if (tripShellCaptureGuard(ctx, surface, fix.warning)) {
+    noteWarmIdentityRead(ctx, surface);
     throw new Error(
       `${surface} cannot be ${verb} while capturing a shared shell ` +
         `(ppr shell capture). ${fix.capture}`,
     );
+  }
+  // A router.prerender() warm reports the refusal below as skipped-personalized.
+  if (isInsideCacheExecScope() || isInsideCacheScope()) {
+    noteWarmIdentityRead(ctx, surface);
   }
   refuseInCacheScope(surface, wording);
   if (wording.record !== false) recordLoaderIdentityRead(surface, verb);

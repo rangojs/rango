@@ -15,6 +15,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NOCACHE_SYMBOL } from "../taint.js";
+import { createWarmRecord } from "../../prerender/warm-request.js";
 
 // encodeReply serializes args so JSON-safe args still exercise the wrapper; the
 // fast-path key builder handles them without calling this in practice.
@@ -320,5 +321,155 @@ describe('"use cache" in-flight dedup (C1)', () => {
       expect(calls).toBe(1);
       expect(store.setItem).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+// router.prerender() warm (prerender/warm-request.ts): replace mode reads a
+// miss, leads its own execution and replaces the in-flight entry.
+describe('"use cache" under a router.prerender() warm', () => {
+  let registerCachedFunction: typeof import("../cache-runtime.js").registerCachedFunction;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    mockGetRequestContext.mockReturnValue(null);
+    registerCachedFunction = (await import("../cache-runtime.js"))
+      .registerCachedFunction;
+  });
+
+  function makeCtx(store: any, record?: ReturnType<typeof createWarmRecord>) {
+    return {
+      _cacheStore: store,
+      _cacheProfiles: { default: { ttl: 60 } },
+      _prerenderWarm: record,
+      waitUntil: (fn: () => Promise<void>) => {
+        void fn();
+      },
+    };
+  }
+
+  function gated() {
+    let release!: (v: string) => void;
+    const gate = new Promise<string>((r) => (release = r));
+    return { gate, release };
+  }
+
+  it("a warm call does not join an in-flight leader; it executes the function itself", async () => {
+    const store = {
+      getItem: vi.fn().mockResolvedValue(null),
+      setItem: vi.fn().mockResolvedValue(undefined),
+    };
+    const leaderGate = gated();
+    let calls = 0;
+    const fn = async (_x: string) => {
+      const n = ++calls;
+      return n === 1 ? await leaderGate.gate : `warm-${n}`;
+    };
+    const cached = registerCachedFunction(fn, "warm-nojoin", "default");
+
+    mockGetRequestContext.mockReturnValue(makeCtx(store));
+    const leader = cached("k");
+    await Promise.resolve();
+
+    const record = createWarmRecord("replace", {} as any);
+    mockGetRequestContext.mockReturnValue(makeCtx(store, record));
+    await expect(cached("k")).resolves.toBe("warm-2");
+    expect(calls).toBe(2);
+
+    leaderGate.release("old");
+    await expect(leader).resolves.toBe("old");
+  });
+
+  it("a normal caller arriving while the warm executes joins the warm's execution, not the older leader's", async () => {
+    const store = {
+      getItem: vi.fn().mockResolvedValue(null),
+      setItem: vi.fn().mockResolvedValue(undefined),
+    };
+    const leaderGate = gated();
+    const warmGate = gated();
+    let calls = 0;
+    const fn = async (_x: string) => {
+      const n = ++calls;
+      return await (n === 1 ? leaderGate.gate : warmGate.gate);
+    };
+    const cached = registerCachedFunction(fn, "warm-replaces", "default");
+
+    mockGetRequestContext.mockReturnValue(makeCtx(store));
+    const leader = cached("k");
+    await Promise.resolve();
+
+    mockGetRequestContext.mockReturnValue(
+      makeCtx(store, createWarmRecord("replace", {} as any)),
+    );
+    const warm = cached("k");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    mockGetRequestContext.mockReturnValue(makeCtx(store));
+    const follower = cached("k");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    warmGate.release("new");
+    await expect(warm).resolves.toBe("new");
+    await expect(follower).resolves.toBe("new");
+    expect(calls).toBe(2);
+
+    leaderGate.release("old");
+    await expect(leader).resolves.toBe("old");
+  });
+
+  it("replace mode never reads the store item, replaces it, and counts one item write", async () => {
+    const fresh = {
+      value: JSON.stringify("stale"),
+      handles: "",
+      tags: [],
+      expiresAt: Date.now() + 60_000,
+    };
+    const store = {
+      getItem: vi.fn().mockResolvedValue(fresh),
+      setItem: vi.fn().mockResolvedValue(undefined),
+    };
+    const record = createWarmRecord("replace", {} as any);
+    mockGetRequestContext.mockReturnValue(makeCtx(store, record));
+    let calls = 0;
+    const cached = registerCachedFunction(
+      async (_x: string) => `rendered-${++calls}`,
+      "warm-replace-item",
+      "default",
+    );
+
+    await expect(cached("k")).resolves.toBe("rendered-1");
+    await vi.waitFor(() => expect(store.setItem).toHaveBeenCalledTimes(1));
+
+    expect(store.getItem).not.toHaveBeenCalled();
+    expect(store.setItem.mock.calls[0][1]).toBe(JSON.stringify("rendered-1"));
+    expect(record.writes.item).toBe(1);
+  });
+
+  it("fill mode reads the fresh item: no execution, no write, no item write counted", async () => {
+    const store = {
+      getItem: vi.fn().mockResolvedValue({
+        value: JSON.stringify("cached"),
+        handles: "",
+        tags: [],
+        expiresAt: Date.now() + 60_000,
+      }),
+      setItem: vi.fn().mockResolvedValue(undefined),
+    };
+    const record = createWarmRecord("fill", {} as any);
+    mockGetRequestContext.mockReturnValue(makeCtx(store, record));
+    let calls = 0;
+    const cached = registerCachedFunction(
+      async (_x: string) => `rendered-${++calls}`,
+      "warm-fill-item",
+      "default",
+    );
+
+    await expect(cached("k")).resolves.toBe("cached");
+
+    expect(store.getItem).toHaveBeenCalledTimes(1);
+    expect(calls).toBe(0);
+    expect(store.setItem).not.toHaveBeenCalled();
+    expect(record.writes.item).toBe(0);
   });
 });

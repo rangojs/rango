@@ -10,6 +10,7 @@ import type { MiddlewareContext } from "../../router/middleware.js";
 // _requestTags the middleware collects (#648).
 import { cacheTag } from "../cache-tag.js";
 import { runWithRequestContext } from "../../server/request-context.js";
+import { createWarmRecord } from "../../prerender/warm-request.js";
 
 // ============================================================================
 // Mock Cache Store
@@ -1576,6 +1577,113 @@ describe("createDocumentCacheMiddleware", () => {
 
       expect(next).toHaveBeenCalledTimes(1);
       expect(response.headers.has("x-document-cache-status")).toBe(false);
+    });
+  });
+
+  describe("router.prerender() warm", () => {
+    const KEY = "localhost/page:html";
+
+    function seedFresh(): Response {
+      const stored = new Response("Stored content", {
+        headers: { "Cache-Control": "s-maxage=60" },
+      });
+      mockStore.cache.set(KEY, {
+        response: stored,
+        staleAt: Date.now() + 60 * 1000,
+      });
+      return stored;
+    }
+
+    function warm(mode: "replace" | "fill") {
+      const record = createWarmRecord(mode, { store: mockStore } as any);
+      (mockRequestCtx as any)._prerenderWarm = record;
+      return record;
+    }
+
+    async function run(next: ReturnType<typeof vi.fn>): Promise<Response> {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+      const response = (await createDocumentCacheMiddleware()(
+        createMockMiddlewareContext("http://localhost/page"),
+        next as any,
+      )) as Response;
+      await response.text();
+      await vi.runAllTimersAsync();
+      return response;
+    }
+
+    it("replace mode does not read the stored response, renders, and writes under the key a non-warm MISS writes", async () => {
+      const getResponse = vi.spyOn(mockStore, "getResponse");
+      const putResponse = vi.spyOn(mockStore, "putResponse");
+
+      // The key a non-warm MISS writes, on an empty store.
+      await run(
+        vi.fn().mockResolvedValue(
+          new Response("cold", {
+            headers: { "Cache-Control": "s-maxage=60" },
+          }),
+        ),
+      );
+      const normalKey = putResponse.mock.calls[0][0];
+      expect(normalKey).toBe(KEY);
+      mockStore.cache.clear();
+      getResponse.mockClear();
+      putResponse.mockClear();
+
+      const previous = seedFresh();
+      const record = warm("replace");
+      const next = vi.fn().mockResolvedValue(
+        new Response("rewarmed", {
+          headers: { "Cache-Control": "s-maxage=60" },
+        }),
+      );
+      const response = await run(next);
+
+      expect(getResponse).not.toHaveBeenCalled();
+      expect(next).toHaveBeenCalledTimes(1);
+      expect(response.headers.get("x-document-cache-status")).toBe("MISS");
+      expect(putResponse).toHaveBeenCalledTimes(1);
+      expect(putResponse.mock.calls[0][0]).toBe(normalKey);
+      expect(mockStore.cache.get(KEY)?.response).not.toBe(previous);
+      expect(await mockStore.cache.get(KEY)!.response.text()).toBe("rewarmed");
+      expect(record.document).toBe("stored");
+      expect(record.writes.response).toBe(1);
+    });
+
+    it.each([
+      ["Cache-Control: private", { "Cache-Control": "private, s-maxage=60" }],
+      ["no s-maxage", { "Cache-Control": "max-age=60" }],
+      [
+        "Set-Cookie",
+        { "Cache-Control": "s-maxage=60", "Set-Cookie": "a=1; Path=/" },
+      ],
+    ])(
+      "replace mode keeps the refusal for %s: nothing is stored",
+      async (_label, headers) => {
+        const putResponse = vi.spyOn(mockStore, "putResponse");
+        const record = warm("replace");
+
+        await run(vi.fn().mockResolvedValue(new Response("body", { headers })));
+
+        expect(putResponse).not.toHaveBeenCalled();
+        expect(record.document).toBe("not-cacheable");
+        expect(record.writes.response).toBe(0);
+      },
+    );
+
+    it("fill mode serves the stored fresh response as a HIT and writes nothing", async () => {
+      seedFresh();
+      const putResponse = vi.spyOn(mockStore, "putResponse");
+      const record = warm("fill");
+      const next = vi.fn();
+
+      const response = await run(next);
+
+      expect(next).not.toHaveBeenCalled();
+      expect(response.headers.get("x-document-cache-status")).toBe("HIT");
+      expect(putResponse).not.toHaveBeenCalled();
+      expect(record.writes.response).toBe(0);
+      expect(record.document).toBeUndefined();
     });
   });
 });

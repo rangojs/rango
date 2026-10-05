@@ -393,6 +393,22 @@ export interface RequestContext<
   _shellForcedMiss?: true;
 
   /**
+   * @internal This request is a router.prerender() warm
+   * (prerender/warm-request.ts). In `replace` mode every runtime cache read
+   * misses (isWarmReplace); the layers report into the record. A capture's
+   * derived context inherits it through the prototype.
+   */
+  _prerenderWarm?: import("../prerender/warm-request.js").PrerenderWarmRecord;
+
+  /**
+   * @internal Runs a callback in the async context this request entered the
+   * handler with (captureRequestEntryContext). router.prerender() dispatches
+   * a warm through it when called from inside a request. Absent where the
+   * runtime has no AsyncLocalStorage.snapshot.
+   */
+  _runAtRequestEntry?: <T>(fn: () => T) => T;
+
+  /**
    * @internal The freshness window of the route cache() records this
    * request read or wrote (cache-scope.ts noteRouteRecordWindow), as ms
    * timestamps: `freshUntil` is the record's `expiresAt`, `staleUntil` adds
@@ -967,6 +983,8 @@ export type PublicRequestContext<
   | "_resolvedCacheKeys"
   | "_shellKey"
   | "_shellForcedMiss"
+  | "_prerenderWarm"
+  | "_runAtRequestEntry"
   | "_routeRecordWindow"
   | "_shellFragmentPayload"
   | "_shellCaptureGuardTripped"
@@ -1037,6 +1055,27 @@ export const UNTRACKED_BACKGROUND_TASK: unique symbol = Symbol.for(
 
 // AsyncLocalStorage instance for request context
 const requestContextStorage = new AsyncLocalStorage<RequestContext<any>>();
+
+/**
+ * Capture the current async context (RequestContext._runAtRequestEntry): the
+ * handler calls this on entry, before it enters any router scope.
+ *
+ * Code that calls router.prerender() from a handler, a loader or an action
+ * sits inside that request's scopes, and a request dispatched from there
+ * inherits all but the request context: the route-definition store
+ * (router/manifest.ts loadManifest), the loader and cache() scope flags, the
+ * tag scopes. Scar tissue: a warm called from a route handler built its
+ * target's manifest into the calling route's store and answered 404 for every
+ * route no visitor had requested yet. Per request, not per module: workerd
+ * refuses a snapshot outside the request that created it.
+ */
+export function captureRequestEntryContext():
+  | (<T>(fn: () => T) => T)
+  | undefined {
+  return typeof AsyncLocalStorage.snapshot === "function"
+    ? AsyncLocalStorage.snapshot()
+    : undefined;
+}
 
 /**
  * Run a function within a request context

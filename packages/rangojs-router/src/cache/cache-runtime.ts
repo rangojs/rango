@@ -61,6 +61,7 @@ import {
 } from "./cache-exec-scope.js";
 import { reportCacheError } from "./cache-error.js";
 import { IN_FLIGHT_LEADER_MAX_WAIT_MS } from "./cache-policy.js";
+import { isWarmReplace, noteWarmWrite } from "../prerender/warm-request.js";
 import {
   executionStart,
   invalidatedSince,
@@ -609,8 +610,12 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       return result;
     }
 
-    // Cache lookup
-    const cached = await store.getItem(cacheKey);
+    // Cache lookup. A router.prerender() warm reads a miss and leads its own
+    // execution below: a leader that started before the warm was called may
+    // be reading data from before the change the warm publishes, and a
+    // follower writes nothing of its own.
+    const warmReplace = isWarmReplace(requestCtx);
+    const cached = warmReplace ? null : await store.getItem(cacheKey);
 
     // Serve a cached entry on the hit path: deserialize the stored value,
     // replay handle data (gated on tainted args), and surface the entry's tags
@@ -760,6 +765,7 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
                         swr: profile.swr,
                         tags: freshTags.length > 0 ? freshTags : undefined,
                       });
+                      noteWarmWrite(requestCtx, "item");
                     }
                   },
                 ),
@@ -798,7 +804,7 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     // against its OWN handle store (gated on ITS hasTaintedArgs), and records
     // tags into its OWN request — no deserialized result is shared across
     // requests. The store write stays exactly once (the leader's).
-    let existing = inFlightExecutions.get(cacheKey);
+    let existing = warmReplace ? undefined : inFlightExecutions.get(cacheKey);
     while (existing) {
       const remainingMs =
         IN_FLIGHT_LEADER_MAX_WAIT_MS - (Date.now() - existing.registeredAt);
@@ -1015,6 +1021,7 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
           swr: profile.swr,
           tags: tags.length > 0 ? tags : undefined,
         });
+        noteWarmWrite(requestCtx, "item");
       } catch (writeError) {
         requestCtx?._reportBackgroundError?.(writeError, "cache-write");
       }

@@ -10,6 +10,7 @@
 import type { ExecutionContext } from "../types/request-scope.js";
 import type { IsEmptyObject, ParamsFor } from "../reverse.js";
 import type { WritablePrerenderStore } from "./writable-store.js";
+import type { ShellCaptureRefusal } from "../rsc/shell-capture-constants.js";
 
 declare const prerenderTargetBrand: unique symbol;
 
@@ -85,6 +86,38 @@ export interface PrerenderRunOptions {
 export interface PrerenderManyOptions extends PrerenderRunOptions {
   /** Max concurrent renders in a batch (default 1; any invalid value is 1). */
   concurrency?: number;
+}
+
+/**
+ * What a warm request wrote, by cache. On a result of the warm path, and on
+ * an on-demand result whose route was also warmed.
+ */
+export interface PrerenderWarmCaches {
+  /**
+   * Store writes that landed, by store family: `record` (route `cache()`),
+   * `item` (`"use cache"` and loader `cache()`), `response` (the document
+   * cache and response routes), `shell` (the `ppr` shell).
+   */
+  writes: { record: number; item: number; response: number; shell: number };
+  /**
+   * The `ppr` shell; absent on a route without `ppr`. `fresh` is
+   * `onlyIfStale` finding a servable shell; `not-eligible` is a request the
+   * shell path passed on (an active nonce, a store without shells, the
+   * route's own `cache()` opt-out, a buffered response).
+   */
+  shell?:
+    | "stored"
+    | "fresh"
+    | "refused"
+    | "no-shell"
+    | "not-eligible"
+    | "skipped-capacity"
+    | "skipped-queue-timeout"
+    | "error";
+  /** Why the capture refused to store the shell. */
+  refusal?: ShellCaptureRefusal;
+  /** The document cache, when `createDocumentCacheMiddleware` ran. */
+  document?: "stored" | "not-cacheable";
 }
 
 /**

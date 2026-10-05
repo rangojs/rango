@@ -88,6 +88,7 @@ import {
   DEFAULT_ROUTE_TTL,
 } from "../../cache/cache-policy.js";
 import { readThroughItem } from "../../cache/read-through-swr.js";
+import { isWarmReplace, noteWarmWrite } from "../../prerender/warm-request.js";
 import {
   executionStart,
   predatesInvalidation,
@@ -768,7 +769,10 @@ function executeLoaderData<TEnv>(
     };
 
     const data = await readThroughItem({
-      getItem: (k) => store.getItem!(k),
+      // A router.prerender() warm takes the miss path: the body runs and
+      // setItem replaces the entry.
+      getItem: async (k) =>
+        isWarmReplace(requestCtxForExecute) ? null : store.getItem!(k),
       // Handles ride the entry like "use cache" (encodeHandles: Flight, pending
       // pushes awaited up to its timeout, the whole blob dropped on a timeout
       // or a thrown encode). Encoded here, inside the deferred write, so a
@@ -796,6 +800,7 @@ function executeLoaderData<TEnv>(
             tags: entryTags.length > 0 ? entryTags : undefined,
             ...(handles ? { handles } : {}),
           });
+          noteWarmWrite(requestCtxForExecute, "item");
         }),
       key,
       execute: async () => {
