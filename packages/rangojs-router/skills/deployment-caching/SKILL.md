@@ -78,6 +78,13 @@ is `createKVPrerenderStore(env.PRERENDER_KV)` from
 `queue` or a webhook route, and every request to an on-demand route pays one
 KV read plus one per tag on the entry.
 
+The same `router.prerender()` call warms any other route's caches before
+traffic, when `CFCacheStore` has `kv` (shared by every colo). It fills the
+calling colo and KV; a colo that already holds its own copy keeps it until it
+expires, so a content refresh is `updateTag()` and then the warm: no colo
+serves the old copy, and a colo without one reads the warmed entry
+(`/cloudflare` → "Warm routes on Workers").
+
 ### Vercel
 
 The Vercel preset emits static client assets plus one streaming Node Function.
@@ -87,6 +94,9 @@ Vercel's CDN/ISR cache. Rango's on-demand prerender does not use Vercel ISR
 either: it needs a durable `WritablePrerenderStore` shared by every function
 instance, and v1 ships none for Vercel (the in-memory store is per process),
 so a Vercel app writes a small get/set adapter over its own storage.
+Warming a plain route (`/prerender` → "Warm any route before traffic") needs
+no such store: it writes to `VercelCacheStore`, in the region the call runs
+in.
 
 The preset deliberately emits no Vercel `.prerender-config.json`, response
 `chain`, or CDN-stitched resume function. Vercel's open-source Build Output

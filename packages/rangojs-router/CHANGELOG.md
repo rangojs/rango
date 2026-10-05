@@ -2,6 +2,76 @@
 
 ## Unreleased
 
+### Added: `router.prerender()` warms any route before traffic ([#1062](https://github.com/rangojs/rango/issues/1062))
+
+After a deploy that changes server code, and after an `updateTag()`, every
+cache key starts cold: the first visitor to each URL pays the render. On-demand
+prerender (in this release too) covers `Prerender(..., { onDemand })` routes.
+Every other route's caches filled only from a visitor's request: a `ppr`
+shell, `cache()` records, `"use cache"` results, a loader's own `cache()`,
+the document cache.
+
+`router.prerender()` now handles those routes too. For a route that is not
+on-demand it sends the URL through the router's own handler as an anonymous
+visitor would, in a mode where every cache read misses and every write
+replaces the entry under the visitor's key. The old entries keep serving until
+the new ones are written.
+
+```ts
+const prerender = router.prerender({
+  env,
+  ctx,
+  origin: "https://shop.example",
+});
+
+await prerender("/products/1"); // any route: its next document request is a shell HIT
+await prerender.many(urls, { concurrency: 4, onlyIfStale: true });
+```
+
+What to know before you call it:
+
+- **The cache store must be shared.** A warm fills the cache where the call
+  runs, so the router asks the store where its entries can be read
+  (`SegmentCacheStore.scope`). `CFCacheStore` with `kv` is `"global"` and
+  `VercelCacheStore` is `"regional"` (a warm fills the region it runs in, which
+  is all traffic on a single-region project): both are warmed. `CFCacheStore`
+  without `kv` and `MemorySegmentCacheStore` are `"local"`: the call returns
+  `skipped-store-not-shared` and renders nothing. The memory store is allowed
+  under the dev server, so you can try it locally. A custom store declares
+  `scope: "global"` or `"regional"` to be warmed; without the field it is
+  refused.
+- **Cache keys carry the host.** A full-URL target uses its own origin. A path
+  or `{ route, params }` target uses `origin` from the binding, or the origin
+  of the request the call is made from (a server action, a route handler,
+  `onRevalidate`). A cron or queue handler has no request: pass `origin`, or
+  the result is `skipped-no-origin`.
+- **The request is anonymous:** a `GET` with `accept: text/html` and no
+  cookies. Middleware sees it; an auth redirect makes the result
+  `render-failed`. A route that reads `cookies()` or `headers()` inside
+  `cache()`, `"use cache"` or a `ppr` shell is `skipped-personalized`, as it
+  is refused for a visitor.
+- **The result says what happened.** Each one has `path: "on-demand" | "warm"`
+  and, for a warm, `caches`: the writes that landed by store family, the
+  shell's outcome and why a capture refused, and the document cache's
+  outcome. New statuses: `warmed`, `skipped-store-not-shared`,
+  `skipped-no-origin`, `shell-not-stored`, `skipped-uncached`.
+- **An on-demand route gets both.** After the requestless render is stored,
+  one warm request rebuilds the route's loaders' own `cache()` and the
+  document cache on the new entry, when the app store is shared and an origin
+  resolves.
+- **To refresh changed content, invalidate and then warm:**
+  `await updateTag(tag)` and then `await prerender(url)`. A warm does not
+  reach a copy another edge location already holds; the invalidation makes
+  those copies unservable.
+- **What a warm does not write:** the records a client navigation reads
+  (they fill on the first navigation), and anything behind an app entry that
+  builds its own `createRSCHandler({ cache, version })` (a warm runs
+  `router.fetch`).
+
+`skipped-not-on-demand`, the status an unreleased build of on-demand prerender
+returned for these routes, is gone. See the `prerender` skill, "Warm any route
+before traffic".
+
 ### Fixed: a superseded link click no longer follows its server redirect ([#1047](https://github.com/rangojs/rango/issues/1047))
 
 When you clicked a link, then clicked another before the first response

@@ -561,6 +561,19 @@ curl -s -D - -o /dev/null https://app.example.com/products/1 | grep -i x-rango-s
   writes, and marker rejection, with `cf-ray`/colo and read timings. The flag is baked at
   build time; setting only a Worker runtime variable is too late.
 
+### Capturing a shell before the first visitor
+
+A shell is captured by the first document MISS for its key, so the first
+visitor after a deploy or an `updateTag()` renders without one. To capture it
+ahead of them, warm the URL: `router.prerender({ env, ctx })(url)` renders it
+through the handler, schedules the capture and waits for it, so the next
+document request is a HIT. A warm replaces a stored shell in place (the old
+one serves until the new one is written) and reports the capture's outcome
+(`result.caches.shell`, with `refusal` when the capture refused). It is not
+subject to the per-key in-flight dedup or the refused-capture backoff, which
+exist to stop a herd of visitors repeating work; every correctness guard on
+this page still decides. See `/prerender` → "Warm any route before traffic".
+
 ### Unit / integration testing (public primitives)
 
 Import from `@rangojs/router/testing` (Vitest) or `@rangojs/router/testing/e2e`

@@ -523,6 +523,23 @@ already expressible with `cache({ key })`.
 | `CFCacheStore`            | `@rangojs/router/cache` | Cloudflare Workers (Cache API L1 + optional KV L2) |
 | `VercelCacheStore`        | `@rangojs/router/cache` | Vercel Functions (Vercel Runtime Cache)            |
 
+### Filling a cache before traffic
+
+Every cache above fills from the first request that misses. To pay that
+render before a visitor does (after a deploy, after an `updateTag()`), warm
+the URL: `router.prerender({ env, ctx })(url)` sends it through the router's
+handler in a mode where every cache read misses and every write replaces the
+entry, so the route's `ppr` shell, `cache()` records, `"use cache"` results,
+loader caches and document cache entry are rewritten under the keys a
+visitor reads, with the old entries serving until then. See `/prerender` →
+"Warm any route before traffic".
+
+A warm only writes to a store that is shared beyond the place the call runs.
+Each store says where its entries can be read (`scope`): `CFCacheStore` with
+`kv` is `"global"`, without `kv` `"local"`; `VercelCacheStore` is `"regional"`
+(a warm fills the region it runs in); `MemorySegmentCacheStore` is `"local"`
+(refused in production, allowed under the dev server).
+
 ### Memory Store
 
 For development, tests, and single-instance deployments. Entries live in
@@ -1093,6 +1110,17 @@ cache({ store: checkoutCache }, () => [
 A per-boundary store becomes reachable by `updateTag()`/`revalidateTag()` only
 once that boundary has been matched in the current process. For data you
 invalidate by tag, prefer the app-level store.
+
+A store you implement declares where its entries can be read, or
+`router.prerender()` refuses to warm into it (a store that declares nothing is
+treated as `"local"`):
+
+```typescript
+const store: SegmentCacheStore = {
+  scope: "global", // every location reads the same entries; or "regional"
+  // get, set, delete, ...
+};
+```
 
 If you implement `SegmentCacheStore` yourself, `invalidateTags(tags)` is called
 synchronously inside the invalidating request, and `revalidateTag()` does not

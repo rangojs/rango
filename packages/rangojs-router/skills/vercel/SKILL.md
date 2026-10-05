@@ -118,6 +118,8 @@ export const router = createRouter({ cache: resolveCache }).routes(/* ... */);
 
 The cache factory receives `(env, ctx)`: on Vercel `env` is `process.env` and `ctx` is `{ waitUntil }`; off-platform `ctx` is `undefined`. Cache semantics and tag invalidation: `/caching`, `/cache-guide`.
 
+`router.prerender()` can warm a route into this store before traffic (`/prerender` → "Warm any route before traffic"). The Runtime Cache is per region, so `VercelCacheStore` declares `scope: "regional"`: a warm fills the region the call runs in. That is all traffic when the project's functions run in one region (the default `iad1` for new projects, and every Hobby project); on a multi-region project it warms one region and the others fill on first use. The router does not detect the region count. The memory store used off-platform above is refused in production and allowed under the dev server.
+
 `getCache()` takes no deployment id: `VercelCacheStore` puts a version in front of every key itself (data version for families `s`, `i`; document version for `r`, `h`; none for tag markers), computed per `createRouter()` from its built code. A deploy that does not change a router keeps its entries; a deploy that changes it reads under new keys. `version` on the store (or on `createRouter`) replaces both versions. To clear the cache on every deploy, set `version` to a per-deploy value or keep a deployment-scoped `getCache({ namespace: process.env.VERCEL_DEPLOYMENT_ID })`. Two environments built from the same code share entries if they share a cache namespace; give each its own namespace or `version`.
 
 ## Host routers (multi-app)

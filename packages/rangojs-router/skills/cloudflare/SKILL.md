@@ -257,6 +257,57 @@ changes server code starts from the build entries again.
 one marker per tag on the entry, uncached, so keep tag counts small. Neither
 `updateTag()` nor `revalidateTag()` reaches this store.
 
+## Warm routes on Workers
+
+`router.prerender()` also warms a route that is not on-demand: its `ppr`
+shell, `cache()` records, `"use cache"` results and document cache entry are
+rewritten before a visitor asks (`/prerender` → "Warm any route before
+traffic"). On Workers:
+
+- **`CFCacheStore` needs `kv`.** With KV the store is shared by every colo
+  (`scope: "global"`) and a warm is allowed; without it entries live in one
+  colo's Cache API and the call returns `skipped-store-not-shared`.
+- **Give `scheduled` and `queue` an origin.** Cache keys carry the host, and
+  those handlers have no request to take it from:
+
+  ```typescript
+  async scheduled(_event: ScheduledEvent, env: AppBindings, ctx: ExecutionContext) {
+    const prerender = router.prerender({
+      env,
+      ctx,
+      origin: "https://shop.example",
+    });
+    ctx.waitUntil(prerender.many(["/", "/products/1"], { onlyIfStale: true }));
+  },
+  ```
+
+  A webhook route or a server action needs none: the warm uses the origin of
+  the request it is called from.
+
+- **A warm fills the colo it runs in, and KV.** Another colo that already
+  holds its own Cache API copy keeps serving it until it expires; an L1 hit
+  never consults KV. After a deploy no colo holds a copy, so the warm's KV
+  entry is what each one reads next. For a content change, invalidate and then
+  warm, in this order:
+
+  ```typescript
+  await updateTag(`product:${id}`); // no colo serves the old copy any more
+  await router.prerender({ env, ctx })(`/products/${id}`); // writes the new one
+  ```
+
+  A colo with no copy of its own reads the warmed entry from KV. A colo that
+  was still holding the old copy treats it as a miss and renders once for
+  itself (it does not read the fresher KV entry). With `tagPurge` the purge
+  evicts every colo's copy, so they all read the warmed entry.
+
+- **Entries under 60 seconds stay in one colo.** KV's minimum `expirationTtl`
+  is 60 s, so a segment, item or response entry whose `ttl + swr` is shorter
+  is written to the Cache API only, and a warm of it reaches the calling colo
+  alone. Shells always reach KV.
+- **KV writes take time to spread.** Cloudflare documents up to 60 seconds or
+  more before a write is visible in other locations; a visitor elsewhere in
+  that window renders the page as before.
+
 ## Tracing on Workers
 
 `createCloudflareTracing()` from `@rangojs/router/cloudflare` emits the

@@ -1,11 +1,20 @@
 # router.prerender() for every route
 
-**Status:** Design, not built. Red tests:
-`src/testing/__tests__/prerender-warm.rsc-test.tsx` (userland, through
-`serveShellRequest` and the public runner) and
-`src/cache/__tests__/store-scope.test.ts` (the store declaration). Issue
-#1062; stacks on #640 (`docs/design/ondemand-prerender.md`) and ships in the
-same release.
+**Status:** Built. Issue #1062; stacks on #640
+(`docs/design/ondemand-prerender.md`) and ships in the same release. The
+analysis below is the design as reviewed, kept so you can see why each piece
+is where it is; where the build differs from what was first written, the
+text says what was built, and "What changed between the design and the build"
+lists every difference in one place. The consumer-facing version is the
+`prerender` skill ("Warm any route before traffic").
+
+Where it lives: the dispatch in `src/prerender/create-prerender-trigger.ts`,
+the request and its wait in `src/prerender/warm.ts`, the mark, record and
+predicate in `src/prerender/warm-request.ts`, the scope gate in
+`src/cache/store-scope.ts`. Tests: the userland suites
+`src/testing/__tests__/prerender-warm.rsc-test.tsx` and
+`prerender-warm-layers.rsc-test.tsx`, the unit tests listed under "Test plan",
+and `e2e/prerender-warm.test.ts` in both apps.
 
 ## Why
 
@@ -87,6 +96,13 @@ writes only what a visitor's request on a cold cache would have written.
 10. **The capture a warm schedules reads normally.** It runs after the warm's
     writes (the capture's write barrier) and replays them, so it bakes the
     fresh generation instead of rendering every handler a second time.
+11. **A warm renders outside the scopes of the code that called it.** Called
+    from a handler, a loader or an action, it runs in the async context that
+    request entered the handler with, not in the caller's (see "Nested
+    calls").
+12. **A warm starts in a later millisecond than the call.** So the
+    invalidation in `await updateTag(tag)` then `prerender(url)` never refuses
+    the warm's own shell.
 
 ## Dispatch
 
@@ -106,7 +122,7 @@ on-demand route?
   |        then, when the app store is shared and an origin resolves:
   |        warm GET (replace) ------------------------> result.caches
   |
-  +-- no:  hash, _rsc*, __no_cache -------------------> skipped-unsupported-target
+  +-- no:  hash, _rsc*, __no_cache, __rsc, __html ----> skipped-unsupported-target
            origin: target, runtime.origin, ambient request
              +-- none --------------------------------> skipped-no-origin
            resolve createRouter({ cache }) with (env, collecting ctx)
@@ -116,6 +132,11 @@ on-demand route?
              -> warmed | already-fresh | skipped-personalized | shell-not-stored
                 | skipped-uncached | render-failed
 ```
+
+A target that does not parse as an http(s) URL or a path is
+`skipped-unsupported-target` before the match; every other check runs after
+it, because the route decides which rules apply (an on-demand key carries no
+search, a warm's keys do).
 
 #640's `skipped-not-on-demand` is gone: that branch is now the warm path. #640
 is not released yet, so the status is removed, not deprecated.
@@ -165,15 +186,15 @@ record through the prototype, and must read normally. The predicate is read at
 six points, all before a store read that already exists. None of them needs a
 store contract change.
 
-| Layer                | Hook point (file:function)                                                                                                                                                                                                                                | Reached through the normal pipeline?           |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| Route `cache()`      | `cache/cache-scope.ts:CacheScope.lookupRouteDetailed`, before `store.get` (:798)                                                                                                                                                                          | yes, plus the predicate                        |
-| Loader `cache()`     | `router/segment-resolution/loader-cache.ts:executeLoaderData`, the `getItem` passed to `readThroughItem` (:771)                                                                                                                                           | yes, plus the predicate                        |
-| `"use cache"`        | `cache/cache-runtime.ts:registerCachedFunction` (the wrapper), `store.getItem` (:613) and the in-flight follower loop (:801)                                                                                                                              | yes, plus the predicate                        |
-| PPR document shell   | `rsc/rsc-rendering.ts:shellServePlan` (`readShellEntry` :559, `lookupBuildShell` :694, `storedSeqAtRead` :555, the descriptor :575); `rsc/shell-capture.ts:scheduleShellCapture` (:1098, :1111, :1119) and `attemptCapture` (:1824) via a descriptor flag | yes, plus the predicate and `descriptor.force` |
-| Navigation shell     | none                                                                                                                                                                                                                                                      | not warmed; see below                          |
-| Document cache       | `cache/document-cache.ts:createDocumentCacheMiddleware`, the `getResponse` (:411)                                                                                                                                                                         | yes, plus the predicate                        |
-| Response-route cache | `rsc/response-cache-serve.ts:serveResponseRouteWithCache`, the `getResponse` (:191)                                                                                                                                                                       | yes, plus the predicate                        |
+| Layer                | Hook point (file:function)                                                                                                                                                                                           | Reached through the normal pipeline?           |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| Route `cache()`      | `cache/cache-scope.ts:CacheScope.lookupRouteDetailed`, before `store.get`                                                                                                                                            | yes, plus the predicate                        |
+| Loader `cache()`     | `router/segment-resolution/loader-cache.ts:executeLoaderData`, the `getItem` passed to `readThroughItem`                                                                                                             | yes, plus the predicate                        |
+| `"use cache"`        | `cache/cache-runtime.ts:registerCachedFunction` (the wrapper), `store.getItem` and the in-flight follower loop                                                                                                       | yes, plus the predicate                        |
+| PPR document shell   | `rsc/rsc-rendering.ts:shellServePlan` (`readShellEntry`, `lookupBuildShell`, `storedSeqAtRead`, the descriptor); `rsc/shell-capture.ts:scheduleShellCapture` and `attemptCapture` via `ShellCaptureDescriptor.force` | yes, plus the predicate and `descriptor.force` |
+| Navigation shell     | none                                                                                                                                                                                                                 | not warmed; see below                          |
+| Document cache       | `cache/document-cache.ts:createDocumentCacheMiddleware`, the `getResponse`                                                                                                                                           | yes, plus the predicate                        |
+| Response-route cache | `rsc/response-cache-serve.ts:serveResponseRouteWithCache`, the `getResponse`                                                                                                                                         | yes, plus the predicate                        |
 
 ### Route `cache()`
 
@@ -240,9 +261,17 @@ scope's `allowsCache("read")`, `resolveRequestShellKey`), then:
 - sets `descriptor.force = true` and chains the warm record's sink in front of
   the router's `debugShellCapture` sink (`descriptor.debugSink`), which is how
   the runner learns the capture's outcome without a new channel;
-- stamps `record.shell ??= "not-eligible"` right after `resolvePprConfig`, so a
-  `ppr` route that later passes on a gate (nonce, no shell family, an opt-out,
-  a failed partition key, `allReady`) reports it. A capture event overwrites it.
+- stamps `record.shell ??= "not-eligible"` at the top of the plan when the
+  route declares `ppr` (`resolvePprConfig`), ahead of every gate, so a `ppr`
+  route that passes on one (a request already marked `ctx.dynamic()`, a nonce,
+  no shell family, an opt-out, a failed partition key, `allReady`) reports it.
+  A capture event overwrites it, and so does a served HIT in fill mode
+  (`"fresh"`). The stamp is also how the runner knows the route declared
+  `ppr`: a route without it leaves `record.shell` unset.
+
+The sink is chained for a warm in either mode (a fill-mode MISS or stale HIT
+schedules an ordinary capture, and the runner still wants its outcome); the
+skipped reads, the unset sequence and `force` are replace mode only.
 
 The response renders and `requestRenderPlan` schedules the capture as on any
 MISS. `scheduleShellCapture` with `force`:
@@ -265,9 +294,10 @@ every handler a second time and could bake a different generation than the
 foreground wrote. The barrier is bounded at `SHELL_CAPTURE_WRITE_BARRIER_MS`
 (1500 ms) for visitors, after which it proceeds and may read an entry that is
 still the old one. With `force` the bound becomes the time left under
-`SHELL_CAPTURE_TASK_HARD_CAP_MS` after the capture budget: the warm is not
-latency-bound, and an old entry baked into a new shell is exactly what a warm
-must not produce.
+`SHELL_CAPTURE_TASK_HARD_CAP_MS` after the capture budget
+(`max(1500, 25000 - (ppr.captureTimeout ?? 15000))` ms, 10 s by default, both
+existing constants): the warm is not latency-bound, and an old entry baked
+into a new shell is exactly what a warm must not produce.
 
 - **Overwrite:** `putShell` replaces; `CFCacheStore` drops its isolate memo for
   the key on write (`cf-cache-store.ts:2623`).
@@ -285,7 +315,10 @@ must not produce.
   (`ShellCaptureDebugEvent`) gains an optional `refusal` field, additive, set
   at the existing refuse exits from what they already know
   (`_shellCaptureGuardTripped`, `_dynamic`, the warning they emit). Its values
-  are listed under `PrerenderWarmCaches.refusal` in "Result shape".
+  are `ShellCaptureRefusal` (`rsc/shell-capture-constants.ts`), listed under
+  `PrerenderWarmCaches.refusal` in "Result shape".
+- **The write count:** `noteWarmWrite(reqCtx, "shell")` after a `putShell`
+  that was not refused; the capture's derived context inherits the record.
 
 ### Navigation shell: not warmed
 
@@ -321,10 +354,10 @@ Overwrite in place is exact at the location the warm runs in. On
 (read flow "L1 hit → serve | L1 miss → L2 hit → serve + promote to L1"), and an
 L1 hit never consults KV. Those copies keep serving until they expire (`max-age
 = ttl + swr`) or a tag invalidation reaches them through the KV markers. So a
-warm closes the cold window the issue is about (after a deploy, after an
-`updateTag()`: in both cases the other colos have no valid L1 copy and read the
-warm's KV entry), but it is not a cross-colo refresh for a content change that
-invalidated nothing. Two smaller cases:
+warm closes the cold window after a deploy (new version, no colo holds a copy,
+each one reads the warm's KV entry), but it is not a cross-colo refresh for a
+content change that invalidated nothing. After an `updateTag()` it depends on
+what a colo holds, see below. Two smaller cases:
 
 - `CFCacheStore` skips the KV write for a segment, item or response entry whose
   `ttl + swr` is under 60 s (KV's minimum `expirationTtl`; `kvSetSegment`,
@@ -333,10 +366,54 @@ invalidated nothing. Two smaller cases:
 - Isolate memos in other isolates (the shell memo, 2 s by default; the marker
   memo) serve their copy for their window.
 
-None of this needs a store contract change; it is what the platform offers. The
-pattern for a CMS webhook (a request, so `updateTag()` works) is
-`updateTag(tag)` then `await prerender(url)`: one short cold window in the
-calling colo, every other colo converges on its next read.
+None of this needs a store contract change; it is what the platform offers,
+and it is decided: the stores are not changed. A global content refresh is two
+calls, `await updateTag(tag)` and then `await prerender(url)` (a webhook is a
+request, so `updateTag()` works there): the invalidation makes every colo's
+copy unservable, and the warm writes the new entry to the calling colo and to
+KV. What another colo does on its next read depends on what it holds:
+
+- **No copy of its own** (it never served the URL, its copy expired, or
+  `tagPurge` evicted it): an L1 miss, so it reads the warm's entry from KV and
+  renders nothing.
+- **Its own, now invalidated, copy:** it answers a miss and renders once for
+  itself. `CFCacheStore.get` (and `getItem`, and the shell read) return `null`
+  for an invalidated L1 hit without reading the entry's KV key; the comment
+  there calls the KV fall-through a deferred follow-up. It never serves the
+  old copy, and its own render heals it.
+
+So the pattern guarantees that no location serves the old content and that
+the calling location and every location without a copy are ready. It does not
+spare a render to a colo that was serving the old copy, unless the store runs
+in purge mode. That is narrower than "their next read finds the warmed entry
+in KV", which is how the decision was first worded; the test below is what
+showed it.
+
+Two tests pin the sequence, at the two levels it crosses:
+
+- `src/cache/cf/__tests__/cf-cache-store-warm-refresh.test.ts` runs two
+  `CFCacheStore` instances over one fake KV, each with its own fake Cache API
+  (two colos). It shows the read flow the pattern relies on: without an
+  invalidation the other colo keeps serving its own L1 copy after the warm's
+  write; after `updateTag` and then the write, a colo with no copy (or whose
+  copy a purge evicted) reads the warmed entry from KV, and a colo holding the
+  old copy stops serving it; an entry under 60 s never reaches the other colo.
+  It cannot show Cloudflare's KV propagation delay (a write "may take up to 60
+  seconds or more to be visible in other global network locations"), real
+  per-colo Cache API isolation, or the isolate memo windows: those are
+  platform behavior.
+- `src/testing/__tests__/prerender-warm-layers.rsc-test.tsx` ("updateTag(tag),
+  then prerender(url)") runs the two calls from one route handler through the
+  router: the warm's own record and shell are stored, not refused by the
+  invalidation that preceded them.
+
+That second test is why a warm starts in a later millisecond than the call
+(`prerender/warm.ts`, `runWarmRequest`). A store refuses a shell whose capture
+started in the millisecond of an invalidation of one of its tags (`putShell`'s
+generation gate compares whole milliseconds, and cannot tell "just before"
+from "just after" inside one). On a memory store the two calls land in one
+millisecond often enough that the test failed one run in three before the
+wait was added.
 
 ## The synthetic request
 
@@ -351,7 +428,11 @@ calling colo, every other colo converges on its next read.
   skips only the follow-up warm GET, and its result has no `caches`.
   Search params are kept (keys carry them, and `cache.searchParams` filters
   them as for a visitor). A hash, and the parameters that switch the handler's
-  mode (`_rsc*`, `__no_cache`, `_rsc_shell`), are `skipped-unsupported-target`.
+  mode (the router's reserved set, `isReservedSearchParam` in
+  `cache/cache-key-utils.ts`: `_rsc*`, which covers `_rsc_shell`, and
+  `__no_cache`, `__rsc`, `__html`), are `skipped-unsupported-target`. A
+  consumer's own `__variant=b` is a page like any other. An `origin` option
+  that is not a URL is `skipped-no-origin` with the parse error.
 - **Headers:** `accept: text/html` and nothing else. No cookie, no
   authorization, no user agent, no `accept-language`, no `x-rsc-*`. On
   Cloudflare there is no `request.cf` (no geo).
@@ -366,8 +447,10 @@ calling colo, every other colo converges on its next read.
   HIT into a MISS; the warm mark also overwrites, so it must not be reachable
   from outside.
 - **Record:** `PrerenderWarmRecord` holds the mode (`"replace"` or `"fill"`),
-  the shell outcome and refusal, the identity surface that was refused, the
-  document-cache outcome, and the write counts by family. The layers write it:
+  the gated cache config, the shell outcome and refusal, the identity surface
+  that was refused, the document-cache outcome, the write counts by family,
+  and the request's `_renderErrors` array (the handler hands it over when it
+  attaches the record). The layers write it:
   the capture sink (`shell`, `refusal`), `guardIdentityRead` right before it
   throws or flags a capture (`identity`, one line), the document cache
   (`document`), and one `noteWarmWrite(ctx, family)` call after each successful
@@ -398,8 +481,33 @@ calling colo, every other colo converges on its next read.
   `render-failed` with `responseStatus: 302`, which is the right signal (an
   anonymous visitor is not served a cached page there).
 - **Nested calls:** the runner may run inside a request (a webhook route, a
-  server action). The handler opens its own request context; the caller's is
-  untouched.
+  server action). The handler opens its own request context, but that is not
+  enough: the caller also sits inside every other `AsyncLocalStorage` scope of
+  its request, and a request dispatched from there inherits them. The one that
+  broke first is the route-definition store: `router/manifest.ts loadManifest`
+  builds a route's manifest into `getContext()`'s store, which for a top-level
+  request is a fresh detached one and for a nested request was the calling
+  route's. A warm called from a route handler answered 404 for every route no
+  visitor had requested yet (a visitor's request fills the module-level
+  manifest cache, which hid it afterwards). The loader and `cache()` scope
+  flags the identity guards read, and the tag scopes, would leak the same
+  way from a loader or a cached handler.
+
+  So a request captures the async context it entered the handler with
+  (`captureRequestEntryContext`, `RequestContext._runAtRequestEntry`, set in
+  `rsc/handler.ts` before any router scope), and the runner dispatches the
+  warm through the calling request's (`router.ts`, the trigger's `fetch`
+  dep). With no calling request there is no scope to leave. It is captured
+  per request, not once per module: workerd refuses to run a snapshot outside
+  the request that created it ("Cannot call this AsyncLocalStorage bound
+  function outside of the request in which it was created"), which is what a
+  module-level snapshot did on the Cloudflare preset. The cost is one
+  `AsyncLocalStorage.snapshot()` per request, about 0.8 µs measured on Node
+  24; a runtime without `snapshot` skips it and a warm there runs in the
+  caller's context.
+
+- **Start:** in a later millisecond than the call (see "What the stores
+  cannot do in place").
 
 ## The store declaration
 
@@ -424,14 +532,15 @@ export interface SegmentCacheStore<TEnv = unknown> {
 ```
 
 It is read in one place: the trigger's warm dispatch
-(`create-prerender-trigger.ts`), on the app-level store. Explicit
+(`create-prerender-trigger.ts`, through `resolveWarmStoreScope` in
+`cache/store-scope.ts`), on the app-level store. Explicit
 `cache({ store })` and loader stores are written by the warm without a check:
 which ones a render reaches is not known before it renders, and a write to a
 local one is wasted work, not a wrong one. Nothing else reads it in v1.
 
 | Store                              | `scope`      | Why                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | ---------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `MemorySegmentCacheStore`          | `"local"`    | Per process: "Suitable for development and single-instance deployments" (`memory-segment-store.ts`).                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `MemorySegmentCacheStore`          | `"local"`    | Per process: "Suitable for development and single-instance deployments" (`memory-segment-store.ts`). Under the Vite dev server the gate counts it as shared: see below.                                                                                                                                                                                                                                                                                                                                                                    |
 | `CFCacheStore` with `kv`           | `"global"`   | `cf-cache-store.ts` header: "L1 (Cache API): Per-colo, fast, ephemeral. Handles SWR atomically. L2 (KV): Global, persistent, ~50ms reads. Auto-warms cold colos." Read flow "L1 hit → serve \| L1 miss → L2 hit → serve + promote to L1". Cloudflare: "KV is a global, low-latency, key-value data store. It stores data in a small number of centralized data centers"; a write "may take up to 60 seconds or more to be visible in other global network locations". Set from `options.kv` in the constructor, next to `tagHistoryInert`. |
 | `CFCacheStore` without `kv` (#819) | `"local"`    | L1 only: the Cache API is per colo. Purge mode (`tagPurge`) evicts across the zone but stores nothing beyond the colo, so it stays local.                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `VercelCacheStore`                 | `"regional"` | Vercel: "Runtime cache is a regional, ephemeral cache ... within a Vercel region"; "Each region has its own cache". Functions "execute in Washington, D.C., USA (`iad1`) for all new projects"; Hobby runs one region, Pro up to 5, Enterprise all; entries can be evicted early (LRU at the storage limit). Decided: allowed for single-region deployments, by documentation only, no runtime region detection.                                                                                                                           |
@@ -439,7 +548,21 @@ local one is wasted work, not a wrong one. Nothing else reads it in v1.
 
 No knob on the shipped stores (decided). A single-process Node deployment whose
 memory store really is the only copy can subclass it and declare `"global"`
-(the e2e test-app does exactly that); that is a custom store declaring itself.
+(the e2e test-app does exactly that, which is what lets its production
+describe warm); that is a custom store declaring itself.
+
+**The memory store in dev (decided).** Refusing it everywhere would leave an
+author on the Node preset with nothing to try: every warm in local dev would
+answer the refusal. So under the Vite dev server the gate treats a
+`MemorySegmentCacheStore` as `"global"`: one process serves every dev request,
+so the entry a warm writes is the entry the next request reads. "Dev" here is
+the dev server itself, not `NODE_ENV`: `isViteDevServer()` reads the origin the
+routes-manifest virtual module sets (`globalThis.__PRERENDER_DEV_URL`), which a
+build, a preview server and a test runner never have. In production the store
+stays `"local"` and is refused. The class's `scope` declaration never moves
+(`store-scope.test.ts` pins `"local"`); only the gate reads the dev rule. If
+the production answer is ever revisited, it is that one declaration in
+`memory-segment-store.ts`.
 
 A non-shared store returns `{ ok: false, status: "skipped-store-not-shared" }`
 before anything renders, and in dev warns once per router (the trigger's
@@ -453,10 +576,10 @@ is "global" or "regional" (CFCacheStore with kv, VercelCacheStore), or a custom
 store that declares one.
 ```
 
-One compatibility note for review: a custom store class that already has a
-member named `scope` of another type stops typechecking against
-`SegmentCacheStore`, and at run time a non-matching value is refused (the safe
-side). If that is a concern, `sharing` is a free name.
+One compatibility note: a custom store class that already has a member named
+`scope` of another type stops typechecking against `SegmentCacheStore`, and at
+run time a value the router does not know is refused (the safe side;
+`warm-store-scope.test.ts`).
 
 ## Result shape
 
@@ -467,19 +590,22 @@ export interface PrerenderWarmCaches {
   /** The ppr shell. Absent on a route without ppr. */
   shell?:
     | "stored"
+    | "fresh" // onlyIfStale found a servable shell
     | "refused"
     | "no-shell"
     | "not-eligible"
     | "skipped-capacity"
     | "skipped-queue-timeout"
     | "error";
-  /** Why the capture refused (ShellCaptureDebugEvent.refusal). */
+  /** Why the capture refused (ShellCaptureRefusal). */
   refusal?:
     | "identity"
     | "dynamic"
     | "loader"
     | "no-record"
+    | "handles"
     | "size"
+    | "record-expired"
     | "invalidated"
     | "uncacheable";
   /** The document cache, when createDocumentCacheMiddleware ran. */
@@ -533,11 +659,19 @@ export type PrerenderResult =
     };
 ```
 
-The warm's status, first match wins: the response was not 200, or the render
-reported an error (`_renderErrors`): `render-failed`. The record holds an
-identity refusal: `skipped-personalized`. The route declared `ppr` and the
-shell is not `stored`: `shell-not-stored`. No write landed: `skipped-uncached`
-in replace mode, `already-fresh` in fill mode. Otherwise `warmed`.
+The warm's status (`warmStatus` in `prerender/warm.ts`), first match wins:
+the record holds an identity refusal: `skipped-personalized`. The handler
+threw, the response was not 200, or the render reported an error
+(`_renderErrors`): `render-failed`. The route declared `ppr` and the shell is
+neither `stored` nor `fresh`: `shell-not-stored`. No write landed:
+`skipped-uncached` in replace mode, `already-fresh` in fill mode. Otherwise
+`warmed`. The identity check comes first because the guard throws: a cookie
+read inside a `cache()` boundary also fails the render, and
+`skipped-personalized` is the cause a caller can act on.
+
+`shell-not-stored` is `ok: false` even when another cache wrote: the route
+declared a shell and the next visitor will not get one. `caches` still shows
+every write that landed.
 
 **`onlyIfStale` on a warm** is _fill_ mode: the request is marked (so the
 runner can report it) but reads normally, so a miss renders and writes, a
@@ -545,7 +679,8 @@ stale entry serves and its SWR refresh runs (the runner waits for it), and a
 fresh entry is left alone. That is exactly "top up what is cold or stale",
 the cron-sweep meaning #640 gave the option, and it costs a visitor's request
 when everything is fresh (a document-cache or shell HIT renders almost
-nothing). Zero writes reports `already-fresh`. On an on-demand route the option
+nothing). Zero writes reports `already-fresh`, and a served shell reports
+`caches.shell: "fresh"`. On an on-demand route the option
 keeps #640's meaning, and a fresh overlay skips the warm GET too.
 
 **`.many()`** dispatches each target on its own: one result per target, in
@@ -595,43 +730,87 @@ refuses its warm targets, each reported.
    renders response routes only. `serveShellRequest` needs one extension so the
    warm can render HTML in the rsc project (see the test plan).
 
-## Where the decided design needs a correction
+## Where the decided design needed a correction, and what was decided
 
-Each of these is stated so the review can decide; none is quietly built in.
+The write-up raised seven points where the design as first decided did not
+hold. The maintainer approved each recommendation; this is what was built.
 
-- **"The old entry serves until the new one is written" holds per location.**
-  On `CFCacheStore` with KV, other colos keep serving their L1 copy until it
-  expires or a tag invalidation reaches it; entries under 60 s total never reach
-  KV. The warm closes the cold window after a deploy or an `updateTag()`; it is
-  not a cross-colo refresh for a content change that invalidated nothing
-  (section "What the stores cannot do in place").
-- **"The existing guards decide" needs a split.** Correctness guards are never
-  bypassed (invariant 4). The capture's in-flight dedup, refused-capture backoff
-  and `skip-stored`, and the `"use cache"` follower join, must be bypassed for
-  the warm's own work, or a warm right after a visitor's capture, or within a
-  60 s backoff window, returns having replaced nothing.
-- **The capture must not run in the forced-miss mode,** and its write barrier
-  needs a longer bound under a warm (invariant 10).
-- **The host is part of every key, and the decided binding has no origin.** A
-  path target from a cron or a queue has no host to request. Recommend
-  `origin?: string` on `PrerenderRuntime` (additive). #640 also refuses search
-  params; the warm needs them, so the unsupported-target check moves after the
-  route is matched.
-- **"The normal request handler" can only be `router.fetch`'s.** An entry that
-  configures `createRSCHandler` directly (`cache`, `version`) is not seen.
-- **"It replaces the URL's `cache()` entries"** means the document (`doc:`)
-  records; the `partial:` and `intercept:` records are not reached.
-- **The memory store is refused in dev,** so local dev on the Node preset shows
-  only the refusal unless the app declares its store shared. The Cloudflare
-  preset in dev runs `CFCacheStore` over miniflare KV and warms.
+1. **"The old entry serves until the new one is written" holds per
+   location.** On `CFCacheStore` with KV, other colos keep serving their L1
+   copy until it expires or a tag invalidation reaches it; entries under 60 s
+   total never reach KV. Decided: do not change that. A global content refresh
+   is `updateTag(tag)` and then `prerender(url)`, documented in the skills and
+   pinned by the two tests named under "What the stores cannot do in place".
+   The tests narrowed the claim: a colo still holding the invalidated copy
+   renders once instead of reading the warmed entry.
+2. **"The existing guards decide" needed a split.** Built as written: a
+   warm's capture bypasses the in-flight dedup, the refused-capture backoff and
+   `skip-stored`, and a warm leads its `"use cache"` execution instead of
+   joining one. Every correctness guard decides as for a visitor: identity
+   reads, the tag-invalidation write gates, render errors, `maxSnapshotBytes`
+   and the store limits, `cache(false)` and `condition()`, the document
+   cache's refusals, queue capacity.
+3. **The capture must not run in the forced-miss mode,** and its write
+   barrier gets a longer bound under a warm (invariant 10; the bound reuses
+   `SHELL_CAPTURE_TASK_HARD_CAP_MS` and the capture budget).
+4. **The host is part of every key, and the decided binding had no origin.**
+   Built: an optional `origin` on the binding, else the calling request's
+   origin, else `skipped-no-origin` for a warm target (the on-demand render
+   never needs one). #640's search-param rejection moved after the route
+   match: a warm target keeps its search params, an on-demand target still
+   rejects them.
+5. **"The normal request handler" can only be `router.fetch`'s.** An entry
+   that configures `createRSCHandler` directly (`cache`, `version`) is not
+   seen. Documented; no code.
+6. **"It replaces the URL's `cache()` entries"** means the document (`doc:`)
+   records; the `partial:` and `intercept:` records are not reached and fill
+   on the first navigation. Documented.
+7. **The memory store is refused in dev** as first written. Decided
+   otherwise: it counts as shared under the Vite dev server and stays `local`
+   in production (see "The store declaration").
+
+### What changed between the design and the build
+
+Things the write-up did not have, or had differently. Each is described where
+it belongs above; this is the list.
+
+- **A warm leaves the caller's async context** (invariant 11, "Nested
+  calls"). The write-up said the handler's own request context was enough. It
+  was not: a warm called from a route handler answered 404 for a route no
+  visitor had requested yet.
+- **A warm starts in a later millisecond than the call** (invariant 12).
+  Found by the userland test for decision 1.
+- **The status order:** an identity refusal is checked before a failed
+  render, not after.
+- **`caches.shell` has `"fresh"`,** for `onlyIfStale` finding a servable
+  shell; without it a fill-mode HIT read as `shell-not-stored`.
+- **`refusal` has two more values,** `"handles"` and `"record-expired"`: two
+  existing refuse exits the first list did not name.
+- **The test SSR loader lives in a leaf module,** `rsc/ssr-module-loader.ts`,
+  not in `rsc/handler.ts`: `testing/serve-shell-request.ts` must install its
+  stub when it loads, and it cannot import the handler at module scope (the
+  handler binds build-only virtual modules).
+- **The reserved search params** are the router's existing set
+  (`isReservedSearchParam`), which adds `__rsc` and `__html` to the ones the
+  write-up listed.
+- **The edge-only refusal e2e was not built.** The refusal is pinned by the
+  trigger's unit tests and the userland test; the browser suites cover the
+  four behaviors a browser adds something to.
+- **An on-demand route's existing triggers now also send a warm request**
+  when the app store is shared and an origin resolves, including #640's own
+  e2e fixtures. Their statuses are unchanged; the result gains `caches`.
 
 ## Test plan
 
-### Userland (written, red): `src/testing/__tests__/prerender-warm.rsc-test.tsx`
+What is written, and the contract each suite pins.
 
-Through `router.prerender()` and `serveShellRequest`, on real Flight, with a
-`SharedMemoryStore` (a `MemorySegmentCacheStore` subclass declaring
-`"global"`):
+### Userland: through `router.prerender()` and `serveShellRequest`
+
+On real Flight, with a `SharedMemoryStore` (a `MemorySegmentCacheStore`
+subclass declaring `"global"`).
+
+`src/testing/__tests__/prerender-warm.rsc-test.tsx` (the 10 tests written red
+with this design, unchanged):
 
 | Test                                                                                        | Contract it pins                                                              |
 | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
@@ -646,108 +825,142 @@ Through `router.prerender()` and `serveShellRequest`, on real Flight, with a
 | `.many()` on a local store: the on-demand target renders, the warm target is refused        | #640 is unaffected by the store's scope                                       |
 | an on-demand route keeps the requestless render of #640, then warms its loaders' own caches | open question 3: render first, then the warm GET fills the loader's `cache()` |
 
+`src/testing/__tests__/prerender-warm-layers.rsc-test.tsx` (22 tests) does the
+same for what that file does not reach: a loader's own `cache()`, `"use
+cache"`, the document cache (and its `private` refusal), a response route's
+cache; the key a warm writes under (search params, `cache.searchParams`, the
+host); the origin (`skipped-no-origin`, the binding's `origin`, the calling
+request's); a warm called from a route handler for a route no visitor has
+requested (the nested-call regression, red without `_runAtRequestEntry`);
+`updateTag(tag)` then `prerender(url)` from one handler; `onlyIfStale`; and
+each refusal a visitor can provoke (`skipped-uncached`, `render-failed` on a
+middleware redirect, `skipped-personalized` for a cookie read inside
+`cache()`, `shell-not-stored` for `ctx.dynamic()`).
+
 **The primitive extension.** The warm renders through `router.fetch`, whose
 default `loadSSRModule` is `import.meta.viteRsc.loadModule("ssr", "index")`,
 which the rsc Vitest project cannot run (and `react-dom/server` refuses to load
 under the `react-server` condition). `serveShellRequest` already stubs exactly
-that one module. The extension: `src/rsc/handler.ts` gains an internal
-`setDefaultSSRModuleLoaderForTests(loader)` consulted where the default
-`loadSSRModule` is chosen, and `testing/serve-shell-request.ts` installs its
-`SSR_STUB` there when it loads. Everything else on the warm's path is
-production code: `router.fetch`, `createRSCHandler`, the match pipeline, the
-capture. Two things a test author must know: the warm writes to the store
-`createRouter({ cache })` configures, not to `serveShellRequest`'s
-`cacheStore` override, so a warm test configures the store on the router; and
-`router.fetch` binds its handler's document version once, as a production
-isolate does, so a test that moves versions with `setBuildVersions()` between
-warms gets the first version's handler.
+that one module. The extension: `src/rsc/ssr-module-loader.ts`, an import-free
+leaf holding `setDefaultSSRModuleLoaderForTests(loader)`, consulted in
+`rsc/handler.ts` where the default `loadSSRModule` is chosen;
+`testing/serve-shell-request.ts` installs its `SSR_STUB` there when it loads.
+Everything else on the warm's path is production code: `router.fetch`,
+`createRSCHandler`, the match pipeline, the capture. Two things a test author
+must know: the warm writes to the store `createRouter({ cache })` configures,
+not to `serveShellRequest`'s `cacheStore` override, so a warm test configures
+the store on the router; and `router.fetch` binds its handler's document
+version once, as a production isolate does, so a test that moves versions with
+`setBuildVersions()` between warms gets the first version's handler.
 
 ### Unit
 
-- `src/cache/__tests__/store-scope.test.ts` (written, red): memory `"local"`,
+- `src/cache/__tests__/store-scope.test.ts` (5, written red): memory `"local"`,
   `CFCacheStore` with KV `"global"`, without KV `"local"`, without KV in purge
   mode `"local"`, `VercelCacheStore` `"regional"`.
-- `src/prerender/__tests__/create-prerender-trigger.test.ts` (extend): dispatch
-  table with fake deps (od vs warm, origin resolution order, search kept for warm
-  and refused for od, reserved params, `no-store`, scope gate incl. undeclared,
-  dev warning once per router, status derivation from a record, `onlyIfStale`
-  fill mode, `.many()` order and `throwOnError` on a refusal, od follow-up warm
-  only on shared stores and only after `rendered` / `skipped-passthrough`).
-- `src/prerender/__tests__/warm-request.test.ts` (new): the mark is per
-  `Request` object (a clone or a rebuilt request carries none), `isWarmReplace`
-  is false under `_shellCaptureRun` and in fill mode, `noteWarmWrite` is a no-op
-  without a record.
-- Per layer, the forced miss and the unchanged guards, each with a record on a
-  hand-built request context: `cache-scope.test.ts` (miss without `store.get`;
-  `cache(false)` and a false `condition()` still `bypass`; the write still gated
-  by `predatesInvalidation`), `cache-runtime-inflight.test.ts` (no follower join;
-  the warm replaces the leader; followers of the warm get its envelope),
-  `run-loader-cache.rsc-test.ts` (miss, identity rule unchanged),
-  `document-cache.test.ts` (miss; `private`/`Set-Cookie` still refused; outcome
-  recorded), `shell-capture.test.ts` (`force` bypasses in-flight, backoff and
-  skip-stored, keeps capacity; the barrier bound; `refusal` on the event),
-  `server/__tests__/cookie-store.test.ts` (an identity throw records
-  `identity`), a response-route case in the dispatch suite.
+- `src/cache/__tests__/warm-store-scope.test.ts`: `resolveWarmStoreScope`
+  (declared, undeclared, an unknown value, the memory store in and out of the
+  dev server, `isViteDevServer`).
+- `src/prerender/__tests__/create-prerender-trigger.test.ts`: the dispatch
+  table with fake deps (on-demand vs warm, the origin order, search kept for a
+  warm and refused for on-demand after the match, reserved params, `no-store`,
+  the scope gate incl. undeclared, the dev warning once per router, each
+  status, `onlyIfStale` fill mode, `.many()` order, default concurrency and
+  `throwOnError` on a refusal, the follow-up warm only after `rendered` /
+  `skipped-passthrough` and only on a shared store with an origin).
+- `src/prerender/__tests__/warm-request.test.ts`: the mark is per `Request`
+  object, `isWarmReplace` is false under `_shellCaptureRun` and in fill mode,
+  the record's writers, `noteWarmShellEvent`.
+- `src/prerender/__tests__/warm.test.ts`: the request (a GET, `accept:
+text/html` only, marked), the collecting context, the drain, the wait for
+  nested background work, the later-millisecond start, `warmStatus`,
+  `warmCaches`.
+- `src/server/__tests__/request-entry-context.test.ts`:
+  `captureRequestEntryContext`.
+- Per layer, the forced miss and the unchanged guards, each with a record on
+  the file's own request context: `cache-scope.test.ts` (miss without
+  `store.get`; `cache(false)` and a false `condition()` still `bypass`; the
+  write under the visitor's key; a write whose tag was invalidated still
+  refused), `cache-runtime-inflight.test.ts` (no follower join; the warm
+  replaces the leader; a later caller joins the warm), `document-cache.test.ts`
+  (miss; `private` / no `s-maxage` / `Set-Cookie` still refused; outcome
+  recorded), `rsc/__tests__/response-cache-serve.test.ts`,
+  `shell-capture.test.ts` and `shell-capture-queue-skip.test.ts` (`force`
+  bypasses in-flight and backoff, keeps the inert-store skip, capacity and the
+  queue timeout; the barrier bound; `refusal` at every refuse exit; the write
+  count; a throwing `putShell`), `rsc-rendering-shell-ppr.test.ts` (replace
+  mode reads no shell and no build shell and forces the capture; the sink
+  order; `not-eligible` at each gate; fill mode), `server/__tests__/
+cookie-store.test.ts` (an identity throw records `identity`).
+- `src/cache/cf/__tests__/cf-cache-store-warm-refresh.test.ts`: the
+  `updateTag` then warm sequence across two colos (see "What the stores cannot
+  do in place").
 
-### Browser e2e (planned; dev and `(production)` describes in both apps)
+### Browser e2e (dev and `(production)` describes in both apps)
 
-Both apps get a trigger route that calls `router.prerender({ env, ctx })` and
-returns the result as JSON (like `OnDemandTrigger`), and fixtures with a
-monotonic stamp per handler run: a `ppr` route, a `cache()` route, a `ppr` route
-reading `cookies()`, and an on-demand route with a cached loader.
+Six shared bodies in `tests/shared-e2e/src/index.ts` (`PrerenderWarmFixture`),
+run by `packages/rangojs-router/e2e/prerender-warm.test.ts` (test-app, Node)
+and `tests/cloudflare-basic/e2e/prerender-warm.test.ts` (CFCacheStore over
+miniflare KV). Each app has a trigger route that calls
+`router.prerender({ env })` with no `origin` and answers the result as JSON,
+and fixtures whose stamp carries a per-`?probe=` generation a test moves on.
 
-- `packages/rangojs-router/e2e/prerender-warm.test.ts` (test-app, Node). The
-  test-app runs one process with a `MemorySegmentCacheStore`; its `cacheStore`
-  becomes a subclass declaring `scope = "global"` (true for a one-process
-  deployment, and the only behavior the declaration changes is the warm gate).
-  Cases per mode: warm, then the next document is `x-rango-shell: HIT` with the
-  warm's stamp; a visitor fills, the fixture's content moves, warm, the next HIT
-  shows the new stamp; the `cache()` route serves the warm's stamp; the cookie
-  route returns `skipped-personalized` and stays MISS; `.many()` mixed; a second
-  `onlyIfStale` warm returns `already-fresh`.
-- `tests/cloudflare-basic/e2e/prerender-warm.test.ts` (CFCacheStore + miniflare
-  KV, `"global"`): the same cases. Dev and production share the miniflare KV, so
-  each mode uses its own URLs. The refusal runs under
-  `playwright.edge-only.config.ts`, where `RANGO_E2E_EDGE_ONLY_CACHE` builds the
-  store without KV (`"local"`): a new `edge-only-prerender-warm.test.ts`, added
-  to that config's `testMatch` for both the `edge-only-dev` and
-  `edge-only-production` projects (CI already runs both, `e2e.yml`), asserts
-  `skipped-store-not-shared` and a following MISS. That is the only shipped
-  configuration where a refusal is observable end to end; the memory-store
-  refusal stays unit and userland.
+- warming a `ppr` route makes the next document request `x-rango-shell: HIT`,
+  and it hydrates clean (`guardHydrationErrors`, a client counter);
+- a warm replaces a stored shell: the next document shows the newer render;
+- a warm replaces a route `cache()` record a visitor's request wrote;
+- a route that reads `cookies()` reports `skipped-personalized` and stays a
+  MISS;
+- a route handler's `.many()` with no `origin` warms on the request's origin,
+  an on-demand and a plain target in one batch;
+- `onlyIfStale` leaves a warmed shell alone (`already-fresh`).
+
+The test-app runs one process with a memory store; its `cacheStore` is a
+subclass declaring `scope = "global"`, which is what lets the production
+describe warm. The edge-only refusal suite the plan had
+(`edge-only-prerender-warm.test.ts`) was not built: the refusal renders
+nothing, so a browser adds nothing to the unit and userland coverage.
 
 `pnpm check:e2e-bucketing` and `check:e2e-parity --strict` cover the titles.
 The semantic matrix is unaffected (no middleware, ordering or visibility
-change) and must stay green.
+change) and stays green.
 
-## Build estimate
+## What was built
 
-Approximate non-test lines.
+The estimate was about 670 non-test lines. The build added 1,024 and removed
+57: 622 lines of code, 350 of JSDoc and comments, 52 blank. Added lines, by
+piece:
 
-| Piece                                                                              | Files                                                                                                                       | Lines |
-| ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ----- |
-| Store declaration                                                                  | `cache/types.ts`, `memory-segment-store.ts`, `cf/cf-cache-store.ts`, `vercel/vercel-cache-store.ts`                         | 40    |
-| Mark, record, predicate, write counter                                             | `prerender/warm-request.ts` (new), `server/request-context.ts`                                                              | 90    |
-| Warm runner (URL and origin, request, collecting ctx, drain, settle, status)       | `prerender/warm.ts` (new)                                                                                                   | 160   |
-| Dispatch, statuses, binding `origin`                                               | `prerender/create-prerender-trigger.ts`, `prerender/on-demand.ts`, `router.ts`                                              | 230   |
-| Handler: read the mark, attach the record, reuse the gated config; test SSR loader | `rsc/handler.ts`                                                                                                            | 30    |
-| Forced miss, six read points                                                       | `cache-scope.ts`, `cache-runtime.ts`, `loader-cache.ts`, `rsc-rendering.ts`, `document-cache.ts`, `response-cache-serve.ts` | 60    |
-| Capture `force`, barrier bound, `refusal` field                                    | `rsc/shell-capture.ts`                                                                                                      | 35    |
-| Identity record, write counts                                                      | `server/context.ts`, the write sites above                                                                                  | 15    |
-| Testing primitive                                                                  | `testing/serve-shell-request.ts`                                                                                            | 10    |
-| **Total**                                                                          |                                                                                                                             | ~670  |
+| Piece                                                              | Files                                                                                                                                               | Lines |
+| ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
+| Store declaration and the gate                                     | `cache/types.ts`, `cache/index.ts`, `memory-segment-store.ts`, `cf/cf-cache-store.ts`, `vercel/vercel-cache-store.ts`, `cache/store-scope.ts` (new) | 78    |
+| Mark, record, predicate, writers                                   | `prerender/warm-request.ts` (new), `server/request-context.ts` (the field)                                                                          | 151   |
+| Warm runner (request, collecting ctx, drain, settle, status)       | `prerender/warm.ts` (new)                                                                                                                           | 187   |
+| Dispatch, statuses, binding `origin`, result types                 | `prerender/create-prerender-trigger.ts`, `prerender/on-demand.ts`, `prerender/index.ts`, `router.ts`, `cache/cache-key-utils.ts`                    | 346   |
+| Handler: the mark, the record, the gated config, the entry context | `rsc/handler.ts`, `server/request-context.ts` (`captureRequestEntryContext`)                                                                        | 50    |
+| Forced miss at the read points, write counts, the identity note    | `cache-scope.ts`, `cache-runtime.ts`, `loader-cache.ts`, `rsc-rendering.ts`, `document-cache.ts`, `response-cache-serve.ts`, `server/context.ts`    | 84    |
+| Capture `force`, the barrier bound, `refusal`                      | `rsc/shell-capture.ts`, `rsc/shell-capture-constants.ts`                                                                                            | 90    |
+| Testing primitive                                                  | `rsc/ssr-module-loader.ts` (new), `testing/serve-shell-request.ts`, `testing/index.ts`                                                              | 38    |
+| **Total**                                                          |                                                                                                                                                     | 1,024 |
 
-Plus the internal reference docs (`docs/internal/feature-map.md`,
-`feature-file-map.md`, `docs/README.md`), this doc and
-`ondemand-prerender.md` updated, and the skills (`prerender`, `caching`, `ppr`,
-`cloudflare`, `vercel`, `testing`): the store contract, the statuses, the CF
-and Vercel scope notes, the `serveShellRequest` note.
+Where the extra went: the result type and its documentation (87 lines in
+`on-demand.ts`), the two things the build found (the request-entry context and
+the later-millisecond start, about 60), the capture's refusal reasons (about
+45), and comments throughout. The client bundle is unchanged: `pnpm
+check:bundle-guards` reports the router chunk of `tests/cloudflare-basic` at
+47,488 B gzip (ratchet 48,128 B), and the same chunk built from #640's source
+is 1 B larger (47,537 B against 47,536 B with `gzip -c`).
 
 ### Risks: what an existing app could notice
 
 - **Every request reads one more field** at six cache read points
-  (`ctx?._prerenderWarm`). No measurable cost; no behavior change without a
-  mark.
+  (`ctx?._prerenderWarm`), and captures its entry async context once
+  (`AsyncLocalStorage.snapshot()`, about 0.8 µs on Node 24). No behavior
+  change without a mark.
+- **An on-demand refresh now also sends one warm request** when the app store
+  is shared and an origin resolves. #640 is unreleased, so no app depends on
+  the previous cost; the request is what rebuilds the document cache on the
+  new entry.
 - **A webhook that calls `router.prerender()` for a plain route now renders
   and writes** instead of answering `skipped-not-on-demand`. #640 is unreleased,
   so no app depends on the old answer, but a stray caller costs a page render

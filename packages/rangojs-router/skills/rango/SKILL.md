@@ -116,6 +116,7 @@ stated, greppable contract.
 | set meta/breadcrumbs from loader data   | `ctx.use(Handle)` in the loader    | /loader                 |
 | guarantee loader output in the SSR HTML | `loader(L, { ssr: false })`        | /loader                 |
 | pre-render a route at build time        | `Prerender(...)` wrapper           | /prerender              |
+| make a route ready before traffic       | `router.prerender({ env })(url)`   | /prerender              |
 | feed live loaders from a cached shell   | replayed handle + `ctx.rendered()` | /shell-manifest         |
 | cache HTML shell, live loaders as holes | `ppr` path option                  | /ppr                    |
 | choose in-function vs CDN caching       | deployment cache boundary          | /deployment-caching     |
