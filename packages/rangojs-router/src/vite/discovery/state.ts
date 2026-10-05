@@ -61,7 +61,12 @@ export interface PrecomputedEntry {
 
 export interface ChunkInfo {
   fileName: string;
-  exports: Array<{ name: string; handlerId: string; passthrough: boolean }>;
+  exports: Array<{
+    name: string;
+    handlerId: string;
+    passthrough: boolean;
+    onDemand: boolean;
+  }>;
 }
 
 export interface PerRouterManifestEntry {
@@ -163,6 +168,16 @@ export interface DiscoveryState {
   buildData: import("./build-versions.js").BuildDataRecord[];
   handlerChunkInfoMap: Map<string, ChunkInfo>;
   staticHandlerChunkInfoMap: Map<string, ChunkInfo>;
+  /**
+   * handlerId ($$id) -> route name for every route the evaluated source marks
+   * onDemand. Written during discovery (buildStart), consumed by the
+   * generateBundle chunk scan (extractHandlerExportsFromChunk) as the
+   * authoritative onDemand set driving producer retention — the same source
+   * that sets the runtime od trie flag, so any truthy onDemand spelling
+   * (literal, spread, imported const) both marks the route and retains its
+   * producer.
+   */
+  onDemandHandlerIds: Map<string, string>;
   rscEntryFileName: string | null;
   resolvedPrerenderModules: Map<string, string[]> | undefined;
   resolvedStaticModules: Map<string, string[]> | undefined;
@@ -225,6 +240,7 @@ export function createDiscoveryState(
     buildData: [],
     handlerChunkInfoMap: new Map(),
     staticHandlerChunkInfoMap: new Map(),
+    onDemandHandlerIds: new Map(),
     rscEntryFileName: null,
     resolvedPrerenderModules: undefined,
     resolvedStaticModules: undefined,

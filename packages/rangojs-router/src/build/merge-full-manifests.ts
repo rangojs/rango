@@ -136,6 +136,11 @@ export function mergeFullManifests(
         manifest.passthroughRoutes,
         overwrittenRoutes,
       ),
+      onDemandRoutes: mergeRouteList(
+        merged.onDemandRoutes,
+        manifest.onDemandRoutes,
+        overwrittenRoutes,
+      ),
       responseTypeRoutes: mergeRouteRecord(
         merged.responseTypeRoutes,
         manifest.responseTypeRoutes,

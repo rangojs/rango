@@ -143,11 +143,13 @@ function existsInSrc(name) {
   const escaped = name.replace(/\$/g, "\\$");
   // Second alternation: class declarations (`export class Skip extends Error`)
   // sit in none of the value-ish positions the first pattern matches -- found
-  // when the skills joined the doc list and `Skip` false-negatived. Third:
-  // namespace imports re-exported as API (`import * as Html` in client.tsx).
+  // when the skills joined the doc list and `Skip` false-negatived; also
+  // non-generic interfaces, which a `type` import names
+  // (`type WritablePrerenderStore`). Third: namespace imports re-exported as
+  // API (`import * as Html` in client.tsx).
   return (
     new RegExp(`\\b${escaped}\\s*(?:\\(|:|=[^=]|\\?:|<)`).test(corpus) ||
-    new RegExp(`\\bclass\\s+${escaped}\\b`).test(corpus) ||
+    new RegExp(`\\b(?:class|interface)\\s+${escaped}\\b`).test(corpus) ||
     new RegExp(`\\bimport\\s*\\*\\s*as\\s+${escaped}\\b`).test(corpus)
   );
 }

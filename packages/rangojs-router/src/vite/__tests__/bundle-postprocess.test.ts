@@ -38,6 +38,7 @@ function createMinimalState(
     buildData: [],
     handlerChunkInfoMap: new Map(),
     staticHandlerChunkInfoMap: new Map(),
+    onDemandHandlerIds: new Map(),
     rscEntryFileName: "index.js",
     resolvedPrerenderModules: undefined,
     resolvedStaticModules: undefined,

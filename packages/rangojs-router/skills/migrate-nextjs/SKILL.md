@@ -416,13 +416,67 @@ default) or serves an open-ended param space. See `/prerender` for full API.
 
 Next.js route segment config maps onto Rango's explicit primitives:
 
-| Next.js segment config                              | Rango                                                        |
-| --------------------------------------------------- | ------------------------------------------------------------ |
-| `dynamic = "force-static"` + `generateStaticParams` | `Static()` / `Prerender()` (see `/prerender`)                |
-| `revalidate = 60` (ISR)                             | `cache({ ttl: 60, swr: ... })` on the route (see `/caching`) |
-| `dynamic = "force-dynamic"`                         | the default — routes are dynamic unless you cache them       |
-| `dynamicParams = true`                              | `Passthrough()` (above)                                      |
-| `experimental_ppr = true`                           | the `ppr` path option (below, and `/ppr`)                    |
+| Next.js segment config                              | Rango                                                                                                                     |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `dynamic = "force-static"` + `generateStaticParams` | `Static()` / `Prerender()` (see `/prerender`)                                                                             |
+| `revalidate = 60` (ISR)                             | `cache({ ttl: 60, swr: ... })` on the route (see `/caching`), or on-demand prerender with `onDemand: { ttl: 60 }` (below) |
+| `dynamic = "force-dynamic"`                         | the default — routes are dynamic unless you cache them                                                                    |
+| `dynamicParams = true`                              | `Passthrough()` (above)                                                                                                   |
+| `experimental_ppr = true`                           | the `ppr` path option (below, and `/ppr`)                                                                                 |
+
+### On-demand ISR → `Prerender(..., { onDemand })` + `router.prerender()`
+
+A Next.js page with `generateStaticParams` refreshed by `revalidatePath()` or
+`revalidateTag()` from a CMS webhook maps to an on-demand prerender route. The
+route opts in, a store holds refreshed payloads, and the webhook re-renders the
+page instead of invalidating it:
+
+```typescript
+// Next.js:
+export const revalidate = 3600;
+export async function generateStaticParams() {
+  return (await getFeatured()).map((p) => ({ id: p.id }));
+}
+// app/api/revalidate/route.ts
+revalidatePath(`/products/${id}`);
+revalidateTag(`product:${id}`);
+
+// Rango:
+export const ProductPage = Prerender<{ id: string }>(
+  async () => (await getFeatured()).map((p) => ({ id: p.id })),
+  async (ctx) => <Product data={await getProduct(ctx.params.id)} />,
+  { onDemand: { ttl: 3600, tags: ({ params }) => [`product:${params.id}`] } },
+);
+
+// router: createRouter({ prerender: { store, ttl, onRevalidate? } })
+// webhook (route handler, cron or queue):
+const prerender = router.prerender({ env, ctx });
+await prerender(`/products/${id}`); // revalidatePath
+await prerender.markStale([`product:${id}`]); // revalidateTag
+```
+
+| Next.js                               | Rango                                                                                               |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `revalidatePath(path)` on an ISR page | `await router.prerender({ env, ctx })(path)`: renders now, serves the new payload next request      |
+| `revalidateTag(tag)` on ISR pages     | `router.prerender({ env, ctx }).markStale([tag])`: marks only; a stale hit schedules `onRevalidate` |
+| `revalidate = N` (time-based ISR)     | `onDemand: { ttl: N }` + `onRevalidate`; `ttl` is soft, entries never expire                        |
+| `dynamicParams = false`               | plain on-demand `Prerender`: an unknown param 404s until something refreshes it                     |
+| `dynamicParams = true`                | wrap it in `Passthrough()`: unknown params render live until refreshed                              |
+
+Three differences to plan for:
+
+- Prerender tags are their own namespace. `updateTag()` / `revalidateTag()`
+  from `@rangojs/router` purge the runtime cache and never reach on-demand
+  entries; `markStale()` never reaches the runtime cache.
+- A refresh is requestless: `cookies()` / `headers()` in the page make it
+  return `skipped-personalized`, and `ctx.env` is the live env you pass.
+- `markStale()` does not re-render: without `onRevalidate` or a cron calling
+  `prerender(target, { onlyIfStale: true })` (the runner from
+  `router.prerender({ env, ctx })`), a marked page keeps
+  serving its old payload.
+
+See `/prerender` → "On-demand refresh (ISR)" for the store options, the serve
+table and the rules.
 
 ### Partial prerendering → the `ppr` path option
 
@@ -552,7 +606,9 @@ cookie (`rango-state-fresh`); other users, and other locations on
 propagates (`/caching` → "The fresh-reads cookie").
 Built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`, `VercelCacheStore`)
 index by tag. Next's
-`revalidatePath` has no path-based equivalent — tag the relevant entries instead.
+`revalidatePath` has no path-based equivalent for runtime-cached data — tag the
+relevant entries instead. For a prerendered ISR page it is
+`router.prerender({ env, ctx })(path)` (see "On-demand ISR" above).
 
 **2. Partial-render selection (which segments re-run after an action).** This is
 NOT cache invalidation — it is `revalidate()`, controlling which segments
@@ -594,7 +650,9 @@ When migrating:
 
 - `revalidateTag(tag)` → `await updateTag(tag)` (in a server action) or
   `revalidateTag(tag)` (in a route handler / webhook). Effectively 1:1.
-- `revalidatePath(path)` → no path-based equivalent; tag the entries on that
+- `revalidatePath(path)` on an ISR page → `router.prerender({ env, ctx })(path)`
+  (on-demand prerender, §3); on runtime-cached data, no path-based
+  equivalent; tag the entries on that
   route (`cache({ tags })` / `cacheTag(...)`) and invalidate by tag.
 - To also force specific segments to re-render after the action (independent of
   cache busting), attach a `revalidate()` rule at those segment boundaries.

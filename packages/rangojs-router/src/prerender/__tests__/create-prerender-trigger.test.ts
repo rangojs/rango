@@ -1,0 +1,656 @@
+import { describe, it, expect, vi } from "vitest";
+import {
+  createPrerenderTrigger,
+  PrerenderError,
+  type PrerenderTriggerDeps,
+  type ProducerOutput,
+} from "../create-prerender-trigger.js";
+import { createMemoryPrerenderStore } from "../memory-prerender-store.js";
+import { PrerenderPersonalizationError } from "../producer-guard.js";
+import {
+  serializePrerenderKey,
+  type WritablePrerenderStore,
+} from "../writable-store.js";
+import { hashParams } from "../param-hash.js";
+import type { PrerenderConfig } from "../on-demand.js";
+
+// A minimal producer output for a route named "products.detail" with { id }.
+function output(overrides: Partial<ProducerOutput> = {}): ProducerOutput {
+  return {
+    segments: [{ id: "s0", encoded: "x" } as any],
+    handles: "",
+    routeName: "products.detail",
+    params: { id: "42" },
+    ...overrides,
+  };
+}
+
+interface HarnessOptions {
+  config?: PrerenderConfig | undefined;
+  resolveConfig?: PrerenderTriggerDeps["resolveConfig"];
+  match?: PrerenderTriggerDeps["matchRoute"];
+  runProducer?: PrerenderTriggerDeps["runProducer"];
+  reverse?: PrerenderTriggerDeps["reverse"];
+  version?: string;
+  isDev?: () => boolean;
+}
+
+function harness(opts: HarnessOptions = {}) {
+  const store = createMemoryPrerenderStore();
+  // "config" in opts distinguishes an explicit `config: undefined` (no store)
+  // from an omitted config (default to the fake store).
+  const config: PrerenderConfig | undefined =
+    "config" in opts ? opts.config : { store };
+  const ensureManifest = vi.fn(async () => {});
+  const deps: PrerenderTriggerDeps = {
+    routerId: "r1",
+    resolveVersion: () => opts.version ?? "b1",
+    isDev: opts.isDev ?? (() => false),
+    ensureManifest,
+    resolveConfig: opts.resolveConfig ?? (() => config),
+    reverse:
+      opts.reverse ??
+      ((route, params) =>
+        route === "products.detail" ? `/products/${params.id}` : undefined),
+    matchRoute:
+      opts.match ??
+      ((pathname) =>
+        pathname.startsWith("/products/")
+          ? {
+              routeName: "products.detail",
+              params: { id: pathname.split("/")[2] },
+              isOnDemand: true,
+              isPassthrough: false,
+            }
+          : null),
+    runProducer: opts.runProducer ?? (async () => output()),
+  };
+  const bind = createPrerenderTrigger(deps);
+  const trigger = bind({ env: {} });
+  return { bind, trigger, store, deps, ensureManifest, config };
+}
+
+describe("createPrerenderTrigger", () => {
+  it("renders and stores an on-demand route (string target)", async () => {
+    const { trigger, store } = harness();
+    const result = await trigger("/products/42");
+    expect(result).toMatchObject({
+      ok: true,
+      status: "rendered",
+      target: "/products/42",
+      routeName: "products.detail",
+      tags: [],
+    });
+    if (!result.ok) throw new Error("expected ok");
+    const stored = store.peek({
+      routerId: "r1",
+      version: "b1",
+      routeName: "products.detail",
+      paramHash: hashParams({ id: "42" }),
+    });
+    expect(stored?.entry.segments.length).toBe(1);
+    expect(result.key).toBe(
+      serializePrerenderKey({
+        routerId: "r1",
+        version: "b1",
+        routeName: "products.detail",
+        paramHash: hashParams({ id: "42" }),
+      }),
+    );
+  });
+
+  it("awaits asynchronous route matching", async () => {
+    const match = vi.fn(async () => ({
+      routeName: "products.detail",
+      params: { id: "42" },
+      isOnDemand: true,
+      isPassthrough: false,
+    }));
+    const { trigger, store } = harness({ match });
+
+    const result = await trigger("/products/42");
+
+    expect(match).toHaveBeenCalledWith("/products/42");
+    expect(result.ok).toBe(true);
+    expect(store.size).toBe(1);
+  });
+
+  it("accepts a typed object target and reverses it", async () => {
+    const reverse = vi.fn(
+      (route: string, params: Record<string, string>) =>
+        `/products/${params.id}`,
+    );
+    const { trigger, store } = harness({ reverse });
+    const result = await trigger({
+      route: "products.detail",
+      params: { id: "42" },
+    } as any);
+    expect(reverse).toHaveBeenCalledWith("products.detail", { id: "42" });
+    expect(result.ok).toBe(true);
+    expect(store.size).toBe(1);
+  });
+
+  it("returns skipped-unsupported-target for search/hash targets", async () => {
+    const { trigger, store } = harness();
+    for (const target of ["/products/42?preview=1", "/products/42#top"]) {
+      const result = await trigger(target);
+      expect(result).toMatchObject({
+        ok: false,
+        status: "skipped-unsupported-target",
+      });
+    }
+    expect(store.size).toBe(0);
+  });
+
+  it("returns no-match for an unknown route object", async () => {
+    const { trigger } = harness();
+    const result = await trigger({ route: "nope", params: {} } as any);
+    expect(result).toMatchObject({ ok: false, status: "no-match" });
+  });
+
+  it("returns no-match when nothing matches the pathname", async () => {
+    const { trigger } = harness();
+    const result = await trigger("/unknown");
+    expect(result).toMatchObject({ ok: false, status: "no-match" });
+  });
+
+  it("returns skipped-not-on-demand when the route did not opt in", async () => {
+    const { trigger } = harness({
+      match: () => ({
+        routeName: "products.detail",
+        params: { id: "42" },
+        isOnDemand: false,
+        isPassthrough: false,
+      }),
+    });
+    const result = await trigger("/products/42");
+    expect(result).toMatchObject({
+      ok: false,
+      status: "skipped-not-on-demand",
+      routeName: "products.detail",
+    });
+  });
+
+  it("returns no-store when no prerender store is configured", async () => {
+    const { trigger } = harness({ config: undefined });
+    const result = await trigger("/products/42");
+    expect(result).toMatchObject({ ok: false, status: "no-store" });
+  });
+
+  it("maps a resolveConfig factory throw to no-store instead of rejecting", async () => {
+    const { trigger, store } = harness({
+      resolveConfig: () => {
+        throw new Error("boom");
+      },
+    });
+
+    const result = await trigger("/products/42");
+    expect(result).toMatchObject({
+      ok: false,
+      status: "no-store",
+      routeName: "products.detail",
+    });
+    if (result.ok) throw new Error("expected fail");
+    expect((result.error as Error).message).toBe("boom");
+    expect(store.size).toBe(0);
+
+    let thrown: unknown;
+    try {
+      await trigger("/products/42", { throwOnError: true });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(PrerenderError);
+    expect((thrown as PrerenderError).result.status).toBe("no-store");
+
+    const many = await trigger.many(["/products/1", "/products/2"]);
+    expect(many).toHaveLength(2);
+    expect(many.every((r) => !r.ok && r.status === "no-store")).toBe(true);
+  });
+
+  it("maps a render throw to render-failed and keeps the store untouched", async () => {
+    const { trigger, store } = harness({
+      runProducer: async () => {
+        throw new Error("upstream 500");
+      },
+    });
+    const result = await trigger("/products/42");
+    expect(result).toMatchObject({ ok: false, status: "render-failed" });
+    if (result.ok) throw new Error("expected fail");
+    expect((result.error as Error).message).toBe("upstream 500");
+    expect(store.size).toBe(0);
+  });
+
+  it("maps a personalization throw to skipped-personalized", async () => {
+    const { trigger, store } = harness({
+      runProducer: async () => {
+        throw new PrerenderPersonalizationError("cookies()");
+      },
+    });
+    const result = await trigger("/products/42");
+    expect(result).toMatchObject({
+      ok: false,
+      status: "skipped-personalized",
+    });
+    expect(store.size).toBe(0);
+  });
+
+  it("maps a passthrough sentinel to skipped-passthrough", async () => {
+    const { trigger, store } = harness({
+      runProducer: async () => output({ passthrough: true }),
+    });
+    const result = await trigger("/products/42");
+    expect(result).toMatchObject({ ok: false, status: "skipped-passthrough" });
+    expect(store.size).toBe(0);
+  });
+
+  it("returns store-failed and keeps the previous entry when set throws", async () => {
+    const failingStore = createMemoryPrerenderStore();
+    failingStore.set = async () => {
+      throw new Error("kv down");
+    };
+    const { trigger } = harness({ config: { store: failingStore } });
+    const result = await trigger("/products/42");
+    expect(result).toMatchObject({ ok: false, status: "store-failed" });
+  });
+
+  it("resolves ttl and tags from the route's onDemand config", async () => {
+    const { trigger, store } = harness({
+      runProducer: async () =>
+        output({
+          onDemandConfig: {
+            ttl: 120,
+            tags: ({ params }) => [`product:${params.id}`],
+          },
+        }),
+    });
+    const result = await trigger("/products/42");
+    expect(result).toMatchObject({
+      ok: true,
+      status: "rendered",
+      ttl: 120,
+      tags: ["product:42"],
+    });
+    const stored = store.entries()[0][1];
+    expect(stored.meta.tags).toEqual(["product:42"]);
+    expect(stored.meta.staleAt).toBeDefined();
+  });
+
+  it("normalizes route tags like cache({ tags }): trimmed, no empties, no duplicates", async () => {
+    const { trigger, store } = harness({
+      runProducer: async () =>
+        output({
+          onDemandConfig: {
+            tags: [" a ", "a", "", "  ", "b", 7 as unknown as string, "b"],
+          },
+        }),
+    });
+    const result = await trigger("/products/42");
+    expect(result).toMatchObject({ ok: true, tags: ["a", "b"] });
+    expect(store.entries()[0]![1].meta.tags).toEqual(["a", "b"]);
+
+    const fn = harness({
+      runProducer: async () =>
+        output({ onDemandConfig: { tags: () => ["x", "x", " "] } }),
+    });
+    expect(await fn.trigger("/products/42")).toMatchObject({
+      tags: ["x"],
+    });
+  });
+
+  it("accepts a static tags array on the route's onDemand config", async () => {
+    const tags = ["catalog", "products"];
+    const { trigger, store } = harness({
+      runProducer: async () => output({ onDemandConfig: { tags } }),
+    });
+    const result = await trigger("/products/42");
+    expect(result).toMatchObject({ ok: true, tags: ["catalog", "products"] });
+    const stored = store.entries()[0][1];
+    expect(stored.meta.tags).toEqual(["catalog", "products"]);
+    // A copy: a later mutation of the route's array does not reach the entry.
+    tags.push("late");
+    expect(stored.meta.tags).toEqual(["catalog", "products"]);
+  });
+
+  it("falls back to router ttl when the route has no onDemand config", async () => {
+    const store = createMemoryPrerenderStore();
+    const { trigger } = harness({ config: { store, ttl: 300 } });
+    const result = await trigger("/products/42");
+    expect(result).toMatchObject({ ok: true, ttl: 300 });
+  });
+
+  describe("onlyIfStale", () => {
+    it("returns already-fresh without rendering when the entry is fresh", async () => {
+      const store = createMemoryPrerenderStore();
+      const runProducer = vi.fn(async () =>
+        output({ onDemandConfig: { ttl: 3600 } }),
+      );
+      const { trigger } = harness({ config: { store }, runProducer });
+      // Seed a fresh entry.
+      await trigger("/products/42");
+      runProducer.mockClear();
+      const result = await trigger("/products/42", {
+        onlyIfStale: true,
+      });
+      expect(result).toMatchObject({ ok: true, status: "already-fresh" });
+      expect(runProducer).not.toHaveBeenCalled();
+    });
+
+    it("falls through to render (does not throw) when the stale-check read fails", async () => {
+      const store = createMemoryPrerenderStore();
+      store.get = async () => {
+        throw new Error("kv read blip");
+      };
+      const runProducer = vi.fn(async () => output());
+      const { trigger } = harness({ config: { store }, runProducer });
+      // A throwing stale-check must not escape as a rejection (would abort a
+      // many() batch); it renders instead.
+      const result = await trigger("/products/42", {
+        onlyIfStale: true,
+      });
+      expect(result).toMatchObject({ ok: true, status: "rendered" });
+      expect(runProducer).toHaveBeenCalledTimes(1);
+    });
+
+    it("renders when the existing entry is stale", async () => {
+      // The trigger composes the envelope, so its clock decides staleAt.
+      const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
+      try {
+        const store = createMemoryPrerenderStore();
+        const runProducer = vi.fn(async () =>
+          output({ onDemandConfig: { ttl: 1 } }),
+        );
+        const { trigger } = harness({ config: { store }, runProducer });
+        await trigger("/products/42"); // staleAt = 1000 + 1000ms
+        runProducer.mockClear();
+        clock.mockReturnValue(5000); // past staleAt
+        const result = await trigger("/products/42", {
+          onlyIfStale: true,
+        });
+        expect(result).toMatchObject({ ok: true, status: "rendered" });
+        expect(runProducer).toHaveBeenCalledTimes(1);
+      } finally {
+        clock.mockRestore();
+      }
+    });
+
+    it("renders when the existing entry fails verification", async () => {
+      const store = createMemoryPrerenderStore();
+      const runProducer = vi.fn(async () =>
+        output({ onDemandConfig: { ttl: 3600 } }),
+      );
+      const { trigger } = harness({ config: { store }, runProducer });
+      await trigger("/products/42");
+      // A colliding entry under the same key (other params) is not "fresh".
+      store.entries()[0]![1].meta.params = { id: "99" };
+      runProducer.mockClear();
+      const result = await trigger("/products/42", {
+        onlyIfStale: true,
+      });
+      expect(result).toMatchObject({ ok: true, status: "rendered" });
+      expect(runProducer).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("throwOnError", () => {
+    it("throws a PrerenderError on a failed result", async () => {
+      const { trigger } = harness({
+        runProducer: async () => {
+          throw new Error("boom");
+        },
+      });
+      await expect(
+        trigger("/products/42", { throwOnError: true }),
+      ).rejects.toBeInstanceOf(PrerenderError);
+    });
+
+    it("does not throw on success", async () => {
+      const { trigger } = harness();
+      const result = await trigger("/products/42", {
+        throwOnError: true,
+      });
+      expect(result.ok).toBe(true);
+    });
+  });
+
+  describe("many()", () => {
+    it("returns one result per target and respects concurrency", async () => {
+      const { trigger, store } = harness();
+      const results = await trigger.many(
+        ["/products/1", "/products/2", "/products/3"],
+        { concurrency: 2 },
+      );
+      expect(results).toHaveLength(3);
+      expect(results.every((r) => r.ok)).toBe(true);
+      expect(store.size).toBe(3);
+    });
+
+    it("defaults an invalid concurrency (NaN/undefined/<1) to 1 without dropping targets", async () => {
+      const { trigger, store } = harness();
+      for (const concurrency of [NaN, 0, -3, undefined as any]) {
+        store.clear();
+        const results = await trigger.many(["/products/1", "/products/2"], {
+          concurrency,
+        });
+        expect(results).toHaveLength(2);
+        expect(results.every((r) => r.ok)).toBe(true);
+        expect(store.size).toBe(2);
+      }
+    });
+
+    it("a throwing tags() callback maps to store-failed, not a batch abort", async () => {
+      const { trigger } = harness({
+        runProducer: async () =>
+          output({
+            onDemandConfig: {
+              tags: () => {
+                throw new Error("bad tags fn");
+              },
+            },
+          }),
+      });
+      const results = await trigger.many(["/products/1", "/products/2"]);
+      // Both targets return a result (the throw did not abort the batch).
+      expect(results).toHaveLength(2);
+      expect(results.every((r) => !r.ok && r.status === "store-failed")).toBe(
+        true,
+      );
+    });
+
+    it("collects failures without stopping the batch (no throwOnError)", async () => {
+      const { trigger } = harness({
+        match: (pathname) =>
+          pathname === "/products/2"
+            ? null
+            : {
+                routeName: "products.detail",
+                params: { id: pathname.split("/")[2] },
+                isOnDemand: true,
+                isPassthrough: false,
+              },
+      });
+      const results = await trigger.many(["/products/1", "/products/2"]);
+      expect(results[0].ok).toBe(true);
+      expect(results[1]).toMatchObject({ ok: false, status: "no-match" });
+    });
+
+    it("many with throwOnError and concurrency stops the batch", async () => {
+      const started: string[] = [];
+      const runProducer: PrerenderTriggerDeps["runProducer"] = async ({
+        pathname,
+      }) => {
+        started.push(pathname);
+        if (pathname === "/products/2") {
+          throw new Error("boom");
+        }
+        // Deferred settle: keeps the other in-flight workers alive long
+        // enough for the abort flag to land before they'd pick a next item.
+        await new Promise((r) => setTimeout(r, 10));
+        return output({ params: { id: pathname.split("/")[2] } });
+      };
+      const { trigger } = harness({ runProducer });
+      const targets = [
+        "/products/1",
+        "/products/2",
+        "/products/3",
+        "/products/4",
+        "/products/5",
+        "/products/6",
+      ];
+
+      await expect(
+        trigger.many(targets, {
+          throwOnError: true,
+          concurrency: 2,
+        }),
+      ).rejects.toBeInstanceOf(PrerenderError);
+
+      // Let any in-flight producer settle before asserting nothing further started.
+      await new Promise((r) => setTimeout(r, 30));
+      expect(started.length).toBeLessThan(6);
+      expect(started.length).toBeLessThanOrEqual(3);
+    });
+  });
+
+  describe("key version", () => {
+    it("resolves per refresh, so a changed table is picked up on the next call", async () => {
+      let version = "d1";
+      const h = harness();
+      h.deps.resolveVersion = () => version;
+      const t = createPrerenderTrigger(h.deps)({ env: {} });
+      const first = await t("/products/42");
+      version = "d2";
+      const second = await t("/products/42");
+      if (!first.ok || !second.ok) throw new Error("expected ok");
+      expect(first.key).toContain(":d1:");
+      expect(second.key).toContain(":d2:");
+    });
+
+    it("resolves once per many() batch", async () => {
+      const h = harness();
+      const resolveVersion = vi.fn(() => "d1");
+      h.deps.resolveVersion = resolveVersion;
+      const t = createPrerenderTrigger(h.deps)({ env: {} });
+      await t.many(["/products/1", "/products/2", "/products/3"], {
+        concurrency: 2,
+      });
+      expect(resolveVersion).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("binding", () => {
+    it("does no work at bind time and resolves the config per call", async () => {
+      const h = harness();
+      const resolveConfig = vi.fn(h.deps.resolveConfig);
+      h.deps.resolveConfig = resolveConfig;
+      const bind = createPrerenderTrigger(h.deps);
+      const envA = { id: "a" };
+      const runner = bind({ env: envA });
+      expect(resolveConfig).not.toHaveBeenCalled();
+      expect(h.ensureManifest).not.toHaveBeenCalled();
+      await runner("/products/1");
+      await runner("/products/2");
+      expect(resolveConfig).toHaveBeenCalledTimes(2);
+      expect(resolveConfig).toHaveBeenCalledWith(envA, undefined);
+    });
+  });
+
+  describe("markStale()", () => {
+    it("delegates to the store", async () => {
+      const store = createMemoryPrerenderStore();
+      const spy = vi.spyOn(store, "markStale");
+      const { trigger } = harness({ config: { store } });
+      await trigger.markStale(["product:42"]);
+      expect(spy).toHaveBeenCalledWith(["product:42"]);
+    });
+
+    it("is a no-op with no tags or no store", async () => {
+      const { trigger } = harness({ config: undefined });
+      await expect(trigger.markStale(["x"])).resolves.toBeUndefined();
+    });
+
+    it("warns in dev when no store is configured", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const { trigger } = harness({ config: undefined, isDev: () => true });
+        await trigger.markStale(["x"]);
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn.mock.calls[0][0]).toContain("markStale");
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("warns in dev when the configured store lacks markStale", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const storeWithoutInvalidate: WritablePrerenderStore = {
+          get: async () => null,
+          set: async () => {},
+        };
+        const { trigger } = harness({
+          config: { store: storeWithoutInvalidate },
+          isDev: () => true,
+        });
+        await trigger.markStale(["x"]);
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn.mock.calls[0][0]).toContain("markStale");
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("warns once per trigger when the store cannot mark", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const { trigger } = harness({ config: undefined, isDev: () => true });
+        await trigger.markStale(["x"]);
+        await trigger.markStale(["y"]);
+        expect(warn).toHaveBeenCalledTimes(1);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("warns once in dev when a store marks entries but no onRevalidate is configured", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const { trigger } = harness({ isDev: () => true });
+        await trigger.markStale(["x"]);
+        await trigger.markStale(["y"]);
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn.mock.calls[0][0]).toContain("no onRevalidate");
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("does not warn when onRevalidate is configured, or outside dev", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const store = createMemoryPrerenderStore();
+        const withRevalidate = harness({
+          config: { store, onRevalidate: () => {} },
+          isDev: () => true,
+        });
+        await withRevalidate.trigger.markStale(["x"]);
+        const outsideDev = harness({ isDev: () => false });
+        await outsideDev.trigger.markStale(["x"]);
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("does not warn outside dev even with no store configured", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const { trigger } = harness({ config: undefined, isDev: () => false });
+        await trigger.markStale(["x"]);
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
+    });
+  });
+});

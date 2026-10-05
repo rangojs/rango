@@ -8,7 +8,7 @@ import {
   requireDslContext,
   stampStaticDefScope,
 } from "../server/context";
-import { invariant, DataNotFoundError } from "../errors";
+import { invariant, DataNotFoundError, isDevEnvironment } from "../errors";
 import { validateUserRouteName } from "../route-name.js";
 import {
   isPrerenderHandler,
@@ -58,6 +58,33 @@ function resolveResponseType(
   options: PathOptions | undefined,
 ): string | undefined {
   return options?.[RESPONSE_TYPE];
+}
+
+const NO_PRERENDER_DATA_MESSAGE = "No prerender data found for this route";
+
+/**
+ * A retained on-demand producer must never render on a live production
+ * request: bundle eviction is skipped for onDemand routes (the producer body
+ * stays available for router.prerender()), so without this gate an
+ * overlay+manifest miss on a plain Prerender(..., { onDemand }) route would
+ * execute the producer in-request — uncached per-request renders with the
+ * personalization guard unarmed. Keep the pre-retention miss contract instead
+ * (DataNotFoundError -> 404). Producer runs (build-time bake and
+ * router.prerender()) arrive with ctx.build true (createPrerenderContext);
+ * Vite dev keeps the documented live fall-through on a dev-store miss.
+ * Pass-through when the route is not onDemand.
+ */
+function gateOnDemandProducer<TEnv>(
+  producer: Handler<any, any, TEnv>,
+  isOnDemand: boolean,
+): Handler<any, any, TEnv> {
+  if (!isOnDemand) return producer;
+  return (ctx) => {
+    if (!ctx.build && !isDevEnvironment()) {
+      throw new DataNotFoundError(NO_PRERENDER_DATA_MESSAGE);
+    }
+    return producer(ctx);
+  };
 }
 
 export function createPathHelper<TEnv>(): PathFn<TEnv> {
@@ -117,6 +144,31 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
 
     const namespace = `${ctx.namespace}.${store.getNextIndex("route")}.${routeName}`;
 
+    // On-demand opt-in lives on the (inner) Prerender def's options for both
+    // plain Prerender and Passthrough-wrapped routes. Presence (truthy, not
+    // false) marks the route ISR-eligible; the trie od flag + producer retention
+    // key off it.
+    const onDemandDef = isPassthroughHandler(handler)
+      ? handler.prerenderDef
+      : isPrerenderHandler(handler)
+        ? handler
+        : undefined;
+    const onDemandOpt = onDemandDef?.options?.onDemand;
+    const isOnDemand = onDemandOpt != null && onDemandOpt !== false;
+
+    // onDemand routes are excluded from the PPR shell lane (a writable refresh
+    // cannot atomically replace the captured shell), so ppr has no effect there.
+    // Thrown ahead of the forRoute early return so lazy evaluation of another
+    // route cannot skip it.
+    if (isOnDemand && options?.ppr !== undefined && options.ppr !== false) {
+      throw new Error(
+        `[rango] Route "${routeName}" sets both ppr and onDemand: onDemand ` +
+          `routes are excluded from the PPR shell lane, so ppr has no ` +
+          `effect here and the route serves without the shell fast path. ` +
+          `Drop one of the two options.`,
+      );
+    }
+
     if (ctx.forRoute && routeName !== ctx.forRoute) {
       store.getShortCode("route");
       return { type: "route" } as RouteItem;
@@ -129,17 +181,16 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
           ? typeof handler.prerenderDef.handler === "function"
             ? (handler.prerenderDef.handler as Handler<any, any, TEnv>)
             : () => {
-                throw new DataNotFoundError(
-                  "No prerender data found for this route",
-                );
+                throw new DataNotFoundError(NO_PRERENDER_DATA_MESSAGE);
               }
           : isPrerenderHandler(handler)
             ? typeof handler.handler === "function"
-              ? (handler.handler as Handler<any, any, TEnv>)
+              ? gateOnDemandProducer(
+                  handler.handler as Handler<any, any, TEnv>,
+                  isOnDemand,
+                )
               : () => {
-                  throw new DataNotFoundError(
-                    "No prerender data found for this route",
-                  );
+                  throw new DataNotFoundError(NO_PRERENDER_DATA_MESSAGE);
                 }
             : isStaticHandler(handler)
               ? (handler.handler as Handler<any, any, TEnv>)
@@ -168,6 +219,7 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
               prerenderDef: handler as PrerenderHandlerDefinition,
             }
           : {}),
+      ...(isOnDemand ? { isOnDemand: true as const } : {}),
       ...(isStaticHandler(handler)
         ? {
             isStaticPrerender: true as const,

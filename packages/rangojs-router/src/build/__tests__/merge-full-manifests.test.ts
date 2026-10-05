@@ -143,6 +143,7 @@ describe("mergeFullManifests", () => {
       routeTrailingSlash: { a: "never" },
       prerenderRoutes: ["a"],
       passthroughRoutes: ["a"],
+      onDemandRoutes: ["a"],
       responseTypeRoutes: { a: "json" },
       routeSearchSchemas: { a: { q: "string" } },
       _prerenderDefs: { a: { source: "a" } },

@@ -100,6 +100,7 @@ export interface RouterContext<TEnv = any> {
       parent: any,
       fn: () => T,
     ) => T;
+    runIsolated: <T>(forRoute: string, fn: () => T) => T;
   };
 
   getMetricsStore: () => MetricsStore | undefined;

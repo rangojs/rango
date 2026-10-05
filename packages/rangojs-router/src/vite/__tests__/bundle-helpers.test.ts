@@ -84,7 +84,74 @@ describe("extractHandlerExportsFromChunk", () => {
       name: "myLoader",
       handlerId: "abc12345#myLoader",
       passthrough: false,
+      onDemand: false,
     });
+  });
+
+  it("marks onDemand when the extracted $$id is in the authoritative set", () => {
+    const chunk = [
+      `const Page = Prerender(() => null, { onDemand: !0 });`,
+      `Page.$$id = "abc12345#Page";`,
+    ].join("\n");
+    const modules = new Map([["src/pages.ts", ["Page"]]]);
+    const result = extractHandlerExportsFromChunk(
+      chunk,
+      modules,
+      "Prerender",
+      false,
+      new Map([["abc12345#Page", "pages.detail"]]),
+    );
+    expect(result[0].onDemand).toBe(true);
+    expect(result[0].passthrough).toBe(false);
+  });
+
+  it("marks onDemand for a non-literal spelling (imported options object) — the map, not the call text, decides", () => {
+    const chunk = [
+      `const Page = Prerender(() => null, sharedOdOptions);`,
+      `Page.$$id = "abc12345#Page";`,
+    ].join("\n");
+    const modules = new Map([["src/pages.ts", ["Page"]]]);
+    const result = extractHandlerExportsFromChunk(
+      chunk,
+      modules,
+      "Prerender",
+      false,
+      new Map([["abc12345#Page", "pages.detail"]]),
+    );
+    expect(result[0].onDemand).toBe(true);
+  });
+
+  it("does NOT mark onDemand when the $$id is absent from the set, even with onDemand text in the body", () => {
+    // Source eval said onDemand is falsy (e.g. `onDemand: false` or a falsy
+    // const); a body mentioning the key must not retain the producer.
+    const chunk = [
+      `const Page = Prerender(() => null, { onDemand: !1 });`,
+      `Page.$$id = "abc12345#Page";`,
+    ].join("\n");
+    const modules = new Map([["src/pages.ts", ["Page"]]]);
+    const result = extractHandlerExportsFromChunk(
+      chunk,
+      modules,
+      "Prerender",
+      false,
+      new Map([["other#Def", "other.route"]]),
+    );
+    expect(result[0].onDemand).toBe(false);
+  });
+
+  it("reports onDemand: false when no set is provided", () => {
+    const chunk = [
+      `const Page = Prerender(() => null, { onDemand: true });`,
+      `Page.$$id = "abc12345#Page";`,
+    ].join("\n");
+    const modules = new Map([["src/pages.ts", ["Page"]]]);
+    const result = extractHandlerExportsFromChunk(
+      chunk,
+      modules,
+      "Prerender",
+      false,
+    );
+    expect(result[0].onDemand).toBe(false);
   });
 
   it("skips handler without $$id assignment", () => {
@@ -209,6 +276,20 @@ describe("evictHandlerCode", () => {
       ],
       "Static",
       "static",
+    );
+    expect(result).toBeNull();
+  });
+
+  it("skips onDemand handlers (retains the producer body)", () => {
+    const code = [
+      `const Page = Prerender({$$id: "abc12345#Page", fetch() {} });`,
+      `Page.$$id = "abc12345#Page";`,
+    ].join("\n");
+    const result = evictHandlerCode(
+      code,
+      [{ name: "Page", handlerId: "abc12345#Page", onDemand: true }],
+      "Prerender",
+      "prerenderHandler",
     );
     expect(result).toBeNull();
   });

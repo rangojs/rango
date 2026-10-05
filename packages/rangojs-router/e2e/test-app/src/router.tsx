@@ -9,15 +9,23 @@ import {
   createDocumentCacheMiddleware,
   MemorySegmentCacheStore,
 } from "@rangojs/router/cache";
+import { createMemoryPrerenderStore } from "@rangojs/router/prerender";
 import { urlpatterns } from "./urls.js";
 import { shellSecureAuthMiddleware } from "./urls/shell-secure.js";
 import { onErrorLog } from "./error-log.js";
 import { recordShellCaptureEvent } from "./shell-capture-events.js";
+import { swrLog } from "./swr-log.js";
 
 // App-level cache store with defaults
 export const cacheStore = new MemorySegmentCacheStore({
   defaults: { ttl: 60, swr: 120 },
 });
+
+// Writable prerender overlay for on-demand (ISR-style) refresh. A single
+// in-memory instance persists across requests within this node process, so the
+// router.prerender() trigger and the serve-path overlay lookup share it in BOTH
+// dev and the production preview build.
+export const prerenderStore = createMemoryPrerenderStore();
 
 /**
  * App-level bindings (platform resources like DB, KV, etc.)
@@ -192,6 +200,16 @@ export const router = createRouter<AppEnv>({
   // suite waits for the capture's outcome instead of a timing gap. A function
   // sink logs nothing.
   debugShellCapture: recordShellCaptureEvent,
+  // onRevalidate (its presence is the SWR opt-in): a STALE overlay hit still
+  // serves but schedules it (scheduling-only — no built-in re-render). The e2e
+  // observes the scheduling through swrLog via /od-swr-log.
+  prerender: {
+    store: prerenderStore,
+    ttl: 3600,
+    onRevalidate: (target) => {
+      swrLog.push(target);
+    },
+  },
   cacheProfiles: {
     short: { ttl: 10, swr: 20 },
     "swr-test": { ttl: 2, swr: 60 },

@@ -14,6 +14,15 @@ import { normalizeTags } from "./cache-tag.js";
 import { reportCacheError } from "./cache-error.js";
 
 /**
+ * How long a follower trusts an in-flight leader before evicting it and
+ * running fresh. High enough that a slow-but-healthy upstream never triggers
+ * duplicate work (a legitimate cached call taking >15s is already pathological);
+ * low enough to bound the blast radius of a wedged leader to seconds, not the
+ * isolate lifetime. Aligned with SHELL_CAPTURE_MAX_WAIT_MS.
+ */
+export const IN_FLIGHT_LEADER_MAX_WAIT_MS = 15_000;
+
+/**
  * Default TTL for route-level cache() DSL and loader cache.
  * Applied when neither the cache options nor the store defaults specify a TTL.
  */
@@ -184,8 +193,8 @@ export function resolveTagsOption<TEnv>(
  * and on CFCacheStore would also cost a wasted KV marker read per request.
  * Returns undefined when nothing usable remains, keeping the entry header-free.
  */
-function normalizeTagList(tags: string[]): string[] | undefined {
-  const out = normalizeTags(tags);
+export function normalizeTagList(tags: string[]): string[] | undefined {
+  const out = [...new Set(normalizeTags(tags))];
   return out.length > 0 ? out : undefined;
 }
 

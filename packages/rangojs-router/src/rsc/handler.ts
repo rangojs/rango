@@ -46,7 +46,10 @@ import {
   type ResponseRouteMatch,
 } from "./response-route-handler.js";
 import { nonce as nonceToken, resolveProviderNonce } from "./nonce.js";
-import { resolveRouterVersions } from "../server/build-version-table.js";
+import {
+  resolvePrerenderVersion,
+  resolveRouterVersions,
+} from "../server/build-version-table.js";
 import type { ErrorPhase } from "../types.js";
 import type { RouterRequestInput } from "../router/router-interfaces.js";
 import {
@@ -522,6 +525,28 @@ export function createRSCHandler<
       }
     }
 
+    // Resolve the writable prerender store (durable overlay) for the serve path.
+    // Same factory-or-object shape as cache, resolved per request from env/ctx
+    // (never memoized). The version resolves per request, as router.prerender()
+    // resolves it per refresh, so both sides key off the same table state.
+    let resolvedPrerender:
+      | import("../prerender/on-demand.js").ResolvedPrerender<any>
+      | undefined;
+    const prerenderOption = router._prerenderConfig;
+    if (prerenderOption) {
+      const prerenderConfig =
+        typeof prerenderOption === "function"
+          ? prerenderOption(env, executionCtx)
+          : prerenderOption;
+      if (prerenderConfig?.store) {
+        resolvedPrerender = {
+          config: prerenderConfig,
+          routerId: router.id,
+          version: resolvePrerenderVersion(router.id, router.version),
+        };
+      }
+    }
+
     // Route manifest is populated at startup via the virtual module
     // (virtual:rsc-router/routes-manifest). In build/production, it's inlined
     // into the bundle. In dev mode (Node), the discovery plugin populates it
@@ -576,6 +601,7 @@ export function createRSCHandler<
       url,
       variables,
       cacheStore,
+      prerender: resolvedPrerender,
       searchParamsFilter,
       explicitTaggedStores,
       cacheProfiles: router.cacheProfiles,

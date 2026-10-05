@@ -8,9 +8,11 @@ import {
   getRequestContext,
   redirect,
   createVar,
+  type Handler,
   type HandlerContext,
   type Middleware,
 } from "@rangojs/router";
+import type { PrerenderResult } from "@rangojs/router/prerender";
 import { CFCacheStore, MemorySegmentCacheStore } from "@rangojs/router/cache";
 import { Suspense, type ReactNode } from "react";
 import { Link, Outlet } from "@rangojs/router/client";
@@ -51,12 +53,6 @@ import { purgeModeStore, purgeLog, clearPurgeLog } from "./purge-store.js";
 import { slowMarkerStore } from "./slow-marker-store.js";
 import { RyowLoader } from "./loaders/ryow.js";
 import type { AppBindings } from "./env.js";
-
-declare global {
-  var __loadPrerenderManifestModule:
-    | (() => Promise<{ default: Record<string, string> }>)
-    | undefined;
-}
 
 // Page handlers
 import { HomePage } from "./pages/home.js";
@@ -263,6 +259,8 @@ import {
 } from "./pages/inline.js";
 import { clientReversePatterns } from "./pages/client-reverse.js";
 import { guidesPatterns } from "./pages/guides.js";
+import { GuidePlainDef, GuideSwrDef } from "./pages/guide-plain.js";
+import { GuidePlainLoader } from "./loaders/guide-plain.js";
 import { suspenseDemoPatterns } from "./pages/suspense-demo.js";
 import { releasesPatterns } from "./pages/releases.js";
 import { staticContentPatterns } from "./pages/static-content-urls.js";
@@ -313,6 +311,85 @@ import {
 } from "./loaders/chrome-mirror.js";
 
 const docsPatterns = createDocsPatterns({ articles: docsArticles });
+
+// Serialize a PrerenderResult for the e2e: Error instances don't survive
+// Response.json, so flatten to the message.
+function prerenderResultJson(result: PrerenderResult): Response {
+  return Response.json(
+    !result.ok && result.error instanceof Error
+      ? { ...result, error: result.error.message }
+      : result,
+  );
+}
+
+// On-demand prerender trigger handler. Explicitly typed as Handler so the lazy
+// `import("./router.js")` inside it does not force TypeScript to infer this
+// module's type from the router (which is built from urlpatterns) — that would
+// be a circular type. Returns the PrerenderResult as JSON for the e2e.
+const GuidesTrigger: Handler<{ slug: string }> = async (ctx) => {
+  const { router } = await import("./router.js");
+  const result = await router.prerender({
+    env: ctx.env,
+    ctx: ctx.executionContext,
+  })({ route: "guides.detail", params: { slug: ctx.params.slug } });
+  return prerenderResultJson(result);
+};
+
+// Trigger for the PLAIN (non-Passthrough) on-demand route. Ops via query:
+//   default             -> plain refresh (always renders)
+//   ?onlyIfStale=1      -> cron-sweep opt-in; "already-fresh" when entry fresh
+//   ?markStale=<t>      -> KV tag-marker mark-stale (no render)
+const GuidePlainTrigger: Handler<{ slug: string }> = async (ctx) => {
+  const { router } = await import("./router.js");
+  const prerender = router.prerender({
+    env: ctx.env,
+    ctx: ctx.executionContext,
+  });
+  const staleTag = ctx.url.searchParams.get("markStale");
+  if (staleTag) {
+    await prerender.markStale([staleTag]);
+    return Response.json({ markedStale: staleTag });
+  }
+  const onlyIfStale = ctx.url.searchParams.get("onlyIfStale") === "1";
+  const result = await prerender(
+    { route: "guidePlain", params: { slug: ctx.params.slug } },
+    onlyIfStale ? { onlyIfStale: true } : undefined,
+  );
+  return prerenderResultJson(result);
+};
+
+// Trigger for the SWR on-demand route. Ops via query:
+//   default       -> plain refresh of /guide-swr/:slug
+//   ?swrlog=1     -> read the KV marker written by the router-level onRevalidate
+//   ?swrclear=1   -> delete the marker (isolates re-runs on a reused server)
+const GuideSwrTrigger: Handler<{ slug: string }> = async (ctx) => {
+  if (ctx.url.searchParams.get("swrlog") === "1") {
+    const log = await ctx.env.PRERENDER_KV.get("swr-log:" + ctx.params.slug);
+    return Response.json({ log });
+  }
+  if (ctx.url.searchParams.get("swrclear") === "1") {
+    await ctx.env.PRERENDER_KV.delete("swr-log:" + ctx.params.slug);
+    return Response.json({ cleared: true });
+  }
+  const { router } = await import("./router.js");
+  const result = await router.prerender({
+    env: ctx.env,
+    ctx: ctx.executionContext,
+  })({ route: "guideSwr", params: { slug: ctx.params.slug } });
+  return prerenderResultJson(result);
+};
+
+const PersonalizedGuideTrigger: Handler<{ slug: string }> = async (ctx) => {
+  const { router } = await import("./router.js");
+  const result = await router.prerender({
+    env: ctx.env,
+    ctx: ctx.executionContext,
+  })({
+    route: "guides.personalized",
+    params: { slug: ctx.params.slug },
+  });
+  return prerenderResultJson(result);
+};
 
 /** Consumer-mirror template layout: server component between the chrome-loader
  *  layout and the clientUrls include, reading params from getRequestContext —
@@ -513,6 +590,23 @@ export const urlpatterns = urls(
       },
       { name: "testClearErrorLog" },
     ),
+
+    // On-demand (ISR-style) prerender trigger. Renders the guides.detail build
+    // handler requestlessly and stores it in the KV overlay so the next
+    // /guides/:slug request is served from the overlay, short-circuiting the
+    // Passthrough live handler. Defined as a top-level typed Handler (below) so
+    // its lazy `import("./router.js")` does not create a type cycle with the
+    // router (which is initialized from these urlpatterns).
+    path("/guide-trigger/:slug", GuidesTrigger, { name: "guidesTrigger" }),
+    path("/guide-personalized-trigger/:slug", PersonalizedGuideTrigger, {
+      name: "guidesPersonalizedTrigger",
+    }),
+    path("/guide-plain-trigger/:slug", GuidePlainTrigger, {
+      name: "guidePlainTrigger",
+    }),
+    path("/guide-swr-trigger/:slug", GuideSwrTrigger, {
+      name: "guideSwrTrigger",
+    }),
 
     // robots.txt (response route)
     path.text(
@@ -2464,6 +2558,19 @@ export const urlpatterns = urls(
 
         // Pre-rendered guides with passthrough (known slugs pre-rendered, unknown slugs live)
         include("/guides", guidesPatterns, { name: "guides" }),
+
+        // PLAIN (non-Passthrough) on-demand prerender: unbaked params 404 on a
+        // live production request (dev falls through to a live render). The
+        // loader stays fresh on overlay hits (loaders are never pre-rendered).
+        path(
+          "/guide-plain/:slug",
+          GuidePlainDef,
+          { name: "guidePlain" },
+          () => [loader(GuidePlainLoader)],
+        ),
+        // SWR on-demand fixture (ttl 1): a stale overlay hit serves and
+        // schedules the router-level onRevalidate via waitUntil.
+        path("/guide-swr/:slug", GuideSwrDef, { name: "guideSwr" }),
 
         // Pre-rendered releases page (uses node:fs at build time, evicted at deploy)
         include("/releases", releasesPatterns, { name: "releases" }),

@@ -31,7 +31,9 @@
  * `router.matchForPrerender` bakes for the URL (on its first request, kept
  * until resetShellTestState), through the production prerender store. Its
  * first `ppr` request is a MISS with a runtime capture, as a URL without a
- * build-time shell is in production; build-time shells are e2e-only.
+ * build-time shell is in production; build-time shells are e2e-only. An
+ * on-demand route (`Prerender(..., { onDemand })`) bakes nothing here: it
+ * serves from its prerender store, as a refresh-only page does in production.
  *
  * Must run under the `react-server` condition (the rsc Vitest project), with
  * `rangoTestAliases()` resolving `@vitejs/plugin-rsc/rsc/server` to the stub
@@ -281,7 +283,9 @@ async function servePrerenderArtifacts(
 ): Promise<(() => void) | undefined> {
   const internal = toInternal(router);
   const matched = await internal.findMatch(pathname);
-  if (!matched?.pr) return undefined;
+  // A build bakes an on-demand route only for the params getParams() lists;
+  // a refresh-only page serves from its prerender store alone.
+  if (!matched?.pr || matched.od) return undefined;
   let artifacts = prerenderArtifacts.get(router);
   if (!artifacts) {
     prerenderArtifacts.set(
@@ -329,10 +333,11 @@ async function servePrerenderArtifacts(
 
 /**
  * Handlers per router, keyed by the `cacheStore` override or the router. A
- * handler resolves its router's versions when it is created, so an entry is
- * reused only while the router would still resolve the versions it was made
- * with: a setBuildVersions() call (a simulated deploy) that changes them gets
- * a new handler.
+ * handler binds its router's document version when it is created, so an entry
+ * is reused only while the router would still resolve that version: a
+ * setBuildVersions() call (a simulated deploy) that changes it gets a new
+ * handler. The data version is read per request, so a data-only change reuses
+ * the handler, as a long-lived worker would.
  */
 const handlers = new WeakMap<
   object,
@@ -352,11 +357,10 @@ async function getHandler(
   const { resolveRouterVersions } =
     await import("../server/build-version-table.js");
   // What createRSCHandler would resolve for this router now.
-  const { data, document } = resolveRouterVersions(
+  const { document: versions } = resolveRouterVersions(
     internal.id,
     internal.version,
   );
-  const versions = `${data}\0${document}`;
   const cached = byStore.get(cacheStore ?? router);
   if (cached?.versions === versions) return cached.handler;
 
@@ -415,18 +419,21 @@ function buildRequest(url: URL, options: ServeShellRequestOptions): Request {
  */
 export async function resetShellTestState(): Promise<void> {
   prerenderArtifacts = new WeakMap();
-  const [capture, serve, buildShells, cf, cacheRuntime] = await Promise.all([
-    import("../rsc/shell-capture.js"),
-    import("../rsc/shell-serve.js"),
-    import("../rsc/shell-build-manifest.js"),
-    import("../cache/cf/cf-cache-store.js"),
-    import("../cache/cache-runtime.js"),
-  ]);
+  const [capture, serve, buildShells, cf, cacheRuntime, cacheLookup] =
+    await Promise.all([
+      import("../rsc/shell-capture.js"),
+      import("../rsc/shell-serve.js"),
+      import("../rsc/shell-build-manifest.js"),
+      import("../cache/cf/cf-cache-store.js"),
+      import("../cache/cache-runtime.js"),
+      import("../router/match-middleware/cache-lookup.js"),
+    ]);
   capture.resetShellCaptureStateForTests();
   serve.resetShellServeStateForTests();
   buildShells.resetBuildShellManifestForTests();
   cf.resetCFShellMemoForTests();
   cacheRuntime.resetCacheRuntimeForTests();
+  cacheLookup.resetOverlayRevalidationsForTests();
 }
 
 /** Settle background tasks, including ones scheduled while settling. */

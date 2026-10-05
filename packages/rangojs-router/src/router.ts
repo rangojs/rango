@@ -15,6 +15,13 @@ import {
 } from "./dev-discovery-protocol.js";
 import { createReverse, type ReverseFunction } from "./reverse.js";
 import {
+  resolvePrerenderVersion,
+  resolveRouterVersions,
+} from "./server/build-version-table.js";
+import { isDevEnvironment } from "./errors.js";
+import { createPrerenderTrigger } from "./prerender/create-prerender-trigger.js";
+import { createMemoryPrerenderStore } from "./prerender/memory-prerender-store.js";
+import {
   registerRouteMap,
   getRouterManifest,
   getRouterPrecomputedEntries,
@@ -155,6 +162,7 @@ export function createRouter<TEnv = any>(
     notFound,
     onError,
     cache,
+    prerender: prerenderConfigOption,
     cacheProfiles: cacheProfilesOption,
     theme: themeOption,
     urls: urlsOption,
@@ -180,6 +188,17 @@ export function createRouter<TEnv = any>(
     debugShellCapture: debugShellCaptureOption,
     strictMode: strictModeOption = true,
   } = options;
+
+  const defaultDevPrerenderStore = prerenderConfigOption
+    ? undefined
+    : createMemoryPrerenderStore();
+  const effectivePrerenderConfigOption =
+    prerenderConfigOption ??
+    ((() =>
+      typeof globalThis.__PRERENDER_DEV_URL === "string" &&
+      defaultDevPrerenderStore
+        ? { store: defaultDevPrerenderStore }
+        : undefined) as RangoOptions<TEnv>["prerender"]);
 
   // Debug cache signal gate (DEVELOPMENT/TEST ONLY). Enabled by the
   // debugCacheSignal option OR the RANGO_TEST_SIGNALS=1 env flag. When off,
@@ -744,6 +763,61 @@ export function createRouter<TEnv = any>(
     );
   }
 
+  // Shared reverse function (also the value behind router.reverse).
+  const reverseFn = createReverse(mergedRouteMap);
+  const reverseLoose = reverseFn as unknown as (
+    name: string,
+    params?: Record<string, string>,
+  ) => string;
+
+  // On-demand prerender binder (router.prerender({ env, ctx }) -> runner with .many / .markStale).
+  // Requestless: runProducer runs matchForPrerender with onDemand=true (arming
+  // the personalization guard); the store/config resolve per call from {env,ctx}.
+  // The key version is the router's data version, resolved by the same call the
+  // handler's overlay read makes (resolvePrerenderVersion), so the keys agree.
+  const prerenderTrigger = createPrerenderTrigger<TEnv, {}>({
+    routerId,
+    resolveVersion: () => resolvePrerenderVersion(routerId, version),
+    isDev: isDevEnvironment,
+    ensureManifest: () => ensureRouterManifest(routerId),
+    resolveConfig: (env, ctx) => {
+      const opt = effectivePrerenderConfigOption;
+      if (!opt) return undefined;
+      return typeof opt === "function" ? opt(env, ctx) : opt;
+    },
+    reverse: (route, params) => {
+      try {
+        return reverseLoose(route, params);
+      } catch {
+        return undefined;
+      }
+    },
+    matchRoute: async (pathname) => {
+      const m = await findMatch(pathname);
+      if (!m) return null;
+      return {
+        routeName: m.routeKey,
+        params: m.params,
+        isOnDemand: m.od === true,
+        isPassthrough: m.pt === true,
+      };
+    },
+    runProducer: ({ pathname, isPassthrough, env, dev }) =>
+      _matchForPrerender<TEnv>(
+        pathname,
+        {},
+        {
+          ...prerenderDeps,
+          versions: resolveRouterVersions(routerId, version),
+        },
+        undefined,
+        isPassthrough,
+        env,
+        dev,
+        true,
+      ),
+  });
+
   // Create match handler functions bound to router state
   const matchHandlers = createMatchHandlers<TEnv>({
     buildRouterContext,
@@ -866,6 +940,7 @@ export function createRouter<TEnv = any>(
       // Collect route keys that have prerender handlers (for non-trie match path)
       let prerenderRouteKeys: Set<string> | undefined;
       let passthroughRouteKeys: Set<string> | undefined;
+      let onDemandRouteKeys: Set<string> | undefined;
       for (const [name, entry] of manifest.entries()) {
         if (entry.type === "route" && entry.isPrerender) {
           if (!prerenderRouteKeys) prerenderRouteKeys = new Set();
@@ -873,6 +948,10 @@ export function createRouter<TEnv = any>(
           if (entry.isPassthrough === true) {
             if (!passthroughRouteKeys) passthroughRouteKeys = new Set();
             passthroughRouteKeys.add(name);
+          }
+          if (entry.isOnDemand === true) {
+            if (!onDemandRouteKeys) onDemandRouteKeys = new Set();
+            onDemandRouteKeys.add(name);
           }
         }
       }
@@ -900,6 +979,7 @@ export function createRouter<TEnv = any>(
             cacheProfiles: resolvedCacheProfiles,
             ...(prerenderRouteKeys ? { prerenderRouteKeys } : {}),
             ...(passthroughRouteKeys ? { passthroughRouteKeys } : {}),
+            ...(onDemandRouteKeys ? { onDemandRouteKeys } : {}),
           });
         }
       } else {
@@ -920,6 +1000,7 @@ export function createRouter<TEnv = any>(
           cacheProfiles: resolvedCacheProfiles,
           ...(prerenderRouteKeys ? { prerenderRouteKeys } : {}),
           ...(passthroughRouteKeys ? { passthroughRouteKeys } : {}),
+          ...(onDemandRouteKeys ? { onDemandRouteKeys } : {}),
         });
       }
 
@@ -1020,7 +1101,7 @@ export function createRouter<TEnv = any>(
     // Type-safe URL builder using merged route map
     // Types are tracked through the builder chain via TRoutes parameter
     // Seeded with static route names from the generated file (injected by Vite)
-    reverse: createReverse(mergedRouteMap),
+    reverse: reverseFn,
 
     // Expose accumulated route map for typeof extraction
     // Returns {} initially, but builder chain accumulates specific route types
@@ -1036,6 +1117,15 @@ export function createRouter<TEnv = any>(
 
     // Expose cache configuration for RSC handler
     cache,
+
+    // Expose the prerender store config (durable overlay) for the RSC handler to
+    // resolve per request. Stored under _prerenderConfig because `prerender` on
+    // the instance is the trigger method (router.prerender()).
+    _prerenderConfig: effectivePrerenderConfigOption,
+
+    // On-demand prerender trigger: router.prerender({ env, ctx })(target),
+    // plus .many() and .markStale() on the runner.
+    prerender: prerenderTrigger,
 
     // Expose notFound component for RSC handler
     notFound,

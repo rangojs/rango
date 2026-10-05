@@ -50,5 +50,6 @@ export function buildPerRouterTrie(manifest: FullManifest): TrieNode | null {
       ? new Set(manifest.passthroughRoutes)
       : undefined,
     manifest.responseTypeRoutes,
+    manifest.onDemandRoutes ? new Set(manifest.onDemandRoutes) : undefined,
   );
 }

@@ -33,6 +33,10 @@ export function postprocessBundle(state: DiscoveryState): void {
   );
 
   // 1. Evict handler code from whichever chunks contain handler exports.
+  // onDemand retention needs no cross-check here: the chunk scan marks
+  // onDemand exports directly from state.onDemandHandlerIds (the evaluated
+  // source's $$id set), so retention and the runtime od trie flag share one
+  // derivation and cannot disagree.
   // handlerChunkInfoMap/staticHandlerChunkInfoMap are populated by generateBundle
   // after the production RSC build. In Vite 6 multi-environment builds, the
   // RSC build runs twice (analysis + production). The maps are cleared at the

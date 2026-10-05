@@ -3,6 +3,8 @@
 // Cloudflare Workers bindings (D1, KV, etc.)
 export interface AppBindings {
   KV: KVNamespace;
+  // On-demand prerender overlay store (see src/router.tsx `prerender` option).
+  PRERENDER_KV: KVNamespace;
   /** Cloudflare zone purge credentials; configure both or neither. */
   CF_TAG_PURGE_ENABLED?: string;
   CF_ZONE_ID?: string;

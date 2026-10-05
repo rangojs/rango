@@ -1,6 +1,6 @@
 ---
 name: prerender
-description: Pre-render route segments at build time with Prerender (with getParams), Passthrough live fallback, Static segments, and Skip. Use when a page's content is mostly static and shouldn't render on every request, speeding up cold responses, reading build-only data (files, build env), or deciding which routes to prerender vs render live.
+description: Pre-render route segments at build time with Prerender (with getParams), Passthrough live fallback, Static segments, and Skip, and refresh them from a running app with on-demand prerender (Prerender onDemand + router.prerender, ISR-style). Use when a page's content is mostly static and shouldn't render on every request, speeding up cold responses, reading build-only data (files, build env), refreshing one page from a webhook, cron or queue without a redeploy, or deciding which routes to prerender vs render live.
 argument-hint: [passthrough]
 ---
 
@@ -678,7 +678,9 @@ and are revalidated by actions as usual.
 
 - **Plain `Prerender`**: the handler was evicted, so the action re-render serves
   the stored prerender entry again. The prerendered output stays frozen; the
-  action's return value reaches the client as usual.
+  action's return value reaches the client as usual. An `onDemand` route serves
+  its on-demand entry first, and re-sends its own segments from it, so an
+  action that calls `router.prerender()` for the page shows the new entry.
 - **`Passthrough()`**: the action re-render runs the live handler, replacing the
   prerendered output. To keep the frozen tree mounted after actions (for example
   so a client component's form state survives), suppress action
@@ -709,12 +711,195 @@ emitted — wrap the route in `Passthrough()` when its segments must re-render.
 ### Tag invalidation does not reach prerendered segments
 
 `updateTag()`/`revalidateTag()` evict runtime cache entries. They do not refresh
-a prerendered route's build-time Flight payload, which is served before the tag
-system is consulted, and a `cacheTag()` inside a `"use cache"` function that runs
-during the build has no runtime effect. A redeploy replaces the payload; because a Prerender payload is part of its router's document version, a deploy whose only change is new prerendered content keeps cached data and replaces stored HTML (shells, document-cache responses) for that router. To make
-a route tag-invalidatable, serve it from the runtime cache instead (`cache()`,
-or a `Passthrough()` live handler). A build-baked **ppr shell** is different: a
-tag it carries does drop it (see "Freshness of a build shell").
+a prerendered route's payload, build-time or on-demand: the prerender store is
+read before the tag system is consulted, and a `cacheTag()` inside a
+`"use cache"` function that runs during the build has no runtime effect. A
+redeploy replaces the build payload; because a Prerender payload is part of its
+router's document version, a deploy whose only change is new prerendered content
+keeps cached data and replaces stored HTML (shells, document-cache responses)
+for that router.
+
+To refresh a prerendered page without a redeploy, opt the route into
+**on-demand prerender** and call `router.prerender()` (next section); its tags
+are a separate namespace, invalidated with the runner's `markStale()`. To
+make a route invalidatable by `updateTag()`, serve it from the runtime cache
+instead (`cache()`, or a `Passthrough()` live handler). A build-baked **ppr
+shell** is different: a tag it carries does drop it (see "Freshness of a build
+shell").
+
+## On-demand refresh (ISR)
+
+Build-time prerender freezes a page until the next deploy. On-demand prerender
+lets a running app re-render one page and serve that to everyone: a CMS
+webhook, a cron sweep, a queue consumer, or a server action calls
+`router.prerender()`, the router renders the route with route params and env
+only (no request), and writes the payload to a durable store that the serve
+path reads before the build manifest.
+
+### Opt a route in
+
+```typescript
+export const ProductPage = Prerender(
+  async () => [{ id: "featured" }],
+  async (ctx) => <Product data={await ctx.env.PRODUCTS.get(ctx.params.id)} />,
+  {
+    onDemand: {
+      ttl: 3600, // soft staleness, seconds; overrides the router `ttl`
+      tags: ({ params }) => [`product:${params.id}`], // or a string[]
+    },
+  },
+);
+```
+
+`onDemand: true` uses the router defaults. Any truthy spelling works (a literal,
+a spread, an imported const). The opt-in keeps the handler in the production
+bundle, which plain `Prerender` evicts. `Passthrough()` alone is not an opt-in:
+wrap an `onDemand` definition to get both a live fallback and refreshes.
+
+`onDemand` and the `ppr` path option cannot be combined: the route definition
+throws, because a refresh cannot replace a captured document shell atomically.
+
+### Configure a store
+
+```typescript
+import { createKVPrerenderStore } from "@rangojs/router/prerender/cloudflare";
+
+export const router = createRouter<Env>({
+  prerender: (env) => ({
+    store: createKVPrerenderStore(env.PRERENDER_KV),
+    ttl: 3600, // default soft TTL; absent = never stale
+    // Optional. Its presence turns on stale-while-revalidate scheduling.
+    onRevalidate: (target, liveEnv) => liveEnv.PRERENDER_QUEUE.send({ target }),
+  }),
+});
+```
+
+The option takes an object or a factory resolved per request and per trigger
+call, like `cache`. `createMemoryPrerenderStore()` from
+`@rangojs/router/prerender` is a single-process store (Node, tests). In dev a
+zero-config in-memory store is used when the option is absent.
+
+### Trigger a refresh
+
+```typescript
+const prerender = router.prerender({ env, ctx });
+await prerender("/products/42");
+await prerender(
+  { route: "products.detail", params: { id: "42" } },
+  { throwOnError: true },
+);
+await prerender.many(targets, { concurrency: 4, onlyIfStale: true });
+await prerender.markStale(["product:42"]);
+```
+
+`router.prerender({ env, ctx })` binds the live env (and the Cloudflare `ctx`,
+absent on Node) once and returns the runner synchronously; binding does no
+work. Per-call options (`onlyIfStale`, `throwOnError`, and `concurrency` on
+`.many()`) go on each call.
+
+`.many()` runs targets through a bounded pool and returns one result per target
+in input order. `concurrency` defaults to 1 (any invalid value is 1). A large
+list belongs in a queue, one message per batch: one invocation runs under the
+platform's time and CPU limits, so a single `.many()` over thousands of targets
+will not finish.
+
+A refresh always renders and replaces; `{ onlyIfStale: true }` (cron sweeps)
+skips a fresh entry and returns `already-fresh`. The result is inspectable
+(`{ ok, status, key, tags, ttl }`); statuses are `rendered`, `already-fresh`,
+`no-match`, `no-store`, `skipped-not-on-demand`, `skipped-personalized`,
+`skipped-unsupported-target` (a target with `?search` or `#hash`),
+`skipped-passthrough`, `render-failed` and `store-failed`. Every failure keeps
+the previous entry.
+
+### What is served
+
+| Request finds                     | `Prerender(..., { onDemand })`                              | `Passthrough(def, live)`                   |
+| --------------------------------- | ----------------------------------------------------------- | ------------------------------------------ |
+| fresh overlay entry               | the overlay entry, loaders fresh (dev and production)       | same                                       |
+| stale overlay entry               | the overlay entry; `onRevalidate` scheduled if configured   | same                                       |
+| no overlay entry, param baked     | production: the build entry; dev: the dev prerender render  | same                                       |
+| no overlay entry, param not baked | production: **404**; dev: rendered through the dev endpoint | the live handler (dev and production)      |
+| server action re-render           | overlay, then build entry, then 404, as above               | the live handler (the overlay is not read) |
+
+The retained handler never renders inside a production request: a plain
+on-demand route 404s for a param until something refreshes it. Dev renders any
+param through the dev prerender endpoint, so a production 404 does not show up
+in dev.
+
+### Rules worth knowing
+
+- **`ttl` is soft staleness.** Entries never expire: a stale entry still serves
+  (it is newer than the build entry below it) and only decides whether
+  `onRevalidate` is scheduled. The KV store writes no `expirationTtl`.
+- **`onRevalidate` runs once per stale key per isolate** while one is in
+  flight, so calling `router.prerender()` from it renders once per stale key
+  on a single Node process. Across isolates, dedup belongs to the queue. Its
+  `target` is a `PrerenderTargetObject`, which the runner and its `.many()`
+  accept as is, so
+  `onRevalidate: (target, env, ctx) => router.prerender({ env, ctx })(target)`
+  typechecks without a cast. `onRevalidate` receives `(target, env)`, with no
+  `ctx`.
+- **Prerender tags are their own namespace.** `cacheTag()`, `updateTag()` and
+  `revalidateTag()` never reach the prerender store; the runner's `markStale()`
+  never reaches the runtime cache. (`updateTag()` needs a request context;
+  refreshes run from queues and crons.)
+- **`markStale()` only marks.** The entry keeps serving; nothing re-renders
+  unless `onRevalidate` is configured or a sweep calls
+  `prerender(target, { onlyIfStale: true })`. Dev warns when you mark
+  with no `onRevalidate`.
+- **The producer is requestless.** `cookies()`, `headers()` and the client-cache
+  directives make a refresh return `skipped-personalized`. `ctx.env` is the
+  live env bound by `router.prerender({ env })`, not `buildEnv`, and `ctx.onDemand` is `true`.
+- **A trigger may render params `getParams()` never returned.** Validate ids
+  from webhooks before refreshing them.
+- **`notFound()` or a throw in a refresh keeps the old entry** (`render-failed`).
+  There is no delete through the trigger in v1.
+- **Intercepted navigations are not refreshed.** A refresh writes the main
+  variant only; an intercept navigation still serves the build's intercept
+  variant, and an on-demand route used as an intercept target 404s on a param
+  that only a refresh produced.
+- **Connected clients can lag.** A refresh has no response to reach open tabs:
+  a client that prefetched the page keeps its copy for `prefetchCacheTTL`
+  (default 300s) and the browser HTTP cache (`prefetchCacheControl`). Lower
+  them if the window matters.
+- **Entries are per deploy.** Keys carry the router's data version, so a deploy
+  that changes server code starts from the build entries again; a client-only
+  deploy keeps refreshed pages.
+
+### Custom stores
+
+A store is plain get/set; the router composes the envelope on write and
+verifies it on read (version and params collision guard):
+
+```typescript
+import {
+  serializePrerenderKey,
+  type WritablePrerenderStore,
+} from "@rangojs/router/prerender";
+
+const store: WritablePrerenderStore = {
+  async get(key) {
+    const raw = await blob.get(serializePrerenderKey(key));
+    return raw ? JSON.parse(raw) : null;
+  },
+  async set(key, stored) {
+    await blob.put(serializePrerenderKey(key), JSON.stringify(stored));
+  },
+  // optional: delete(key), markStale(tags)
+};
+```
+
+Key everything off the `key` you are given (`serializePrerenderKey` includes
+`key.version`). Do not call `getCacheVersions()` in a prerender store: `set()`
+runs outside the producer's request context.
+
+### Test it
+
+`router.prerender()` and the serve path run under the public testing
+primitives: render with `router.prerender()`, then `serveShellRequest(router,
+url)` from `@rangojs/router/testing/flight` serves the route through the
+production handler and returns the Flight payload. `createMemoryPrerenderStore`
+is exported from `@rangojs/router/testing` too. See `/testing`.
 
 ### loading() is ignored without Passthrough
 
@@ -849,9 +1034,12 @@ Pre-rendered routes set flags on the route trie leaf at build time:
 
 - `pr: true` -- route has pre-rendered segment data
 - `pt: true` -- route wrapped with `Passthrough()` (live handler available)
+- `od: true` -- route opted into on-demand refresh (`onDemand`); the writable
+  store is read before the build manifest
 
 At runtime, the cache-lookup middleware uses these flags:
 
+- `od + overlay hit` -- serve the on-demand entry
 - `pr + hit` -- serve pre-rendered Flight payload
 - `pr + pt + miss` -- fall through to Passthrough live handler
 - `pr + miss` (no pt) -- fall through to the stubbed handler, which throws a
@@ -864,4 +1052,5 @@ At runtime, the cache-lookup middleware uses these flags:
 - `/ppr` — the `ppr` path option; combine with `Prerender` for build-time shells
 - `/shell-manifest` — prerendered shell feeding ids to a live loader
 - `/deployment-caching` — why prerender output is not a CDN static file
+- `/cloudflare` — the KV-backed on-demand store and a queue consumer
 - `/loader` — loaders stay live on prerendered routes

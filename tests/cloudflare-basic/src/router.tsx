@@ -5,6 +5,7 @@ import {
   CFCacheStore,
 } from "@rangojs/router/cache";
 import { createCloudflareTracing } from "@rangojs/router/cloudflare";
+import { createKVPrerenderStore } from "@rangojs/router/prerender/cloudflare";
 import { urlpatterns } from "./urls.js";
 import { Document } from "./document.js";
 import type { AppBindings } from "./env.js";
@@ -110,6 +111,25 @@ export const router = createRouter<AppBindings>({
     // Key-only filter: utm_* never keys the cache (search-params-cache-key
     // e2e via /test/spk-cached). Byte-stable for every URL without utm params.
     searchParams: { exclude: ["utm_*"] },
+  }),
+  // On-demand (ISR-style) prerender: a KV-backed writable overlay. A requestless
+  // router.prerender() render is stored here and served on the next request as a
+  // cache hit, short-circuiting the Passthrough live handler. Keys are
+  // version+router-scoped; entries carry a soft staleAt (no KV expirationTtl).
+  prerender: (env) => ({
+    store: createKVPrerenderStore(env.PRERENDER_KV),
+    ttl: 3600,
+    // SWR scheduling (onRevalidate's presence is the opt-in): a STALE overlay
+    // hit still serves and schedules onRevalidate via waitUntil. Test fixture:
+    // write a KV marker keyed by the slug so the e2e can observe the schedule
+    // (a real app points this at a queue). `liveEnv` is the live request env,
+    // not the factory `env`.
+    onRevalidate: (target, liveEnv) => {
+      void liveEnv.PRERENDER_KV.put(
+        "swr-log:" + (target.params["slug"] ?? ""),
+        JSON.stringify(target),
+      );
+    },
   }),
   // Short-TTL profile for the SWR + getRequestContext() regression (see
   // pages/swr-ctx.tsx). ttl=2 opens the stale window fast; swr=120 keeps the

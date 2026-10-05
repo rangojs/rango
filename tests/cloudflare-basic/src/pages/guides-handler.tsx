@@ -1,4 +1,4 @@
-import { Prerender, Passthrough } from "@rangojs/router";
+import { Prerender, Passthrough, cookies } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 
 // Known slugs that get pre-rendered at build time.
@@ -18,6 +18,10 @@ export const GuidesDetailDef = Prerender<{ slug: string }>(
       <div data-testid="guide-detail">
         <h1 data-testid="guide-title">{title}</h1>
         <p data-testid="guide-build">Build: {String(ctx.build)}</p>
+        <p data-testid="guide-source">prerender</p>
+        <p data-testid="guide-ondemand">
+          {String((ctx as any).onDemand ?? false)}
+        </p>
         <p data-testid="guide-rendered-at">Rendered at: {renderedAt}</p>
         <p data-testid="guide-slug">Slug: {ctx.params.slug}</p>
         <nav style={{ marginTop: "1rem" }}>
@@ -45,6 +49,9 @@ export const GuidesDetailDef = Prerender<{ slug: string }>(
       </div>
     );
   },
+  // On-demand (ISR-style) refresh opt-in. MUST be a static literal so the
+  // bundle-eviction pass retains this producer body for router.prerender().
+  { onDemand: { ttl: 3600, tags: ({ params }) => [`guide:${params.slug}`] } },
 );
 
 export const GuidesDetail = Passthrough(GuidesDetailDef, async (ctx) => {
@@ -55,6 +62,10 @@ export const GuidesDetail = Passthrough(GuidesDetailDef, async (ctx) => {
     <div data-testid="guide-detail">
       <h1 data-testid="guide-title">{title}</h1>
       <p data-testid="guide-build">Build: {String(ctx.build)}</p>
+      <p data-testid="guide-source">live</p>
+      <p data-testid="guide-ondemand">
+        {String((ctx as any).onDemand ?? false)}
+      </p>
       <p data-testid="guide-rendered-at">Rendered at: {renderedAt}</p>
       <p data-testid="guide-slug">Slug: {ctx.params.slug}</p>
       <nav style={{ marginTop: "1rem" }}>
@@ -82,3 +93,21 @@ export const GuidesDetail = Passthrough(GuidesDetailDef, async (ctx) => {
     </div>
   );
 });
+
+async function PersonalizedGuideChild({ slug }: { slug: string }) {
+  cookies().get("session");
+  return <p>{slug}</p>;
+}
+
+const PersonalizedGuideDef = Prerender<{ slug: string }>(
+  async () => [],
+  async (ctx) => <PersonalizedGuideChild slug={ctx.params.slug} />,
+  { onDemand: true },
+);
+
+export const PersonalizedGuide = Passthrough(
+  PersonalizedGuideDef,
+  async (ctx) => (
+    <p data-testid="guide-personalized-source">live:{ctx.params.slug}</p>
+  ),
+);

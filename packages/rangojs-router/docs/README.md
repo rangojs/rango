@@ -73,6 +73,9 @@ Read these before changing the corresponding subsystem.
   build-time cache: build flow, prerender store, `BuildContext`, handler
   eviction, `Passthrough()`, intercept prerendering, build-time PPR shells, and
   the runtime cache-lookup model
+- [On-demand prerender design](./design/ondemand-prerender.md) - implemented
+  ISR-style durable prerender refresh from fetch, cron, queues, workflows, and
+  webhooks
 - [`"use cache"` API design](./use-cache-api-design.md) - function/component
   caching: directive forms, cache profiles, keys and tainted arguments, the
   Vite transform, the runtime, and embedded server actions

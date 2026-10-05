@@ -29,19 +29,39 @@ export function findMatchingParenInBundle(
 
 /**
  * Scan a bundled chunk for handler exports and extract their names + $$id values.
- * Optionally detects passthrough flag. @internal Exported for testing only.
+ * Optionally detects the passthrough flag by parsing the call body, and marks
+ * onDemand from the authoritative discovery-derived handlerId set.
+ * @internal Exported for testing only.
  */
 export function extractHandlerExportsFromChunk(
   chunkCode: string,
   handlerModules: Map<string, string[]>,
   fnName: string,
   detectPassthrough: boolean,
-): Array<{ name: string; handlerId: string; passthrough: boolean }> {
+  // handlerIds ($$id) of routes the evaluated source marks onDemand — the
+  // single source of truth shared with the runtime od trie flag. Keyed on the
+  // same $$id the chunk scan extracts, so any spelling of the option (literal,
+  // spread, imported const) retains the producer; a textual scan of the call
+  // body cannot see non-literal spellings and silently evicted them.
+  onDemandHandlerIds?: ReadonlyMap<string, string>,
+): Array<{
+  name: string;
+  handlerId: string;
+  passthrough: boolean;
+  onDemand: boolean;
+}> {
   const handlers: Array<{
     name: string;
     handlerId: string;
     passthrough: boolean;
+    onDemand: boolean;
   }> = [];
+
+  // Only parse a call body (an O(callBody) paren walk per export) when the whole
+  // chunk actually contains the marker we're detecting — the common case (no
+  // passthrough opt-in anywhere in the chunk) skips the walk entirely.
+  const scanPassthrough =
+    detectPassthrough && chunkCode.includes("passthrough");
 
   for (const [, handlerNames] of handlerModules) {
     for (const name of handlerNames) {
@@ -53,7 +73,7 @@ export function extractHandlerExportsFromChunk(
       if (!match) continue;
 
       let isPassthrough = false;
-      if (detectPassthrough) {
+      if (scanPassthrough) {
         const eFnName = escapeRegExp(fnName);
         const callStartRe = new RegExp(
           `(?:const|let|var)\\s+${eName}\\s*=\\s*${eFnName}\\s*(?:<[^>]*>)?\\s*\\(`,
@@ -68,7 +88,12 @@ export function extractHandlerExportsFromChunk(
           }
         }
       }
-      handlers.push({ name, handlerId: match[1], passthrough: isPassthrough });
+      handlers.push({
+        name,
+        handlerId: match[1],
+        passthrough: isPassthrough,
+        onDemand: onDemandHandlerIds?.has(match[1]) ?? false,
+      });
     }
   }
 
@@ -82,7 +107,12 @@ export function extractHandlerExportsFromChunk(
  */
 export function evictHandlerCode(
   code: string,
-  exports: Array<{ name: string; handlerId: string; passthrough?: boolean }>,
+  exports: Array<{
+    name: string;
+    handlerId: string;
+    passthrough?: boolean;
+    onDemand?: boolean;
+  }>,
   fnName: string,
   brand: string,
 ): { code: string; savedBytes: number } | null {
@@ -90,8 +120,10 @@ export function evictHandlerCode(
   let modified = code;
 
   const eFnName = escapeRegExp(fnName);
-  for (const { name, handlerId, passthrough } of exports) {
-    if (passthrough) continue;
+  for (const { name, handlerId, passthrough, onDemand } of exports) {
+    // Keep the producer body for passthrough (live fallback) and onDemand
+    // (router.prerender() must be able to invoke the retained producer).
+    if (passthrough || onDemand) continue;
 
     const eName = escapeRegExp(name);
     // Match const/let/var: Rolldown (Vite 8) emits top-level bindings in the

@@ -20,11 +20,12 @@ To choose between the in-app layers themselves, start at `/cache-guide`.
 | `"use cache"`                     | one function result                             |                            yes |                                                          yes | caller, handlers, loaders, rendering |
 | `cache()`                         | serialized Flight segments                      |                            yes |                                                          yes | middleware, loaders, HTML rendering  |
 | `Prerender()`                     | build-time Flight segments in the server bundle |                            yes |                                                          yes | middleware, loaders, HTML rendering  |
+| `Prerender(..., { onDemand })`    | refreshed Flight segments in a writable store   |                            yes |                                                          yes | middleware, loaders, HTML rendering  |
 | `ppr`                             | HTML prelude + React postponed state            |                            yes |                                 **yes, before shell commit** | middleware, holes, hydration payload |
 | `createDocumentCacheMiddleware()` | complete response in the app cache store        |                            yes | outer middleware runs; the hit skips its downstream pipeline | nothing downstream                   |
 | HTTP CDN cache (`s-maxage`)       | complete HTTP response outside the app          |                         **no** |                                                       **no** | nothing                              |
 
-The first five rows enter the app. The first four preserve the complete request
+The first six rows enter the app. The first five preserve the complete request
 model; a document-cache middleware hit intentionally short-circuits its
 downstream pipeline. The last row is a platform cache: on a hit it serves bytes
 without invoking Rango at all.
@@ -71,12 +72,21 @@ Worker at the edge, middleware runs there, and PPR shell lookup/resume stays in
 that Worker. `CFCacheStore` supplies the app cache families; client assets are
 served separately as assets.
 
+An on-demand prerender store (`/prerender` → "On-demand refresh") on Workers
+is `createKVPrerenderStore(env.PRERENDER_KV)` from
+`@rangojs/router/prerender/cloudflare`: refreshes run from `scheduled`,
+`queue` or a webhook route, and every request to an on-demand route pays one
+KV read plus one per tag on the entry.
+
 ### Vercel
 
 The Vercel preset emits static client assets plus one streaming Node Function.
 HTML, Flight, prerender payloads, and PPR shells are served from that function.
 `VercelCacheStore` uses Runtime Cache inside the function; Runtime Cache is not
-Vercel's CDN/ISR cache.
+Vercel's CDN/ISR cache. Rango's on-demand prerender does not use Vercel ISR
+either: it needs a durable `WritablePrerenderStore` shared by every function
+instance, and v1 ships none for Vercel (the in-memory store is per process),
+so a Vercel app writes a small get/set adapter over its own storage.
 
 The preset deliberately emits no Vercel `.prerender-config.json`, response
 `chain`, or CDN-stitched resume function. Vercel's open-source Build Output
@@ -155,15 +165,16 @@ the app store, should own the complete response.
 
 ## Decision guide
 
-| Requirement                                         | Choose                                     |
-| --------------------------------------------------- | ------------------------------------------ |
-| Per-request auth or request shaping                 | in-function caching; never shared CDN HTML |
-| Stable shell with cart/session/live prices          | `ppr` with live holes                      |
-| Build-known segments with live loaders              | `Prerender()`                              |
-| Fully public response, whole-page TTL is acceptable | HTTP `s-maxage` + SWR                      |
-| Whole response reused inside the app store          | `createDocumentCacheMiddleware()`          |
-| One query or component is expensive                 | `"use cache"`                              |
-| One route subtree is expensive                      | `cache()`                                  |
+| Requirement                                         | Choose                                                |
+| --------------------------------------------------- | ----------------------------------------------------- |
+| Per-request auth or request shaping                 | in-function caching; never shared CDN HTML            |
+| Stable shell with cart/session/live prices          | `ppr` with live holes                                 |
+| Build-known segments with live loaders              | `Prerender()`                                         |
+| Prerendered page refreshed on a CMS edit, no deploy | `Prerender(..., { onDemand })` + `router.prerender()` |
+| Fully public response, whole-page TTL is acceptable | HTTP `s-maxage` + SWR                                 |
+| Whole response reused inside the app store          | `createDocumentCacheMiddleware()`                     |
+| One query or component is expensive                 | `"use cache"`                                         |
+| One route subtree is expensive                      | `cache()`                                             |
 
 For a large dynamic app, CDN-stitched PPR would mainly improve shell first-byte
 latency and avoid sending the prelude from the function. It would not remove the
@@ -175,7 +186,7 @@ provably public and shared.
 ## Related skills
 
 - `/ppr` — shell capture, holes, middleware commit point, invalidation
-- `/prerender` — build-time Flight segments and `Prerender + ppr`
+- `/prerender` — build-time Flight segments, `Prerender + ppr`, and on-demand refresh
 - `/document-cache` — store-backed complete-response middleware
 - `/vercel` — Vercel Build Output preset and Runtime Cache wiring
 - `/cloudflare` — Worker deployment and bindings

@@ -21,6 +21,7 @@ import {
   requestReadCaptureFix,
   type IdentityReadWording,
 } from "./context.js";
+import { assertNotInsidePrerenderProducer } from "../prerender/producer-guard.js";
 import { requestHeaders, shadowRequestHeaders } from "./request-headers.js";
 
 /**
@@ -72,6 +73,7 @@ export interface CookieStore {
  */
 export function cookies(): CookieStore {
   const ctx = getRequestContext();
+  assertNotInsidePrerenderProducer(ctx, "cookies()");
   guardIdentityRead(ctx, "cookies()", COOKIES_READ);
   return createCookieStore(ctx);
 }
@@ -273,6 +275,7 @@ const HEADERS_READ_PROPS = new Set<string | symbol>([
  */
 export function headers(): ReadonlyHeaders {
   const ctx = getRequestContext();
+  assertNotInsidePrerenderProducer(ctx, "headers()");
   guardIdentityRead(ctx, "headers()", HEADERS_READ);
   return new Proxy(requestHeaders(ctx.request), {
     get(target, prop, receiver) {
@@ -313,6 +316,7 @@ export function invalidateClientCache(): void {
     }
     return;
   }
+  assertNotInsidePrerenderProducer(ctx, "invalidateClientCache()");
   refuseInCacheScope("invalidateClientCache()", COOKIES_READ);
   ctx._rotateStateCookie();
 }
@@ -338,6 +342,7 @@ export function keepClientCache(): void {
     }
     return;
   }
+  assertNotInsidePrerenderProducer(ctx, "keepClientCache()");
   refuseInCacheScope("keepClientCache()", COOKIES_READ);
   ctx._setKeepCacheDirective();
 }

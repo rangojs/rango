@@ -2505,6 +2505,12 @@ export function createRouterDiscoveryPlugin(
             s.resolvedPrerenderModules,
             "Prerender",
             false,
+            // Mark onDemand exports (retained, not evicted) from the
+            // discovery-derived $$id set — the same evaluated source that sets
+            // the runtime od trie flag, so retention and serve can never
+            // disagree. Populated by discoverRouters (buildStart), which runs
+            // before this generateBundle pass.
+            s.onDemandHandlerIds,
           );
           if (handlers.length > 0) {
             const existing = s.handlerChunkInfoMap.get(fileName);
