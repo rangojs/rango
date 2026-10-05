@@ -47,6 +47,7 @@ import type { SegmentCacheStore, ShellCacheEntry } from "../cache/types.js";
 import type { ExecutionContext } from "../types/request-scope.js";
 import type { HandlerCacheConfig, SSRModule } from "../rsc/types.js";
 import type { createRSCHandler } from "../rsc/handler.js";
+import { setDefaultSSRModuleLoaderForTests } from "../rsc/ssr-module-loader.js";
 import {
   POST_QUIESCE_TASK_HOPS,
   SHELL_CAPTURE_MAX_WAIT_MS,
@@ -233,6 +234,16 @@ const SSR_STUB: SSRModule = {
     );
   },
 };
+
+/**
+ * `router.prerender()` warms a route through `router.fetch`, whose handler is
+ * built with no `loadSSRModule` and so reaches for the Vite RSC module loader
+ * this project cannot run. It gets the stub the handlers below get:
+ * everything else on a warm's path (router.fetch, createRSCHandler, the match
+ * pipeline, the capture) is production code. A warm runs outside a
+ * serveShellRequest call, so the stub records nothing for it.
+ */
+setDefaultSSRModuleLoaderForTests(async () => SSR_STUB);
 
 type HandleChannel = AsyncIterable<HandleData> | undefined;
 

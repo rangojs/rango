@@ -8,9 +8,9 @@
  * warmed `ppr` route is a real shell HIT and a warmed `cache()` route a real
  * record HIT.
  *
- * Design phase: these pin the decided behavior and fail until it is built.
- * Today the runner answers `skipped-not-on-demand` for every route here except
- * the on-demand one, and renders nothing.
+ * These ten were written with the design, before the build, and pin its
+ * headline contracts; prerender-warm-layers.rsc-test.tsx covers the other
+ * cache layers, the origin and the refusals.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";

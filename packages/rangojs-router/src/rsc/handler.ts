@@ -91,6 +91,7 @@ import {
 import { handleRscRendering } from "./rsc-rendering.js";
 import { withoutShellMissMarker } from "./shell-serve.js";
 import { readWarmMark } from "../prerender/warm-request.js";
+import { defaultSSRModuleLoaderForTests } from "./ssr-module-loader.js";
 import {
   withTimeout,
   isTimeoutEnabled,
@@ -210,7 +211,9 @@ export function createRSCHandler<
   // In dev mode Vite may hot-reload the module, so skip memoization.
   const rawLoadSSRModule: LoadSSRModule =
     options.loadSSRModule ??
-    (() => import.meta.viteRsc.loadModule("ssr", "index"));
+    (() =>
+      defaultSSRModuleLoaderForTests()?.() ??
+      import.meta.viteRsc.loadModule("ssr", "index"));
   let _ssrModulePromise: Promise<SSRModule> | undefined;
   const loadSSRModule: LoadSSRModule =
     process.env.NODE_ENV === "production"
