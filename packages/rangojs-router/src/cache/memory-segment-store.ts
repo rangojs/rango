@@ -6,6 +6,7 @@
  */
 
 import type {
+  CacheStoreScope,
   SegmentCacheStore,
   CachedEntryData,
   CacheDefaults,
@@ -188,6 +189,13 @@ const DEFAULT_MAX_ENTRIES = 1000;
 export class MemorySegmentCacheStore<
   TEnv = unknown,
 > implements SegmentCacheStore<TEnv> {
+  /**
+   * SegmentCacheStore.scope: these maps live in one process, so
+   * router.prerender() refuses to warm into them in production. Under the Vite
+   * dev server the gate counts this class as shared (store-scope.ts
+   * resolveWarmStoreScope).
+   */
+  readonly scope: CacheStoreScope = "local";
   readonly supportsPassiveShellReads: true = true;
   private cache: Map<string, CachedEntryData>;
   private responseCache: Map<string, CachedResponseEntry>;

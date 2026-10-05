@@ -43,6 +43,18 @@ export interface CacheGetResult {
 }
 
 /**
+ * Where an entry a store writes during one request can be read by a later
+ * request. `router.prerender()` warms a route only when the app store answers
+ * `"global"` or `"regional"`: a warm fills the store where it runs, which
+ * serves other traffic only when the store is shared beyond that place.
+ * - `"global"`: every location reads the same entries.
+ * - `"regional"`: each region has its own copy; a warm fills the region it
+ *   runs in.
+ * - `"local"`: only the process, isolate or edge location that wrote it.
+ */
+export type CacheStoreScope = "global" | "regional" | "local";
+
+/**
  * Low-level segment cache store interface.
  *
  * Implementations handle the actual storage (memory, KV, Redis, etc.).
@@ -59,6 +71,12 @@ export interface CacheGetResult {
  * @typeParam TEnv - Platform bindings type (e.g., Cloudflare env)
  */
 export interface SegmentCacheStore<TEnv = unknown> {
+  /**
+   * Where an entry this store writes can be read ({@link CacheStoreScope}).
+   * Absent: unknown to the router, treated as `"local"`.
+   */
+  readonly scope?: CacheStoreScope;
+
   /**
    * The store honors getShell(..., { claimRevalidation: false }) without
    * claiming an SWR lock. Navigation replay requires this opt-in because it

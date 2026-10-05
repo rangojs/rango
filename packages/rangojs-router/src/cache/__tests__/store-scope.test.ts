@@ -2,8 +2,9 @@
  * SegmentCacheStore.scope on the shipped stores: where an entry one request
  * writes can be read. router.prerender() warms a route only when its app
  * store is shared beyond the place the call runs ("global" or "regional");
- * see docs/design/prerender-every-route.md. Design phase: none of the stores
- * declares a scope yet.
+ * see docs/design/prerender-every-route.md. What the warm gate makes of a
+ * declaration (the memory store under the dev server included) is
+ * warm-store-scope.test.ts.
  */
 import { describe, expect, it } from "vitest";
 import { MemorySegmentCacheStore } from "../memory-segment-store.js";
