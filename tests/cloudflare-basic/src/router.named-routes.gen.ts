@@ -238,6 +238,8 @@ export const NamedRoutes = {
   testTaggedJson: "/test/tagged-json",
   testTaggedJsonB: "/test/tagged-json-b",
   testUncachedJson: "/test/uncached-json",
+  testWarmBump: "/__test/warm-bump",
+  testWarmTrigger: "/__test/warm-trigger",
   theme: "/theme",
   "transformCases.index": "/transform-cases",
   "transformCases.prerendered": "/transform-cases/prerendered",
@@ -249,6 +251,9 @@ export const NamedRoutes = {
   useCacheMemoHandlerFirst: "/use-cache-memo/handler-first",
   useCacheMemoPlain: "/use-cache-memo/plain",
   useCacheMemoRequestContext: "/use-cache-memo/request-context",
+  warmCached: "/warm/cached",
+  warmPersonal: "/warm/personal",
+  warmShell: "/warm/shell",
 } as const;
 
 // Aliased so the augmentation below does not pay a homomorphic mapped-type

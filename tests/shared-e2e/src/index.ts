@@ -2615,3 +2615,314 @@ export async function expectRedirectLoopEndsInErrorBoundary(
   expect(loopLogs).toHaveLength(1);
   expect(loopLogs[0]).toContain("20 redirects");
 }
+
+// ---------------------------------------------------------------------------
+// router.prerender() for every route (issue #1062): warming a route that is
+// not Prerender(..., { onDemand }) through the request handler, before a
+// visitor asks for it. Shared by packages/rangojs-router/e2e/prerender-warm
+// .test.ts (memory store declared shared) and tests/cloudflare-basic/e2e/
+// prerender-warm.test.ts (CFCacheStore over KV).
+// ---------------------------------------------------------------------------
+
+/**
+ * The warm fixture both apps implement. Each test owns a `?probe=`, which
+ * keys its cache entries, and a generation per probe that the fixture's stamps
+ * carry (`<kind>-<probe>@g<n>`), so a stored render reads apart from a newer
+ * one.
+ * - `shellUrl`: a `ppr` route. `warm-stamp` reads `shell-<probe>@g<n>`;
+ *   `warm-counter` is a client counter (hydration proof).
+ * - `cachedUrl`: a route under `cache()` without `ppr`. `warm-stamp` reads
+ *   `cached-<probe>@g<n>#r<run>`, `run` counting the handler's runs for the
+ *   probe.
+ * - `personalUrl`: a `ppr` route whose handler reads `cookies()`.
+ * - `triggerUrl`: GET `?target=<path>` (repeatable) `[&onlyIfStale=1]` calls
+ *   `router.prerender({ env })` from a route handler, with NO `origin`, and
+ *   answers the result as JSON (several targets: the `.many()` results).
+ * - `bumpUrl`: GET `?probe=` moves that probe's generation on.
+ * - `onDemandPath`: the path of a `Prerender(..., { onDemand })` route.
+ */
+export interface PrerenderWarmFixture {
+  shellUrl: string;
+  cachedUrl: string;
+  personalUrl: string;
+  triggerUrl: string;
+  bumpUrl: string;
+  onDemandPath: (slug: string) => string;
+}
+
+/** A `router.prerender()` result as the trigger serializes it. */
+interface WarmTriggerResult {
+  ok: boolean;
+  path?: "on-demand" | "warm";
+  status: string;
+  target: string;
+  caches?: {
+    writes: { record: number; item: number; response: number; shell: number };
+    shell?: string;
+    refusal?: string;
+  };
+}
+
+/**
+ * The path and search of a fixture URL for `probe`: what the trigger is
+ * handed. A path carries no origin, so the warm takes the trigger request's.
+ */
+function warmTarget(url: string, probe: string): string {
+  return `${new URL(url).pathname}?probe=${probe}`;
+}
+
+async function triggerWarm(
+  page: Page,
+  fixture: PrerenderWarmFixture,
+  targets: string[],
+  options: { onlyIfStale?: boolean } = {},
+): Promise<unknown> {
+  const params = new URLSearchParams();
+  for (const target of targets) params.append("target", target);
+  if (options.onlyIfStale) params.set("onlyIfStale", "1");
+  const res = await page.request.get(`${fixture.triggerUrl}?${params}`);
+  expect(res.ok(), await res.text()).toBe(true);
+  return res.json();
+}
+
+/** Warm one fixture URL and return its result. */
+async function warmOne(
+  page: Page,
+  fixture: PrerenderWarmFixture,
+  url: string,
+  probe: string,
+  options?: { onlyIfStale?: boolean },
+): Promise<WarmTriggerResult> {
+  return (await triggerWarm(
+    page,
+    fixture,
+    [warmTarget(url, probe)],
+    options,
+  )) as WarmTriggerResult;
+}
+
+/** Request `url` as a document: its shell status and the stamp it rendered. */
+async function warmDocument(
+  page: Page,
+  url: string,
+): Promise<{ shell: string | undefined; stamp: string | undefined }> {
+  const res = await page.request.get(url, { headers: PUSH_HTML_HEADERS });
+  expect(res.status()).toBe(200);
+  const html = await res.text();
+  return {
+    shell: res.headers()["x-rango-shell"],
+    stamp: /data-testid="warm-stamp"[^>]*>([^<]*)</.exec(html)?.[1],
+  };
+}
+
+/**
+ * A visitor's request for another key of the `ppr` fixture route, until it
+ * HITs: the route's modules are loaded and one capture has run. Without it a
+ * dev server's first capture of the route can race its cold module graph and
+ * store nothing, which is the capture's cold-start case, not the warm's.
+ */
+async function primeWarmFixture(
+  page: Page,
+  fixture: PrerenderWarmFixture,
+): Promise<void> {
+  await warmShellToHit(page, `${fixture.shellUrl}?probe=${pushProbe("prime")}`);
+}
+
+/**
+ * Warming a `ppr` route stores its shell: the first document request any
+ * visitor makes for the URL is a HIT and hydrates clean. The trigger's route
+ * handler passed a path and no `origin`, so the warm requested it on the
+ * origin of the trigger's own request; shell keys carry the host, so the
+ * visitor's HIT is the proof.
+ */
+export async function expectWarmMakesNextDocumentAShellHit(
+  page: Page,
+  fixture: PrerenderWarmFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  await primeWarmFixture(page, fixture);
+  const probe = pushProbe("warm");
+  const url = `${fixture.shellUrl}?probe=${probe}`;
+
+  const result = await warmOne(page, fixture, fixture.shellUrl, probe);
+  expect(result, JSON.stringify(result)).toMatchObject({
+    ok: true,
+    path: "warm",
+    status: "warmed",
+    target: url,
+    responseStatus: 200,
+    caches: { shell: "stored" },
+  });
+  expect(result.caches?.writes.shell).toBe(1);
+
+  const response = await page.goto(url);
+  expect(response?.headers()["x-rango-shell"]).toBe("HIT");
+  await waitForShellHydration(page);
+  await expect(byTestId(page, "warm-stamp")).toHaveText(`shell-${probe}@g1`);
+  await byTestId(page, "warm-counter").click();
+  await expect(byTestId(page, "warm-counter")).toHaveText("1");
+}
+
+/**
+ * A warm replaces a stored shell in place: the old shell serves until the
+ * warm's write, and the next document request is a HIT with the newer render.
+ */
+export async function expectWarmReplacesStoredShell(
+  page: Page,
+  fixture: PrerenderWarmFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const probe = pushProbe("replace");
+  const url = `${fixture.shellUrl}?probe=${probe}`;
+  // A visitor's request captures the shell at generation 1.
+  await warmShellToHit(page, url);
+  // The content moves on; the stored shell keeps serving the older render.
+  const bumped = await page.request.get(`${fixture.bumpUrl}?probe=${probe}`);
+  expect(bumped.ok()).toBe(true);
+  expect(await warmDocument(page, url)).toEqual({
+    shell: "HIT",
+    stamp: `shell-${probe}@g1`,
+  });
+
+  const result = await warmOne(page, fixture, fixture.shellUrl, probe);
+  expect(result, JSON.stringify(result)).toMatchObject({
+    ok: true,
+    path: "warm",
+    status: "warmed",
+    caches: { shell: "stored" },
+  });
+
+  expect(await warmDocument(page, url)).toEqual({
+    shell: "HIT",
+    stamp: `shell-${probe}@g2`,
+  });
+  await gotoShellHit(page, url);
+  await expect(byTestId(page, "warm-stamp")).toHaveText(`shell-${probe}@g2`);
+}
+
+/**
+ * A warm replaces a route `cache()` record a visitor's request wrote: its
+ * read misses although the record is fresh, and its write lands under the
+ * same key, so the next request replays the newer render.
+ */
+export async function expectWarmReplacesCachedRecord(
+  page: Page,
+  fixture: PrerenderWarmFixture,
+): Promise<void> {
+  const probe = pushProbe("record");
+  const url = `${fixture.cachedUrl}?probe=${probe}`;
+  // The record write is deferred: it has landed once two requests in a row
+  // show one run of the handler.
+  let stored: string | undefined;
+  await expect(async () => {
+    const first = (await warmDocument(page, url)).stamp;
+    expect((await warmDocument(page, url)).stamp).toBe(first);
+    stored = first;
+  }).toPass({ timeout: 20_000 });
+  expect(stored).toContain(`cached-${probe}@g1#r`);
+
+  const bumped = await page.request.get(`${fixture.bumpUrl}?probe=${probe}`);
+  expect(bumped.ok()).toBe(true);
+  expect((await warmDocument(page, url)).stamp).toBe(stored);
+
+  const result = await warmOne(page, fixture, fixture.cachedUrl, probe);
+  expect(result, JSON.stringify(result)).toMatchObject({
+    ok: true,
+    path: "warm",
+    status: "warmed",
+  });
+  expect(result.caches?.writes.record).toBeGreaterThanOrEqual(1);
+
+  const after = (await warmDocument(page, url)).stamp;
+  expect(after).toContain(`cached-${probe}@g2#r`);
+  // A record HIT again: the handler did not run for this request.
+  expect((await warmDocument(page, url)).stamp).toBe(after);
+}
+
+/**
+ * A route whose handler reads `cookies()` is not warmed: the shell capture's
+ * identity guard refuses it, the result says so, and nothing is stored (the
+ * visitor's next document is still a MISS).
+ */
+export async function expectWarmOfCookieReaderStoresNothing(
+  page: Page,
+  fixture: PrerenderWarmFixture,
+): Promise<void> {
+  const probe = pushProbe("personal");
+  const url = `${fixture.personalUrl}?probe=${probe}`;
+
+  const result = await warmOne(page, fixture, fixture.personalUrl, probe);
+  expect(result, JSON.stringify(result)).toMatchObject({
+    ok: false,
+    path: "warm",
+    status: "skipped-personalized",
+    caches: { shell: "refused", refusal: "identity" },
+  });
+  expect(result.caches?.writes.shell).toBe(0);
+
+  expect(await warmDocument(page, url)).toEqual({
+    shell: "MISS",
+    stamp: "personal-anonymous",
+  });
+}
+
+/**
+ * `.many()` from a route handler, with no `origin` on the binding: an
+ * on-demand target takes the requestless render and a plain target the warm,
+ * one result per target in input order, and both warm requests ran on the
+ * origin of the handler's request (the on-demand result carries `caches`, the
+ * warmed shell is the visitor's HIT).
+ */
+export async function expectMixedBatchWarmsOnTheRequestOrigin(
+  page: Page,
+  fixture: PrerenderWarmFixture,
+): Promise<void> {
+  await primeWarmFixture(page, fixture);
+  const probe = pushProbe("batch");
+  const url = `${fixture.shellUrl}?probe=${probe}`;
+  const onDemandPath = fixture.onDemandPath(probe);
+
+  const results = (await triggerWarm(page, fixture, [
+    onDemandPath,
+    warmTarget(fixture.shellUrl, probe),
+  ])) as WarmTriggerResult[];
+  expect(results, JSON.stringify(results)).toMatchObject([
+    {
+      ok: true,
+      path: "on-demand",
+      status: "rendered",
+      target: onDemandPath,
+    },
+    { ok: true, path: "warm", status: "warmed", target: url },
+  ]);
+  expect(results[0]!.caches, JSON.stringify(results[0])).toBeDefined();
+
+  expect((await warmDocument(page, url)).shell).toBe("HIT");
+}
+
+/**
+ * `onlyIfStale` on a warmed route tops up nothing: the request reads its
+ * caches normally, finds the shell fresh, and reports `already-fresh`.
+ */
+export async function expectOnlyIfStaleWarmLeavesFreshShellAlone(
+  page: Page,
+  fixture: PrerenderWarmFixture,
+): Promise<void> {
+  await primeWarmFixture(page, fixture);
+  const probe = pushProbe("fresh");
+  const first = await warmOne(page, fixture, fixture.shellUrl, probe);
+  expect(first, JSON.stringify(first)).toMatchObject({ status: "warmed" });
+
+  const second = await warmOne(page, fixture, fixture.shellUrl, probe, {
+    onlyIfStale: true,
+  });
+  expect(second, JSON.stringify(second)).toMatchObject({
+    ok: true,
+    path: "warm",
+    status: "already-fresh",
+    caches: {
+      shell: "fresh",
+      writes: { record: 0, item: 0, response: 0, shell: 0 },
+    },
+  });
+}
