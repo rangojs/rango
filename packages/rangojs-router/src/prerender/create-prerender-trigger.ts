@@ -1,21 +1,42 @@
 /**
  * `router.prerender()` trigger factory.
  *
- * Builds the `router.prerender` binder: `(runtime) => runner`, the runner being the requestless refresh callable (plus `.many` / `.markStale`)
- * from router-supplied deps. Pure and testable: all router internals (reverse,
- * match, the producer) arrive as injected functions, so this module has no RSC
+ * Builds the `router.prerender` binder: `(runtime) => runner`, the runner being
+ * the per-target callable (plus `.many` / `.markStale`) from router-supplied
+ * deps. Pure and testable: all router internals (reverse, match, the producer,
+ * the request handler) arrive as injected functions, so this module has no RSC
  * imports and can be unit-tested with fakes.
  *
- * Contract highlights (see docs/design/ondemand-prerender.md):
+ * One verb, dispatched by route after the match:
+ * - A `Prerender(..., { onDemand })` route takes the requestless render into
+ *   the prerender store (docs/design/ondemand-prerender.md), then, when the
+ *   app cache store is shared and an origin resolves, a warm request that
+ *   rebuilds the runtime caches on top of the new entry.
+ * - Every other route is warmed: a cookie-free GET through the router's own
+ *   handler in which every runtime cache read misses and every write replaces
+ *   the entry (docs/design/prerender-every-route.md).
+ *
+ * Contract highlights:
  * - Requestless: the producer render never inherits the caller's request state.
- * - Refresh always renders and replaces; `onlyIfStale` is the cron-sweep opt-in
- *   and the only path that returns `already-fresh`.
+ * - A refresh always renders and replaces; `onlyIfStale` is the cron-sweep
+ *   opt-in and the only path that returns `already-fresh`.
  * - A failed render/store keeps the previous entry (replace-on-success).
- * - Path-only targets in v1: a target with search/hash is unsupported.
+ * - An on-demand target is path-only (its key carries no search); a warm
+ *   target keeps its search params, which cache keys carry.
+ * - A warm writes only to a store shared beyond the place the call runs.
  */
 
 import type { SerializedSegmentData } from "../cache/types.js";
+import { isReservedSearchParam } from "../cache/cache-key-utils.js";
+import { resolveWarmStoreScope } from "../cache/store-scope.js";
+import type { HandlerCacheConfig } from "../rsc/types.js";
 import type { ExecutionContext } from "../types/request-scope.js";
+import {
+  createCollectingExecutionContext,
+  runWarmRequest,
+  warmCaches,
+  warmStatus,
+} from "./warm.js";
 import { hashParams } from "./param-hash.js";
 import { isPrerenderPersonalizationError } from "./producer-guard.js";
 import { normalizeTagList } from "../cache/cache-policy.js";
@@ -95,6 +116,21 @@ export interface PrerenderTriggerDeps<TEnv = any> {
     env: TEnv;
     dev: boolean;
   }) => Promise<ProducerOutput | null>;
+  /**
+   * Resolve `createRouter({ cache })` (factory or object) for a warm;
+   * undefined when the router has none. May throw, like the prerender factory.
+   */
+  resolveCacheConfig: (
+    env: TEnv,
+    ctx: ExecutionContext,
+  ) => HandlerCacheConfig | undefined;
+  /** The router's own request handler (`router.fetch`): where a warm is dispatched. */
+  fetch: (
+    request: Request,
+    input: { env: TEnv; ctx: ExecutionContext },
+  ) => Promise<Response>;
+  /** The origin of the request the runner is called from, when there is one. */
+  ambientOrigin: () => string | undefined;
 }
 
 /** Thrown by the trigger when `throwOnError: true` and the operation did not succeed. */
@@ -116,9 +152,18 @@ interface ResolvedTarget {
   pathname?: string;
   /** Display form used in the result's `target` field. */
   display: string;
-  /** Set when the target carries search/hash (v1 unsupported). */
+  /** Set when the target does not parse as an http(s) URL or a path. */
   unsupported?: boolean;
+  /** The target's own origin: a full-URL string or a URL. */
+  origin?: string;
+  /** `?`-prefixed search, or "". */
+  search: string;
+  /** The target carries a hash, or a search param the router reserves. */
+  hashOrReserved: boolean;
 }
+
+/** Stands in for the origin while a path target is parsed; never requested. */
+const PATH_BASE = "http://prerender.local";
 
 function resolveTarget<TRoutes>(
   target: PrerenderTarget<TRoutes>,
@@ -137,7 +182,7 @@ function resolveTarget<TRoutes>(
   const pathname = reverse(route, params);
   if (pathname === undefined) {
     // Unknown route name — surfaced as no-match downstream.
-    return { display: route };
+    return { display: route, search: "", hashOrReserved: false };
   }
   return fromUrlLike(pathname, pathname);
 }
@@ -145,17 +190,25 @@ function resolveTarget<TRoutes>(
 function fromUrlLike(raw: string, display: string): ResolvedTarget {
   let url: URL;
   try {
-    // Host is irrelevant (prerender keys are route+params only); a relative path
-    // resolves against the dummy base, a full URL keeps its own path.
-    url = new URL(raw, "http://prerender.local");
+    // A relative path resolves against the stand-in base; a full URL keeps
+    // its own origin, which a warm requests (cache keys carry the host).
+    url = new URL(raw, PATH_BASE);
   } catch {
-    return { display, unsupported: true };
+    return { display, unsupported: true, search: "", hashOrReserved: false };
   }
-  if (url.search || url.hash) {
-    // Path-only in v1: search/hash would silently persist under the base key.
-    return { display, unsupported: true };
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    return { display, unsupported: true, search: "", hashOrReserved: false };
   }
-  return { pathname: url.pathname, display: url.pathname };
+  // The params that switch the handler's mode (`_rsc*`, `__no_cache`) are not
+  // a page a visitor requests.
+  const reserved = [...url.searchParams.keys()].some(isReservedSearchParam);
+  return {
+    pathname: url.pathname,
+    display: url.pathname,
+    ...(url.origin !== PATH_BASE ? { origin: url.origin } : {}),
+    search: url.search,
+    hashOrReserved: url.hash !== "" || reserved,
+  };
 }
 
 /**
@@ -202,14 +255,176 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
       return { ok: false, status: "no-match", target: display };
     }
     if (!match.isOnDemand) {
+      return warm(
+        resolved,
+        match,
+        runtime,
+        options.onlyIfStale ? "fill" : "replace",
+      );
+    }
+
+    if (resolved.search || resolved.hashOrReserved) {
+      // An on-demand key is route + params: search/hash would silently
+      // persist under the base key.
       return {
         ok: false,
-        status: "skipped-not-on-demand",
+        path: "on-demand",
+        status: "skipped-unsupported-target",
         target: display,
         routeName: match.routeName,
       };
     }
+    const result = await renderOnDemand(
+      resolved.pathname,
+      display,
+      match,
+      runtime,
+      options,
+      version,
+    );
+    // Then the request handler, on top of the entry just stored: the route's
+    // loaders' own cache() and the document cache are rebuilt on it. A
+    // Passthrough param the producer declined is served by the live handler,
+    // whose caches are warmed the same way. Quiet: the refresh is complete
+    // without it.
+    if (
+      result.status === "rendered" ||
+      result.status === "skipped-passthrough"
+    ) {
+      const warmed = await warm(resolved, match, runtime, "replace", true);
+      if (warmed.caches) return { ...result, caches: warmed.caches };
+    }
+    return result;
+  }
 
+  let warnedNotShared = false;
+
+  /**
+   * Warm one matched route: a GET of the URL a visitor requests, through the
+   * router's own handler. `followUp` is the warm after an on-demand render:
+   * its refusals are not worth a warning, the render already did its job.
+   */
+  async function warm(
+    resolved: ResolvedTarget,
+    match: PrerenderMatchInfo,
+    runtime: PrerenderRuntime<TEnv>,
+    mode: "replace" | "fill",
+    followUp = false,
+  ): Promise<PrerenderResult> {
+    const refused = (
+      status: Extract<PrerenderResult, { ok: false }>["status"],
+      target: string = resolved.display,
+      error?: unknown,
+    ): PrerenderResult => ({
+      ok: false,
+      path: "warm",
+      status,
+      target,
+      routeName: match.routeName,
+      ...(error !== undefined ? { error } : {}),
+    });
+
+    if (resolved.hashOrReserved) return refused("skipped-unsupported-target");
+
+    // Cache keys carry the host, so the warm requests the host visitors use:
+    // the target's own, the binding's, else the calling request's.
+    let origin: string | undefined;
+    try {
+      origin =
+        resolved.origin ??
+        (runtime.origin !== undefined
+          ? new URL(runtime.origin).origin
+          : deps.ambientOrigin());
+    } catch (error) {
+      return refused("skipped-no-origin", resolved.display, error);
+    }
+    if (!origin) return refused("skipped-no-origin");
+    const url = new URL(resolved.pathname + resolved.search, origin);
+
+    // Resolved with the collecting context, so a store's own background
+    // writes are waited for too. A factory throw maps to no-store.
+    const ctx = createCollectingExecutionContext(runtime.ctx);
+    let cacheConfig: HandlerCacheConfig | undefined;
+    let configError: unknown;
+    try {
+      cacheConfig = deps.resolveCacheConfig(runtime.env, ctx);
+    } catch (error) {
+      configError = error;
+    }
+    if (!cacheConfig?.store || cacheConfig.enabled === false) {
+      return refused("no-store", url.href, configError);
+    }
+
+    const scope = resolveWarmStoreScope(cacheConfig.store);
+    if (scope === "local") {
+      if (!followUp && deps.isDev() && !warnedNotShared) {
+        warnedNotShared = true;
+        const name = cacheConfig.store.constructor?.name;
+        console.warn(
+          `[rango] router.prerender("${resolved.display}") did not warm: the ` +
+            `cache store${name && name !== "Object" ? ` (${name})` : ""} ` +
+            `declares ${
+              cacheConfig.store.scope === undefined
+                ? "no scope"
+                : `scope "${String(cacheConfig.store.scope)}"`
+            }, so entries written here serve no other process, isolate or ` +
+            "edge location. Warming needs a store whose scope is " +
+            '"global" or "regional" (CFCacheStore with kv, ' +
+            "VercelCacheStore), or a custom store that declares one.",
+        );
+      }
+      return refused("skipped-store-not-shared", url.href);
+    }
+
+    const outcome = await runWarmRequest({
+      url,
+      mode,
+      cacheConfig,
+      env: runtime.env,
+      ctx,
+      fetch: deps.fetch,
+    });
+    const status = warmStatus(outcome);
+    const caches = warmCaches(outcome.record);
+    if (status === "warmed" || status === "already-fresh") {
+      return {
+        ok: true,
+        path: "warm",
+        status,
+        target: url.href,
+        routeName: match.routeName,
+        // warmStatus answers these two only for a 200.
+        responseStatus: 200,
+        caches,
+      };
+    }
+    return {
+      ok: false,
+      path: "warm",
+      status,
+      target: url.href,
+      routeName: match.routeName,
+      ...(outcome.responseStatus !== undefined
+        ? { responseStatus: outcome.responseStatus }
+        : {}),
+      caches,
+      ...(outcome.error !== undefined
+        ? { error: outcome.error }
+        : status === "render-failed" && outcome.record.renderErrors?.length
+          ? { error: outcome.record.renderErrors[0] }
+          : {}),
+    };
+  }
+
+  /** The requestless render of an on-demand route into the prerender store (#640). */
+  async function renderOnDemand(
+    pathname: string,
+    display: string,
+    match: PrerenderMatchInfo,
+    runtime: PrerenderRuntime<TEnv>,
+    options: PrerenderRunOptions,
+    version: string,
+  ): Promise<PrerenderResult> {
     // The prerender factory is user code like tags()/store.set: a throw (e.g.
     // a missing binding tripping store construction) must map to a result, not
     // escape run() — which would reject refresh() despite throwOnError: false
@@ -225,6 +440,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     if (!config?.store) {
       return {
         ok: false,
+        path: "on-demand",
         status: "no-store",
         target: display,
         routeName: match.routeName,
@@ -260,6 +476,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
             : undefined;
         return {
           ok: true,
+          path: "on-demand",
           status: "already-fresh",
           target: display,
           routeName: match.routeName,
@@ -273,7 +490,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     let produced: ProducerOutput | null;
     try {
       produced = await deps.runProducer({
-        pathname: resolved.pathname,
+        pathname,
         isPassthrough: match.isPassthrough,
         env: runtime.env,
         dev: deps.isDev(),
@@ -282,6 +499,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
       if (isPrerenderPersonalizationError(err)) {
         return {
           ok: false,
+          path: "on-demand",
           status: "skipped-personalized",
           target: display,
           routeName: match.routeName,
@@ -291,6 +509,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
       // surfaces here rather than baking a frozen error page. Keep the old entry.
       return {
         ok: false,
+        path: "on-demand",
         status: "render-failed",
         target: display,
         routeName: match.routeName,
@@ -301,6 +520,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     if (!produced) {
       return {
         ok: false,
+        path: "on-demand",
         status: "no-match",
         target: display,
         routeName: match.routeName,
@@ -309,6 +529,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     if (produced.passthrough) {
       return {
         ok: false,
+        path: "on-demand",
         status: "skipped-passthrough",
         target: display,
         routeName: match.routeName,
@@ -348,6 +569,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
       // the bundled manifest fallback) in place.
       return {
         ok: false,
+        path: "on-demand",
         status: "store-failed",
         target: display,
         routeName: match.routeName,
@@ -357,6 +579,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
 
     return {
       ok: true,
+      path: "on-demand",
       status: "rendered",
       target: display,
       routeName: match.routeName,

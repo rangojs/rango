@@ -816,6 +816,21 @@ export function createRouter<TEnv = any>(
         dev,
         true,
       ),
+    // A warm goes through router.fetch's handler: the one createRouter's own
+    // cache, nonce and version configure. An entry that passes them to
+    // createRSCHandler itself is not what a warm runs.
+    resolveCacheConfig: (env, ctx) =>
+      typeof cache === "function" ? cache(env, ctx) : cache,
+    // Called from inside a request, the warm leaves that request's scopes:
+    // it runs in the context the request entered the handler with
+    // (RequestContext._runAtRequestEntry).
+    fetch: (request, input) => {
+      const atRequestEntry = _getRequestContext()?._runAtRequestEntry;
+      return atRequestEntry
+        ? atRequestEntry(() => router.fetch(request, input))
+        : router.fetch(request, input);
+    },
+    ambientOrigin: () => _getRequestContext()?.url.origin,
   });
 
   // Create match handler functions bound to router state
