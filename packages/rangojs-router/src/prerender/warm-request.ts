@@ -26,12 +26,15 @@ export interface PrerenderWarmRecord extends PrerenderWarmCaches {
   cacheConfig: HandlerCacheConfig;
   /** The surface an identity guard refused (server/context.ts guardIdentityRead). */
   identity?: string;
-  /** The request's `RequestContext._renderErrors`, set by the handler. */
-  renderErrors?: unknown[];
+  /**
+   * The request's render errors: the handler adopts this list as
+   * `RequestContext._renderErrors`, so what the layers push lands here.
+   */
+  renderErrors: unknown[];
 }
 
 /** What the helpers read; a derived capture context inherits the record. */
-interface WarmContext {
+export interface WarmContext {
   _prerenderWarm?: PrerenderWarmRecord;
   _shellCaptureRun?: boolean;
 }
@@ -50,6 +53,7 @@ export function createWarmRecord(
   return {
     mode,
     cacheConfig,
+    renderErrors: [],
     writes: { record: 0, item: 0, response: 0, shell: 0 },
   };
 }
@@ -69,10 +73,16 @@ export function readWarmMark(
 }
 
 /**
- * True when this request must read every runtime cache as a miss. False in
- * the warm's own shell capture (`_shellCaptureRun`): it runs after the warm's
- * writes settled and must replay them, or it would render every handler a
- * second time and could bake another generation than the one just written.
+ * True when this request must read every runtime cache as a miss. A flag read
+ * at each read point, not a store wrapper: a route's or loader's own
+ * `cache({ store })` bypasses the app store (CacheScope.getStore), and the
+ * "use cache" in-flight dedup lives outside the store, so a wrapper would
+ * miss both.
+ *
+ * False in the warm's own shell capture (`_shellCaptureRun`): it runs after
+ * the warm's writes settled and must replay them, or it would render every
+ * handler a second time and could bake another generation than the one just
+ * written.
  */
 export function isWarmReplace(ctx: WarmContext | null | undefined): boolean {
   return (
@@ -89,7 +99,7 @@ export function noteWarmWrite(
   if (record) record.writes[family] += 1;
 }
 
-/** Record the document cache's outcome; `stored` is also a response write. */
+/** Record the document cache's outcome; its store write counts through noteWarmWrite. */
 export function noteWarmDocument(
   ctx: WarmContext | null | undefined,
   outcome: NonNullable<PrerenderWarmCaches["document"]>,
@@ -97,12 +107,14 @@ export function noteWarmDocument(
   const record = ctx?._prerenderWarm;
   if (!record) return;
   record.document = outcome;
-  if (outcome === "stored") record.writes.response += 1;
 }
 
 /** Record the surface an identity guard (guardIdentityRead) is about to refuse. */
-export function noteWarmIdentityRead(ctx: unknown, surface: string): void {
-  const record = (ctx as WarmContext | null | undefined)?._prerenderWarm;
+export function noteWarmIdentityRead(
+  ctx: WarmContext | null | undefined,
+  surface: string,
+): void {
+  const record = ctx?._prerenderWarm;
   if (record) record.identity ??= surface;
 }
 

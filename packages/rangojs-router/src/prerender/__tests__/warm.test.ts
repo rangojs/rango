@@ -5,8 +5,9 @@
  * it does with the record are under the test's control.
  */
 import { describe, expect, it, vi } from "vitest";
+import { createCollectingExecutionContext } from "../../cache/background-task.js";
 import {
-  createCollectingExecutionContext,
+  composeWarmResult,
   runWarmRequest,
   warmCaches,
   warmStatus,
@@ -134,6 +135,30 @@ describe("runWarmRequest", () => {
       });
       expect(startedAt).toBeGreaterThan(calledAt);
     }
+  });
+
+  it("cancels the body of a response that is not a 200, and still reports it", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array([1]));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+
+    const outcome = await runWarmRequest({
+      url: new URL("https://shop.example/"),
+      mode: "replace",
+      cacheConfig,
+      env: {},
+      ctx: createCollectingExecutionContext(),
+      fetch: async () => new Response(body, { status: 404 }),
+    });
+
+    expect(cancelled).toBe(true);
+    expect(outcome.responseStatus).toBe(404);
   });
 
   it("drains the response body: the render finishes with it", async () => {
@@ -385,5 +410,46 @@ describe("warmCaches", () => {
     expect(warmCaches(createWarmRecord("replace", cacheConfig))).toEqual({
       writes: { record: 0, item: 0, response: 0, shell: 0 },
     });
+  });
+});
+
+describe("composeWarmResult", () => {
+  const record = (): PrerenderWarmRecord => {
+    const r = createWarmRecord("replace", cacheConfig);
+    r.writes.record = 1;
+    return r;
+  };
+
+  it("passes the response status through on success", () => {
+    expect(
+      composeWarmResult(
+        { record: record(), responseStatus: 200 },
+        "https://shop.example/a",
+        "a",
+      ),
+    ).toMatchObject({
+      ok: true,
+      path: "warm",
+      status: "warmed",
+      responseStatus: 200,
+    });
+  });
+
+  it("picks the thrown error, else the first render error", () => {
+    const thrown = new Error("thrown");
+    const rendered = new Error("rendered");
+    const withRender = record();
+    withRender.renderErrors.push(rendered);
+
+    expect(
+      composeWarmResult(
+        { record: withRender, responseStatus: 200, error: thrown },
+        "t",
+        "a",
+      ),
+    ).toMatchObject({ ok: false, status: "render-failed", error: thrown });
+    expect(
+      composeWarmResult({ record: withRender, responseStatus: 200 }, "t", "a"),
+    ).toMatchObject({ ok: false, status: "render-failed", error: rendered });
   });
 });

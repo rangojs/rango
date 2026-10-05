@@ -789,7 +789,8 @@ export class CacheScope {
     // A router.prerender() warm renders as on a cold cache: the opt-outs
     // above still answer `bypass`, and the miss lets the write path replace
     // the record under the key it resolves (cacheRoute).
-    if (isWarmReplace(_getRequestContext())) return { status: "miss" };
+    const ambientContext = _getRequestContext();
+    if (isWarmReplace(ambientContext)) return { status: "miss" };
 
     // Resolve cache key INSIDE the try so a throwing consumer key() (or a
     // store.keyGenerator) degrades to a cache miss (return null -> render
@@ -831,7 +832,6 @@ export class CacheScope {
       // seeded record, which a document tail turns into the degrade
       // (ShellRecordUnavailableError).
       let segments: ResolvedSegment[];
-      const ambientContext = _getRequestContext();
       try {
         const codec = await import("./segment-codec.js");
         segments = ambientContext?._shellFragmentPayload

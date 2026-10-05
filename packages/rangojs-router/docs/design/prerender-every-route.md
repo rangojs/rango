@@ -413,7 +413,11 @@ started in the millisecond of an invalidation of one of its tags (`putShell`'s
 generation gate compares whole milliseconds, and cannot tell "just before"
 from "just after" inside one). On a memory store the two calls land in one
 millisecond often enough that the test failed one run in three before the
-wait was added.
+wait was added. The wait is bounded (`awaitLaterMillisecond`,
+`cache/background-task.ts`, ten macrotask turns): on Cloudflare the clock
+stands still between I/O events, so an unbounded wait could hang a warm. At
+the bound the warm proceeds, a store may refuse the shell write, and the result
+says so (`shell-not-stored`).
 
 ## The synthetic request
 
@@ -449,11 +453,11 @@ wait was added.
 - **Record:** `PrerenderWarmRecord` holds the mode (`"replace"` or `"fill"`),
   the gated cache config, the shell outcome and refusal, the identity surface
   that was refused, the document-cache outcome, the write counts by family,
-  and the request's `_renderErrors` array (the handler hands it over when it
-  attaches the record). The layers write it:
-  the capture sink (`shell`, `refusal`), `guardIdentityRead` right before it
-  throws or flags a capture (`identity`, one line), the document cache
-  (`document`), and one `noteWarmWrite(ctx, family)` call after each successful
+  and the request's render errors (the record owns the list; the handler adopts
+  it as the request's `_renderErrors`). The layers write it:
+  the capture sink (`shell`, `refusal`), the identity guards where they throw
+  (`guardIdentityRead`, `refuseInCacheScope`: `identity`), the document cache
+  (`document`, its store write counted with the rest), and one `noteWarmWrite(ctx, family)` call after each successful
   store write (`cacheRoute`, `finalizeAndWrite` and the stale refresh in
   `cache-runtime.ts`, the loader `setItem` closure, both document-cache puts,
   `putFresh`, `putShell`). The implicit doc scope's snapshot-only write is not
@@ -556,13 +560,22 @@ author on the Node preset with nothing to try: every warm in local dev would
 answer the refusal. So under the Vite dev server the gate treats a
 `MemorySegmentCacheStore` as `"global"`: one process serves every dev request,
 so the entry a warm writes is the entry the next request reads. "Dev" here is
-the dev server itself, not `NODE_ENV`: `isViteDevServer()` reads the origin the
+the dev server itself, not `NODE_ENV`: `isViteDevServer()` (which the
+not-shared warning below reads too, so the warning and the rule cannot
+disagree) reads the origin the
 routes-manifest virtual module sets (`globalThis.__PRERENDER_DEV_URL`), which a
 build, a preview server and a test runner never have. In production the store
 stays `"local"` and is refused. The class's `scope` declaration never moves
 (`store-scope.test.ts` pins `"local"`); only the gate reads the dev rule. If
 the production answer is ever revisited, it is that one declaration in
 `memory-segment-store.ts`.
+
+The shared-store check covers the app store only. A warm also overwrites
+entries in a route's or loader's own `cache({ store })` (the forced miss is a
+flag read at each read point, not a wrapper on the app store, because
+`CacheScope.getStore` lets an explicit store bypass it and the `"use cache"`
+in-flight dedup lives outside any store), and that store is not checked: a
+`local` explicit store is warmed for the calling process only.
 
 A non-shared store returns `{ ok: false, status: "skipped-store-not-shared" }`
 before anything renders, and in dev warns once per router (the trigger's

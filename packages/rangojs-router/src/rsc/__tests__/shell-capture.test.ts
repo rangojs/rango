@@ -3316,6 +3316,69 @@ describe("runShellCapture", () => {
       expect(putShell).toHaveBeenCalledTimes(1);
     });
 
+    it("a visitor's capture finishing first does not release the warm's guard: nothing is admitted to write after it", async () => {
+      const putShell = makePutShell();
+      const { events, descriptor } = capturing("/force-order:shell", {
+        putShell,
+      });
+      const visitor = scheduling(storedShell("visitor"));
+      const warm = scheduling(storedShell("warm"));
+      const hold = () => {
+        let release!: () => void;
+        let started!: () => void;
+        return {
+          held: new Promise<void>((resolve) => {
+            release = resolve;
+          }),
+          started: new Promise<void>((resolve) => {
+            started = resolve;
+          }),
+          enter: () => started(),
+          release: () => release(),
+        };
+      };
+      const visitorHold = hold();
+      const warmHold = hold();
+      vi.mocked(visitor.ctx.router.match).mockImplementation(async () => {
+        visitorHold.enter();
+        await visitorHold.held;
+        writeDocRecord();
+        return okMatch;
+      });
+      vi.mocked(warm.ctx.router.match).mockImplementation(async () => {
+        warmHold.enter();
+        await warmHold.held;
+        writeDocRecord();
+        return okMatch;
+      });
+
+      visitor.schedule(descriptor);
+      const visitorTask = visitor.captured[0]!();
+      await visitorHold.started;
+      warm.schedule({ ...descriptor, force: true });
+      const warmTask = warm.captured[0]!();
+
+      // The visitor stores first and releases its own token only; the warm,
+      // now running, still owns the key.
+      visitorHold.release();
+      await visitorTask;
+      await warmHold.started;
+      expect(putShell).toHaveBeenCalledTimes(1);
+
+      visitor.schedule(descriptor);
+      expect(visitor.captured).toHaveLength(1);
+      expect(outcomes(events).at(-1)).toBe("skip-in-flight");
+
+      warmHold.release();
+      await warmTask;
+      expect(
+        putShell.mock.calls.map(([, entry]) => atob(entry.prelude!)),
+      ).toEqual([
+        "<html><body>visitor</body></html>",
+        "<html><body>warm</body></html>",
+      ]);
+    });
+
     it("ignores the refused-capture backoff, and a stored shell clears it", async () => {
       const key = "/force-backoff-stored:shell";
       const putShell = makePutShell();

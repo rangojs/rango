@@ -15,7 +15,10 @@ import { invariant, DslContextError } from "../errors";
 import type { DefaultRouteName } from "../types/global-namespace.js";
 import type { ContextVar } from "../context-var.js";
 import { PPR_LANE_HINT } from "../rsc/shell-capture-constants.js";
-import { noteWarmIdentityRead } from "../prerender/warm-request.js";
+import {
+  noteWarmIdentityRead,
+  type WarmContext,
+} from "../prerender/warm-request.js";
 import {
   endIdentityExempt,
   isInsideCacheExecScope,
@@ -969,7 +972,7 @@ export interface IdentityReadWording {
  * nothing and are not captured reads: they take refuseInCacheScope alone.
  */
 export function guardIdentityRead(
-  ctx: unknown,
+  ctx: WarmContext | null | undefined,
   surface: string,
   wording: IdentityReadWording,
 ): void {
@@ -982,11 +985,7 @@ export function guardIdentityRead(
         `(ppr shell capture). ${fix.capture}`,
     );
   }
-  // A router.prerender() warm reports the refusal below as skipped-personalized.
-  if (isInsideCacheExecScope() || isInsideCacheScope()) {
-    noteWarmIdentityRead(ctx, surface);
-  }
-  refuseInCacheScope(surface, wording);
+  refuseInCacheScope(surface, wording, ctx);
   if (wording.record !== false) recordLoaderIdentityRead(surface, verb);
 }
 
@@ -997,13 +996,16 @@ export function guardIdentityRead(
 export function refuseInCacheScope(
   surface: string,
   { verb, fix }: IdentityReadWording,
+  ctx?: WarmContext | null,
 ): void {
   if (isInsideCacheExecScope()) {
+    noteWarmIdentityRead(ctx, surface);
     throw new Error(
       `${surface} cannot be ${verb} inside a "use cache" function. ${fix.useCache}`,
     );
   }
   if (isInsideCacheScope()) {
+    noteWarmIdentityRead(ctx, surface);
     throw new Error(
       `${surface} cannot be ${verb} inside a cache() boundary. ${fix.cacheScope}`,
     );
@@ -1089,7 +1091,7 @@ const NON_CACHEABLE_READ: IdentityReadWording = {
  */
 export function assertNonCacheableReadAllowed(
   keyOrVar: string | ContextVar<unknown>,
-  requestCtx?: unknown,
+  requestCtx?: WarmContext | null,
 ): void {
   const name = typeof keyOrVar === "string" ? ` "${keyOrVar}"` : "";
   guardIdentityRead(

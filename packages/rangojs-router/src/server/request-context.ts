@@ -1057,17 +1057,12 @@ export const UNTRACKED_BACKGROUND_TASK: unique symbol = Symbol.for(
 const requestContextStorage = new AsyncLocalStorage<RequestContext<any>>();
 
 /**
- * Capture the current async context (RequestContext._runAtRequestEntry): the
- * handler calls this on entry, before it enters any router scope.
- *
- * Code that calls router.prerender() from a handler, a loader or an action
- * sits inside that request's scopes, and a request dispatched from there
- * inherits all but the request context: the route-definition store
- * (router/manifest.ts loadManifest), the loader and cache() scope flags, the
- * tag scopes. Scar tissue: a warm called from a route handler built its
- * target's manifest into the calling route's store and answered 404 for every
- * route no visitor had requested yet. Per request, not per module: workerd
- * refuses a snapshot outside the request that created it.
+ * Capture the current async context (RequestContext._runAtRequestEntry), taken
+ * on handler entry before any router scope, so a nested dispatch (a
+ * router.prerender() warm called from a handler, loader or action) does not
+ * inherit the caller's route-definition, loader and cache-scope state. Per
+ * request: workerd refuses a snapshot outside the request that created it.
+ * See docs/design/prerender-every-route.md.
  */
 export function captureRequestEntryContext():
   | (<T>(fn: () => T) => T)

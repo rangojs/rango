@@ -31,12 +31,8 @@ import { isReservedSearchParam } from "../cache/cache-key-utils.js";
 import { resolveWarmStoreScope } from "../cache/store-scope.js";
 import type { HandlerCacheConfig } from "../rsc/types.js";
 import type { ExecutionContext } from "../types/request-scope.js";
-import {
-  createCollectingExecutionContext,
-  runWarmRequest,
-  warmCaches,
-  warmStatus,
-} from "./warm.js";
+import { createCollectingExecutionContext } from "../cache/background-task.js";
+import { composeWarmResult, runWarmRequest } from "./warm.js";
 import { hashParams } from "./param-hash.js";
 import { isPrerenderPersonalizationError } from "./producer-guard.js";
 import { normalizeTagList } from "../cache/cache-policy.js";
@@ -93,6 +89,11 @@ export interface PrerenderTriggerDeps<TEnv = any> {
   resolveVersion: () => string;
   /** True when running under Vite dev (drives the producer context's `dev`). */
   isDev: () => boolean;
+  /**
+   * True under the Vite dev server (isViteDevServer): the one place the
+   * memory store counts as shared, and so where the not-shared warning fires.
+   */
+  isViteDevServer: () => boolean;
   /** Load the per-router manifest/trie before matching, as router.fetch does. */
   ensureManifest: () => Promise<void>;
   /** Resolve the env-scoped prerender config (factory or object); undefined when unconfigured. */
@@ -254,6 +255,15 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     if (!match) {
       return { ok: false, status: "no-match", target: display };
     }
+    if (resolved.hashOrReserved) {
+      return {
+        ok: false,
+        path: match.isOnDemand ? "on-demand" : "warm",
+        status: "skipped-unsupported-target",
+        target: display,
+        routeName: match.routeName,
+      };
+    }
     if (!match.isOnDemand) {
       return warm(
         resolved,
@@ -263,9 +273,9 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
       );
     }
 
-    if (resolved.search || resolved.hashOrReserved) {
-      // An on-demand key is route + params: search/hash would silently
-      // persist under the base key.
+    if (resolved.search) {
+      // An on-demand key is route + params: a search would silently persist
+      // under the base key.
       return {
         ok: false,
         path: "on-demand",
@@ -324,8 +334,6 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
       ...(error !== undefined ? { error } : {}),
     });
 
-    if (resolved.hashOrReserved) return refused("skipped-unsupported-target");
-
     // Cache keys carry the host, so the warm requests the host visitors use:
     // the target's own, the binding's, else the calling request's.
     let origin: string | undefined;
@@ -355,9 +363,9 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
       return refused("no-store", url.href, configError);
     }
 
-    const scope = resolveWarmStoreScope(cacheConfig.store);
-    if (scope === "local") {
-      if (!followUp && deps.isDev() && !warnedNotShared) {
+    const devServer = deps.isViteDevServer();
+    if (resolveWarmStoreScope(cacheConfig.store, devServer) === "local") {
+      if (!followUp && devServer && !warnedNotShared) {
         warnedNotShared = true;
         const name = cacheConfig.store.constructor?.name;
         console.warn(
@@ -384,36 +392,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
       ctx,
       fetch: deps.fetch,
     });
-    const status = warmStatus(outcome);
-    const caches = warmCaches(outcome.record);
-    if (status === "warmed" || status === "already-fresh") {
-      return {
-        ok: true,
-        path: "warm",
-        status,
-        target: url.href,
-        routeName: match.routeName,
-        // warmStatus answers these two only for a 200.
-        responseStatus: 200,
-        caches,
-      };
-    }
-    return {
-      ok: false,
-      path: "warm",
-      status,
-      target: url.href,
-      routeName: match.routeName,
-      ...(outcome.responseStatus !== undefined
-        ? { responseStatus: outcome.responseStatus }
-        : {}),
-      caches,
-      ...(outcome.error !== undefined
-        ? { error: outcome.error }
-        : status === "render-failed" && outcome.record.renderErrors?.length
-          ? { error: outcome.record.renderErrors[0] }
-          : {}),
-    };
+    return composeWarmResult(outcome, url.href, match.routeName);
   }
 
   /** The requestless render of an on-demand route into the prerender store (#640). */

@@ -212,7 +212,11 @@ export function createRSCHandler<
   const rawLoadSSRModule: LoadSSRModule =
     options.loadSSRModule ??
     (() =>
-      defaultSSRModuleLoaderForTests()?.() ??
+      // The test seam (ssr-module-loader.ts). Gated on the build mode, not
+      // NODE_ENV: the rsc Vitest project forces NODE_ENV=production, its mode
+      // is "test", and a production build folds the whole branch away.
+      ((import.meta as any).env?.MODE !== "production" &&
+        defaultSSRModuleLoaderForTests()?.()) ||
       import.meta.viteRsc.loadModule("ssr", "index"));
   let _ssrModulePromise: Promise<SSRModule> | undefined;
   const loadSSRModule: LoadSSRModule =
@@ -626,7 +630,7 @@ export function createRSCHandler<
     requestContext._runAtRequestEntry = runAtRequestEntry;
     if (warm) {
       requestContext._prerenderWarm = warm;
-      warm.renderErrors = requestContext._renderErrors;
+      requestContext._renderErrors = warm.renderErrors;
     }
     // Gate on the SAME enabled-semantics withTimeout uses (isTimeoutEnabled):
     // a `renderStartMs: 0` / negative opt-out disables the timeout, so the

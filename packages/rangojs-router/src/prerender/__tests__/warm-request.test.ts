@@ -49,6 +49,7 @@ describe("the warm mark", () => {
   it("a new record starts with zero writes and nothing reported", () => {
     expect(createWarmRecord("fill", cacheConfig)).toEqual({
       mode: "fill",
+      renderErrors: [],
       cacheConfig,
       writes: { record: 0, item: 0, response: 0, shell: 0 },
     });
@@ -111,11 +112,11 @@ describe("the record's writers", () => {
       noteWarmDocument(null, "not-cacheable");
       noteWarmIdentityRead({}, "cookies()");
       noteWarmIdentityRead(undefined, "cookies()");
-      noteWarmIdentityRead("not a context", "cookies()");
+      noteWarmIdentityRead(null, "cookies()");
     }).not.toThrow();
   });
 
-  it("noteWarmDocument records the outcome; stored is also a response write", () => {
+  it("noteWarmDocument records the outcome only; the write count is noteWarmWrite's", () => {
     const record = createWarmRecord("replace", cacheConfig);
     noteWarmDocument({ _prerenderWarm: record }, "not-cacheable");
     expect(record.document).toBe("not-cacheable");
@@ -123,7 +124,7 @@ describe("the record's writers", () => {
 
     noteWarmDocument({ _prerenderWarm: record }, "stored");
     expect(record.document).toBe("stored");
-    expect(record.writes.response).toBe(1);
+    expect(record.writes.response).toBe(0);
   });
 
   it("noteWarmIdentityRead keeps the first refused surface", () => {

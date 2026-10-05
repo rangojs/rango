@@ -24,7 +24,11 @@ import {
 import { mayNeedSSR } from "../rsc/ssr-setup.js";
 import { cacheKeyBase } from "./cache-key-utils.js";
 import { runBackground } from "./background-task.js";
-import { isWarmReplace, noteWarmDocument } from "../prerender/warm-request.js";
+import {
+  isWarmReplace,
+  noteWarmDocument,
+  noteWarmWrite,
+} from "../prerender/warm-request.js";
 import { reportCacheError } from "./cache-error.js";
 import { executionStart, predatesInvalidation } from "./tag-invalidation.js";
 import { observePhase, PHASES } from "../router/instrument.js";
@@ -470,6 +474,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
                     directives.staleWhileRevalidate,
                     tags,
                   );
+                  noteWarmWrite(requestCtx, "response");
                   noteWarmDocument(requestCtx, "stored");
                   log(
                     `[DocumentCache] REVALIDATED ${typeLabel}: ${url.pathname}`,
@@ -540,6 +545,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
               directives.staleWhileRevalidate,
               tags,
             );
+            noteWarmWrite(requestCtx, "response");
             noteWarmDocument(requestCtx, "stored");
           } catch (error) {
             // Detached waitUntil task — pass the captured requestCtx so onError

@@ -44,6 +44,10 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { toInternal, type Rango } from "../router/router-interfaces.js";
 import { ensureRouterManifest } from "../route-map-builder.js";
 import type { SegmentCacheStore, ShellCacheEntry } from "../cache/types.js";
+import {
+  awaitLaterMillisecond,
+  createCollectingExecutionContext,
+} from "../cache/background-task.js";
 import type { ExecutionContext } from "../types/request-scope.js";
 import type { HandlerCacheConfig, SSRModule } from "../rsc/types.js";
 import type { createRSCHandler } from "../rsc/handler.js";
@@ -486,24 +490,15 @@ export async function serveShellRequest<TEnv = any>(
   await ensureRouterManifest(router.id);
   const handler = await getHandler(router, options.cacheStore);
   const request = buildRequest(target, options);
-  const tasks: Promise<unknown>[] = [];
-  const executionContext: ExecutionContext = {
-    waitUntil(promise) {
-      tasks.push(
-        Promise.resolve(promise).catch((error) =>
-          console.error("[waitUntil] Background task failed:", error),
-        ),
-      );
-    },
-    passThroughOnException() {},
-  };
+  const executionContext = createCollectingExecutionContext();
+  const { tasks } = executionContext;
   const recorder: Recorder = {};
   const unservePrerender = await servePrerenderArtifacts(
     router,
     target.pathname,
     options.env,
   );
-  while (Date.now() === called) await macrotask();
+  await awaitLaterMillisecond(called);
 
   const { response, body } = await recorders.run(recorder, async () => {
     try {

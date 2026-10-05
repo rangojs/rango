@@ -844,8 +844,8 @@ in dev.
   `target` is a `PrerenderTargetObject`, which the runner and its `.many()`
   accept as is, so
   `onRevalidate: (target, env, ctx) => router.prerender({ env, ctx })(target)`
-  typechecks without a cast. `onRevalidate` receives `(target, env)`, with no
-  `ctx`.
+  typechecks without a cast. `onRevalidate` receives `(target, env, ctx)`;
+  `ctx` is the stale request's execution context, absent where none exists.
 - **Prerender tags are their own namespace.** `cacheTag()`, `updateTag()` and
   `revalidateTag()` never reach the prerender store; the runner's `markStale()`
   never reaches the runtime cache. (`updateTag()` needs a request context;
@@ -985,6 +985,11 @@ the store is shared beyond that place, so the router asks the store
 Cache is per region, and a warm fills the one it runs in. New projects and
 every Hobby project run functions in one region (`iad1`); on a multi-region
 project warm from each region, or accept that the others fill on first use.
+
+The shared-store check covers the app store (`createRouter({ cache })`) only.
+A warm also overwrites entries in a route's or loader's own `cache({ store })`,
+and that store is not checked: one that is `local` is warmed for the calling
+process only, so no other process or location sees the new entry.
 
 The dev exception exists so you can try warming locally on the Node preset. It
 follows the dev server, not `NODE_ENV`: a production build, `vite preview` and

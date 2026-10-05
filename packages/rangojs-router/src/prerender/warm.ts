@@ -6,12 +6,17 @@
  * is an injected `fetch`, so unit tests drive this with a fake.
  */
 
-import { raceDeadline, settleGrowing } from "../cache/background-task.js";
+import {
+  awaitLaterMillisecond,
+  raceDeadline,
+  settleGrowing,
+  type CollectingExecutionContext,
+} from "../cache/background-task.js";
 import { CAPTURE_QUEUE_WAIT_BUDGET_MS } from "../rsc/capture-queue.js";
 import { SHELL_CAPTURE_TASK_HARD_CAP_MS } from "../rsc/shell-capture-constants.js";
 import type { HandlerCacheConfig } from "../rsc/types.js";
 import type { ExecutionContext } from "../types/request-scope.js";
-import type { PrerenderWarmCaches } from "./on-demand.js";
+import type { PrerenderResult, PrerenderWarmCaches } from "./on-demand.js";
 import {
   createWarmRecord,
   markWarmRequest,
@@ -24,46 +29,6 @@ import {
  */
 export const WARM_SETTLE_BUDGET_MS: number =
   SHELL_CAPTURE_TASK_HARD_CAP_MS + CAPTURE_QUEUE_WAIT_BUDGET_MS;
-
-/** An ExecutionContext that keeps every promise handed to `waitUntil`. */
-export interface CollectingExecutionContext extends ExecutionContext {
-  readonly tasks: Promise<unknown>[];
-}
-
-/**
- * Wrap the caller's ExecutionContext (or none) so the warm can wait for the
- * request's background work: the deferred cache writes, the shell capture, a
- * store's own writes. Every other member reads through to `inner`, bound to
- * it (workerd's methods reject a foreign `this`).
- */
-export function createCollectingExecutionContext(
-  inner?: ExecutionContext,
-): CollectingExecutionContext {
-  const tasks: Promise<unknown>[] = [];
-  const own: CollectingExecutionContext = {
-    tasks,
-    waitUntil(promise) {
-      const task = Promise.resolve(promise);
-      // The list only waits; the host (or the log below) owns the failure.
-      tasks.push(task.catch(() => {}));
-      if (inner) inner.waitUntil(task);
-      else {
-        task.catch((error) =>
-          console.error("[waitUntil] Background task failed:", error),
-        );
-      }
-    },
-    passThroughOnException() {},
-  };
-  if (!inner) return own;
-  return new Proxy(own, {
-    get(target, prop) {
-      if (prop in target) return target[prop as keyof typeof target];
-      const value = (inner as unknown as Record<PropertyKey, unknown>)[prop];
-      return typeof value === "function" ? value.bind(inner) : value;
-    },
-  });
-}
 
 export interface WarmRequestInput<TEnv> {
   /** The absolute URL a visitor requests. */
@@ -103,11 +68,8 @@ export async function runWarmRequest<TEnv>(
   // `await updateTag(tag)` then a warm is the content-refresh pattern, and a
   // store refuses a shell whose capture started in the millisecond of an
   // invalidation of one of its tags (putShell's gate compares whole
-  // milliseconds). Start in a later one.
-  const called = Date.now();
-  while (Date.now() === called) {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  }
+  // milliseconds). Start in a later one, within the helper's bound.
+  await awaitLaterMillisecond(Date.now());
   const record = createWarmRecord(input.mode, input.cacheConfig);
   const request = new Request(input.url, { headers: { accept: "text/html" } });
   markWarmRequest(request, record);
@@ -122,10 +84,7 @@ export async function runWarmRequest<TEnv>(
     });
     responseStatus = response.status;
     // The render, and the tags and writes it records, finish with the body.
-    const drained = await raceDeadline(
-      response.arrayBuffer().then(() => undefined),
-      deadline,
-    );
+    const drained = await raceDeadline(drainBody(response), deadline);
     if (!drained.done) {
       error = new Error(
         `router.prerender(): the response for ${input.url.href} did not finish within the warm's wait`,
@@ -138,6 +97,21 @@ export async function runWarmRequest<TEnv>(
   return { record, responseStatus, error };
 }
 
+/**
+ * Read the body to its end without keeping it. A non-200 is a failed warm
+ * whatever its body says, so it is cancelled instead.
+ */
+async function drainBody(response: Response): Promise<void> {
+  const { body } = response;
+  if (!body) return;
+  if (response.status !== 200) {
+    await body.cancel().catch(() => {});
+    return;
+  }
+  const reader = body.getReader();
+  while (!(await reader.read()).done);
+}
+
 /** The per-cache detail a result carries. */
 export function warmCaches(record: PrerenderWarmRecord): PrerenderWarmCaches {
   return {
@@ -147,15 +121,6 @@ export function warmCaches(record: PrerenderWarmRecord): PrerenderWarmCaches {
     ...(record.document !== undefined ? { document: record.document } : {}),
   };
 }
-
-/** The status of a warm, first match wins. */
-export type WarmStatus =
-  | "warmed"
-  | "already-fresh"
-  | "skipped-personalized"
-  | "render-failed"
-  | "shell-not-stored"
-  | "skipped-uncached";
 
 /**
  * A warm's status from what it recorded, first match wins. An identity
@@ -168,7 +133,7 @@ export function warmStatus(outcome: WarmRequestOutcome): WarmStatus {
   if (
     error !== undefined ||
     responseStatus !== 200 ||
-    (record.renderErrors?.length ?? 0) > 0
+    record.renderErrors.length > 0
   ) {
     return "render-failed";
   }
@@ -184,4 +149,45 @@ export function warmStatus(outcome: WarmRequestOutcome): WarmStatus {
     return record.mode === "fill" ? "already-fresh" : "skipped-uncached";
   }
   return "warmed";
+}
+
+type WarmStatus =
+  | Extract<PrerenderResult, { ok: true; path: "warm" }>["status"]
+  | Extract<PrerenderResult, { ok: false }>["status"];
+
+/** The `PrerenderResult` of a finished warm. */
+export function composeWarmResult(
+  outcome: WarmRequestOutcome,
+  target: string,
+  routeName: string,
+): PrerenderResult {
+  const status = warmStatus(outcome);
+  const caches = warmCaches(outcome.record);
+  if (status === "warmed" || status === "already-fresh") {
+    // Both are answered only for a 200 (warmStatus).
+    return {
+      ok: true,
+      path: "warm",
+      status,
+      target,
+      routeName,
+      responseStatus: outcome.responseStatus!,
+      caches,
+    };
+  }
+  const error =
+    outcome.error ??
+    (status === "render-failed" ? outcome.record.renderErrors[0] : undefined);
+  return {
+    ok: false,
+    path: "warm",
+    status,
+    target,
+    routeName,
+    ...(outcome.responseStatus !== undefined
+      ? { responseStatus: outcome.responseStatus }
+      : {}),
+    caches,
+    ...(error !== undefined ? { error } : {}),
+  };
 }

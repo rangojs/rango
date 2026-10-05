@@ -169,7 +169,8 @@ build-time durable seeding options can live in the same config without renaming
 anything.
 
 `onRevalidate` receives the target (`{ route, params }`, kept
-JSON-serializable so it can go straight into a queue message) and the live env.
+JSON-serializable so it can go straight into a queue message), the live env and
+the stale request's execution context (`ctx`, absent where none exists).
 It runs at most once per stale key per isolate while one is in flight
 (`scheduleOverlayRevalidation`, `cache-lookup.ts`), so the obvious single
 process wiring, a direct `router.prerender({ env, ctx })(target)` call, renders once per stale key

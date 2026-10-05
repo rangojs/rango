@@ -36,6 +36,7 @@ interface HarnessOptions {
   reverse?: PrerenderTriggerDeps["reverse"];
   version?: string;
   isDev?: () => boolean;
+  isViteDevServer?: () => boolean;
   /** The app cache config a warm resolves; default: none (no createRouter({ cache })). */
   resolveCacheConfig?: PrerenderTriggerDeps["resolveCacheConfig"];
   /** The router's handler; default: a 200 that writes nothing. */
@@ -54,6 +55,7 @@ function harness(opts: HarnessOptions = {}) {
     routerId: "r1",
     resolveVersion: () => opts.version ?? "b1",
     isDev: opts.isDev ?? (() => false),
+    isViteDevServer: opts.isViteDevServer ?? (() => false),
     ensureManifest,
     resolveConfig: opts.resolveConfig ?? (() => config),
     reverse:
@@ -665,6 +667,21 @@ describe("createPrerenderTrigger: warming a route that is not on-demand", () => 
     readonly scope = "global" as const;
   }
 
+  /** Declares `local` and is not a MemorySegmentCacheStore (no dev-server exemption). */
+  class LocalStore implements SegmentCacheStore {
+    readonly scope = "local" as const;
+    private readonly inner = new MemorySegmentCacheStore();
+    get(key: string) {
+      return this.inner.get(key);
+    }
+    set(...args: Parameters<SegmentCacheStore["set"]>) {
+      return this.inner.set(...args);
+    }
+    delete(key: string) {
+      return this.inner.delete(key);
+    }
+  }
+
   const plainMatch: PrerenderTriggerDeps["matchRoute"] = (pathname) =>
     pathname.startsWith("/plain")
       ? {
@@ -1013,6 +1030,23 @@ describe("createPrerenderTrigger: warming a route that is not on-demand", () => 
       expect(h.fetch).not.toHaveBeenCalled();
     });
 
+    it("under the Vite dev server the memory store is warmed, and the not-shared warning stays quiet", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const h = handler();
+      const { trigger } = warmHarness({
+        fetch: h.fetch,
+        store: new MemorySegmentCacheStore(),
+        isViteDevServer: () => true,
+      });
+
+      expect(await trigger("https://shop.example/plain")).toMatchObject({
+        ok: true,
+        status: "warmed",
+      });
+      expect(warn).not.toHaveBeenCalled();
+      warn.mockRestore();
+    });
+
     it("a store that declares no scope is refused; a regional one is warmed", async () => {
       const inner = new MemorySegmentCacheStore();
       const undeclared: SegmentCacheStore = {
@@ -1037,8 +1071,8 @@ describe("createPrerenderTrigger: warming a route that is not on-demand", () => 
     it("warns once per router in dev, naming the store and its scope", async () => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       const { trigger } = warmHarness({
-        store: new MemorySegmentCacheStore(),
-        isDev: () => true,
+        store: new LocalStore(),
+        isViteDevServer: () => true,
       });
 
       await trigger("https://shop.example/plain");
@@ -1047,7 +1081,7 @@ describe("createPrerenderTrigger: warming a route that is not on-demand", () => 
       expect(warn).toHaveBeenCalledTimes(1);
       const message = String(warn.mock.calls[0][0]);
       expect(message).toContain('router.prerender("/plain") did not warm');
-      expect(message).toContain("(MemorySegmentCacheStore)");
+      expect(message).toContain("(LocalStore)");
       expect(message).toContain('declares scope "local"');
       expect(message).toContain("CFCacheStore with kv");
       warn.mockRestore();
@@ -1062,14 +1096,16 @@ describe("createPrerenderTrigger: warming a route that is not on-demand", () => 
         delete: (key) => inner.delete(key),
       };
 
-      await warmHarness({ store: undeclared, isDev: () => false }).trigger(
-        "https://shop.example/plain",
-      );
+      await warmHarness({
+        store: undeclared,
+        isViteDevServer: () => false,
+      }).trigger("https://shop.example/plain");
       expect(warn).not.toHaveBeenCalled();
 
-      await warmHarness({ store: undeclared, isDev: () => true }).trigger(
-        "https://shop.example/plain",
-      );
+      await warmHarness({
+        store: undeclared,
+        isViteDevServer: () => true,
+      }).trigger("https://shop.example/plain");
       expect(String(warn.mock.calls[0][0])).toContain(
         "the cache store declares no scope",
       );
@@ -1164,7 +1200,7 @@ describe("createPrerenderTrigger: warming a route that is not on-demand", () => 
       const rendered = await warmHarness({
         fetch: handler((record) => {
           record.writes.record += 1;
-          record.renderErrors = [renderError];
+          record.renderErrors.push(renderError);
         }).fetch,
       }).trigger("https://shop.example/plain");
       expect(rendered).toMatchObject({
@@ -1275,12 +1311,12 @@ describe("createPrerenderTrigger: warming a route that is not on-demand", () => 
       const h = handler();
       const local = await warmHarness({
         fetch: h.fetch,
-        store: new MemorySegmentCacheStore(),
-        isDev: () => true,
+        store: new LocalStore(),
+        isViteDevServer: () => true,
       }).trigger("https://shop.example/products/42");
       const noOrigin = await warmHarness({
         fetch: h.fetch,
-        isDev: () => true,
+        isViteDevServer: () => true,
       }).trigger("/products/42");
 
       for (const result of [local, noOrigin]) {

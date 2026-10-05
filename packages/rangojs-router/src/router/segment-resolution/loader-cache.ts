@@ -771,8 +771,9 @@ function executeLoaderData<TEnv>(
     const data = await readThroughItem({
       // A router.prerender() warm takes the miss path: the body runs and
       // setItem replaces the entry.
-      getItem: async (k) =>
-        isWarmReplace(requestCtxForExecute) ? null : store.getItem!(k),
+      getItem: isWarmReplace(requestCtxForExecute)
+        ? async () => null
+        : (k) => store.getItem!(k),
       // Handles ride the entry like "use cache" (encodeHandles: Flight, pending
       // pushes awaited up to its timeout, the whole blob dropped on a timeout
       // or a thrown encode). Encoded here, inside the deferred write, so a

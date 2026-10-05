@@ -19,6 +19,7 @@ import {
   resolveRouterVersions,
 } from "./server/build-version-table.js";
 import { isDevEnvironment } from "./errors.js";
+import { isViteDevServer } from "./cache/store-scope.js";
 import { createPrerenderTrigger } from "./prerender/create-prerender-trigger.js";
 import { createMemoryPrerenderStore } from "./prerender/memory-prerender-store.js";
 import {
@@ -195,8 +196,7 @@ export function createRouter<TEnv = any>(
   const effectivePrerenderConfigOption =
     prerenderConfigOption ??
     ((() =>
-      typeof globalThis.__PRERENDER_DEV_URL === "string" &&
-      defaultDevPrerenderStore
+      isViteDevServer() && defaultDevPrerenderStore
         ? { store: defaultDevPrerenderStore }
         : undefined) as RangoOptions<TEnv>["prerender"]);
 
@@ -779,6 +779,7 @@ export function createRouter<TEnv = any>(
     routerId,
     resolveVersion: () => resolvePrerenderVersion(routerId, version),
     isDev: isDevEnvironment,
+    isViteDevServer,
     ensureManifest: () => ensureRouterManifest(routerId),
     resolveConfig: (env, ctx) => {
       const opt = effectivePrerenderConfigOption;
