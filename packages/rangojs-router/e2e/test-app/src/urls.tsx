@@ -28,6 +28,7 @@ import { shellCachePatterns } from "./urls/shell-cache.js";
 import { pprHeaderGuardPatterns } from "./urls/ppr-header-guard.js";
 import { shellCacheActionPatterns } from "./urls/shell-cache-action.js";
 import { shellPushOwnershipPatterns } from "./urls/shell-push-ownership.js";
+import { prerenderWarmPatterns } from "./urls/prerender-warm.js";
 import { shellSecurePatterns } from "./urls/shell-secure.js";
 import { themePatterns } from "./urls/theme.js";
 import { hrefPatterns } from "./urls/href.js";
@@ -1053,6 +1054,9 @@ export const urlpatterns = urls(
 
       // PPR push-ownership fixtures — /shell-push (issues #1001, #1003).
       include("/", shellPushOwnershipPatterns, { name: "" }),
+
+      // router.prerender() warm fixtures — /warm (issue #1062).
+      include("/", prerenderWarmPatterns, { name: "" }),
 
       // PPR guarding + scope-fidelity fixtures — /shell-secure (global auth
       // middleware, mounted in router.tsx) and /shell-secure-dsl (route DSL

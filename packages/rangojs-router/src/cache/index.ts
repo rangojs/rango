@@ -1,5 +1,6 @@
 export type {
   SegmentCacheStore,
+  CacheStoreScope,
   CachedEntryData,
   CacheGetResult,
   CacheItemResult,

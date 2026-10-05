@@ -44,9 +44,14 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { toInternal, type Rango } from "../router/router-interfaces.js";
 import { ensureRouterManifest } from "../route-map-builder.js";
 import type { SegmentCacheStore, ShellCacheEntry } from "../cache/types.js";
+import {
+  awaitLaterMillisecond,
+  createCollectingExecutionContext,
+} from "../cache/background-task.js";
 import type { ExecutionContext } from "../types/request-scope.js";
 import type { HandlerCacheConfig, SSRModule } from "../rsc/types.js";
 import type { createRSCHandler } from "../rsc/handler.js";
+import { setDefaultSSRModuleLoaderForTests } from "../rsc/ssr-module-loader.js";
 import {
   POST_QUIESCE_TASK_HOPS,
   SHELL_CAPTURE_MAX_WAIT_MS,
@@ -233,6 +238,16 @@ const SSR_STUB: SSRModule = {
     );
   },
 };
+
+/**
+ * `router.prerender()` warms a route through `router.fetch`, whose handler is
+ * built with no `loadSSRModule` and so reaches for the Vite RSC module loader
+ * this project cannot run. It gets the stub the handlers below get:
+ * everything else on a warm's path (router.fetch, createRSCHandler, the match
+ * pipeline, the capture) is production code. A warm runs outside a
+ * serveShellRequest call, so the stub records nothing for it.
+ */
+setDefaultSSRModuleLoaderForTests(async () => SSR_STUB);
 
 type HandleChannel = AsyncIterable<HandleData> | undefined;
 
@@ -475,24 +490,15 @@ export async function serveShellRequest<TEnv = any>(
   await ensureRouterManifest(router.id);
   const handler = await getHandler(router, options.cacheStore);
   const request = buildRequest(target, options);
-  const tasks: Promise<unknown>[] = [];
-  const executionContext: ExecutionContext = {
-    waitUntil(promise) {
-      tasks.push(
-        Promise.resolve(promise).catch((error) =>
-          console.error("[waitUntil] Background task failed:", error),
-        ),
-      );
-    },
-    passThroughOnException() {},
-  };
+  const executionContext = createCollectingExecutionContext();
+  const { tasks } = executionContext;
   const recorder: Recorder = {};
   const unservePrerender = await servePrerenderArtifacts(
     router,
     target.pathname,
     options.env,
   );
-  while (Date.now() === called) await macrotask();
+  await awaitLaterMillisecond(called);
 
   const { response, body } = await recorders.run(recorder, async () => {
     try {

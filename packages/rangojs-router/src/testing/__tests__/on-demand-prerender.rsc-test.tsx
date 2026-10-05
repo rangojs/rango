@@ -175,7 +175,9 @@ describe("on-demand prerender: router.prerender() then serve", () => {
 
       const result = await router.prerender({ env: {} })("/article/v");
 
-      if (!result.ok) throw new Error(`expected ok, got ${result.status}`);
+      if (!result.ok || result.path !== "on-demand") {
+        throw new Error(`expected an on-demand render, got ${result.status}`);
+      }
       expect(result.key).toContain(":pinned:");
       expect(store.entries()[0]?.[1].meta.version).toBe("pinned");
       expect((await serveShellRequest(router, "/article/v")).flight).toContain(

@@ -4,6 +4,13 @@
 prerender refresh from a running app; the API and safety rules below ship in
 `@rangojs/router`.
 
+**One verb, two paths.** `router.prerender()` is also how a route that is not
+on-demand is made ready before traffic: it warms that route's runtime caches
+through the request handler (`prerender-every-route.md`, shipped together with
+this). This doc covers the on-demand path; a result's `path` field says which
+one ran. The `skipped-not-on-demand` status an earlier draft of this design had
+is gone: that branch is the warm path.
+
 **Shipped in v1:** the `prerender` router option, `router.prerender()` /
 `.many()` / `.markStale()`, the `Prerender(..., { onDemand })` opt-in and
 `od` trie flag, per-request store resolution, the writable durable overlay read
@@ -162,7 +169,8 @@ build-time durable seeding options can live in the same config without renaming
 anything.
 
 `onRevalidate` receives the target (`{ route, params }`, kept
-JSON-serializable so it can go straight into a queue message) and the live env.
+JSON-serializable so it can go straight into a queue message), the live env and
+the stale request's execution context (`ctx`, absent where none exists).
 It runs at most once per stale key per isolate while one is in flight
 (`scheduleOverlayRevalidation`, `cache-lookup.ts`), so the obvious single
 process wiring, a direct `router.prerender({ env, ctx })(target)` call, renders once per stale key
@@ -337,9 +345,12 @@ The method should not force every trigger into try/catch. By default it returns
 an inspectable result:
 
 ```ts
+// The on-demand path's results. The full union, with the warm path's
+// variant and statuses, is in prerender-every-route.md ("Result shape").
 type PrerenderResult =
   | {
       ok: true;
+      path: "on-demand";
       // "already-fresh" only occurs with onlyIfStale: true
       status: "rendered" | "already-fresh";
       target: string;
@@ -348,15 +359,18 @@ type PrerenderResult =
       key: string;
       tags: string[];
       ttl?: number; // absent = never stale
+      // the warm request that followed the store write, when one ran
+      caches?: PrerenderWarmCaches;
     }
   | {
       ok: false;
+      path?: "on-demand"; // absent when no route matched
       status:
         | "no-match"
         | "no-store"
-        | "skipped-not-on-demand"
         | "skipped-personalized"
         | "skipped-unsupported-target"
+        | "skipped-passthrough"
         | "render-failed"
         | "store-failed";
       target: string;
@@ -364,6 +378,11 @@ type PrerenderResult =
       error?: unknown;
     };
 ```
+
+A target with search params or a hash is `skipped-unsupported-target` on this
+path (the key is route + params). The check runs after the route match: the
+same search params on a route that is not on-demand are part of the URL a warm
+requests.
 
 `throwOnError: true` is useful for admin endpoints and CI-like workflows:
 
@@ -698,7 +717,10 @@ resolve target to route + params
   v
 check on-demand route metadata
   |
-  +-- not opted in --> skipped-not-on-demand
+  +-- not opted in --> the warm path (prerender-every-route.md)
+  |
+  v
+search or hash on the target --> skipped-unsupported-target
   |
   v
 resolve env-scoped writable store
@@ -718,6 +740,11 @@ write durable entry
   |
   v
 rendered
+  |
+  v
+app cache store shared, and an origin resolves?
+  |
+  +-- yes --> one warm request on top of the new entry (result.caches)
 ```
 
 If a write fails, keep the previous durable entry and the bundled manifest

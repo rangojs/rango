@@ -552,6 +552,11 @@ export const NamedRoutes = {
   "useCacheTest.useCacheTest.withArgs": "/use-cache-test/with-args/:category",
   "useCacheTest.useCacheTest.withHandles": "/use-cache-test/with-handles",
   "useCacheTest.useCacheTest.withLoader": "/use-cache-test/with-loader",
+  warmBump: "/warm/__bump",
+  warmCached: "/warm/cached",
+  warmPersonal: "/warm/personal",
+  warmShell: "/warm/shell",
+  warmTrigger: "/warm/__trigger",
 } as const;
 
 // Aliased so the augmentation below does not pay a homomorphic mapped-type

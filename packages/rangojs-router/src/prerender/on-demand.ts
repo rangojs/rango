@@ -10,6 +10,7 @@
 import type { ExecutionContext } from "../types/request-scope.js";
 import type { IsEmptyObject, ParamsFor } from "../reverse.js";
 import type { WritablePrerenderStore } from "./writable-store.js";
+import type { ShellCaptureRefusal } from "../rsc/shell-capture-constants.js";
 
 declare const prerenderTargetBrand: unique symbol;
 
@@ -68,6 +69,16 @@ export interface PrerenderRuntime<TEnv = any> {
   env: TEnv;
   /** Cloudflare `ExecutionContext`; absent on node/Vercel. */
   ctx?: ExecutionContext;
+  /**
+   * The origin a warm requests a path or `{ route, params }` target on, for
+   * example `"https://shop.example"`. Cache keys carry the host, so a warm
+   * must request the host visitors use. A full-URL target uses its own
+   * origin; without this option the runner uses the origin of the request it
+   * is called from (an action, a route handler, `onRevalidate`), and with
+   * neither a warm returns `skipped-no-origin`. An on-demand route's
+   * requestless render never needs it.
+   */
+  origin?: string;
 }
 
 /** Per-call options of the bound runner. */
@@ -75,8 +86,11 @@ export interface PrerenderRunOptions {
   /** Throw on failure instead of returning an `{ ok: false }` result. */
   throwOnError?: boolean;
   /**
-   * Only render when the current entry is stale (cron-sweep opt-in). This is the
-   * only path that can return `already-fresh`; a plain refresh always renders.
+   * Only refresh what is cold or stale (cron-sweep opt-in), and the only
+   * path that can return `already-fresh`. On an on-demand route the stored
+   * entry is rendered only when stale. On any other route the warm reads its
+   * caches normally instead of forcing misses, so a fresh entry is left
+   * alone, a stale one refreshes and a missing one is written.
    */
   onlyIfStale?: boolean;
 }
@@ -88,12 +102,49 @@ export interface PrerenderManyOptions extends PrerenderRunOptions {
 }
 
 /**
- * Inspectable result. The trigger does not force callers into try/catch;
- * `throwOnError: true` opts into throwing for admin/CI endpoints.
+ * What a warm request wrote, by cache. On a result of the warm path, and on
+ * an on-demand result whose route was also warmed.
+ */
+export interface PrerenderWarmCaches {
+  /**
+   * Store writes that landed, by store family: `record` (route `cache()`),
+   * `item` (`"use cache"` and loader `cache()`), `response` (the document
+   * cache and response routes), `shell` (the `ppr` shell).
+   */
+  writes: { record: number; item: number; response: number; shell: number };
+  /**
+   * The `ppr` shell; absent on a route without `ppr`. `fresh` is
+   * `onlyIfStale` finding a servable shell; `not-eligible` is a request the
+   * shell path passed on (an active nonce, a store without shells, the
+   * route's own `cache()` opt-out, a buffered response).
+   */
+  shell?:
+    | "stored"
+    | "fresh"
+    | "refused"
+    | "no-shell"
+    | "not-eligible"
+    | "skipped-capacity"
+    | "skipped-queue-timeout"
+    | "error";
+  /** Why the capture refused to store the shell. */
+  refusal?: ShellCaptureRefusal;
+  /** The document cache, when `createDocumentCacheMiddleware` ran. */
+  document?: "stored" | "not-cacheable";
+}
+
+/**
+ * Inspectable result, one per target. The trigger does not force callers
+ * into try/catch; `throwOnError: true` opts into throwing for admin/CI
+ * endpoints. `path` says what ran: `on-demand` is the requestless render of a
+ * `Prerender(..., { onDemand })` route into the prerender store, `warm` is a
+ * request through the router's handler that rewrites the route's runtime
+ * caches.
  */
 export type PrerenderResult =
   | {
       ok: true;
+      path: "on-demand";
       /** `already-fresh` only occurs with `onlyIfStale: true`. */
       status: "rendered" | "already-fresh";
       target: string;
@@ -103,23 +154,54 @@ export type PrerenderResult =
       tags: string[];
       /** Absent = never stale. */
       ttl?: number;
+      /**
+       * The warm request that followed the store write. Absent when the app
+       * store is not shared, no origin resolved, or nothing was rendered.
+       */
+      caches?: PrerenderWarmCaches;
+    }
+  | {
+      ok: true;
+      path: "warm";
+      /** `already-fresh` only occurs with `onlyIfStale: true`. */
+      status: "warmed" | "already-fresh";
+      /** The absolute URL that was requested. */
+      target: string;
+      routeName: string;
+      /** The warm response's HTTP status. */
+      responseStatus: number;
+      caches: PrerenderWarmCaches;
     }
   | {
       ok: false;
+      /** Absent when no route matched: every other result is past the match. */
+      path?: "on-demand" | "warm";
       status:
         | "no-match"
+        // No prerender store (on-demand), or no `createRouter({ cache })` (warm).
         | "no-store"
-        | "skipped-not-on-demand"
         | "skipped-personalized"
         | "skipped-unsupported-target"
         // The route (a Passthrough + onDemand route) returned ctx.passthrough()
         // for this param set — no shared payload to persist; the live handler
         // keeps serving it.
         | "skipped-passthrough"
+        // The app store's entries are not readable beyond the place the call
+        // runs (SegmentCacheStore.scope), so a warm would serve no one else.
+        | "skipped-store-not-shared"
+        // A path or { route, params } target with no origin to request it on.
+        | "skipped-no-origin"
+        // A ppr route whose shell was not stored (caches.shell says why).
+        | "shell-not-stored"
+        // The request rendered and no cache wrote anything.
+        | "skipped-uncached"
         | "render-failed"
         | "store-failed";
       target: string;
       routeName?: string;
+      /** The warm response's HTTP status, when a warm request ran. */
+      responseStatus?: number;
+      caches?: PrerenderWarmCaches;
       error?: unknown;
     };
 

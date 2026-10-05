@@ -38,6 +38,7 @@ import { requestHeaders } from "../request-headers.js";
 import { createMiddlewareContext } from "../../router/middleware.js";
 import { payloadInitialTheme } from "../../rsc/full-payload.js";
 import { resolveThemeConfig } from "../../theme/constants.js";
+import { createWarmRecord } from "../../prerender/warm-request.js";
 
 /** Helper: create a RequestContext and run `fn` inside it. */
 function withContext(
@@ -1247,6 +1248,101 @@ describe("identity read guards: cookies(), headers(), the theme reads, a non-cac
         expect(() => ctx.setTheme!("light")).toThrow(/"use cache"/);
       });
     });
+  });
+});
+
+describe("identity reads refused on a router.prerender() warm request", () => {
+  type Enter = (ctx: unknown, fn: () => void) => void;
+  const SURFACES: Array<[string, () => unknown]> = [
+    ["cookies()", () => cookies().get("session")],
+    ["headers()", () => headers().get("authorization")],
+  ];
+
+  function warmContext() {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com", {
+        headers: { Cookie: "session=abc", Authorization: "Bearer tok" },
+      }),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+    const record = createWarmRecord("replace", {} as any);
+    ctx._prerenderWarm = record;
+    return { ctx, record };
+  }
+
+  const scopes: Array<[string, Enter]> = [
+    [
+      "a capture context",
+      (ctx, fn) => {
+        (ctx as any)._shellCaptureRun = true;
+        runWithRequestContext(ctx as any, fn);
+      },
+    ],
+    [
+      "a cache() boundary",
+      (ctx, fn) =>
+        runWithRequestContext(ctx as any, () =>
+          RangoContext.run({ insideCacheScope: true } as any, fn),
+        ),
+    ],
+    [
+      'a "use cache" execution',
+      (ctx, fn) =>
+        runWithRequestContext(ctx as any, () => runWithCacheExecScope(fn)),
+    ],
+  ];
+
+  for (const [scopeLabel, enter] of scopes) {
+    for (const [surface, read] of SURFACES) {
+      it(`${surface} refused in ${scopeLabel} records the surface and still throws`, () => {
+        const { ctx, record } = warmContext();
+        let threw = false;
+        enter(ctx, () => {
+          try {
+            read();
+          } catch {
+            threw = true;
+          }
+        });
+
+        expect(threw).toBe(true);
+        expect(record.identity).toBe(surface);
+      });
+    }
+  }
+
+  it("a read outside any cached scope does not throw and records no identity", () => {
+    const { ctx, record } = warmContext();
+    runWithRequestContext(ctx, () => {
+      expect(cookies().get("session")?.value).toBe("abc");
+      expect(headers().get("authorization")).toBe("Bearer tok");
+    });
+    expect(record.identity).toBeUndefined();
+  });
+
+  it("a read allowed inside a loader within a cache() boundary records no identity", () => {
+    const { ctx, record } = warmContext();
+    runWithRequestContext(ctx, () =>
+      RangoContext.run({ insideCacheScope: true } as any, () =>
+        runInsideLoaderScope(() => {
+          expect(cookies().get("session")?.value).toBe("abc");
+        }),
+      ),
+    );
+    expect(record.identity).toBeUndefined();
+  });
+
+  it("the first refused surface is kept when a second one is refused", () => {
+    const { ctx, record } = warmContext();
+    runWithRequestContext(ctx, () =>
+      runWithCacheExecScope(() => {
+        expect(() => headers()).toThrow(/cannot be called inside/i);
+        expect(() => cookies()).toThrow(/cannot be called inside/i);
+      }),
+    );
+    expect(record.identity).toBe("headers()");
   });
 });
 

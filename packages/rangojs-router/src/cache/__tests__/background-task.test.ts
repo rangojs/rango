@@ -1,5 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
-import { runBackground } from "../background-task.js";
+import {
+  LATER_MILLISECOND_MAX_TURNS,
+  awaitLaterMillisecond,
+  runBackground,
+} from "../background-task.js";
 
 describe("runBackground", () => {
   it("delegates to host.waitUntil when available", () => {
@@ -59,5 +63,29 @@ describe("runBackground", () => {
     runBackground({ waitUntil }, task, true);
 
     expect(waitUntil).toHaveBeenCalledWith(task);
+  });
+});
+
+describe("awaitLaterMillisecond", () => {
+  it("returns once the clock has passed `since`", async () => {
+    const since = Date.now();
+    await awaitLaterMillisecond(since);
+    expect(Date.now()).toBeGreaterThan(since);
+  });
+
+  it("gives up after the bound when the clock stands still", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    const timeout = vi.spyOn(globalThis, "setTimeout");
+    try {
+      await awaitLaterMillisecond(1_000);
+      expect(timeout).toHaveBeenCalledTimes(LATER_MILLISECOND_MAX_TURNS);
+
+      timeout.mockClear();
+      await awaitLaterMillisecond(1_000, 3);
+      expect(timeout).toHaveBeenCalledTimes(3);
+    } finally {
+      timeout.mockRestore();
+      now.mockRestore();
+    }
   });
 });

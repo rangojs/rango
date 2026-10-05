@@ -58,6 +58,9 @@ const { serializeSegments, deserializeSegments, serializeResult } =
 const { CacheScope } = await import("../cache-scope.js");
 const { createRequestContext, runWithRequestContext } =
   await import("../../server/request-context.js");
+const warmModule = await import("../../prerender/warm-request.js");
+const { executionStart, markInvalidated } =
+  await import("../invalidation-order.js");
 
 import type { SegmentCacheStore, CachedEntryData } from "../types.js";
 import type { PartialCacheOptions } from "../../types.js";
@@ -587,5 +590,185 @@ describe("CacheScope.recordTags - first-write tags land in the request tag union
       new CacheScope({ ttl: 60 }).recordTags(untagged),
     );
     expect(untagged._requestTags.size).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// router.prerender() warm (prerender/warm-request.ts): in replace mode a route
+// cache() read answers a miss without touching the store and the write path
+// replaces the record under the unchanged key.
+// ---------------------------------------------------------------------------
+
+describe("CacheScope - router.prerender() warm", () => {
+  function createWarmRecord(
+    mode: "replace" | "fill",
+    store: SegmentCacheStore,
+  ) {
+    return warmModule.createWarmRecord(mode, { store } as any);
+  }
+
+  function makeMapStore() {
+    const entries = new Map<string, CachedEntryData>();
+    const get = vi.fn(async (key: string) => {
+      const data = entries.get(key);
+      return data ? { data, shouldRevalidate: false } : null;
+    });
+    const set = vi.fn(async (key: string, data: CachedEntryData) => {
+      entries.set(key, data);
+    });
+    return {
+      entries,
+      get,
+      set,
+      store: { get, set } as unknown as SegmentCacheStore,
+    };
+  }
+
+  function makeCtx(store: SegmentCacheStore) {
+    return createRequestContext({
+      env: {},
+      request: new Request("https://example.com/products"),
+      url: new URL("https://example.com/products"),
+      variables: {},
+      cacheStore: store,
+    });
+  }
+
+  async function seed(
+    scope: InstanceType<typeof CacheScope>,
+    store: SegmentCacheStore,
+  ) {
+    // A non-warm write through the scope's own path.
+    const ctx = makeCtx(store);
+    await writeRoute(scope, ctx);
+  }
+
+  async function writeRoute(
+    scope: InstanceType<typeof CacheScope>,
+    ctx: ReturnType<typeof makeCtx>,
+  ) {
+    await runWithRequestContext(ctx, async () => {
+      await scope.cacheRoute("/products", {}, [makeSegment()]);
+      ctx._handleStore.seal();
+      const tasks = ctx._pendingBackgroundTasks!;
+      for (let i = 0; i < tasks.length; i++) await tasks[i];
+    });
+  }
+
+  it("replace mode answers a miss without reading the store although a fresh record exists", async () => {
+    const { store, get, entries } = makeMapStore();
+    const scope = new CacheScope({ ttl: 60, store });
+    await seed(scope, store);
+    expect(entries.size).toBe(1);
+
+    const normal = makeCtx(store);
+    const hit = await runWithRequestContext(normal, () =>
+      scope.lookupRouteDetailed("/products", {}),
+    );
+    expect(hit.status).toBe("hit");
+    get.mockClear();
+
+    const ctx = makeCtx(store);
+    ctx._prerenderWarm = createWarmRecord("replace", store);
+    const outcome = await runWithRequestContext(ctx, () =>
+      scope.lookupRouteDetailed("/products", {}),
+    );
+
+    expect(outcome).toEqual({ status: "miss" });
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it("replace mode keeps the opt-outs: cache(false) and a false condition() still bypass", async () => {
+    const { store, get } = makeMapStore();
+
+    const disabledCtx = makeCtx(store);
+    disabledCtx._prerenderWarm = createWarmRecord("replace", store);
+    const disabled = await runWithRequestContext(disabledCtx, () =>
+      new CacheScope(false).lookupRouteDetailed("/products", {}),
+    );
+    expect(disabled).toEqual({ status: "bypass" });
+
+    const conditionCtx = makeCtx(store);
+    conditionCtx._prerenderWarm = createWarmRecord("replace", store);
+    const gated = await runWithRequestContext(conditionCtx, () =>
+      new CacheScope({
+        ttl: 60,
+        store,
+        condition: () => false,
+      }).lookupRouteDetailed("/products", {}),
+    );
+    expect(gated).toEqual({ status: "bypass" });
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it("fill mode reads normally and serves the stored record", async () => {
+    const { store, get } = makeMapStore();
+    const scope = new CacheScope({ ttl: 60, store });
+    await seed(scope, store);
+
+    const ctx = makeCtx(store);
+    ctx._prerenderWarm = createWarmRecord("fill", store);
+    const outcome = await runWithRequestContext(ctx, () =>
+      scope.lookupRouteDetailed("/products", {}),
+    );
+
+    expect(outcome.status).toBe("hit");
+    expect(get).toHaveBeenCalled();
+  });
+
+  it("the warm's own shell capture context reads normally even with a replace record", async () => {
+    const { store, get } = makeMapStore();
+    const scope = new CacheScope({ ttl: 60, store });
+    await seed(scope, store);
+
+    const foreground = makeCtx(store);
+    foreground._prerenderWarm = createWarmRecord("replace", store);
+    const capture = Object.create(foreground) as typeof foreground;
+    capture._shellCaptureRun = true;
+    const outcome = await runWithRequestContext(capture, () =>
+      scope.lookupRouteDetailed("/products", {}),
+    );
+
+    expect(outcome.status).toBe("hit");
+    expect(get).toHaveBeenCalled();
+  });
+
+  it("replace mode writes under the key a non-warm request writes, replaces the record, and counts one record write", async () => {
+    const { store, set, entries } = makeMapStore();
+    const scope = new CacheScope({ ttl: 60, store });
+    await seed(scope, store);
+    const [[normalKey, previous]] = [...entries.entries()];
+    expect(set).toHaveBeenCalledTimes(1);
+
+    const ctx = makeCtx(store);
+    const record = createWarmRecord("replace", store);
+    ctx._prerenderWarm = record;
+    await writeRoute(scope, ctx);
+
+    expect(set).toHaveBeenCalledTimes(2);
+    expect(set.mock.calls[1][0]).toBe(normalKey);
+    expect(entries.size).toBe(1);
+    expect(entries.get(normalKey)).not.toBe(previous);
+    expect(record.writes.record).toBe(1);
+  });
+
+  it("a write whose tag was invalidated after the render started is still refused in replace mode and counts no write", async () => {
+    const { store, set } = makeMapStore();
+    const scope = new CacheScope({ ttl: 60, store, tags: ["warm-tag"] });
+    const start = executionStart();
+    markInvalidated(["warm-tag"]);
+
+    const ctx = makeCtx(store);
+    const record = createWarmRecord("replace", store);
+    ctx._prerenderWarm = record;
+    await runWithRequestContext(ctx, async () => {
+      await scope.cacheRoute("/products", {}, [makeSegment()], false, start);
+      ctx._handleStore.seal();
+      const tasks = ctx._pendingBackgroundTasks!;
+      for (let i = 0; i < tasks.length; i++) await tasks[i];
+    });
+
+    expect(set).not.toHaveBeenCalled();
+    expect(record.writes.record).toBe(0);
   });
 });

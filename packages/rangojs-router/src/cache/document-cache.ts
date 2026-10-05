@@ -24,6 +24,11 @@ import {
 import { mayNeedSSR } from "../rsc/ssr-setup.js";
 import { cacheKeyBase } from "./cache-key-utils.js";
 import { runBackground } from "./background-task.js";
+import {
+  isWarmReplace,
+  noteWarmDocument,
+  noteWarmWrite,
+} from "../prerender/warm-request.js";
 import { reportCacheError } from "./cache-error.js";
 import { executionStart, predatesInvalidation } from "./tag-invalidation.js";
 import { observePhase, PHASES } from "../router/instrument.js";
@@ -406,9 +411,11 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       // Recovery must reach CacheScope's server decoder so it can evict the bad
       // segment. Treat it as a miss, then let the ordinary write path replace
       // the corrupt fragment-capable response with the valid fallback bytes.
-      const cached = isFragmentRecovery
-        ? null
-        : await store.getResponse(cacheKey);
+      // A router.prerender() warm is a miss too: it renders and replaces.
+      const cached =
+        isFragmentRecovery || isWarmReplace(requestCtx)
+          ? null
+          : await store.getResponse(cacheKey);
       // Every path past the lookup either returns a fresh HIT, which renders
       // nothing, or renders a response this cache may store.
       requestCtx._documentCacheRender = true;
@@ -467,6 +474,8 @@ export function createDocumentCacheMiddleware<TEnv = any>(
                     directives.staleWhileRevalidate,
                     tags,
                   );
+                  noteWarmWrite(requestCtx, "response");
+                  noteWarmDocument(requestCtx, "stored");
                   log(
                     `[DocumentCache] REVALIDATED ${typeLabel}: ${url.pathname}`,
                   );
@@ -536,6 +545,8 @@ export function createDocumentCacheMiddleware<TEnv = any>(
               directives.staleWhileRevalidate,
               tags,
             );
+            noteWarmWrite(requestCtx, "response");
+            noteWarmDocument(requestCtx, "stored");
           } catch (error) {
             // Detached waitUntil task — pass the captured requestCtx so onError
             // fires even though the ALS context is gone (see the revalidation
@@ -556,6 +567,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       }
 
       // No cache headers - pass through
+      noteWarmDocument(requestCtx, "not-cacheable");
       return originalResponse;
     } catch (error) {
       reportCacheError(error, "cache-read", "[DocumentCache] middleware");

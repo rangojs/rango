@@ -77,6 +77,7 @@ export type {
 export type {
   PrerenderConfig,
   PrerenderResult,
+  PrerenderWarmCaches,
 } from "../prerender/on-demand.js";
 
 export {

@@ -7,6 +7,8 @@
  * skipping.
  */
 
+import type { ExecutionContext } from "../types/request-scope.js";
+
 interface WaitUntilHost {
   waitUntil?: (fn: () => Promise<void>) => void;
 }
@@ -84,4 +86,63 @@ export async function settleGrowing(
     if (!settled.done) return false;
   }
   return true;
+}
+
+/** Macrotask turns `awaitLaterMillisecond` waits at most. */
+export const LATER_MILLISECOND_MAX_TURNS = 10;
+
+/**
+ * Yield until `Date.now()` passes `since`, so a store's whole-millisecond tag
+ * gate (putShell vs an invalidation made just before) sees a later
+ * millisecond. Bounded: on Cloudflare the clock stands still between I/O
+ * events, so an unbounded wait could hang. At the bound the caller proceeds
+ * and a store may refuse the write, which its result reports.
+ */
+export async function awaitLaterMillisecond(
+  since: number,
+  maxTurns: number = LATER_MILLISECOND_MAX_TURNS,
+): Promise<void> {
+  for (let turn = 0; turn < maxTurns && Date.now() === since; turn++) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+}
+
+/** An ExecutionContext that keeps every promise handed to `waitUntil`. */
+export interface CollectingExecutionContext extends ExecutionContext {
+  readonly tasks: Promise<unknown>[];
+}
+
+/**
+ * Wrap the caller's ExecutionContext (or none) so a caller can wait for the
+ * request's background work: the deferred cache writes, the shell capture, a
+ * store's own writes. Every other member reads through to `inner`, bound to
+ * it (workerd's methods reject a foreign `this`).
+ */
+export function createCollectingExecutionContext(
+  inner?: ExecutionContext,
+): CollectingExecutionContext {
+  const tasks: Promise<unknown>[] = [];
+  const own: CollectingExecutionContext = {
+    tasks,
+    waitUntil(promise) {
+      const task = Promise.resolve(promise);
+      // The list only waits; the host (or the log below) owns the failure.
+      tasks.push(task.catch(() => {}));
+      if (inner) inner.waitUntil(task);
+      else {
+        task.catch((error) =>
+          console.error("[waitUntil] Background task failed:", error),
+        );
+      }
+    },
+    passThroughOnException() {},
+  };
+  if (!inner) return own;
+  return new Proxy(own, {
+    get(target, prop) {
+      if (prop in target) return target[prop as keyof typeof target];
+      const value = (inner as unknown as Record<PropertyKey, unknown>)[prop];
+      return typeof value === "function" ? value.bind(inner) : value;
+    },
+  });
 }

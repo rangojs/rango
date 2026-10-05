@@ -15,6 +15,7 @@ import {
   getRequestContext,
   _getRequestContext,
   createRequestContext,
+  captureRequestEntryContext,
 } from "../server/request-context.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc/server";
 import type {
@@ -89,6 +90,8 @@ import {
 } from "./origin-guard.js";
 import { handleRscRendering } from "./rsc-rendering.js";
 import { withoutShellMissMarker } from "./shell-serve.js";
+import { readWarmMark } from "../prerender/warm-request.js";
+import { defaultSSRModuleLoaderForTests } from "./ssr-module-loader.js";
 import {
   withTimeout,
   isTimeoutEnabled,
@@ -208,7 +211,13 @@ export function createRSCHandler<
   // In dev mode Vite may hot-reload the module, so skip memoization.
   const rawLoadSSRModule: LoadSSRModule =
     options.loadSSRModule ??
-    (() => import.meta.viteRsc.loadModule("ssr", "index"));
+    (() =>
+      // The test seam (ssr-module-loader.ts). Gated on the build mode, not
+      // NODE_ENV: the rsc Vitest project forces NODE_ENV=production, its mode
+      // is "test", and a production build folds the whole branch away.
+      ((import.meta as any).env?.MODE !== "production" &&
+        defaultSSRModuleLoaderForTests()?.()) ||
+      import.meta.viteRsc.loadModule("ssr", "index"));
   let _ssrModulePromise: Promise<SSRModule> | undefined;
   const loadSSRModule: LoadSSRModule =
     process.env.NODE_ENV === "production"
@@ -455,12 +464,17 @@ export function createRSCHandler<
     input: RouterRequestInput<TEnv> = {},
   ): Promise<Response> {
     const handlerStart = performance.now();
+    // Before any router scope: see captureRequestEntryContext.
+    const runAtRequestEntry = captureRequestEntryContext();
     // A degraded PPR HIT's reload carries the forced-MISS marker: keep only
     // the flag (set on the request context below) and drop the marker before
     // anything reads the request, so middleware, handlers, loaders, cache
     // keys and the SSR search seed see the URL the visitor asked for.
     const unmarkedRequest = withoutShellMissMarker(incomingRequest);
     const request = unmarkedRequest ?? incomingRequest;
+    // A router.prerender() warm: the mark is the incoming Request object
+    // itself (prerender/warm-request.ts), read before anything rebuilds it.
+    const warm = readWarmMark(incomingRequest);
     // Create the metrics store at handler start so handler:total has startTime=0
     // and all metrics are relative to the request entry point.
     const earlyMetricsStore = router.debugPerformance
@@ -512,10 +526,12 @@ export function createRSCHandler<
     let searchParamsFilter: SearchParamsFilter | undefined;
     const cacheOption = options.cache ?? router.cache;
     if (cacheOption && !url.searchParams.has("__no_cache")) {
+      // A warm writes to the store the trigger checked the scope of.
       const cacheConfig =
-        typeof cacheOption === "function"
+        warm?.cacheConfig ??
+        (typeof cacheOption === "function"
           ? cacheOption(env, executionCtx)
-          : cacheOption;
+          : cacheOption);
 
       if (cacheConfig.enabled !== false) {
         cacheStore = cacheConfig.store;
@@ -611,6 +627,11 @@ export function createRSCHandler<
       versions,
     });
     if (unmarkedRequest) requestContext._shellForcedMiss = true;
+    requestContext._runAtRequestEntry = runAtRequestEntry;
+    if (warm) {
+      requestContext._prerenderWarm = warm;
+      requestContext._renderErrors = warm.renderErrors;
+    }
     // Gate on the SAME enabled-semantics withTimeout uses (isTimeoutEnabled):
     // a `renderStartMs: 0` / negative opt-out disables the timeout, so the
     // driver's cursor bookkeeping (which only the timeout reads) must be off too.

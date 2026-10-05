@@ -76,6 +76,11 @@ Read these before changing the corresponding subsystem.
 - [On-demand prerender design](./design/ondemand-prerender.md) - implemented
   ISR-style durable prerender refresh from fetch, cron, queues, workflows, and
   webhooks
+- [router.prerender() for every route](./design/prerender-every-route.md) -
+  implemented. Warming a route that is not on-demand through the request
+  handler: the forced-miss mode at each cache read, the forced shell capture,
+  the store `scope` gate, the synthetic request, result statuses, and what a
+  warm does not reach (other edge locations, navigation records)
 - [`"use cache"` API design](./use-cache-api-design.md) - function/component
   caching: directive forms, cache profiles, keys and tainted arguments, the
   Vite transform, the runtime, and embedded server actions

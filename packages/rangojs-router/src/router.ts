@@ -19,6 +19,7 @@ import {
   resolveRouterVersions,
 } from "./server/build-version-table.js";
 import { isDevEnvironment } from "./errors.js";
+import { isViteDevServer } from "./cache/store-scope.js";
 import { createPrerenderTrigger } from "./prerender/create-prerender-trigger.js";
 import { createMemoryPrerenderStore } from "./prerender/memory-prerender-store.js";
 import {
@@ -195,8 +196,7 @@ export function createRouter<TEnv = any>(
   const effectivePrerenderConfigOption =
     prerenderConfigOption ??
     ((() =>
-      typeof globalThis.__PRERENDER_DEV_URL === "string" &&
-      defaultDevPrerenderStore
+      isViteDevServer() && defaultDevPrerenderStore
         ? { store: defaultDevPrerenderStore }
         : undefined) as RangoOptions<TEnv>["prerender"]);
 
@@ -779,6 +779,7 @@ export function createRouter<TEnv = any>(
     routerId,
     resolveVersion: () => resolvePrerenderVersion(routerId, version),
     isDev: isDevEnvironment,
+    isViteDevServer,
     ensureManifest: () => ensureRouterManifest(routerId),
     resolveConfig: (env, ctx) => {
       const opt = effectivePrerenderConfigOption;
@@ -816,6 +817,21 @@ export function createRouter<TEnv = any>(
         dev,
         true,
       ),
+    // A warm goes through router.fetch's handler: the one createRouter's own
+    // cache, nonce and version configure. An entry that passes them to
+    // createRSCHandler itself is not what a warm runs.
+    resolveCacheConfig: (env, ctx) =>
+      typeof cache === "function" ? cache(env, ctx) : cache,
+    // Called from inside a request, the warm leaves that request's scopes:
+    // it runs in the context the request entered the handler with
+    // (RequestContext._runAtRequestEntry).
+    fetch: (request, input) => {
+      const atRequestEntry = _getRequestContext()?._runAtRequestEntry;
+      return atRequestEntry
+        ? atRequestEntry(() => router.fetch(request, input))
+        : router.fetch(request, input);
+    },
+    ambientOrigin: () => _getRequestContext()?.url.origin,
   });
 
   // Create match handler functions bound to router state

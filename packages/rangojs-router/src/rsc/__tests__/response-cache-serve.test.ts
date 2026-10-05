@@ -17,6 +17,7 @@ import {
 } from "../../server/request-context.js";
 import type { EntryData } from "../../server/context.js";
 import type { PartialCacheOptions } from "../../types.js";
+import { createWarmRecord } from "../../prerender/warm-request.js";
 
 function setup(
   options: PartialCacheOptions,
@@ -149,5 +150,101 @@ describe("serveResponseRouteWithCache: outside its own request context", () => {
         "response:json:localhost/api/data|de",
       ]),
     );
+  });
+});
+
+describe("serveResponseRouteWithCache: router.prerender() warm", () => {
+  function harness(handler: () => Response = () => Response.json({ n: 1 })) {
+    const store = new MemorySegmentCacheStore();
+    const getResponse = vi.spyOn(store, "getResponse");
+    const putResponse = vi.spyOn(store, "putResponse");
+    const url = new URL("http://localhost/api/data");
+    const manifestEntry = {
+      type: "route",
+      cache: { options: { ttl: 60 } },
+      parent: null,
+    } as unknown as EntryData;
+    const executeHandler = vi.fn(async () => handler());
+
+    async function serve(
+      record?: ReturnType<typeof createWarmRecord>,
+    ): Promise<Response | undefined> {
+      const reqCtx = createRequestContext({
+        env: {},
+        request: new Request(url),
+        url,
+        variables: {},
+        cacheStore: store,
+      });
+      reqCtx._prerenderWarm = record;
+      const pending: Promise<void>[] = [];
+      reqCtx.waitUntil = (fn) => {
+        pending.push(fn());
+      };
+      const served = await runWithRequestContext(reqCtx, () =>
+        serveResponseRouteWithCache({
+          reqCtx,
+          manifestEntry,
+          responseType: "json",
+          url,
+          executeHandler,
+          deps: { createCacheScope },
+        }),
+      );
+      await Promise.all(pending);
+      return served;
+    }
+    const warm = (mode: "replace" | "fill") =>
+      createWarmRecord(mode, { store } as any);
+    return { getResponse, putResponse, executeHandler, serve, warm };
+  }
+
+  it("replace mode does not read the store, runs the handler, and replaces the entry under the same key", async () => {
+    const { getResponse, putResponse, executeHandler, serve, warm } = harness();
+    await serve();
+    const normalKey = putResponse.mock.calls[0][0];
+    expect(executeHandler).toHaveBeenCalledTimes(1);
+    getResponse.mockClear();
+
+    const record = warm("replace");
+    const served = await serve(record);
+
+    expect(served?.status).toBe(200);
+    expect(getResponse).not.toHaveBeenCalled();
+    expect(executeHandler).toHaveBeenCalledTimes(2);
+    expect(putResponse).toHaveBeenCalledTimes(2);
+    expect(putResponse.mock.calls[1][0]).toBe(normalKey);
+    expect(record.writes.response).toBe(1);
+  });
+
+  it("replace mode keeps canStore: a Set-Cookie response is not stored and counts no write", async () => {
+    const { putResponse, executeHandler, serve, warm } = harness(
+      () =>
+        new Response("{}", {
+          headers: { "content-type": "application/json", "set-cookie": "a=1" },
+        }),
+    );
+    const record = warm("replace");
+
+    await serve(record);
+
+    expect(executeHandler).toHaveBeenCalledTimes(1);
+    expect(putResponse).not.toHaveBeenCalled();
+    expect(record.writes.response).toBe(0);
+  });
+
+  it("fill mode serves the cached response without running the handler", async () => {
+    const { putResponse, executeHandler, serve, warm } = harness();
+    await serve();
+    expect(executeHandler).toHaveBeenCalledTimes(1);
+    putResponse.mockClear();
+
+    const record = warm("fill");
+    const served = await serve(record);
+
+    expect(await served?.json()).toEqual({ n: 1 });
+    expect(executeHandler).toHaveBeenCalledTimes(1);
+    expect(putResponse).not.toHaveBeenCalled();
+    expect(record.writes.response).toBe(0);
   });
 });

@@ -27,6 +27,7 @@ declare global {
 
 import { requestHeaders } from "../../server/request-headers.js";
 import type {
+  CacheStoreScope,
   SegmentCacheStore,
   CachedEntryData,
   CacheDefaults,
@@ -519,6 +520,12 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private readonly kv?: KVNamespace;
   /** True when constructed without KV: no durable tag history (see ctor). */
   readonly tagHistoryInert?: boolean;
+  /**
+   * SegmentCacheStore.scope: with KV every colo's L1 miss reads the same L2
+   * entry ("global"); without it entries live in one colo's Cache API
+   * ("local"), purge mode included (a purge evicts, it stores nothing).
+   */
+  readonly scope: CacheStoreScope;
   private readonly onRevalidateTag?: (tags: string[]) => Promise<void>;
   private readonly tagPurge?: (cacheTags: string[]) => Promise<void>;
   private readonly tagInvalidationTtl?: number;
@@ -604,6 +611,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     // evict it (purge cannot delete a build asset), so the manifest gate
     // declines on this flag (shell-build-manifest.ts).
     this.tagHistoryInert = options.kv ? undefined : true;
+    this.scope = options.kv ? "global" : "local";
     this.onRevalidateTag = options.onRevalidateTag;
     // tagPurge accepts a ready purge function or a credentials object; the
     // object form is normalized through the built-in zone purge client, which

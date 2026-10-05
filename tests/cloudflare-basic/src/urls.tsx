@@ -298,6 +298,13 @@ import { authRedirectPatterns } from "./pages/auth-redirect.js";
 import { redirectLoopPatterns } from "./pages/redirect-loop.js";
 import { deferredHandleNavPatterns } from "./pages/deferred-handle-nav.js";
 import { onErrorLog, clearOnErrorLog } from "./error-log.js";
+import {
+  WarmCachedPage,
+  WarmPersonalPage,
+  WarmShellPage,
+  WarmTrigger,
+  bumpWarmGeneration,
+} from "./pages/prerender-warm.js";
 import mixedClientUrls from "./mixed-client/urls.js";
 import pureClientUrls from "./client-urls/urls.js";
 import slowClientUrls, { SlowChrome } from "./client-urls/slow.js";
@@ -580,6 +587,16 @@ export const urlpatterns = urls(
         generation: bumpPprPushGeneration(ctx.searchParams.get("probe") ?? ""),
       }),
       { name: "testPprPushBump" },
+    ),
+    // router.prerender() warm fixture (e2e/prerender-warm.test.ts): the
+    // trigger a test calls, and the bump that moves one ?probe='s generation.
+    path("/__test/warm-trigger", WarmTrigger, { name: "testWarmTrigger" }),
+    path.json(
+      "/__test/warm-bump",
+      (ctx): { generation: number } => ({
+        generation: bumpWarmGeneration(ctx.searchParams.get("probe") ?? ""),
+      }),
+      { name: "testWarmBump" },
     ),
     // Test utils: clear the onError log.
     path.json(
@@ -1243,6 +1260,20 @@ export const urlpatterns = urls(
           { name: "pprRestock", ppr: { ttl: 300, swr: 120 } },
           () => [loader(PprRestockLoader, { ssr: false })],
         ),
+        // router.prerender() warm fixture (issue #1062;
+        // e2e/prerender-warm.test.ts): a ppr route, a route under cache()
+        // and a ppr route that reads cookies(), none of them on-demand.
+        path("/warm/shell", WarmShellPage, {
+          name: "warmShell",
+          ppr: { ttl: 300, swr: 120 },
+        }),
+        cache({ ttl: 300 }, () => [
+          path("/warm/cached", WarmCachedPage, { name: "warmCached" }),
+        ]),
+        path("/warm/personal", WarmPersonalPage, {
+          name: "warmPersonal",
+          ppr: { ttl: 300, swr: 120 },
+        }),
         // Push ownership (issues #1001, #1003; e2e/ppr-push-ownership.test.ts).
         // #1003: the loader runs on every replay; its pin serves the data, so
         // the shell record's copy of its push stands, on a navigation too.

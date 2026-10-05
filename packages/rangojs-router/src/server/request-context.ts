@@ -393,6 +393,22 @@ export interface RequestContext<
   _shellForcedMiss?: true;
 
   /**
+   * @internal This request is a router.prerender() warm
+   * (prerender/warm-request.ts). In `replace` mode every runtime cache read
+   * misses (isWarmReplace); the layers report into the record. A capture's
+   * derived context inherits it through the prototype.
+   */
+  _prerenderWarm?: import("../prerender/warm-request.js").PrerenderWarmRecord;
+
+  /**
+   * @internal Runs a callback in the async context this request entered the
+   * handler with (captureRequestEntryContext). router.prerender() dispatches
+   * a warm through it when called from inside a request. Absent where the
+   * runtime has no AsyncLocalStorage.snapshot.
+   */
+  _runAtRequestEntry?: <T>(fn: () => T) => T;
+
+  /**
    * @internal The freshness window of the route cache() records this
    * request read or wrote (cache-scope.ts noteRouteRecordWindow), as ms
    * timestamps: `freshUntil` is the record's `expiresAt`, `staleUntil` adds
@@ -967,6 +983,8 @@ export type PublicRequestContext<
   | "_resolvedCacheKeys"
   | "_shellKey"
   | "_shellForcedMiss"
+  | "_prerenderWarm"
+  | "_runAtRequestEntry"
   | "_routeRecordWindow"
   | "_shellFragmentPayload"
   | "_shellCaptureGuardTripped"
@@ -1037,6 +1055,22 @@ export const UNTRACKED_BACKGROUND_TASK: unique symbol = Symbol.for(
 
 // AsyncLocalStorage instance for request context
 const requestContextStorage = new AsyncLocalStorage<RequestContext<any>>();
+
+/**
+ * Capture the current async context (RequestContext._runAtRequestEntry), taken
+ * on handler entry before any router scope, so a nested dispatch (a
+ * router.prerender() warm called from a handler, loader or action) does not
+ * inherit the caller's route-definition, loader and cache-scope state. Per
+ * request: workerd refuses a snapshot outside the request that created it.
+ * See docs/design/prerender-every-route.md.
+ */
+export function captureRequestEntryContext():
+  | (<T>(fn: () => T) => T)
+  | undefined {
+  return typeof AsyncLocalStorage.snapshot === "function"
+    ? AsyncLocalStorage.snapshot()
+    : undefined;
+}
 
 /**
  * Run a function within a request context

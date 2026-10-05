@@ -27,6 +27,7 @@ export type {
   PrerenderConfig,
   PrerenderFn,
   PrerenderResult,
+  PrerenderWarmCaches,
   PrerenderManyOptions,
   PrerenderRunner,
   PrerenderRunOptions,

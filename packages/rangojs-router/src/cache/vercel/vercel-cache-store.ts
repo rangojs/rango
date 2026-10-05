@@ -35,6 +35,7 @@
  */
 
 import type {
+  CacheStoreScope,
   SegmentCacheStore,
   CachedEntryData,
   CacheDefaults,
@@ -512,6 +513,12 @@ function tagStamp(tags: string[]): { ta?: number } {
 export class VercelCacheStore<
   TEnv = unknown,
 > implements SegmentCacheStore<TEnv> {
+  /**
+   * SegmentCacheStore.scope: the Runtime Cache is per region. A
+   * router.prerender() warm fills the region it runs in, which is all traffic
+   * only when the project's functions run in one region.
+   */
+  readonly scope: CacheStoreScope = "regional";
   readonly supportsPassiveShellReads: true = true;
   readonly defaults?: CacheDefaults;
   readonly keyGenerator?: (

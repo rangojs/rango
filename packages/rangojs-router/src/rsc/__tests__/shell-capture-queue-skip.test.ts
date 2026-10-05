@@ -190,3 +190,59 @@ describe("scheduleShellCapture inert-store guard", () => {
     expect(captured).toHaveLength(1);
   });
 });
+
+// A router.prerender() warm's capture (ShellCaptureDescriptor.force) skips
+// the guards that shed a herd of visitors, not the queue's limits: the wait
+// budget still drops it unrun, which the warm reports as
+// caches.shell "skipped-queue-timeout" (prerender/warm-request.ts).
+describe("scheduleShellCapture queue-wait timeout: a forced capture", () => {
+  it("is still dropped unrun at the queue wait budget (skip-queue-timeout), without backoff", async () => {
+    const key = "/queue-skip-forced:shell";
+    const events: ShellCaptureDebugEvent[] = [];
+    const captured: Array<() => Promise<void>> = [];
+    const reqCtx = createRequestContext({
+      env: {},
+      request: new Request("http://localhost/q"),
+      url: new URL("http://localhost/q"),
+      variables: {},
+    }) as RequestContext;
+    (reqCtx as any).waitUntil = (task: () => Promise<void>) => {
+      captured.push(task);
+    };
+    const ssrModule = {
+      renderHTML: vi.fn(),
+      resumeShellHTML: vi.fn(),
+      captureShellHTML: vi.fn(),
+    } as unknown as SSRModule;
+    const putShell = vi.fn();
+
+    scheduleShellCapture(
+      { version: "v-test" } as unknown as HandlerContext<any>,
+      new Request("http://localhost/q"),
+      {},
+      new URL("http://localhost/q"),
+      reqCtx,
+      ssrModule,
+      {
+        key,
+        buildVersion: "test-build",
+        store: { putShell } as any,
+        debugSink: (e: ShellCaptureDebugEvent) => events.push(e),
+        force: true,
+      },
+    );
+    expect(captured).toHaveLength(1);
+    await captured[0]!();
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        key,
+        outcome: "skip-queue-timeout",
+        queueWaitMs: 20_000,
+      }),
+    ]);
+    expect(ssrModule.captureShellHTML).not.toHaveBeenCalled();
+    expect(putShell).not.toHaveBeenCalled();
+    expect(isCaptureBackedOff(key)).toBe(false);
+  });
+});

@@ -23,7 +23,7 @@ const PlainDef = Prerender<{ id: string }>(
 );
 
 describe("router.prerender() dogfood (public createRouter + public store)", () => {
-  test("skipped-not-on-demand for a plain Prerender route (no onDemand opt-in)", async () => {
+  test("a plain Prerender route (no onDemand opt-in) takes the warm path: a path target with no origin is skipped-no-origin", async () => {
     const store = createMemoryPrerenderStore();
     const router = createRouter({ prerender: { store } }).routes(({ path }) => [
       path("/plain/:id", PlainDef, { name: "plainPr" }),
@@ -31,10 +31,28 @@ describe("router.prerender() dogfood (public createRouter + public store)", () =
     const result = await router.prerender({ env: {} })("/plain/seed");
     expect(result).toMatchObject({
       ok: false,
-      status: "skipped-not-on-demand",
+      path: "warm",
+      status: "skipped-no-origin",
       routeName: "plainPr",
     });
     expect(store.size).toBe(0);
+  });
+
+  test("a warm of a router without createRouter({ cache }) is no-store, with the URL it would have requested", async () => {
+    const router = createRouter({}).routes(({ path }) => [
+      path("/plain/:id", PlainDef, { name: "plainPr" }),
+    ]);
+    const result = await router.prerender({
+      env: {},
+      origin: "https://shop.example",
+    })("/plain/seed?page=2");
+    expect(result).toMatchObject({
+      ok: false,
+      path: "warm",
+      status: "no-store",
+      target: "https://shop.example/plain/seed?page=2",
+      routeName: "plainPr",
+    });
   });
 
   test("no-store when no prerender store is configured", async () => {

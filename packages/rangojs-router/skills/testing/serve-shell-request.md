@@ -228,6 +228,49 @@ Loader data has no decoder: it rides the payload, so assert it as text in `prelu
 expect(hit.flight).toContain('"stock":"in stock"');
 ```
 
+## Warming a route: router.prerender()
+
+`router.prerender()` warms a route that is not `Prerender(..., { onDemand })`
+through `router.fetch` (`/prerender` → "Warm any route before traffic").
+Importing `serveShellRequest` gives that handler the same HTML stub, so the
+whole path runs here: warm, then serve the next visitor's request.
+
+```tsx
+class SharedMemoryStore extends MemorySegmentCacheStore {
+  // The shipped store is "local" and refused; a test store says it is shared.
+  readonly scope = "global" as const;
+}
+
+const router = createRouter({
+  cache: { store: new SharedMemoryStore() },
+}).routes(
+  urls(({ path }) => [path("/product/:id", ProductPage, { ppr: true })]),
+);
+
+const result = await router.prerender({ env: {} })(
+  "http://localhost/product/1",
+);
+expect(result).toMatchObject({ ok: true, path: "warm", status: "warmed" });
+
+// No visitor has requested the URL: its first document is a HIT.
+const hit = await serveShellRequest(router, "/product/1");
+expect(hit.shellStatus).toBe("HIT");
+```
+
+- Configure the store on the router. A warm writes to the store
+  `createRouter({ cache })` resolves, not to the `cacheStore` option of
+  `serveShellRequest`.
+- Give the target the origin `serveShellRequest` uses (`http://localhost`), as
+  a full URL or with `router.prerender({ env, origin })`: cache keys carry the
+  host. A path target with neither returns `skipped-no-origin`, unless the
+  runner is called from inside a served request (a route handler that calls
+  `router.prerender()`), where it takes that request's origin.
+- To assert a replace, count handler runs or render a per-run stamp: fill the
+  cache with one request, move the data, warm, then check the next request
+  shows the new value and ran no handler.
+- `router.fetch` binds its handler's document version once, as a production
+  isolate does, so `setBuildVersions()` between two warms does not move it.
+
 ## Caveats
 
 What the HTML stub cannot reproduce, so keep it in e2e:

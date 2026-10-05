@@ -15,7 +15,19 @@ import {
   REFUSED_CAPTURE_DEV_MAX_MS,
   type ShellCaptureDebugEvent,
 } from "../shell-capture.js";
-import { SHELL_CAPTURE_TASK_HARD_CAP_MS } from "../shell-capture-constants.js";
+import {
+  SHELL_CAPTURE_MAX_WAIT_MS,
+  SHELL_CAPTURE_TASK_HARD_CAP_MS,
+  type ShellCaptureRefusal,
+} from "../shell-capture-constants.js";
+import {
+  MAX_ADMITTED_CAPTURES,
+  enqueueSerializedCapture,
+} from "../capture-queue.js";
+import {
+  createWarmRecord,
+  noteWarmShellEvent,
+} from "../../prerender/warm-request.js";
 import {
   RecordingShellStore,
   estimateShellEntryBytes,
@@ -3179,6 +3191,824 @@ describe("runShellCapture", () => {
     );
 
     expect((reqCtx as any)._shellCaptureRun).toBeUndefined();
+  });
+
+  const storedShell = (body: string) =>
+    vi.fn(async () => ({
+      prelude: enc(`<html><body>${body}</body></html>`),
+      postponed: null,
+    }));
+
+  // A router.prerender() warm's capture (ShellCaptureDescriptor.force, set by
+  // rsc-rendering.ts shellServePlan): one explicit call that must store, so
+  // the guards that shed a herd of visitors do not apply to it, while the
+  // store and queue limits still decide
+  // (docs/design/prerender-every-route.md, invariants 4 and 5).
+  describe("a forced capture (ShellCaptureDescriptor.force)", () => {
+    const request = new Request("http://localhost/p");
+    const url = new URL("http://localhost/p");
+    const outcomes = (events: ShellCaptureDebugEvent[]) =>
+      events.map((event) => event.outcome);
+
+    /** A request whose waitUntil hands the capture task to the test. */
+    function scheduling(capture: SSRModule["captureShellHTML"]) {
+      const captured: Array<() => Promise<void>> = [];
+      const reqCtx = makeReqCtx();
+      (reqCtx as any).waitUntil = (task: () => Promise<void>) => {
+        captured.push(task);
+      };
+      const { ctx, ssrModule } = makeCtx(okMatch, capture);
+      const schedule = (
+        descriptor: Parameters<typeof scheduleShellCapture>[6],
+      ): void =>
+        scheduleShellCapture(
+          ctx,
+          request,
+          {},
+          url,
+          reqCtx,
+          ssrModule,
+          descriptor,
+        );
+      return { ctx, captured, schedule };
+    }
+
+    /** A capture descriptor for `key`, and the events its captures publish. */
+    function capturing(key: string, store: Record<string, unknown>) {
+      const events: ShellCaptureDebugEvent[] = [];
+      return {
+        events,
+        descriptor: {
+          key,
+          buildVersion: "test-build",
+          ttl: 300,
+          store: store as any,
+          debugSink: (event: ShellCaptureDebugEvent) => events.push(event),
+        },
+      };
+    }
+
+    it("is not deduplicated against a visitor's in-flight capture: it runs after it and stores last", async () => {
+      const putShell = makePutShell();
+      const { events, descriptor } = capturing("/force-in-flight:shell", {
+        putShell,
+      });
+      const visitor = scheduling(storedShell("visitor"));
+      const warm = scheduling(storedShell("warm"));
+      // The visitor's capture is held in its match: the key stays in flight.
+      let matchStarted!: () => void;
+      const started = new Promise<void>((resolve) => {
+        matchStarted = resolve;
+      });
+      let releaseVisitor!: () => void;
+      const held = new Promise<void>((resolve) => {
+        releaseVisitor = resolve;
+      });
+      vi.mocked(visitor.ctx.router.match).mockImplementation(async () => {
+        matchStarted();
+        await held;
+        writeDocRecord();
+        return okMatch;
+      });
+
+      visitor.schedule(descriptor);
+      const visitorTask = visitor.captured[0]!();
+      await started;
+
+      // Control: another visitor's schedule coalesces onto the first.
+      visitor.schedule(descriptor);
+      expect(visitor.captured).toHaveLength(1);
+      expect(outcomes(events)).toEqual(["skip-in-flight"]);
+
+      warm.schedule({ ...descriptor, force: true });
+      expect(warm.captured).toHaveLength(1);
+      expect(outcomes(events)).toEqual(["skip-in-flight"]);
+      const warmTask = warm.captured[0]!();
+
+      releaseVisitor();
+      await Promise.all([visitorTask, warmTask]);
+
+      // capture-queue.ts runs one capture at a time. The visitor's started
+      // first (it may have read data from before the change the warm
+      // publishes), so it stores first and the warm's replaces it.
+      expect(
+        putShell.mock.calls.map(([, entry]) => atob(entry.prelude!)),
+      ).toEqual([
+        "<html><body>visitor</body></html>",
+        "<html><body>warm</body></html>",
+      ]);
+      expect(outcomes(events)).toEqual(["skip-in-flight", "stored", "stored"]);
+    });
+
+    it("installs its own guard: a visitor's schedule made while it is in flight coalesces onto it", async () => {
+      const putShell = makePutShell();
+      const { events, descriptor } = capturing("/force-own-guard:shell", {
+        putShell,
+      });
+      const { captured, schedule } = scheduling(storedShell("warm"));
+
+      schedule({ ...descriptor, force: true });
+      schedule(descriptor);
+
+      expect(captured).toHaveLength(1);
+      expect(outcomes(events)).toEqual(["skip-in-flight"]);
+      await captured[0]!();
+      expect(putShell).toHaveBeenCalledTimes(1);
+    });
+
+    it("a visitor's capture finishing first does not release the warm's guard: nothing is admitted to write after it", async () => {
+      const putShell = makePutShell();
+      const { events, descriptor } = capturing("/force-order:shell", {
+        putShell,
+      });
+      const visitor = scheduling(storedShell("visitor"));
+      const warm = scheduling(storedShell("warm"));
+      const hold = () => {
+        let release!: () => void;
+        let started!: () => void;
+        return {
+          held: new Promise<void>((resolve) => {
+            release = resolve;
+          }),
+          started: new Promise<void>((resolve) => {
+            started = resolve;
+          }),
+          enter: () => started(),
+          release: () => release(),
+        };
+      };
+      const visitorHold = hold();
+      const warmHold = hold();
+      vi.mocked(visitor.ctx.router.match).mockImplementation(async () => {
+        visitorHold.enter();
+        await visitorHold.held;
+        writeDocRecord();
+        return okMatch;
+      });
+      vi.mocked(warm.ctx.router.match).mockImplementation(async () => {
+        warmHold.enter();
+        await warmHold.held;
+        writeDocRecord();
+        return okMatch;
+      });
+
+      visitor.schedule(descriptor);
+      const visitorTask = visitor.captured[0]!();
+      await visitorHold.started;
+      warm.schedule({ ...descriptor, force: true });
+      const warmTask = warm.captured[0]!();
+
+      // The visitor stores first and releases its own token only; the warm,
+      // now running, still owns the key.
+      visitorHold.release();
+      await visitorTask;
+      await warmHold.started;
+      expect(putShell).toHaveBeenCalledTimes(1);
+
+      visitor.schedule(descriptor);
+      expect(visitor.captured).toHaveLength(1);
+      expect(outcomes(events).at(-1)).toBe("skip-in-flight");
+
+      warmHold.release();
+      await warmTask;
+      expect(
+        putShell.mock.calls.map(([, entry]) => atob(entry.prelude!)),
+      ).toEqual([
+        "<html><body>visitor</body></html>",
+        "<html><body>warm</body></html>",
+      ]);
+    });
+
+    it("ignores the refused-capture backoff, and a stored shell clears it", async () => {
+      const key = "/force-backoff-stored:shell";
+      const putShell = makePutShell();
+      const { events, descriptor } = capturing(key, { putShell });
+      const { captured, schedule } = scheduling(storedShell("warm"));
+      clearCaptureBackoff(key);
+      try {
+        markCaptureBackoff(key);
+        markCaptureBackoff(key);
+
+        // Control: a visitor's schedule inside the window is not attempted.
+        schedule(descriptor);
+        expect(captured).toHaveLength(0);
+        expect(events).toEqual([
+          expect.objectContaining({
+            outcome: "skip-backoff",
+            backoffFailures: 2,
+          }),
+        ]);
+
+        schedule({ ...descriptor, force: true });
+        expect(captured).toHaveLength(1);
+        expect(events).toHaveLength(1);
+        await captured[0]!();
+
+        expect(outcomes(events)).toEqual(["skip-backoff", "stored"]);
+        expect(putShell).toHaveBeenCalledTimes(1);
+        expect(isCaptureBackedOff(key)).toBe(false);
+        // Cleared, not merely elapsed: the next failure counts from one.
+        markCaptureBackoff(key);
+        schedule(descriptor);
+        expect(events.at(-1)).toMatchObject({
+          outcome: "skip-backoff",
+          backoffFailures: 1,
+        });
+      } finally {
+        clearCaptureBackoff(key);
+      }
+    });
+
+    it("a refused forced capture still escalates the backoff", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const key = "/force-backoff-refused:shell";
+      const { events, descriptor } = capturing(key, {
+        putShell: vi.fn(async () => "uncacheable" as const),
+      });
+      const { captured, schedule } = scheduling(storedShell("warm"));
+      clearCaptureBackoff(key);
+      try {
+        markCaptureBackoff(key);
+
+        schedule({ ...descriptor, force: true });
+        expect(captured).toHaveLength(1);
+        await captured[0]!();
+
+        expect(outcomes(events)).toEqual(["refused", "backoff"]);
+        expect(events[1]).toMatchObject({ backoffFailures: 2 });
+        expect(isCaptureBackedOff(key)).toBe(true);
+      } finally {
+        clearCaptureBackoff(key);
+        warnSpy.mockRestore();
+      }
+    });
+
+    it("a forced capture that produced no shell still escalates the backoff", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      vi.useFakeTimers();
+      const key = "/force-backoff-no-shell:shell";
+      const { events, descriptor } = capturing(key, {
+        putShell: makePutShell(),
+      });
+      const { captured, schedule } = scheduling(vi.fn(async () => null));
+      clearCaptureBackoff(key);
+      try {
+        markCaptureBackoff(key);
+
+        schedule({ ...descriptor, force: true });
+        expect(captured).toHaveLength(1);
+        const task = captured[0]!();
+        await vi.runAllTimersAsync(); // the in-place retry delay
+        await task;
+
+        expect(outcomes(events)).toEqual(["no-shell", "no-shell", "backoff"]);
+        expect(events[2]).toMatchObject({ backoffFailures: 2 });
+        expect(isCaptureBackedOff(key)).toBe(true);
+      } finally {
+        clearCaptureBackoff(key);
+        vi.useRealTimers();
+        warnSpy.mockRestore();
+      }
+    });
+
+    it.each([
+      ["has no putShell", {}],
+      [
+        "declared its shell family inert",
+        { putShell: vi.fn(), shellFamilyInert: true },
+      ],
+    ])(
+      "is not scheduled when the store %s (skip-inert-store)",
+      (_label, store) => {
+        const { events, descriptor } = capturing(
+          "/force-inert-store:shell",
+          store,
+        );
+        const { captured, schedule } = scheduling(storedShell("warm"));
+
+        schedule({ ...descriptor, force: true });
+
+        expect(outcomes(events)).toEqual(["skip-inert-store"]);
+        expect(captured).toHaveLength(0);
+      },
+    );
+
+    it("is still dropped when the isolate's capture queue is full (skip-capacity)", async () => {
+      const key = "/force-capacity:shell";
+      const putShell = makePutShell();
+      const { events, descriptor } = capturing(key, { putShell });
+      const { ctx, captured, schedule } = scheduling(storedShell("warm"));
+      // The admission bound, filled as capture-queue.test.ts fills it: one
+      // capture running, the rest waiting behind it.
+      let release!: () => void;
+      const blocked = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const admitted = Array.from({ length: MAX_ADMITTED_CAPTURES }, () =>
+        enqueueSerializedCapture(() => blocked),
+      );
+      try {
+        schedule({ ...descriptor, force: true });
+        expect(captured).toHaveLength(1);
+        await captured[0]!();
+      } finally {
+        release();
+        await Promise.all(admitted);
+      }
+
+      expect(outcomes(events)).toEqual(["skip-capacity"]);
+      expect(ctx.router.match).not.toHaveBeenCalled();
+      expect(putShell).not.toHaveBeenCalled();
+      // Dropped unrun: no backoff, and the key is free for a later schedule.
+      expect(isCaptureBackedOff(key)).toBe(false);
+      schedule(descriptor);
+      expect(captured).toHaveLength(2);
+      await captured[1]!();
+      expect(outcomes(events)).toEqual(["skip-capacity", "stored"]);
+    });
+  });
+
+  // attemptCapture's write barrier settles the foreground's tracked
+  // background tasks (reqCtx._pendingBackgroundTasks) before the capture's
+  // match. A visitor's capture stops waiting at
+  // SHELL_CAPTURE_WRITE_BARRIER_MS (1500) and may then read an entry that is
+  // still the old one, which a warm must not bake: a forced capture waits
+  // for what SHELL_CAPTURE_TASK_HARD_CAP_MS leaves after the capture budget.
+  describe("the write barrier of a forced capture", () => {
+    const VISITOR_BARRIER_MS = 1_500;
+
+    /**
+     * Start a capture whose foreground request scheduled one deferred write
+     * that settles after `writeMs` (never, when undefined). `order` records
+     * that write and the capture's match.
+     */
+    function startCapture(
+      key: string,
+      descriptor: { force?: true; captureTimeout?: number },
+      writeMs: number | undefined,
+    ) {
+      const order: string[] = [];
+      const events: ShellCaptureDebugEvent[] = [];
+      const reqCtx = makeReqCtx();
+      reqCtx.waitUntil(async () => {
+        if (writeMs === undefined) return new Promise<void>(() => {});
+        await new Promise((resolve) => setTimeout(resolve, writeMs));
+        order.push("foreground-write");
+      });
+      const { ctx, ssrModule } = makeCtx(okMatch, storedShell("captured"));
+      const originalMatch = ctx.router.match;
+      (ctx.router as any).match = vi.fn(async (request: Request, opts: any) => {
+        order.push("capture-match");
+        return originalMatch(request, opts);
+      });
+      const run = runShellCapture(
+        ctx,
+        new Request("http://localhost/p"),
+        {},
+        new URL("http://localhost/p"),
+        reqCtx,
+        ssrModule,
+        {
+          key,
+          buildVersion: "test-build",
+          store: { putShell: makePutShell() } as any,
+          debugSink: (event) => events.push(event),
+          ...descriptor,
+        },
+        0,
+      );
+      return { order, events, run };
+    }
+
+    it("waits for a foreground write that takes longer than the visitor bound, then matches", async () => {
+      vi.useFakeTimers();
+      try {
+        const { order, events, run } = startCapture(
+          "/force-barrier:shell",
+          { force: true },
+          2_000,
+        );
+
+        await vi.advanceTimersByTimeAsync(VISITOR_BARRIER_MS + 100);
+        expect(order).toEqual([]);
+        await vi.advanceTimersByTimeAsync(400);
+        await run;
+
+        expect(order).toEqual(["foreground-write", "capture-match"]);
+        expect(events).toEqual([
+          expect.objectContaining({ outcome: "stored", attempt: 1 }),
+        ]);
+        expect(events[0]!.barrierWaitMs).toBe(2_000);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("control: a visitor's capture stops waiting at 1500 ms and matches before the write settles", async () => {
+      vi.useFakeTimers();
+      try {
+        const { order, events, run } = startCapture(
+          "/visitor-barrier:shell",
+          {},
+          2_000,
+        );
+
+        await vi.advanceTimersByTimeAsync(VISITOR_BARRIER_MS - 1);
+        expect(order).toEqual([]);
+        await vi.advanceTimersByTimeAsync(1);
+        await run;
+
+        expect(order).toEqual(["capture-match"]);
+        expect(events).toEqual([
+          expect.objectContaining({
+            outcome: "stored",
+            barrierWaitMs: VISITOR_BARRIER_MS,
+          }),
+        ]);
+        await vi.advanceTimersByTimeAsync(500);
+        expect(order).toEqual(["capture-match", "foreground-write"]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("is bounded by what the task hard cap leaves after the capture budget: a hung write holds it for 10 s", async () => {
+      vi.useFakeTimers();
+      try {
+        const bound =
+          SHELL_CAPTURE_TASK_HARD_CAP_MS - SHELL_CAPTURE_MAX_WAIT_MS;
+        const { order, events, run } = startCapture(
+          "/force-barrier-hung:shell",
+          { force: true },
+          undefined,
+        );
+
+        await vi.advanceTimersByTimeAsync(bound - 1);
+        expect(order).toEqual([]);
+        await vi.advanceTimersByTimeAsync(1);
+        await run;
+
+        expect(order).toEqual(["capture-match"]);
+        expect(events[0]).toMatchObject({
+          outcome: "stored",
+          barrierWaitMs: bound,
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("never waits less than a visitor's capture: a ppr.captureTimeout near the hard cap leaves the 1500 ms bound", async () => {
+      vi.useFakeTimers();
+      try {
+        const { order, events, run } = startCapture(
+          "/force-barrier-floor:shell",
+          {
+            force: true,
+            captureTimeout: SHELL_CAPTURE_TASK_HARD_CAP_MS - 1_000,
+          },
+          undefined,
+        );
+
+        await vi.advanceTimersByTimeAsync(VISITOR_BARRIER_MS - 1);
+        expect(order).toEqual([]);
+        await vi.advanceTimersByTimeAsync(1);
+        await run;
+
+        expect(order).toEqual(["capture-match"]);
+        expect(events[0]).toMatchObject({
+          outcome: "stored",
+          barrierWaitMs: VISITOR_BARRIER_MS,
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  // Why an attempt refused rides its event (ShellCaptureDebugEvent.refusal),
+  // set at every refuse exit of settleCaptureRecord and captureAndStoreShell.
+  // A router.prerender() result reports it as caches.refusal
+  // (prerender/warm-request.ts noteWarmShellEvent).
+  describe("the refusal on a refused attempt's event", () => {
+    const expiredWrittenRecord = () => ({
+      freshUntil: Date.now() - 1,
+      staleUntil: Date.now() - 1,
+      ttl: 300,
+      swr: 0,
+      written: true,
+    });
+
+    const cases: Array<{
+      refusal: ShellCaptureRefusal;
+      when: string;
+      /** Runs inside the capture's match, before its doc record is written. */
+      during?: () => void;
+      store?: () => Record<string, unknown>;
+      noDocRecord?: true;
+    }> = [
+      {
+        refusal: "identity",
+        when: "a capture guard tripped",
+        during: () => {
+          getRequestContext()._shellCaptureGuardTripped = {
+            surface: "cookies()",
+            fix: "Read it in a live loader.",
+          };
+        },
+      },
+      {
+        refusal: "dynamic",
+        when: "ctx.dynamic() was called while capturing",
+        during: () => getRequestContext().dynamic(),
+      },
+      {
+        refusal: "loader",
+        when: "a bake-lane loader rejected",
+        during: () => {
+          const rejected = Promise.reject(new Error("loader boom"));
+          rejected.catch(() => {});
+          getRequestContext()._shellCaptureLoaderRecords?.set(
+            "M0D0.app/x#L",
+            rejected,
+          );
+        },
+      },
+      {
+        refusal: "loader",
+        when: "a bake-lane loader settled with redirect()",
+        during: () => {
+          getRequestContext()._shellCaptureLoaderRecords?.set(
+            "M0D0.app/x#L",
+            Promise.resolve({
+              __loaderResult: true,
+              ok: false,
+              redirect: { to: "/login" },
+              error: { message: "Loader redirected to /login", name: "Error" },
+              fallback: null,
+            }),
+          );
+        },
+      },
+      {
+        refusal: "no-record",
+        when: "the match wrote no doc record",
+        noDocRecord: true,
+      },
+      {
+        refusal: "handles",
+        when: "a pushed handle value is missing from the doc record",
+        during: () =>
+          getRequestContext()._handleStore.push("meta", "M0L0", {
+            title: "x",
+          }),
+      },
+      {
+        refusal: "size",
+        when: "the entry is over the store's maxShellEntryBytes",
+        store: () => ({ putShell: makePutShell(), maxShellEntryBytes: 1 }),
+      },
+      {
+        refusal: "record-expired",
+        when: "the route cache() record the capture wrote ran out",
+        during: () => {
+          getRequestContext()._routeRecordWindow = expiredWrittenRecord();
+        },
+      },
+      {
+        refusal: "invalidated",
+        when: "putShell answered invalidated",
+        store: () => ({ putShell: vi.fn(async () => "invalidated" as const) }),
+      },
+      {
+        refusal: "uncacheable",
+        when: "putShell answered uncacheable",
+        store: () => ({ putShell: vi.fn(async () => "uncacheable" as const) }),
+      },
+    ];
+
+    it.each(cases)(
+      "$refusal: $when",
+      async ({ refusal, when, during, store, noDocRecord }) => {
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        try {
+          const key = `/refusal ${when}:shell`;
+          const events: ShellCaptureDebugEvent[] = [];
+          const { ctx, ssrModule } = makeCtx(
+            okMatch,
+            storedShell("captured"),
+            during ? { tags: [], during } : undefined,
+          );
+          if (noDocRecord) {
+            vi.mocked(ctx.router.match).mockImplementation(async () => okMatch);
+          }
+
+          const outcome = await runShellCapture(
+            ctx,
+            new Request("http://localhost/p"),
+            {},
+            new URL("http://localhost/p"),
+            makeReqCtx(),
+            ssrModule,
+            {
+              key,
+              buildVersion: "test-build",
+              ttl: 300,
+              store: (store?.() ?? { putShell: makePutShell() }) as any,
+              debugSink: (event) => events.push(event),
+            },
+            0,
+          );
+
+          expect(outcome).toBe("no-shell");
+          // Deterministic: one attempt, no in-place retry.
+          expect(events).toEqual([
+            expect.objectContaining({
+              key,
+              outcome: "refused",
+              attempt: 1,
+              refusal,
+            }),
+          ]);
+          expect(describeShellCaptureEvent(events[0]!)).toContain(
+            `refusal=${refusal}`,
+          );
+        } finally {
+          warnSpy.mockRestore();
+        }
+      },
+    );
+
+    it("a stored attempt's event carries no refusal", async () => {
+      const events: ShellCaptureDebugEvent[] = [];
+      const { ctx, ssrModule } = makeCtx(okMatch, storedShell("captured"));
+
+      await runShellCapture(
+        ctx,
+        new Request("http://localhost/p"),
+        {},
+        new URL("http://localhost/p"),
+        makeReqCtx(),
+        ssrModule,
+        {
+          key: "/refusal-none:shell",
+          buildVersion: "test-build",
+          ttl: 300,
+          store: { putShell: makePutShell() } as any,
+          debugSink: (event) => events.push(event),
+        },
+      );
+
+      expect(events).toEqual([expect.objectContaining({ outcome: "stored" })]);
+      expect(events[0]).not.toHaveProperty("refusal");
+      expect(describeShellCaptureEvent(events[0]!)).not.toContain("refusal=");
+    });
+
+    it("describeShellCaptureEvent prints the refusal", () => {
+      expect(
+        describeShellCaptureEvent({
+          key: "/p:shell",
+          outcome: "refused",
+          refusal: "identity",
+        }),
+      ).toBe("refused refusal=identity");
+    });
+  });
+
+  // captureAndStoreShell reports its write to the warm that scheduled it
+  // (prerender/warm-request.ts noteWarmWrite): the record is on the
+  // foreground context and the capture's derived context inherits it.
+  describe("a warm's capture counts its shell write", () => {
+    async function captureForWarm(
+      key: string,
+      store: Record<string, unknown>,
+      capture: SSRModule["captureShellHTML"] = storedShell("captured"),
+    ) {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const record = createWarmRecord("replace", {
+          store: new MemorySegmentCacheStore(),
+        });
+        const reqCtx = makeReqCtx();
+        reqCtx._prerenderWarm = record;
+        const { ctx, ssrModule } = makeCtx(okMatch, capture);
+        const outcome = await runShellCapture(
+          ctx,
+          new Request("http://localhost/p"),
+          {},
+          new URL("http://localhost/p"),
+          reqCtx,
+          ssrModule,
+          {
+            key,
+            buildVersion: "test-build",
+            ttl: 300,
+            store: store as any,
+            force: true,
+          },
+          0,
+        );
+        return { record, outcome };
+      } finally {
+        warnSpy.mockRestore();
+      }
+    }
+
+    it("counts one shell write after a stored capture", async () => {
+      const putShell = makePutShell();
+      const { record, outcome } = await captureForWarm("/warm-stored:shell", {
+        putShell,
+      });
+
+      expect(outcome).toBe("stored");
+      expect(putShell).toHaveBeenCalledTimes(1);
+      expect(record.writes.shell).toBe(1);
+    });
+
+    it("counts the one write of a capture stored on its in-place retry", async () => {
+      const { record, outcome } = await captureForWarm(
+        "/warm-stored-on-retry:shell",
+        { putShell: makePutShell() },
+        vi
+          .fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce({
+            prelude: enc("<html><body>warm</body></html>"),
+            postponed: null,
+          }) as any,
+      );
+
+      expect(outcome).toBe("stored");
+      expect(record.writes.shell).toBe(1);
+    });
+
+    it.each(["invalidated", "uncacheable"] as const)(
+      "counts nothing when the store answered %s",
+      async (acknowledgement) => {
+        const putShell = vi.fn(async () => acknowledgement);
+        const { record, outcome } = await captureForWarm(
+          `/warm-${acknowledgement}:shell`,
+          { putShell },
+        );
+
+        expect(outcome).toBe("no-shell");
+        expect(putShell).toHaveBeenCalledTimes(1);
+        expect(record.writes.shell).toBe(0);
+      },
+    );
+
+    it("counts nothing when the capture refused before the write", async () => {
+      const putShell = makePutShell();
+      const { record, outcome } = await captureForWarm("/warm-size:shell", {
+        putShell,
+        maxShellEntryBytes: 1,
+      });
+
+      expect(outcome).toBe("no-shell");
+      expect(putShell).not.toHaveBeenCalled();
+      expect(record.writes.shell).toBe(0);
+    });
+
+    it("a putShell that throws ends the attempt stored, but the warm reports an error", async () => {
+      // The capture worked and the I/O failure is reported (reportCacheError):
+      // the attempt outcome stays `stored` for visitors. A warm must not say
+      // it stored a shell nobody can read (noteWarmShellEvent).
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const record = createWarmRecord("replace", {
+          store: new MemorySegmentCacheStore(),
+        });
+        const reqCtx = makeReqCtx();
+        reqCtx._prerenderWarm = record;
+        const { ctx, ssrModule } = makeCtx(okMatch, storedShell("captured"));
+        const putShell = vi.fn(async () => {
+          throw new Error("KV put failed");
+        });
+        const outcome = await runShellCapture(
+          ctx,
+          new Request("http://localhost/p"),
+          {},
+          new URL("http://localhost/p"),
+          reqCtx,
+          ssrModule,
+          {
+            key: "/warm-put-throws:shell",
+            buildVersion: "test-build",
+            ttl: 300,
+            store: { putShell } as any,
+            force: true,
+            debugSink: (event) => noteWarmShellEvent(record, event),
+          },
+          0,
+        );
+
+        expect(outcome).toBe("stored");
+        expect(record.writes.shell).toBe(0);
+        expect(record.shell).toBe("error");
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
   });
 });
 

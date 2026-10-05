@@ -22,7 +22,7 @@ import type { SearchParamsFilter } from "./search-params-filter.js";
  */
 const RESERVED_SEARCH_PARAMS = new Set(["__no_cache", "__rsc", "__html"]);
 
-function isReservedSearchParam(key: string): boolean {
+export function isReservedSearchParam(key: string): boolean {
   return key.startsWith("_rsc") || RESERVED_SEARCH_PARAMS.has(key);
 }
 

@@ -1,6 +1,6 @@
 ---
 name: prerender
-description: Pre-render route segments at build time with Prerender (with getParams), Passthrough live fallback, Static segments, and Skip, and refresh them from a running app with on-demand prerender (Prerender onDemand + router.prerender, ISR-style). Use when a page's content is mostly static and shouldn't render on every request, speeding up cold responses, reading build-only data (files, build env), refreshing one page from a webhook, cron or queue without a redeploy, or deciding which routes to prerender vs render live.
+description: Pre-render route segments at build time with Prerender (with getParams), Passthrough live fallback, Static segments, and Skip, refresh them from a running app with on-demand prerender (Prerender onDemand + router.prerender, ISR-style), and warm any other route's runtime caches (ppr shell, cache(), "use cache", document cache) before traffic with the same router.prerender. Use when a page's content is mostly static and shouldn't render on every request, speeding up cold responses, reading build-only data (files, build env), refreshing one page from a webhook, cron or queue without a redeploy, making routes ready after a deploy or an updateTag so no visitor pays the first render, or deciding which routes to prerender vs render live.
 argument-hint: [passthrough]
 ---
 
@@ -805,11 +805,18 @@ will not finish.
 
 A refresh always renders and replaces; `{ onlyIfStale: true }` (cron sweeps)
 skips a fresh entry and returns `already-fresh`. The result is inspectable
-(`{ ok, status, key, tags, ttl }`); statuses are `rendered`, `already-fresh`,
-`no-match`, `no-store`, `skipped-not-on-demand`, `skipped-personalized`,
+(`{ ok, path: "on-demand", status, key, tags, ttl }`); statuses are `rendered`,
+`already-fresh`, `no-match`, `no-store`, `skipped-personalized`,
 `skipped-unsupported-target` (a target with `?search` or `#hash`),
 `skipped-passthrough`, `render-failed` and `store-failed`. Every failure keeps
 the previous entry.
+
+A route that is not on-demand is not refused: the same call warms its runtime
+caches instead (see "Warm any route before traffic"). An on-demand route gets
+both: after the store write, the runner sends one warm request so the route's
+loaders' own `cache()` and the document cache are rebuilt on the new entry.
+That request needs a shared app cache store and an origin; without them the
+refresh is complete as it is, and the result has no `caches`.
 
 ### What is served
 
@@ -837,8 +844,8 @@ in dev.
   `target` is a `PrerenderTargetObject`, which the runner and its `.many()`
   accept as is, so
   `onRevalidate: (target, env, ctx) => router.prerender({ env, ctx })(target)`
-  typechecks without a cast. `onRevalidate` receives `(target, env)`, with no
-  `ctx`.
+  typechecks without a cast. `onRevalidate` receives `(target, env, ctx)`;
+  `ctx` is the stale request's execution context, absent where none exists.
 - **Prerender tags are their own namespace.** `cacheTag()`, `updateTag()` and
   `revalidateTag()` never reach the prerender store; the runner's `markStale()`
   never reaches the runtime cache. (`updateTag()` needs a request context;
@@ -905,6 +912,239 @@ is exported from `@rangojs/router/testing` too. See `/testing`.
 
 Pre-rendered segments are fully resolved at build time and never suspend.
 With `Passthrough()`, `loading()` works for live fallback renders.
+
+## Warm any route before traffic
+
+`router.prerender()` is one verb for "make this URL ready before a visitor
+asks for it". For a `Prerender(..., { onDemand })` route that is the
+requestless render above. For **every other route** it warms: the runner
+sends the URL through the router's own request handler as an anonymous
+visitor would, in a mode where every runtime cache read misses and every
+write replaces the entry under the visitor's key. The old entries keep
+serving until the new ones are written, so there is no cold window.
+
+After a deploy that changes server code, and after an `updateTag()`, every
+cache key starts cold and the first visitor per key pays the render. A warm
+pays it for them.
+
+```typescript
+const prerender = router.prerender({
+  env,
+  ctx,
+  origin: "https://shop.example",
+});
+
+await prerender("/products/1"); // any route
+await prerender("/search?q=wine"); // search params are part of the key
+await prerender.many(urls, { concurrency: 4 }); // default concurrency 1
+await prerender.many(urls, { onlyIfStale: true }); // top up what is cold or stale
+```
+
+### What one call does
+
+| Route                                         | `prerender(url)`                                                                                                            | `result.path` |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| `Prerender(..., { onDemand })`                | requestless render into the prerender store; then a warm request, when the app cache store is shared and an origin resolves | `on-demand`   |
+| any other route, shared app cache store       | a warm request through the router's handler                                                                                 | `warm`        |
+| any other route, store not shared             | refused before anything renders: `skipped-store-not-shared` (dev warns once)                                                | `warm`        |
+| any other route, no `createRouter({ cache })` | `no-store`                                                                                                                  | `warm`        |
+
+A warm replaces what a cookie-free visitor's document request for that URL
+would fill:
+
+- a `ppr` route's shell (the next document request is `x-rango-shell: HIT`);
+- the route's `cache()` records for a document request;
+- the `"use cache"` results the render reaches (a function keyed by its
+  arguments only is refreshed for every URL that calls it);
+- its loaders' own `cache()`;
+- the document cache entry (`createDocumentCacheMiddleware`), and a response
+  route's cache.
+
+It does not write the records a client navigation reads (`partial:`) or an
+intercept's: those fill on the first navigation. A `ppr` route's navigations
+replay the document shell, so they are covered.
+
+A `clientUrls()` group cannot use `Prerender()`; with `ppr` on a group route,
+warming is how that route is ready before its first visitor.
+
+### The store must be shared
+
+A warm fills the cache where the call runs. That helps other traffic only when
+the store is shared beyond that place, so the router asks the store
+(`SegmentCacheStore.scope`):
+
+| Store                       | `scope`      | Warm                                                                                           |
+| --------------------------- | ------------ | ---------------------------------------------------------------------------------------------- |
+| `CFCacheStore` with `kv`    | `"global"`   | yes                                                                                            |
+| `CFCacheStore` without `kv` | `"local"`    | refused: the Cache API is per colo                                                             |
+| `VercelCacheStore`          | `"regional"` | yes; fills the region the call runs in (all traffic only on a single-region project)           |
+| `MemorySegmentCacheStore`   | `"local"`    | refused in production; allowed under the dev server (one process serves every request)         |
+| a custom store              | its own      | only when it declares `scope: "global"` or `"regional"`; a store that declares none is refused |
+
+`VercelCacheStore` is not checked for the number of regions: Vercel's Runtime
+Cache is per region, and a warm fills the one it runs in. New projects and
+every Hobby project run functions in one region (`iad1`); on a multi-region
+project warm from each region, or accept that the others fill on first use.
+
+The shared-store check covers the app store (`createRouter({ cache })`) only.
+A warm also overwrites entries in a route's or loader's own `cache({ store })`,
+and that store is not checked: one that is `local` is warmed for the calling
+process only, so no other process or location sees the new entry.
+
+The dev exception exists so you can try warming locally on the Node preset. It
+follows the dev server, not `NODE_ENV`: a production build, `vite preview` and
+a test runner all refuse the memory store. A single-process deployment whose
+memory store really is the only copy declares it:
+
+```typescript
+class SingleProcessStore extends MemorySegmentCacheStore {
+  readonly scope = "global" as const;
+}
+```
+
+### The origin
+
+Cache keys carry the host, so a warm must request the host visitors use. In
+order:
+
+1. the target's own origin (`prerender("https://shop.example/p/1")`, or a
+   `URL`);
+2. `origin` on the binding (`router.prerender({ env, ctx, origin })`), for
+   path and `{ route, params }` targets;
+3. the origin of the request the runner is called from, when there is one: a
+   server action, a route handler, `onRevalidate`;
+4. none: `skipped-no-origin`.
+
+A cron or queue handler has no request, so give it `origin`. An on-demand
+render never needs one (prerender keys carry no host); without one it only
+skips the warm request that follows.
+
+A hash, or a parameter the router reserves (`_rsc*`, `__no_cache`), is
+`skipped-unsupported-target`.
+
+### The request is anonymous
+
+The warm is a `GET` with `accept: text/html` and nothing else: no cookies, no
+authorization, no user agent, no `accept-language`, and on Cloudflare no
+`request.cf`. It lands in the partition a header-less visitor lands in (a
+route partitioned by `cache({ key })` or the store's `keyGenerator` gets that
+one partition warmed).
+
+- Middleware runs and sees an anonymous request. An auth middleware that
+  redirects makes the result `render-failed` with `responseStatus: 302`: an
+  anonymous visitor is not served a cached page there either.
+- `cookies()` or `headers()` read outside any cached scope see nothing, and
+  the anonymous view is rendered and stored wherever a cookie-free visitor's
+  would be.
+- A read inside `cache()`, `"use cache"` or a `ppr` shell capture trips the
+  same guard it trips for a visitor; the result is `skipped-personalized`.
+- Analytics that count document GETs count warms, and a rate limiter keyed by
+  IP sees an empty key.
+
+Nothing a client sends makes a request a warm: the mark is in process.
+
+### Results
+
+```typescript
+const result = await prerender("/products/1");
+if (!result.ok) console.warn(result.status, result.caches);
+```
+
+| `status`                     | `ok`    | Meaning                                                                                         |
+| ---------------------------- | ------- | ----------------------------------------------------------------------------------------------- |
+| `warmed`                     | `true`  | the request rendered and at least one cache wrote                                               |
+| `already-fresh`              | `true`  | `onlyIfStale`: nothing was cold or stale                                                        |
+| `skipped-store-not-shared`   | `false` | the app store's `scope` is `"local"` or undeclared; nothing rendered                            |
+| `skipped-no-origin`          | `false` | a path target with no origin to request it on                                                   |
+| `no-store`                   | `false` | no `createRouter({ cache })`, or `enabled: false`                                               |
+| `skipped-personalized`       | `false` | an identity guard refused a read                                                                |
+| `shell-not-stored`           | `false` | a `ppr` route whose shell was not stored; `caches.shell` and `caches.refusal` say why           |
+| `skipped-uncached`           | `false` | the request rendered and no cache wrote (the route caches nothing, or every write was refused)  |
+| `render-failed`              | `false` | the handler threw, the response was not 200 (`responseStatus`), or the render reported an error |
+| `skipped-unsupported-target` | `false` | a hash or a reserved parameter                                                                  |
+| `no-match`                   | `false` | no route matches the path                                                                       |
+
+`result.target` is the absolute URL that was requested. `result.caches` has
+the detail: `writes` by store family (`record`, `item`, `response`, `shell`),
+`shell` (`stored`, `fresh`, `refused`, `no-shell`, `not-eligible`,
+`skipped-capacity`, `skipped-queue-timeout`, `error`), `refusal` when the
+capture refused, and `document` (`stored` or `not-cacheable`) when the document
+cache middleware ran. `throwOnError: true` throws a `PrerenderError` on any
+`ok: false`, refusals included.
+
+`.many()` dispatches each target on its own, so a batch can mix on-demand and
+plain routes: one result per target, in input order.
+
+`onlyIfStale` on a plain route makes the request read its caches normally
+instead of forcing misses: a fresh entry is left alone, a stale one refreshes,
+a missing one is written. It costs a visitor's request when everything is
+fresh.
+
+### Refreshing changed content: `updateTag`, then `prerender`
+
+A warm replaces the entry where it runs, and on a shared store that is the
+entry other locations read on their next miss. It does not reach a copy
+another location already holds: on `CFCacheStore`, each colo keeps serving its
+own Cache API copy until it expires, and an entry whose `ttl + swr` is under
+60 seconds never reaches KV at all.
+
+So after a deploy (new keys: no location holds a copy) a warm alone makes
+the route ready everywhere. For a content change, invalidate first, then
+warm:
+
+```typescript
+// A CMS webhook route. A webhook is a request, so updateTag() works here and
+// the warm takes the request's origin.
+path.json("/hooks/product-changed", async (ctx) => {
+  const { id } = (await ctx.request.json()) as { id: string };
+  await updateTag(`product:${id}`); // drops every location's copy
+  const result = await router.prerender({
+    env: ctx.env,
+    ctx: ctx.executionContext,
+  })(`/products/${id}`); // writes the new one
+  return { status: result.status };
+});
+```
+
+The invalidation makes every location's copy unservable, so no visitor is
+served the old content, and the warm writes the new entry where it runs and
+to the shared store. A location with no copy of its own reads that entry on
+its next request and renders nothing. On `CFCacheStore`, a colo that was
+still holding its own (now invalidated) copy renders once for itself instead
+of reading the warmed entry, unless the store uses `tagPurge`, which evicts
+those copies. Await `updateTag()` before the warm: a write that started
+before an invalidation of one of its tags is refused.
+
+### Limits worth knowing
+
+- **Only the router's own handler.** A warm goes through `router.fetch`, the
+  handler `createRouter`'s `cache`, `nonce` and `version` configure. An app
+  entry that builds its own `createRSCHandler({ cache, version })` is not what
+  a warm runs: put those options on `createRouter`.
+- **Document records only.** Navigation (`partial:`) and intercept records
+  fill on the first navigation.
+- **One location at a time.** A warm does not reach a copy another location
+  already holds; see the refresh pattern above.
+- **A warm costs a visitor's MISS:** one render, plus a shell capture on a
+  `ppr` route. `concurrency` defaults to 1 so a sweep never fans out against
+  your data source unless you ask. One call waits for the request's
+  background work (the cache writes, the capture), up to about 40 seconds in
+  the worst case; a large list belongs in a queue, one message per batch.
+- **Gradual deployments:** a warm fills the version that received the call.
+- **The correctness guards still decide.** A warm never stores what a
+  visitor's request would refuse to store: `cache(false)`, a false
+  `condition()`, `private` / `no-store` / `Set-Cookie` on a document, a tag
+  invalidated mid-render, an entry over the store's size limit.
+
+### Test it
+
+`router.prerender()` warms under the public testing primitives too: warm, then
+`serveShellRequest(router, url)` from `@rangojs/router/testing/flight` serves
+the next visitor's request through the production handler (`shellStatus:
+"HIT"`). Configure the store on the router (`createRouter({ cache: { store }
+})`), not through `serveShellRequest`'s `cacheStore` option, and give it a
+shared scope: the shipped `MemorySegmentCacheStore` is refused, so subclass it
+as above. See `/testing`.
 
 ## Complete Example
 

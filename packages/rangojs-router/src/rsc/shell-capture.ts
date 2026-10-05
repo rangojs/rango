@@ -41,7 +41,9 @@ import {
   SHELL_CAPTURE_TASK_HARD_CAP_MS,
   resetShellWarningsForTests,
   warnOnce,
+  type ShellCaptureRefusal,
 } from "./shell-capture-constants.js";
+import { noteWarmWrite } from "../prerender/warm-request.js";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import type { TraceSpan } from "../router/tracing.js";
@@ -491,6 +493,20 @@ function refuseOnCaptureGuard(
   return true;
 }
 
+/** The refusal a tripped capture guard stands for (refuseOnCaptureGuard). */
+function guardRefusal(derivedCtx: RequestContext<any>): ShellCaptureRefusal {
+  return derivedCtx._dynamic ? "dynamic" : "identity";
+}
+
+/** A refused attempt; the reason rides its event (ShellCaptureDebugEvent.refusal). */
+function refuse(
+  stats: Pick<ShellCaptureDebugEvent, "refusal">,
+  refusal: ShellCaptureRefusal,
+): "refused" {
+  stats.refusal = refusal;
+  return "refused";
+}
+
 /** The no-shell cause for handler output that missed the capture deadline. */
 const HANDLER_OUTPUT_TIMEOUT_REASON: string =
   "the handler output (a promise it passes or pushes, or an async server " +
@@ -667,6 +683,8 @@ export interface ShellCaptureDebugEvent {
   untaggedBake?: true;
   /** Outcome reported by a store that supports shell-write acknowledgements. */
   storeWrite?: "stored" | "invalidated" | "uncacheable";
+  /** Why a `refused` attempt refused. */
+  refusal?: ShellCaptureRefusal;
   /** Consecutive failure count in the key's backoff entry, when one exists. */
   backoffFailures?: number;
   /** Ms remaining in the key's backoff window, when one exists. */
@@ -728,6 +746,7 @@ export function describeShellCaptureEvent(
   if (event.storeWrite !== undefined) {
     parts.push(`store-write=${event.storeWrite}`);
   }
+  if (event.refusal !== undefined) parts.push(`refusal=${event.refusal}`);
   if (event.backoffFailures !== undefined) {
     parts.push(`backoff-failures=${event.backoffFailures}`);
   }
@@ -1051,6 +1070,15 @@ export interface ShellCaptureDescriptor {
    * re-render the page and drop the isolate's memo of the shell just stored.
    */
   storedSeqAtRead?: number;
+  /**
+   * A `router.prerender()` warm's capture (rsc-rendering.ts shellServePlan):
+   * one explicit call that must store, so the guards that shed a herd of
+   * visitors do not apply to it. scheduleShellCapture skips the in-flight
+   * dedup and the refused-capture backoff, and attemptCapture waits longer on
+   * the write barrier. Every correctness guard, the inert-store skip and the
+   * queue limits still decide.
+   */
+  force?: true;
 }
 
 /** Per key, the sequence number of its latest stored capture (bounded). */
@@ -1095,7 +1123,10 @@ export function scheduleShellCapture(
   descriptor: ShellCaptureDescriptor,
 ): void {
   const key = descriptor.key;
-  const inFlight = inFlightCaptures.get(key);
+  // A forced capture installs its own token below: a visitor's capture that
+  // started before the warm may have read data from before the change the
+  // warm publishes, and the queue runs it first, so the warm stores last.
+  const inFlight = descriptor.force ? undefined : inFlightCaptures.get(key);
   if (inFlight) {
     if (Date.now() - inFlight.startedAt <= SHELL_CAPTURE_TASK_HARD_CAP_MS) {
       publishCaptureDebugEvent(descriptor, { key, outcome: "skip-in-flight" });
@@ -1116,7 +1147,7 @@ export function scheduleShellCapture(
   }
   // Refused/failed within the window → skip the doomed re-render (one probe per
   // key per window per isolate). Expired entries self-evict inside the check.
-  if (isCaptureBackedOff(key)) {
+  if (!descriptor.force && isCaptureBackedOff(key)) {
     publishCaptureDebugEvent(descriptor, {
       key,
       outcome: "skip-backoff",
@@ -1445,6 +1476,7 @@ type CaptureAttemptStats = Pick<
   | "snapshotSkipped"
   | "untaggedBake"
   | "storeWrite"
+  | "refusal"
   | "recordSettleMs"
   | "entryBytes"
 > & {
@@ -1606,7 +1638,7 @@ async function runShellCapture(
 export type CaptureRecordOutcome =
   | { kind: "record" | "prerender"; match: MatchResult }
   | { kind: "timeout"; reason: string }
-  | { kind: "refused" };
+  | { kind: "refused"; refusal: ShellCaptureRefusal };
 
 /**
  * Record-first capture: the doc record is both the settle signal and the
@@ -1670,7 +1702,7 @@ export async function settleCaptureRecord(
   // write starts (no encode for a capture that already failed).
   if (!settled.done) {
     if (refuseOnCaptureGuard(capture.key, derivedCtx))
-      return { kind: "refused" };
+      return { kind: "refused", refusal: guardRefusal(derivedCtx) };
     return { kind: "timeout", reason: HANDLER_OUTPUT_TIMEOUT_REASON };
   }
 
@@ -1691,7 +1723,9 @@ export async function settleCaptureRecord(
 
   // Capture guards first: a tripped guard usually also fails the record,
   // and its own message names the cause.
-  if (refuseOnCaptureGuard(capture.key, derivedCtx)) return { kind: "refused" };
+  if (refuseOnCaptureGuard(capture.key, derivedCtx)) {
+    return { kind: "refused", refusal: guardRefusal(derivedCtx) };
+  }
 
   const docKey = derivedCtx._shellImplicitCache?.docKey;
   const record =
@@ -1709,7 +1743,7 @@ export async function settleCaptureRecord(
       return { kind: "timeout", reason: HANDLER_OUTPUT_TIMEOUT_REASON };
     }
     warnCaptureRefusedOnce(capture.key, NO_DOC_RECORD_REASON);
-    return { kind: "refused" };
+    return { kind: "refused", refusal: "no-record" };
   }
 
   // A handle encode that timed out stores "" (handle-snapshot.ts
@@ -1723,7 +1757,7 @@ export async function settleCaptureRecord(
         "record. A promise inside a Map, Set, or class instance is not awaited " +
         "before the encode; push plain objects and arrays.",
     );
-    return { kind: "refused" };
+    return { kind: "refused", refusal: "handles" };
   }
 
   const { fragmentSegments } = await import("../cache/segment-codec.js");
@@ -1820,8 +1854,21 @@ async function attemptCapture(
   // skipped, cache-store middleware's write path gated off by state.cacheHit), so
   // prelude, snapshot, and ring-3 agree on the foreground's generation. Runs per
   // attempt (the retry re-checks; already-settled promises are free).
+  //
+  // A forced capture (a warm) is not latency-bound and must not bake an entry
+  // its own foreground is still replacing, so it waits for as long as the task
+  // hard cap leaves after the capture budget.
   const barrierStart = performance.now();
-  await settleTrackedBackgroundTasks(reqCtx, SHELL_CAPTURE_WRITE_BARRIER_MS);
+  await settleTrackedBackgroundTasks(
+    reqCtx,
+    descriptor.force
+      ? Math.max(
+          SHELL_CAPTURE_WRITE_BARRIER_MS,
+          SHELL_CAPTURE_TASK_HARD_CAP_MS -
+            (descriptor.captureTimeout ?? SHELL_CAPTURE_MAX_WAIT_MS),
+        )
+      : SHELL_CAPTURE_WRITE_BARRIER_MS,
+  );
   stats.barrierWaitMs = Math.round(performance.now() - barrierStart);
 
   const derivation = deriveShellCaptureContext(
@@ -1878,7 +1925,7 @@ async function attemptCapture(
         stats.recordSettleMs,
       );
     }
-    if (settled.kind === "refused") return "refused";
+    if (settled.kind === "refused") return refuse(stats, settled.refusal);
     if (settled.kind === "timeout") {
       stats.noShellCause = settled.reason;
       return "no-shell";
@@ -2255,7 +2302,9 @@ async function captureAndStoreShell(
   // (boundary-less segment — lands in the catch) or is swallowed into
   // per-loader error UI (the render completes — caught after the try).
   const refuseOnGuardTrip = (): "refused" | undefined =>
-    refuseOnCaptureGuard(capture.key, reqCtx) ? "refused" : undefined;
+    refuseOnCaptureGuard(capture.key, reqCtx)
+      ? refuse(stats, guardRefusal(reqCtx))
+      : undefined;
 
   // Dev diagnostics for a no-shell attempt (warnNullCaptureOnce): the stacks of
   // the tasks React reports as still pending at the capture's abort. React's
@@ -2371,7 +2420,7 @@ async function captureAndStoreShell(
               "Fix the loader, or drop its ssr: false to move it to the live lane.",
             PPR_LANE_HINT,
           );
-          return "refused";
+          return refuse(stats, "loader");
         }
         // The container itself never settled: it is a hole (under an ancestor
         // boundary) or the trivial-prelude gate already fired. Omit — no pin.
@@ -2388,7 +2437,7 @@ async function captureAndStoreShell(
               "Drop its ssr: false to move it to the live lane, or move the decision into middleware.",
             PPR_LANE_HINT,
           );
-          return "refused";
+          return refuse(stats, "loader");
         }
         // Past the hole check: this container settled with real material that
         // bakes into the shell prelude (independent of the snapshot pin below).
@@ -2563,7 +2612,7 @@ async function captureAndStoreShell(
           "Shrink the page the shell bakes, or move large regions under a live " +
           "loader's boundary.",
       );
-      return "refused";
+      return refuse(stats, "size");
     }
 
     // Missing tags are valid: the shell follows TTL/SWR-only invalidation. Expose
@@ -2635,7 +2684,7 @@ async function captureAndStoreShell(
                 record,
                 `${sinceWriteMs} ms after this capture wrote it`,
               );
-              return "refused";
+              return refuse(stats, "record-expired");
             }
             stats.expired = {
               route,
@@ -2661,7 +2710,7 @@ async function captureAndStoreShell(
               "If capture code deterministically calls updateTag() on its own shell tag, move that mutation out of the render; " +
               "otherwise every generation is invalidated before it can be served.",
           );
-          return "refused";
+          return refuse(stats, "invalidated");
         }
         if (storeWrite === "uncacheable") {
           // The store declared the entry unstorable under its current
@@ -2676,8 +2725,9 @@ async function captureAndStoreShell(
               "the write as permanently refusable, so the key is backed off. See the cache store's " +
               "own warning for the specific limit and remedy.",
           );
-          return "refused";
+          return refuse(stats, "uncacheable");
         }
+        noteWarmWrite(reqCtx, "shell");
       } catch (error) {
         // Best-effort: a failed put must never throw out of the background task.
         reportCacheError(
