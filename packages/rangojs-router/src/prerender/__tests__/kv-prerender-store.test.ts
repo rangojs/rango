@@ -125,7 +125,7 @@ describe("createKVPrerenderStore", () => {
     const store = createKVPrerenderStore(kv, { now: () => now });
     await store.set(key(), stored({ ttl: 3600, tags: ["product:42"] }));
     now = 2000;
-    await store.markStale!(["product:42"]);
+    await store.markStale!("r1", ["product:42"]);
     const got = await store.get(key());
     // Still present (mark-stale, not delete), and now stale.
     expect(got).not.toBeNull();
@@ -159,7 +159,7 @@ describe("createKVPrerenderStore", () => {
     let now = 1000;
     const kv = fakeKV();
     const store = createKVPrerenderStore(kv, { now: () => now });
-    await store.markStale!(["product:42"]); // marker = 1000
+    await store.markStale!("r1", ["product:42"]); // marker = 1000
     now = 2000;
     await store.set(
       key(),
@@ -167,6 +167,81 @@ describe("createKVPrerenderStore", () => {
     ); // storedAt = 2000 > marker
     const got = await store.get(key());
     expect(isStoredEntryStale(got!, 2000)).toBe(false);
+  });
+
+  it("a marker written for one router does not mark another router's entry", async () => {
+    let now = 1000;
+    const kv = fakeKV();
+    const store = createKVPrerenderStore(kv, { now: () => now });
+    const a = key({ routerId: "router-a" });
+    const b = key({ routerId: "router-b" });
+    await store.set(a, stored({ ttl: 3600, tags: ["product:42"] }, a));
+    await store.set(b, stored({ ttl: 3600, tags: ["product:42"] }, b));
+    now = 2000;
+    await store.markStale!("router-a", ["product:42"]);
+    expect(isStoredEntryStale((await store.get(a))!, 2000)).toBe(true);
+    expect(isStoredEntryStale((await store.get(b))!, 2000)).toBe(false);
+  });
+
+  it("scopes the marker key by the encoded router id, so ids and tags never run together", async () => {
+    const kv = fakeKV();
+    const store = createKVPrerenderStore(kv, { now: () => 1000 });
+    await store.markStale!("a/b", ["c"]);
+    await store.markStale!("a", ["b/c"]);
+    expect([...kv.map.keys()].sort()).toEqual([
+      "__rango_pr_tag__/a%2Fb/c",
+      "__rango_pr_tag__/a/b/c",
+    ]);
+  });
+
+  describe("tagMarkerTtl", () => {
+    function spiedKV() {
+      const kv = fakeKV();
+      const puts: Array<{ k: string; opts: unknown }> = [];
+      const spied: KVNamespace = {
+        ...kv,
+        put: async (k, v, opts) => {
+          puts.push({ k, opts });
+          return kv.put(k, v, opts);
+        },
+      };
+      return { spied, puts };
+    }
+
+    it("writes markers with no expiry by default", async () => {
+      const { spied, puts } = spiedKV();
+      await createKVPrerenderStore(spied).markStale!("r1", ["t"]);
+      expect(puts.map((p) => p.opts)).toEqual([undefined]);
+    });
+
+    it("passes the TTL to KV as expirationTtl, never on entries", async () => {
+      const { spied, puts } = spiedKV();
+      const store = createKVPrerenderStore(spied, { tagMarkerTtl: 7200 });
+      await store.markStale!("r1", ["t"]);
+      await store.set(key(), stored({ ttl: 60 }));
+      expect(puts.map((p) => p.opts)).toEqual([
+        { expirationTtl: 7200 },
+        undefined,
+      ]);
+    });
+
+    it("raises a value below KV's 60s floor, and ignores a non-positive or non-finite one", async () => {
+      const seen: unknown[] = [];
+      for (const tagMarkerTtl of [5, 0, -1, Number.NaN, Infinity]) {
+        const { spied, puts } = spiedKV();
+        await createKVPrerenderStore(spied, { tagMarkerTtl }).markStale!("r1", [
+          "t",
+        ]);
+        seen.push(puts[0].opts);
+      }
+      expect(seen).toEqual([
+        { expirationTtl: 60 },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+      ]);
+    });
   });
 
   it("delete removes the entry", async () => {

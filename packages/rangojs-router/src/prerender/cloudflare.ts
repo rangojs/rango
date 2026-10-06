@@ -18,7 +18,12 @@
  * - Invalidation is mark-stale, not delete (deleting would re-expose the manifest
  *   entry as the result of an "invalidation").
  * - Tag markers use a prerender-specific prefix, separate from the runtime cache's
- *   `updateTag()`/`revalidateTag()` namespace.
+ *   `updateTag()`/`revalidateTag()` namespace, and are scoped by router id
+ *   (`{prefix}{encodeURIComponent(routerId)}/{tag}`): routers sharing one KV
+ *   namespace (an app behind a host router) must not mark each other's entries.
+ * - Markers carry no TTL by default. An entry never expires, so a marker can
+ *   mark an entry stored arbitrarily long before it; only the app knows how
+ *   long entries go unrefreshed (see `tagMarkerTtl`).
  */
 
 import type { KVNamespace } from "../cache/cf/cf-cache-types.js";
@@ -33,9 +38,25 @@ import {
 /** Prerender tag markers live in their own namespace, separate from the runtime cache. */
 const PRERENDER_TAG_MARKER_PREFIX = "__rango_pr_tag__/";
 
+/** Cloudflare KV rejects an expirationTtl below 60 seconds. */
+const KV_MIN_EXPIRATION_TTL = 60;
+
 export interface KVPrerenderStoreOptions {
   /** Injectable clock for `markStale` markers in deterministic tests. Defaults to Date.now. */
   now?: () => number;
+  /**
+   * Seconds a tag marker lives in KV. Default: no expiry.
+   *
+   * A marker only matters for entries stored before it, and an entry with a
+   * `ttl` is stale on its own `ttl` seconds after it was stored, so once the
+   * marker is older than the largest `ttl` among your on-demand routes (the
+   * route's `onDemand.ttl`, else the router's `prerender.ttl`) it has nothing
+   * left to mark. Set this above that value. Do not set it when any entry has
+   * no `ttl`: such an entry never goes stale by itself, and an expired marker
+   * would make it fresh again. Values below KV's 60s floor are raised to it;
+   * non-finite or non-positive values mean no expiry.
+   */
+  tagMarkerTtl?: number;
 }
 
 /**
@@ -59,9 +80,23 @@ export function createKVPrerenderStore(
   options: KVPrerenderStoreOptions = {},
 ): WritablePrerenderStore {
   const now = options.now ?? (() => Date.now());
+  const markerTtl =
+    options.tagMarkerTtl != null &&
+    Number.isFinite(options.tagMarkerTtl) &&
+    options.tagMarkerTtl > 0
+      ? Math.max(KV_MIN_EXPIRATION_TTL, Math.ceil(options.tagMarkerTtl))
+      : undefined;
 
-  async function readTagMarker(tag: string): Promise<number | null> {
-    const raw = await kv.get(PRERENDER_TAG_MARKER_PREFIX + tag);
+  function markerKey(routerId: string, tag: string): string {
+    // An encoded id holds no "/", so the id/tag split is unambiguous.
+    return `${PRERENDER_TAG_MARKER_PREFIX}${encodeURIComponent(routerId)}/${tag}`;
+  }
+
+  async function readTagMarker(
+    routerId: string,
+    tag: string,
+  ): Promise<number | null> {
+    const raw = await kv.get(markerKey(routerId, tag));
     if (!raw) return null;
     const n = Number(raw);
     return Number.isFinite(n) ? n : null;
@@ -88,7 +123,9 @@ export function createKVPrerenderStore(
         meta?.tags?.length &&
         !(meta.staleAt != null && meta.staleAt <= now())
       ) {
-        const markers = await Promise.all(meta.tags.map(readTagMarker));
+        const markers = await Promise.all(
+          meta.tags.map((tag) => readTagMarker(key.routerId, tag)),
+        );
         if (markers.some((m) => m != null && m >= meta.storedAt)) {
           lowerStoredEntryStaleAt(stored, meta.storedAt);
         }
@@ -106,11 +143,17 @@ export function createKVPrerenderStore(
       await kv.delete(serializePrerenderKey(key));
     },
 
-    async markStale(tags: string[]): Promise<void> {
+    async markStale(routerId: string, tags: string[]): Promise<void> {
       if (tags.length === 0) return;
       const marker = String(now());
       await Promise.all(
-        tags.map((tag) => kv.put(PRERENDER_TAG_MARKER_PREFIX + tag, marker)),
+        tags.map((tag) =>
+          kv.put(
+            markerKey(routerId, tag),
+            marker,
+            markerTtl ? { expirationTtl: markerTtl } : undefined,
+          ),
+        ),
       );
     },
   };

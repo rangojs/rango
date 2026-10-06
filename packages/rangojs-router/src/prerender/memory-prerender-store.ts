@@ -16,7 +16,7 @@ import {
 
 export interface MemoryPrerenderStore extends WritablePrerenderStore {
   delete(key: PrerenderKey): Promise<void>;
-  markStale(tags: string[]): Promise<void>;
+  markStale(routerId: string, tags: string[]): Promise<void>;
   /** Synchronous read by structured key (tests). */
   peek(key: PrerenderKey): PrerenderStoredEntry | null;
   /** All stored [serializedKey, entry] pairs (tests). */
@@ -41,6 +41,8 @@ export function createMemoryPrerenderStore(
 ): MemoryPrerenderStore {
   const now = options.now ?? (() => Date.now());
   const map = new Map<string, PrerenderStoredEntry>();
+  // The owning router per serialized key: the key string alone cannot be split.
+  const routerIds = new Map<string, string>();
 
   return {
     async get(key: PrerenderKey): Promise<PrerenderStoredEntry | null> {
@@ -48,19 +50,26 @@ export function createMemoryPrerenderStore(
     },
 
     async set(key: PrerenderKey, stored: PrerenderStoredEntry): Promise<void> {
-      map.set(serializePrerenderKey(key), stored);
+      const serialized = serializePrerenderKey(key);
+      map.set(serialized, stored);
+      routerIds.set(serialized, key.routerId);
     },
 
     async delete(key: PrerenderKey): Promise<void> {
-      map.delete(serializePrerenderKey(key));
+      const serialized = serializePrerenderKey(key);
+      map.delete(serialized);
+      routerIds.delete(serialized);
     },
 
-    async markStale(tags: string[]): Promise<void> {
+    async markStale(routerId: string, tags: string[]): Promise<void> {
       if (tags.length === 0) return;
       const tagSet = new Set(tags);
       const at = now();
-      for (const stored of map.values()) {
-        if (stored.meta.tags.some((t) => tagSet.has(t))) {
+      for (const [serialized, stored] of map) {
+        if (
+          routerIds.get(serialized) === routerId &&
+          stored.meta.tags.some((t) => tagSet.has(t))
+        ) {
           lowerStoredEntryStaleAt(stored, at);
         }
       }
@@ -76,6 +85,7 @@ export function createMemoryPrerenderStore(
 
     clear(): void {
       map.clear();
+      routerIds.clear();
     },
 
     get size(): number {

@@ -892,13 +892,54 @@ const store: WritablePrerenderStore = {
   async set(key, stored) {
     await blob.put(serializePrerenderKey(key), JSON.stringify(stored));
   },
-  // optional: delete(key), markStale(tags)
+  // optional: delete(key), markStale(routerId, tags)
 };
 ```
+
+`markStale(routerId, tags)` receives the id of the router whose runner was
+called (`key.routerId` on that router's entries). Mark only entries whose
+`key.routerId` equals it: routers behind a host router share one store, and a
+tag means something only inside the router whose routes declared it.
 
 Key everything off the `key` you are given (`serializePrerenderKey` includes
 `key.version`). Do not call `getCacheVersions()` in a prerender store: `set()`
 runs outside the producer's request context.
+
+### Several routers (host router)
+
+A runner belongs to the router `router.prerender()` was called on, so an app
+with several routers behind a host router calls it on each router:
+
+- It matches only that router's routes. A URL only another router has is
+  `no-match`.
+- Entries are keyed by router id plus that router's data version, so two
+  routers can share one `prerender.store` (one KV namespace) without touching
+  each other's entries, and a deploy that changes one router's server code
+  leaves the others' refreshed entries served.
+- `markStale(tags)` marks only that router's entries, in every shipped store:
+  `markStale(["product:1"])` on one router does not make another router's
+  `product:1` entry stale.
+- A warm of a non-on-demand route goes through that router's own handler, and
+  its cache keys carry the host: pass the host the visitors use as `origin`
+  (`router.prerender({ env, ctx, origin: "https://a.example" })`), or a path
+  target resolves against the calling request's origin.
+
+### KV tag markers
+
+`createKVPrerenderStore(kv)` writes a marker per tag at
+`__rango_pr_tag__/{encodeURIComponent(routerId)}/{tag}` and has no expiry on
+markers by default. An entry never expires, so a marker can still have to mark
+an entry stored long before it. Set `tagMarkerTtl` (seconds) only when every
+on-demand entry has a `ttl` (the route's `onDemand.ttl` or the router's
+`prerender.ttl`): an entry with a `ttl` is stale by itself that long after it
+was stored, so a marker older than your largest `ttl` has nothing left to mark.
+
+```typescript
+createKVPrerenderStore(env.PRERENDER_KV, { tagMarkerTtl: 2 * 3600 }); // > the largest ttl
+```
+
+Do not set it when any entry is never stale: an expired marker would make a
+marked entry fresh again. Values below KV's 60 second floor are raised to it.
 
 ### Test it
 
