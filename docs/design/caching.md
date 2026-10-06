@@ -579,6 +579,35 @@ legitimately run slower — measure the p99 first. Full table and fail-open
 semantics: `skills/caching/SKILL.md` (Latency budgets); canonical defaults:
 `src/cache/cf/cf-cache-constants.ts`.
 
+The read flow is L1, then L2, then render: an L1 hit serves, an L1 miss reads
+KV, and a KV hit is served and promoted into L1. An L1 copy that a tag marker
+rejects (see "Tags for Invalidation") counts as an L1 miss, not as the end of
+the read. You might expect its KV twin to be just as old, and usually it is:
+the two were written together, the KV read finds the twin, the same marker
+check refuses it, and the request renders, one KV get (bounded by
+`kvReadTimeoutMs`) later than it would have. But the tiers can diverge.
+Another colo may have re-rendered the entry after the invalidation, or a
+`router.prerender()` warm wrote it, and then this colo serves that entry from
+KV and promotes it instead of rendering it a second time. Before this, every
+colo that held a copy rendered once after each `updateTag()`, whatever KV
+held. Three things keep it safe and cheap:
+
+- The KV entry goes through the reader and the check a plain miss uses
+  (`kvGetSegment` and its siblings, `isGloballyInvalidated`), so a value from
+  before the marker is never served, however stale KV's answer is. The
+  markers that rejected the L1 copy are in the request's memo by then, so a
+  KV entry carrying the same tags costs no second marker read.
+- A valid L1 hit and a plain L1 miss read exactly what they read before. Only
+  a rejected copy pays the KV get.
+- The request that invalidated the tag itself skips it
+  (`CFCacheStore.ownMaskRejects`): its mask rejects the KV twin too, and a
+  server action's re-render would pay one KV get per entry for nothing.
+
+All four families do this: `get`, `getItem`, `getResponse`, and the shell read
+(`readShellDocumentWithin`, plus `readMemoizedShell` for a copy in the
+isolate's shell memo). Pinned by
+`src/cache/cf/__tests__/cf-cache-store-warm-refresh.test.ts`.
+
 KV keys of any length are safe: composed keys over Cloudflare KV's 512-byte
 limit are normalized at the `toKVKey` chokepoint (preserved 400-byte prefix +
 128-bit SHA-256 digest of the full key) for every family — segments, `"use
@@ -1700,7 +1729,7 @@ The document cache takes the request's start, not its own: a middleware ahead of
 
 The cost: an untagged write checks nothing, and a tagged one reads its markers before the put (KV or the L1 marker cache on `CFCacheStore`, the `tm` entries on `VercelCacheStore`), once per tag for the gates of a request that ask while the read is in flight. The read runs in the write's `waitUntil` task, but two callers do wait on it: a `"use cache"` call that joined an in-flight execution waits for the leader's gate before it gets the value, and where the request context has no `waitUntil` (`runBackground` then runs the task inline) the leader itself awaits its write, gate included.
 
-The invariant: a skipped write only costs a later miss, never a stale read, and the execution still returns the value it computed. What stays open: a KV-less `CFCacheStore` has no marker to read, so another isolate's late write lands and ttl+swr bounds it (purge mode purges before it); KV itself is eventually consistent across colos, so a marker written in another colo that this colo's KV read does not see yet lets the write through; with `tagCacheTtl` the read can come from this colo's L1 marker cache, up to `tagCacheTtl` behind another colo's invalidation; and a check-then-write window remains on `CFCacheStore`/`VercelCacheStore` between the marker read and the put, which a shared read in flight widens by at most one marker round-trip (the shell family closes it by stamping the capture start as `taggedAt`; the data families stamp write time). One consequence to know: an entry whose tag is invalidated more often than its execution takes never fills, since every write started before the latest invalidation. Nested tags (#980) make that likelier, because an outer entry now answers to every tag of the calls inside it.
+The invariant: a skipped write only costs a later miss, never a stale read, and the execution still returns the value it computed. What stays open: a KV-less `CFCacheStore` has no marker to read, so another isolate's late write lands and ttl+swr bounds it (purge mode purges before it); KV itself is eventually consistent across colos, so a marker written in another colo that this colo's KV read does not see yet lets the write through; with `tagCacheTtl` the read can come from this colo's L1 marker cache, up to `tagCacheTtl` behind another colo's invalidation; and a check-then-write window remains on `CFCacheStore`/`VercelCacheStore` between the marker read and the put, which a shared read in flight widens by at most one marker round-trip (the shell family closes it by stamping the capture start as `taggedAt`; the data families stamp write time). An entry such a late write leaves in KV is read by every colo that misses L1, and a colo whose own copy the marker rejected is now one of them (the KV fall-through under "Implementations"); before, that colo rendered for itself and never read it. One consequence to know: an entry whose tag is invalidated more often than its execution takes never fills, since every write started before the latest invalidation. Nested tags (#980) make that likelier, because an outer entry now answers to every tag of the calls inside it.
 
 A custom store gets the same behavior by recording its invalidation in request-scoped state its reads consult before the first await of its `invalidateTags()` (the contract is on `SegmentCacheStore.invalidateTags` in `src/cache/types.ts`). One that does not still works; the request that ran `revalidateTag()` can then read entries the invalidation covers until the durable write lands.
 

@@ -36,8 +36,10 @@ import {
   type HandlerContext,
 } from "../../index.rsc.js";
 import {
+  CFCacheStore,
   MemorySegmentCacheStore,
   createDocumentCacheMiddleware,
+  type SegmentCacheStore,
 } from "../../cache/index.js";
 import type { PrerenderResult } from "../../prerender/index.js";
 import { getStock, runs as useCacheRuns } from "./fixtures/use-cache-data.js";
@@ -60,6 +62,7 @@ const runs = {
   trigger: 0,
   nested: 0,
   tagged: 0,
+  taggedRecord: 0,
 };
 
 const StampLoader = createLoader(async () => {
@@ -123,14 +126,26 @@ function TaggedPage(): React.ReactNode {
   return <h1>{`tagged-${source}-run${runs.tagged}`}</h1>;
 }
 
+/** The same tag with no shell: the route's cache() record is all it stores. */
+function TaggedRecordPage(): React.ReactNode {
+  runs.taggedRecord += 1;
+  return <h1>{`record-${source}-run${runs.taggedRecord}`}</h1>;
+}
+
 let triggerResult: PrerenderResult | undefined;
 
+/** A store per request from the bindings, as an app on Workers builds it. */
+type StoreFactory = (env: any, ctx?: any) => { store: SegmentCacheStore };
+
 function makeRouter(
-  store: MemorySegmentCacheStore = new SharedMemoryStore(),
+  store: MemorySegmentCacheStore | StoreFactory = new SharedMemoryStore(),
   searchParams?: { exclude: string[] },
 ) {
   const router = createRouter({
-    cache: { store, ...(searchParams ? { searchParams } : {}) },
+    cache:
+      typeof store === "function"
+        ? store
+        : { store, ...(searchParams ? { searchParams } : {}) },
     cacheProfiles: { default: { ttl: 300 } },
   })
     .use("/doc/*", createDocumentCacheMiddleware())
@@ -167,13 +182,16 @@ function makeRouter(
         }),
         cache({ ttl: 300, tags: ["catalog"] }, () => [
           path("/tagged", TaggedPage, { name: "tagged", ppr: true }),
+          path("/tagged-record", TaggedRecordPage, { name: "taggedRecord" }),
         ]),
         // The content-refresh pattern: invalidate the tag, then warm the URL.
         path(
           "/refresh",
           async (ctx: HandlerContext) => {
             await updateTag("catalog");
-            triggerResult = await router.prerender({ env: ctx.env })("/tagged");
+            triggerResult = await router.prerender({ env: ctx.env })(
+              ctx.searchParams.get("target") ?? "/tagged",
+            );
             return <p>{`refreshed-${triggerResult.status}`}</p>;
           },
           { name: "refresh" },
@@ -206,6 +224,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("a warm replaces each runtime cache a request fills", () => {
@@ -495,7 +514,111 @@ describe("updateTag(tag), then prerender(url): the content-refresh pattern", () 
     );
     expect(runs.tagged).toBe(2);
   });
+
+  it.each([
+    {
+      what: "a ppr route's shell",
+      path: "/tagged",
+      page: "tagged",
+      run: "tagged" as const,
+    },
+    {
+      what: "a cache() route's record",
+      path: "/tagged-record",
+      page: "record",
+      run: "taggedRecord" as const,
+    },
+  ])(
+    "CFCacheStore with KV, $what: a location that held the old copy serves what the warm stored elsewhere, without rendering",
+    async ({ path, page, run }) => {
+      // invalidateTags warns once per isolate that the markers have no expiry.
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      // Two edge locations: a Cache API each, one KV. `caches` resolves to the
+      // location serving the request. One process is one isolate, so the
+      // isolate memos, which would answer for both locations, are off.
+      const visitors = edgeCache();
+      const webhook = edgeCache();
+      let serving = visitors;
+      vi.stubGlobal("caches", {
+        get default() {
+          return serving;
+        },
+        open: async () => serving,
+      });
+      const env = { KV: kvNamespace() };
+      const router = makeRouter((bindings: typeof env, ctx) => ({
+        store: new CFCacheStore({
+          ctx: ctx!,
+          kv: bindings.KV,
+          memo: { shellMs: 0, markerFreshMs: 0 },
+        }),
+      }));
+      /** The page a request served: a shell HIT's prelude, else its render. */
+      const serveAt = async (edge: typeof visitors, url: string) => {
+        serving = edge;
+        const served = await serveShellRequest(router, url, { env });
+        return (served.prelude ?? served.flight)?.match(
+          new RegExp(`${page}-v\\d-run\\d`),
+        )?.[0];
+      };
+
+      // The visitors' location renders the page and keeps its own copies.
+      await serveAt(visitors, path);
+      expect(await serveAt(visitors, path)).toBe(`${page}-v1-run1`);
+      expect(runs[run]).toBe(1);
+      expect(visitors.size()).toBeGreaterThan(0);
+
+      // The content changes; a webhook lands in another location.
+      source = "v2";
+      await serveAt(webhook, `/refresh?target=${path}`);
+      expect(triggerResult).toMatchObject({
+        ok: true,
+        status: "warmed",
+        caches: { writes: { record: 1 } },
+      });
+      expect(runs[run]).toBe(2);
+
+      // Its own copies predate the tag marker; the warm's entries are in KV.
+      expect(await serveAt(visitors, path)).toBe(`${page}-v2-run2`);
+      expect(runs[run]).toBe(2);
+    },
+  );
 });
+
+/** One edge location's Cache API. */
+function edgeCache() {
+  const entries = new Map<string, Response>();
+  return {
+    async match(request: Request) {
+      return entries.get(request.url)?.clone();
+    },
+    async put(request: Request, response: Response) {
+      entries.set(request.url, response.clone());
+    },
+    async delete(request: Request) {
+      return entries.delete(request.url);
+    },
+    size: () => entries.size,
+  };
+}
+
+/** The KV namespace every location is bound to (string values). */
+function kvNamespace() {
+  const values = new Map<string, string>();
+  return {
+    async get(key: string, options?: { type?: string }) {
+      const value = values.get(key);
+      if (value === undefined) return null;
+      return options?.type === "json" ? JSON.parse(value) : value;
+    },
+    async put(key: string, value: string) {
+      values.set(key, value);
+    },
+    async delete(key: string) {
+      values.delete(key);
+    },
+  };
+}
 
 describe("onlyIfStale on a warm", () => {
   it("leaves a fresh entry alone and reports already-fresh", async () => {

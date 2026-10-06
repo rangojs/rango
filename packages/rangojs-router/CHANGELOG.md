@@ -62,7 +62,8 @@ What to know before you call it:
 - **To refresh changed content, invalidate and then warm:**
   `await updateTag(tag)` and then `await prerender(url)`. A warm does not
   reach a copy another edge location already holds; the invalidation makes
-  those copies unservable.
+  those copies unservable, and each location then reads the warmed entry
+  (see the `CFCacheStore` entry below).
 - **What a warm does not write:** the records a client navigation reads
   (they fill on the first navigation), and anything behind an app entry that
   builds its own `createRSCHandler({ cache, version })` (a warm runs
@@ -71,6 +72,46 @@ What to know before you call it:
 `skipped-not-on-demand`, the status an unreleased build of on-demand prerender
 returned for these routes, is gone. See the `prerender` skill, "Warm any route
 before traffic".
+
+### Changed: after `updateTag()`, a Cloudflare location serves the entry another location already rebuilt
+
+On `CFCacheStore` with `kv`, every edge location keeps its own copy of an
+entry it has served. After `updateTag(tag)` or `revalidateTag(tag)`, each
+location that held a copy rendered the page again on its next request, even
+when another location had already rebuilt the entry and written it to KV, by a
+visitor's render there or by a `router.prerender()` warm. Only a location with
+no copy of its own, or a store using `tagPurge`, read the rebuilt entry.
+
+Now a location whose copy the invalidation rejected reads the entry from KV,
+the way a location with no copy does. An entry written after the invalidation
+is served and kept, and nothing renders. This covers `cache()` records,
+`"use cache"` results, cached responses and `ppr` shells.
+
+```ts
+await updateTag(`product:${id}`); // no location serves the old copy
+await router.prerender({ env, ctx })(`/products/${id}`); // one render, written to KV
+
+// Before: every location that had served the page rendered it once more.
+// Now: they read the warmed entry from KV.
+```
+
+What stays the same:
+
+- **No location serves an entry from before the invalidation.** The KV entry
+  passes the same tag check as the location's own copy. Cloudflare documents
+  up to 60 seconds for a KV write to spread; a location that KV still hands
+  the old entry refuses it and renders, as before.
+- **A valid copy costs what it did.** The KV read happens only where the
+  location's copy was invalidated. If nothing newer is in KV yet, that
+  request pays one KV read (bounded by `kvReadTimeoutMs`) before it renders.
+- **The request that called `updateTag()`** renders its own entries without
+  that read, as before.
+- **A store without `kv`** is unchanged: it has no second tier to read.
+
+Nothing to configure. With `debug` on, a `tag-invalidated` event for the
+location's own copy is now followed by the KV read's own event: `kv-fresh` or
+`kv-stale` when it served the rebuilt entry, a second `tag-invalidated` when
+KV held the old one, `kv-miss` or `kv-timeout` otherwise.
 
 ### Fixed: a superseded link click no longer follows its server redirect ([#1047](https://github.com/rangojs/rango/issues/1047))
 

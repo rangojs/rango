@@ -285,20 +285,22 @@ traffic"). On Workers:
   the request it is called from.
 
 - **A warm fills the colo it runs in, and KV.** Another colo that already
-  holds its own Cache API copy keeps serving it until it expires; an L1 hit
-  never consults KV. After a deploy no colo holds a copy, so the warm's KV
-  entry is what each one reads next. For a content change, invalidate and then
-  warm, in this order:
+  holds its own Cache API copy keeps serving it until it expires or a tag
+  invalidation rejects it; a hit on a valid copy never consults KV. After a
+  deploy no colo holds a copy, so the warm's KV entry is what each one reads
+  next. For a content change, invalidate and then warm, in this order:
 
   ```typescript
   await updateTag(`product:${id}`); // no colo serves the old copy any more
   await router.prerender({ env, ctx })(`/products/${id}`); // writes the new one
   ```
 
-  A colo with no copy of its own reads the warmed entry from KV. A colo that
-  was still holding the old copy treats it as a miss and renders once for
-  itself (it does not read the fresher KV entry). With `tagPurge` the purge
-  evicts every colo's copy, so they all read the warmed entry.
+  Every other colo then reads the warmed entry from KV and renders nothing: a
+  colo with no copy of its own, and a colo that was still holding the old
+  copy, which reads KV as if it held none (with `tagPurge` the purge evicts
+  the copy first). The KV entry is checked against the same tag markers as
+  the colo's own copy, so a colo that KV still hands the entry from before
+  the invalidation refuses it and renders for itself.
 
 - **Entries under 60 seconds stay in one colo.** KV's minimum `expirationTtl`
   is 60 s, so a segment, item or response entry whose `ttl + swr` is shorter

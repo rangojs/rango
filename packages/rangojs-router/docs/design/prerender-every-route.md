@@ -300,7 +300,7 @@ existing constants): the warm is not latency-bound, and an old entry baked
 into a new shell is exactly what a warm must not produce.
 
 - **Overwrite:** `putShell` replaces; `CFCacheStore` drops its isolate memo for
-  the key on write (`cf-cache-store.ts:2623`).
+  the key on write (`cf-cache-store.ts:2647`).
 - **Tag markers:** `putShell`'s generation gate (`createdAt` against the
   markers) is unchanged; an `"invalidated"` acknowledgement reports
   `caches.shell: "refused"` with `refusal: "invalidated"`.
@@ -351,13 +351,13 @@ the miss branch: `executeHandler`, `canStore`, `putFresh` (gated by
 
 Overwrite in place is exact at the location the warm runs in. On
 `CFCacheStore` with KV, other colos may hold their own L1 copy of an entry
-(read flow "L1 hit → serve | L1 miss → L2 hit → serve + promote to L1"), and an
-L1 hit never consults KV. Those copies keep serving until they expire (`max-age
-= ttl + swr`) or a tag invalidation reaches them through the KV markers. So a
-warm closes the cold window after a deploy (new version, no colo holds a copy,
-each one reads the warm's KV entry), but it is not a cross-colo refresh for a
-content change that invalidated nothing. After an `updateTag()` it depends on
-what a colo holds, see below. Two smaller cases:
+(read flow "L1 hit → serve | L1 miss → L2 hit → serve + promote to L1"), and a
+valid L1 hit never consults KV. Those copies keep serving until they expire
+(`max-age = ttl + swr`) or a tag invalidation reaches them through the KV
+markers. So a warm closes the cold window after a deploy (new version, no colo
+holds a copy, each one reads the warm's KV entry), but it is not a cross-colo
+refresh for a content change that invalidated nothing. After an `updateTag()`
+every colo reads the warm's entry, see below. Two smaller cases:
 
 - `CFCacheStore` skips the KV write for a segment, item or response entry whose
   `ttl + swr` is under 60 s (KV's minimum `expirationTtl`; `kvSetSegment`,
@@ -366,28 +366,52 @@ what a colo holds, see below. Two smaller cases:
 - Isolate memos in other isolates (the shell memo, 2 s by default; the marker
   memo) serve their copy for their window.
 
-None of this needs a store contract change; it is what the platform offers,
-and it is decided: the stores are not changed. A global content refresh is two
-calls, `await updateTag(tag)` and then `await prerender(url)` (a webhook is a
-request, so `updateTag()` works there): the invalidation makes every colo's
-copy unservable, and the warm writes the new entry to the calling colo and to
-KV. What another colo does on its next read depends on what it holds:
+None of this needs a store contract change; it is what the platform offers.
+A global content refresh is two calls, `await updateTag(tag)` and then
+`await prerender(url)` (a webhook is a request, so `updateTag()` works there):
+the invalidation makes every colo's copy unservable, and the warm writes the
+new entry to the calling colo and to KV. What another colo does on its next
+read:
 
 - **No copy of its own** (it never served the URL, its copy expired, or
   `tagPurge` evicted it): an L1 miss, so it reads the warm's entry from KV and
   renders nothing.
-- **Its own, now invalidated, copy:** it answers a miss and renders once for
-  itself. `CFCacheStore.get` (and `getItem`, and the shell read) return `null`
-  for an invalidated L1 hit without reading the entry's KV key; the comment
-  there calls the KV fall-through a deferred follow-up. It never serves the
-  old copy, and its own render heals it.
+- **Its own, now invalidated, copy:** the same. A copy a tag marker rejects
+  reads as an L1 miss: `CFCacheStore.get`, `getItem`, `getResponse` and the
+  shell read (`readShellDocumentWithin`, and `readMemoizedShell` for a copy in
+  the isolate's shell memo) go on to the entry's KV key through the readers a
+  plain miss uses (`kvGetSegment`, `kvGetItem`, `kvGetResponse`,
+  `kvReadShellDocument`). Those check what KV holds against the same markers
+  (`isGloballyInvalidated`; the values that rejected the copy are already in
+  the request's memo, so an entry carrying the same tags costs no second
+  marker read), serve it when it was written after them, and promote it over
+  the old copy.
 
-So the pattern guarantees that no location serves the old content and that
-the calling location and every location without a copy are ready. It does not
-spare a render to a colo that was serving the old copy, unless the store runs
-in purge mode. That is narrower than "their next read finds the warmed entry
-in KV", which is how the decision was first worded; the test below is what
-showed it.
+You might worry that this serves whatever KV has. It does not: KV is
+eventually consistent, and for a while after the warm a colo's KV read can
+still return the entry from before the marker. That entry fails the marker
+check exactly as the L1 copy did, the read is a miss, and the colo renders for
+itself, as it always did. The same holds when no colo has rebuilt the entry
+yet (an `updateTag()` with no warm): the KV twin of the rejected copy is
+refused. That case is what the read costs: one KV get, bounded by
+`kvReadTimeoutMs`, before a render that used to start at once. A valid L1 hit
+and a plain L1 miss read exactly what they read before.
+
+One request skips the KV read: the one that invalidated the tag
+(`ownMaskRejects`). Its mask rejects the KV twin as well, it is about to
+re-render every entry it masked, and a server action's re-render should not
+pay a KV get per entry for nothing.
+
+So the pattern guarantees that no location serves the old content, and that
+each location serves the warm's entry from the moment the warm's KV write is
+visible to it.
+
+This is wider than the first version of the feature. The stores were at first
+left alone: an invalidated L1 hit answered a miss without reading KV (the
+comment in `get()` called the fall-through a deferred follow-up), so a colo
+that had been serving the old copy rendered once for itself unless the store
+ran in purge mode. The store test below is what showed that gap; the
+fall-through closed it.
 
 Two tests pin the sequence, at the two levels it crosses:
 
@@ -396,16 +420,21 @@ Two tests pin the sequence, at the two levels it crosses:
   (two colos). It shows the read flow the pattern relies on: without an
   invalidation the other colo keeps serving its own L1 copy after the warm's
   write; after `updateTag` and then the write, a colo with no copy (or whose
-  copy a purge evicted) reads the warmed entry from KV, and a colo holding the
-  old copy stops serving it; an entry under 60 s never reaches the other colo.
-  It cannot show Cloudflare's KV propagation delay (a write "may take up to 60
+  copy a purge evicted) and a colo holding the old copy both read the warmed
+  entry from KV, for each family (segment, `"use cache"` item, response,
+  shell); a KV entry from before the marker is refused; a valid L1 hit reads
+  no entry from KV; an entry under 60 s never reaches the other colo. It
+  cannot show Cloudflare's KV propagation delay (a write "may take up to 60
   seconds or more to be visible in other global network locations"), real
   per-colo Cache API isolation, or the isolate memo windows: those are
   platform behavior.
 - `src/testing/__tests__/prerender-warm-layers.rsc-test.tsx` ("updateTag(tag),
   then prerender(url)") runs the two calls from one route handler through the
   router: the warm's own record and shell are stored, not refused by the
-  invalidation that preceded them.
+  invalidation that preceded them. Its `CFCacheStore with KV` cases run the
+  router over two fake edge locations and one KV: the location that rendered
+  the page first serves what the warm stored in the other one, and its
+  handler does not run again.
 
 That second test is why a warm starts in a later millisecond than the call
 (`prerender/warm.ts`, `runWarmRequest`). A store refuses a shell whose capture
@@ -754,8 +783,10 @@ hold. The maintainer approved each recommendation; this is what was built.
    total never reach KV. Decided: do not change that. A global content refresh
    is `updateTag(tag)` and then `prerender(url)`, documented in the skills and
    pinned by the two tests named under "What the stores cannot do in place".
-   The tests narrowed the claim: a colo still holding the invalidated copy
-   renders once instead of reading the warmed entry.
+   The tests first narrowed the claim (a colo still holding the invalidated
+   copy rendered once instead of reading the warmed entry); `CFCacheStore`
+   now reads KV when a tag marker rejects its L1 copy, so that colo reads the
+   warmed entry too.
 2. **"The existing guards decide" needed a split.** Built as written: a
    warm's capture bypasses the in-flight dedup, the refused-capture backoff and
    `skip-stored`, and a warm leads its `"use cache"` execution instead of

@@ -66,8 +66,10 @@ export interface CFCacheReadDebugEvent {
    * - kv-timeout: the L2/KV read budget fired (read abandoned, NOT a genuine
    *   absence -- distinct from kv-miss so a degradation signal is separable)
    * - tag-invalidated: a live L1/KV entry whose cache tags were invalidated
-   *   after it was written -- treated as a miss so the next render re-populates
-   *   it (the tag-invalidation read path, distinct from a plain miss)
+   *   after it was written -- never served (the tag-invalidation read path,
+   *   distinct from a plain miss). An L1 copy then reads L2/KV, so a kv-*
+   *   event follows unless the request invalidated the tag itself; from L2/KV
+   *   it is a miss and the next render re-populates the entry
    * - error: the read threw
    */
   outcome:

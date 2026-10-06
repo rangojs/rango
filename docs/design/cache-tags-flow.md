@@ -197,11 +197,22 @@ flowchart TD
   C -- no --> SERVE["Serve cached"]
   C -- yes --> D["Get each tag's last-invalidated time<br/>(per-request memo → edge-cached marker → KV)"]
   D --> E{"Any tag invalidated<br/>at/after this entry's taggedAt?"}
-  E -- yes --> MISS
+  E -- yes --> F{"CF store with KV: was that the L1 copy,<br/>in a request that did not invalidate the tag?"}
+  F -- yes --> G["Read the entry's KV copy"] --> B
+  F -- no --> MISS
   E -- no --> SERVE
 ```
 
 - Untagged entries pay nothing — the tag check is skipped entirely.
+- On `CFCacheStore` with KV the check runs per tier. An L1 (Cache API) copy
+  that fails it is not the end of the read: the store reads the entry's KV
+  copy and runs the same check on it, so a colo serves (and promotes) an entry
+  another colo re-rendered, or a `router.prerender()` warm wrote, after the
+  invalidation instead of rendering it again. A KV copy that fails the check
+  is the MISS: usually the twin written with the L1 copy, or the old value KV
+  still returns before a newer write has spread. The request that ran
+  `updateTag()` / `revalidateTag()` skips the KV read: it re-renders what it
+  invalidated. Details: [caching.md](./caching.md) "Implementations".
 - For tagged entries, the per-tag "last-invalidated time" (the **marker**) is
   resolved through a cascade so a hot route does not hit KV on every read:
   - **per-request memo** — one lookup per distinct tag per request;

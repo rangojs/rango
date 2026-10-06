@@ -613,11 +613,18 @@ const router = createRouter<AppBindings>({
 
 **How the two layers work:**
 
-| Scenario     | L1 (Cache API) | L2 (KV) | Result                        |
-| ------------ | -------------- | ------- | ----------------------------- |
-| Hot request  | HIT            | —       | Serve from L1 (fast)          |
-| Cold colo    | MISS           | HIT     | Serve from KV, promote to L1  |
-| First render | MISS           | MISS    | Render, write to both L1 + KV |
+| Scenario          | L1 (Cache API)   | L2 (KV)                     | Result                        |
+| ----------------- | ---------------- | --------------------------- | ----------------------------- |
+| Hot request       | HIT              | —                           | Serve from L1 (fast)          |
+| Cold colo         | MISS             | HIT                         | Serve from KV, promote to L1  |
+| First render      | MISS             | MISS                        | Render, write to both L1 + KV |
+| After `updateTag` | copy invalidated | HIT, written after the call | Serve from KV, promote to L1  |
+| After `updateTag` | copy invalidated | MISS, or the old entry      | Render, write to both L1 + KV |
+
+A copy a tag invalidation rejected reads KV like a cold colo, so a colo serves
+the entry another colo already rebuilt (a visitor's render there, or a
+`router.prerender()` warm) instead of rebuilding it. The KV entry passes the
+same tag check: one written before the invalidation is never served.
 
 KV entries require `expirationTtl >= 60s`. Short-lived data entries (< 60s total
 TTL) are only cached in L1. A PPR shell is always written to KV, a short one
