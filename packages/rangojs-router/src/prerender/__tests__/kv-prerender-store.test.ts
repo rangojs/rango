@@ -194,56 +194,6 @@ describe("createKVPrerenderStore", () => {
     ]);
   });
 
-  describe("tagMarkerTtl", () => {
-    function spiedKV() {
-      const kv = fakeKV();
-      const puts: Array<{ k: string; opts: unknown }> = [];
-      const spied: KVNamespace = {
-        ...kv,
-        put: async (k, v, opts) => {
-          puts.push({ k, opts });
-          return kv.put(k, v, opts);
-        },
-      };
-      return { spied, puts };
-    }
-
-    it("writes markers with no expiry by default", async () => {
-      const { spied, puts } = spiedKV();
-      await createKVPrerenderStore(spied).markStale!("r1", ["t"]);
-      expect(puts.map((p) => p.opts)).toEqual([undefined]);
-    });
-
-    it("passes the TTL to KV as expirationTtl, never on entries", async () => {
-      const { spied, puts } = spiedKV();
-      const store = createKVPrerenderStore(spied, { tagMarkerTtl: 7200 });
-      await store.markStale!("r1", ["t"]);
-      await store.set(key(), stored({ ttl: 60 }));
-      expect(puts.map((p) => p.opts)).toEqual([
-        { expirationTtl: 7200 },
-        undefined,
-      ]);
-    });
-
-    it("raises a value below KV's 60s floor, and ignores a non-positive or non-finite one", async () => {
-      const seen: unknown[] = [];
-      for (const tagMarkerTtl of [5, 0, -1, Number.NaN, Infinity]) {
-        const { spied, puts } = spiedKV();
-        await createKVPrerenderStore(spied, { tagMarkerTtl }).markStale!("r1", [
-          "t",
-        ]);
-        seen.push(puts[0].opts);
-      }
-      expect(seen).toEqual([
-        { expirationTtl: 60 },
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-      ]);
-    });
-  });
-
   it("delete removes the entry", async () => {
     const kv = fakeKV();
     const store = createKVPrerenderStore(kv);

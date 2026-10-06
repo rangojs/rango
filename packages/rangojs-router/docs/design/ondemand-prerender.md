@@ -536,11 +536,10 @@ markers, which is how the KV store implements `markStale()`.
 
 `markStale` takes the router id because stores are shared: routers behind a
 host router point at one KV namespace, and an unscoped marker for
-`product:1` marked every router's `product:1` entries stale. The first version
-of the contract was `markStale(tags)`, so the KV markers were keyed by tag
-alone; both shipped stores now scope by `routerId` (the memory store by the
-key's router id, KV by the marker key). Runtime-cache markers are a separate
-store and are not scoped here.
+`product:1` would mark every router's `product:1` entries stale. Both shipped
+stores scope by `routerId` (the memory store by the key's router id, KV by the
+marker key). Runtime-cache markers are a separate store and are not scoped
+here.
 
 ```ts
 interface PrerenderStoredEntry {
@@ -629,14 +628,10 @@ regression risk for the runtime cache. Reusing `CFCacheStore`'s L1 marker memo
 is a follow-up if per-request marker reads show up in KV analytics.
 
 Markers are `__rango_pr_tag__/{encodeURIComponent(routerId)}/{tag}` (an
-encoded id holds no `/`, so the split is unambiguous) and have no expiry by
-default. A marker matters only for entries stored before it, and entries never
-expire, so a store cannot pick a safe lifetime on its own: an entry with a
-`ttl` goes stale by itself `ttl` seconds after it was stored, so a marker
-older than the largest `ttl` is dead, but an entry with no `ttl` is only ever
-marked by the marker. The `tagMarkerTtl` option (seconds, floored to KV's 60)
-lets an app that gives every entry a `ttl` set it above the largest one; the
-default stays unbounded.
+encoded id holds no `/`, so the split is unambiguous) and have no expiry. An
+entry without a `ttl` never goes stale by itself, so an expired marker would
+silently drop an invalidation; the cost of keeping them is one tiny KV value
+per router and tag. Marker lifetime is left to entry lifecycle (#1060).
 
 ## Build-time Durable Seeding
 

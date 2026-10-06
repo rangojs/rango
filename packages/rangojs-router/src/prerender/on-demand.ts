@@ -215,7 +215,7 @@ export interface OnDemandRouteConfig {
   ttl?: number;
   /**
    * Tags stamped on the stored entry, addressable via
-   * `router.prerender.markStale()`. A separate namespace from `cacheTag()` /
+   * the runner's `markStale()`. A separate namespace from `cacheTag()` /
    * `updateTag()` / `revalidateTag()`, which never reach the prerender store.
    */
   tags?: string[] | ((target: { params: Record<string, string> }) => string[]);
@@ -281,7 +281,7 @@ export interface PrerenderRunner<TRoutes = {}> {
     options?: PrerenderManyOptions,
   ): Promise<PrerenderResult[]>;
   /**
-   * Mark every stored entry carrying one of `tags` stale. Marking only: the
+   * Mark this router's stored entries carrying one of `tags` stale. Marking only: the
    * entries keep serving, and a stale hit schedules `onRevalidate` when one is
    * configured. Nothing is deleted or re-rendered here.
    */

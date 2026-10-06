@@ -30,7 +30,6 @@ import {
 } from "../../prerender/writable-store.js";
 import { createKVPrerenderStore } from "../../prerender/cloudflare.js";
 import type { WritablePrerenderStore } from "../../prerender/writable-store.js";
-import { hashParams } from "../../prerender/param-hash.js";
 
 const A_HOST = "a.example.com";
 const B_HOST = "b.example.com";
@@ -52,7 +51,10 @@ function makeRouter(
     prerender: WritablePrerenderStore;
     cache: SharedMemoryStore;
   },
-  options: { onlyHere?: boolean } = {},
+  options: {
+    onlyHere?: boolean;
+    onRevalidate?: () => void;
+  } = {},
 ) {
   const Article = Prerender<{ slug: string }>(
     async () => [],
@@ -71,7 +73,10 @@ function makeRouter(
   return createRouter({
     id: `router-${label}`,
     cache: { store: shared.cache },
-    prerender: { store: shared.prerender },
+    prerender: {
+      store: shared.prerender,
+      ...(options.onRevalidate && { onRevalidate: options.onRevalidate }),
+    },
   }).routes(
     urls(({ path }) => [
       path("/article/:slug", Article, { name: "article" }),
@@ -83,22 +88,34 @@ function makeRouter(
   );
 }
 
-function keyFor(
-  label: "a" | "b",
-  slug: string,
-  version = `${label}-d1`,
-): PrerenderKey {
-  return {
-    routerId: `router-${label}`,
-    version,
-    routeName: "article",
-    paramHash: hashParams({ slug }),
+/** Keys the routers wrote, recorded at `set` so tests need not rebuild them. */
+const written: PrerenderKey[] = [];
+
+function track<T extends WritablePrerenderStore>(store: T): T {
+  const set = store.set.bind(store);
+  store.set = async (key, stored) => {
+    written.push(key);
+    return set(key, stored);
   };
+  return store;
+}
+
+function keyFor(label: "a" | "b", version?: string): PrerenderKey {
+  const found = [...written]
+    .reverse()
+    .find(
+      (k) =>
+        k.routerId === `router-${label}` && (!version || k.version === version),
+    );
+  if (!found) throw new Error(`no entry written for router-${label}`);
+  return found;
 }
 
 describe("router.prerender() with two routers sharing stores", () => {
   let prerender: ReturnType<typeof createMemoryPrerenderStore>;
   let cache: SharedMemoryStore;
+  let a: ReturnType<typeof makeRouter>;
+  let b: ReturnType<typeof makeRouter>;
 
   beforeEach(async () => {
     await resetShellTestState();
@@ -110,8 +127,11 @@ describe("router.prerender() with two routers sharing stores", () => {
         "router-b": { data: "b-d1", document: "b-h1" },
       },
     });
-    prerender = createMemoryPrerenderStore();
+    written.length = 0;
+    prerender = track(createMemoryPrerenderStore());
     cache = new SharedMemoryStore();
+    a = makeRouter("a", { prerender, cache });
+    b = makeRouter("b", { prerender, cache });
     runs.a = { producer: 0, shelled: 0 };
     runs.b = { producer: 0, shelled: 0 };
   });
@@ -122,28 +142,32 @@ describe("router.prerender() with two routers sharing stores", () => {
   });
 
   it("refreshing on A leaves B's entry for the same route and params untouched", async () => {
-    const a = makeRouter("a", { prerender, cache });
-    const b = makeRouter("b", { prerender, cache });
+    // One data version for both routers: only the router id tells the keys apart.
+    setBuildVersions({
+      data: "all-d1",
+      document: "all-h1",
+      routers: {
+        "router-a": { data: "shared-d1", document: "a-h1" },
+        "router-b": { data: "shared-d1", document: "b-h1" },
+      },
+    });
 
     await b.prerender({ env: {} })("/article/x");
-    const bEntry = prerender.entries().map(([k]) => k);
-    expect(bEntry).toHaveLength(1);
-    const bStored = prerender.entries()[0][1];
+    expect(prerender.size).toBe(1);
+    const bStored = prerender.peek(keyFor("b"))!;
 
     const result = await a.prerender({ env: {} })("/article/x");
     expect(result).toMatchObject({ ok: true, status: "rendered" });
     // A wrote its own key; B's envelope is the very object B stored.
     expect(prerender.size).toBe(2);
-    expect(prerender.peek(keyFor("b", "x"))).toBe(bStored);
-    expect(serializePrerenderKey(keyFor("a", "x"))).not.toBe(
-      serializePrerenderKey(keyFor("b", "x")),
-    );
+    expect(keyFor("a").version).toBe(keyFor("b").version);
+    expect(prerender.peek(keyFor("b"))).toBe(bStored);
 
     // Refreshing A again re-renders A only.
     await a.prerender({ env: {} })("/article/x");
     expect(runs.a.producer).toBe(2);
     expect(runs.b.producer).toBe(1);
-    expect(prerender.peek(keyFor("b", "x"))).toBe(bStored);
+    expect(prerender.peek(keyFor("b"))).toBe(bStored);
 
     // Each router serves its own entry.
     expect((await serveShellRequest(a, "/article/x")).flight).toContain(
@@ -157,8 +181,7 @@ describe("router.prerender() with two routers sharing stores", () => {
   });
 
   it("a URL only B has is no-match for A's runner", async () => {
-    const a = makeRouter("a", { prerender, cache });
-    const b = makeRouter("b", { prerender, cache }, { onlyHere: true });
+    b = makeRouter("b", { prerender, cache }, { onlyHere: true });
 
     expect(await a.prerender({ env: {} })("/b-only")).toMatchObject({
       ok: false,
@@ -177,12 +200,10 @@ describe("router.prerender() with two routers sharing stores", () => {
       "router-b": { data: "b-d1", document: "b-h1" },
     };
     setBuildVersions({ data: "all-d1", document: "all-h1", routers: v1 });
-    const a = makeRouter("a", { prerender, cache });
-    const b = makeRouter("b", { prerender, cache });
     await a.prerender({ env: {} })("/article/x");
     await b.prerender({ env: {} })("/article/x");
-    expect(prerender.peek(keyFor("a", "x", "a-d1"))).not.toBeNull();
-    expect(prerender.peek(keyFor("b", "x", "b-d1"))).not.toBeNull();
+    expect(prerender.peek(keyFor("a", "a-d1"))).not.toBeNull();
+    expect(prerender.peek(keyFor("b", "b-d1"))).not.toBeNull();
 
     // A's server code changed; B's did not.
     setBuildVersions({
@@ -197,15 +218,15 @@ describe("router.prerender() with two routers sharing stores", () => {
     expect(bServed.flight).toContain("b:x:stamp-1");
     expect(runs.b.producer).toBe(1);
 
-    // A no longer reads the old-version entry.
-    expect(
-      (await serveShellRequest(a, "/article/x")).flight ?? "",
-    ).not.toContain("a:x:stamp-1");
+    // A no longer reads the old-version entry: no live entry, so no match.
+    expect((await serveShellRequest(a, "/article/x")).response.status).toBe(
+      404,
+    );
 
     // Refreshing A writes under A's new version and leaves B's alone.
     await a.prerender({ env: {} })("/article/x");
-    expect(prerender.peek(keyFor("a", "x", "a-d2"))).not.toBeNull();
-    expect(prerender.peek(keyFor("b", "x", "b-d1"))).not.toBeNull();
+    expect(prerender.peek(keyFor("a", "a-d2"))).not.toBeNull();
+    expect(prerender.peek(keyFor("b", "b-d1"))).not.toBeNull();
     expect((await serveShellRequest(b, "/article/x")).flight).toContain(
       "b:x:stamp-1",
     );
@@ -226,7 +247,7 @@ describe("router.prerender() with two routers sharing stores", () => {
     ],
   ])("markStale with a shared %s", (_name, createStore) => {
     it("on A does not mark B's entry for the same tag stale", async () => {
-      const shared = createStore();
+      const shared = track(createStore());
       const a = makeRouter("a", { prerender: shared, cache });
       const b = makeRouter("b", { prerender: shared, cache });
       await a.prerender({ env: {} })("/article/x");
@@ -234,40 +255,44 @@ describe("router.prerender() with two routers sharing stores", () => {
 
       await a.prerender({ env: {} }).markStale(["p:x"]);
 
-      const aEntry = (await shared.get(keyFor("a", "x")))!.meta;
-      const bEntry = (await shared.get(keyFor("b", "x")))!.meta;
+      const aEntry = (await shared.get(keyFor("a")))!.meta;
+      const bEntry = (await shared.get(keyFor("b")))!.meta;
       expect(aEntry.staleAt).toBeLessThanOrEqual(Date.now());
       // B keeps the staleAt its own ttl gave it.
       expect(bEntry.staleAt).toBe(bEntry.storedAt + 3600 * 1000);
     });
   });
 
-  describe("warming", () => {
-    // A host router gives each router its own host, so the shell keys
-    // (`host/path:shell`) of the two apps never meet in the shared store.
-    it("fills A's caches under A's keys; B's request for the same path on B's host still misses", async () => {
-      const a = makeRouter("a", { prerender, cache });
-      const b = makeRouter("b", { prerender, cache });
+  describe("serve path after markStale", () => {
+    it("only the router that marked schedules onRevalidate", async () => {
+      const onA = vi.fn();
+      const onB = vi.fn();
+      a = makeRouter("a", { prerender, cache }, { onRevalidate: onA });
+      b = makeRouter("b", { prerender, cache }, { onRevalidate: onB });
+      await a.prerender({ env: {} })("/article/x");
+      await b.prerender({ env: {} })("/article/x");
 
-      const result = await a.prerender({ env: {} })(`http://${A_HOST}/shelled`);
-      expect(result).toMatchObject({ ok: true, status: "warmed" });
-      const warmedRuns = runs.a.shelled;
-      expect(warmedRuns).toBeGreaterThan(0);
-      expect(runs.b.shelled).toBe(0);
+      await a.prerender({ env: {} }).markStale(["p:x"]);
+      await serveShellRequest(a, "/article/x");
+      await serveShellRequest(b, "/article/x");
 
-      const bFirst = await serveShellRequest(b, `http://${B_HOST}/shelled`);
-      expect(bFirst.shellStatus).toBe("MISS");
-      expect(runs.b.shelled).toBeGreaterThan(0);
+      expect(onA).toHaveBeenCalledTimes(1);
+      expect(onB).not.toHaveBeenCalled();
+    });
 
-      const aHit = await serveShellRequest(a, `http://${A_HOST}/shelled`);
-      expect(aHit.shellStatus).toBe("HIT");
-      expect(aHit.prelude).toContain(`a-shelled-${warmedRuns}`);
-      expect(runs.a.shelled).toBe(warmedRuns);
+    it("onlyIfStale renders the marked router and reports already-fresh for the other", async () => {
+      await a.prerender({ env: {} })("/article/x");
+      await b.prerender({ env: {} })("/article/x");
+      await a.prerender({ env: {} }).markStale(["p:x"]);
 
-      // B's own capture is its own entry.
-      const bHit = await serveShellRequest(b, `http://${B_HOST}/shelled`);
-      expect(bHit.shellStatus).toBe("HIT");
-      expect(bHit.prelude).toContain("b-shelled-");
+      expect(
+        await a.prerender({ env: {} })("/article/x", { onlyIfStale: true }),
+      ).toMatchObject({ ok: true, status: "rendered" });
+      expect(
+        await b.prerender({ env: {} })("/article/x", { onlyIfStale: true }),
+      ).toMatchObject({ ok: true, status: "already-fresh" });
+      expect(runs.a.producer).toBe(2);
+      expect(runs.b.producer).toBe(1);
     });
   });
 
@@ -304,8 +329,6 @@ describe("router.prerender() with two routers sharing stores", () => {
     }
 
     it("a warm for A's host is a HIT through the host router for A's host, a MISS for B's", async () => {
-      const a = makeRouter("a", { prerender, cache });
-      const b = makeRouter("b", { prerender, cache });
       const app = hostApp(a, b);
 
       const result = await a.prerender({ env: {} })(`http://${A_HOST}/shelled`);
@@ -324,12 +347,15 @@ describe("router.prerender() with two routers sharing stores", () => {
     });
 
     it("a warm with the wrong host (the origin option) does not serve A's own host", async () => {
-      const a = makeRouter("a", { prerender, cache });
-      const b = makeRouter("b", { prerender, cache });
       const app = hostApp(a, b);
 
       // The runner's `origin` is the host the warm requests: cache keys carry it.
       await a.prerender({ env: {}, origin: `http://${B_HOST}` })("/shelled");
+
+      // A's warm wrote a shell under B's host. The shell key has no router id
+      // (#1065); only the per-router versions keep B from serving it here.
+      await app.get(B_HOST, "/shelled");
+      expect(app.served.b?.shellStatus).toBe("MISS");
 
       await app.get(A_HOST, "/shelled");
       expect(app.served.a?.shellStatus).toBe("MISS");
@@ -338,8 +364,6 @@ describe("router.prerender() with two routers sharing stores", () => {
     });
 
     it("an on-demand refresh on A is served through the host router for A's host only", async () => {
-      const a = makeRouter("a", { prerender, cache });
-      const b = makeRouter("b", { prerender, cache });
       const app = hostApp(a, b);
 
       await a.prerender({ env: {}, origin: `http://${A_HOST}` })("/article/x");
@@ -350,7 +374,7 @@ describe("router.prerender() with two routers sharing stores", () => {
 
       // B's host reaches B, which has no entry: its handler renders live.
       await app.get(B_HOST, "/article/x");
-      expect(app.served.b?.flight ?? "").not.toContain("a:x:stamp-1");
+      expect(app.served.b?.response.status).toBe(404);
     });
   });
 });

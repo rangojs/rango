@@ -914,32 +914,30 @@ with several routers behind a host router calls it on each router:
   `no-match`.
 - Entries are keyed by router id plus that router's data version, so two
   routers can share one `prerender.store` (one KV namespace) without touching
-  each other's entries, and a deploy that changes one router's server code
-  leaves the others' refreshed entries served.
+  each other's entries. A deploy that changes one router's server code leaves
+  the others' refreshed entries served when their code is separate (for
+  example lazy mounts); routers that share a statically imported module move
+  together.
 - `markStale(tags)` marks only that router's entries, in every shipped store:
   `markStale(["product:1"])` on one router does not make another router's
   `product:1` entry stale.
 - A warm of a non-on-demand route goes through that router's own handler, and
   its cache keys carry the host: pass the host the visitors use as `origin`
   (`router.prerender({ env, ctx, origin: "https://a.example" })`), or a path
-  target resolves against the calling request's origin.
+  target resolves against the calling request's origin. A multi-router app
+  passes `origin` or a full URL on every warm: a host router can forward one
+  host and path to either router (`hostOverride` from a cookie, `fallback()`
+  after a cookie error), and the PPR shell key (`{host}{path}:shell`) has no
+  router id, so two routers sharing a cache store on one host and path share a
+  shell. Do not give two routers the same `version`; with equal versions one
+  serves the other's page (#1065).
 
 ### KV tag markers
 
 `createKVPrerenderStore(kv)` writes a marker per tag at
-`__rango_pr_tag__/{encodeURIComponent(routerId)}/{tag}` and has no expiry on
-markers by default. An entry never expires, so a marker can still have to mark
-an entry stored long before it. Set `tagMarkerTtl` (seconds) only when every
-on-demand entry has a `ttl` (the route's `onDemand.ttl` or the router's
-`prerender.ttl`): an entry with a `ttl` is stale by itself that long after it
-was stored, so a marker older than your largest `ttl` has nothing left to mark.
-
-```typescript
-createKVPrerenderStore(env.PRERENDER_KV, { tagMarkerTtl: 2 * 3600 }); // > the largest ttl
-```
-
-Do not set it when any entry is never stale: an expired marker would make a
-marked entry fresh again. Values below KV's 60 second floor are raised to it.
+`__rango_pr_tag__/{encodeURIComponent(routerId)}/{tag}` (the encoded router id)
+and markers have no expiry: an entry without a `ttl` never goes stale by
+itself, so an expired marker would silently drop an invalidation.
 
 ### Test it
 

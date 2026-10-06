@@ -2,28 +2,17 @@
 
 ## Unreleased
 
-### Fixed: a prerender tag marked stale on one router no longer marks another router's entries
+### Added: prerender tags are per router
 
-On-demand prerender (in this release too) marks entries stale by tag with
-`router.prerender({ env, ctx }).markStale(["product:1"])`. Routers behind a
-host router can share one prerender store, and the markers were keyed by tag
-alone, so marking `product:1` on one router marked every router's
-`product:1` entries stale and scheduled their refreshes. Markers are now
-scoped by router id in both shipped stores (`createKVPrerenderStore` writes
-`__rango_pr_tag__/{routerId}/{tag}`).
+`router.prerender({ env, ctx }).markStale(["product:1"])` marks only that
+router's entries. Routers behind a host router can share one prerender store
+(one KV namespace), and a mark on one router does not mark another router's
+entries for the same tag, in both shipped stores. `createKVPrerenderStore`
+writes markers at `__rango_pr_tag__/{encoded routerId}/{tag}`; they have no
+expiry.
 
-A custom `WritablePrerenderStore` implements `markStale(routerId, tags)`
-instead of `markStale(tags)` and marks only entries whose `key.routerId`
-equals `routerId`.
-
-### Added: `createKVPrerenderStore(kv, { tagMarkerTtl })` expires tag markers
-
-KV tag markers had no expiry and still have none by default: an entry never
-expires, so a marker can have to mark an entry stored long before it. When
-every entry has a `ttl`, an entry is stale by itself `ttl` seconds after it
-was stored, so a marker older than your largest `ttl` has nothing left to
-mark. Set `tagMarkerTtl` (seconds, raised to KV's 60 second floor) above that
-value to stop markers accumulating. Do not set it when any entry has no `ttl`.
+A custom `WritablePrerenderStore` implements `markStale(routerId, tags)` and
+marks only entries whose `key.routerId` equals `routerId`.
 
 ### Added: `router.prerender()` warms any route before traffic ([#1062](https://github.com/rangojs/rango/issues/1062))
 
