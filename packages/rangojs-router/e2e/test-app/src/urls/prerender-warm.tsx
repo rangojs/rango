@@ -68,7 +68,7 @@ const WarmTrigger: Handler = async (ctx) => {
   // selects the "local"-scope store (router.tsx); requests keep the shared one.
   const env: AppEnv =
     ctx.searchParams.get("localStore") === "1"
-      ? { ...(ctx.env as AppEnv), warmLocalStore: true }
+      ? ({ ...(ctx.env as object), warmLocalStore: true } as AppEnv)
       : (ctx.env as AppEnv);
   const prerender = router.prerender({ env });
   const targets = ctx.searchParams.getAll("target");

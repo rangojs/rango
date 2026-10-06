@@ -2932,9 +2932,13 @@ export async function expectOnlyIfStaleWarmLeavesFreshShellAlone(
  * A warm whose app store declares scope "local" is refused: the result says
  * `skipped-store-not-shared` and carries no `caches` report. Nothing renders
  * and nothing is stored: after the warm the content moves to generation 2,
- * and the visitor's first request renders it as run 1 of the handler (a warm
- * that ran would make it run 2, one that stored would replay generation 1).
- * The trigger's `localStore=1` makes the gate read a "local" store.
+ * and the visitor's first request renders it as run 1 of the handler. The
+ * render counter (`#r1`) is the discriminator everywhere: a warm that ran
+ * would make it run 2. Where the refused store shares storage with the store
+ * visitors read (cloudflare-basic), a warm that stored would also replay
+ * generation 1; in the router test-app the two stores are separate, so only
+ * `#r1` tells. The trigger's `localStore=1` makes the gate read a "local"
+ * store.
  */
 export async function expectWarmOfLocalStoreIsRefused(
   page: Page,
@@ -2962,9 +2966,12 @@ export async function expectWarmOfLocalStoreIsRefused(
 /**
  * The same warm under the Vite dev server, against a shipped
  * MemorySegmentCacheStore (scope "local"): the dev rule counts it as shared,
- * so the warm runs. The handler ran once for it (the visitor's request after
- * the bump is run 2, rendering generation 2 because the warm wrote into the
- * store the trigger's env selected, not the one visitors read).
+ * so the warm runs. The visitor's request is run 2 (the warm was run 1) and
+ * renders generation 1 afresh: the warm wrote into the store the
+ * trigger's env selected, not the one visitors read. That visitor miss is the
+ * evidence the gate read the "local" store: the app's default store also warms
+ * in dev, and a warm into it would have made the visitor's request a HIT
+ * (run 1).
  */
 export async function expectDevWarmOfLocalMemoryStoreRuns(
   page: Page,
@@ -2982,8 +2989,27 @@ export async function expectDevWarmOfLocalMemoryStoreRuns(
     status: "warmed",
     target: url,
   });
+  expect(result.caches?.writes.record).toBeGreaterThanOrEqual(1);
 
-  const bumped = await page.request.get(`${fixture.bumpUrl}?probe=${probe}`);
-  expect(bumped.ok()).toBe(true);
-  expect((await warmDocument(page, url)).stamp).toBe(`cached-${probe}@g2#r2`);
+  // The entry a warm writes is the entry the next call reads: that is why
+  // the dev rule admits the memory store. A second, onlyIfStale warm finds it
+  // fresh and writes nothing.
+  const again = await warmOne(page, fixture, fixture.cachedUrl, probe, {
+    localStore: true,
+    onlyIfStale: true,
+  });
+  expect(again, JSON.stringify(again)).toMatchObject({
+    ok: true,
+    path: "warm",
+    status: "already-fresh",
+    target: url,
+  });
+  expect(again.caches?.writes).toEqual({
+    record: 0,
+    item: 0,
+    response: 0,
+    shell: 0,
+  });
+
+  expect((await warmDocument(page, url)).stamp).toBe(`cached-${probe}@g1#r2`);
 }

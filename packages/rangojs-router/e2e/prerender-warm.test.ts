@@ -28,7 +28,7 @@ import {
 // Own isolatedServer, like the other shell suites: captures are background
 // tasks of this suite's requests only. Each test owns its ?probe=.
 
-function runPrerenderWarmSpec(f: Fixture, mode: "dev" | "build") {
+function runPrerenderWarmSpec(f: Fixture) {
   const fixture = (): PrerenderWarmFixture => ({
     shellUrl: f.url("/warm/shell"),
     cachedUrl: f.url("/warm/cached"),
@@ -77,7 +77,7 @@ function runPrerenderWarmSpec(f: Fixture, mode: "dev" | "build") {
   // The trigger's localStore=1 makes the gate read a shipped
   // MemorySegmentCacheStore (scope "local"). Production refuses it; the dev
   // rule counts the memory store as shared under the Vite dev server.
-  if (mode === "build") {
+  if (f.mode === "build") {
     test("a warm against a store with scope local is refused: nothing renders, nothing is stored", async ({
       page,
     }) => {
@@ -98,7 +98,7 @@ test.describe("prerender warm (dev)", () => {
     mode: "dev",
     isolatedServer: true,
   });
-  runPrerenderWarmSpec(f, "dev");
+  runPrerenderWarmSpec(f);
 });
 
 test.describe("prerender warm (production)", () => {
@@ -107,5 +107,5 @@ test.describe("prerender warm (production)", () => {
     mode: "build",
     isolatedServer: true,
   });
-  runPrerenderWarmSpec(f, "build");
+  runPrerenderWarmSpec(f);
 });

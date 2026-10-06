@@ -27,13 +27,16 @@ class SingleProcessCacheStore extends MemorySegmentCacheStore {
 }
 
 // App-level cache store with defaults
+// App-level cache store with defaults
 export const cacheStore = new SingleProcessCacheStore({
   defaults: { ttl: 60, swr: 120 },
 });
 
 // The shipped store, scope "local": what /warm/__trigger?localStore=1 makes
 // the warm gate read (the env it passes carries warmLocalStore). Requests
-// themselves never carry the flag, so they keep using cacheStore.
+// themselves never carry the flag, so they keep using cacheStore. AppBindings
+// stays empty (ctx.env is untyped across the app): the flag is read through a
+// local cast here and set through one in urls/prerender-warm.tsx.
 const localScopeStore = new MemorySegmentCacheStore({
   defaults: { ttl: 60, swr: 120 },
 });
@@ -47,10 +50,7 @@ export const prerenderStore = createMemoryPrerenderStore();
 /**
  * App-level bindings (platform resources like DB, KV, etc.)
  */
-export interface AppBindings {
-  /** Set only by the warm trigger's localStore variant (see localScopeStore). */
-  warmLocalStore?: boolean;
-}
+export interface AppBindings {}
 
 /**
  * App-level variables (middleware-injected context)
@@ -213,7 +213,9 @@ export const router = createRouter<AppEnv>({
   // for every URL that carries none of these params, so other suites see the
   // exact same keys as before.
   cache: (env) => ({
-    store: env.warmLocalStore ? localScopeStore : cacheStore,
+    store: (env as { warmLocalStore?: boolean } | undefined)?.warmLocalStore
+      ? localScopeStore
+      : cacheStore,
     searchParams: { exclude: ["utm_*", "x_e2e_excluded"] },
   }),
   // PPR capture outcomes, read back by /shell-cache/__capture-events so a
