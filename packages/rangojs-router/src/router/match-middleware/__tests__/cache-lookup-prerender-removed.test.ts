@@ -56,6 +56,7 @@ import {
   composeStoredEntry,
   type PrerenderKey,
   type PrerenderStoredEntry,
+  type WritablePrerenderStore,
 } from "../../../prerender/writable-store.js";
 import type { PrerenderConfig } from "../../../prerender/on-demand.js";
 import type { EntryData } from "../../../server/context.js";
@@ -100,8 +101,12 @@ async function lookup(options: {
   overlay?: (
     now: number,
   ) => PrerenderStoredEntry | Promise<PrerenderStoredEntry>;
+  /** Answers every read in place of the memory store. */
+  read?: () => Promise<unknown>;
   passthrough?: boolean;
   action?: boolean;
+  /** A client navigation (`_rsc_partial`), not a document request. */
+  partial?: boolean;
   intercept?: boolean;
   onRevalidate?: PrerenderConfig["onRevalidate"];
 }): Promise<{
@@ -120,8 +125,9 @@ async function lookup(options: {
       };
     },
   });
-  const store = createMemoryPrerenderStore();
+  const store: WritablePrerenderStore = createMemoryPrerenderStore();
   if (options.overlay) await store.set(KEY, await options.overlay(Date.now()));
+  if (options.read) store.get = options.read as WritablePrerenderStore["get"];
 
   const url = new URL("http://localhost/product/42");
   const request = new Request(url, {
@@ -146,7 +152,7 @@ async function lookup(options: {
     cacheScope: undefined,
     isAction: options.action === true,
     isIntercept: options.intercept === true,
-    isFullMatch: !options.action,
+    isFullMatch: !options.action && !options.partial,
     request,
     pathname: url.pathname,
     url,
@@ -251,30 +257,139 @@ describe("withCacheLookup: a removed marker hides the build-time entry", () => {
     expect(handlerContext._prerenderRemoved).toBe(true);
   });
 
-  it("onRevalidate is never scheduled for it, even when a store lowered its staleAt", async () => {
+  it("a client navigation to a removed page is not served from a store either", async () => {
+    const control = await lookup({ partial: true });
+    expect(control.served).toEqual(["BUILD"]);
+
+    const { served, state, handlerContext, buildReads } = await lookup({
+      overlay: tombstone,
+      partial: true,
+    });
+
+    expect(served).toEqual(["HANDLER"]);
+    expect(state.cacheHit).toBe(false);
+    expect(buildReads).toBe(0);
+    expect(handlerContext._prerenderRemoved).toBe(true);
+  });
+
+  it("only `removed: true` is a marker: any other value with an entry is a page", async () => {
+    // isStoredEntryValidFor accepts this envelope as a page; the read path
+    // must agree with it instead of testing `removed` for truthiness.
+    const { served, state } = await lookup({
+      overlay: async (now) =>
+        ({
+          ...(await page(now)),
+          removed: 1,
+        }) as unknown as PrerenderStoredEntry,
+    });
+
+    expect(served).toEqual(["OVERLAY"]);
+    expect(state.cacheSource).toBe("prerender");
+  });
+});
+
+describe("withCacheLookup: a removed marker and onRevalidate", () => {
+  /** A marker a refresh that hit notFound() wrote, with the route's ttl. */
+  const notFoundMarker = (now: number, ttlSeconds: number) => {
+    const marker = tombstone(now);
+    marker.meta.staleAt = now + ttlSeconds * 1000;
+    return marker;
+  };
+
+  it("a stale notFound() marker schedules onRevalidate like a stale page, and the request is still not served from a store", async () => {
     const onRevalidate = vi.fn();
-    // The scheduling itself works: a stale page schedules.
-    await lookup({
-      overlay: (now) => page(now - 5000, 1),
+    const { served, state, handlerContext, buildReads } = await lookup({
+      overlay: (now) => notFoundMarker(now - 5000, 1),
       onRevalidate,
     });
-    await vi.waitFor(() => expect(onRevalidate).toHaveBeenCalledTimes(1));
-    onRevalidate.mockClear();
-    resetOverlayRevalidationsForTests();
 
-    await lookup({
-      overlay: (now) => {
-        const removed = tombstone(now - 5000);
-        removed.meta.staleAt = now - 1000;
-        return removed;
-      },
+    await vi.waitFor(() => expect(onRevalidate).toHaveBeenCalledTimes(1));
+    expect(onRevalidate.mock.calls[0]![0]).toEqual({
+      route: "product",
+      params: PARAMS,
+    });
+    // The 404 (or the live handler) keeps answering while it is rechecked.
+    expect(served).toEqual(["HANDLER"]);
+    expect(state.cacheHit).toBe(false);
+    expect(buildReads).toBe(0);
+    expect(handlerContext._prerenderRemoved).toBe(true);
+  });
+
+  it("a fresh notFound() marker schedules nothing", async () => {
+    const onRevalidate = vi.fn();
+    const { served } = await lookup({
+      overlay: (now) => notFoundMarker(now, 3600),
       onRevalidate,
     });
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     expect(onRevalidate).not.toHaveBeenCalled();
+    expect(served).toEqual(["HANDLER"]);
   });
 
+  it("a remove() marker has no staleAt: nothing is ever scheduled for it", async () => {
+    const onRevalidate = vi.fn();
+    // The scheduling itself works: a stale page schedules.
+    await lookup({ overlay: (now) => page(now - 5000, 1), onRevalidate });
+    await vi.waitFor(() => expect(onRevalidate).toHaveBeenCalledTimes(1));
+    onRevalidate.mockClear();
+    resetOverlayRevalidationsForTests();
+
+    const { served } = await lookup({
+      // Written a year ago by prerender.remove().
+      overlay: (now) => tombstone(now - 365 * 24 * 3600 * 1000),
+      onRevalidate,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(onRevalidate).not.toHaveBeenCalled();
+    expect(served).toEqual(["HANDLER"]);
+  });
+});
+
+describe("withCacheLookup: when the marker cannot be read or is not this page's", () => {
+  it("a marker stored for other params under the same key is a miss: it removes nothing", async () => {
+    // The 8-hex DJB2 collision guard (param-hash.ts), for a removal.
+    const { served, handlerContext } = await lookup({
+      overlay: (now) => ({
+        ...tombstone(now),
+        meta: { ...tombstone(now).meta, params: { id: "99" } },
+      }),
+    });
+
+    expect(served).toEqual(["BUILD"]);
+    expect(handlerContext).not.toHaveProperty("_prerenderRemoved");
+  });
+
+  it("a marker written under another key version is a miss", async () => {
+    // A store that answers this key with another version's marker.
+    const { served, handlerContext } = await lookup({
+      read: async () => ({
+        ...tombstone(Date.now()),
+        meta: { ...tombstone(Date.now()).meta, version: "b0" },
+      }),
+    });
+
+    expect(served).toEqual(["BUILD"]);
+    expect(handlerContext).not.toHaveProperty("_prerenderRemoved");
+  });
+
+  it("a store read failure is a miss: the build-time entry of a removed page serves while the store is failing", async () => {
+    // readVerifiedStoredEntry degrades a store error to a miss, for a page
+    // and for a marker alike. Documented in the prerender skill.
+    const { served, state } = await lookup({
+      overlay: tombstone,
+      read: async () => {
+        throw new Error("kv outage");
+      },
+    });
+
+    expect(served).toEqual(["BUILD"]);
+    expect(state.cacheSource).toBe("prerender");
+  });
+});
+
+describe("withCacheLookup: an intercepted navigation", () => {
   it("an intercepted navigation does not read the overlay, so it does not see the marker", async () => {
     // The documented limit of v1 (docs/design/ondemand-prerender.md): only the
     // main variant is written and read. Pinned so a change is deliberate.

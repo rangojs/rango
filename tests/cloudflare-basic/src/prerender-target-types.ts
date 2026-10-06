@@ -39,11 +39,12 @@ export async function pinPrerenderTargetTypes(): Promise<void> {
   await prerender.remove.many(["/guides/a"], { onlyIfStale: true });
 }
 
-// The documented one-liner: onRevalidate's env and ctx bind the runner.
+// The documented one-liner: onRevalidate's env and ctx bind the runner, and
+// onlyIfStale makes a job that runs after a prerender.remove() render nothing.
 export const pinOnRevalidate: Pick<
   PrerenderConfig<AppBindings>,
   "onRevalidate"
 > = {
   onRevalidate: (target, liveEnv, ctx) =>
-    bind({ env: liveEnv, ctx })(target).then(() => {}),
+    bind({ env: liveEnv, ctx })(target, { onlyIfStale: true }).then(() => {}),
 };

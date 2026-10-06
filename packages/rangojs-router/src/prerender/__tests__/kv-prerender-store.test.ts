@@ -179,7 +179,7 @@ describe("createKVPrerenderStore", () => {
     expect(await store.get(key())).toBeNull();
   });
 
-  it("persists a removed marker as the JSON it is given, and reads no tag marker for it", async () => {
+  it("persists a remove() marker as the JSON it is given, and reads no tag marker for it", async () => {
     const kv = fakeKV();
     const gets: string[] = [];
     const spied: KVNamespace = {
@@ -190,7 +190,11 @@ describe("createKVPrerenderStore", () => {
       }) as KVNamespace["get"],
     };
     const store = createKVPrerenderStore(spied, { now: () => 5000 });
-    const tombstone = composeStoredTombstone(key(), { id: "42" }, 1000);
+    const tombstone = composeStoredTombstone(
+      key(),
+      { tags: [], params: { id: "42" } },
+      1000,
+    );
     await store.set(key(), tombstone);
     // Marked after the tombstone was written: it has no tag to match.
     await store.markStale!(["product:42"]);
@@ -201,5 +205,28 @@ describe("createKVPrerenderStore", () => {
     expect(gets).toEqual([serializePrerenderKey(key())]);
     expect(isStoredEntryValidFor(got, key(), { id: "42" })).toBe(true);
     expect(isStoredEntryStale(got!, Number.MAX_SAFE_INTEGER)).toBe(false);
+  });
+
+  it("a notFound() marker carries its route's tags: a tag marker makes it stale, as it does a page", async () => {
+    let now = 1000;
+    const kv = fakeKV();
+    const store = createKVPrerenderStore(kv, { now: () => now });
+    const tombstone = composeStoredTombstone(
+      key(),
+      { ttl: 3600, tags: ["product:42"], params: { id: "42" } },
+      1000,
+    );
+    await store.set(key(), tombstone);
+    expect(isStoredEntryStale((await store.get(key()))!, 2000)).toBe(false);
+
+    now = 2000;
+    await store.markStale!(["product:42"]);
+
+    const got = await store.get(key());
+    // Still the marker (mark-stale, not delete), now due a recheck.
+    expect(got).toMatchObject({ v: 1, removed: true });
+    expect(got).not.toHaveProperty("entry");
+    expect(isStoredEntryValidFor(got, key(), { id: "42" })).toBe(true);
+    expect(isStoredEntryStale(got!, 2000)).toBe(true);
   });
 });

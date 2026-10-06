@@ -68,11 +68,12 @@ type StoredPage = StoredEnvelope & { entry: PrerenderEntry; removed?: never };
 
 /**
  * The "removed" marker (tombstone) stored in place of a page, by
- * `prerender.remove()` or by a refresh whose handler calls `notFound()`. A
- * request that finds it is not served the build-time entry below the overlay.
- * No `entry`: a router from before the marker rejects it as malformed (a
- * miss) instead of serving an empty page. `meta.tags` is always empty, so
- * `markStale()` never matches it, and it has no `staleAt`.
+ * `prerender.remove()` or by a refresh whose render hit `notFound()` (or
+ * declined with `ctx.passthrough()`). A request that finds it is not served
+ * the build-time entry below the overlay. No `entry`: a router from before the
+ * marker rejects it as malformed (a miss) instead of serving an empty page.
+ * `meta` is stamped like a page's for a render outcome, so that marker goes
+ * stale and is rechecked; a `remove()` marker has no `staleAt` and no tags.
  */
 type StoredTombstone = StoredEnvelope & { removed: true; entry?: never };
 
@@ -155,17 +156,24 @@ export function composeStoredEntry(
   };
 }
 
-/** @internal Compose the "removed" marker stored in place of a page. */
+/**
+ * @internal Compose the "removed" marker stored in place of a page. Its meta
+ * is a page's (composeStoredEntry), so `ttl` and `tags` mean the same: the
+ * marker of a render outcome is given the route's and is rechecked like a
+ * page; `prerender.remove()` gives neither, and its marker never goes stale.
+ */
 export function composeStoredTombstone(
   key: PrerenderKey,
-  params: Record<string, string>,
+  options: StoredEntryOptions,
   now: number,
 ): StoredTombstone {
-  return {
-    v: 1,
-    removed: true,
-    meta: { storedAt: now, tags: [], version: key.version, params },
-  };
+  const { v, meta } = composeStoredEntry(
+    key,
+    { segments: [], handles: "" },
+    options,
+    now,
+  );
+  return { v, removed: true, meta };
 }
 
 /**

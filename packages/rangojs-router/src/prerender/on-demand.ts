@@ -146,10 +146,19 @@ export type PrerenderResult =
       ok: true;
       path: "on-demand";
       /**
-       * `already-fresh` only occurs with `onlyIfStale: true`. `removed`: a
-       * "removed" marker is stored in place of the page (`prerender.remove()`,
-       * a refresh whose handler called `notFound()`, or `onlyIfStale` finding
-       * one). `tags` is then empty.
+       * `already-fresh` only occurs with `onlyIfStale: true`.
+       *
+       * `removed`: a "removed" marker is stored in place of the page, and
+       * requests no longer get the page or its build-time entry. It is
+       * `ok: true`, so count it in sweep results. Written by
+       * `prerender.remove()` (permanent until a refresh without
+       * `onlyIfStale`; `tags` empty, no `ttl`), or by a refresh in which a
+       * `notFound()` was the only thing that went wrong, anywhere in the
+       * render: the route handler, a layout or parallel slot handler, any
+       * server component. That marker has the route's `tags` and `ttl` and is
+       * rechecked like a page. `onlyIfStale` finding a fresh marker reports
+       * `removed` too. When the data source may be failing, throw anything
+       * else: that is `render-failed` and keeps the page.
        */
       status: "rendered" | "already-fresh" | "removed";
       target: string;
@@ -188,8 +197,9 @@ export type PrerenderResult =
         | "skipped-personalized"
         | "skipped-unsupported-target"
         // The route (a Passthrough + onDemand route) returned ctx.passthrough()
-        // for this param set — no shared payload to persist; the live handler
-        // keeps serving it.
+        // for this param set: no shared payload to persist. The "removed"
+        // marker is stored instead, so the live handler serves it and not a
+        // page stored or baked earlier.
         | "skipped-passthrough"
         // prerender.remove() on a route that is not on-demand: it has no page
         // in the prerender store. (A refresh of such a route is a warm.)
@@ -250,8 +260,11 @@ export interface PrerenderConfig<TEnv = any> {
    * the JSON-serializable target and the live env. Runs at most once per
    * stale key per isolate while one is in flight (one running longer than
    * 15 s counts as finished, so a hung call cannot block the key), so
-   * `(target, env, ctx) => router.prerender({ env, ctx })(target)` is safe in a single
-   * process; across isolates, point it at a queue, which owns dedup.
+   * `(target, env, ctx) => router.prerender({ env, ctx })(target, { onlyIfStale: true })`
+   * is safe in a single process; across isolates, point it at a queue, which
+   * owns dedup. Pass `onlyIfStale` in the call that runs later: a job queued
+   * for a page that `prerender.remove()` then removed finds the marker and
+   * renders nothing, where a plain refresh would bring the page back.
    */
   onRevalidate?: (
     target: PrerenderTargetObject,
@@ -291,9 +304,12 @@ export interface PrerenderRunner<TRoutes = {}> {
   /**
    * Remove an on-demand route's page without rendering: a "removed" marker is
    * stored in place of it. Requests then get a 404 (a `Passthrough` route: its
-   * live handler), never the build-time entry, until `prerender(target)`
-   * renders the page again. `{ ok: true, status: "removed" }`; a route that
-   * is not on-demand is `skipped-not-on-demand`. `.many` is the batch form.
+   * live handler), never the build-time entry. Permanent: no `ttl`, no
+   * `onRevalidate`, left by `onlyIfStale`, until a `prerender(target)`
+   * without `onlyIfStale` renders the page again. It is a write like a
+   * refresh's, and the last write wins. `{ ok: true, status: "removed" }`; a
+   * route that is not on-demand is `skipped-not-on-demand`. `.many` is the
+   * batch form.
    */
   remove: {
     (

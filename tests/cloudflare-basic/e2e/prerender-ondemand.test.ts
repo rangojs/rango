@@ -313,6 +313,7 @@ function defineRemoveFlow(f: Fixture) {
   const fixture = (): PrerenderRemoveFixture => ({
     pageUrl: (slug) => f.url(`/guide-plain/${slug}`),
     triggerUrl: (slug) => f.url(`/guide-plain-trigger/${slug}`),
+    tag: (slug) => `guide-plain:${slug}`,
     slugTestId: "gp-slug",
     actionTestId: "gp-action-noop",
     bakedSlug: "intro",

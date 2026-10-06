@@ -2941,9 +2941,13 @@ export async function expectOnlyIfStaleWarmLeavesFreshShellAlone(
  *   `slugTestId` renders the slug, and `actionTestId` is a button in the page
  *   that submits a server action which changes nothing.
  * - `triggerUrl(slug)`: GET answers a runner call's result as JSON. No query
- *   is `prerender(page)`; `?remove=1` is `prerender.remove(page)`. `?gone=1`
- *   deletes the slug from the fixture's data source, so the page's handler
- *   calls `notFound()` on its next refresh, and `?gone=0` restores it.
+ *   is `prerender(page)`; `?remove=1` is `prerender.remove(page)`;
+ *   `?onlyIfStale=1` is `prerender(page, { onlyIfStale: true })`;
+ *   `?markStale=<tag>` is `prerender.markStale([tag])`. `?gone=1` deletes the
+ *   slug from the fixture's data source, so the page's handler calls
+ *   `notFound()` on its next refresh, and `?gone=0` restores it.
+ * - `tag(slug)`: the tag the route's `onDemand.tags` stamps for the slug. The
+ *   route's `ttl` is long, so an entry goes stale only through `markStale`.
  * - `bakedSlug`: a slug `getParams()` lists, which a production build bakes.
  *   No other test may request it: these tests remove its page.
  * - `passthrough`: the same page, trigger and baked slug for a
@@ -2953,6 +2957,7 @@ export async function expectOnlyIfStaleWarmLeavesFreshShellAlone(
 export interface PrerenderRemoveFixture {
   pageUrl: (slug: string) => string;
   triggerUrl: (slug: string) => string;
+  tag: (slug: string) => string;
   slugTestId: string;
   actionTestId: string;
   bakedSlug: string;
@@ -3036,6 +3041,14 @@ async function removeThroughRunner(
     ok: true,
     path: "on-demand",
     status: "removed",
+    tags: [],
+  });
+  await expectPageRemoved(page, fixture, slug);
+  // Permanent: a sweep finds the marker and renders nothing.
+  const swept = await removeTrigger(page, trigger, "?onlyIfStale=1");
+  expect(swept, JSON.stringify(swept)).toMatchObject({
+    ok: true,
+    status: "removed",
   });
   await expectPageRemoved(page, fixture, slug);
 
@@ -3047,11 +3060,18 @@ async function removeThroughRunner(
  * A refresh whose handler calls `notFound()` removes the page. It stays a 404
  * when the data is back and nothing refreshed it (the marker answers, not a
  * render), and a refresh brings it back.
+ *
+ * With `recheck`, the way back is the one a transient not-found takes: the
+ * marker has the route's ttl and tags, so a sweep (`onlyIfStale`) leaves it
+ * while it is fresh and renders the page again once it is stale. Only for a
+ * slug no other run shares: a tag marked stale is seen by the dev and the
+ * preview server alike where they share a store.
  */
 async function removeThroughNotFound(
   page: Page,
   fixture: PrerenderRemoveFixture,
   slug: string,
+  recheck = false,
 ): Promise<void> {
   const trigger = fixture.triggerUrl(slug);
   await refreshPage(page, trigger);
@@ -3064,6 +3084,7 @@ async function removeThroughNotFound(
       ok: true,
       path: "on-demand",
       status: "removed",
+      tags: [fixture.tag(slug)],
     });
     await expectPageRemoved(page, fixture, slug);
   } finally {
@@ -3071,7 +3092,29 @@ async function removeThroughNotFound(
   }
   await expectPageRemoved(page, fixture, slug);
 
-  await refreshPage(page, trigger);
+  if (!recheck) {
+    await refreshPage(page, trigger);
+    await expectPageServed(page, fixture, slug);
+    return;
+  }
+  // Fresh: the sweep leaves the marker, and the page stays a 404.
+  const left = await removeTrigger(page, trigger, "?onlyIfStale=1");
+  expect(left, JSON.stringify(left)).toMatchObject({
+    ok: true,
+    status: "removed",
+  });
+  await expectPageRemoved(page, fixture, slug);
+  // Stale: the sweep renders, and the page is back.
+  await removeTrigger(
+    page,
+    trigger,
+    `?markStale=${encodeURIComponent(fixture.tag(slug))}`,
+  );
+  const rechecked = await removeTrigger(page, trigger, "?onlyIfStale=1");
+  expect(rechecked, JSON.stringify(rechecked)).toMatchObject({
+    ok: true,
+    status: "rendered",
+  });
   await expectPageServed(page, fixture, slug);
 }
 
@@ -3120,7 +3163,7 @@ export async function expectRemovedUnbakedPageAnswers404(
 ): Promise<void> {
   using _ = guardHydrationErrors(page);
   await removeThroughRunner(page, fixture, pushProbe("removed"));
-  await removeThroughNotFound(page, fixture, pushProbe("gone"));
+  await removeThroughNotFound(page, fixture, pushProbe("gone"), true);
   await actionOnRemovedPage(page, fixture, pushProbe("action"));
 }
 

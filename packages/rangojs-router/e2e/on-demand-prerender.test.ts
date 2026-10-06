@@ -293,6 +293,7 @@ async function exerciseRefreshInsideAction(f: Fixture, page: Page) {
 const removeFixture = (f: Fixture): PrerenderRemoveFixture => ({
   pageUrl: (slug) => f.url(`/on-demand-plain/${slug}`),
   triggerUrl: (slug) => f.url(`/od-plain-trigger/${slug}`),
+  tag: (slug) => `od-plain:${slug}`,
   slugTestId: "od-plain-slug",
   actionTestId: "od-action-noop",
   bakedSlug: "baked",

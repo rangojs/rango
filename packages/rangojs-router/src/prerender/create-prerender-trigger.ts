@@ -21,8 +21,11 @@
  * - A refresh always renders and replaces; `onlyIfStale` is the cron-sweep
  *   opt-in and the only path that returns `already-fresh`.
  * - A failed render/store keeps the previous entry (replace-on-success).
- * - A handler's `notFound()` is not a failure: it stores a "removed" marker
- *   in place of the page, as `prerender.remove()` does without rendering.
+ * - A `notFound()` in the render is not a failure: it stores a "removed"
+ *   marker in place of the page, stamped with the route's ttl and tags so it
+ *   is rechecked like a page. `prerender.remove()` stores one without
+ *   rendering, which never goes stale. A Passthrough build handler that
+ *   declines (`ctx.passthrough()`) stores one too, so its live handler answers.
  * - An on-demand target is path-only (its key carries no search); a warm
  *   target keeps its search params, which cache keys carry.
  * - A warm writes only to a store shared beyond the place the call runs.
@@ -38,7 +41,6 @@ import { composeWarmResult, runWarmRequest } from "./warm.js";
 import { hashParams } from "./param-hash.js";
 import { isPrerenderPersonalizationError } from "./producer-guard.js";
 import { normalizeTagList } from "../cache/cache-policy.js";
-import { isDataNotFoundError } from "../errors.js";
 import {
   composeStoredEntry,
   composeStoredTombstone,
@@ -46,6 +48,7 @@ import {
   readVerifiedStoredEntry,
   serializePrerenderKey,
   type PrerenderKey,
+  type PrerenderStoredEntry,
 } from "./writable-store.js";
 import type {
   OnDemandRouteConfig,
@@ -80,6 +83,8 @@ export interface ProducerOutput {
   routeName: string;
   params: Record<string, string>;
   passthrough?: true;
+  /** The render hit `notFound()` and nothing else failed: no page to store. */
+  notFound?: true;
   onDemandConfig?: OnDemandRouteConfig;
 }
 
@@ -141,9 +146,15 @@ export interface PrerenderTriggerDeps<TEnv = any> {
 /** Thrown by the trigger when `throwOnError: true` and the operation did not succeed. */
 export class PrerenderError extends Error {
   readonly result: Extract<PrerenderResult, { ok: false }>;
-  constructor(result: Extract<PrerenderResult, { ok: false }>) {
+  /** `operation` is the runner call that failed; the message names it. */
+  constructor(
+    result: Extract<PrerenderResult, { ok: false }>,
+    operation: "prerender" | "remove" = "prerender",
+  ) {
+    const call =
+      operation === "remove" ? "prerender.remove" : "router.prerender";
     super(
-      `router.prerender("${result.target}") failed: ${result.status}` +
+      `${call}("${result.target}") failed: ${result.status}` +
         (result.error instanceof Error ? ` — ${result.error.message}` : ""),
     );
     this.name = "PrerenderError";
@@ -231,7 +242,9 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     removing = false,
   ): Promise<PrerenderResult> {
     const result = await run(target, runtime, options, version, removing);
-    if (!result.ok && options.throwOnError) throw new PrerenderError(result);
+    if (!result.ok && options.throwOnError) {
+      throw new PrerenderError(result, removing ? "remove" : "prerender");
+    }
     return result;
   }
 
@@ -313,12 +326,13 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     );
     // Then the request handler, on top of the entry just stored: the route's
     // loaders' own cache() and the document cache are rebuilt on it. A
-    // Passthrough param the producer declined is served by the live handler,
-    // whose caches are warmed the same way. Quiet: the refresh is complete
-    // without it. Never after `removed`: there is no page to rebuild a cache
-    // on, and a Passthrough route's live handler may still render the removed
-    // page from a data source that has not caught up, which the warm would
-    // then write to its caches.
+    // Passthrough param the producer declined is served by the live handler
+    // (the marker renderOnDemand stored for it keeps a page stored or baked
+    // earlier from answering the warm), whose caches are warmed the same way.
+    // Quiet: the refresh is complete without it. Never after `removed`: there
+    // is no page to rebuild a cache on, and a Passthrough route's live handler
+    // may still render the removed page from a data source that has not
+    // caught up, which the warm would then write to its caches.
     if (
       result.status === "rendered" ||
       result.status === "skipped-passthrough"
@@ -460,36 +474,51 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
       paramHash: hashParams(match.params),
     };
     const keyStr = serializePrerenderKey(key);
-    const removed: PrerenderResult = {
+    const store = config.store;
+    /** What the store holds for the page, as a result reports it. */
+    const held = (
+      status: "already-fresh" | "removed",
+      meta: PrerenderStoredEntry["meta"],
+    ): PrerenderResult => ({
       ok: true,
       path: "on-demand",
-      status: "removed",
+      status,
       target: display,
       routeName: match.routeName,
       key: keyStr,
-      tags: [],
-    };
-    const store = config.store;
-    // The "removed" marker in place of the page. Not store.delete(): that
-    // would bring a baked param's build-time entry back. Replace-on-success.
-    async function storeTombstone(): Promise<PrerenderResult> {
-      try {
-        const tombstone = composeStoredTombstone(key, match.params, Date.now());
-        await store.set(key, tombstone);
-        return removed;
-      } catch (error) {
-        return {
-          ok: false,
-          path: "on-demand",
-          status: "store-failed",
-          target: display,
-          routeName: match.routeName,
-          error,
-        };
-      }
-    }
+      tags: meta.tags,
+      ...(meta.staleAt != null
+        ? { ttl: Math.round((meta.staleAt - meta.storedAt) / 1000) }
+        : {}),
+    });
+    // Replace-on-success: a failed write leaves the prior durable entry (and
+    // the bundled manifest fallback) in place.
+    const storeFailed = (error: unknown): PrerenderResult => ({
+      ok: false,
+      path: "on-demand",
+      status: "store-failed",
+      target: display,
+      routeName: match.routeName,
+      error,
+    });
 
-    if (removing) return storeTombstone();
+    if (removing) {
+      // The "removed" marker in place of the page. Not store.delete(): that
+      // would bring a baked param's build-time entry back. No ttl and no
+      // tags: it never goes stale and markStale() cannot reach it, so only a
+      // refresh without onlyIfStale brings the page back.
+      const marker = composeStoredTombstone(
+        key,
+        { tags: [], params: match.params },
+        Date.now(),
+      );
+      try {
+        await store.set(key, marker);
+      } catch (error) {
+        return storeFailed(error);
+      }
+      return held("removed", marker.meta);
+    }
 
     // onlyIfStale: the cron-sweep opt-in. A CMS webhook (default) always renders,
     // because it fires precisely when content changed. This is the only path that
@@ -497,34 +526,18 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     if (options.onlyIfStale) {
       // An unreadable or unverifiable entry is "couldn't confirm fresh":
       // render, never throw (one result per target, many() keeps going).
-      const existing = await readVerifiedStoredEntry(
-        config.store,
-        key,
-        match.params,
-      );
-      // A removed page is never stale: a sweep over every URL must not bring
-      // it back from a data source that still has it. Only a plain refresh does.
-      if (existing?.removed) return removed;
+      const existing = await readVerifiedStoredEntry(store, key, match.params);
+      // A fresh marker is left like a fresh page; a stale one (a notFound()
+      // past its ttl, or marked stale) is rendered again below.
       if (existing && !isStoredEntryStale(existing, Date.now())) {
-        const existingTtl =
-          existing.meta.staleAt != null
-            ? Math.round(
-                (existing.meta.staleAt - existing.meta.storedAt) / 1000,
-              )
-            : undefined;
-        return {
-          ok: true,
-          path: "on-demand",
-          status: "already-fresh",
-          target: display,
-          routeName: match.routeName,
-          key: keyStr,
-          tags: existing.meta.tags,
-          ...(existingTtl != null ? { ttl: existingTtl } : {}),
-        };
+        return held(
+          existing.removed === true ? "removed" : "already-fresh",
+          existing.meta,
+        );
       }
     }
 
+    const startedAt = Date.now();
     let produced: ProducerOutput | null;
     try {
       produced = await deps.runProducer({
@@ -543,10 +556,6 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
           routeName: match.routeName,
         };
       }
-      // notFound() is the handler saying the page no longer exists, not a
-      // failure: keeping the old entry would serve a deleted product until
-      // the next deploy.
-      if (isDataNotFoundError(err)) return storeTombstone();
       // #587: matchForPrerender already threads throwOnError so a render throw
       // surfaces here rather than baking a frozen error page. Keep the old entry.
       return {
@@ -568,15 +577,13 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
         routeName: match.routeName,
       };
     }
-    if (produced.passthrough) {
-      return {
-        ok: false,
-        path: "on-demand",
-        status: "skipped-passthrough",
-        target: display,
-        routeName: match.routeName,
-      };
-    }
+    // No page to store: the render hit notFound() (the page no longer
+    // exists; keeping the old entry would serve a deleted item until the next
+    // deploy), or a Passthrough build handler declined the param (the live
+    // handler is to answer, which it only does once nothing in a prerender
+    // store does). Both store the "removed" marker, stamped below with the
+    // route's ttl and tags like a page, so the outcome is rechecked like one.
+    const noPage = produced.notFound === true || produced.passthrough === true;
 
     // Resolve soft TTL + tags from the route's onDemand config (read off the
     // loaded route entry by the producer), falling back to the router default.
@@ -596,33 +603,50 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
         normalizeTagList(
           [...rawTags].filter((t): t is string => typeof t === "string"),
         ) ?? [];
+      const stamp = {
+        ...(ttl != null ? { ttl } : {}),
+        tags,
+        params: match.params,
+      };
+      if (!noPage) {
+        // A marker that landed while this render ran (a remove(), or another
+        // refresh's notFound()) is not overwritten by its page. This narrows
+        // the race, it cannot close it: the read and the write are two store
+        // calls, and KV is eventually consistent. Otherwise last write wins.
+        const current = await readVerifiedStoredEntry(store, key, match.params);
+        if (current?.removed === true && current.meta.storedAt > startedAt) {
+          return held("removed", current.meta);
+        }
+      }
       // The router composes the envelope; the store only persists it.
-      await config.store.set(
+      await store.set(
         key,
-        composeStoredEntry(
-          key,
-          { segments: produced.segments, handles: produced.handles },
-          { ...(ttl != null ? { ttl } : {}), tags, params: match.params },
-          Date.now(),
-        ),
+        noPage
+          ? composeStoredTombstone(key, stamp, Date.now())
+          : composeStoredEntry(
+              key,
+              { segments: produced.segments, handles: produced.handles },
+              stamp,
+              Date.now(),
+            ),
       );
     } catch (err) {
-      // Replace-on-success: a failed write leaves the prior durable entry (and
-      // the bundled manifest fallback) in place.
+      return storeFailed(err);
+    }
+
+    if (produced.passthrough) {
       return {
         ok: false,
         path: "on-demand",
-        status: "store-failed",
+        status: "skipped-passthrough",
         target: display,
         routeName: match.routeName,
-        error: err,
       };
     }
-
     return {
       ok: true,
       path: "on-demand",
-      status: "rendered",
+      status: produced.notFound ? "removed" : "rendered",
       target: display,
       routeName: match.routeName,
       key: keyStr,
