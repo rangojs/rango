@@ -463,6 +463,14 @@ await prerender.markStale([`product:${id}`]); // revalidateTag
 | `dynamicParams = false`               | plain on-demand `Prerender`: an unknown param 404s until something refreshes it                     |
 | `dynamicParams = true`                | wrap it in `Passthrough()`: unknown params render live until refreshed                              |
 
+A page whose item was deleted: in the Pages Router, `getStaticProps` returning
+`{ notFound: true }` on a revalidation makes the page a 404 "even if there was
+a successfully generated page before". In Rango the on-demand handler calls
+`notFound()`: the next `prerender(path)` stores a "removed" marker and the
+page answers 404 instead of the page or its build-time entry.
+`prerender.remove(path)` does the same without rendering, for a webhook that
+already knows the item is gone. See `/prerender` → "Remove a page".
+
 Three differences to plan for:
 
 - Prerender tags are their own namespace. `updateTag()` / `revalidateTag()`

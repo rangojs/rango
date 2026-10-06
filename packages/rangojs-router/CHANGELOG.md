@@ -68,9 +68,74 @@ What to know before you call it:
   builds its own `createRSCHandler({ cache, version })` (a warm runs
   `router.fetch`).
 
-`skipped-not-on-demand`, the status an unreleased build of on-demand prerender
-returned for these routes, is gone. See the `prerender` skill, "Warm any route
+A refresh no longer returns `skipped-not-on-demand`, the status an unreleased
+build of on-demand prerender returned for these routes (only
+`prerender.remove()` does, below). See the `prerender` skill, "Warm any route
 before traffic".
+
+### Added: remove a page from on-demand prerender ([#1060](https://github.com/rangojs/rango/issues/1060))
+
+Part of on-demand prerender, which is in this release too. A page refreshed
+with `router.prerender()` kept serving after the item behind it was deleted: a
+refresh whose handler called `notFound()` came back `render-failed` and kept
+the old page, and there was no call that took a page out of service.
+
+There are now two ways to remove one:
+
+```ts
+const prerender = router.prerender({ env, ctx });
+
+// From a "product deleted" webhook. Nothing is rendered, so it does not wait
+// for the data source to catch up.
+await prerender.remove("/products/42");
+await prerender.remove.many(paths, { concurrency: 4 });
+
+// Or let the route say so: a refresh whose handler calls notFound() removes
+// the page instead of failing.
+await prerender("/products/42"); // { ok: true, status: "removed", ... }
+```
+
+Both store a "removed" marker in the prerender store in place of the page.
+From the next request on the route answers 404 for that param, in dev and in
+production; a `Passthrough` route runs its live handler. A param the build
+baked does not fall back to its build-time page, which is what deleting the
+entry would have done. A later `prerender(url)` that renders brings the page
+back.
+
+What to know before you call it:
+
+- **`notFound()` in a refresh no longer keeps the old page.** It returned
+  `render-failed`; it now removes the page and returns
+  `{ ok: true, path: "on-demand", status: "removed" }`. Any other throw is
+  still `render-failed` and keeps the page.
+- **`remove()` is for on-demand routes.** On any other route it returns
+  `skipped-not-on-demand` and renders or warms nothing. `throwOnError` works
+  as on a refresh; `remove.many()` also takes `concurrency` (default 1).
+- **A sweep leaves a removed page removed.** `{ onlyIfStale: true }` finds the
+  marker, renders nothing and returns `removed`; only a refresh without it
+  replaces the marker. `markStale()` never matches a marker, and
+  `onRevalidate` is never scheduled for one.
+- **Invalidate first when a cache sits above the router.** No warm request
+  follows a removal, and the marker does not reach a document cache
+  (`createDocumentCacheMiddleware`): it keeps serving the document it stored
+  until `s-maxage` and `stale-while-revalidate` run out. Call
+  `await updateTag(tag)` for a tag the document carries, then
+  `await prerender.remove(url)`. A `Passthrough` route's live handler serves
+  through its own `cache()`, as it does for a page that was never refreshed.
+- **A custom prerender store needs no change** when it persists the value it
+  is given. The marker is `{ v: 1, removed: true, meta }` with no `entry`, and
+  `meta` has the fields a page's has (`tags` is empty). `PrerenderStoredEntry`
+  is now a union of the two, so code that reads `stored.entry` has to check
+  for it.
+- **Intercepted navigations do not see the marker**: they do not read the
+  prerender store, so the build's intercept variant of a removed page still
+  serves.
+
+The Next.js Pages Router has the same rule for the `notFound()` half: "With
+`notFound: true`, the page will return a `404` even if there was a
+successfully generated page before."
+([getStaticProps](https://nextjs.org/docs/pages/api-reference/functions/get-static-props))
+See the `prerender` skill, "Remove a page".
 
 ### Fixed: a superseded link click no longer follows its server redirect ([#1047](https://github.com/rangojs/rango/issues/1047))
 

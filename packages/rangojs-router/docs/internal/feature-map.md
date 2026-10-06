@@ -692,6 +692,21 @@ The visitor's theme reads (the handler and middleware `ctx.theme`, `getRequestCo
   `runner.markStale(tags)` marks durable entries stale (marking only: they keep
   serving). Types: `PrerenderRuntime`, `PrerenderRunOptions`,
   `PrerenderManyOptions`, `PrerenderRunner`, `PrerenderFn`.
+- Removing a page (#1060): `runner.remove(target, { throwOnError? })` and
+  `runner.remove.many(targets, { concurrency?, throwOnError? })` store a
+  "removed" marker (`composeStoredTombstone`, `prerender/writable-store.ts`)
+  in place of the page, rendering nothing; a refresh whose handler calls
+  `notFound()` stores the same marker. Result status `removed`; a route that
+  is not on-demand is `skipped-not-on-demand`. A request that finds the
+  marker is not served from any prerender store (`tryPrerenderLookup` returns
+  ahead of the bundled manifest and of `onRevalidate` scheduling): a plain
+  route's gated producer answers 404, in dev too
+  (`InternalHandlerContext._prerenderRemoved`, read by `gateOnDemandProducer`
+  in `urls/path-helper.ts`), a Passthrough route runs its live handler.
+  `onlyIfStale` leaves a marker alone; `markStale()` never matches one; no
+  warm request follows a removal. The marker has no `entry`, so a router from
+  before it reads it as a miss. It does not reach the document cache or a
+  Passthrough route's live caches: pair it with `updateTag()`.
 - `Prerender(..., { onDemand })` is the explicit route opt-in
   (`onDemand: true | { ttl?, tags?: string[] | (target) => string[] }`). Any
   truthy spelling works: producer retention and the runtime `od` trie flag are
@@ -708,7 +723,8 @@ The visitor's theme reads (the handler and middleware `ctx.theme`, `getRequestCo
   newer than the build artifact; staleness only schedules refresh work.
 - The producer reuses `matchForPrerender` without inheriting request state.
   Personalized reads map to `skipped-personalized`; failed renders and writes
-  leave the previous entry intact. Its context carries the router's cache
+  leave the previous entry intact (a `notFound()` is not a failure: it removes
+  the page, above). Its context carries the router's cache
   versions (`_versions`), so `getCacheVersions()` inside a refresh answers like
   a live request.
 - Stores are plain get/set (`WritablePrerenderStore`): the trigger composes the
@@ -723,7 +739,9 @@ The visitor's theme reads (the handler and middleware `ctx.theme`, `getRequestCo
   an older bundled intercept artifact can remain until the next deploy.
 - Userland testing: `router.prerender()` then `serveShellRequest(router, url)`
   (`@rangojs/router/testing/flight`) serves the refreshed entry through the
-  production handler (`testing/__tests__/on-demand-prerender.rsc-test.tsx`).
+  production handler (`testing/__tests__/on-demand-prerender.rsc-test.tsx`);
+  after `runner.remove(url)` the same request is a 404
+  (`testing/__tests__/on-demand-prerender-remove.rsc-test.tsx`).
 
 ### Warming Any Route (router.prerender() for every route)
 
