@@ -394,7 +394,18 @@ check exactly as the L1 copy did, the read is a miss, and the colo renders for
 itself, as it always did. The same holds when no colo has rebuilt the entry
 yet (an `updateTag()` with no warm): the KV twin of the rejected copy is
 refused. That case is what the read costs: one KV get, bounded by
-`kvReadTimeoutMs`, before a render that used to start at once. A valid L1 hit
+`kvReadTimeoutMs`, before a render that used to start at once. The cost is per
+cached read, not per request. A `ppr` document reads its shell, then its
+record, then each `"use cache"` result; with every copy rejected and the newer
+entry in KV, measured: 150 ms of added wait at 50 ms per KV read
+and 510 ms when each read runs to the 170 ms budget, where `main` waits 0. A
+partial navigation reads two shell keys in series, and a rejected memoized
+shell adds a Cache API lookup and a frame read first. It is what an L1 miss
+already costs on a cold colo, an expired copy or after a deploy, and a
+`tagPurge` store pays it after every invalidation. An entry nothing rewrites
+(the route now errors or 404s) pays one KV read per cached read on every
+request until the copy's max-age ends; an entry with ttl + swr under 60 s has
+no KV twin and always misses. Not measured on a deployed worker. A valid L1 hit
 and a plain L1 miss read exactly what they read before.
 
 One request skips the KV read: the one that invalidated the tag
@@ -402,8 +413,9 @@ One request skips the KV read: the one that invalidated the tag
 re-render every entry it masked, and a server action's re-render should not
 pay a KV get per entry for nothing.
 
-So the pattern guarantees that no location serves the old content, and that
-each location serves the warm's entry from the moment the warm's KV write is
+So the pattern guarantees that no location the marker has reached serves the old
+content (the marker is a KV read too, so a location it has not reached yet can
+still serve its old copy), and that each location serves the warm's entry from the moment the warm's KV write is
 visible to it.
 
 This is wider than the first version of the feature. The stores were at first

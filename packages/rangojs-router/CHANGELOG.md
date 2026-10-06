@@ -88,7 +88,7 @@ is served and kept, and nothing renders. This covers `cache()` records,
 `"use cache"` results, cached responses and `ppr` shells.
 
 ```ts
-await updateTag(`product:${id}`); // no location serves the old copy
+await updateTag(`product:${id}`); // once the marker reaches a location, it refuses its old copy
 await router.prerender({ env, ctx })(`/products/${id}`); // one render, written to KV
 
 // Before: every location that had served the page rendered it once more.
@@ -97,21 +97,38 @@ await router.prerender({ env, ctx })(`/products/${id}`); // one render, written 
 
 What stays the same:
 
-- **No location serves an entry from before the invalidation.** The KV entry
-  passes the same tag check as the location's own copy. Cloudflare documents
-  up to 60 seconds for a KV write to spread; a location that KV still hands
-  the old entry refuses it and renders, as before.
+- **No location serves an entry from before the invalidation, once the marker
+  has reached it.** The marker is a KV entry too, so a location the marker has
+  not reached yet (Cloudflare documents up to 60 seconds for a KV write to
+  spread) can still serve its old copy. The KV entry passes the same tag check
+  as the location's own copy; a location that KV still hands the old entry
+  refuses it and renders, as before.
 - **A valid copy costs what it did.** The KV read happens only where the
-  location's copy was invalidated. If nothing newer is in KV yet, that
-  request pays one KV read (bounded by `kvReadTimeoutMs`) before it renders.
+  location's copy was invalidated.
 - **The request that called `updateTag()`** renders its own entries without
   that read, as before.
 - **A store without `kv`** is unchanged: it has no second tier to read.
 
+What it costs, and when. The cost is per cached read, not per request. A `ppr`
+document reads its shell, then its record, then each `"use cache"` result; with
+every copy rejected and the newer entry in KV, each read pays one KV get before
+it can serve. Measured on a document with a shell, a record and one `"use
+cache"` result: 150 ms of added wait at 50 ms per KV read, and 510 ms when each
+read runs to the 170 ms budget (`kvReadTimeoutMs`); `main` waits 0 there,
+because it renders at once. A partial navigation reads two shell keys in
+series, and a rejected memoized shell adds a Cache API lookup and a frame read
+first. This is what an L1 miss already costs on a cold location, an expired
+copy, or after a deploy, and what a `tagPurge` store already pays after every
+invalidation. Two cases pay more or always: an entry that nothing rewrites (the
+route now errors or answers 404, so nothing is stored) pays one KV read per
+cached read on every request until the old copy's max-age ends, and an entry
+with ttl + swr under 60 s has no KV twin, so its read always misses. Not
+measured on a deployed worker.
+
 Nothing to configure. With `debug` on, a `tag-invalidated` event for the
 location's own copy is now followed by the KV read's own event: `kv-fresh` or
 `kv-stale` when it served the rebuilt entry, a second `tag-invalidated` when
-KV held the old one, `kv-miss` or `kv-timeout` otherwise.
+KV held the old one, `kv-miss`, `kv-timeout` or `error` otherwise.
 
 ### Fixed: a superseded link click no longer follows its server redirect ([#1047](https://github.com/rangojs/rango/issues/1047))
 

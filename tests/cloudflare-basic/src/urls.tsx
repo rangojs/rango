@@ -50,6 +50,7 @@ import {
 import { setOverlayCookie } from "./middleware/cookie-overlay.js";
 import { apiPatterns } from "./api/urls.js";
 import { purgeModeStore, purgeLog, clearPurgeLog } from "./purge-store.js";
+import { locationStore, locationRenders } from "./location-store.js";
 import { slowMarkerStore } from "./slow-marker-store.js";
 import { RyowLoader } from "./loaders/ryow.js";
 import type { AppBindings } from "./env.js";
@@ -778,6 +779,52 @@ export const urlpatterns = urls(
         return { cleared: true };
       },
       { name: "testClearPurgeLog" },
+    ),
+
+    // Cross-location KV fall-through (location-kv-fall-through.test.ts): a
+    // cached response whose store is "the location the request names" (see
+    // location-store.ts), over the one KV every location reads. The handler
+    // counts its renders per run id so the e2e can tell a served entry from a
+    // render. Cache keys carry the query, so each run id is its own entry.
+    cache(
+      { ttl: 600, tags: ["cf-location-items"], store: locationStore },
+      () => [
+        path.json(
+          "/test/location-tagged",
+          (ctx) => {
+            const run = new URL(ctx.request.url).searchParams.get("run") ?? "";
+            const renders = (locationRenders.get(run) ?? 0) + 1;
+            locationRenders.set(run, renders);
+            return { run, renders };
+          },
+          { name: "testLocationTagged" },
+        ),
+      ],
+    ),
+    // The bodies of a run id's response entries in KV (the envelope's base64
+    // `b` field), so the e2e knows a write has landed before it reads.
+    path.json(
+      "/__test/location-kv",
+      async (ctx) => {
+        const run = new URL(ctx.request.url).searchParams.get("run") ?? "";
+        const listed = await ctx.env.KV.list();
+        const values: string[] = [];
+        for (const { name } of listed.keys) {
+          const value = await ctx.env.KV.get(name);
+          if (run && name.includes(`run=${run}`) && value)
+            values.push(atob(JSON.parse(value).b));
+        }
+        return { values };
+      },
+      { name: "testLocationKv" },
+    ),
+    path.json(
+      "/__test/location-renders",
+      (ctx) => {
+        const run = new URL(ctx.request.url).searchParams.get("run") ?? "";
+        return { renders: locationRenders.get(run) ?? 0 };
+      },
+      { name: "testLocationRenders" },
     ),
 
     // Cached response routes: test cache() with CFCacheStore across MIME types

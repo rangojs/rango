@@ -943,3 +943,150 @@ describe("CFCacheStore with KV: a warm's shell write, seen from another colo", (
     expect(await readShell(b)).toBe("short");
   });
 });
+
+const SECOND_TAG = "promo";
+
+describe.each(families)(
+  "CFCacheStore with KV: the fall-through under the default memo settings and a request context, $name",
+  (family) => {
+    const read = async (colo: Colo): Promise<string | null> =>
+      (await request(colo, family.read))?.content ?? null;
+
+    it("serves the warmed entry from KV with the isolate memos on", async () => {
+      // `memo: {}` is the store's defaults (shell memo 2 s, marker memo 1 s):
+      // the other cases turn both off.
+      const a = createColo({ memo: {} });
+      const b = createColo({ memo: {} });
+      await request(a, (store) => family.write(store, "v1"));
+      later();
+      expect(await read(b)).toBe("v1");
+      later();
+      await request(a, () => updateTag(TAG));
+      later();
+      await request(a, (store) => family.write(store, "v2"));
+      later();
+      kv.takeReads();
+
+      expect(await read(b)).toBe("v2");
+      expect(kv.takeReads().entries).toHaveLength(1);
+      expect(await read(b)).toBe("v2");
+      expect(kv.takeReads().entries).toEqual([]);
+    });
+  },
+);
+
+describe("CFCacheStore with KV: the shell fall-through under the default memo settings and a request context", () => {
+  it("serves the warmed shell from KV with the isolate memos on", async () => {
+    const a = createColo({ memo: {} });
+    const b = createColo({ memo: {} });
+    await request(a, (store) =>
+      store.putShell(SHELL_KEY, shellEntry("v1"), 300, 0, [TAG]),
+    );
+    later();
+    expect(await readShell(b)).toBe("v1");
+    later();
+    await request(a, () => updateTag(TAG));
+    later();
+    await request(a, (store) =>
+      store.putShell(SHELL_KEY, shellEntry("v2"), 300, 0, [TAG]),
+    );
+    later();
+    kv.takeReads();
+
+    expect(await readShell(b)).toBe("v2");
+    expect(await readShell(b)).toBe("v2");
+  });
+});
+
+describe("CFCacheStore with KV: a KV entry carrying a second tag invalidated after it was written", () => {
+  const twoTagFamilies: Array<{
+    name: string;
+    write(store: CFCacheStore, content: string): Promise<void>;
+    read(store: CFCacheStore): Promise<unknown>;
+  }> = [
+    {
+      name: "segment (get)",
+      write: (store, content) =>
+        store.set(
+          KEY,
+          { ...segmentEntry(content), tags: [TAG, SECOND_TAG] },
+          300,
+        ),
+      read: async (store) => servedSegment(await store.get(KEY)),
+    },
+    {
+      name: '"use cache" item (getItem)',
+      write: (store, content) =>
+        store.setItem(KEY, content, { ttl: 300, tags: [TAG, SECOND_TAG] }),
+      read: async (store) => (await store.getItem(KEY))?.value ?? null,
+    },
+  ];
+
+  it.each(twoTagFamilies)(
+    "is refused, $name: the first tag's marker predates the entry, the second does not",
+    async (family) => {
+      const a = createColo();
+      const b = createColo();
+      await request(a, (store) => family.write(store, "v1"));
+      later();
+      expect(await request(b, family.read)).toBe("v1");
+      later();
+      await request(a, () => updateTag(TAG));
+      later();
+      await request(a, (store) => family.write(store, "v2"));
+      later();
+      // Written after TAG's marker, before SECOND_TAG's.
+      await request(a, () => updateTag(SECOND_TAG));
+      later();
+      kv.takeReads();
+
+      expect(await request(b, family.read)).toBeNull();
+      expect(kv.takeReads().entries).toHaveLength(1);
+    },
+  );
+});
+
+describe("CFCacheStore with KV: what the fall-through costs and what it can serve", () => {
+  it("N concurrent readers of one rejected copy each read the entry's KV key: nothing coalesces them", async () => {
+    const a = createColo();
+    const b = createColo();
+    await request(a, (store) => store.set(KEY, segmentEntry("v1"), 300));
+    later();
+    expect(await readSegment(b)).toBe("v1");
+    later();
+    await request(a, () => updateTag(TAG));
+    later();
+    kv.takeReads();
+
+    const readers = 5;
+    const served = await Promise.all(
+      Array.from({ length: readers }, () => readSegment(b)),
+    );
+
+    expect(served).toEqual(Array(readers).fill(null));
+    // One KV get per miss, the count `main` had for a colo with no copy.
+    expect(kv.takeReads().entries).toHaveLength(readers);
+  });
+
+  it("a late write (stamped after the marker with content from before it) is served and promoted by the colo that held a rejected copy", async () => {
+    // Known hole, issue #1068: the data families stamp `taggedAt` at write
+    // time, so a render that started before the invalidation and stored
+    // after it passes the marker check. On main this colo re-rendered and its
+    // write replaced the late entry; now it serves and promotes it. Delete
+    // this case together with the hole.
+    const a = createColo();
+    const b = createColo();
+    await request(a, (store) => store.set(KEY, segmentEntry("v1"), 300));
+    later();
+    expect(await readSegment(b)).toBe("v1");
+    later();
+    await request(a, () => updateTag(TAG));
+    later();
+    // The late write: bypasses the cache layers' predatesInvalidation gate.
+    await request(a, (store) => store.set(KEY, segmentEntry("late"), 300));
+    later();
+
+    expect(await readSegment(b)).toBe("late");
+    expect(await readSegment(b)).toBe("late");
+  });
+});

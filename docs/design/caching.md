@@ -584,13 +584,24 @@ KV, and a KV hit is served and promoted into L1. An L1 copy that a tag marker
 rejects (see "Tags for Invalidation") counts as an L1 miss, not as the end of
 the read. You might expect its KV twin to be just as old, and usually it is:
 the two were written together, the KV read finds the twin, the same marker
-check refuses it, and the request renders, one KV get (bounded by
-`kvReadTimeoutMs`) later than it would have. But the tiers can diverge.
+check refuses it, and the request renders after the KV get (bounded by
+`kvReadTimeoutMs`) that it would not have paid before. That cost is per cached
+read, not per request: a `ppr` document reads its shell, then its record, then
+each `"use cache"` result, and each read whose copy is rejected pays one get. Measured with every copy rejected and the newer entry in
+KV: 150 ms of added wait at 50 ms per KV read, 510 ms when each read runs to
+the 170 ms budget, where `main` waits 0. A partial navigation reads two shell
+keys in series; a rejected memoized shell adds a Cache API lookup and a frame
+read first. It is what an L1 miss already costs on a cold colo, an expired
+copy or after a deploy, and what a `tagPurge` store pays after every
+invalidation. An entry nothing rewrites (the route now errors or 404s) pays one
+KV read per cached read on every request until the copy's max-age ends; an
+entry with ttl + swr under 60 s has no KV twin and always misses. Not measured
+on a deployed worker. But the tiers can diverge.
 Another colo may have re-rendered the entry after the invalidation, or a
 `router.prerender()` warm wrote it, and then this colo serves that entry from
 KV and promotes it instead of rendering it a second time. Before this, every
 colo that held a copy rendered once after each `updateTag()`, whatever KV
-held. Three things keep it safe and cheap:
+held. Three things keep it safe and bounded:
 
 - The KV entry goes through the reader and the check a plain miss uses
   (`kvGetSegment` and its siblings, `isGloballyInvalidated`), so a value from
@@ -1729,7 +1740,7 @@ The document cache takes the request's start, not its own: a middleware ahead of
 
 The cost: an untagged write checks nothing, and a tagged one reads its markers before the put (KV or the L1 marker cache on `CFCacheStore`, the `tm` entries on `VercelCacheStore`), once per tag for the gates of a request that ask while the read is in flight. The read runs in the write's `waitUntil` task, but two callers do wait on it: a `"use cache"` call that joined an in-flight execution waits for the leader's gate before it gets the value, and where the request context has no `waitUntil` (`runBackground` then runs the task inline) the leader itself awaits its write, gate included.
 
-The invariant: a skipped write only costs a later miss, never a stale read, and the execution still returns the value it computed. What stays open: a KV-less `CFCacheStore` has no marker to read, so another isolate's late write lands and ttl+swr bounds it (purge mode purges before it); KV itself is eventually consistent across colos, so a marker written in another colo that this colo's KV read does not see yet lets the write through; with `tagCacheTtl` the read can come from this colo's L1 marker cache, up to `tagCacheTtl` behind another colo's invalidation; and a check-then-write window remains on `CFCacheStore`/`VercelCacheStore` between the marker read and the put, which a shared read in flight widens by at most one marker round-trip (the shell family closes it by stamping the capture start as `taggedAt`; the data families stamp write time). An entry such a late write leaves in KV is read by every colo that misses L1, and a colo whose own copy the marker rejected is now one of them (the KV fall-through under "Implementations"); before, that colo rendered for itself and never read it. One consequence to know: an entry whose tag is invalidated more often than its execution takes never fills, since every write started before the latest invalidation. Nested tags (#980) make that likelier, because an outer entry now answers to every tag of the calls inside it.
+The invariant: a skipped write only costs a later miss, never a stale read, and the execution still returns the value it computed. What stays open: a KV-less `CFCacheStore` has no marker to read, so another isolate's late write lands and ttl+swr bounds it (purge mode purges before it); KV itself is eventually consistent across colos, so a marker written in another colo that this colo's KV read does not see yet lets the write through; with `tagCacheTtl` the read can come from this colo's L1 marker cache, up to `tagCacheTtl` behind another colo's invalidation; and a check-then-write window remains on `CFCacheStore`/`VercelCacheStore` between the marker read and the put, which a shared read in flight widens by at most one marker round-trip (the shell family closes it by stamping the capture start as `taggedAt`; the data families stamp write time). An entry such a late write leaves in KV is read by every colo that misses L1, and a colo whose own copy the marker rejected is now one of them (the KV fall-through under "Implementations"). On `main` that colo re-rendered, and its write replaced the late entry in KV; now it serves and promotes the late entry, so a late write can last in every colo until its ttl, and one that lands after a warm replaces the warm's KV entry. Root cause and follow-up: [#1068](https://github.com/rangojs/rango/issues/1068) (the data families stamp `taggedAt` at write time; `putShell` stamps the capture start, so shells are not exposed). One consequence to know: an entry whose tag is invalidated more often than its execution takes never fills, since every write started before the latest invalidation. Nested tags (#980) make that likelier, because an outer entry now answers to every tag of the calls inside it.
 
 A custom store gets the same behavior by recording its invalidation in request-scoped state its reads consult before the first await of its `invalidateTags()` (the contract is on `SegmentCacheStore.invalidateTags` in `src/cache/types.ts`). One that does not still works; the request that ran `revalidateTag()` can then read entries the invalidation covers until the durable write lands.
 

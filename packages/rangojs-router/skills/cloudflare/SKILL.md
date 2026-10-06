@@ -291,7 +291,7 @@ traffic"). On Workers:
   next. For a content change, invalidate and then warm, in this order:
 
   ```typescript
-  await updateTag(`product:${id}`); // no colo serves the old copy any more
+  await updateTag(`product:${id}`); // a colo the marker has reached refuses its old copy
   await router.prerender({ env, ctx })(`/products/${id}`); // writes the new one
   ```
 
