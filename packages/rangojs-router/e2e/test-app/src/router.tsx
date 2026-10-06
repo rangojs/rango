@@ -16,19 +16,13 @@ import { onErrorLog } from "./error-log.js";
 import { recordShellCaptureEvent } from "./shell-capture-events.js";
 import { swrLog } from "./swr-log.js";
 
+// App-level cache store with defaults
 // One process serves this app, in dev and in the production preview, so this
-// store is the only copy of its entries. It says so: router.prerender() warms
-// a route only into a store shared beyond the process that runs the call, and
-// the shipped MemorySegmentCacheStore declares "local" (refused in
-// production). Only the warm gate reads the declaration
-// (e2e/prerender-warm.test.ts).
-class SingleProcessCacheStore extends MemorySegmentCacheStore {
-  readonly scope = "global" as const;
-}
-
-// App-level cache store with defaults
-// App-level cache store with defaults
-export const cacheStore = new SingleProcessCacheStore({
+// store is the only copy of its entries and says so: router.prerender() warms
+// only into a store shared beyond the process that runs the call, and the
+// default MemorySegmentCacheStore declares "local" (refused in production).
+export const cacheStore = new MemorySegmentCacheStore({
+  scope: "global",
   defaults: { ttl: 60, swr: 120 },
 });
 

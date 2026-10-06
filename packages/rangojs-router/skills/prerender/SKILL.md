@@ -973,13 +973,13 @@ A warm fills the cache where the call runs. That helps other traffic only when
 the store is shared beyond that place, so the router asks the store
 (`SegmentCacheStore.scope`):
 
-| Store                       | `scope`      | Warm                                                                                           |
-| --------------------------- | ------------ | ---------------------------------------------------------------------------------------------- |
-| `CFCacheStore` with `kv`    | `"global"`   | yes                                                                                            |
-| `CFCacheStore` without `kv` | `"local"`    | refused: the Cache API is per colo                                                             |
-| `VercelCacheStore`          | `"regional"` | yes; fills the region the call runs in (all traffic only on a single-region project)           |
-| `MemorySegmentCacheStore`   | `"local"`    | refused in production; allowed under the dev server (one process serves every request)         |
-| a custom store              | its own      | only when it declares `scope: "global"` or `"regional"`; a store that declares none is refused |
+| Store                       | `scope`      | Warm                                                                                                                    |
+| --------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `CFCacheStore` with `kv`    | `"global"`   | yes                                                                                                                     |
+| `CFCacheStore` without `kv` | `"local"`    | refused: the Cache API is per colo                                                                                      |
+| `VercelCacheStore`          | `"regional"` | yes; fills the region the call runs in (all traffic only on a single-region project)                                    |
+| `MemorySegmentCacheStore`   | `"local"`    | refused in production; allowed under the dev server (one process serves every request); `{ scope: "global" }` admits it |
+| a custom store              | its own      | only when it declares `scope: "global"` or `"regional"`; a store that declares none is refused                          |
 
 `VercelCacheStore` is not checked for the number of regions: Vercel's Runtime
 Cache is per region, and a warm fills the one it runs in. New projects and
@@ -994,13 +994,18 @@ process only, so no other process or location sees the new entry.
 The dev exception exists so you can try warming locally on the Node preset. It
 follows the dev server, not `NODE_ENV`: a production build, `vite preview` and
 a test runner all refuse the memory store. A single-process deployment whose
-memory store really is the only copy declares it:
+memory store really is the only copy says so with the `scope` option:
 
 ```typescript
-class SingleProcessStore extends MemorySegmentCacheStore {
-  readonly scope = "global" as const;
-}
+const store = new MemorySegmentCacheStore({ scope: "global" });
 ```
+
+It is not the default because the store is per process and the router cannot
+tell one long-running server from several replicas or serverless instances. A
+default of `"global"` would report `warmed` while most visitors hit a cold
+instance, so you opt in only when exactly one process serves the app. Two
+instances with the same `name` share their maps but each declares its own
+`scope`: keep them identical.
 
 ### The origin
 
@@ -1143,8 +1148,8 @@ before an invalidation of one of its tags is refused.
 the next visitor's request through the production handler (`shellStatus:
 "HIT"`). Configure the store on the router (`createRouter({ cache: { store }
 })`), not through `serveShellRequest`'s `cacheStore` option, and give it a
-shared scope: the shipped `MemorySegmentCacheStore` is refused, so subclass it
-as above. See `/testing`.
+shared scope: the shipped `MemorySegmentCacheStore` is refused, so pass
+`{ scope: "global" }` as above. See `/testing`.
 
 ## Complete Example
 

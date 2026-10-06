@@ -36,6 +36,29 @@ describe("SegmentCacheStore.scope on the shipped stores", () => {
     expect(new MemorySegmentCacheStore()).toHaveProperty("scope", "local");
   });
 
+  it("MemorySegmentCacheStore({ scope }) declares what the author says", () => {
+    expect(new MemorySegmentCacheStore({ scope: "global" })).toHaveProperty(
+      "scope",
+      "global",
+    );
+    expect(new MemorySegmentCacheStore({ scope: "regional" })).toHaveProperty(
+      "scope",
+      "regional",
+    );
+    expect(new MemorySegmentCacheStore({})).toHaveProperty("scope", "local");
+  });
+
+  it("two instances of one name share maps but each declares its own scope", () => {
+    const a = new MemorySegmentCacheStore({ name: "scope-pair" });
+    const b = new MemorySegmentCacheStore({
+      name: "scope-pair",
+      scope: "global",
+    });
+
+    expect(a.scope).toBe("local");
+    expect(b.scope).toBe("global");
+  });
+
   it("CFCacheStore with KV is global: an L1 miss in any colo reads KV", () => {
     expect(new CFCacheStore({ ctx: ctx as any, kv: kv as any })).toHaveProperty(
       "scope",

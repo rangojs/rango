@@ -147,6 +147,26 @@ export interface MemorySegmentCacheStoreOptions<TEnv = unknown> {
    * ```
    */
   maxEntries?: number;
+
+  /**
+   * Where an entry this store writes can be read; what `router.prerender()`
+   * checks before warming a route. Defaults to `"local"`: the maps live in one
+   * process, and the router cannot tell one long-running server from several
+   * replicas or serverless instances, so a warm into it is refused in
+   * production. Set `"global"` only when exactly one process serves the app
+   * (a single Node server); a warm then reports `warmed`. Under the Vite dev
+   * server a `"local"` instance already counts as shared.
+   *
+   * Like `defaults` and `keyGenerator`, the scope is per instance: two
+   * instances with the same `name` share their maps but each declares its own
+   * scope. Keep them identical.
+   *
+   * @example
+   * ```typescript
+   * const store = new MemorySegmentCacheStore({ scope: "global" });
+   * ```
+   */
+  scope?: CacheStoreScope;
 }
 
 /** Default per-family entry cap for MemorySegmentCacheStore (FIFO eviction). */
@@ -190,12 +210,12 @@ export class MemorySegmentCacheStore<
   TEnv = unknown,
 > implements SegmentCacheStore<TEnv> {
   /**
-   * SegmentCacheStore.scope: these maps live in one process, so
-   * router.prerender() refuses to warm into them in production. Under the Vite
-   * dev server the gate counts this class as shared (store-scope.ts
-   * resolveWarmStoreScope).
+   * SegmentCacheStore.scope: "local" unless `options.scope` says otherwise, so
+   * router.prerender() refuses to warm into these maps in production. Under
+   * the Vite dev server the gate counts a "local" instance as shared
+   * (store-scope.ts resolveWarmStoreScope).
    */
-  readonly scope: CacheStoreScope = "local";
+  readonly scope: CacheStoreScope;
   readonly supportsPassiveShellReads: true = true;
   private cache: Map<string, CachedEntryData>;
   private responseCache: Map<string, CachedResponseEntry>;
@@ -261,6 +281,7 @@ export class MemorySegmentCacheStore<
     this.defaults = options?.defaults;
     this.keyGenerator = options?.keyGenerator;
     this.maxEntries = options?.maxEntries ?? DEFAULT_MAX_ENTRIES;
+    this.scope = options?.scope ?? "local";
   }
 
   /**
