@@ -2926,3 +2926,233 @@ export async function expectOnlyIfStaleWarmLeavesFreshShellAlone(
     },
   });
 }
+
+// ---------------------------------------------------------------------------
+// Removing a refreshed page from on-demand prerender (issue #1060): a
+// "removed" marker in the prerender store, written by `prerender.remove()` or
+// by a refresh whose handler calls `notFound()`. Shared by
+// packages/rangojs-router/e2e/on-demand-prerender.test.ts (memory prerender
+// store) and tests/cloudflare-basic/e2e/prerender-ondemand.test.ts (KV).
+// ---------------------------------------------------------------------------
+
+/**
+ * The removal fixture both apps implement on their on-demand routes.
+ * - `pageUrl(slug)`: a plain `Prerender(..., { onDemand })` page. The element
+ *   `slugTestId` renders the slug, and `actionTestId` is a button in the page
+ *   that submits a server action which changes nothing.
+ * - `triggerUrl(slug)`: GET answers a runner call's result as JSON. No query
+ *   is `prerender(page)`; `?remove=1` is `prerender.remove(page)`. `?gone=1`
+ *   deletes the slug from the fixture's data source, so the page's handler
+ *   calls `notFound()` on its next refresh, and `?gone=0` restores it.
+ * - `bakedSlug`: a slug `getParams()` lists, which a production build bakes.
+ *   No other test may request it: these tests remove its page.
+ * - `passthrough`: the same page, trigger and baked slug for a
+ *   `Passthrough(def, live)` route. `sourceTestId` reads `prerender` for a
+ *   stored or baked page and `live` for the live handler's render.
+ */
+export interface PrerenderRemoveFixture {
+  pageUrl: (slug: string) => string;
+  triggerUrl: (slug: string) => string;
+  slugTestId: string;
+  actionTestId: string;
+  bakedSlug: string;
+  passthrough: {
+    pageUrl: (slug: string) => string;
+    triggerUrl: (slug: string) => string;
+    sourceTestId: string;
+    bakedSlug: string;
+  };
+}
+
+/** One call of a removal fixture's trigger: its JSON answer. */
+async function removeTrigger(
+  page: Page,
+  url: string,
+  op = "",
+): Promise<unknown> {
+  const res = await page.request.get(url + op);
+  expect(res.ok(), await res.text()).toBe(true);
+  return res.json();
+}
+
+/** `prerender(page)` through the trigger, which must render and store it. */
+async function refreshPage(page: Page, triggerUrl: string): Promise<void> {
+  const result = await removeTrigger(page, triggerUrl);
+  expect(result, JSON.stringify(result)).toMatchObject({
+    ok: true,
+    path: "on-demand",
+    status: "rendered",
+  });
+}
+
+async function expectPageServed(
+  page: Page,
+  fixture: PrerenderRemoveFixture,
+  slug: string,
+): Promise<void> {
+  const response = await page.goto(fixture.pageUrl(slug));
+  expect(response?.status()).toBe(200);
+  await waitForShellHydration(page);
+  await expect(byTestId(page, fixture.slugTestId)).toHaveText(slug);
+}
+
+/**
+ * The page is a 404, as a document request and in the browser, and no render
+ * of it is in the response: neither the stored one nor the build-time one.
+ */
+async function expectPageRemoved(
+  page: Page,
+  fixture: PrerenderRemoveFixture,
+  slug: string,
+): Promise<void> {
+  const res = await page.request.get(fixture.pageUrl(slug), {
+    headers: PUSH_HTML_HEADERS,
+  });
+  expect(res.status()).toBe(404);
+  expect(await res.text()).not.toContain(`data-testid="${fixture.slugTestId}"`);
+
+  const response = await page.goto(fixture.pageUrl(slug));
+  expect(response?.status()).toBe(404);
+  await waitForShellHydration(page);
+  await expect(byTestId(page, fixture.slugTestId)).toHaveCount(0);
+}
+
+/**
+ * `prerender.remove(page)`: the refreshed page is a 404 from the next request
+ * on, although its data still exists (nothing is rendered to remove it), and
+ * a refresh brings it back.
+ */
+async function removeThroughRunner(
+  page: Page,
+  fixture: PrerenderRemoveFixture,
+  slug: string,
+): Promise<void> {
+  const trigger = fixture.triggerUrl(slug);
+  await refreshPage(page, trigger);
+  await expectPageServed(page, fixture, slug);
+
+  const removed = await removeTrigger(page, trigger, "?remove=1");
+  expect(removed, JSON.stringify(removed)).toMatchObject({
+    ok: true,
+    path: "on-demand",
+    status: "removed",
+  });
+  await expectPageRemoved(page, fixture, slug);
+
+  await refreshPage(page, trigger);
+  await expectPageServed(page, fixture, slug);
+}
+
+/**
+ * A refresh whose handler calls `notFound()` removes the page. It stays a 404
+ * when the data is back and nothing refreshed it (the marker answers, not a
+ * render), and a refresh brings it back.
+ */
+async function removeThroughNotFound(
+  page: Page,
+  fixture: PrerenderRemoveFixture,
+  slug: string,
+): Promise<void> {
+  const trigger = fixture.triggerUrl(slug);
+  await refreshPage(page, trigger);
+  await expectPageServed(page, fixture, slug);
+
+  try {
+    await removeTrigger(page, trigger, "?gone=1");
+    const removed = await removeTrigger(page, trigger);
+    expect(removed, JSON.stringify(removed)).toMatchObject({
+      ok: true,
+      path: "on-demand",
+      status: "removed",
+    });
+    await expectPageRemoved(page, fixture, slug);
+  } finally {
+    await removeTrigger(page, trigger, "?gone=0");
+  }
+  await expectPageRemoved(page, fixture, slug);
+
+  await refreshPage(page, trigger);
+  await expectPageServed(page, fixture, slug);
+}
+
+/**
+ * A server action submitted from a page that was removed while it was open:
+ * the action's re-render of the route is the 404, not the page the marker
+ * replaced. Ends with the page refreshed again.
+ */
+async function actionOnRemovedPage(
+  page: Page,
+  fixture: PrerenderRemoveFixture,
+  slug: string,
+): Promise<void> {
+  const trigger = fixture.triggerUrl(slug);
+  await refreshPage(page, trigger);
+  await expectPageServed(page, fixture, slug);
+
+  await removeTrigger(page, trigger, "?remove=1");
+  await byTestId(page, fixture.actionTestId).click();
+  await expect(byTestId(page, fixture.slugTestId)).toHaveCount(0);
+
+  await refreshPage(page, trigger);
+  await expectPageServed(page, fixture, slug);
+}
+
+/**
+ * A param the build baked: once removed, by `prerender.remove()` and then by
+ * a refresh that hits `notFound()`, the page answers 404, to a document
+ * request and to a server action's re-render. The build-time entry under the
+ * prerender store does not come back.
+ */
+export async function expectRemovedBakedPageAnswers404(
+  page: Page,
+  fixture: PrerenderRemoveFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  await removeThroughRunner(page, fixture, fixture.bakedSlug);
+  await removeThroughNotFound(page, fixture, fixture.bakedSlug);
+  await actionOnRemovedPage(page, fixture, fixture.bakedSlug);
+}
+
+/** The same for a param only a refresh ever produced. */
+export async function expectRemovedUnbakedPageAnswers404(
+  page: Page,
+  fixture: PrerenderRemoveFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  await removeThroughRunner(page, fixture, pushProbe("removed"));
+  await removeThroughNotFound(page, fixture, pushProbe("gone"));
+  await actionOnRemovedPage(page, fixture, pushProbe("action"));
+}
+
+/**
+ * A `Passthrough` route's removed page is answered by its live handler, for
+ * a param the build baked: not by the build-time entry, which a missing
+ * entry would fall back to. A refresh stores the page again.
+ */
+export async function expectRemovedPassthroughPageRunsLiveHandler(
+  page: Page,
+  fixture: PrerenderRemoveFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const { pageUrl, triggerUrl, sourceTestId } = fixture.passthrough;
+  const slug = fixture.passthrough.bakedSlug;
+  const source = byTestId(page, sourceTestId);
+
+  await refreshPage(page, triggerUrl(slug));
+  await page.goto(pageUrl(slug));
+  await expect(source).toHaveText("prerender");
+
+  const removed = await removeTrigger(page, triggerUrl(slug), "?remove=1");
+  expect(removed, JSON.stringify(removed)).toMatchObject({
+    ok: true,
+    path: "on-demand",
+    status: "removed",
+  });
+  const response = await page.goto(pageUrl(slug));
+  expect(response?.status()).toBe(200);
+  await expect(source).toHaveText("live");
+
+  await refreshPage(page, triggerUrl(slug));
+  await page.goto(pageUrl(slug));
+  await expect(source).toHaveText("prerender");
+}

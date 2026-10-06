@@ -26,6 +26,17 @@ export async function pinPrerenderTargetTypes(): Promise<void> {
   await prerender({ route: "guides.detail", params: { id: "a" } });
   // @ts-expect-error an unbranded { route, params } is not an onRevalidate target
   await prerender({ route: "x" as string, params: {} });
+
+  // prerender.remove() and its batch form take the same targets.
+  await prerender.remove({ route: "guides.detail", params: { slug: "a" } });
+  await prerender.remove(target, { throwOnError: true });
+  await prerender.remove.many(["/guides/a", target], { concurrency: 2 });
+  // @ts-expect-error unknown route name
+  await prerender.remove({ route: "guides.nope", params: { slug: "a" } });
+  // @ts-expect-error onlyIfStale is a refresh option: a removal renders nothing
+  await prerender.remove("/guides/a", { onlyIfStale: true });
+  // @ts-expect-error nor is it one of the batch form's
+  await prerender.remove.many(["/guides/a"], { onlyIfStale: true });
 }
 
 // The documented one-liner: onRevalidate's env and ctx bind the runner.
