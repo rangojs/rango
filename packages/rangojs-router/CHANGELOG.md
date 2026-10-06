@@ -1,6 +1,97 @@
 # Changelog
 
-## Unreleased
+## 0.22.0 (2026-10-06)
+
+### Added: on-demand prerender: refresh a prerendered page without a deploy ([#640](https://github.com/rangojs/rango/pull/640))
+
+Prerendering was build-time only: a CMS edit or a price change could not
+update one prerendered page without rebuilding and redeploying the app. A
+`Prerender` route can now opt in to being re-rendered at runtime, from a
+webhook, a queue, a cron or a server action, and every visitor gets the new
+page.
+
+Opt a route in, and give the router a store to write to:
+
+```tsx
+export const ProductPage = Prerender(
+  async () => [{ id: "featured" }],
+  async (ctx) => <Product data={await ctx.env.PRODUCTS.get(ctx.params.id)} />,
+  { onDemand: { ttl: 3600, tags: ({ params }) => [`product:${params.id}`] } },
+);
+```
+
+```ts
+import { createKVPrerenderStore } from "@rangojs/router/prerender/cloudflare";
+
+export const router = createRouter<Env>({
+  prerender: (env) => ({
+    store: createKVPrerenderStore(env.PRERENDER_KV),
+    ttl: 3600,
+    // optional: its presence turns on stale-while-revalidate
+    onRevalidate: (target, liveEnv) => liveEnv.PRERENDER_QUEUE.send({ target }),
+  }),
+});
+```
+
+Refresh from anywhere:
+
+```ts
+const prerender = router.prerender({ env, ctx }); // binds once, no work yet
+await prerender("/products/42");
+await prerender({ route: "products.detail", params: { id: "42" } });
+await prerender.many(targets, { concurrency: 4, onlyIfStale: true });
+await prerender.markStale(["product:42"]);
+```
+
+What to know before you use it:
+
+- **It needs a writable store.** The build-time output is part of the bundle
+  and cannot be written at runtime; a refresh goes to `prerender.store`, which
+  a request reads before the build-time entry. `createKVPrerenderStore`
+  (`@rangojs/router/prerender/cloudflare`) is durable and shared;
+  `createMemoryPrerenderStore` (`@rangojs/router/prerender`) is one process
+  (a single Node server, tests). A custom store is a plain `get` / `set` (the
+  router builds and checks the stored entry). Without a store a refresh
+  returns `{ ok: false, status: "no-store" }` and the build-time entry keeps
+  serving; the dev server uses an in-memory store when none is configured.
+- **A request never renders the page.** It serves the refreshed entry, else
+  the build-time entry. A plain `Prerender(..., { onDemand })` route answers
+  **404** in production for a param that was neither baked at build
+  (`getParams()`) nor refreshed yet; `Passthrough` runs the live handler
+  instead. The dev server renders any param, so that 404 does not show in dev.
+- **`ttl` is soft.** Entries never expire: a stale entry still serves. Staleness
+  only decides whether `onRevalidate` is scheduled, and whether
+  `{ onlyIfStale: true }` re-renders.
+- **`onRevalidate(target, env, ctx)`** runs once per stale key per isolate
+  while one is in flight. Point it at a queue, or on a single process call the
+  runner directly: `(target, env, ctx) => router.prerender({ env, ctx })(target)`.
+- **A refresh has no request.** No cookies, no headers: a page that reads them
+  is not stored (`skipped-personalized`), as at build time. `ctx.env` is the
+  live env.
+- **Prerender tags are their own namespace.** `markStale()` marks entries
+  stale and keeps serving them; it never reaches the runtime cache, and
+  `updateTag()` / `revalidateTag()` never reach the prerender store.
+- **Server actions** on an on-demand page re-render from the refreshed entry,
+  so an action that calls `router.prerender()` for its page shows the new one.
+- **`.many()` renders one target at a time by default** (`concurrency: 1`),
+  returns one result per target in input order, and stops at the first failure
+  only with `throwOnError`. A large list belongs in a queue, one message per
+  batch: one invocation runs under the platform's time and CPU limits.
+- **Not combinable with `ppr`:** a route with both `onDemand` and the `ppr`
+  path option throws when it is defined. Intercept variants are not refreshed.
+- **Deploys keep refreshed pages** whose router code did not change: entries
+  are keyed by the router's data version (per-app cache versions, 0.21.0).
+
+Testing: `serveShellRequest` (`@rangojs/router/testing`) serves a refreshed
+entry through the production handler, and `createMemoryPrerenderStore` is
+re-exported from `@rangojs/router/testing`. See the `prerender` skill,
+"On-demand refresh (ISR)". Follow-ups are tracked in
+[#1060](https://github.com/rangojs/rango/issues/1060).
+
+### Changed: `cache({ tags })` drops duplicate tags
+
+A tag listed twice in `cache({ tags })` is stored once. Invalidation is
+unchanged: `updateTag()` of that tag drops the entry as before.
 
 ### Added: `router.prerender()` warms any route before traffic ([#1062](https://github.com/rangojs/rango/issues/1062))
 
