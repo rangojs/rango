@@ -31,6 +31,13 @@ export const cacheStore = new SingleProcessCacheStore({
   defaults: { ttl: 60, swr: 120 },
 });
 
+// The shipped store, scope "local": what /warm/__trigger?localStore=1 makes
+// the warm gate read (the env it passes carries warmLocalStore). Requests
+// themselves never carry the flag, so they keep using cacheStore.
+const localScopeStore = new MemorySegmentCacheStore({
+  defaults: { ttl: 60, swr: 120 },
+});
+
 // Writable prerender overlay for on-demand (ISR-style) refresh. A single
 // in-memory instance persists across requests within this node process, so the
 // router.prerender() trigger and the serve-path overlay lookup share it in BOTH
@@ -40,7 +47,10 @@ export const prerenderStore = createMemoryPrerenderStore();
 /**
  * App-level bindings (platform resources like DB, KV, etc.)
  */
-export interface AppBindings {}
+export interface AppBindings {
+  /** Set only by the warm trigger's localStore variant (see localScopeStore). */
+  warmLocalStore?: boolean;
+}
 
 /**
  * App-level variables (middleware-injected context)
@@ -202,10 +212,10 @@ export const router = createRouter<AppEnv>({
   // (exercised by search-params-cache-key.test.ts via /spk/cached). Byte-stable
   // for every URL that carries none of these params, so other suites see the
   // exact same keys as before.
-  cache: {
-    store: cacheStore,
+  cache: (env) => ({
+    store: env.warmLocalStore ? localScopeStore : cacheStore,
     searchParams: { exclude: ["utm_*", "x_e2e_excluded"] },
-  },
+  }),
   // PPR capture outcomes, read back by /shell-cache/__capture-events so a
   // suite waits for the capture's outcome instead of a timing gap. A function
   // sink logs nothing.

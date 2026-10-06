@@ -2675,11 +2675,12 @@ async function triggerWarm(
   page: Page,
   fixture: PrerenderWarmFixture,
   targets: string[],
-  options: { onlyIfStale?: boolean } = {},
+  options: { onlyIfStale?: boolean; localStore?: boolean } = {},
 ): Promise<unknown> {
   const params = new URLSearchParams();
   for (const target of targets) params.append("target", target);
   if (options.onlyIfStale) params.set("onlyIfStale", "1");
+  if (options.localStore) params.set("localStore", "1");
   const res = await page.request.get(`${fixture.triggerUrl}?${params}`);
   expect(res.ok(), await res.text()).toBe(true);
   return res.json();
@@ -2691,7 +2692,7 @@ async function warmOne(
   fixture: PrerenderWarmFixture,
   url: string,
   probe: string,
-  options?: { onlyIfStale?: boolean },
+  options?: { onlyIfStale?: boolean; localStore?: boolean },
 ): Promise<WarmTriggerResult> {
   return (await triggerWarm(
     page,
@@ -2925,4 +2926,64 @@ export async function expectOnlyIfStaleWarmLeavesFreshShellAlone(
       writes: { record: 0, item: 0, response: 0, shell: 0 },
     },
   });
+}
+
+/**
+ * A warm whose app store declares scope "local" is refused: the result says
+ * `skipped-store-not-shared` and carries no `caches` report. Nothing renders
+ * and nothing is stored: after the warm the content moves to generation 2,
+ * and the visitor's first request renders it as run 1 of the handler (a warm
+ * that ran would make it run 2, one that stored would replay generation 1).
+ * The trigger's `localStore=1` makes the gate read a "local" store.
+ */
+export async function expectWarmOfLocalStoreIsRefused(
+  page: Page,
+  fixture: PrerenderWarmFixture,
+): Promise<void> {
+  const probe = pushProbe("local");
+  const url = `${fixture.cachedUrl}?probe=${probe}`;
+
+  const result = await warmOne(page, fixture, fixture.cachedUrl, probe, {
+    localStore: true,
+  });
+  expect(result, JSON.stringify(result)).toMatchObject({
+    ok: false,
+    path: "warm",
+    status: "skipped-store-not-shared",
+    target: url,
+  });
+  expect(result.caches, JSON.stringify(result)).toBeUndefined();
+
+  const bumped = await page.request.get(`${fixture.bumpUrl}?probe=${probe}`);
+  expect(bumped.ok()).toBe(true);
+  expect((await warmDocument(page, url)).stamp).toBe(`cached-${probe}@g2#r1`);
+}
+
+/**
+ * The same warm under the Vite dev server, against a shipped
+ * MemorySegmentCacheStore (scope "local"): the dev rule counts it as shared,
+ * so the warm runs. The handler ran once for it (the visitor's request after
+ * the bump is run 2, rendering generation 2 because the warm wrote into the
+ * store the trigger's env selected, not the one visitors read).
+ */
+export async function expectDevWarmOfLocalMemoryStoreRuns(
+  page: Page,
+  fixture: PrerenderWarmFixture,
+): Promise<void> {
+  const probe = pushProbe("local-dev");
+  const url = `${fixture.cachedUrl}?probe=${probe}`;
+
+  const result = await warmOne(page, fixture, fixture.cachedUrl, probe, {
+    localStore: true,
+  });
+  expect(result, JSON.stringify(result)).toMatchObject({
+    ok: true,
+    path: "warm",
+    status: "warmed",
+    target: url,
+  });
+
+  const bumped = await page.request.get(`${fixture.bumpUrl}?probe=${probe}`);
+  expect(bumped.ok()).toBe(true);
+  expect((await warmDocument(page, url)).stamp).toBe(`cached-${probe}@g2#r2`);
 }

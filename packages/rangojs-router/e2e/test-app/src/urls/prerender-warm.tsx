@@ -64,7 +64,13 @@ function flattenResult(result: PrerenderResult): unknown {
 // import cycle with router.tsx.
 const WarmTrigger: Handler = async (ctx) => {
   const { router } = await import("../router.js");
-  const prerender = router.prerender({ env: ctx.env as AppEnv });
+  // localStore=1: the warm gate reads the app store through this env, which
+  // selects the "local"-scope store (router.tsx); requests keep the shared one.
+  const env: AppEnv =
+    ctx.searchParams.get("localStore") === "1"
+      ? { ...(ctx.env as AppEnv), warmLocalStore: true }
+      : (ctx.env as AppEnv);
+  const prerender = router.prerender({ env });
   const targets = ctx.searchParams.getAll("target");
   const options =
     ctx.searchParams.get("onlyIfStale") === "1"
