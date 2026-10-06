@@ -145,8 +145,13 @@ export type PrerenderResult =
   | {
       ok: true;
       path: "on-demand";
-      /** `already-fresh` only occurs with `onlyIfStale: true`. */
-      status: "rendered" | "already-fresh";
+      /**
+       * `already-fresh` only occurs with `onlyIfStale: true`. `removed`: a
+       * "removed" marker is stored in place of the page (`prerender.remove()`,
+       * a refresh whose handler called `notFound()`, or `onlyIfStale` finding
+       * one). `tags` is then empty.
+       */
+      status: "rendered" | "already-fresh" | "removed";
       target: string;
       routeName: string;
       /** Opaque, for debugging/logs only — not a stable format. */
@@ -186,6 +191,9 @@ export type PrerenderResult =
         // for this param set — no shared payload to persist; the live handler
         // keeps serving it.
         | "skipped-passthrough"
+        // prerender.remove() on a route that is not on-demand: it has no page
+        // in the prerender store. (A refresh of such a route is a warm.)
+        | "skipped-not-on-demand"
         // The app store's entries are not readable beyond the place the call
         // runs (SegmentCacheStore.scope), so a warm would serve no one else.
         | "skipped-store-not-shared"
@@ -268,8 +276,8 @@ export interface ResolvedPrerender<TEnv = any> {
 
 /**
  * The runner `router.prerender({ env, ctx })` returns: callable per target,
- * plus `.many` / `.markStale`. Typing rides the phantom `TRoutes` accumulator,
- * like `reverse`.
+ * plus `.many` / `.remove` / `.markStale`. Typing rides the phantom `TRoutes`
+ * accumulator, like `reverse`.
  */
 export interface PrerenderRunner<TRoutes = {}> {
   (
@@ -280,6 +288,23 @@ export interface PrerenderRunner<TRoutes = {}> {
     targets: ReadonlyArray<PrerenderTarget<TRoutes>>,
     options?: PrerenderManyOptions,
   ): Promise<PrerenderResult[]>;
+  /**
+   * Remove an on-demand route's page without rendering: a "removed" marker is
+   * stored in place of it. Requests then get a 404 (a `Passthrough` route: its
+   * live handler), never the build-time entry, until `prerender(target)`
+   * renders the page again. `{ ok: true, status: "removed" }`; a route that
+   * is not on-demand is `skipped-not-on-demand`. `.many` is the batch form.
+   */
+  remove: {
+    (
+      target: PrerenderTarget<TRoutes>,
+      options?: Pick<PrerenderRunOptions, "throwOnError">,
+    ): Promise<PrerenderResult>;
+    many(
+      targets: ReadonlyArray<PrerenderTarget<TRoutes>>,
+      options?: Omit<PrerenderManyOptions, "onlyIfStale">,
+    ): Promise<PrerenderResult[]>;
+  };
   /**
    * Mark every stored entry carrying one of `tags` stale. Marking only: the
    * entries keep serving, and a stale hit schedules `onRevalidate` when one is

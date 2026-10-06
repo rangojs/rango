@@ -16,6 +16,7 @@ import type { PrerenderConfig } from "../on-demand.js";
 import { readWarmMark, type PrerenderWarmRecord } from "../warm-request.js";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
 import type { SegmentCacheStore } from "../../cache/types.js";
+import { DataNotFoundError } from "../../errors.js";
 
 // A minimal producer output for a route named "products.detail" with { id }.
 function output(overrides: Partial<ProducerOutput> = {}): ProducerOutput {
@@ -103,7 +104,7 @@ describe("createPrerenderTrigger", () => {
       routeName: "products.detail",
       paramHash: hashParams({ id: "42" }),
     });
-    expect(stored?.entry.segments.length).toBe(1);
+    expect(stored?.entry?.segments.length).toBe(1);
     expect(result.key).toBe(
       serializePrerenderKey({
         routerId: "r1",
@@ -652,6 +653,418 @@ describe("createPrerenderTrigger", () => {
       } finally {
         warn.mockRestore();
       }
+    });
+  });
+
+  /**
+   * Removing a refreshed page (#1060): a "removed" marker is stored in place
+   * of the page, by a refresh whose producer calls notFound() or by
+   * `prerender.remove()`, which renders nothing.
+   */
+  describe("removing a page", () => {
+    const productKey = (id = "42") => ({
+      routerId: "r1",
+      version: "b1",
+      routeName: "products.detail",
+      paramHash: hashParams({ id }),
+    });
+    const removed = {
+      ok: true,
+      path: "on-demand",
+      status: "removed",
+      target: "/products/42",
+      routeName: "products.detail",
+      key: serializePrerenderKey(productKey()),
+      tags: [],
+    };
+    const tombstone = {
+      v: 1,
+      removed: true,
+      meta: { tags: [], version: "b1", params: { id: "42" } },
+    };
+
+    describe("a refresh whose producer calls notFound()", () => {
+      it("stores the marker over the previous entry and reports removed", async () => {
+        const runProducer = vi.fn<PrerenderTriggerDeps["runProducer"]>(
+          async () => output(),
+        );
+        const { trigger, store } = harness({ runProducer });
+        await trigger("/products/42");
+        expect(store.peek(productKey())).toHaveProperty("entry");
+
+        runProducer.mockRejectedValueOnce(new DataNotFoundError("gone"));
+        const result = await trigger("/products/42");
+
+        expect(result).toEqual(removed);
+        const stored = store.peek(productKey());
+        expect(stored).toMatchObject(tombstone);
+        expect(stored).not.toHaveProperty("entry");
+        expect(stored?.meta).not.toHaveProperty("staleAt");
+        expect(store.size).toBe(1);
+      });
+
+      it("recognizes a notFound() from another realm by name", async () => {
+        const foreign = new Error("gone");
+        foreign.name = "DataNotFoundError";
+        const { trigger, store } = harness({
+          runProducer: async () => {
+            throw foreign;
+          },
+        });
+
+        expect(await trigger("/products/42")).toMatchObject({
+          ok: true,
+          status: "removed",
+        });
+        expect(store.peek(productKey())).toMatchObject(tombstone);
+      });
+
+      it("any other throw stays render-failed and keeps the previous entry", async () => {
+        const runProducer = vi.fn<PrerenderTriggerDeps["runProducer"]>(
+          async () => output(),
+        );
+        const { trigger, store } = harness({ runProducer });
+        await trigger("/products/42");
+        const page = store.peek(productKey());
+
+        runProducer.mockRejectedValueOnce(new Error("upstream 500"));
+        expect(await trigger("/products/42")).toMatchObject({
+          ok: false,
+          status: "render-failed",
+        });
+        runProducer.mockRejectedValueOnce(
+          new PrerenderPersonalizationError("cookies()"),
+        );
+        expect(await trigger("/products/42")).toMatchObject({
+          ok: false,
+          status: "skipped-personalized",
+        });
+        expect(store.peek(productKey())).toBe(page);
+      });
+
+      it("ctx.passthrough() is not notFound(): a page stored earlier stays until it is removed", async () => {
+        // A Passthrough route whose build handler declines a missing item
+        // with ctx.passthrough(). Documented in the prerender skill: such a
+        // route removes a page with notFound() or prerender.remove().
+        const runProducer = vi.fn<PrerenderTriggerDeps["runProducer"]>(
+          async () => output(),
+        );
+        const { trigger, store } = harness({ runProducer });
+        await trigger("/products/42");
+        const page = store.peek(productKey());
+
+        runProducer.mockResolvedValueOnce(output({ passthrough: true }));
+        expect(await trigger("/products/42")).toMatchObject({
+          ok: false,
+          status: "skipped-passthrough",
+        });
+        expect(store.peek(productKey())).toBe(page);
+
+        expect(await trigger.remove("/products/42")).toMatchObject({
+          status: "removed",
+        });
+        expect(store.peek(productKey())).toMatchObject(tombstone);
+      });
+
+      it("a failed marker write is store-failed and keeps the previous entry", async () => {
+        const store = createMemoryPrerenderStore();
+        const { trigger } = harness({
+          config: { store },
+          runProducer: async () => {
+            throw new DataNotFoundError();
+          },
+        });
+        store.set = async () => {
+          throw new Error("kv down");
+        };
+
+        const result = await trigger("/products/42");
+
+        expect(result).toMatchObject({
+          ok: false,
+          path: "on-demand",
+          status: "store-failed",
+        });
+        expect((result as { error: Error }).error.message).toBe("kv down");
+      });
+    });
+
+    describe("prerender.remove()", () => {
+      it("stores the marker without calling the producer", async () => {
+        const runProducer = vi.fn<PrerenderTriggerDeps["runProducer"]>(
+          async () => output(),
+        );
+        const { trigger, store, ensureManifest } = harness({ runProducer });
+        await trigger("/products/42");
+        runProducer.mockClear();
+
+        const result = await trigger.remove("/products/42");
+
+        expect(result).toEqual(removed);
+        expect(runProducer).not.toHaveBeenCalled();
+        expect(ensureManifest).toHaveBeenCalledTimes(2);
+        expect(store.peek(productKey())).toMatchObject(tombstone);
+        expect(store.peek(productKey())).not.toHaveProperty("entry");
+      });
+
+      it("removes a page that was never refreshed: a param baked at build has no entry here", async () => {
+        const { trigger, store } = harness();
+
+        expect(await trigger.remove("/products/42")).toEqual(removed);
+        expect(store.peek(productKey())).toMatchObject(tombstone);
+      });
+
+      it("accepts a { route, params } target and a URL", async () => {
+        const { trigger, store } = harness();
+
+        expect(
+          await trigger.remove({
+            route: "products.detail",
+            params: { id: "42" },
+          } as any),
+        ).toEqual(removed);
+        expect(
+          await trigger.remove(new URL("https://shop.example/products/7")),
+        ).toMatchObject({ ok: true, status: "removed", target: "/products/7" });
+        expect(store.size).toBe(2);
+      });
+
+      it("a later refresh overwrites the marker with the page", async () => {
+        const { trigger, store } = harness({
+          runProducer: async () => output({ onDemandConfig: { ttl: 60 } }),
+        });
+        await trigger.remove("/products/42");
+
+        expect(await trigger("/products/42")).toMatchObject({
+          ok: true,
+          status: "rendered",
+          ttl: 60,
+        });
+        const stored = store.peek(productKey());
+        expect(stored).toHaveProperty("entry");
+        expect(stored).not.toHaveProperty("removed");
+        expect(store.size).toBe(1);
+      });
+
+      it("refuses a route that is not on-demand, and warms nothing", async () => {
+        const fetch = vi.fn<PrerenderTriggerDeps["fetch"]>(
+          async () => new Response("ok"),
+        );
+        const { trigger, store } = harness({
+          match: () => ({
+            routeName: "plain",
+            params: {},
+            isOnDemand: false,
+            isPassthrough: false,
+          }),
+          resolveCacheConfig: () => ({ store: new MemorySegmentCacheStore() }),
+          isViteDevServer: () => true,
+          fetch,
+        });
+
+        expect(await trigger.remove("https://shop.example/plain")).toEqual({
+          ok: false,
+          path: "on-demand",
+          status: "skipped-not-on-demand",
+          target: "/plain",
+          routeName: "plain",
+        });
+        expect(fetch).not.toHaveBeenCalled();
+        expect(store.size).toBe(0);
+      });
+
+      it("removes a Passthrough route's page too: its live handler answers next", async () => {
+        const { trigger, store } = harness({
+          match: (pathname) => ({
+            routeName: "products.detail",
+            params: { id: pathname.split("/")[2] },
+            isOnDemand: true,
+            isPassthrough: true,
+          }),
+        });
+
+        expect(await trigger.remove("/products/42")).toEqual(removed);
+        expect(store.peek(productKey())).toMatchObject(tombstone);
+      });
+
+      it("no-match, no-store and an unsupported target are refused as a refresh refuses them", async () => {
+        const { trigger } = harness();
+        expect(await trigger.remove("/nope")).toEqual({
+          ok: false,
+          status: "no-match",
+          target: "/nope",
+        });
+        expect(await trigger.remove({ route: "unknown" } as any)).toMatchObject(
+          { ok: false, status: "no-match" },
+        );
+        // An on-demand key is route + params: a search would remove the page
+        // at the base key.
+        for (const target of ["/products/42?preview=1", "/products/42#top"]) {
+          expect(await trigger.remove(target)).toEqual({
+            ok: false,
+            path: "on-demand",
+            status: "skipped-unsupported-target",
+            target: "/products/42",
+            routeName: "products.detail",
+          });
+        }
+        expect(
+          await trigger.remove("mailto:someone@example.com"),
+        ).toMatchObject({ ok: false, status: "skipped-unsupported-target" });
+
+        const noStore = harness({ config: undefined });
+        expect(await noStore.trigger.remove("/products/42")).toEqual({
+          ok: false,
+          path: "on-demand",
+          status: "no-store",
+          target: "/products/42",
+          routeName: "products.detail",
+        });
+        const boom = new Error("missing binding");
+        const throwing = harness({
+          resolveConfig: () => {
+            throw boom;
+          },
+        });
+        expect(await throwing.trigger.remove("/products/42")).toMatchObject({
+          ok: false,
+          status: "no-store",
+          error: boom,
+        });
+      });
+
+      it("a failed write is store-failed, and the previous entry stays", async () => {
+        const store = createMemoryPrerenderStore();
+        const { trigger } = harness({ config: { store } });
+        await trigger("/products/42");
+        const page = store.peek(productKey());
+        store.set = async () => {
+          throw new Error("kv down");
+        };
+
+        expect(await trigger.remove("/products/42")).toMatchObject({
+          ok: false,
+          path: "on-demand",
+          status: "store-failed",
+        });
+        // A custom store whose set() throws before returning a promise.
+        store.set = () => {
+          throw new Error("sync throw");
+        };
+        await expect(trigger.remove("/products/42")).resolves.toMatchObject({
+          ok: false,
+          status: "store-failed",
+        });
+        expect(store.peek(productKey())).toBe(page);
+      });
+
+      it("throwOnError throws a PrerenderError on a refusal", async () => {
+        const { trigger } = harness({ config: undefined });
+        await expect(
+          trigger.remove("/products/42", { throwOnError: true }),
+        ).rejects.toBeInstanceOf(PrerenderError);
+        await expect(
+          harness().trigger.remove("/products/42", { throwOnError: true }),
+        ).resolves.toMatchObject({ ok: true, status: "removed" });
+      });
+    });
+
+    describe("prerender.remove.many()", () => {
+      it("returns one result per target in input order, and renders nothing", async () => {
+        const runProducer = vi.fn<PrerenderTriggerDeps["runProducer"]>(
+          async () => output(),
+        );
+        const { trigger, store } = harness({ runProducer });
+
+        const results = await trigger.remove.many(
+          ["/products/1", "/nope", "/products/3"],
+          { concurrency: 2 },
+        );
+
+        expect(results.map((r) => [r.status, r.target])).toEqual([
+          ["removed", "/products/1"],
+          ["no-match", "/nope"],
+          ["removed", "/products/3"],
+        ]);
+        expect(runProducer).not.toHaveBeenCalled();
+        expect(store.size).toBe(2);
+      });
+
+      it("resolves the key version once per batch, and defaults to one at a time", async () => {
+        let active = 0;
+        let peak = 0;
+        const store = createMemoryPrerenderStore();
+        const set = store.set.bind(store);
+        store.set = async (...args) => {
+          active += 1;
+          peak = Math.max(peak, active);
+          await new Promise((resolve) => setTimeout(resolve, 1));
+          active -= 1;
+          return set(...args);
+        };
+        const h = harness({ config: { store } });
+        const resolveVersion = vi.fn(() => "d1");
+        h.deps.resolveVersion = resolveVersion;
+        const t = createPrerenderTrigger(h.deps)({ env: {} });
+
+        const results = await t.remove.many(["/products/1", "/products/2"]);
+
+        expect(resolveVersion).toHaveBeenCalledTimes(1);
+        expect(peak).toBe(1);
+        expect(results.map((r) => r.ok && "key" in r && r.key)).toEqual([
+          serializePrerenderKey({ ...productKey("1"), version: "d1" }),
+          serializePrerenderKey({ ...productKey("2"), version: "d1" }),
+        ]);
+      });
+
+      it("throwOnError stops the batch at the first refusal", async () => {
+        const { trigger, store } = harness();
+
+        await expect(
+          trigger.remove.many(["/products/1", "/nope", "/products/3"], {
+            throwOnError: true,
+          }),
+        ).rejects.toBeInstanceOf(PrerenderError);
+        expect(store.size).toBe(1);
+      });
+    });
+
+    describe("a stored marker and the other runner calls", () => {
+      it("onlyIfStale leaves it: a sweep does not bring a removed page back", async () => {
+        const runProducer = vi.fn<PrerenderTriggerDeps["runProducer"]>(
+          async () => output(),
+        );
+        const { trigger, store } = harness({ runProducer });
+        await trigger.remove("/products/42");
+        const marker = store.peek(productKey());
+
+        const result = await trigger("/products/42", { onlyIfStale: true });
+
+        expect(result).toEqual(removed);
+        expect(runProducer).not.toHaveBeenCalled();
+        expect(store.peek(productKey())).toBe(marker);
+      });
+
+      it("markStale never marks it: it carries no tag", async () => {
+        let now = 1000;
+        const store = createMemoryPrerenderStore({ now: () => now });
+        const { trigger } = harness({
+          config: { store, onRevalidate: () => {} },
+          runProducer: async () =>
+            output({ onDemandConfig: { tags: ["product:42"] } }),
+        });
+        await trigger("/products/42");
+        await trigger.remove("/products/42");
+        now = 2000;
+
+        await trigger.markStale(["product:42"]);
+
+        expect(store.peek(productKey())?.meta).not.toHaveProperty("staleAt");
+        // Still left alone by a sweep after the mark.
+        expect(
+          await trigger("/products/42", { onlyIfStale: true }),
+        ).toMatchObject({ ok: true, status: "removed" });
+      });
     });
   });
 });
@@ -1347,6 +1760,28 @@ describe("createPrerenderTrigger: warming a route that is not on-demand", () => 
         }),
       ).toMatchObject({ ok: true, status: "already-fresh" });
 
+      expect(h.fetch).not.toHaveBeenCalled();
+    });
+
+    it("does not warm after a removal: there is no page, and a live handler's render of it must not be cached", async () => {
+      const h = handler();
+      const byNotFound = warmHarness({
+        fetch: h.fetch,
+        runProducer: async () => {
+          throw new DataNotFoundError();
+        },
+      });
+      const viaRefresh = await byNotFound.trigger(
+        "https://shop.example/products/42",
+      );
+      const viaRemove = await warmHarness({ fetch: h.fetch }).trigger.remove(
+        "https://shop.example/products/42",
+      );
+
+      for (const result of [viaRefresh, viaRemove]) {
+        expect(result).toMatchObject({ ok: true, status: "removed" });
+        expect(result).not.toHaveProperty("caches");
+      }
       expect(h.fetch).not.toHaveBeenCalled();
     });
 

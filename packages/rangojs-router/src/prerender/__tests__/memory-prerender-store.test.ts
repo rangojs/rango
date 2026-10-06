@@ -3,6 +3,7 @@ import { createMemoryPrerenderStore } from "../memory-prerender-store.js";
 import {
   serializePrerenderKey,
   composeStoredEntry,
+  composeStoredTombstone,
   isStoredEntryValidFor,
   isStoredEntryStale,
   lowerStoredEntryStaleAt,
@@ -10,6 +11,7 @@ import {
   type PrerenderKey,
 } from "../writable-store.js";
 import type { PrerenderEntry } from "../store.js";
+import { paramsEqual } from "../../router/params-util.js";
 
 const entry: PrerenderEntry = {
   segments: [{ id: "s0", encoded: "x" } as any],
@@ -283,5 +285,133 @@ describe("createMemoryPrerenderStore", () => {
     await store.delete(key());
     expect(await store.get(key())).toBeNull();
     expect(store.size).toBe(0);
+  });
+});
+
+/**
+ * isStoredEntryValidFor as it was before the removed marker existed, frozen
+ * here. A deploy rolled back to that router reads the markers the newer one
+ * wrote when the key version did not move (an app that pins
+ * `createRouter({ version })`): it must reject them, so the request is a miss
+ * and never an empty page. Do not update this copy with the validator.
+ */
+function validatorBeforeTheRemovedMarker(
+  stored: unknown,
+  k: PrerenderKey,
+  params: Record<string, string>,
+): boolean {
+  if (stored == null || typeof stored !== "object") return false;
+  const candidate = stored as {
+    v?: unknown;
+    entry?: { segments?: unknown; handles?: unknown } | null;
+    meta?: {
+      tags?: unknown;
+      storedAt?: unknown;
+      version?: unknown;
+      params?: Record<string, string>;
+    } | null;
+  };
+  const e = candidate.entry;
+  const meta = candidate.meta;
+  if (
+    candidate.v !== 1 ||
+    e == null ||
+    typeof e !== "object" ||
+    !Array.isArray(e.segments) ||
+    typeof e.handles !== "string" ||
+    meta == null ||
+    typeof meta !== "object" ||
+    !Array.isArray(meta.tags) ||
+    typeof meta.storedAt !== "number"
+  ) {
+    return false;
+  }
+  if (meta.version !== k.version) return false;
+  return paramsEqual(meta.params ?? {}, params);
+}
+
+describe("the removed marker (tombstone)", () => {
+  const params = { id: "42" };
+
+  it("composeStoredTombstone: no entry, no tags, never stale, the key's version and the params", () => {
+    const tombstone = composeStoredTombstone(key(), params, 1000);
+    expect(tombstone).toEqual({
+      v: 1,
+      removed: true,
+      meta: { storedAt: 1000, tags: [], version: "b1", params },
+    });
+    expect("entry" in tombstone).toBe(false);
+    expect(isStoredEntryStale(tombstone, Number.MAX_SAFE_INTEGER)).toBe(false);
+    expect(stored()).not.toHaveProperty("removed");
+  });
+
+  it("is valid under the same version and params checks as a page", () => {
+    // The stored JSON, spelled out: what a durable store hands back.
+    const tombstone = {
+      v: 1,
+      removed: true,
+      meta: { storedAt: 1000, tags: [], version: "b1", params },
+    };
+    expect(composeStoredTombstone(key(), params, 1000)).toEqual(tombstone);
+    expect(isStoredEntryValidFor(tombstone, key(), params)).toBe(true);
+    // The DJB2 collision guard: another page's marker must not remove this one.
+    expect(isStoredEntryValidFor(tombstone, key(), { id: "99" })).toBe(false);
+    expect(
+      isStoredEntryValidFor(tombstone, key({ version: "b2" }), params),
+    ).toBe(false);
+    // The JSON round trip a durable store puts it through.
+    expect(
+      isStoredEntryValidFor(
+        JSON.parse(JSON.stringify(tombstone)),
+        key(),
+        params,
+      ),
+    ).toBe(true);
+  });
+
+  it("a malformed marker reads as a miss, never as a removal", () => {
+    const meta = { version: "b1", params, tags: [], storedAt: 1 };
+    for (const malformed of [
+      { v: 1, removed: true },
+      { v: 1, removed: true, meta: null },
+      { v: 2, removed: true, meta },
+      { v: 1, removed: "true", meta },
+      { v: 1, removed: true, meta: { ...meta, storedAt: "1" } },
+    ]) {
+      expect(isStoredEntryValidFor(malformed as any, key(), params)).toBe(
+        false,
+      );
+    }
+  });
+
+  it("a router from before the marker reads it as a miss, not as an empty page", () => {
+    const page = JSON.parse(JSON.stringify(stored()));
+    const tombstone = JSON.parse(
+      JSON.stringify(composeStoredTombstone(key(), params, 1000)),
+    );
+    expect(validatorBeforeTheRemovedMarker(page, key(), params)).toBe(true);
+    expect(validatorBeforeTheRemovedMarker(tombstone, key(), params)).toBe(
+      false,
+    );
+  });
+
+  it("the memory store persists it as given, and markStale leaves it alone", async () => {
+    const store = createMemoryPrerenderStore({ now: () => 5000 });
+    const tombstone = composeStoredTombstone(key(), params, 1000);
+    await store.set(key(), tombstone);
+    await store.markStale(["product:42"]);
+
+    expect(await store.get(key())).toBe(tombstone);
+    expect(tombstone.meta.staleAt).toBeUndefined();
+    expect(await readVerifiedStoredEntry(store, key(), params)).toBe(tombstone);
+  });
+
+  it("a later page write replaces it", async () => {
+    const store = createMemoryPrerenderStore();
+    await store.set(key(), composeStoredTombstone(key(), params, 1000));
+    const page = stored();
+    await store.set(key(), page);
+    expect(await store.get(key())).toBe(page);
+    expect(store.size).toBe(1);
   });
 });

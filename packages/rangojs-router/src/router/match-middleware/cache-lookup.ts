@@ -91,7 +91,7 @@
  *   - Request object
  *   - Action context (if POST)
  */
-import type { ResolvedSegment } from "../../types.js";
+import type { InternalHandlerContext, ResolvedSegment } from "../../types.js";
 import { isPprEntry, type EntryData } from "../../server/context.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { getRouterContext, type RouterContext } from "../router-context.js";
@@ -510,6 +510,18 @@ async function* tryPrerenderLookup<TEnv>(
       key,
       ctx.matched.params,
     );
+    if (stored?.removed) {
+      // The page was removed (prerender.remove(), or a refresh that hit
+      // notFound()). Not served, and step 2 is skipped: the build-time entry
+      // below must not come back. The route's handler answers: a Passthrough
+      // route's live handler, or a plain route's gated producer, which
+      // `_prerenderRemoved` makes a 404 in dev too (gateOnDemandProducer).
+      // Ahead of the staleness check: nothing revalidates a removed page.
+      (
+        ctx.handlerContext as InternalHandlerContext<any, TEnv>
+      )._prerenderRemoved = true;
+      return false;
+    }
     if (stored) {
       if (
         overlay.config.onRevalidate &&

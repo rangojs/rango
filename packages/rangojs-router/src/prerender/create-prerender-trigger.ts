@@ -2,7 +2,7 @@
  * `router.prerender()` trigger factory.
  *
  * Builds the `router.prerender` binder: `(runtime) => runner`, the runner being
- * the per-target callable (plus `.many` / `.markStale`) from router-supplied
+ * the per-target callable (plus `.many` / `.remove` / `.markStale`) from router-supplied
  * deps. Pure and testable: all router internals (reverse, match, the producer,
  * the request handler) arrive as injected functions, so this module has no RSC
  * imports and can be unit-tested with fakes.
@@ -21,6 +21,8 @@
  * - A refresh always renders and replaces; `onlyIfStale` is the cron-sweep
  *   opt-in and the only path that returns `already-fresh`.
  * - A failed render/store keeps the previous entry (replace-on-success).
+ * - A handler's `notFound()` is not a failure: it stores a "removed" marker
+ *   in place of the page, as `prerender.remove()` does without rendering.
  * - An on-demand target is path-only (its key carries no search); a warm
  *   target keeps its search params, which cache keys carry.
  * - A warm writes only to a store shared beyond the place the call runs.
@@ -36,8 +38,10 @@ import { composeWarmResult, runWarmRequest } from "./warm.js";
 import { hashParams } from "./param-hash.js";
 import { isPrerenderPersonalizationError } from "./producer-guard.js";
 import { normalizeTagList } from "../cache/cache-policy.js";
+import { isDataNotFoundError } from "../errors.js";
 import {
   composeStoredEntry,
+  composeStoredTombstone,
   isStoredEntryStale,
   readVerifiedStoredEntry,
   serializePrerenderKey,
@@ -218,13 +222,15 @@ function fromUrlLike(raw: string, display: string): ResolvedTarget {
 export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
   deps: PrerenderTriggerDeps<TEnv>,
 ): PrerenderFn<TEnv, TRoutes> {
+  /** One target: a refresh, or with `removing` a removal (`prerender.remove`). */
   async function refresh(
     target: PrerenderTarget<TRoutes>,
     runtime: PrerenderRuntime<TEnv>,
     options: PrerenderRunOptions = {},
     version: string = deps.resolveVersion(),
+    removing = false,
   ): Promise<PrerenderResult> {
-    const result = await run(target, runtime, options, version);
+    const result = await run(target, runtime, options, version, removing);
     if (!result.ok && options.throwOnError) throw new PrerenderError(result);
     return result;
   }
@@ -234,6 +240,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     runtime: PrerenderRuntime<TEnv>,
     options: PrerenderRunOptions,
     version: string,
+    removing: boolean,
   ): Promise<PrerenderResult> {
     const resolved = resolveTarget(target, deps.reverse);
     const display = resolved.display;
@@ -255,6 +262,17 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     if (!match) {
       return { ok: false, status: "no-match", target: display };
     }
+    if (removing && !match.isOnDemand) {
+      // Only an on-demand route has a page in the prerender store. Never the
+      // warm a refresh of this route would be.
+      return {
+        ok: false,
+        path: "on-demand",
+        status: "skipped-not-on-demand",
+        target: display,
+        routeName: match.routeName,
+      };
+    }
     if (resolved.hashOrReserved) {
       return {
         ok: false,
@@ -275,7 +293,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
 
     if (resolved.search) {
       // An on-demand key is route + params: a search would silently persist
-      // under the base key.
+      // (or remove the page) under the base key.
       return {
         ok: false,
         path: "on-demand",
@@ -291,12 +309,16 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
       runtime,
       options,
       version,
+      removing,
     );
     // Then the request handler, on top of the entry just stored: the route's
     // loaders' own cache() and the document cache are rebuilt on it. A
     // Passthrough param the producer declined is served by the live handler,
     // whose caches are warmed the same way. Quiet: the refresh is complete
-    // without it.
+    // without it. Never after `removed`: there is no page to rebuild a cache
+    // on, and a Passthrough route's live handler may still render the removed
+    // page from a data source that has not caught up, which the warm would
+    // then write to its caches.
     if (
       result.status === "rendered" ||
       result.status === "skipped-passthrough"
@@ -395,7 +417,10 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     return composeWarmResult(outcome, url.href, match.routeName);
   }
 
-  /** The requestless render of an on-demand route into the prerender store (#640). */
+  /**
+   * The requestless render of an on-demand route into the prerender store
+   * (#640), or with `removing` the write of its "removed" marker (#1060).
+   */
   async function renderOnDemand(
     pathname: string,
     display: string,
@@ -403,6 +428,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     runtime: PrerenderRuntime<TEnv>,
     options: PrerenderRunOptions,
     version: string,
+    removing: boolean,
   ): Promise<PrerenderResult> {
     // The prerender factory is user code like tags()/store.set: a throw (e.g.
     // a missing binding tripping store construction) must map to a result, not
@@ -434,6 +460,36 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
       paramHash: hashParams(match.params),
     };
     const keyStr = serializePrerenderKey(key);
+    const removed: PrerenderResult = {
+      ok: true,
+      path: "on-demand",
+      status: "removed",
+      target: display,
+      routeName: match.routeName,
+      key: keyStr,
+      tags: [],
+    };
+    const store = config.store;
+    // The "removed" marker in place of the page. Not store.delete(): that
+    // would bring a baked param's build-time entry back. Replace-on-success.
+    async function storeTombstone(): Promise<PrerenderResult> {
+      try {
+        const tombstone = composeStoredTombstone(key, match.params, Date.now());
+        await store.set(key, tombstone);
+        return removed;
+      } catch (error) {
+        return {
+          ok: false,
+          path: "on-demand",
+          status: "store-failed",
+          target: display,
+          routeName: match.routeName,
+          error,
+        };
+      }
+    }
+
+    if (removing) return storeTombstone();
 
     // onlyIfStale: the cron-sweep opt-in. A CMS webhook (default) always renders,
     // because it fires precisely when content changed. This is the only path that
@@ -446,6 +502,9 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
         key,
         match.params,
       );
+      // A removed page is never stale: a sweep over every URL must not bring
+      // it back from a data source that still has it. Only a plain refresh does.
+      if (existing?.removed) return removed;
       if (existing && !isStoredEntryStale(existing, Date.now())) {
         const existingTtl =
           existing.meta.staleAt != null
@@ -484,6 +543,10 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
           routeName: match.routeName,
         };
       }
+      // notFound() is the handler saying the page no longer exists, not a
+      // failure: keeping the old entry would serve a deleted product until
+      // the next deploy.
+      if (isDataNotFoundError(err)) return storeTombstone();
       // #587: matchForPrerender already threads throwOnError so a render throw
       // surfaces here rather than baking a frozen error page. Keep the old entry.
       return {
@@ -575,6 +638,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     runtime: PrerenderRuntime<TEnv>,
     targets: ReadonlyArray<PrerenderTarget<TRoutes>>,
     options: PrerenderManyOptions = {},
+    removing = false,
   ): Promise<PrerenderResult[]> {
     // Default to 1 for any invalid concurrency (undefined, NaN, < 1). Without
     // this, Math.floor(NaN) -> NaN spawns zero workers and many() resolves to an
@@ -588,7 +652,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     return runWithConcurrency(targets, concurrency, (target) =>
       // throwOnError propagates per-item so the batch stops on the first failure;
       // without it, every target yields a result.
-      refresh(target, runtime, options, version),
+      refresh(target, runtime, options, version, removing),
     );
   }
 
@@ -630,6 +694,16 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     const runner = ((target, options) =>
       refresh(target, runtime, options)) as PrerenderRunner<TRoutes>;
     runner.many = (targets, options) => many(runtime, targets, options);
+    const remove = ((target, options) =>
+      refresh(
+        target,
+        runtime,
+        options,
+        undefined,
+        true,
+      )) as PrerenderRunner<TRoutes>["remove"];
+    remove.many = (targets, options) => many(runtime, targets, options, true);
+    runner.remove = remove;
     runner.markStale = (tags) => markStale(runtime, tags);
     return runner;
   };

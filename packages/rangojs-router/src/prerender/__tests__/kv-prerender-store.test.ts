@@ -2,7 +2,9 @@ import { describe, it, expect } from "vitest";
 import { createKVPrerenderStore } from "../cloudflare.js";
 import {
   composeStoredEntry,
+  composeStoredTombstone,
   isStoredEntryStale,
+  isStoredEntryValidFor,
   serializePrerenderKey,
   type PrerenderKey,
 } from "../writable-store.js";
@@ -175,5 +177,29 @@ describe("createKVPrerenderStore", () => {
     await store.set(key(), stored());
     await store.delete!(key());
     expect(await store.get(key())).toBeNull();
+  });
+
+  it("persists a removed marker as the JSON it is given, and reads no tag marker for it", async () => {
+    const kv = fakeKV();
+    const gets: string[] = [];
+    const spied: KVNamespace = {
+      ...kv,
+      get: (async (k: string) => {
+        gets.push(k);
+        return kv.get(k);
+      }) as KVNamespace["get"],
+    };
+    const store = createKVPrerenderStore(spied, { now: () => 5000 });
+    const tombstone = composeStoredTombstone(key(), { id: "42" }, 1000);
+    await store.set(key(), tombstone);
+    // Marked after the tombstone was written: it has no tag to match.
+    await store.markStale!(["product:42"]);
+
+    gets.length = 0;
+    const got = await store.get(key());
+    expect(got).toEqual(tombstone);
+    expect(gets).toEqual([serializePrerenderKey(key())]);
+    expect(isStoredEntryValidFor(got, key(), { id: "42" })).toBe(true);
+    expect(isStoredEntryStale(got!, Number.MAX_SAFE_INTEGER)).toBe(false);
   });
 });
