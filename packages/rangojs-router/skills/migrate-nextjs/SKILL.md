@@ -463,13 +463,20 @@ await prerender.markStale([`product:${id}`]); // revalidateTag
 | `dynamicParams = false`               | plain on-demand `Prerender`: an unknown param 404s until something refreshes it                     |
 | `dynamicParams = true`                | wrap it in `Passthrough()`: unknown params render live until refreshed                              |
 
-A page whose item was deleted: in the Pages Router, `getStaticProps` returning
-`{ notFound: true }` on a revalidation makes the page a 404 "even if there was
-a successfully generated page before". In Rango the on-demand handler calls
-`notFound()`: the next `prerender(path)` stores a "removed" marker and the
-page answers 404 instead of the page or its build-time entry.
-`prerender.remove(path)` does the same without rendering, for a webhook that
-already knows the item is gone. See `/prerender` → "Remove a page".
+A page whose item was deleted. In the Pages Router, `getStaticProps` returns
+`{ notFound: true }` on a revalidation: "With `notFound: true`, the page will
+return a `404` even if there was a successfully generated page before. This is
+meant to support use cases like user-generated content getting removed by its
+author. Note, `notFound` follows the same `revalidate` behavior described
+here." In Rango a `notFound()` anywhere in the on-demand render (the route
+handler, a layout or slot handler, any server component) does the same on the
+next `prerender(path)`: the result is `{ ok: true, status: "removed" }`, the
+page answers 404 instead of the page or its build-time entry, and the removal
+is rechecked per the route's `ttl`, as Next's is per `revalidate`. When the
+data source may be failing, throw anything else: that keeps the page.
+`prerender.remove(path)` removes without rendering, for a webhook that already
+knows the item is gone, and is permanent until a `prerender(path)` renders the
+page again. See `/prerender` → "Remove a page".
 
 Three differences to plan for:
 

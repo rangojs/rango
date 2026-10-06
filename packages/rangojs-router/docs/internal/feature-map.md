@@ -695,18 +695,28 @@ The visitor's theme reads (the handler and middleware `ctx.theme`, `getRequestCo
 - Removing a page (#1060): `runner.remove(target, { throwOnError? })` and
   `runner.remove.many(targets, { concurrency?, throwOnError? })` store a
   "removed" marker (`composeStoredTombstone`, `prerender/writable-store.ts`)
-  in place of the page, rendering nothing; a refresh whose handler calls
-  `notFound()` stores the same marker. Result status `removed`; a route that
-  is not on-demand is `skipped-not-on-demand`. A request that finds the
-  marker is not served from any prerender store (`tryPrerenderLookup` returns
-  ahead of the bundled manifest and of `onRevalidate` scheduling): a plain
-  route's gated producer answers 404, in dev too
+  in place of the page, rendering nothing. Result status `removed`; a route
+  that is not on-demand is `skipped-not-on-demand`; a `PrerenderError` names
+  the call (`operation`). A request that finds the marker is not served from
+  any prerender store (`tryPrerenderLookup` returns ahead of the bundled
+  manifest): a plain route's gated producer answers 404, in dev too
   (`InternalHandlerContext._prerenderRemoved`, read by `gateOnDemandProducer`
-  in `urls/path-helper.ts`), a Passthrough route runs its live handler.
-  `onlyIfStale` leaves a marker alone; `markStale()` never matches one; no
-  warm request follows a removal. The marker has no `entry`, so a router from
-  before it reads it as a miss. It does not reach the document cache or a
-  Passthrough route's live caches: pair it with `updateTag()`.
+  in `urls/path-helper.ts`), a Passthrough route runs its live handler. The
+  marker has no `entry`, so a router from before it reads it as a miss.
+- A refresh whose render hits `notFound()` anywhere, and nothing else
+  (`matchForPrerender` reports `{ notFound: true }` on an on-demand run and
+  rethrows any other collected error ahead of it, `firstFlightError`), stores
+  the marker too, and so does a Passthrough build handler that returns
+  `ctx.passthrough()` (`skipped-passthrough`, so its live handler answers).
+  Those markers are stamped with the route's `ttl` and `tags` like a page: a
+  stale one still answers 404, schedules `onRevalidate`, is rendered again by
+  `onlyIfStale`, and `markStale()` reaches it. A `remove()` marker has
+  neither and is permanent until a refresh without `onlyIfStale`.
+- `remove()` and a refresh are two writes to one key: last write wins, except
+  that a page is not written over a marker stored after its render started
+  (`renderOnDemand` re-reads the key). No warm request follows `removed`. A
+  removal does not reach the document cache or a Passthrough route's live
+  caches: remove first, then `updateTag()`.
 - `Prerender(..., { onDemand })` is the explicit route opt-in
   (`onDemand: true | { ttl?, tags?: string[] | (target) => string[] }`). Any
   truthy spelling works: producer retention and the runtime `od` trie flag are

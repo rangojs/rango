@@ -40,7 +40,8 @@ a Vercel Blob adapter (the interface is platform-agnostic; the concrete v1
 adapters are in-memory + CF KV). One status was added beyond the original
 result union: `skipped-passthrough`, returned when a `Passthrough + onDemand`
 route's build handler returns `ctx.passthrough()` for the refreshed param (no
-shared payload to persist; the live handler keeps serving it).
+shared payload to persist; the "removed" marker is stored so that the live
+handler serves it).
 
 On-demand routes stay off the separate PPR shell lane in v1. A refresh can
 replace the durable segment payload, but it cannot atomically replace a cached
@@ -175,15 +176,17 @@ JSON-serializable so it can go straight into a queue message), the live env and
 the stale request's execution context (`ctx`, absent where none exists).
 It runs at most once per stale key per isolate while one is in flight
 (`scheduleOverlayRevalidation`, `cache-lookup.ts`), so the obvious single
-process wiring, a direct `router.prerender({ env, ctx })(target)` call, renders once per stale key
-rather than once per stale request. The key is free again once its task
+process wiring, a direct `router.prerender({ env, ctx })(target, { onlyIfStale: true })` call,
+renders once per stale key rather than once per stale request (`onlyIfStale`
+is there for a removal that lands before the call runs: "Last write wins"). The key is free again once its task
 settles or after `IN_FLIGHT_LEADER_MAX_WAIT_MS` (the runtime cache's leader cap),
 so a hung `onRevalidate` cannot pin it, and no scheduling happens under a build
 context where `waitUntil` is a no-op.
 
 The target is typed `PrerenderTargetObject`: `{ route: string; params }` plus a
 type-only brand. the runner and its `.many()` accept it in addition to the
-typed named-route object, so `(target, env, ctx) => router.prerender({ env, ctx })(target)`
+typed named-route object, so
+`(target, env, ctx) => router.prerender({ env, ctx })(target, { onlyIfStale: true })`
 typechecks on a router with named routes, also after a queue round trip
 (`JSON.parse(raw) as PrerenderTargetObject`), while a hand-written
 `{ route: "typo" }` is still a type error. Pinned in
@@ -347,8 +350,9 @@ await prerender.remove.many(paths, { concurrency: 4 });
 ```
 
 It stores a "removed" marker in place of the page, which masks the manifest
-entry instead of re-exposing it. A refresh whose handler calls `notFound()`
-stores the same marker. See "Removing A Page".
+entry instead of re-exposing it. A refresh whose render hits `notFound()`
+stores one too, with the route's `ttl` and `tags` so that it is rechecked. See
+"Removing A Page".
 
 ### Result object
 
@@ -363,13 +367,15 @@ type PrerenderResult =
       ok: true;
       path: "on-demand";
       // "already-fresh" only occurs with onlyIfStale: true.
-      // "removed": the "removed" marker is stored in place of the page.
+      // "removed": the "removed" marker is stored in place of the page, by
+      // remove(), by a render that hit notFound(), or found fresh by
+      // onlyIfStale. ok: true, so a sweep counts it.
       status: "rendered" | "already-fresh" | "removed";
       target: string;
       routeName: string;
       // opaque, for debugging and logs only -- not a stable format
       key: string;
-      tags: string[]; // empty for "removed"
+      tags: string[]; // empty for a remove() marker
       ttl?: number; // absent = never stale
       // the warm request that followed the store write, when one ran
       caches?: PrerenderWarmCaches;
@@ -488,11 +494,13 @@ map the throw to `render-failed`, keeping the old entry. Without it, a refresh
 against a flaky upstream silently replaces a good entry with a durable error
 page.
 
-One throw is not a failure: `notFound()`. The handler is telling you the page
+One throw is not a failure: `notFound()`. The render is telling you the page
 no longer exists, and keeping the old entry would serve a deleted product until
-the next deploy. The trigger maps a `DataNotFoundError` from the producer to
-the "removed" marker and the `removed` status (`isDataNotFoundError`, which
-also recognizes the error across realms by name). See "Removing A Page".
+the next deploy. On an on-demand run the producer reports a
+`DataNotFoundError` as an outcome (`isDataNotFoundError`, which also
+recognizes the error across realms by name), unless something else failed in
+the same render, and the trigger stores the "removed" marker and returns
+`removed`. See "Removing A Page".
 
 ## Stored Payload
 
@@ -661,31 +669,51 @@ So a removal writes something instead of deleting: a "removed" marker (a
 tombstone) stored in place of the page.
 
 ```ts
-// what the store holds for a removed page
+// prerender.remove(): permanent
 { v: 1, removed: true, meta: { storedAt, tags: [], version, params } }
+// a refresh that hit notFound(): stamped like the page it replaces
+{ v: 1, removed: true, meta: { storedAt, staleAt, tags, version, params } }
 ```
 
 A request that finds it is not served from any prerender store. The overlay
 answered, so the bundled manifest below is never read, and the route's own
 handler takes it from there: a plain on-demand route's gated producer throws
 the same `DataNotFoundError` a miss throws (a 404 through the app's
-`notFound` boundary), and a `Passthrough` route runs its live handler.
+`notFound` boundary), and a `Passthrough` route runs its live handler. Pages
+the build baked are covered like pages only a refresh produced.
 
 ### Two writers, one mechanism
 
-1. **A refresh whose handler calls `notFound()`.** `await prerender(url)` on a
-   deleted product now does the right thing: the result is
-   `{ ok: true, path: "on-demand", status: "removed", ... }`. Any other throw
-   is still `render-failed` and keeps the old entry.
+1. **A refresh whose render hits `notFound()`.** `await prerender(url)` on a
+   deleted product does the right thing: the result is
+   `{ ok: true, path: "on-demand", status: "removed", ... }`. It is `ok: true`,
+   so a sweep counts it with `rendered` and `already-fresh`.
 2. **`await prerender.remove(target)`**, which renders nothing. A "product
    deleted" webhook fires when the item is gone from the CMS, which is not
    always when it is gone from the read replica the handler queries; a removal
    that needed a render would bring the page back from a lagging data source.
 
-Both end in the one `store.set(key, tombstone)` (`composeStoredTombstone`,
-`writable-store.ts`; `renderOnDemand` in `create-prerender-trigger.ts`). A
+Both end in a `store.set(key, marker)` (`composeStoredTombstone`,
+`writable-store.ts`; `renderOnDemand` in `create-prerender-trigger.ts`), and a
 later `prerender(url)` that renders overwrites the marker with the page:
 `set()` replaces, whatever was there.
+
+A `notFound()` counts wherever it happens in the render: the route handler, a
+layout handler, a parallel slot handler, any server component, sync or async.
+The producer (`matchForPrerender`) turns it into an outcome instead of a
+throw, `{ notFound: true, onDemandConfig }`, because the trigger needs the
+route's `ttl` and `tags` to stamp the marker, and it only had those for a
+render that succeeded.
+
+One rule keeps a failing data source from ever removing a page. A render can
+hit a missing item and an outage at once (one component calls `notFound()`,
+another throws `upstream 500`), and Flight collects both. The producer used to
+rethrow the first one it collected, so the order of two sibling components
+decided between `removed` and `render-failed`. Now any error that is not a
+`DataNotFoundError` goes first on an on-demand run (`firstFlightError`,
+`prerender-match.ts`), as a personalization error already did. The advice for
+an app follows from that: call `notFound()` when you know the item is gone,
+throw anything else when you are not sure.
 
 The batch form is `prerender.remove.many(targets, { concurrency, throwOnError })`,
 not an option on `.many()`. Next to `prerender.many(targets)` it reads as the
@@ -695,6 +723,38 @@ an options bag: `.many(targets, { remove: true })` turns a refresh into a
 removal by one boolean, carries `onlyIfStale`, which means nothing for a
 removal, and a mixed "refresh these, remove those" batch is not something a
 webhook produces.
+
+### Rechecked or permanent
+
+The first cut made every marker permanent: never stale, never revalidated,
+left alone by `onlyIfStale`. That is right for `remove()` and wrong for
+`notFound()`. A data source that loses an item for thirty seconds would remove
+its page until someone refreshed it by hand, and no sweep would ever look
+again. Next.js, the precedent for the `notFound()` half, re-checks its 404 for
+the same reason (see "Precedent").
+
+So the two writers stamp different markers, and nothing else tells them apart:
+
+|                         | `prerender.remove()`    | a refresh that hit `notFound()`                                               |
+| ----------------------- | ----------------------- | ----------------------------------------------------------------------------- |
+| `meta.staleAt`          | none                    | from the route's `onDemand.ttl`, else the router's `prerender.ttl`, else none |
+| `meta.tags`             | `[]`                    | the route's `onDemand.tags`                                                   |
+| a request that finds it | 404 or the live handler | the same, and when stale it schedules `onRevalidate` like a stale page        |
+| `{ onlyIfStale: true }` | leaves it, `removed`    | leaves it while fresh (`removed`); renders again once stale                   |
+| `markStale(tags)`       | cannot reach it         | marks it stale, so it is rechecked                                            |
+
+A `notFound()` marker is a page entry without a page: `composeStoredTombstone`
+takes the same `{ ttl, tags, params }` a page takes and composes its `meta`
+through `composeStoredEntry`, so there is one staleness rule and the stores
+need no code for it (`markStale` in the memory store and the tag markers in the
+KV store both work off `meta`). The serve path schedules `onRevalidate` for any
+stale envelope before it looks at what kind it is (`tryPrerenderLookup`). A
+`remove()` marker never gets there because it has no `staleAt` and no tag for
+anything to lower one through.
+
+You might ask why the marker carries tags at all. Without them a
+`markStale(["product:42"])` from a "product restored" webhook would skip the
+one entry that most needs a recheck.
 
 ### The rules, and why
 
@@ -706,33 +766,36 @@ webhook produces.
   the case that matters is an app that pins `createRouter({ version })`.)
   `validatorBeforeTheRemovedMarker` in `memory-prerender-store.test.ts` is a
   frozen copy of that old check, so the property cannot drift. `meta` keeps
-  the fields a page has, with `tags` always empty and no `staleAt`: a store
-  that reads or indexes `meta.tags` keeps working on a marker without knowing
-  it exists, which is why neither shipped store changed.
+  the fields a page has, which is why neither shipped store changed and why a
+  store that reads or indexes `meta.tags` keeps working without knowing a
+  marker exists.
 - **Verified like a page.** Same key version, same params check. The params
   check matters more here than for a page: on a hash collision, another
-  page's marker must not remove this one.
-- **`onlyIfStale` leaves it alone.** A marker is never stale. A cron sweep
-  over every catalog URL would otherwise render each removed page every
-  night, and bring one back whenever the data source still had it. The sweep
-  gets `removed` for that target and renders nothing; only a refresh without
-  `onlyIfStale` replaces a marker.
-- **`markStale()` never matches it** (no tags), and **`onRevalidate` is never
-  scheduled for it**: the serve path returns on the marker ahead of the
-  staleness check, so even a store that lowered its `staleAt` schedules
-  nothing (`cache-lookup-prerender-removed.test.ts`).
+  page's marker must not remove this one. Readers test `removed === true`, as
+  the validator does; an envelope with an `entry` and any other `removed`
+  value is a page.
+- **A store that cannot be read is a miss**, as for a page
+  (`readVerifiedStoredEntry`). While the store is failing, the build-time
+  entry of a removed page can serve. The alternative, failing the request
+  when the overlay is down, would take every on-demand route down with the
+  store.
+- **`ctx.passthrough()` stores the marker too.** A `Passthrough` route's
+  build handler can decline a param, and the status for that,
+  `skipped-passthrough`, has always said the live handler serves it. That was
+  only true when nothing was stored or baked for the param: a page refreshed
+  earlier kept answering, and so did the build's entry. The decline now
+  stores the marker (stamped and rechecked like a `notFound()` one), the
+  status keeps its name, and the warm request that follows it finds the
+  marker and warms the live handler's caches, which is what it was for.
 - **Server actions.** A plain on-demand route's action re-render reads the
   overlay (it has no live handler). On a marker it takes the same path as a
   document request, so the re-render is the 404 and not the build entry.
 - **`remove()` on a route that is not on-demand** returns
   `skipped-not-on-demand`. A refresh of such a route is a warm; a removal has
-  nothing to remove there and must not turn into a request.
-- **`ctx.passthrough()` is not `notFound()`.** A `Passthrough` route whose
-  build handler declines a param still gets `skipped-passthrough`, and a page
-  stored earlier for that param keeps serving. Only `notFound()` and
-  `remove()` write the marker. Whether a decline should write it too (the
-  status's own wording, "the live handler keeps serving it", is only true
-  when no page was stored) is left open; it was not part of this decision.
+  nothing to remove there and must not turn into a request. A failed
+  `remove()` thrown by `throwOnError` names the call:
+  `prerender.remove("/products/42") failed: ...` (`PrerenderError`'s
+  `operation`).
 - **Dev answers 404 too.** `gateOnDemandProducer` (`urls/path-helper.ts`) lets
   the retained producer render live in dev on a miss. For a removed page that
   would show, in dev only, a page production answers with a 404, and only
@@ -740,9 +803,10 @@ webhook produces.
   marks the handler context (`_prerenderRemoved`) and the gate closes on it.
   It rides the handler context and not the request context because the gate
   runs after awaits in the match pipeline, where `withCacheLookup` documents
-  that the request ALS can be lost on workerd. One dev difference remains: an
-  HMR refetch (`X-RSC-HMR`) skips the prerender stores altogether, so it skips
-  the marker and renders the edited module live.
+  that the request ALS can be lost on workerd. One dev difference: an edit to
+  a server module bumps the dev version (`version-plugin.ts`), and the store
+  key carries it, so after an edit a marker is unreachable for every request,
+  as a refreshed page is.
 - **Intercepted navigations do not see the marker.** They do not read the
   overlay (only the main variant is written), so the build's `:i` artifact of
   a removed page still serves. Reading the overlay there only to look for a
@@ -750,12 +814,36 @@ webhook produces.
   intercepted navigation to an on-demand route. It belongs to the intercept
   refresh follow-up (#1060).
 
+### Last write wins
+
+`remove()` and a refresh of the same page are two writes to one key, with no
+lock between them. Whichever lands last is what requests see, and two cases
+are worth knowing.
+
+A job queued before the removal. `onRevalidate` fired for the page while it
+was stale, the page was removed, and the queued job runs after that. If it
+calls `prerender(target)`, it renders the page back. So the documented wiring
+passes `{ onlyIfStale: true }` (in `onRevalidate` and in a queue consumer): the
+job then finds the `remove()` marker, which is never stale, and returns
+`removed` without rendering. It costs nothing in the normal case, where the
+entry it was scheduled for is still stale, and it also makes a job that lost a
+race to another refresh a no-op (`already-fresh`).
+
+A refresh in flight when `remove()` lands. Here the refresh would write its
+page over the marker a moment later. `renderOnDemand` re-reads the key before
+it writes a page and keeps a marker stored after the render started
+(`storedAt > startedAt`), returning `removed`. That closes the case on one
+process and narrows it elsewhere; it cannot close it. The read and the write
+are two store calls, KV is eventually consistent, and `storedAt` comes from
+another isolate's clock. It costs one store read per page refresh.
+
 ### What a removal does not reach
 
 No warm request follows a removal. There is no page to rebuild a cache on, and
 on a `Passthrough` route the warm would run the live handler, which may still
 render the removed page from a data source that has not caught up, and write
-that to its caches.
+that to its caches. (A `ctx.passthrough()` decline is the one case that does
+warm: the handler asked for the live render.)
 
 The marker lives in the prerender store, and two runtime caches sit around the
 route. What each serves right after a removal is pinned in
@@ -770,19 +858,34 @@ route. What each serves right after a removal is pinned in
 You might expect the removal to drop the cached document too. It cannot from
 where it runs: `SegmentCacheStore` has no call that deletes a response entry,
 and the entry's tags are the ones its request recorded, in the runtime
-namespace, which the trigger has no request context to invalidate. So the
-contract is the one content changes already have (`await updateTag(tag)`, then
-`prerender(url)`, in `prerender-every-route.md`): invalidate the tag the
-document carries, then remove. A removal that should reach the document cache on its
-own needs a response-delete on the store interface, or an implicit per-page
-tag on documents served from the overlay; neither is small.
+namespace, which the trigger has no request context to invalidate. So the app
+pairs the removal with an invalidation, and the order is the part that is easy
+to get wrong: **remove first, then `updateTag(tag)`**.
+
+The first write-up of this had it the other way round, by analogy with the
+content-refresh pattern (`updateTag`, then `prerender`). For a removal that
+order leaks. After the invalidation and before the removal, the page is still
+in the prerender store, so a visitor in that window misses the document cache,
+is served the page, and the document cache stores it again; the removal that
+follows cannot reach that new entry. With the removal first, the visitor in
+the window either hits the old document (still cached, about to be dropped) or
+reaches the router, finds the marker and gets a 404, which is never stored.
+Both orders are pinned, the leaking one as a test of why.
+
+`updateTag()` needs a request context. A webhook route has one; a queue or
+cron handler does not, the call does nothing there, and the stored document
+serves until it expires. A removal that reaches the document cache on its own
+needs a response-delete on the store interface, or an implicit per-page tag on
+documents served from the overlay; neither is small, and both are left as
+follow-ups.
 
 ### Precedent
 
-The Next.js Pages Router has the same rule for the `notFound()` half: "With
-`notFound: true`, the page will return a `404` even if there was a
-successfully generated page before. This is meant to support use cases like
-user-generated content getting removed by its author."
+The Next.js Pages Router has the same rule for the `notFound()` half,
+including the recheck: "With `notFound: true`, the page will return a `404`
+even if there was a successfully generated page before. This is meant to
+support use cases like user-generated content getting removed by its author.
+Note, `notFound` follows the same `revalidate` behavior described here."
 (nextjs.org/docs/pages/api-reference/functions/get-static-props)
 
 ## Build-time Durable Seeding
@@ -829,7 +932,9 @@ lookup durable overlay by versioned key; verify the answer
   |
   +-- "removed" marker --> nothing is served and the bundled manifest is
   |                        skipped: the route's handler answers (a plain
-  |                        route's gate: 404; Passthrough: the live handler)
+  |                        route's gate: 404; Passthrough: the live handler).
+  |                        A stale one schedules onRevalidate first, as a
+  |                        stale hit does
   |
   v
 lookup bundled manifest
@@ -870,6 +975,7 @@ before.
 | fresh overlay entry               | the overlay entry, loaders fresh (dev and production)      | same                                       |
 | stale overlay entry               | the overlay entry; `onRevalidate` scheduled if configured  | same                                       |
 | "removed" marker                  | 404 (dev and production); the build entry is not served    | the live handler (dev and production)      |
+| stale "removed" marker            | the same 404; `onRevalidate` scheduled if configured       | the live handler; `onRevalidate` likewise  |
 | no overlay entry, param baked     | production: the build entry; dev: the dev prerender render | same                                       |
 | no overlay entry, param not baked | production: 404; dev: rendered through the dev endpoint    | the live handler (dev and production)      |
 | server action re-render           | overlay, then build entry, then 404, as above              | the live handler (the overlay is not read) |
@@ -901,8 +1007,11 @@ resolve env-scoped writable store
 run requestless prerender producer
   |
   +-- personalized --> skipped-personalized
-  +-- notFound() --> write the "removed" marker --> removed (no warm)
-  +-- render failed --> render-failed
+  +-- render failed --> render-failed (also when a notFound() happened too)
+  +-- notFound() only --> write the "removed" marker, stamped with the
+  |                       route's ttl and tags --> removed (no warm)
+  +-- ctx.passthrough() --> write the same marker --> skipped-passthrough,
+  |                         then the warm request below
   |
   v
 write durable entry
@@ -922,9 +1031,12 @@ If a write fails, keep the previous durable entry and the bundled manifest
 fallback. The refresh operation should be replace-on-success.
 
 `prerender.remove(target)` takes the same steps up to the store and then
-writes the marker instead of running the producer. A route that is not opted
-in is `skipped-not-on-demand` there, never a warm. With `onlyIfStale`, a
-refresh that finds a marker stops before the producer and reports `removed`.
+writes the marker (no ttl, no tags) instead of running the producer. A route
+that is not opted in is `skipped-not-on-demand` there, never a warm. With
+`onlyIfStale`, a refresh that finds a fresh marker stops before the producer
+and reports `removed`; a stale one is rendered again. Before a page is
+written, the key is read once more: a marker stored after the render started
+is kept, and the result is `removed` ("Last write wins").
 
 ## Dev Mode
 
@@ -995,7 +1107,11 @@ export default {
   async queue(batch, env, ctx) {
     const targets = batch.messages.map((message) => message.body.target);
     ctx.waitUntil(
-      router.prerender({ env, ctx }).many(targets, { concurrency: 8 }),
+      // onlyIfStale: a message can run after another one refreshed the page,
+      // or after prerender.remove() removed it; then it renders nothing.
+      router
+        .prerender({ env, ctx })
+        .many(targets, { concurrency: 8, onlyIfStale: true }),
     );
   },
 };
@@ -1113,16 +1229,21 @@ behavior. Coverage should include:
   component route, and the overlay is read in the RSC match pipeline.
 - E2E for server actions on plain on-demand routes: an action on an
   overlay-only page, and `router.prerender()` inside the action.
-- Removing a page: the marker's shape and validation, including the frozen
-  pre-marker validator (`memory-prerender-store.test.ts`); the two writers
-  and every refusal (`create-prerender-trigger.test.ts`); the serve path with
-  a build-time entry under the marker (`cache-lookup-prerender-removed.test.ts`);
-  the gate in dev (`urls/__tests__/on-demand-producer-gate.test.ts`); the
-  userland flow and what the runtime caches serve
+- Removing a page: both kinds of marker and their validation, including the
+  frozen pre-marker validator (`memory-prerender-store.test.ts`); the writers,
+  the recheck, the race with a refresh and every refusal
+  (`create-prerender-trigger.test.ts`); the serve path with a build-time
+  entry under the marker, a stale marker, another page's marker and a failing
+  store (`cache-lookup-prerender-removed.test.ts`); the gate in dev
+  (`urls/__tests__/on-demand-producer-gate.test.ts`); the userland flow, a
+  `notFound()` from each place in a render, a `notFound()` next to an outage,
+  a baked page, and what the runtime caches serve in either order of
+  `remove()` and `updateTag()`
   (`testing/__tests__/on-demand-prerender-remove.rsc-test.tsx`); and in a
   browser, dev and production in both apps, a baked and an unbaked param
-  removed both ways, an action on a removed page, and a `Passthrough` route
-  (`expectRemoved*` in `tests/shared-e2e`).
+  removed both ways, the recheck through `markStale` and `onlyIfStale`, an
+  action on a removed page, and a `Passthrough` route (`expectRemoved*` in
+  `tests/shared-e2e`).
 - E2E tests in both dev and production for the e2e test app and the Cloudflare
   basic app.
 - Production tests proving a durable entry serves through the prerender store

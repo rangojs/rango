@@ -68,19 +68,16 @@ What to know before you call it:
   builds its own `createRSCHandler({ cache, version })` (a warm runs
   `router.fetch`).
 
-A refresh no longer returns `skipped-not-on-demand`, the status an unreleased
-build of on-demand prerender returned for these routes (only
-`prerender.remove()` does, below). See the `prerender` skill, "Warm any route
-before traffic".
+`skipped-not-on-demand` is not a status of a refresh: a route that is not
+on-demand is warmed. Only `prerender.remove()` returns it (below). See the
+`prerender` skill, "Warm any route before traffic".
 
 ### Added: remove a page from on-demand prerender ([#1060](https://github.com/rangojs/rango/issues/1060))
 
-Part of on-demand prerender, which is in this release too. A page refreshed
-with `router.prerender()` kept serving after the item behind it was deleted: a
-refresh whose handler called `notFound()` came back `render-failed` and kept
-the old page, and there was no call that took a page out of service.
-
-There are now two ways to remove one:
+Part of on-demand prerender, which is in this release too. When the item
+behind a refreshed page is deleted, the page has to stop serving, and for a
+param the build baked, the build-time page must not come back in its place.
+There are two ways to remove a page:
 
 ```ts
 const prerender = router.prerender({ env, ctx });
@@ -90,50 +87,77 @@ const prerender = router.prerender({ env, ctx });
 await prerender.remove("/products/42");
 await prerender.remove.many(paths, { concurrency: 4 });
 
-// Or let the route say so: a refresh whose handler calls notFound() removes
-// the page instead of failing.
+// Or let the route say so: a refresh whose render hits notFound() removes
+// the page.
 await prerender("/products/42"); // { ok: true, status: "removed", ... }
 ```
 
 Both store a "removed" marker in the prerender store in place of the page.
 From the next request on the route answers 404 for that param, in dev and in
-production; a `Passthrough` route runs its live handler. A param the build
-baked does not fall back to its build-time page, which is what deleting the
-entry would have done. A later `prerender(url)` that renders brings the page
-back.
+production; a `Passthrough` route runs its live handler. A page the build
+baked is covered too: its build-time entry is not served.
 
 What to know before you call it:
 
-- **`notFound()` in a refresh no longer keeps the old page.** It returned
-  `render-failed`; it now removes the page and returns
-  `{ ok: true, path: "on-demand", status: "removed" }`. Any other throw is
-  still `render-failed` and keeps the page.
+- **A `notFound()` anywhere in the render removes the page**: the route
+  handler, a layout handler, a parallel slot handler, any server component,
+  sync or async. The result is `{ ok: true, path: "on-demand", status:
+"removed" }`, so count `removed` in what a sweep reports. It removes the
+  page only when nothing else went wrong: when the data source may be
+  failing, throw anything else, which is `render-failed` and keeps the page.
+  A render that hits a `notFound()` and another error is `render-failed`,
+  whichever came first.
+- **A `notFound()` removal is rechecked; `remove()` is permanent.** The
+  marker of a refresh has the route's `ttl` and `tags`, like the page it
+  replaces. Once it is stale (the `ttl` passed, or `markStale()` marked one of
+  its tags) it still answers 404, a request schedules `onRevalidate`, and
+  `{ onlyIfStale: true }` renders the page again: an item the data source
+  lost for a moment comes back on the next recheck. A `remove()` marker has
+  no `ttl` and no tags: nothing reaches it until a `prerender(url)` without
+  `onlyIfStale` renders the page.
+- **`ctx.passthrough()` in a refresh hands the page to the live handler.** A
+  `Passthrough` route whose build handler declines a param gets
+  `skipped-passthrough`, and the marker is stored so that the live handler
+  answers, not a page stored or baked earlier.
 - **`remove()` is for on-demand routes.** On any other route it returns
   `skipped-not-on-demand` and renders or warms nothing. `throwOnError` works
-  as on a refresh; `remove.many()` also takes `concurrency` (default 1).
-- **A sweep leaves a removed page removed.** `{ onlyIfStale: true }` finds the
-  marker, renders nothing and returns `removed`; only a refresh without it
-  replaces the marker. `markStale()` never matches a marker, and
-  `onRevalidate` is never scheduled for one.
-- **Invalidate first when a cache sits above the router.** No warm request
-  follows a removal, and the marker does not reach a document cache
-  (`createDocumentCacheMiddleware`): it keeps serving the document it stored
-  until `s-maxage` and `stale-while-revalidate` run out. Call
-  `await updateTag(tag)` for a tag the document carries, then
-  `await prerender.remove(url)`. A `Passthrough` route's live handler serves
-  through its own `cache()`, as it does for a page that was never refreshed.
+  as on a refresh, and the error names the call
+  (`prerender.remove("/products/42") failed: ...`); `remove.many()` also
+  takes `concurrency` (default 1).
+- **Last write wins.** `remove()` and a refresh of the same page are two
+  writes to one key. Pass `{ onlyIfStale: true }` where a refresh runs later
+  than it was scheduled, in `onRevalidate` and in a queue consumer: a job
+  queued before a removal then finds the marker and renders nothing, where a
+  plain refresh would bring the page back. A marker that lands while a
+  refresh is still rendering is not overwritten by that render's page, which
+  narrows the race and cannot close it on an eventually consistent store.
+- **Remove first, then invalidate, when a cache sits above the router.** No
+  warm request follows a removal, and the marker does not reach a document
+  cache (`createDocumentCacheMiddleware`): it keeps serving the document it
+  stored until `s-maxage` and `stale-while-revalidate` run out. Call
+  `await prerender.remove(url)`, then `await updateTag(tag)` for a tag the
+  document carries. In the other order a visitor between the two calls is
+  served the page the store still holds, and the document cache stores it
+  again. `updateTag()` needs a request context: from a queue or cron handler
+  the stored document serves until it expires. A `Passthrough` route's live
+  handler serves through its own `cache()`, as it does for a page that was
+  never refreshed.
 - **A custom prerender store needs no change** when it persists the value it
   is given. The marker is `{ v: 1, removed: true, meta }` with no `entry`, and
-  `meta` has the fields a page's has (`tags` is empty). `PrerenderStoredEntry`
-  is now a union of the two, so code that reads `stored.entry` has to check
-  for it.
+  `meta` has the fields a page's has, with the same meaning.
+  `PrerenderStoredEntry` is a union of the two, so code that reads
+  `stored.entry` has to check for it. A store that cannot be read is a miss,
+  for a marker as for a page: while it is failing, the build-time entry of a
+  removed page can serve.
 - **Intercepted navigations do not see the marker**: they do not read the
   prerender store, so the build's intercept variant of a removed page still
   serves.
 
-The Next.js Pages Router has the same rule for the `notFound()` half: "With
+The `notFound()` half is the Next.js Pages Router's rule: "With
 `notFound: true`, the page will return a `404` even if there was a
-successfully generated page before."
+successfully generated page before. This is meant to support use cases like
+user-generated content getting removed by its author. Note, `notFound`
+follows the same `revalidate` behavior described here."
 ([getStaticProps](https://nextjs.org/docs/pages/api-reference/functions/get-static-props))
 See the `prerender` skill, "Remove a page".
 
