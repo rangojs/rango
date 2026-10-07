@@ -1,11 +1,9 @@
 /**
- * Build-time shell manifest key, `{routerId}@{pathname}` — the ONE derivation
- * shared by the producer (vite/discovery/shell-prerender-phase.ts, staging)
- * and the consumer (rsc/shell-build-manifest.ts, runtime lookup) so the two
- * sides of the join cannot drift. The capturing router's id on one side, the
- * serving router's on the other (cache-key-utils.ts, the router rule).
- * Host-free: the build knows no request host. A manifest namespace, never a
- * store keyspace (that is buildShellKey).
+ * Build-time shell manifest key, `{routerId}@{pathname}`: the ONE derivation
+ * shared by the producer (vite/discovery/shell-prerender-phase.ts) and the
+ * consumer (rsc/shell-build-manifest.ts) so the two sides cannot drift. The
+ * router part follows the router rule (cache-key-utils.ts). Host-free (the
+ * build knows no request host); a manifest namespace, never a store keyspace.
  */
 import { routerKeyPrefix } from "../cache/cache-key-utils.js";
 
