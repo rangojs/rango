@@ -8,9 +8,11 @@ import {
 import { createMemoryPrerenderStore } from "../memory-prerender-store.js";
 import { PrerenderPersonalizationError } from "../producer-guard.js";
 import {
+  isStoredEntryStale,
   serializePrerenderKey,
   type WritablePrerenderStore,
 } from "../writable-store.js";
+import { createKVPrerenderStore } from "../cloudflare.js";
 import { hashParams } from "../param-hash.js";
 import type { PrerenderConfig } from "../on-demand.js";
 import { readWarmMark, type PrerenderWarmRecord } from "../warm-request.js";
@@ -556,6 +558,145 @@ describe("createPrerenderTrigger", () => {
       await runner("/products/2");
       expect(resolveConfig).toHaveBeenCalledTimes(2);
       expect(resolveConfig).toHaveBeenCalledWith(envA, undefined);
+    });
+  });
+
+  // #1072: a render that started before markStale() and stored after it holds
+  // pre-invalidation content. The stores compare their tag marker with
+  // storedAt, so storedAt is the render's start, not the write's.
+  describe("a markStale() that lands while a render runs", () => {
+    const pause = (ms: number) =>
+      new Promise((resolve) => setTimeout(resolve, ms));
+    const storedKey = {
+      routerId: "r1",
+      version: "b1",
+      routeName: "products.detail",
+      paramHash: hashParams({ id: "42" }),
+    };
+
+    function kvStore() {
+      const map = new Map<string, string>();
+      const kv = {
+        get: async (k: string) => map.get(k) ?? null,
+        put: async (k: string, v: string) => void map.set(k, v),
+        delete: async (k: string) => void map.delete(k),
+      };
+      return createKVPrerenderStore(kv as any);
+    }
+
+    /** Run one refresh, marking the tag "x" stale between its start and its write. */
+    async function markDuringRender(
+      store: WritablePrerenderStore,
+      produced: ProducerOutput,
+    ) {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let started = false;
+      const { trigger } = harness({
+        config: { store },
+        runProducer: async () => {
+          started = true;
+          await gate;
+          return produced;
+        },
+      });
+      const run = trigger("/products/42");
+      await vi.waitFor(() => expect(started).toBe(true));
+      await pause(5);
+      await trigger.markStale(["x"]);
+      await pause(5);
+      release();
+      return run;
+    }
+
+    const tagged = { onDemandConfig: { ttl: 600, tags: ["x"] } as any };
+
+    it("KV store: the page is stale once stored", async () => {
+      const store = kvStore();
+      const result = await markDuringRender(store, output(tagged));
+      expect(result).toMatchObject({ ok: true, status: "rendered" });
+      const stored = await store.get(storedKey);
+      expect(isStoredEntryStale(stored!, Date.now())).toBe(true);
+    });
+
+    it("memory store: the page is stale once stored", async () => {
+      const store = createMemoryPrerenderStore();
+      const result = await markDuringRender(store, output(tagged));
+      expect(result).toMatchObject({ ok: true, status: "rendered" });
+      expect(isStoredEntryStale(store.peek(storedKey)!, Date.now())).toBe(true);
+    });
+
+    it("a notFound() marker written by that refresh is stale too", async () => {
+      for (const store of [kvStore(), createMemoryPrerenderStore()]) {
+        const result = await markDuringRender(
+          store,
+          output({ notFound: true, ...tagged }),
+        );
+        expect(result).toMatchObject({ ok: true, status: "removed" });
+        const stored = await store.get(storedKey);
+        expect(stored).toMatchObject({ removed: true });
+        expect(isStoredEntryStale(stored!, Date.now())).toBe(true);
+      }
+    });
+
+    it("the ttl counts from the render's start", async () => {
+      const store = createMemoryPrerenderStore();
+      const before = Date.now();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let started = false;
+      const { trigger } = harness({
+        config: { store },
+        runProducer: async () => {
+          started = true;
+          await gate;
+          return output(tagged);
+        },
+      });
+      const run = trigger("/products/42");
+      await vi.waitFor(() => expect(started).toBe(true));
+      await pause(20);
+      release();
+      await run;
+      const { meta } = store.peek(storedKey)!;
+      expect(meta.storedAt).toBeGreaterThanOrEqual(before);
+      expect(meta.storedAt).toBeLessThan(Date.now() - 15);
+      expect(meta.staleAt).toBe(meta.storedAt + 600_000);
+    });
+
+    it("a remove() that lands during the render still wins, and a fresh page is already-fresh", async () => {
+      const store = createMemoryPrerenderStore();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let started = false;
+      const { trigger } = harness({
+        config: { store },
+        runProducer: async () => {
+          started = true;
+          await gate;
+          return output(tagged);
+        },
+      });
+      const run = trigger("/products/42");
+      await vi.waitFor(() => expect(started).toBe(true));
+      await pause(5);
+      await trigger.remove("/products/42");
+      release();
+      expect(await run).toMatchObject({ ok: true, status: "removed" });
+
+      const fresh = harness({
+        config: { store: createMemoryPrerenderStore() },
+        runProducer: async () => output(tagged),
+      });
+      await fresh.trigger("/products/42");
+      expect(
+        await fresh.trigger("/products/42", { onlyIfStale: true }),
+      ).toMatchObject({ ok: true, status: "already-fresh" });
+      await fresh.trigger.markStale(["x"]);
+      await pause(2);
+      expect(
+        await fresh.trigger("/products/42", { onlyIfStale: true }),
+      ).toMatchObject({ ok: true, status: "rendered" });
     });
   });
 

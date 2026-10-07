@@ -44,9 +44,16 @@ const StampLoader = createLoader(async () => {
   return { value: `loader-${counts.loader}` };
 });
 
+/** Set to hold the article's render open, to land a markStale() inside it. */
+let holdRender: { entered: () => void; gate: Promise<void> } | undefined;
+
 const ArticleDef = Prerender<{ slug: string }>(
   async () => [],
   async (ctx) => {
+    if (holdRender) {
+      holdRender.entered();
+      await holdRender.gate;
+    }
     counts.producer += 1;
     return <h1>{`${ctx.params.slug}:stamp-${counts.producer}`}</h1>;
   },
@@ -102,6 +109,7 @@ describe("on-demand prerender: router.prerender() then serve", () => {
     store = createMemoryPrerenderStore();
     counts.producer = 0;
     counts.loader = 0;
+    holdRender = undefined;
   });
 
   afterEach(() => {
@@ -309,5 +317,41 @@ describe("on-demand prerender: router.prerender() then serve", () => {
     // Settled: the next stale hit schedules again.
     await serveShellRequest(router, "/hot/a", { env });
     expect(onRevalidate).toHaveBeenCalledTimes(2);
+  });
+
+  // #1072: a refresh that started before markStale() renders pre-invalidation
+  // content, so the entry it stores is stale although its ttl has not passed.
+  it("a refresh that started before markStale() leaves an entry the next request treats as stale", async () => {
+    const onRevalidate = vi.fn();
+    const router = makeRouter({ store, onRevalidate });
+    const prerender = router.prerender({ env: {} });
+
+    // Control: an undisturbed refresh is fresh (ttl 3600), no revalidation.
+    await prerender("/article/calm");
+    await serveShellRequest(router, "/article/calm");
+    expect(onRevalidate).not.toHaveBeenCalled();
+
+    let entered!: () => void;
+    const hasEntered = new Promise<void>((resolve) => (entered = resolve));
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    holdRender = { entered, gate };
+    const refresh = prerender("/article/intro");
+    await hasEntered;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await prerender.markStale(["article:intro"]);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    holdRender = undefined;
+    release();
+    expect(await refresh).toMatchObject({ ok: true, status: "rendered" });
+
+    const served = await serveShellRequest(router, "/article/intro");
+    expect(served.response.status).toBe(200);
+    expect(served.flight).toContain("intro:stamp-");
+    expect(onRevalidate).toHaveBeenCalledTimes(1);
+    expect(onRevalidate.mock.calls[0]![0]).toEqual({
+      route: "article",
+      params: { slug: "intro" },
+    });
   });
 });

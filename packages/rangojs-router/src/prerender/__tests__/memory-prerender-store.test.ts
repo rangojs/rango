@@ -476,3 +476,67 @@ describe("the removed marker (tombstone)", () => {
     expect(store.size).toBe(1);
   });
 });
+
+describe("a write rendered before a markStale()", () => {
+  const stamp = (storedAt: number, tags = ["t"]) =>
+    composeStoredEntry(
+      key(),
+      entry,
+      { ttl: 600, tags, params: { id: "42" } },
+      storedAt,
+    );
+
+  it("is stored as stale, and keeps serving", async () => {
+    const store = createMemoryPrerenderStore({ now: () => 5000 });
+    await store.markStale("r1", ["t"]);
+    await store.set(key(), stamp(4000));
+
+    const held = await store.get(key());
+    expect(held!.meta.staleAt).toBe(5000);
+    expect(isStoredEntryStale(held!, 5000)).toBe(true);
+    expect(held!.entry).toBe(entry);
+  });
+
+  it("a mark in the stamp's own millisecond covers it, like the KV store", async () => {
+    const store = createMemoryPrerenderStore({ now: () => 5000 });
+    await store.markStale("r1", ["t"]);
+    await store.set(key(), stamp(5000));
+    expect((await store.get(key()))!.meta.staleAt).toBe(5000);
+  });
+
+  it("a write rendered after the mark, another tag or another router is left alone", async () => {
+    const store = createMemoryPrerenderStore({ now: () => 5000 });
+    await store.markStale("r1", ["t"]);
+    await store.set(key(), stamp(5001));
+    await store.set(key({ paramHash: "b" }), stamp(4000, ["other"]));
+    await store.set(key({ routerId: "r2", paramHash: "c" }), stamp(4000));
+
+    expect((await store.get(key()))!.meta.staleAt).toBe(5001 + 600_000);
+    expect((await store.get(key({ paramHash: "b" })))!.meta.staleAt).toBe(
+      4000 + 600_000,
+    );
+    expect(
+      (await store.get(key({ routerId: "r2", paramHash: "c" })))!.meta.staleAt,
+    ).toBe(4000 + 600_000);
+  });
+
+  it("a remove() marker has no tags and is never marked", async () => {
+    const store = createMemoryPrerenderStore({ now: () => 5000 });
+    await store.markStale("r1", ["t"]);
+    const tombstone = composeStoredTombstone(
+      key(),
+      { tags: [], params: { id: "42" } },
+      4000,
+    );
+    await store.set(key(), tombstone);
+    expect(tombstone.meta.staleAt).toBeUndefined();
+  });
+
+  it("clear() forgets the marks", async () => {
+    const store = createMemoryPrerenderStore({ now: () => 5000 });
+    await store.markStale("r1", ["t"]);
+    store.clear();
+    await store.set(key(), stamp(4000));
+    expect((await store.get(key()))!.meta.staleAt).toBe(4000 + 600_000);
+  });
+});

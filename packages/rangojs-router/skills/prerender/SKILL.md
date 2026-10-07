@@ -816,7 +816,8 @@ page"), `no-match`, `no-store`, `skipped-personalized`,
 `skipped-unsupported-target` (a target with `?search` or `#hash`),
 `skipped-passthrough`, `render-failed` and `store-failed`. Every failure keeps
 the previous entry, except `skipped-passthrough`, which hands the page to the
-live handler.
+live handler. An entry's `ttl` counts from the start of its render, and a
+`markStale()` that lands during the render marks the entry that render stores.
 
 A route that is not on-demand is not refused: the same call warms its runtime
 caches instead (see "Warm any route before traffic"). An on-demand route gets

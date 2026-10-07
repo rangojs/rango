@@ -194,7 +194,11 @@ typechecks on a router with named routes, also after a queue round trip
 
 TTL resolves route `onDemand.ttl` > router `ttl` > never stale, and it
 is soft staleness metadata on the stored entry, never a hard store expiry — see
-Store Model for why that distinction is load-bearing.
+Store Model for why that distinction is load-bearing. The ttl counts from the
+start of the render, not from the write: `storedAt` is the render's start (a
+page, or the marker of a refresh that hit `notFound()`), so a `markStale()`
+that lands while the render runs marks the entry it stores (#1072); a
+`remove()` marker renders nothing and keeps its write time.
 
 The important part is that store resolution is per call or per request, not a
 module singleton. Cloudflare, Vercel, and multi-tenant apps must not memoize one
@@ -567,6 +571,13 @@ host router point at one KV namespace, and an unscoped marker for
 stores scope by `routerId` (the memory store by the key's router id, KV by the
 marker key). Runtime-cache markers are a separate store and are not scoped
 here.
+
+Both shipped stores also mark an entry written after the mark: KV compares its
+tag marker with `storedAt` on read (`marker >= storedAt`), and the memory store
+remembers when each tag was last marked per router id and, in `set()`, lowers
+`staleAt` of an entry whose `storedAt` is at or before that mark (the same
+comparison). It marks and never refuses: the entry keeps serving. A custom
+store needs the same rule for a write stamped before a mark it has taken.
 
 ```ts
 interface StoredEnvelope {

@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Fixed: a prerender refresh that started before `markStale()` is stored stale ([#1072](https://github.com/rangojs/rango/issues/1072))
+
+`router.prerender()` stamped an entry (a page, or the marker of a refresh that
+hit `notFound()`) with the time of the store write. A render that started
+before `markStale(tags)` and finished after it was kept as fresh, holding
+pre-invalidation content. The entry is now stamped with the render's start, so
+both stores mark it stale and it keeps serving until the next refresh.
+`createMemoryPrerenderStore` now also remembers when each tag was last marked
+per router and marks a write rendered before that mark. Consequence: an entry's
+`ttl` counts from the start of its render, not from the write. A custom
+`WritablePrerenderStore` that compares a tag marker with `meta.storedAt` needs
+no change; one that only marks the entries it holds at `markStale()` time
+should also mark a later write stamped before the mark.
+
 ### Added: prerender tags are per router
 
 `router.prerender({ env, ctx }).markStale(["product:1"])` marks only that

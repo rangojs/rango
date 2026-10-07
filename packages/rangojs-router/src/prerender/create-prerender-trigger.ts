@@ -24,7 +24,9 @@
  * - A `notFound()` in the render is not a failure: it stores a "removed"
  *   marker in place of the page, stamped with the route's ttl and tags so it
  *   is rechecked like a page. `prerender.remove()` stores one without
- *   rendering, which never goes stale. A Passthrough build handler that
+ *   rendering, which never goes stale. A page and a render's marker are
+ *   stamped with the render's start (`storedAt`), so a `markStale()` that
+ *   lands during the render marks the result; the ttl counts from it too. A Passthrough build handler that
  *   declines (`ctx.passthrough()`) stores one too, so its live handler answers.
  * - An on-demand target is path-only (its key carries no search); a warm
  *   target keeps its search params, which cache keys carry.
@@ -537,6 +539,8 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
       }
     }
 
+    // The entry's storedAt (#1072): a markStale() while the render runs must
+    // mark it, and the stores compare their tag marker with storedAt.
     const startedAt = Date.now();
     let produced: ProducerOutput | null;
     try {
@@ -622,12 +626,12 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
       await store.set(
         key,
         noPage
-          ? composeStoredTombstone(key, stamp, Date.now())
+          ? composeStoredTombstone(key, stamp, startedAt)
           : composeStoredEntry(
               key,
               { segments: produced.segments, handles: produced.handles },
               stamp,
-              Date.now(),
+              startedAt,
             ),
       );
     } catch (err) {

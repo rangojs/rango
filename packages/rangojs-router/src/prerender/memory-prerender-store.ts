@@ -46,12 +46,29 @@ export function createMemoryPrerenderStore(
     { routerId: string; stored: PrerenderStoredEntry }
   >();
 
+  // routerId -> tag -> when markStale() last named it. A held entry is marked
+  // in place; this covers a write that was rendered before the mark and set
+  // after it.
+  const marks = new Map<string, Map<string, number>>();
+
   return {
     async get(key: PrerenderKey): Promise<PrerenderStoredEntry | null> {
       return map.get(serializePrerenderKey(key))?.stored ?? null;
     },
 
     async set(key: PrerenderKey, stored: PrerenderStoredEntry): Promise<void> {
+      // Same comparison as the KV store's read (cloudflare.ts): a mark at or
+      // after storedAt covers the entry. It marks, never refuses: a stale
+      // entry keeps serving.
+      const routerMarks = marks.get(key.routerId);
+      if (routerMarks) {
+        for (const tag of stored.meta.tags) {
+          const at = routerMarks.get(tag);
+          if (at != null && at >= stored.meta.storedAt) {
+            lowerStoredEntryStaleAt(stored, at);
+          }
+        }
+      }
       map.set(serializePrerenderKey(key), { routerId: key.routerId, stored });
     },
 
@@ -63,6 +80,9 @@ export function createMemoryPrerenderStore(
       if (tags.length === 0) return;
       const tagSet = new Set(tags);
       const at = now();
+      let routerMarks = marks.get(routerId);
+      if (!routerMarks) marks.set(routerId, (routerMarks = new Map()));
+      for (const tag of tags) routerMarks.set(tag, at);
       for (const entry of map.values()) {
         if (
           entry.routerId === routerId &&
@@ -83,6 +103,7 @@ export function createMemoryPrerenderStore(
 
     clear(): void {
       map.clear();
+      marks.clear();
     },
 
     get size(): number {
