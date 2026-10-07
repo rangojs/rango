@@ -450,6 +450,13 @@ export type InternalHandlerContext<
   /** Route name for cache key scoping (prevents cross-route collisions). */
   _routeName?: string;
   /**
+   * @internal The on-demand overlay holds a "removed" marker for this request
+   * (tryPrerenderLookup, cache-lookup.ts); gateOnDemandProducer reads it. On
+   * this context, not the request's: withCacheLookup documents that the
+   * request ALS can be lost mid-pipeline on workerd.
+   */
+  _prerenderRemoved?: true;
+  /**
    * @internal Loader-cache override table: loaderId -> memoized data promise.
    * A single stable ctx.use interceptor consults this instead of chaining one
    * wrapper per cached loader (avoids O(N) dispatch). See loader-cache.ts.

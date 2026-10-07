@@ -31,7 +31,11 @@ import {
   noteWarmWrite,
 } from "../prerender/warm-request.js";
 import { reportCacheError } from "./cache-error.js";
-import { executionStart, predatesInvalidation } from "./tag-invalidation.js";
+import {
+  executionStart,
+  markResponseStart,
+  predatesInvalidation,
+} from "./tag-invalidation.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import {
   SEGMENT_FRAGMENT_CAPABILITY_HEADER,
@@ -373,7 +377,8 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       return next();
     }
 
-    // The write gate's start (#977): the request's, not this middleware's. A
+    // The write gate's start (#977) and the entry's stamp (#1068): the
+    // request's, not this middleware's, also for a stale refresh. A
     // middleware ahead of this one can read tagged data the document bakes,
     // and a stale refresh re-runs the handler over what they set.
     const start = requestCtx._requestStart ?? executionStart();
@@ -490,7 +495,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
                   if (await predatesInvalidation(store, tags, start)) return;
                   await store.putResponse!(
                     cacheKey,
-                    new Response(body, fresh),
+                    markResponseStart(new Response(body, fresh), start),
                     directives.sMaxAge!,
                     directives.staleWhileRevalidate,
                     tags,
@@ -561,7 +566,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
             if (await predatesInvalidation(store, tags, start)) return;
             await store.putResponse!(
               cacheKey,
-              new Response(body, originalResponse),
+              markResponseStart(new Response(body, originalResponse), start),
               directives.sMaxAge!,
               directives.staleWhileRevalidate,
               tags,

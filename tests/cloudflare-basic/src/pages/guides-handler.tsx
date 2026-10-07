@@ -3,9 +3,12 @@ import { Link } from "@rangojs/router/client";
 
 // Known slugs that get pre-rendered at build time.
 // Unknown slugs fall through to the Passthrough live handler.
+// "removable" is baked for the removal e2e alone
+// (e2e/prerender-ondemand.test.ts), which removes its page.
 const knownGuides: Record<string, string> = {
   routing: "Routing Guide",
   caching: "Caching Guide",
+  removable: "Removable Guide",
 };
 
 export const GuidesDetailDef = Prerender<{ slug: string }>(

@@ -151,18 +151,27 @@ or is rewritten.
 
 ```mermaid
 flowchart TD
-  A["set / setItem / putResponse (entry has tags)"] --> B["stamp taggedAt = now"]
+  A["set / setItem / putResponse (entry has tags)"] --> B["stamp taggedAt = start of the execution<br/>(write time when the writer knows none)"]
   B --> C["store entry + its tags + taggedAt"]
   C --> D["L1 edge cache (+ KV L2 if configured)"]
 ```
 
-The entry carries its tags and the moment it was cached (`taggedAt`). That
-timestamp is the only thing reads need to make the freshness decision.
+The entry carries its tags and the moment the execution that produced it
+started (`taggedAt`). That timestamp is the only thing reads need to make the
+freshness decision. It is the start, not the write time
+([#1068](https://github.com/rangojs/rango/issues/1068)): an execution that
+read its data before `updateTag("x")` and finished after it would otherwise
+be stamped after the invalidation and served as fresh by any location with no
+copy of its own. Which reads compare the stamp with a marker: `CFCacheStore`
+with KV, on every read. `VercelCacheStore` data reads compare it with the
+invalidating request's mask only, and `CFCacheStore` L1 hits in purge mode (or
+without KV) read no marker, so a later request is not protected there; the
+write gate below is their guard. `MemorySegmentCacheStore` has no stamp and
+refuses the late write instead. See "The stamp is the execution's start" in
+[caching.md](./caching.md).
 
-Which is why a write must not carry data older than its stamp
-([#977](https://github.com/rangojs/rango/issues/977)). An execution that
-read its data before `updateTag("x")` and finished after it would be stamped
-after the invalidation and served as fresh. So before the store write, every
+A write must also not carry data older than the invalidation
+([#977](https://github.com/rangojs/rango/issues/977)). So before the store write, every
 writer asks `predatesInvalidation(store, tags, start)` (`tag-invalidation.ts`)
 and skips the write when one of the entry's tags was invalidated after the
 execution started:

@@ -185,7 +185,7 @@
     },
     {
       "name": "prerender",
-      "description": "Pre-render route segments at build time with Prerender (with getParams), Passthrough live fallback, Static segments, and Skip, refresh them from a running app with on-demand prerender (Prerender onDemand + router.prerender, ISR-style), and warm any other route's runtime caches (ppr shell, cache(), \"use cache\", document cache) before traffic with the same router.prerender. Use when a page's content is mostly static and shouldn't render on every request, speeding up cold responses, reading build-only data (files, build env), refreshing one page from a webhook, cron or queue without a redeploy, making routes ready after a deploy or an updateTag so no visitor pays the first render, or deciding which routes to prerender vs render live.",
+      "description": "Pre-render route segments at build time with Prerender (with getParams), Passthrough live fallback, Static segments, and Skip, refresh them from a running app with on-demand prerender (Prerender onDemand + router.prerender, ISR-style), and warm any other route's runtime caches (ppr shell, cache(), \"use cache\", document cache) before traffic with the same router.prerender. Use when a page's content is mostly static and shouldn't render on every request, speeding up cold responses, reading build-only data (files, build env), refreshing one page from a webhook, cron or queue without a redeploy, removing a deleted item's page (prerender.remove, or notFound() in a refresh), making routes ready after a deploy or an updateTag so no visitor pays the first render, or deciding which routes to prerender vs render live.",
       "argumentHint": "[passthrough]",
       "path": "skills/prerender/SKILL.md"
     },

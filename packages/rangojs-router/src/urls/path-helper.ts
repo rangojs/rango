@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { Handler } from "../types.js";
+import type { Handler, InternalHandlerContext } from "../types.js";
 import type { RouteItem, RouteUseItem, UseItems } from "../route-types.js";
 import {
   getUrlPrefix,
@@ -71,16 +71,24 @@ const NO_PRERENDER_DATA_MESSAGE = "No prerender data found for this route";
  * personalization guard unarmed. Keep the pre-retention miss contract instead
  * (DataNotFoundError -> 404). Producer runs (build-time bake and
  * router.prerender()) arrive with ctx.build true (createPrerenderContext);
- * Vite dev keeps the documented live fall-through on a dev-store miss.
+ * Vite dev keeps the documented live fall-through on a dev-store miss, except
+ * for a page the overlay marks removed (`_prerenderRemoved`): a live render
+ * would show in dev a page production answers with a 404.
  * Pass-through when the route is not onDemand.
+ *
+ * @internal Exported for the unit test.
  */
-function gateOnDemandProducer<TEnv>(
+export function gateOnDemandProducer<TEnv>(
   producer: Handler<any, any, TEnv>,
   isOnDemand: boolean,
 ): Handler<any, any, TEnv> {
   if (!isOnDemand) return producer;
   return (ctx) => {
-    if (!ctx.build && !isDevEnvironment()) {
+    if (
+      !ctx.build &&
+      (!isDevEnvironment() ||
+        (ctx as InternalHandlerContext<any, TEnv>)._prerenderRemoved)
+    ) {
       throw new DataNotFoundError(NO_PRERENDER_DATA_MESSAGE);
     }
     return producer(ctx);

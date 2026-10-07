@@ -1,6 +1,7 @@
 import { test } from "@playwright/test";
 import { useFixture } from "./fixture";
 import {
+  expectWarmOfLocalStoreIsRefused,
   expectMixedBatchWarmsOnTheRequestOrigin,
   expectOnlyIfStaleWarmLeavesFreshShellAlone,
   expectWarmMakesNextDocumentAShellHit,
@@ -69,6 +70,15 @@ function describePrerenderWarm(mode: "dev" | "build") {
       page,
     }) => {
       await expectOnlyIfStaleWarmLeavesFreshShellAlone(page, fixture());
+    });
+
+    // localStore=1 builds the app store without KV: a CFCacheStore declares
+    // scope "local" then. The dev rule admits only a MemorySegmentCacheStore,
+    // so dev refuses it too.
+    test("a warm against a KV-less CFCacheStore (scope local) is refused: nothing renders, nothing is stored", async ({
+      page,
+    }) => {
+      await expectWarmOfLocalStoreIsRefused(page, fixture());
     });
   });
 }

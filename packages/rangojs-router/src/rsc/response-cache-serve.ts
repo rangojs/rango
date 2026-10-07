@@ -37,6 +37,7 @@ import { cacheKeyBase } from "../cache/cache-key-utils.js";
 import { isWarmReplace, noteWarmWrite } from "../prerender/warm-request.js";
 import {
   executionStart,
+  markResponseStart,
   predatesInvalidation,
   type ExecutionStart,
 } from "../cache/tag-invalidation.js";
@@ -181,7 +182,7 @@ export async function serveResponseRouteWithCache(
     }
     await store2.putResponse!(
       cacheKey,
-      fresh,
+      markResponseStart(fresh, start),
       cacheScope!.ttl,
       cacheScope!.swr,
       responseTags,

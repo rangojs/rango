@@ -14,7 +14,7 @@ The one stub is the HTML step (the SSR module), because `react-dom/server` does 
 
 So `prelude` is the shell as captured (Flight text, not HTML): a value the shell froze appears there, and a hole (a live loader under `loading()`) does not.
 
-A `Prerender` route is served as in production: from the artifact `router.matchForPrerender` bakes for the URL (on its first request, kept until `resetShellTestState()`), through the production prerender store, so its handler runs once, at the bake, and never on a request. Its first `ppr` request is a MISS with a runtime capture, as a URL without a build-time shell is in production. The shell `vite build` bakes (served first in production for a URL without a query string) is not reproduced: keep that in e2e. The `env` option doubles as the bake's `buildEnv`.
+A `Prerender` route is served as in production: from the artifact `router.matchForPrerender` bakes for the URL (on its first request, kept until `resetShellTestState()`), through the production prerender store, so its handler runs once, at the bake, and never on a request. Its first `ppr` request is a MISS with a runtime capture, as a URL without a build-time shell is in production. The shell `vite build` bakes (served first in production for a URL without a query string) is not reproduced: keep that in e2e. The `env` option doubles as the bake's `buildEnv`. An on-demand route (`Prerender(..., { onDemand })`) is baked only when it is wrapped in `Passthrough()` and its `getParams()` lists the param, as a build bakes it; a plain on-demand route is not baked here, so its pages come from the prerender store alone (`router.prerender()`), and "a removed page the build baked" is a case for a `Passthrough` route or for e2e.
 
 ## API
 
