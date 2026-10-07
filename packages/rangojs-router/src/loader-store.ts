@@ -537,12 +537,20 @@ export class LoaderStore {
       this.pendingStreams.set(loaderId, set);
     }
     set.add(stream);
-    const release = () => {
-      const current = this.pendingStreams.get(loaderId);
-      if (!current || !current.delete(stream)) return;
-      if (current.size === 0) this.pendingStreams.delete(loaderId);
-    };
+    const release = () => this.releasePendingStream(loaderId, stream);
     stream.then(release, release);
+  }
+
+  /**
+   * Stop tracking a stream. trackPendingStream does it as the stream settles;
+   * an abandoned fill's gate (browser/partial-update.ts) never settles, and
+   * left tracked it would pin the family's held readers on every later
+   * transition.
+   */
+  releasePendingStream(loaderId: string, stream: Promise<unknown>): void {
+    const current = this.pendingStreams.get(loaderId);
+    if (!current || !current.delete(stream)) return;
+    if (current.size === 0) this.pendingStreams.delete(loaderId);
   }
 
   /** True while any navigation stream for `loaderId` is still pending. */

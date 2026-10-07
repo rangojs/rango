@@ -676,6 +676,12 @@ export interface FetchPartialOptions {
   routerId?: string;
   /** If true, this is an HMR refetch - server should invalidate manifest cache */
   hmr?: boolean;
+  /**
+   * The fill request of an adopted prefetch that carried deferred segments
+   * (`prefetch: false`): marked `_rsc_fill`, never answered from or written
+   * to a prefetch cache or the HTTP cache, and it cancels no prefetch.
+   */
+  fill?: boolean;
 }
 
 /**

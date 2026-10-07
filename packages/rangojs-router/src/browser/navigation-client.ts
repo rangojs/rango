@@ -85,6 +85,7 @@ export function createNavigationClient(
         version,
         routerId,
         hmr,
+        fill,
       } = options;
 
       const debugEnabled = isBrowserDebugEnabled();
@@ -114,11 +115,18 @@ export function createNavigationClient(
       if (routerId) {
         fetchUrl.searchParams.set("_rsc_rid", routerId);
       }
+      // A param, not a header: the document cache decides from the raw URL
+      // (cache/document-cache.ts), and it keeps the fill out of every
+      // prefetch key below.
+      if (fill) {
+        fetchUrl.searchParams.set("_rsc_fill", "1");
+      }
 
       // If the lazy prefetch runtime has not loaded yet, prevent a deferred
       // speculative request from starting after this navigation misses the
-      // synchronous cache lookup and begins its own fetch.
-      cancelAllPrefetches(targetUrl);
+      // synchronous cache lookup and begins its own fetch. A fill is not a
+      // navigation: the links on the page it completes stay prefetched.
+      if (!fill) cancelAllPrefetches(targetUrl);
 
       // Check completed in-memory prefetch cache before making a network
       // request. Try the source-scoped key first (populated when the server
@@ -136,6 +144,7 @@ export function createNavigationClient(
       const canUsePrefetch =
         !staleRevalidation &&
         !hmr &&
+        !fill &&
         !interceptSourceUrl &&
         !isActionFenceActive();
       const rangoState = getRangoState();
@@ -248,7 +257,7 @@ export function createNavigationClient(
           // it so a genuine mid-action navigation fetches fresh instead of being
           // served the stale prefetched bytes. Fragment recovery also bypasses
           // HTTP caches so it reaches the server's decode-and-evict path.
-          ...((isActionFenceActive() || fragmentRecovery) && {
+          ...((isActionFenceActive() || fragmentRecovery || fill) && {
             cache: "no-store" as RequestCache,
           }),
           headers: {

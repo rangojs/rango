@@ -14,7 +14,12 @@ import {
   createNavigationTransaction,
   resolveNavigationState,
 } from "./navigation-transaction.js";
-import { buildHistoryState, pushHistoryWithIdx } from "./history-state.js";
+import {
+  buildHistoryState,
+  mergeLocationState,
+  pushHistoryWithIdx,
+} from "./history-state.js";
+import { cancelPendingFill } from "./pending-fill.js";
 import {
   handleNavigationStart,
   handleNavigationEnd,
@@ -144,6 +149,9 @@ export function createNavigationBridge(
   } = config;
   let version = config.version;
 
+  // Bound to the bridge below: a fill follows a redirect as a navigation.
+  let navigateTo: NavigationBridge["navigate"] | undefined;
+
   // Create shared partial updater
   const fetchPartialUpdate = createPartialUpdater({
     store,
@@ -151,6 +159,12 @@ export function createNavigationBridge(
     onUpdate,
     renderSegments,
     getVersion: () => version,
+    fill: {
+      redirect: (url, state) =>
+        void navigateTo?.(url, { state, replace: true, _skipCache: true }),
+      locationState: (state) =>
+        eventController.commitLocationState(mergeLocationState(state)),
+    },
   });
 
   /**
@@ -192,7 +206,7 @@ export function createNavigationBridge(
     });
   }
 
-  return {
+  const bridge: NavigationBridge = {
     /**
      * Navigate to a URL
      * Uses cached segments for SWR revalidation when available
@@ -365,6 +379,9 @@ export function createNavigationBridge(
       const hasUsableCache =
         cachedSegments &&
         cachedSegments.length > 0 &&
+        // An entry left before its fill landed (prefetch: false) holds
+        // placeholders, not segments: fetch it.
+        !cachedSegments.some((s) => s.deferred) &&
         !isInterceptOnlyCache(cachedSegments) &&
         !hasInterceptCache &&
         !isLeavingIntercept &&
@@ -571,6 +588,8 @@ export function createNavigationBridge(
     async handlePopstate(): Promise<void> {
       // Abort any pending navigation to prevent race conditions
       eventController.abortNavigation();
+      // The page being left may be waiting on a fill (prefetch: false).
+      cancelPendingFill();
       handleTraversalStart();
 
       const url = window.location.href;
@@ -637,7 +656,13 @@ export function createNavigationBridge(
       // revalidates (SWR) instead of serving it as fresh.
       const isStale = (cached?.stale ?? false) || isActionFenceActive();
 
-      if (cachedSegments && cachedSegments.length > 0) {
+      // An entry left before its fill landed (prefetch: false) holds
+      // placeholders: restoring it would suspend on gates nobody resolves.
+      if (
+        cachedSegments &&
+        cachedSegments.length > 0 &&
+        !cachedSegments.some((s) => s.deferred)
+      ) {
         // transition({ when }) decides the restore (kind "pop") against the
         // entry being left, so before the store moves to the restored entry.
         // The decision the entry was committed with is not reused: it was
@@ -922,6 +947,8 @@ export function createNavigationBridge(
       store.clearHistoryCache();
     },
   };
+  navigateTo = (url, options) => bridge.navigate(url, options);
+  return bridge;
 }
 
 export { createNavigationBridge as default };

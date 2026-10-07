@@ -159,7 +159,15 @@ export function planPrefetchDeferral(
 
   const leaf = entries[entries.length - 1];
   let storedFrom = Infinity;
-  if (matched.pr || matched.od || (leaf && isPprEntry(leaf))) {
+  if (
+    matched.pr ||
+    matched.od ||
+    (leaf &&
+      (isPprEntry(leaf) ||
+        // A Prerender route is stored whether or not this request found the
+        // artifact (dev renders it live): the rule is the declaration's.
+        (leaf.type === "route" && leaf.isPrerender)))
+  ) {
     storedFrom = 0;
   } else if (cacheScope?.enabled) {
     // The same index withCacheLookup resolves its live entries above.
