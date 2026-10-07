@@ -1124,11 +1124,22 @@ What happens:
   click sends no second request. The rule: a click that adopts a prefetch is
   never worse than the same click with no prefetch at all, and content on
   screen is never swapped for a fallback because of the flag.
-- A **click** that adopts that prefetch commits at once. Where the page reads
-  the loader (`useLoader(ReviewsLoader)`) it shows the nearest `loading()` or
-  `<Suspense>` fallback, and the browser sends one second request, the fill,
-  that runs only the deferred loader. Its value merges into the page that is
-  already on screen; nothing remounts.
+- A **click** that adopts that prefetch is never blocked by the loader. A
+  deferred loader behaves like a loader that is still streaming, and where
+  the page reads it (`useLoader(ReviewsLoader)`) React does what it does for
+  one:
+  - the read has its own `<Suspense>`: the page shows at once with that
+    fallback in it. This can be a finer fallback than the same click shows
+    with no prefetch, where the whole route is still streaming behind its
+    `loading()`;
+  - the nearest boundary is the route's `loading()`: that fallback shows;
+  - no boundary at all: React holds the page being left until the value
+    arrives.
+
+  Meanwhile the browser sends one second request, the fill, that runs only
+  the deferred loader. Its value merges into the page that is already on
+  screen; nothing remounts.
+
 - A **document request** (hard load), a **navigation with no prefetch to
   adopt**, an action, back/forward and a no-JS form post run the loader as
   they always did. Leaving the option out is the old behavior.
@@ -1171,8 +1182,14 @@ The limits:
   after the page is already on screen: a redirect becomes a replace
   navigation, `notFound()` renders the nearest not-found boundary, an error
   reaches the error boundary.
-- **A loader with its own `cache()` is skipped in a prefetch even on a hit.**
-  The prefetch never reads the loader cache; the fill does.
+- **The fill reads through the loader's own caching; a prefetch reads none
+  of it, by intent.** A loader with `cache()` is skipped in a prefetch even
+  when its entry is warm, and so is a `"use cache"` function it calls: a
+  prefetch that looked would have to run the loader on a miss, which is the
+  work the flag keeps out. The fill is where the loader runs. It serves a
+  warm `cache()` entry without running the loader, runs the loader and
+  stores on a cold one, and a `"use cache"` function inside the loader hits
+  or stores as on any request.
 - **A loader something else reads with `ctx.use()` runs in the prefetch.**
   The reader needs the value, so the flag cannot keep the loader out. When
   the read is in time, the loader is an ordinary loader for that prefetch:

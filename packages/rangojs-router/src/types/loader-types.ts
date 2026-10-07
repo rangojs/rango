@@ -202,12 +202,19 @@ export type LoaderOptions = {
   ssr?: boolean;
   /**
    * `prefetch: false` keeps this loader out of prefetches. A `<Link>`
-   * prefetch (a partial request with `X-Rango-Prefetch`) does not execute it
-   * and does not read its `cache()`; the payload marks it deferred. When a
-   * click adopts that payload the page commits at once, the loader's read
-   * site shows its `loading()`/Suspense fallback (with no boundary React
-   * holds the transition), and one fill request runs the loader. A document
-   * request and a navigation with no prefetch to adopt run it as usual.
+   * prefetch (a partial request with `X-Rango-Prefetch`) does not execute it;
+   * the payload marks it deferred. A document request and a navigation with
+   * no prefetch to adopt run it as usual.
+   *
+   * A deferred loader never blocks the navigation that adopts the prefetch:
+   * it behaves like a loader that is still streaming. Its own `<Suspense>`
+   * shows at once; if the nearest boundary is the route's `loading()`, that
+   * shows; with no boundary React holds the page until the fill returns. The
+   * fill is the one follow-up request that runs the loader.
+   *
+   * The fill reads through the loader's own `cache()` and any `"use cache"`
+   * function it calls. A prefetch reads neither, by intent: looking would
+   * mean running the loader on a miss.
    *
    * The flag applies only to a segment the client does not have yet. A
    * loader the client already holds (the same route with new params, say)
