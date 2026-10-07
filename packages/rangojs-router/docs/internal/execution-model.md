@@ -98,10 +98,13 @@ Three things to keep in mind, because each looks like a bug the first time:
   nothing below a held segment is deferred because of it. A new route with its
   own flagged `loading()` under a held layout is still its own unit. The
   invariant: a click that adopts a prefetch with deferred units is never worse
-  than the same click with no prefetch at all. It shows a fallback only where
-  that plain navigation would show the same one, waits only where it would
-  wait, and content on screen is never replaced by a fallback, blanked or
-  remounted while a fill is pending.
+  than the same click with no prefetch at all. It never covers more of the
+  page with a fallback than that plain navigation does, and never for longer,
+  it waits only where the plain navigation would wait, and content on screen
+  is never replaced by a fallback, blanked or remounted while a fill is
+  pending. What a prefetch defers depends on what its source page holds, so a
+  response that defers is used only on that page (`x-rsc-prefetch-scope:
+source`) and is never stored.
 - **Deferral replaces execution; it never adds a skip.** A new segment always
   renders, so the flag only ever turns work that would have run into deferred
   work. Revalidation of held segments is untouched.

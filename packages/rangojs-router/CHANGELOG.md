@@ -29,24 +29,32 @@ What to know before you use it:
   click that adopts a prefetch is never worse than the same click with no
   prefetch at all, and content on screen is never swapped for a fallback. To
   defer navigation inside a section, flag the `loading()` of its routes.
-- **A loader needs a boundary.** Put its read under `loading()` or `<Suspense>`;
-  with none, the click waits for the fill.
+- **A deferred loader never blocks the click.** It behaves like a loader that
+  is still streaming: its own `<Suspense>` shows at once, the route's
+  `loading()` shows when that is the nearest boundary, and with no boundary
+  React holds the page being left until the fill returns
+  (`useNavigation()` reads `loading` meanwhile).
+- **A prefetch that deferred something is used only on the page that made
+  it.** A page that already shows the segment makes its own prefetch, which
+  defers nothing for it.
 - **`ctx.rendered()` is refused** in a loader a prefetch can defer, on every
   request, and so is the handle data it unlocks.
 - **A deferred loader cannot see `ctx.set()` values** from handlers the client
   already holds, and its `redirect()`, `notFound()` and handle pushes arrive
   after the page is on screen.
 - **Stored routes defer loaders only.** Under `cache()`, `ppr` and `Prerender`
-  the stored handler output is served as before; a loader with its own
-  `cache()` is skipped even on a hit.
+  the stored handler output is served as before. A loader with its own
+  `cache()` is skipped in a prefetch even on a hit; the fill reads through
+  `cache()` and `"use cache"` as any request does.
 - A loader a handler awaits with `ctx.use()`, `clientUrls()` routes and
   `intercept()` ignore the flag.
 - **Double runs.** A flagged loader that a handler under `loading()`, or
   another loader, reads with `ctx.use()` after an `await` runs in the
   prefetch for its reader and again in the fill.
-- The document cache stores the prefetch body of a flagged route in its own
-  slot, which only prefetches read. Routes without the flag keep one slot for
-  a prefetch and a navigation, as before.
+- **A response that defers is never stored**, by the document cache, the
+  browser or a CDN (`cache-control: private, no-cache`, whatever the route
+  set). The document cache keeps one slot for a prefetch and a navigation, as
+  before, and every body in it is complete.
 
 `@rangojs/router/testing` gets `serveShellRequest(..., { partial: { prefetch,
 fill } })` and `result.readDeferred()` to test it. See `/loader`, `/route` and

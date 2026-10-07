@@ -269,10 +269,13 @@ flag has no say: a prefetch of a sibling route renders that route's handler
 and loaders as usual, and the click sends no second request. The same goes for
 a same-route navigation (`/product/a` to `/product/b`). The rule behind it:
 a click that adopts a prefetch is never worse than the same click with no
-prefetch at all. It shows a fallback only where that plain navigation would,
-waits only where it would, and never replaces content that is on screen with a
-fallback. To keep navigation _inside_ a section out of prefetches, flag the
-`loading()` of the routes in it:
+prefetch at all. It never covers more of the page with a fallback than that
+plain navigation does, and never for longer, it waits only where that one
+would, and it never replaces content that is on screen with a fallback. For
+the same reason a prefetch that deferred something is used only on the page
+that made it: a page that already shows the entry makes its own prefetch,
+which defers nothing for it. To keep navigation _inside_ a section out of
+prefetches, flag the `loading()` of the routes in it:
 
 ```tsx
 layout(AccountLayout, () => [
@@ -292,8 +295,10 @@ layout(AccountLayout, () => [
 once: the URL changes, the prefetched content shows, and the fallback shows
 where the deferred part goes. The browser sends one second request (the fill)
 that runs only the deferred work, and the result merges into the page without
-remounting what is already there. A hard load, a navigation with nothing
-prefetched, an action and back/forward run everything as before.
+remounting what is already there. The fill reads `cache()` and `"use cache"`
+as any request does; the prefetch read neither for the work it skipped. A hard
+load, a navigation with nothing prefetched, an action and back/forward run
+everything as before.
 
 **Stored output is still served.** Under `cache()`, on a `ppr` route and for a
 `Prerender`/`Static` handler, the handler output is stored, so the prefetch
@@ -310,9 +315,9 @@ loaders behind the fallback are deferred. See `/caching`, `/ppr` and
   request kind. See `/loader` → "`prefetch: false`" for this and the other
   loader limits (`ctx.set()` values, late `redirect()`/`notFound()`, a loader a
   handler awaits).
-- A layout the client already holds, and that does not re-render on that
-  navigation, is not deferred (its fallback would not show). To keep
-  navigation inside it out of prefetches, flag the route's own `loading()`.
+- A layout the client already holds is not deferred (its fallback would not
+  show). To keep navigation inside it out of prefetches, flag the route's own
+  `loading()`.
 - An orphan layout's flagged `loading()` defers its loaders but not its
   handler: the route's handler has already run by then.
 - `clientUrls()` routes and `intercept()` ignore the flag.
