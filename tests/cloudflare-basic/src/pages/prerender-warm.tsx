@@ -69,8 +69,15 @@ function flattenResult(result: PrerenderResult): unknown {
 // this module's type depend on the router built from the urlpatterns.
 export const WarmTrigger: Handler = async (ctx) => {
   const { router } = await import("../router.js");
+  // localStore=1: the warm gate builds the app store from this env, and
+  // without KV a CFCacheStore declares scope "local" (router.tsx). Requests
+  // keep the real env, so the app store itself is unchanged.
+  const env =
+    ctx.searchParams.get("localStore") === "1"
+      ? { ...ctx.env, KV: undefined as unknown as KVNamespace }
+      : ctx.env;
   const prerender = router.prerender({
-    env: ctx.env,
+    env,
     ctx: ctx.executionContext,
   });
   const targets = ctx.searchParams.getAll("target");

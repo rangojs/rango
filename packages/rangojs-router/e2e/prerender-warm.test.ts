@@ -1,6 +1,8 @@
 import { test } from "@playwright/test";
 import { useFixture, type Fixture } from "./fixture";
 import {
+  expectDevWarmOfLocalMemoryStoreRuns,
+  expectWarmOfLocalStoreIsRefused,
   expectMixedBatchWarmsOnTheRequestOrigin,
   expectOnlyIfStaleWarmLeavesFreshShellAlone,
   expectWarmMakesNextDocumentAShellHit,
@@ -71,6 +73,23 @@ function runPrerenderWarmSpec(f: Fixture) {
   }) => {
     await expectOnlyIfStaleWarmLeavesFreshShellAlone(page, fixture());
   });
+
+  // The trigger's localStore=1 makes the gate read a shipped
+  // MemorySegmentCacheStore (scope "local"). Production refuses it; the dev
+  // rule counts the memory store as shared under the Vite dev server.
+  if (f.mode === "build") {
+    test("a warm against a store with scope local is refused: nothing renders, nothing is stored", async ({
+      page,
+    }) => {
+      await expectWarmOfLocalStoreIsRefused(page, fixture());
+    });
+  } else {
+    test("under the dev server a warm against the local memory store runs", async ({
+      page,
+    }) => {
+      await expectDevWarmOfLocalMemoryStoreRuns(page, fixture());
+    });
+  }
 }
 
 test.describe("prerender warm (dev)", () => {

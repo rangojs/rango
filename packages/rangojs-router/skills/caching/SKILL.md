@@ -543,7 +543,8 @@ A warm only writes to a store that is shared beyond the place the call runs.
 Each store says where its entries can be read (`scope`): `CFCacheStore` with
 `kv` is `"global"`, without `kv` `"local"`; `VercelCacheStore` is `"regional"`
 (a warm fills the region it runs in); `MemorySegmentCacheStore` is `"local"`
-(refused in production, allowed under the dev server).
+(refused in production, allowed under the dev server; a single-process server
+opts in with `new MemorySegmentCacheStore({ scope: "global" })`).
 
 ### Memory Store
 
@@ -557,6 +558,7 @@ const store = new MemorySegmentCacheStore({
   defaults: { ttl: 60 }, // segments ignore swr on this store
   maxEntries: 1000, // per-family FIFO cap (default 1000)
   name: "app", // optional: keep entries across Vite HMR module reloads
+  scope: "local", // default; "global" only when ONE process serves the app (see /prerender warming)
 });
 ```
 

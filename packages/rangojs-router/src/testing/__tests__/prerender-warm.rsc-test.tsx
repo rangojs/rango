@@ -42,12 +42,12 @@ import {
 const ORIGIN = "http://localhost";
 
 /**
- * A store that declares its entries visible to every location, as a
- * single-process deployment may (the e2e test-app does the same). The shipped
- * MemorySegmentCacheStore declares itself local.
+ * A memory store that declares its entries visible to every location, as a
+ * single-process deployment says explicitly. The default declares itself
+ * local and a production warm refuses it.
  */
-class SharedMemoryStore extends MemorySegmentCacheStore {
-  readonly scope = "global" as const;
+function sharedMemoryStore(): MemorySegmentCacheStore {
+  return new MemorySegmentCacheStore({ scope: "global" });
 }
 
 /** Handler, producer and loader runs, to tell a stored render from a fresh one. */
@@ -131,8 +131,25 @@ afterEach(() => {
 });
 
 describe("router.prerender() warms a route that is not on-demand", () => {
+  it("a MemorySegmentCacheStore warms in production only when it declares scope global", async () => {
+    const refused = await makeRouter(new MemorySegmentCacheStore()).prerender({
+      env: {},
+    })(`${ORIGIN}/cached`);
+    expect(refused).toMatchObject({
+      ok: false,
+      status: "skipped-store-not-shared",
+    });
+    expect(runs.cached).toBe(0);
+
+    const warmed = await makeRouter(sharedMemoryStore()).prerender({ env: {} })(
+      `${ORIGIN}/cached`,
+    );
+    expect(warmed).toMatchObject({ ok: true, status: "warmed" });
+    expect(runs.cached).toBe(1);
+  });
+
   it("warming a ppr route fills its shell: the next document request is a HIT", async () => {
-    const router = makeRouter(new SharedMemoryStore());
+    const router = makeRouter(sharedMemoryStore());
 
     const result = await router.prerender({ env: {} })(`${ORIGIN}/shelled`);
 
@@ -147,7 +164,7 @@ describe("router.prerender() warms a route that is not on-demand", () => {
   });
 
   it("warming replaces a shell in place: the old shell serves until the new one is written", async () => {
-    const router = makeRouter(new SharedMemoryStore());
+    const router = makeRouter(sharedMemoryStore());
     expect((await serveShellRequest(router, "/shelled")).shellStatus).toBe(
       "MISS",
     );
@@ -180,7 +197,7 @@ describe("router.prerender() warms a route that is not on-demand", () => {
   });
 
   it("warming a route with cache() fills its record", async () => {
-    const router = makeRouter(new SharedMemoryStore());
+    const router = makeRouter(sharedMemoryStore());
 
     const result = await router.prerender({ env: {} })(`${ORIGIN}/cached`);
 
@@ -197,7 +214,7 @@ describe("router.prerender() warms a route that is not on-demand", () => {
   });
 
   it("warming replaces a cache() record a visitor wrote", async () => {
-    const router = makeRouter(new SharedMemoryStore());
+    const router = makeRouter(sharedMemoryStore());
     await serveShellRequest(router, "/cached");
     expect((await serveShellRequest(router, "/cached")).flight).toContain(
       "cached-run-1",
@@ -253,7 +270,7 @@ describe("router.prerender() warms a route that is not on-demand", () => {
 
   it("a route that reads cookies() stores no shell and reports skipped-personalized", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
-    const router = makeRouter(new SharedMemoryStore());
+    const router = makeRouter(sharedMemoryStore());
 
     const result = await router.prerender({ env: {} })(`${ORIGIN}/personal`);
 
@@ -271,7 +288,7 @@ describe("router.prerender() warms a route that is not on-demand", () => {
 
 describe("router.prerender().many() mixing on-demand and warm targets", () => {
   it("returns one result per target, in order, each with its path's status", async () => {
-    const router = makeRouter(new SharedMemoryStore());
+    const router = makeRouter(sharedMemoryStore());
 
     const results = await router
       .prerender({ env: {} })
@@ -305,7 +322,7 @@ describe("router.prerender().many() mixing on-demand and warm targets", () => {
 
 describe("an on-demand route keeps the requestless render of #640", () => {
   it("renders into the prerender store, then warms its loaders' own caches through the request handler", async () => {
-    const router = makeRouter(new SharedMemoryStore());
+    const router = makeRouter(sharedMemoryStore());
 
     const result = await router.prerender({ env: {} })(
       `${ORIGIN}/article/intro`,

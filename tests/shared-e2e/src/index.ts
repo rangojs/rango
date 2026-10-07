@@ -2675,11 +2675,12 @@ async function triggerWarm(
   page: Page,
   fixture: PrerenderWarmFixture,
   targets: string[],
-  options: { onlyIfStale?: boolean } = {},
+  options: { onlyIfStale?: boolean; localStore?: boolean } = {},
 ): Promise<unknown> {
   const params = new URLSearchParams();
   for (const target of targets) params.append("target", target);
   if (options.onlyIfStale) params.set("onlyIfStale", "1");
+  if (options.localStore) params.set("localStore", "1");
   const res = await page.request.get(`${fixture.triggerUrl}?${params}`);
   expect(res.ok(), await res.text()).toBe(true);
   return res.json();
@@ -2691,7 +2692,7 @@ async function warmOne(
   fixture: PrerenderWarmFixture,
   url: string,
   probe: string,
-  options?: { onlyIfStale?: boolean },
+  options?: { onlyIfStale?: boolean; localStore?: boolean },
 ): Promise<WarmTriggerResult> {
   return (await triggerWarm(
     page,
@@ -2925,6 +2926,92 @@ export async function expectOnlyIfStaleWarmLeavesFreshShellAlone(
       writes: { record: 0, item: 0, response: 0, shell: 0 },
     },
   });
+}
+
+/**
+ * A warm whose app store declares scope "local" is refused: the result says
+ * `skipped-store-not-shared` and carries no `caches` report. Nothing renders
+ * and nothing is stored: after the warm the content moves to generation 2,
+ * and the visitor's first request renders it as run 1 of the handler. The
+ * render counter (`#r1`) is the discriminator everywhere: a warm that ran
+ * would make it run 2. Where the refused store shares storage with the store
+ * visitors read (cloudflare-basic), a warm that stored would also replay
+ * generation 1; in the router test-app the two stores are separate, so only
+ * `#r1` tells. The trigger's `localStore=1` makes the gate read a "local"
+ * store.
+ */
+export async function expectWarmOfLocalStoreIsRefused(
+  page: Page,
+  fixture: PrerenderWarmFixture,
+): Promise<void> {
+  const probe = pushProbe("local");
+  const url = `${fixture.cachedUrl}?probe=${probe}`;
+
+  const result = await warmOne(page, fixture, fixture.cachedUrl, probe, {
+    localStore: true,
+  });
+  expect(result, JSON.stringify(result)).toMatchObject({
+    ok: false,
+    path: "warm",
+    status: "skipped-store-not-shared",
+    target: url,
+  });
+  expect(result.caches, JSON.stringify(result)).toBeUndefined();
+
+  const bumped = await page.request.get(`${fixture.bumpUrl}?probe=${probe}`);
+  expect(bumped.ok()).toBe(true);
+  expect((await warmDocument(page, url)).stamp).toBe(`cached-${probe}@g2#r1`);
+}
+
+/**
+ * The same warm under the Vite dev server, against a shipped
+ * MemorySegmentCacheStore (scope "local"): the dev rule counts it as shared,
+ * so the warm runs. The visitor's request is run 2 (the warm was run 1) and
+ * renders generation 1 afresh: the warm wrote into the store the
+ * trigger's env selected, not the one visitors read. That visitor miss is the
+ * evidence the gate read the "local" store: the app's default store also warms
+ * in dev, and a warm into it would have made the visitor's request a HIT
+ * (run 1).
+ */
+export async function expectDevWarmOfLocalMemoryStoreRuns(
+  page: Page,
+  fixture: PrerenderWarmFixture,
+): Promise<void> {
+  const probe = pushProbe("local-dev");
+  const url = `${fixture.cachedUrl}?probe=${probe}`;
+
+  const result = await warmOne(page, fixture, fixture.cachedUrl, probe, {
+    localStore: true,
+  });
+  expect(result, JSON.stringify(result)).toMatchObject({
+    ok: true,
+    path: "warm",
+    status: "warmed",
+    target: url,
+  });
+  expect(result.caches?.writes.record).toBeGreaterThanOrEqual(1);
+
+  // The entry a warm writes is the entry the next call reads: that is why
+  // the dev rule admits the memory store. A second, onlyIfStale warm finds it
+  // fresh and writes nothing.
+  const again = await warmOne(page, fixture, fixture.cachedUrl, probe, {
+    localStore: true,
+    onlyIfStale: true,
+  });
+  expect(again, JSON.stringify(again)).toMatchObject({
+    ok: true,
+    path: "warm",
+    status: "already-fresh",
+    target: url,
+  });
+  expect(again.caches?.writes).toEqual({
+    record: 0,
+    item: 0,
+    response: 0,
+    shell: 0,
+  });
+
+  expect((await warmDocument(page, url)).stamp).toBe(`cached-${probe}@g1#r2`);
 }
 
 // ---------------------------------------------------------------------------

@@ -190,6 +190,33 @@ follows the same `revalidate` behavior described here."
 ([getStaticProps](https://nextjs.org/docs/pages/api-reference/functions/get-static-props))
 See the `prerender` skill, "Remove a page".
 
+### Added: `MemorySegmentCacheStore({ scope })` lets a single-process server be warmed
+
+`router.prerender()` warms a route only into a store that is shared beyond the
+process that runs the call. `MemorySegmentCacheStore` is per process, and the
+router cannot tell one long-running server from several replicas or serverless
+instances, so it stays `"local"` and a production warm of it returns
+`skipped-store-not-shared`: counting it as shared by default would report
+`warmed` while most visitors reached a cold instance.
+
+If you do run exactly one process (a single Node server), say so:
+
+```ts
+import { MemorySegmentCacheStore } from "@rangojs/router/cache";
+
+const store = new MemorySegmentCacheStore({
+  scope: "global",
+  defaults: { ttl: 60, swr: 300 },
+});
+```
+
+A warm of that store is `warmed` in production. Without the option nothing
+changes: the store is `"local"`, refused in production and counted as shared
+under the dev server. You no longer need a subclass declaring
+`readonly scope = "global"`. Two instances with the same `name` share their
+maps but each keeps its own `scope`, like `defaults` and `keyGenerator`: keep
+them identical.
+
 ### Fixed: a superseded link click no longer follows its server redirect ([#1047](https://github.com/rangojs/rango/issues/1047))
 
 When you clicked a link, then clicked another before the first response
