@@ -12,7 +12,10 @@ import {
   PrefetchFalseScroll,
 } from "../components/PrefetchFalseCounts.js";
 import { PrefetchFalseNotes } from "../components/PrefetchFalseNotes.js";
-import { PrefetchFalseValue } from "../components/PrefetchFalseValue.js";
+import {
+  PrefetchFalseNav,
+  PrefetchFalseValue,
+} from "../components/PrefetchFalseValue.js";
 import { PfNotes } from "./prefetch-false.handle.js";
 import { countRun, readRunCounts } from "../prefetch-false-counts.js";
 
@@ -33,6 +36,20 @@ import { countRun, readRunCounts } from "../prefetch-false-counts.js";
 // handler (`<c>.handler`); `section` counts its flagged layout
 // (`section.layout`) and `slot` its slot handler (`slot.side`).
 //
+// Three more routes sit inside the `section` layout, to tell a layout that
+// is new to the client from one it holds: `section-plain` (no loading() of
+// its own), `section-own` (its own flagged loading()) and `section-cached`
+// (a cache() route). Each counts its handler and its loader.
+//
+// `item/:id` is one route with a flagged loader, linked as `item/a` and
+// `item/b`: moving between them is a same-route navigation, whose segments
+// the client holds. `item-twin/:id` is the same route without the flag. Both
+// print their param as pf-<c>-id. `vt` is a flagged loader on a route with
+// transition().
+//
+// pf-nav mirrors useNavigation() as data-state / data-streaming, and
+// pf-outlet is the box the page renders in.
+//
 // Four cases have no value to show: their deferred work ends another way.
 // `throws` and `missing` render pf-<c>-error / pf-<c>-not-found, `redirects`
 // lands on the `control` page, and `handle` pushes a note the hub layout
@@ -40,13 +57,18 @@ import { countRun, readRunCounts } from "../prefetch-false-counts.js";
 //
 // By hand: /prefetch-false?run=<anything>&manual=1 adds a live panel of the
 // server's run counts and a scrollY badge; &tall=1 makes the page scrollable.
-// Both flags ride on every link. Without them the page is quiet for a suite.
+// &slow=1 makes every `<c>.data` loader take 600 ms longer, past the 300 ms
+// React keeps a fallback up before it reveals what replaces it: the deferred
+// work is then the last thing a plain navigation waits for, too.
+// The flags ride on every link. Without them the page is quiet for a suite.
 
 const runOf = (ctx: any): string => ctx.searchParams.get("run") ?? "";
 
 async function work(ctx: any, name: string, delayMs: number = 0) {
   const n = countRun(runOf(ctx), name);
-  if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+  const slow = ctx.searchParams.get("slow") === "1" && name.endsWith(".data");
+  const wait = delayMs + (slow ? 600 : 0);
+  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
   return { name, n };
 }
 
@@ -89,11 +111,28 @@ export const PfRedirectsLoader = createLoader(async (ctx) => {
 export const PfHandleLoader = createLoader((ctx) =>
   work(ctx, "handle.data", 100),
 );
+export const PfSectionPlainLoader = createLoader((ctx) =>
+  work(ctx, "section-plain.data", 100),
+);
+export const PfSectionOwnLoader = createLoader((ctx) =>
+  work(ctx, "section-own.data", 100),
+);
+export const PfSectionCachedLoader = createLoader((ctx) =>
+  work(ctx, "section-cached.data", 100),
+);
+export const PfItemLoader = createLoader((ctx) => work(ctx, "item.data", 100));
+export const PfItemTwinLoader = createLoader((ctx) =>
+  work(ctx, "item-twin.data", 100),
+);
+export const PfVtLoader = createLoader((ctx) => work(ctx, "vt.data", 100));
 
 const CASES = [
   ["loader", "one flagged loader beside an unflagged one, own Suspense"],
   ["unit", "flagged loading() on a route: handler and loader wait"],
   ["section", "flagged loading() on a layout: layout and route wait"],
+  ["section-plain", "inside that layout, no loading(): waits only with it"],
+  ["section-own", "inside that layout, its own flagged loading()"],
+  ["section-cached", "inside that layout, a cache() route: record is used"],
   ["slot", "flagged loading() on a parallel slot: only the slot waits"],
   ["bare", "flagged loader, no boundary: the click waits for the fill"],
   ["throws", "the deferred loader throws: error boundary after the click"],
@@ -105,6 +144,11 @@ const CASES = [
   ["ppr", "ppr route: shell replays, the live loader waits"],
   ["ssr-false", "ssr: false with prefetch: false"],
   ["control", "no flag: the prefetch runs everything"],
+  ["item/a", "same route, flagged loader: held segments are never deferred"],
+  ["item/b", "from item/a the prefetch runs the loader, no fill"],
+  ["item-twin/a", "the same route without the flag"],
+  ["item-twin/b", "must behave exactly like item/a to item/b"],
+  ["vt", "flagged loader on a route with transition()"],
 ] as const;
 
 const box = {
@@ -117,7 +161,8 @@ function PrefetchFalseLayout(ctx: any) {
   const run = runOf(ctx);
   const tall = ctx.searchParams.get("tall") === "1";
   const manual = ctx.searchParams.get("manual") === "1";
-  const query = `run=${run}${manual ? "&manual=1" : ""}${tall ? "&tall=1" : ""}`;
+  const slow = ctx.searchParams.get("slow") === "1";
+  const query = `run=${run}${manual ? "&manual=1" : ""}${tall ? "&tall=1" : ""}${slow ? "&slow=1" : ""}`;
   return (
     <div
       data-testid="pf-layout"
@@ -188,10 +233,11 @@ function PrefetchFalseLayout(ctx: any) {
         HANDLE PUSHES
       </div>
       <PrefetchFalseNotes />
+      <PrefetchFalseNav />
       <div style={{ margin: "16px 0 4px", fontSize: 12, opacity: 0.6 }}>
         PAGE
       </div>
-      <div style={box}>
+      <div style={box} data-testid="pf-outlet">
         <Outlet />
       </div>
       {tall && <div style={{ height: 1600 }} />}
@@ -219,6 +265,8 @@ const fallback = (name: string) => (
 // boundary, so the page and the unflagged value show while it is missing.
 function LoaderPage(ctx: any) {
   countRun(runOf(ctx), "loader.handler");
+  // A push from a handler no prefetch defers: it arrives with the prefetch.
+  ctx.use(PfNotes)("loader");
   return (
     <div data-testid="pf-loader-page">
       <PrefetchFalseValue loader={PfPriceLoader} testId="pf-loader-price" />
@@ -253,6 +301,36 @@ function SectionPage(ctx: any) {
   return (
     <div data-testid="pf-section-page">
       <PrefetchFalseValue loader={PfSectionLoader} testId="pf-section-value" />
+    </div>
+  );
+}
+
+// Routes inside the section layout. The layout's flag reaches them only
+// while the layout itself is new to the client.
+const sectionSibling = (name: string, loader: any) => (ctx: any) => {
+  countRun(runOf(ctx), `${name}.handler`);
+  return (
+    <div data-testid={`pf-${name}-page`}>
+      <PrefetchFalseValue loader={loader} testId={`pf-${name}-value`} />
+    </div>
+  );
+};
+
+// One route, two params: the client holds its segments between them.
+const itemPage = (name: string, loader: any) => (ctx: any) => {
+  countRun(runOf(ctx), `${name}.handler`);
+  return (
+    <div data-testid={`pf-${name}-page`}>
+      <span data-testid={`pf-${name}-id`}>{ctx.params.id}</span>
+      <PrefetchFalseValue loader={loader} testId={`pf-${name}-value`} />
+    </div>
+  );
+};
+
+function VtPage() {
+  return (
+    <div data-testid="pf-vt-page">
+      <PrefetchFalseValue loader={PfVtLoader} testId="pf-vt-value" />
     </div>
   );
 }
@@ -362,6 +440,7 @@ export const prefetchFalsePatterns = urls(
     loading,
     cache,
     parallel,
+    transition,
     errorBoundary,
     notFoundBoundary,
   }) => [
@@ -393,6 +472,34 @@ export const prefetchFalsePatterns = urls(
         loading(fallback("section"), { prefetch: false }),
         path("/section", SectionPage, { name: "section" }, () => [
           loader(PfSectionLoader),
+        ]),
+        // From outside the section these wait with the layout. From inside
+        // it the client holds the layout, so its flag has no say: a route
+        // with no flag of its own is prefetched whole, a route with its own
+        // flagged loading() is its own unit, and a cache() route uses its
+        // record.
+        path(
+          "/section-plain",
+          sectionSibling("section-plain", PfSectionPlainLoader),
+          { name: "sectionPlain" },
+          () => [loader(PfSectionPlainLoader)],
+        ),
+        path(
+          "/section-own",
+          sectionSibling("section-own", PfSectionOwnLoader),
+          { name: "sectionOwn" },
+          () => [
+            loader(PfSectionOwnLoader),
+            loading(fallback("section-own"), { prefetch: false }),
+          ],
+        ),
+        cache({ ttl: 600 }, () => [
+          path(
+            "/section-cached",
+            sectionSibling("section-cached", PfSectionCachedLoader),
+            { name: "sectionCached" },
+            () => [loader(PfSectionCachedLoader)],
+          ),
         ]),
       ]),
 
@@ -476,6 +583,31 @@ export const prefetchFalsePatterns = urls(
       path("/ssr-false", SsrFalsePage, { name: "ssrFalse" }, () => [
         loader(PfSsrFalseLoader, { ssr: false, prefetch: false }),
         loading(fallback("ssr-false")),
+      ]),
+
+      // A same-route navigation: the client holds the route and the loader
+      // segment, so a prefetch runs the flagged loader like its twin's.
+      path(
+        "/item/:id",
+        itemPage("item", PfItemLoader),
+        { name: "item" },
+        () => [
+          loader(PfItemLoader, { prefetch: false }),
+          loading(fallback("item")),
+        ],
+      ),
+      path(
+        "/item-twin/:id",
+        itemPage("item-twin", PfItemTwinLoader),
+        { name: "itemTwin" },
+        () => [loader(PfItemTwinLoader), loading(fallback("item-twin"))],
+      ),
+
+      // A flagged loader on a route with a view transition.
+      path("/vt", VtPage, { name: "vt" }, () => [
+        loader(PfVtLoader, { prefetch: false }),
+        loading(fallback("vt")),
+        transition(),
       ]),
 
       // No flag: a prefetch runs everything and the click sends nothing.

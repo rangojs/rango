@@ -1,6 +1,6 @@
 "use client";
 
-import { useLoader } from "@rangojs/router/client";
+import { useLoader, useNavigation } from "@rangojs/router/client";
 import type { LoaderDefinition } from "@rangojs/router/client";
 
 /**
@@ -30,5 +30,21 @@ export function PrefetchFalseValue({
       <span style={{ opacity: 0.7, marginRight: 8, fontSize: 12 }}>loaded</span>
       <span data-testid={testId}>{`${data.name}:${data.n}`}</span>
     </span>
+  );
+}
+
+/**
+ * useNavigation() as attributes, for a suite to read while a fill is in
+ * flight: data-state and data-streaming. Not visible.
+ */
+export function PrefetchFalseNav() {
+  const nav = useNavigation();
+  return (
+    <span
+      data-testid="pf-nav"
+      data-state={nav.state}
+      data-streaming={String(nav.isStreaming)}
+      hidden
+    />
   );
 }
