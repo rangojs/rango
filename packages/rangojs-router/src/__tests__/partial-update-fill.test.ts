@@ -115,7 +115,7 @@ function createTx(store: ReturnType<typeof createStore>, key = "/product") {
         store.setHistoryKey(key);
         store.setSegmentIds(ids);
         store.cache.set(key, { segments, stale: false });
-        return { scroll: undefined };
+        return { scroll: { enabled: undefined } };
       }),
     },
   };
@@ -413,7 +413,12 @@ describe("the fill landing", () => {
     await expect(gate).resolves.toEqual({ reviews: 5 });
   });
 
-  it("resolves a unit's gate with the component and adds the segments below it", async () => {
+  // A unit is revealed like a segment a navigation is still streaming: by
+  // a Suspense retry, after React has committed the fill's tree. Resolved
+  // before that commit, the fill's own transition would reveal the unit,
+  // past React's reveal throttle (docs/design/prefetch-false.md, "The
+  // browser").
+  it("resolves a unit's gate with the component once React has committed the fill, and adds the segments below it", async () => {
     const layout = seg("L0", { type: "layout", component: "layout" });
     const unit = seg("L0L1", {
       type: "layout",
@@ -422,7 +427,7 @@ describe("the fill landing", () => {
       deferred: true,
     });
     const adoptedMatched = ["L0", "L0L1"];
-    const { navigate, fill, store } = setup({
+    const { navigate, fill, store, onUpdate } = setup({
       layout,
       payload: {
         metadata: {
@@ -435,6 +440,10 @@ describe("the fill landing", () => {
     });
     await navigate();
     const gate = unit.component as unknown as Promise<unknown>;
+    let resolved = false;
+    void gate.then(() => {
+      resolved = true;
+    });
 
     const filledUnit = seg("L0L1", {
       type: "layout",
@@ -445,15 +454,65 @@ describe("the fill landing", () => {
     fill.resolve(fillPayload([filledUnit, below], ["L0", "L0L1", "L0L1R0"]));
     await flush();
 
+    const segments = store.cache.get("/product")!.segments;
+    expect(segments.map((s) => s.id)).toEqual(["L0", "L0L1", "L0L1R0"]);
+    // The tree the fill committed still reads the gate.
+    expect(segments[1].component).toBe(gate);
+    expect(segments[1].deferred).toBeUndefined();
+    expect(resolved, "not before React has committed the fill").toBe(false);
+
+    const update = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+    update.onCommit();
     await expect(gate).resolves.toBe("unit-content");
-    expect(store.cache.get("/product")!.segments.map((s) => s.id)).toEqual([
-      "L0",
-      "L0L1",
-      "L0L1R0",
-    ]);
     // The adoption's handle stream reads this array on every yield: it must
     // name the segments the fill added, or their handle data is dropped.
     expect(adoptedMatched).toEqual(["L0", "L0L1", "L0L1R0"]);
+  });
+
+  // A prefetch made on another page, adopted on the unit's own: the unit's
+  // content is on screen, so React holds every commit that still reads the
+  // gate. The fill's tree must carry the content, or nothing ever commits.
+  it("resolves at once the gate of a unit the page being left holds", async () => {
+    const layout = seg("L0", { type: "layout", component: "layout" });
+    const held = seg("L0L1", {
+      type: "layout",
+      component: "unit-content, held",
+      loading: "skeleton",
+    });
+    const unit = seg("L0L1", {
+      type: "layout",
+      component: null,
+      loading: "skeleton",
+      deferred: true,
+    });
+    const { navigate, fill, store, onUpdate } = setup({
+      payload: {
+        metadata: {
+          isPartial: true,
+          segments: [unit],
+          matched: ["L0", "L0L1"],
+          diff: ["L0L1"],
+        },
+      },
+    });
+    store.cache.set("/", { segments: [layout, held], stale: false });
+    await navigate();
+    const gate = unit.component as unknown as Promise<unknown>;
+
+    const filledUnit = seg("L0L1", {
+      type: "layout",
+      component: "unit-content",
+      loading: "skeleton",
+    });
+    fill.resolve(fillPayload([filledUnit], ["L0", "L0L1"]));
+    await flush();
+
+    await expect(gate).resolves.toBe("unit-content");
+    expect(store.cache.get("/product")!.segments[1].component).toBe(
+      "unit-content",
+    );
+    const update = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+    expect(update.onCommit).toBeUndefined();
   });
 
   it("waits for the adoption's commit when the fill answers first", async () => {

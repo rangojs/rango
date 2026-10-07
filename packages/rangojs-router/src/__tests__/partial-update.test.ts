@@ -143,7 +143,7 @@ function createMockTx(currentUrl = "http://localhost/") {
   return {
     currentUrl,
     startStreaming: vi.fn(() => ({ end: vi.fn() })),
-    commit: vi.fn(() => ({ scroll: undefined })),
+    commit: vi.fn(() => ({ scroll: { enabled: undefined } })),
   };
 }
 
