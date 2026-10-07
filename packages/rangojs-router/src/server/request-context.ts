@@ -828,6 +828,14 @@ export interface RequestContext<
   _renderBarrierHandleSnapshot?: HandleData;
 
   /**
+   * @internal The partial request's matched tree declares `prefetch: false`,
+   * so a prefetch of it and a navigation to it differ: the response varies
+   * on X-Rango-Prefetch (rsc-rendering.ts). Set by
+   * createMatchContextForPartial (router/match-api.ts).
+   */
+  _prefetchFlagged?: true;
+
+  /**
    * @internal The deadlock guard window is closed (no further handler-awaits-
    * loader cycle is possible). For non-streaming trees this is set when the
    * barrier resolves. For streaming trees the window stays open until
@@ -1014,6 +1022,7 @@ export type PublicRequestContext<
   | "_handlerLoaderDeps"
   | "_awaitBeforeFlushLoaderIds"
   | "_renderBarrierHandleSnapshot"
+  | "_prefetchFlagged"
   | "_renderBarrierGuardClosed"
   | "_reportBackgroundError"
   | "_debugPerformance"

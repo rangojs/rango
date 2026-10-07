@@ -200,6 +200,23 @@ export type LoaderFn<
  */
 export type LoaderOptions = {
   ssr?: boolean;
+  /**
+   * `prefetch: false` keeps this loader out of prefetches. A `<Link>`
+   * prefetch (a partial request with `X-Rango-Prefetch`) does not execute it
+   * and does not read its `cache()`; the payload marks it deferred. When a
+   * click adopts that payload the page commits at once, the loader's read
+   * site shows its `loading()`/Suspense fallback (with no boundary React
+   * holds the transition), and one fill request runs the loader. A document
+   * request and a navigation with no prefetch to adopt run it as usual.
+   *
+   * Limits: a handler that awaits the loader with `ctx.use()` makes it run in
+   * the prefetch anyway; the loader cannot call `ctx.rendered()` (it throws
+   * on every request); on a `ppr` route the flag is ignored for an
+   * `ssr: false` loader (the bake lane), with a dev warning. In the fill
+   * request only deferred work and middleware run, so values a held handler
+   * would have set with `ctx.set()` are not visible.
+   */
+  prefetch?: boolean;
 };
 
 /**

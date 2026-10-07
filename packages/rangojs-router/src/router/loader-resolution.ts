@@ -56,6 +56,10 @@ import {
 import { getFetchableLoader } from "../server/fetchable-loader-store.js";
 import { _getRequestContext } from "../server/request-context.js";
 import {
+  firstUnitCandidate,
+  type PrefetchDeferral,
+} from "./segment-resolution/prefetch-deferral.js";
+import {
   assertNonCacheableReadAllowed,
   isInsideLoaderScope,
   runInsideLoaderBodyScope,
@@ -380,6 +384,29 @@ function detectLoaderCycle(
   return dfs(to);
 }
 
+const warnedRenderedBesideUnit = new Set<string>();
+
+/**
+ * Dev only, once per loader: a loader that is not deferrable awaits
+ * ctx.rendered() in a tree where a prefetch can skip a handler. The prefetch
+ * rejects that call (see rendered() below); saying so on a document or a
+ * navigation shows it before production, where prefetch is automatic.
+ */
+function warnRenderedBesideUnit(
+  deferral: PrefetchDeferral,
+  loaderId: string,
+): void {
+  if (warnedRenderedBesideUnit.has(loaderId)) return;
+  const unit = firstUnitCandidate(deferral);
+  if (!unit) return;
+  warnedRenderedBesideUnit.add(loaderId);
+  console.warn(
+    `[rango] loader "${loaderId}" awaits ctx.rendered() on a route where "${unit.shortCode}" (${unit.id}) has loading(fallback, { prefetch: false }). ` +
+      `A prefetch of this route skips that handler, so ctx.rendered() throws in the prefetch and this loader is an error on the click that adopts it. ` +
+      `Remove { prefetch: false } from that loading(), or stop calling ctx.rendered() in this loader.`,
+  );
+}
+
 /**
  * Creates a memoizing loader executor with cycle detection.
  * Shared by setupLoaderAccess and setupLoaderAccessSilent; only the handle
@@ -641,6 +668,32 @@ function createLoaderExecutor<TEnv>(
           );
         }
 
+        // prefetch: false (segment-resolution/prefetch-deferral.ts). A
+        // deferrable loader runs in a fill request, where its entry is held
+        // and its handler does not run: there is no render to wait for.
+        // Refused on every request kind, so it is seen on a document load.
+        const deferral = internal._prefetchDeferral;
+        if (deferral?.scope.loaderIds.has(currentLoaderId)) {
+          throw new Error(
+            `ctx.rendered() is not available to loader "${currentLoaderId}": it is deferred in prefetches ` +
+              `(registered with loader(Def, { prefetch: false }), or behind a loading(fallback, { prefetch: false })), ` +
+              `and the fill request that runs it afterwards does not re-run its entry's handler, so there is no render to wait for and no handle data to read. ` +
+              `Remove { prefetch: false } from the loader (or from the loading() above it), or stop calling ctx.rendered() in this loader.`,
+          );
+        }
+        if (deferral?.mode === "fill") {
+          throw new Error(
+            `ctx.rendered() is not available to loader "${currentLoaderId}" in a fill request: the handlers the client already holds do not run, so their handle data is missing.`,
+          );
+        }
+        if (
+          process.env.NODE_ENV !== "production" &&
+          deferral &&
+          !deferral.mode
+        ) {
+          warnRenderedBesideUnit(deferral, currentLoaderId);
+        }
+
         // awaitBeforeFlush cycle: segment resolution awaits this loader
         // (loader(Def, { ssr: false })), the barrier awaits segment
         // resolution, and rendered() awaits the barrier — waiting here can
@@ -692,6 +745,17 @@ function createLoaderExecutor<TEnv>(
         // keeps a handler from depending on this loader.
         const streaming = reqCtx._treeHasStreaming === true;
         renderedPromise = reqCtx._renderBarrier.then(async () => {
+          // A prefetch that skipped a handler unit has none of that handler's
+          // pushes, and the fill never re-runs this loader: an error, never
+          // a handle list with a hole in it. Known only once resolution has
+          // decided the unit, which is what the barrier waits for.
+          if (deferral?.mode === "prefetch" && deferral.deferredUnit) {
+            throw new Error(
+              `ctx.rendered() in loader "${currentLoaderId}" cannot settle in a prefetch of this route: segment "${deferral.deferredUnit}" has loading(fallback, { prefetch: false }), ` +
+                `so the prefetch skipped its handler and its handle data does not exist. ` +
+                `Remove { prefetch: false } from that loading(), or stop calling ctx.rendered() in this loader.`,
+            );
+          }
           if (streaming) {
             reqCtx._handleStore.seal();
             await reqCtx._handleStore.settled;
@@ -815,6 +879,7 @@ export function setupLoaderAccess<TEnv>(
   // pushes, and a later run here replaces them (HandleStore.pushReplayed).
   const claimed = new Set<string>();
   const internal = ctx as InternalHandlerContext<any, TEnv>;
+  internal._loaderStarted = (loaderId) => loaderPromises.has(loaderId);
   internal._claimLoaderPushes = (loaderId) => {
     if (loaderPromises.has(loaderId) || claimed.has(loaderId)) return false;
     claimed.add(loaderId);

@@ -1204,6 +1204,16 @@ function renderPreparedRscResponse<TEnv>(
       rscHeaders["cache-control"] = cc;
     }
   }
+  // prefetch: false (docs/design/prefetch-false.md, R7). A flagged tree's
+  // prefetch carries deferred units a navigation must never be answered
+  // with, so the two vary on the header; an unflagged route keeps its exact
+  // `vary`. A fill is the second half of one adoption: never stored.
+  if (isPartial && reqCtx._prefetchFlagged) {
+    rscHeaders.vary += ", X-Rango-Prefetch";
+  }
+  if (isPartial && reqCtx.originalUrl.searchParams.has("_rsc_fill")) {
+    rscHeaders["cache-control"] = "no-store";
+  }
 
   const isFlightResponse = isRscRequest(request, url, isPartial);
   const stageTracking = {

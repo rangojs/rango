@@ -32,7 +32,12 @@ import {
   getContext,
   type InterceptSelectorContext,
 } from "../server/context";
-import type { ErrorBoundaryHandler, ErrorInfo, MatchResult } from "../types";
+import type {
+  ErrorBoundaryHandler,
+  ErrorInfo,
+  InternalHandlerContext,
+  MatchResult,
+} from "../types";
 import type { ReactNode } from "react";
 import type { MatchContext } from "./match-context.js";
 import type { MatchApiDeps, ActionContext } from "./types.js";
@@ -49,6 +54,10 @@ import {
   type RouteSnapshot,
 } from "./route-snapshot.js";
 import { resolveNavigation } from "./navigation-snapshot.js";
+import {
+  planPrefetchDeferral,
+  type PrefetchDeferral,
+} from "./segment-resolution/prefetch-deferral.js";
 
 /**
  * Create match context for full requests (document/SSR).
@@ -174,6 +183,9 @@ export async function createMatchContextForFull<TEnv>(
   if (reqCtx?._shellCaptureRun) {
     reqCtx._shellCaptureLoaderLanes = routeLoaderLanes(snapshot.entries);
   }
+  // A document never defers; the plan feeds the ctx.rendered() guards.
+  (handlerContext as InternalHandlerContext<any, TEnv>)._prefetchDeferral =
+    planPrefetchDeferral(snapshot.entries, undefined, matched, cacheScope);
 
   return {
     request,
@@ -452,6 +464,41 @@ export async function createMatchContextForPartial<TEnv>(
   // before any handler runs (#957); see the full-match site for #964's arm.
   if (cacheScope) armRecordTagOwners();
   if (bindsLoaderCache(snapshot.entries)) armLoaderTagSets();
+
+  // `prefetch: false` (segment-resolution/prefetch-deferral.ts). A fill is
+  // marked on the raw URL (browser/navigation-client.ts) and wins over the
+  // prefetch header. A prefetch defers only on a plain GET navigation: an
+  // intercept resolves its loaders outside the shared funnel, and a shell
+  // capture is never a prefetch whatever the request that scheduled it sent.
+  let deferralMode: PrefetchDeferral["mode"];
+  if (rawUrl.searchParams.has("_rsc_fill")) {
+    deferralMode = "fill";
+  } else if (
+    request.method === "GET" &&
+    !isAction &&
+    !isIntercept &&
+    !reqCtx?._shellCaptureRun &&
+    requestHeaders(request).has("X-Rango-Prefetch")
+  ) {
+    deferralMode = "prefetch";
+  }
+  const deferral = planPrefetchDeferral(
+    snapshot.entries,
+    deferralMode,
+    matched,
+    cacheScope,
+  );
+  (handlerContext as InternalHandlerContext<any, TEnv>)._prefetchDeferral =
+    deferral;
+  // Flagged tree: a prefetch of it and a navigation to it are different
+  // bodies (rsc-rendering.ts adds X-Rango-Prefetch to Vary).
+  if (
+    reqCtx &&
+    deferral &&
+    deferral.scope.loaders.size + deferral.scope.units.size > 0
+  ) {
+    reqCtx._prefetchFlagged = true;
+  }
 
   return {
     request,

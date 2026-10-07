@@ -57,11 +57,13 @@ async function partial(prefetch: boolean) {
     cacheStore: new MemorySegmentCacheStore(),
     partial: { from: "/", prefetch },
   });
+  const headers: string[] = [];
+  response.headers.forEach((_value, name) => headers.push(name));
   return {
     flight: flight?.replaceAll(PACKAGE_ROOT, "<package>/"),
     vary: response.headers.get("vary"),
     cacheControl: response.headers.get("cache-control"),
-    headers: [...response.headers.keys()].sort(),
+    headers: headers.sort(),
   };
 }
 

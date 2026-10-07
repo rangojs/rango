@@ -330,6 +330,13 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       return next();
     }
 
+    // Skip fill requests (prefetch: false): a fill is the second half of one
+    // adoption, rendered against what that client holds, never stored and
+    // never served from a stored body (docs/design/prefetch-false.md, R7).
+    if (rawUrl.searchParams.has("_rsc_fill")) {
+      return next();
+    }
+
     // Skip configured paths
     if (skipPaths.some((path) => url.pathname.startsWith(path))) {
       return next();
@@ -387,6 +394,14 @@ export function createDocumentCacheMiddleware<TEnv = any>(
           isFragmentRecovery)
           ? ":fragments"
           : "";
+      // A prefetch body may carry deferred units (prefetch: false) that a
+      // navigation must never be answered with, and the other way round.
+      // This middleware runs before classification and cannot tell whether
+      // the route declares the flag, so every prefetch has its own slot.
+      const prefetchSuffix =
+        isPartial && requestHeaders(ctx.request).has("X-Rango-Prefetch")
+          ? ":prefetch"
+          : "";
       const typeSuffix = isRscRequest ? ":rsc" : ":html";
 
       // Default key rides the shared host-namespaced base (cacheKeyBase) so the
@@ -396,7 +411,11 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       // owns its own namespacing (auto-prefixing host would silently change their
       // existing keys and double any host they already include).
       const cacheKey = keyGenerator
-        ? keyGenerator(url) + segmentHash + fragmentSuffix + typeSuffix
+        ? keyGenerator(url) +
+          segmentHash +
+          fragmentSuffix +
+          prefetchSuffix +
+          typeSuffix
         : cacheKeyBase(
             url.host,
             url.pathname,
@@ -406,6 +425,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
           ) +
           segmentHash +
           fragmentSuffix +
+          prefetchSuffix +
           typeSuffix;
       // 1. Check cache
       // Recovery must reach CacheScope's server decoder so it can evict the bad

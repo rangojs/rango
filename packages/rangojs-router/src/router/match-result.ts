@@ -235,10 +235,13 @@ export function buildMatchResult<TEnv>(
     resolvedIds = [];
     for (const s of allSegments) {
       if (s._handlerRan) resolvedIds.push(s.id);
+      // A deferred unit (prefetch: false) is sent even when the client holds
+      // its id: it replaces that copy with the fallback until the fill lands.
       if (
         s.component !== null ||
         s.type === "loader" ||
-        !clientIdSet.has(s.id)
+        !clientIdSet.has(s.id) ||
+        s.deferred
       ) {
         segmentsToRender.push(s);
       }

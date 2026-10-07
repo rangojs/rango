@@ -99,6 +99,10 @@ import { observeEvent } from "../instrument.js";
 import { pushRevalidationTraceEntry, isTraceActive } from "../logging.js";
 import { treeHasStreaming } from "./segment-resolution.js";
 import { loaderPins } from "../segment-resolution/loader-cache.js";
+import {
+  chainUnitPossible,
+  isFillRequest,
+} from "../segment-resolution/prefetch-deferral.js";
 import type { PrerenderStore, PrerenderEntry } from "../../prerender/store.js";
 import {
   isStoredEntryStale,
@@ -342,15 +346,18 @@ async function* yieldFromStore<TEnv>(
   const paramsChanged =
     !ctx.isFullMatch && !paramsEqual(ctx.matched.params, ctx.prevParams);
   const resendRouteSegments = replaceable === true && ctx.isAction;
+  // A fill (prefetch-deferral.ts) keeps every segment the client holds.
+  const fill = isFillRequest(ctx.handlerContext);
   for (const segment of segments) {
     if (
       !ctx.isFullMatch &&
-      !paramsChanged &&
       ctx.clientSegmentSet.has(segment.id) &&
-      !(
-        resendRouteSegments &&
-        (segment.type === "route" || segment.belongsToRoute === true)
-      )
+      (fill ||
+        (!paramsChanged &&
+          !(
+            resendRouteSegments &&
+            (segment.type === "route" || segment.belongsToRoute === true)
+          )))
     ) {
       keepClientSegment(segment);
     }
@@ -711,7 +718,15 @@ export function withCacheLookup<TEnv>(
       throw new ShellRecordUnavailableError(tailMarker.fixedDocKey);
     }
 
-    if (ctx.isAction || !ctx.cacheScope?.enabled) {
+    // A prefetch that can defer a layout or route above the boundary
+    // (prefetch: false) emits nothing the record holds: reading it would
+    // replay the handle pushes of segments the response does not carry.
+    // withCacheStore skips the write for the same request.
+    if (
+      ctx.isAction ||
+      !ctx.cacheScope?.enabled ||
+      chainUnitPossible(ctx.handlerContext)
+    ) {
       yield* source;
       if (ms) {
         ms.metrics.push({
@@ -883,6 +898,7 @@ export function withCacheLookup<TEnv>(
 
     yield* liveSegments;
 
+    const fill = isFillRequest(ctx.handlerContext);
     for (const segment of cacheResult.segments) {
       if (!ctx.clientSegmentSet.has(segment.id)) {
         if (isTraceActive()) {
@@ -901,6 +917,13 @@ export function withCacheLookup<TEnv>(
       }
 
       if (segment.namespace?.startsWith("intercept:")) {
+        yield segment;
+        continue;
+      }
+
+      // A fill (prefetch-deferral.ts) skips a held segment outright.
+      if (fill) {
+        keepClientSegment(segment);
         yield segment;
         continue;
       }

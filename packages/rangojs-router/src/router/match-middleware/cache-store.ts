@@ -114,6 +114,10 @@ import { debugLog, debugWarn, getOrCreateRequestId } from "../logging.js";
 import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
 import type { GeneratorMiddleware } from "./cache-lookup.js";
 import { rerenderAndCacheRoute } from "./background-revalidation.js";
+import {
+  chainUnitPossible,
+  isFillRequest,
+} from "../segment-resolution/prefetch-deferral.js";
 
 /**
  * Creates cache store middleware
@@ -149,11 +153,18 @@ export function withCacheStore<TEnv>(
     // segments were collected into allSegments either way).
     recordShellCaptureDocRecord(ctx, state, allSegments);
 
+    // prefetch: false (prefetch-deferral.ts). A prefetch that can defer a
+    // unit above the boundary did not read the record (withCacheLookup) and
+    // could only write an incomplete one. A fill renders what the client is
+    // missing and nothing else: a write would be partial, and the proactive
+    // re-render below would run the handlers the fill must not run.
     if (
       !ctx.cacheScope?.enabled ||
       ctx.isAction ||
       state.cacheHit ||
-      ctx.request.method !== "GET"
+      ctx.request.method !== "GET" ||
+      isFillRequest(ctx.handlerContext) ||
+      chainUnitPossible(ctx.handlerContext)
     ) {
       if (ms) {
         ms.metrics.push({
