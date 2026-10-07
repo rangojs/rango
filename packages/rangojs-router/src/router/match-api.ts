@@ -478,6 +478,9 @@ export async function createMatchContextForPartial<TEnv>(
     }),
     matched,
     cacheScope,
+    // As the request listed them, not the copy forced above: see
+    // prefetch-deferral.ts.
+    nav.clientSegmentSet,
   );
   (handlerContext as InternalHandlerContext<any, TEnv>)._prefetchDeferral =
     deferral;

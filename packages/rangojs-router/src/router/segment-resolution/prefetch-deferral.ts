@@ -17,6 +17,12 @@
  * whether or not it re-renders, and nothing is deferred because of it. A
  * placeholder over content that is on screen would replace it with a fallback,
  * or make the click wait where a plain navigation would not.
+ *
+ * "Holds" is what the request listed in `_rsc_segments` (PrefetchDeferral.held),
+ * the set buildMatchResult (match-result.ts) filters the response with. Not
+ * the set resolution works on: the match deletes a route's id from that one to
+ * force a same-route render from an intercept source (match-api.ts), and a
+ * unit deferred on that ground would be dropped from the response as held.
  */
 
 import {
@@ -26,7 +32,7 @@ import {
   type EntryData,
   type LoaderEntry,
 } from "../../server/context.js";
-import type { HandlerContext, InternalHandlerContext } from "../../types";
+import type { HandlerContext, InternalHandlerContext } from "../../types.js";
 import type { CacheScope } from "../../cache/cache-scope.js";
 
 /** Static, per matched chain. */
@@ -42,10 +48,17 @@ export interface DeferralScope {
   readonly loaderIds: ReadonlySet<string>;
   /**
    * Entries whose handler a prefetch can skip (a flagged loading() with a
-   * fallback to show), mapped to the chain index that owns them: a chain
-   * entry maps to its own index, a parallel entry to its parent's.
+   * fallback to show). `index` is the chain index that owns the entry: its
+   * own for a chain entry, its parent's for a parallel entry. `ids` are its
+   * segment ids: the entry's for a chain entry, one per slot for a parallel
+   * entry.
    */
-  readonly units: ReadonlyMap<EntryData, number>;
+  readonly units: ReadonlyMap<EntryData, DeferralUnit>;
+}
+
+interface DeferralUnit {
+  readonly index: number;
+  readonly ids: readonly string[];
 }
 
 /** Per match: InternalHandlerContext._prefetchDeferral. */
@@ -62,6 +75,18 @@ export interface PrefetchDeferral {
    * cache() boundary, a ppr or Prerender route): no unit at or below it.
    */
   readonly storedFrom: number;
+  /** The segment ids the request listed as held (`_rsc_segments`). */
+  readonly held: ReadonlySet<string>;
+  /**
+   * Segment ids of the handler units this prefetch skips: every unit that is
+   * not stored and not held. Empty outside a prefetch.
+   */
+  readonly skipped: ReadonlySet<string>;
+  /**
+   * One of `skipped` is a chain entry: the walk stops there, so the response
+   * lacks everything below it, a route cache() record included.
+   */
+  readonly skipsChain: boolean;
   /** Segment id of the handler unit this prefetch skipped. */
   deferredUnit?: string;
 }
@@ -94,7 +119,7 @@ export function resolveDeferralScope(
 
   const loaders = new Map<LoaderEntry, true | readonly string[]>();
   const loaderIds = new Set<string>();
-  const units = new Map<EntryData, number>();
+  const units = new Map<EntryData, DeferralUnit>();
   const chain = new Set(entries);
   // ssr: false on a ppr route is the bake lane (loader-cache.ts
   // resolveLoaderData): shell material, served from the record.
@@ -131,15 +156,14 @@ export function resolveDeferralScope(
       loaderIds.add(loaderEntry.loader.$$id);
     }
     for (const parallelEntry of getParallelEntries(entry.parallel)) {
-      const flagged = flagsLoading(parallelEntry);
-      if (flagged) units.set(parallelEntry, index);
       // A slot's segment id, as resolveParallelSegmentsWithRevalidation
       // (revalidation.ts) forms it.
-      const slotIds = flagged
+      const slotIds = flagsLoading(parallelEntry)
         ? getParallelSlotEntries(entry.parallel)
             .filter((slot) => slot.entry === parallelEntry)
             .map((slot) => `${entry.shortCode}.${slot.slot}`)
         : [];
+      if (slotIds.length > 0) units.set(parallelEntry, { index, ids: slotIds });
       collect(parallelEntry, [...behind, ...slotIds], index);
     }
     for (const orphan of entry.layout) {
@@ -159,7 +183,7 @@ export function resolveDeferralScope(
     let behind: readonly string[] = [];
     entries.forEach((entry, index) => {
       const flagged = flagsLoading(entry);
-      if (flagged) units.set(entry, index);
+      if (flagged) units.set(entry, { index, ids: [entry.shortCode] });
       const own = flagged ? [...behind, entry.shortCode] : behind;
       collect(entry, own, index);
       // A layout's fallback covers its outlet: every deeper chain entry.
@@ -202,15 +226,19 @@ export function partialDeferralMode(request: {
     : undefined;
 }
 
+const NOTHING_HELD: ReadonlySet<string> = new Set();
+
 /**
  * The plan for one match, or undefined when the tree declares no flag and the
- * request is not a fill (the common case: nothing to carry).
+ * request is not a fill (the common case: nothing to carry). `held` is the
+ * client's segment ids as the request listed them.
  */
 export function planPrefetchDeferral(
   entries: readonly EntryData[],
   mode: PrefetchDeferral["mode"],
   matched: { pr?: boolean; od?: boolean },
   cacheScope: CacheScope | null | undefined,
+  held: ReadonlySet<string> = NOTHING_HELD,
 ): PrefetchDeferral | undefined {
   const scope = resolveDeferralScope(entries);
   if (scope === EMPTY_SCOPE && mode !== "fill") return undefined;
@@ -237,7 +265,20 @@ export function planPrefetchDeferral(
             entries.findIndex((e) => e.shortCode === cacheScope.boundary),
           );
   }
-  return { scope, mode, storedFrom };
+
+  const skipped = new Set<string>();
+  let skipsChain = false;
+  if (mode === "prefetch") {
+    for (const [entry, unit] of scope.units) {
+      if (!unitEligible(storedFrom, entry, unit)) continue;
+      for (const id of unit.ids) {
+        if (held.has(id)) continue;
+        skipped.add(id);
+        if (entry.type !== "parallel") skipsChain = true;
+      }
+    }
+  }
+  return { scope, mode, storedFrom, held, skipped, skipsChain };
 }
 
 export function getPrefetchDeferral(
@@ -262,40 +303,37 @@ export function defersLoader(
   ctx: HandlerContext<any, any>,
   loaderEntry: LoaderEntry,
   segmentId: string,
-  held: ReadonlySet<string>,
 ): boolean {
   const plan = getPrefetchDeferral(ctx);
-  if (plan?.mode !== "prefetch" || held.has(segmentId)) return false;
+  if (plan?.mode !== "prefetch" || plan.held.has(segmentId)) return false;
   const by = plan.scope.loaders.get(loaderEntry);
-  return by === true || (by !== undefined && by.some((id) => !held.has(id)));
+  return (
+    by === true || (by !== undefined && by.some((id) => !plan.held.has(id)))
+  );
 }
 
-function unitEligible(plan: PrefetchDeferral, entry: EntryData): boolean {
-  const index = plan.scope.units.get(entry);
+/** A unit whose handler output is not stored: a prefetch can skip it. */
+function unitEligible(
+  storedFrom: number,
+  entry: EntryData,
+  unit: DeferralUnit,
+): boolean {
   return (
-    index !== undefined &&
-    index < plan.storedFrom &&
+    unit.index < storedFrom &&
     !("isStaticPrerender" in entry && entry.isStaticPrerender)
   );
 }
 
 /**
- * This prefetch skips the handler of `entry`, whose segment is `segmentId`:
+ * This prefetch skips the handler of the entry whose segment is `segmentId`:
  * a unit the client does not hold. A held segment that re-renders is rendered
  * by the prefetch, as by a navigation.
  */
 export function defersUnit(
   ctx: HandlerContext<any, any>,
-  entry: EntryData,
   segmentId: string,
-  held: ReadonlySet<string>,
 ): boolean {
-  const plan = getPrefetchDeferral(ctx);
-  return (
-    plan?.mode === "prefetch" &&
-    !held.has(segmentId) &&
-    unitEligible(plan, entry)
-  );
+  return getPrefetchDeferral(ctx)?.skipped.has(segmentId) === true;
 }
 
 /**
@@ -306,8 +344,8 @@ export function defersUnit(
 export function firstUnitCandidate(
   plan: PrefetchDeferral,
 ): EntryData | undefined {
-  for (const entry of plan.scope.units.keys()) {
-    if (unitEligible(plan, entry)) return entry;
+  for (const [entry, unit] of plan.scope.units) {
+    if (unitEligible(plan.storedFrom, entry, unit)) return entry;
   }
   return undefined;
 }
@@ -319,22 +357,8 @@ export function firstUnitCandidate(
  * a prefetch of the same tree that holds the layout reads and writes the
  * record like any other request.
  */
-export function defersAboveRecord(
-  ctx: HandlerContext<any, any>,
-  held: ReadonlySet<string>,
-): boolean {
-  const plan = getPrefetchDeferral(ctx);
-  if (plan?.mode !== "prefetch") return false;
-  for (const entry of plan.scope.units.keys()) {
-    if (
-      entry.type !== "parallel" &&
-      !held.has(entry.shortCode) &&
-      unitEligible(plan, entry)
-    ) {
-      return true;
-    }
-  }
-  return false;
+export function defersAboveRecord(ctx: HandlerContext<any, any>): boolean {
+  return getPrefetchDeferral(ctx)?.skipsChain === true;
 }
 
 /** Record the handler unit this prefetch skipped. */

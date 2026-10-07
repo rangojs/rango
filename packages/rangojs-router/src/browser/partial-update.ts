@@ -11,10 +11,15 @@ import { startTransition } from "react";
 // addTransitionType is only available in React experimental
 const addTransitionType: ((type: string) => void) | undefined =
   "addTransitionType" in React ? (React as any).addTransitionType : undefined;
+
 import type { RenderSegmentsOptions } from "../segment-system.js";
 import { reconcileSegments } from "./segment-reconciler.js";
 import type { ReconcileActor } from "./segment-reconciler.js";
-import { clearPendingFill, setPendingFill } from "./pending-fill.js";
+import {
+  clearPendingFill,
+  emitAdoption,
+  setPendingFill,
+} from "./pending-fill.js";
 import {
   emitNavigationError,
   toNetworkError,
@@ -119,17 +124,16 @@ export interface PartialUpdateConfig {
 
 const FILL_REDIRECT_NOT_FOLLOWED = "[rango] fill: redirect not followed";
 
-/** A promise the browser created for a deferred segment's missing value. */
+/**
+ * A promise the browser created for a deferred segment's missing value. The
+ * segment is always new to the page: a payload that defers is adopted only
+ * on the page it was prefetched from, with the segments it was prefetched
+ * with (rsc/rsc-rendering.ts sourceScoped, prefetch/cache.ts buildSourceKey),
+ * and the server defers nothing that request listed as held.
+ */
 interface Gate {
   promise: Promise<unknown>;
   resolve(value: unknown): void;
-  /**
-   * A unit the page being left has no copy of: its boundary is new, so its
-   * fallback shows. A unit the page holds (a prefetch from another page,
-   * adopted on the unit's own) has its content on screen instead, and React
-   * holds every commit that still reads the gate.
-   */
-  fresh: boolean;
 }
 
 /**
@@ -150,6 +154,8 @@ interface Fill {
   cancelled: boolean;
   /** tx.commit() ran for the adoption: its placeholders are on screen. */
   committed: boolean;
+  /** The tree the adoption rendered. */
+  root?: ReactNode;
   /** Settles with `committed`, or false when the adoption is abandoned. */
   whenCommitted: Promise<boolean>;
   commit(): void;
@@ -259,7 +265,6 @@ export function createPartialUpdater(
    */
   function armGates(placeholders: ResolvedSegment[], matched: string[]): Fill {
     const gates = new Map<ResolvedSegment, Gate>();
-    const onScreen = new Set(getCurrentCachedSegments().map((s) => s.id));
     for (const segment of placeholders) {
       let resolve!: Gate["resolve"];
       const promise = new Promise<unknown>((res) => {
@@ -267,11 +272,7 @@ export function createPartialUpdater(
       });
       if (segment.type === "loader") segment.loaderData = promise;
       else segment.component = promise as ReactNode;
-      gates.set(segment, {
-        promise,
-        resolve,
-        fresh: segment.type !== "loader" && !onScreen.has(segment.id),
-      });
+      gates.set(segment, { promise, resolve });
     }
     let settleCommitted!: (committed: boolean) => void;
     const fill: Fill = {
@@ -397,26 +398,49 @@ export function createPartialUpdater(
       // own transition would reveal it at once, past the throttle React puts
       // between a fallback and what replaces it, and a boundary inside the
       // unit would show its fallback for data a few milliseconds away.
-      // Only a `fresh` unit: React never commits a tree that still suspends
-      // where content is on screen, so that gate would never resolve.
+      // The unit is new to the page, so its fallback is what shows and React
+      // commits this tree. Not a loader: its read may have no boundary, and
+      // React never commits a tree that suspends where no fallback can show.
+      //
+      // Not under a view transition either. This transition waits there for
+      // the one the adoption started, which lasts about as long as the
+      // throttle, and every retry that suspends again under a
+      // <ViewTransition> starts a transition of its own the reveal then has
+      // to wait for: the gate's retry does when the unit reads a loader that
+      // is still streaming (measured: two more transitions, content 280 ms
+      // late).
+      const animated =
+        "ViewTransition" in React &&
+        typeof document !== "undefined" &&
+        "startViewTransition" in document &&
+        shouldStartViewTransition(reconciled.segments, fill.gatedOff);
       const filledById = new Map(reconciled.segments.map((s) => [s.id, s]));
       const revealed = new Map<Gate, unknown>();
+      let hasUnit = false;
       for (const [placeholder, gate] of fill.gates) {
+        if (placeholder.type === "loader") continue;
+        hasUnit = true;
         const next = filledById.get(placeholder.id);
-        if (!next?.loading || !gate.fresh) continue;
+        if (animated || !next?.loading) continue;
         revealed.set(gate, next.component);
         next.component = gate.promise as ReactNode;
       }
 
+      // A fill of loaders alone changes no element of the tree the adoption
+      // rendered: that tree reads the gates, and they resolve below. A new
+      // tree would be one more commit, with nothing to show for it, and one
+      // more view transition under transition().
       // No forceAwait: what the fill is still streaming keeps the fallback
       // its placeholder is already showing.
-      const root = await renderSegments(reconciled.mainSegments, {
-        transitionGatedOff: fill.gatedOff,
-        interceptSegments:
-          reconciled.interceptSegments.length > 0
-            ? reconciled.interceptSegments
-            : undefined,
-      });
+      const root = hasUnit
+        ? await renderSegments(reconciled.mainSegments, {
+            transitionGatedOff: fill.gatedOff,
+            interceptSegments:
+              reconciled.interceptSegments.length > 0
+                ? reconciled.interceptSegments
+                : undefined,
+          })
+        : fill.root;
       if (
         fill.cancelled ||
         store.getCachedSegments(store.getHistoryKey())?.segments !== live
@@ -875,18 +899,18 @@ export function createPartialUpdater(
         placeholders.length > 0
           ? armGates(placeholders, matchedIds)
           : undefined;
-      const deferredIds = new Set(placeholders.map((s) => s.id));
+      // A placeholder is not held: every later request from this page
+      // leaves its id out, so the server renders it.
+      const heldIds = fill
+        ? matchedIds.filter((id) => !placeholders.some((s) => s.id === id))
+        : matchedIds;
 
       const reconciled = reconcileSegments({
         actor,
         matched: matchedIds,
         diff: diff || [],
         serverSegments: newSegments || [],
-        // A placeholder replaces the copy the client holds, structure
-        // included: its fallback has to show.
-        cachedSegments: fill
-          ? cachedSegs.filter((s) => !deferredIds.has(s.id))
-          : cachedSegs,
+        cachedSegments: cachedSegs,
         insertMissingDiff: true,
       });
 
@@ -943,11 +967,7 @@ export function createPartialUpdater(
       if (fill) {
         fill.gatedOff = gatedOff;
         adoption.fill = fill;
-        fill.done = runFill(
-          fill,
-          url,
-          matchedIds.filter((id) => !deferredIds.has(id)),
-        );
+        fill.done = runFill(fill, url, heldIds);
       }
       const renderOptions = {
         transitionGatedOff: gatedOff,
@@ -1028,11 +1048,6 @@ export function createPartialUpdater(
         }
       }
 
-      // A placeholder is not held: every later request from this page
-      // leaves its id out, so the server renders it.
-      const allSegmentIds = fill
-        ? matchedIds.filter((id) => !deferredIds.has(id))
-        : matchedIds;
       const serverLocationState = payload.metadata?.locationState;
       const overrides: CommitOverrides = {
         routeName: payload.metadata?.routeName,
@@ -1044,12 +1059,15 @@ export function createPartialUpdater(
         ...(serverLocationState && { serverState: serverLocationState }),
       };
       const { scroll: navScroll } = tx.commit(
-        allSegmentIds,
+        heldIds,
         reconciled.segments,
         overrides,
       );
       // After tx.commit(), which cancels the fill of the page being left.
-      fill?.commit();
+      if (fill) {
+        fill.root = newTree;
+        fill.commit();
+      }
 
       if (mode.type === "stale-revalidation") {
         const historyKeyNow = store.getHistoryKey();
@@ -1094,6 +1112,11 @@ export function createPartialUpdater(
 
       // No scroll for a commit that is not a navigation (an action refetch):
       // navigation-transaction.ts CommitResult.
+      // An adoption that waits for a fill reads `loading` until React
+      // commits it (pending-fill.ts emitAdoption).
+      const emit: UpdateSubscriber = fill
+        ? (next) => emitAdoption(() => onUpdate(next))
+        : onUpdate;
       const update: NavigationUpdate = {
         root: newTree,
         metadata: payload.metadata!,
@@ -1104,14 +1127,14 @@ export function createPartialUpdater(
         (mode.type === "action" || mode.type === "stale-revalidation")
       ) {
         commitInTransition(
-          onUpdate,
+          emit,
           reconciled.mainSegments,
           update,
           hasTransition ? ["action"] : [],
         );
       } else if (hasTransition) {
         commitInTransition(
-          onUpdate,
+          emit,
           reconciled.mainSegments,
           update,
           optimisticPresented
@@ -1145,7 +1168,7 @@ export function createPartialUpdater(
         // segment reconciles in place (clientGroup key), so a read that still
         // suspends must hold the presented content, not flash a fallback.
         commitInTransition(
-          onUpdate,
+          emit,
           reconciled.mainSegments,
           update,
           optimisticPresented ? [OPTIMISTIC_COMMIT_TRANSITION_TYPE] : [],
@@ -1159,7 +1182,7 @@ export function createPartialUpdater(
         // boundary re-suspending on this urgent commit, not from a remount
         // (#995). Explicit transition() routes keep the content-hold via the
         // hasTransition branch above (the opt-in).
-        onUpdate(update);
+        emit(update);
       }
 
       debugLog("[Browser] Navigation complete");

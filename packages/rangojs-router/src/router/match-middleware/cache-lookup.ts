@@ -725,7 +725,7 @@ export function withCacheLookup<TEnv>(
     if (
       ctx.isAction ||
       !ctx.cacheScope?.enabled ||
-      defersAboveRecord(ctx.handlerContext, ctx.clientSegmentSet)
+      defersAboveRecord(ctx.handlerContext)
     ) {
       yield* source;
       if (ms) {

@@ -34,7 +34,9 @@ import { countRun, readRunCounts } from "../prefetch-false-counts.js";
 // `loader` also has pf-loader-price (an unflagged loader, counter
 // `loader.price`). `unit`, `cached`, `section` and `slot` count their route
 // handler (`<c>.handler`); `section` counts its flagged layout
-// (`section.layout`) and `slot` its slot handler (`slot.side`).
+// (`section.layout`) and `slot` its slot handler (`slot.side`). `slot-b` is a
+// second route beside the same slot: between the two the client holds the
+// slot.
 //
 // Three more routes sit inside the `section` layout, to tell a layout that
 // is new to the client from one it holds: `section-plain` (no loading() of
@@ -60,6 +62,8 @@ import { countRun, readRunCounts } from "../prefetch-false-counts.js";
 // &slow=1 makes every `<c>.data` loader take 600 ms longer, past the 300 ms
 // React keeps a fallback up before it reveals what replaces it: the deferred
 // work is then the last thing a plain navigation waits for, too.
+// &hslow=1 makes the section layout's handler take 600 ms: work a click must
+// not repeat for a layout the page already shows.
 // The flags ride on every link. Without them the page is quiet for a suite.
 
 const runOf = (ctx: any): string => ctx.searchParams.get("run") ?? "";
@@ -125,6 +129,9 @@ export const PfItemTwinLoader = createLoader((ctx) =>
   work(ctx, "item-twin.data", 100),
 );
 export const PfVtLoader = createLoader((ctx) => work(ctx, "vt.data", 100));
+export const PfVtUnitLoader = createLoader((ctx) =>
+  work(ctx, "vt-unit.data", 100),
+);
 
 const CASES = [
   ["loader", "one flagged loader beside an unflagged one, own Suspense"],
@@ -134,6 +141,7 @@ const CASES = [
   ["section-own", "inside that layout, its own flagged loading()"],
   ["section-cached", "inside that layout, a cache() route: record is used"],
   ["slot", "flagged loading() on a parallel slot: only the slot waits"],
+  ["slot-b", "a second route beside that slot: from slot, the slot is held"],
   ["bare", "flagged loader, no boundary: the click waits for the fill"],
   ["throws", "the deferred loader throws: error boundary after the click"],
   ["missing", "the deferred loader calls notFound()"],
@@ -149,6 +157,7 @@ const CASES = [
   ["item-twin/a", "the same route without the flag"],
   ["item-twin/b", "must behave exactly like item/a to item/b"],
   ["vt", "flagged loader on a route with transition()"],
+  ["vt-unit", "flagged loading() on a route with transition()"],
 ] as const;
 
 const box = {
@@ -162,7 +171,8 @@ function PrefetchFalseLayout(ctx: any) {
   const tall = ctx.searchParams.get("tall") === "1";
   const manual = ctx.searchParams.get("manual") === "1";
   const slow = ctx.searchParams.get("slow") === "1";
-  const query = `run=${run}${manual ? "&manual=1" : ""}${tall ? "&tall=1" : ""}${slow ? "&slow=1" : ""}`;
+  const hslow = ctx.searchParams.get("hslow") === "1";
+  const query = `run=${run}${manual ? "&manual=1" : ""}${tall ? "&tall=1" : ""}${slow ? "&slow=1" : ""}${hslow ? "&hslow=1" : ""}`;
   return (
     <div
       data-testid="pf-layout"
@@ -287,8 +297,11 @@ function UnitPage(ctx: any) {
 }
 
 // A flagged loading() on a layout covers its outlet: the route below.
-function SectionLayout(ctx: any) {
+async function SectionLayout(ctx: any) {
   countRun(runOf(ctx), "section.layout");
+  if (ctx.searchParams.get("hslow") === "1") {
+    await new Promise((resolve) => setTimeout(resolve, 600));
+  }
   return (
     <section data-testid="pf-section-layout">
       <Outlet />
@@ -335,6 +348,15 @@ function VtPage() {
   );
 }
 
+function VtUnitPage(ctx: any) {
+  countRun(runOf(ctx), "vt-unit.handler");
+  return (
+    <div data-testid="pf-vt-unit-page">
+      <PrefetchFalseValue loader={PfVtUnitLoader} testId="pf-vt-unit-value" />
+    </div>
+  );
+}
+
 // A slot with its own flagged loading() is its own unit: the route renders.
 function SlotLayout() {
   return (
@@ -348,6 +370,15 @@ function SlotLayout() {
 function SlotPage(ctx: any) {
   countRun(runOf(ctx), "slot.handler");
   return <div data-testid="pf-slot-page">slot page</div>;
+}
+
+function SlotPageB(ctx: any) {
+  countRun(runOf(ctx), "slot-b.handler");
+  return (
+    <div data-testid="pf-slot-b-page">
+      <span data-testid="pf-slot-b-value">slot-b page</span>
+    </div>
+  );
 }
 
 function SlotSide(ctx: any) {
@@ -511,6 +542,7 @@ export const prefetchFalsePatterns = urls(
           loading(fallback("slot"), { prefetch: false }),
         ]),
         path("/slot", SlotPage, { name: "slot" }),
+        path("/slot-b", SlotPageB, { name: "slotB" }),
       ]),
 
       // A flagged loader nothing can show a fallback for: the page left stays
@@ -607,6 +639,13 @@ export const prefetchFalsePatterns = urls(
       path("/vt", VtPage, { name: "vt" }, () => [
         loader(PfVtLoader, { prefetch: false }),
         loading(fallback("vt")),
+        transition(),
+      ]),
+
+      // A deferred unit on a route with a view transition.
+      path("/vt-unit", VtUnitPage, { name: "vtUnit" }, () => [
+        loader(PfVtUnitLoader),
+        loading(fallback("vt-unit"), { prefetch: false }),
         transition(),
       ]),
 

@@ -341,7 +341,7 @@ export async function resolveLoadersWithRevalidation<TEnv>(
       // Only a loader on a segment the client lacks (defersLoader). It
       // would have run, and its cache() is not read either
       // (resolveLoaderData is never reached).
-      if (defersLoader(ctx, loaderEntry, segmentId, clientSegmentIds)) {
+      if (defersLoader(ctx, loaderEntry, segmentId)) {
         const deferred: ResolvedSegment = {
           id: segmentId,
           namespace: entry.id,
@@ -805,9 +805,7 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
 
     // A slot with its own flagged loading() is its own unit: a prefetch
     // sends its fallback instead of running the slot handler.
-    const deferSlot =
-      shouldResolve &&
-      defersUnit(context, parallelEntry, parallelId, clientSegmentIds);
+    const deferSlot = shouldResolve && defersUnit(context, parallelId);
     if (deferSlot) markUnitDeferred(context, parallelId);
     const { component, handlerRan } = deferSlot
       ? { component: null, handlerRan: false }
@@ -955,7 +953,7 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
     async () => {
       // Only an entry the client lacks (defersUnit). Its handler would
       // have run, and a prefetch sends the entry's fallback in its place.
-      if (defersUnit(context, entry, entry.shortCode, clientSegmentIds)) {
+      if (defersUnit(context, entry.shortCode)) {
         deferred = true;
         markUnitDeferred(context, entry.shortCode);
         return null;

@@ -29,8 +29,8 @@ export {
   expectClickFromAScrolledPageEndsAtTheTop,
   expectDeferredOutcomeArrivesWithTheFill,
   expectDocumentAwaitsLoaderThatPrefetchSkips,
-  expectDoubleClickEndsOnTheLastFill,
-  expectEveryAdoptionSendsItsOwnFill,
+  expectDoubleClickEndsOnTheLastRequest,
+  expectRevisitUsesWhatTheClientHolds,
   expectFailedFillReachesTheNetworkErrorBoundary,
   expectLeavingBeforeTheFillAbortsItAndBackRefetches,
   expectNoBoundaryHoldsThePageLeftUntilTheFillReturns,
@@ -42,16 +42,24 @@ export {
   expectCachedRouteUnderHeldFlaggedLayoutUsesItsRecord,
   expectHeldFlaggedLayoutLeavesRoutesToTheirOwnFlags,
   expectPendingFillReadsLikeAStreamingNavigation,
-  expectPrefetchFromAnotherPageKeepsWhatIsOnScreen,
+  expectPrefetchThatDeferredStaysWithItsPage,
+  expectDeferredLoaderShowsItsOwnFallbackAtOnce,
+  definePrefetchFalseTests,
+  prefetchFalseParityTitle,
   PREFETCH_FALSE_PARITY_CASES,
   expectSameRouteNavigationIsNeverDeferred,
 } from "./prefetch-false.js";
 export type {
   PrefetchFalseCase,
+  PrefetchFalseClick,
+  PrefetchFalseElsewhereCase,
   PrefetchFalseFixture,
+  PrefetchFalseFlags,
   PrefetchFalseObservation,
   PrefetchFalseParityCase,
+  PrefetchFalseRequestKind,
   PrefetchFalseScrollCase,
+  PrefetchFalseSuite,
 } from "./prefetch-false.js";
 
 /**

@@ -302,7 +302,10 @@ type PreparedRender =
   | {
       kind: "payload";
       payload: RscPayload;
-      /** The response depends on the source page: an intercept targets the route. */
+      /**
+       * The response depends on the source page: an intercept targets the
+       * route, or it carries deferred units (`prefetch: false`).
+       */
       sourceScoped: boolean;
       pprReplayStatus?: PprReplayStatus;
       /** The key a navigation-only heal capture stores under, when one is needed. */
@@ -854,7 +857,13 @@ function* preparePayloadPlan<TEnv>(
           stateCookieName: ctx.router.resolvedStateCookieName,
         },
       },
-      sourceScoped: result.interceptTargeted === true,
+      // What a prefetch defers depends on what the source page holds: a
+      // page that holds the segment gets it rendered. Adopted from another
+      // page, a deferring payload held the click on a fill for content a
+      // plain click showed at once, and ran held work again.
+      sourceScoped:
+        result.interceptTargeted === true ||
+        result.segments.some((s) => s.deferred),
       pprReplayStatus,
       healKey,
     };

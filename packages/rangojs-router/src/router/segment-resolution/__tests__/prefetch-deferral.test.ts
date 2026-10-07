@@ -94,7 +94,9 @@ describe("resolveDeferralScope", () => {
 
     expect(ids(scope)).toEqual(["nested", "orphan", "own", "slot"]);
     // The route is the unit, at its chain index. Nothing above it is covered.
-    expect([...scope.units]).toEqual([[route, 1]]);
+    expect([...scope.units]).toEqual([
+      [route, { index: 1, ids: [route.shortCode] }],
+    ]);
   });
 
   it("a flagged layout covers every deeper entry of the chain", () => {
@@ -107,7 +109,9 @@ describe("resolveDeferralScope", () => {
     const scope = resolveDeferralScope([outer, section, route]);
 
     expect(ids(scope)).toEqual(["page", "section"]);
-    expect([...scope.units]).toEqual([[section, 1]]);
+    expect([...scope.units]).toEqual([
+      [section, { index: 1, ids: [section.shortCode] }],
+    ]);
   });
 
   it("a flagged route does not cover anything after it", () => {
@@ -129,7 +133,10 @@ describe("resolveDeferralScope", () => {
     const scope = resolveDeferralScope([entry("layout"), route]);
 
     expect(ids(scope)).toEqual(["slot"]);
-    expect([...scope.units]).toEqual([[slot, 1]]);
+    // Its segment is the slot's: `<parent>.<slot>`.
+    expect([...scope.units]).toEqual([
+      [slot, { index: 1, ids: [`${route.shortCode}.@side`] }],
+    ]);
   });
 
   it("an orphan layout's flagged loading() defers its loaders, not its handler", () => {
@@ -293,9 +300,7 @@ describe("planPrefetchDeferral", () => {
     ];
     const plan = planPrefetchDeferral(chain, "prefetch", matched, null)!;
     expect(plan.storedFrom).toBe(0);
-    expect(
-      defersUnit(ctxWith(plan), chain[0], chain[0].shortCode, new Set()),
-    ).toBe(false);
+    expect(defersUnit(ctxWith(plan), chain[0].shortCode)).toBe(false);
   });
 
   it("stores from the cache() boundary down", () => {
@@ -317,9 +322,14 @@ describe("planPrefetchDeferral", () => {
 });
 
 describe("the decisions", () => {
+  const NONE: ReadonlySet<string> = new Set();
+  const holding = (...ids: string[]): ReadonlySet<string> => new Set(ids);
+
+  /** The plan of one request: what it listed as held is part of it. */
   function plan(
     mode: PrefetchDeferral["mode"],
     build: () => { chain: EntryData[]; cacheBoundary?: string },
+    held: ReadonlySet<string> = NONE,
   ) {
     const { chain, cacheBoundary } = build();
     return planPrefetchDeferral(
@@ -329,11 +339,9 @@ describe("the decisions", () => {
       cacheBoundary
         ? ({ enabled: true, boundary: cacheBoundary } as any)
         : null,
+      held,
     )!;
   }
-
-  const NONE: ReadonlySet<string> = new Set();
-  const holding = (...ids: string[]): ReadonlySet<string> => new Set(ids);
 
   it("defer a loader only in a prefetch", () => {
     const reviews = loaderEntry("reviews", { prefetch: false });
@@ -349,7 +357,6 @@ describe("the decisions", () => {
         ctxWith(mode === "no plan" ? undefined : plan(mode, build)),
         loader,
         "R0D0.x",
-        NONE,
       );
 
     expect(defers("prefetch", reviews)).toBe(true);
@@ -362,18 +369,17 @@ describe("the decisions", () => {
   // The flag applies only to a segment the client does not have yet.
   it("never defer a loader whose segment the client holds", () => {
     const reviews = loaderEntry("reviews", { prefetch: false });
-    const active = plan("prefetch", () => ({
-      chain: [entry("route", { loader: [reviews] })],
-    }));
-    const ctx = ctxWith(active);
-    expect(defersLoader(ctx, reviews, "R0D0.reviews", NONE)).toBe(true);
-    expect(
-      defersLoader(ctx, reviews, "R0D0.reviews", holding("R0D0.reviews")),
-    ).toBe(false);
+    const build = () => ({ chain: [entry("route", { loader: [reviews] })] });
+    const defers = (held: ReadonlySet<string>) =>
+      defersLoader(
+        ctxWith(plan("prefetch", build, held)),
+        reviews,
+        "R0D0.reviews",
+      );
+    expect(defers(NONE)).toBe(true);
+    expect(defers(holding("R0D0.reviews"))).toBe(false);
     // Holding the route, not the loader's segment: still new, still deferred.
-    expect(defersLoader(ctx, reviews, "R0D0.reviews", holding("R0"))).toBe(
-      true,
-    );
+    expect(defers(holding("R0"))).toBe(true);
   });
 
   it("defer a loader behind a flagged entry only while the client does not hold that entry", () => {
@@ -382,43 +388,50 @@ describe("the decisions", () => {
     const flaggedPageLoader = loaderEntry("flagged", { prefetch: false });
     const section = entry("layout", { ...flagged, loader: [sectionLoader] });
     const route = entry("route", { loader: [pageLoader, flaggedPageLoader] });
-    const ctx = ctxWith(plan("prefetch", () => ({ chain: [section, route] })));
+    const build = () => ({ chain: [section, route] });
     const pageId = `${route.shortCode}D0.page`;
 
     // The section is new: everything its fallback covers is deferred.
-    expect(defersLoader(ctx, pageLoader, pageId, NONE)).toBe(true);
-    expect(defersLoader(ctx, sectionLoader, "S.D0", NONE)).toBe(true);
+    const fresh = ctxWith(plan("prefetch", build));
+    expect(defersLoader(fresh, pageLoader, pageId)).toBe(true);
+    expect(defersLoader(fresh, sectionLoader, "S.D0")).toBe(true);
     // The client holds the section: a new route's loaders run.
-    const inside = holding(section.shortCode);
-    expect(defersLoader(ctx, pageLoader, pageId, inside)).toBe(false);
+    const inside = ctxWith(plan("prefetch", build, holding(section.shortCode)));
+    expect(defersLoader(inside, pageLoader, pageId)).toBe(false);
     // A loader with its own flag does not need the section.
-    expect(defersLoader(ctx, flaggedPageLoader, "R.D1", inside)).toBe(true);
+    expect(defersLoader(inside, flaggedPageLoader, "R.D1")).toBe(true);
   });
 
   it("defer a loader behind a flagged slot while one of its slots is new", () => {
     const slotLoader = loaderEntry("slot");
     const slot = entry("parallel", { ...flagged, loader: [slotLoader] });
     const route = entry("route", { parallel: { "@side": slot } });
-    const ctx = ctxWith(plan("prefetch", () => ({ chain: [route] })));
     const slotId = `${route.shortCode}.@side`;
+    const defers = (held: ReadonlySet<string>) =>
+      defersLoader(
+        ctxWith(plan("prefetch", () => ({ chain: [route] }), held)),
+        slotLoader,
+        "R.D0",
+      );
 
-    expect(defersLoader(ctx, slotLoader, "R.D0", NONE)).toBe(true);
-    expect(defersLoader(ctx, slotLoader, "R.D0", holding(slotId))).toBe(false);
-    expect(
-      defersLoader(ctx, slotLoader, "R.D0", holding(route.shortCode)),
-    ).toBe(true);
+    expect(defers(NONE)).toBe(true);
+    expect(defers(holding(slotId))).toBe(false);
+    expect(defers(holding(route.shortCode))).toBe(true);
   });
 
   it("defer a loader behind a flagged orphan layout while the client does not hold it", () => {
     const orphanLoader = loaderEntry("orphan");
     const orphan = entry("layout", { ...flagged, loader: [orphanLoader] });
     const route = entry("route", { layout: [orphan] });
-    const ctx = ctxWith(plan("prefetch", () => ({ chain: [route] })));
+    const defers = (held: ReadonlySet<string>) =>
+      defersLoader(
+        ctxWith(plan("prefetch", () => ({ chain: [route] }), held)),
+        orphanLoader,
+        "O.D0",
+      );
 
-    expect(defersLoader(ctx, orphanLoader, "O.D0", NONE)).toBe(true);
-    expect(
-      defersLoader(ctx, orphanLoader, "O.D0", holding(orphan.shortCode)),
-    ).toBe(false);
+    expect(defers(NONE)).toBe(true);
+    expect(defers(holding(orphan.shortCode))).toBe(false);
   });
 
   it("defer a unit only in a prefetch, above the stored part of the chain", () => {
@@ -433,7 +446,7 @@ describe("the decisions", () => {
       mode: PrefetchDeferral["mode"],
       build: () => { chain: EntryData[]; cacheBoundary?: string },
       unit: EntryData,
-    ) => defersUnit(ctxWith(plan(mode, build)), unit, unit.shortCode, NONE);
+    ) => defersUnit(ctxWith(plan(mode, build)), unit.shortCode);
 
     expect(defers("prefetch", open, section)).toBe(true);
     expect(defers("prefetch", open, route)).toBe(true);
@@ -443,36 +456,46 @@ describe("the decisions", () => {
     expect(defers("prefetch", cachedRoute, route)).toBe(false);
     expect(defers("prefetch", cachedRoute, section)).toBe(true);
     expect(defers("prefetch", open, entry("route"))).toBe(false);
+    expect(defersUnit(ctxWith(undefined), section.shortCode)).toBe(false);
   });
 
   it("never defer a unit whose segment the client holds, whether or not it re-renders", () => {
     const section = entry("layout", flagged);
     const route = entry("route", flagged);
-    const ctx = ctxWith(plan("prefetch", () => ({ chain: [section, route] })));
+    const build = () => ({ chain: [section, route] });
+    const inSection = ctxWith(
+      plan("prefetch", build, holding(section.shortCode)),
+    );
 
-    expect(
-      defersUnit(ctx, section, section.shortCode, holding(section.shortCode)),
-    ).toBe(false);
+    expect(defersUnit(inSection, section.shortCode)).toBe(false);
     // A new route under the held section is still its own unit.
+    expect(defersUnit(inSection, route.shortCode)).toBe(true);
     expect(
-      defersUnit(ctx, route, route.shortCode, holding(section.shortCode)),
-    ).toBe(true);
-    expect(
-      defersUnit(ctx, route, route.shortCode, holding(route.shortCode)),
+      defersUnit(
+        ctxWith(plan("prefetch", build, holding(route.shortCode))),
+        route.shortCode,
+      ),
     ).toBe(false);
+  });
+
+  it("defer each slot of a flagged parallel entry by its own segment", () => {
+    const slots = entry("parallel", flagged);
+    const route = entry("route", { parallel: { "@a": slots, "@b": slots } });
+    const a = `${route.shortCode}.@a`;
+    const b = `${route.shortCode}.@b`;
+    const active = plan("prefetch", () => ({ chain: [route] }), holding(a));
+
+    expect([...active.skipped]).toEqual([b]);
+    expect(defersUnit(ctxWith(active), a)).toBe(false);
+    expect(defersUnit(ctxWith(active), b)).toBe(true);
   });
 
   it("never defer a Static handler", () => {
     const layout = entry("layout", { ...flagged, isStaticPrerender: true });
     const build = () => ({ chain: [layout, entry("route")] });
-    expect(
-      defersUnit(
-        ctxWith(plan("prefetch", build)),
-        layout,
-        layout.shortCode,
-        NONE,
-      ),
-    ).toBe(false);
+    expect(defersUnit(ctxWith(plan("prefetch", build)), layout.shortCode)).toBe(
+      false,
+    );
   });
 
   it("report whether this prefetch skips a layout above the cache boundary", () => {
@@ -480,29 +503,31 @@ describe("the decisions", () => {
     const route = entry("route");
     const slot = entry("parallel", flagged);
     const slotOnly = entry("route", { parallel: { "@side": slot } });
+    const aboveRecord = () => ({
+      chain: [section, route],
+      cacheBoundary: route.shortCode,
+    });
 
-    const above = ctxWith(
-      plan("prefetch", () => ({
-        chain: [section, route],
-        cacheBoundary: route.shortCode,
-      })),
+    expect(defersAboveRecord(ctxWith(plan("prefetch", aboveRecord)))).toBe(
+      true,
     );
-    expect(defersAboveRecord(above, NONE)).toBe(true);
     // The client holds the layout: nothing above the record is skipped, so
     // the record is read and written.
-    expect(defersAboveRecord(above, holding(section.shortCode))).toBe(false);
+    expect(
+      defersAboveRecord(
+        ctxWith(plan("prefetch", aboveRecord, holding(section.shortCode))),
+      ),
+    ).toBe(false);
     // Not a prefetch: the record is read and written as usual.
     expect(
       defersAboveRecord(
         ctxWith(plan(undefined, () => ({ chain: [section, route] }))),
-        NONE,
       ),
     ).toBe(false);
     // A slot unit skips nothing the record holds.
     expect(
       defersAboveRecord(
         ctxWith(plan("prefetch", () => ({ chain: [slotOnly] }))),
-        NONE,
       ),
     ).toBe(false);
     // A flagged layout the record itself stores is not a unit.
@@ -514,10 +539,9 @@ describe("the decisions", () => {
             cacheBoundary: section.shortCode,
           })),
         ),
-        NONE,
       ),
     ).toBe(false);
-    expect(defersAboveRecord(ctxWith(undefined), NONE)).toBe(false);
+    expect(defersAboveRecord(ctxWith(undefined))).toBe(false);
   });
 
   it("name the first unit a prefetch of the tree can skip", () => {

@@ -103,12 +103,14 @@ const plans = {
     ),
   // The layout above the boundary is flagged: a prefetch from a client that
   // does not hold it skips it and, with it, everything the record holds.
-  prefetchUnitAbove: () =>
+  // `held`: what the request listed, which the plan is built from.
+  prefetchUnitAbove: (held: string[] = []) =>
     planPrefetchDeferral(
       [chainEntry("layout", LAYOUT, true), chainEntry("route", ROUTE, false)],
       "prefetch",
       {},
       { enabled: true, boundary: ROUTE } as any,
+      new Set(held),
     ),
 };
 
@@ -301,7 +303,7 @@ describe("withCacheLookup and prefetch: false", () => {
   // The same tree, from a client that holds the flagged layout: nothing
   // above the record is skipped, so the record answers.
   it("a prefetch that holds the flagged layout above the boundary reads the record", async () => {
-    const result = await lookup(plans.prefetchUnitAbove(), {
+    const result = await lookup(plans.prefetchUnitAbove([LAYOUT]), {
       routeRevalidates: false,
       clientSegments: [LAYOUT],
     });
@@ -423,7 +425,7 @@ describe("withCacheStore and prefetch: false", () => {
 
   it("a prefetch that holds the flagged layout above the boundary writes the record", async () => {
     expect(
-      await store(plans.prefetchUnitAbove(), [LAYOUT]),
+      await store(plans.prefetchUnitAbove([LAYOUT]), [LAYOUT]),
     ).toHaveBeenCalledTimes(1);
   });
 });

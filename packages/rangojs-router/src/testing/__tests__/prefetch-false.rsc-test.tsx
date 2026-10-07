@@ -1299,6 +1299,34 @@ describe("the flag applies only to a segment the client does not have yet", () =
     expect(payload.ids).toEqual(navigation.ids);
   });
 
+  // The match forces a same-route render from an intercept source by
+  // dropping the route from the set resolution works on. "Held" is what the
+  // request listed: deferring on the forced set skipped the handler of a
+  // route the response then left out as held, and the click got nothing.
+  it("a same-route prefetch from an intercept source renders the route the client holds", async () => {
+    const { serve } = setup();
+    const held = await standingOn(serve, "/orders");
+
+    const request = {
+      headers: { "X-RSC-Router-Intercept-Source": "/orders" },
+      partial: { from: "/orders", segments: held },
+    };
+    const navigation = payloadOf(await serve("/orders", request));
+    const afterNavigation = { ...runs };
+    expect(afterNavigation.orders, "the route is rendered again").toBe(1);
+    resetRuns();
+
+    const result = await serve("/orders", {
+      ...request,
+      partial: { ...request.partial, prefetch: true },
+    });
+    const payload = payloadOf(result);
+    expect(runs).toEqual(afterNavigation);
+    expect(payload.deferred).toEqual([]);
+    expect(result.flight).not.toContain('"deferred"');
+    expect(payload.ids).toEqual(navigation.ids);
+  });
+
   it("a flagged loader on a new segment is still deferred when the layout above it is held", async () => {
     const { serve } = setup();
     const held = await standingOn(serve, "/elsewhere");

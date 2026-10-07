@@ -110,7 +110,8 @@ async function resolve(
   clientIds: string[],
   options: { started?: string[] } = {},
 ) {
-  const plan = planPrefetchDeferral(chain, mode, {}, null);
+  // The plan holds what the request listed as held, as match-api builds it.
+  const plan = planPrefetchDeferral(chain, mode, {}, null, new Set(clientIds));
   const context: any = {
     request: new Request(URL_PAGE),
     env: {},
