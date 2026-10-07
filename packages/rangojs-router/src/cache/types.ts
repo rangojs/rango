@@ -186,6 +186,11 @@ export interface SegmentCacheStore<TEnv = unknown> {
    * @param ttl - Time-to-live in seconds
    * @param swr - Optional stale-while-revalidate window in seconds
    * @param tags - Optional cache tags for invalidation
+   *
+   * The built-in stores read the start of the render from the `Response`
+   * object itself (#1068). A custom store, or a wrapper that rebuilds the
+   * `Response` before delegating, stamps write time. The write gate
+   * (`predatesInvalidation`) runs before this call either way.
    */
   putResponse?(
     key: string,
@@ -713,6 +718,17 @@ export interface CacheItemOptions {
   swr?: number;
   /** Cache tags for invalidation */
   tags?: string[];
+  /**
+   * Ms since epoch when the execution that produced the value started (#1068).
+   * A store stamps a tagged entry with it instead of its write time. Later
+   * requests then reject an entry an invalidation landed under in
+   * CFCacheStore with KV markers; MemorySegmentCacheStore refuses the write.
+   * Not rejected: VercelCacheStore (a read compares the stamp with the
+   * invalidating request's mask only) and CFCacheStore L1 hits in purge mode
+   * or without KV. Absent or not positive: write time. A custom store may
+   * ignore it.
+   */
+  startedAt?: number;
 }
 
 /**
@@ -760,7 +776,12 @@ export interface CachedEntryData {
   expiresAt: number;
   /** Cache tags for invalidation */
   tags?: string[];
-  /** Timestamp (ms since epoch) when tags were attached, for distributed invalidation */
+  /**
+   * Timestamp (ms since epoch) the entry's tags are valid as of, for
+   * distributed invalidation. The writer sets it to the start of the render
+   * that produced the record; a store stamps write time when it is absent
+   * (#1068). Which reads reject on it: see `CacheItemOptions.startedAt`.
+   */
   taggedAt?: number;
 }
 

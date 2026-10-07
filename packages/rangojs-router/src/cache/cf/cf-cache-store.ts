@@ -119,6 +119,7 @@ import {
   DEFAULT_CF_MARKER_MAX_STALE_MS,
 } from "../isolate-tag-memo.js";
 import { createCloudflareZonePurge } from "./cf-zone-purge.js";
+import { responseStartedAt, taggedStamp } from "../invalidation-order.js";
 
 // ============================================================================
 // Constants
@@ -1397,13 +1398,11 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const totalTtl = ttl + swrWindow;
       const staleAt = Date.now() + ttl * 1000;
 
-      // Stamp the tag timestamp at write time and carry it (with the tags)
-      // into both the L1 body and the KV envelope so reads can run the
-      // invalidation check.
-      const taggedAt =
-        Array.isArray(data.tags) && data.tags.length > 0
-          ? Date.now()
-          : undefined;
+      // Stamp the tag timestamp and carry it (with the tags) into both the
+      // L1 body and the KV envelope so reads can run the invalidation check.
+      // It is the render's start when the writer passed it (#1068), else the
+      // write time: a marker written while the render ran then rejects it.
+      const taggedAt = taggedStamp(data.tags, data.taggedAt);
       const dataToStore: CachedEntryData = taggedAt
         ? { ...data, taggedAt }
         : data;
@@ -1648,8 +1647,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const swrWindow = resolveSwrWindow(swr, this.defaults);
       const totalTtl = ttl + swrWindow;
       const staleAt = Date.now() + ttl * 1000;
-      const taggedAt =
-        Array.isArray(tags) && tags.length > 0 ? Date.now() : undefined;
+      const taggedAt = taggedStamp(tags, responseStartedAt(response));
 
       // Clone body for potential KV write before consuming it for L1
       const [l1Body, kvBody] = this.kv
@@ -1949,8 +1947,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const staleAt = Date.now() + ttl * 1000;
 
       const tags = options?.tags;
-      const taggedAt =
-        Array.isArray(tags) && tags.length > 0 ? Date.now() : undefined;
+      const taggedAt = taggedStamp(tags, options?.startedAt);
 
       // Serialize value/handles once; L1 body and KV envelope.v/h share the
       // escaped strings so a large RSC payload is not re-escaped for L2.
