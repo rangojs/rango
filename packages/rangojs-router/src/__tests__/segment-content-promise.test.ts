@@ -1,9 +1,14 @@
 // @vitest-environment happy-dom
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { createElement } from "react";
 import { getMemoizedContentPromise } from "../segment-content-promise";
 
 describe("getMemoizedContentPromise", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
   it("returns the component directly when it is already a Promise", () => {
     const componentPromise = Promise.resolve(createElement("div"));
 
@@ -12,62 +17,29 @@ describe("getMemoizedContentPromise", () => {
     expect(result).toBe(componentPromise);
   });
 
-  it("wraps a non-Promise component in a Promise", () => {
+  // Not a promise: React knows a resolved promise as fulfilled only once it
+  // has read it, and a boundary on screen handed one it has not read, in a
+  // render that cannot wait, shows its loading() fallback again.
+  it("returns a non-Promise component as is in the browser", () => {
     const component = createElement("div", null, "body");
 
-    const first = getMemoizedContentPromise(component);
+    expect(getMemoizedContentPromise(component)).toBe(component);
+    expect(getMemoizedContentPromise("hello")).toBe("hello");
+    expect(getMemoizedContentPromise(null)).toBe(null);
+  });
+
+  it("wraps a non-Promise component in a fresh Promise on the server", async () => {
+    vi.resetModules();
+    vi.stubGlobal("window", undefined);
+    const server = await import("../segment-content-promise");
+    const component = createElement("div", null, "body");
+
+    const first = server.getMemoizedContentPromise(component);
+    const second = server.getMemoizedContentPromise(component);
 
     expect(first).toBeInstanceOf(Promise);
-  });
-
-  it("returns the same wrapper when called again with the same component ref", () => {
-    const component = createElement("div", null, "body");
-
-    const first = getMemoizedContentPromise(component);
-    const second = getMemoizedContentPromise(component);
-
-    expect(second).toBe(first);
-  });
-
-  it("creates a new wrapper when the component ref changes", () => {
-    const first = createElement("div", null, "first");
-    const second = createElement("div", null, "second");
-
-    const firstPromise = getMemoizedContentPromise(first);
-    const secondPromise = getMemoizedContentPromise(second);
-
-    expect(firstPromise).toBeInstanceOf(Promise);
-    expect(secondPromise).toBeInstanceOf(Promise);
-    expect(secondPromise).not.toBe(firstPromise);
-  });
-
-  it("memoizes across independent callers sharing a component ref", () => {
-    const component = createElement("div", null, "shared");
-
-    const a = getMemoizedContentPromise(component);
-    const b = getMemoizedContentPromise(component);
-
-    expect(a).toBe(b);
-  });
-
-  it("memoizes primitive components (strings, null) via the fallback cache", () => {
-    // Partial-update flows render text/null-backed segments; a fresh
-    // Promise.resolve per render would reintroduce the Suspense flicker
-    // this memoization exists to prevent.
-    const stringFirst = getMemoizedContentPromise("hello");
-    const stringSecond = getMemoizedContentPromise("hello");
-    const nullFirst = getMemoizedContentPromise(null);
-    const nullSecond = getMemoizedContentPromise(null);
-
-    expect(stringSecond).toBe(stringFirst);
-    expect(nullSecond).toBe(nullFirst);
-    expect(stringFirst).not.toBe(nullFirst);
-  });
-
-  it("returns distinct wrappers for different primitive values", () => {
-    const a = getMemoizedContentPromise("a");
-    const b = getMemoizedContentPromise("b");
-
-    expect(a).not.toBe(b);
+    expect(second).toBeInstanceOf(Promise);
+    expect(second).not.toBe(first);
+    await expect(first as Promise<unknown>).resolves.toBe(component);
   });
 });

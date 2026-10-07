@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Fixed: a link that was not prefetched no longer flashes a `loading()` fallback over a layout or slot already on screen
+
+After entering a page through a prefetched link, clicking a link that was not
+prefetched could replace a layout or a parallel slot that was already on screen
+with its `loading()` fallback for about 300 ms, although nothing in it was
+loading. It showed for a layout with `loading()` and no loaders, for a layout
+with a loader read by `useLoader`, and for a slot with its own loader and
+`loading()`. After a plain click or a document load on the same page it never
+did. A boundary on screen that has nothing to wait for is now handed its content
+and loader data directly instead of an already resolved promise that React had
+not read yet. A route that is new to the page still shows its own `loading()`
+fallback, and the server render is unchanged.
+
 ### Fixed: a prerender refresh that started before `markStale()` is stored stale ([#1072](https://github.com/rangojs/rango/issues/1072))
 
 `router.prerender()` stamped an entry with the time of the store write. A

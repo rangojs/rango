@@ -32,6 +32,11 @@ interface LoaderCacheEntry {
   // bare array. The public getMemoizedLoaderPromise return type stays broader
   // (Promise<any[]> | any[]) to mirror its siblings.
   promise: Promise<any[]>;
+  // Set once the aggregate fulfils. Later calls hand out this array instead of
+  // the promise: React treats a promise as fulfilled only after it has read
+  // it, and a boundary on screen handed a resolved promise it has not read, in
+  // a render that cannot wait, shows its fallback again.
+  value?: any[];
 }
 
 // Cap the per-key entries array. A stable first-ref (e.g. a layout loader whose
@@ -148,13 +153,22 @@ export function getMemoizedLoaderPromise(
   if (entries) {
     for (const entry of entries) {
       if (hasSameReferences(entry.sources, sources)) {
-        return entry.promise;
+        return entry.value ?? entry.promise;
       }
     }
   }
 
   const promise = buildLoaderPromise(loaders);
   const newEntry: LoaderCacheEntry = { sources, promise };
+  // A rejected aggregate keeps returning the promise so the error reaches the
+  // error boundary; the no-op handler keeps this branch from adding an
+  // unhandled rejection.
+  promise.then(
+    (values) => {
+      newEntry.value = values;
+    },
+    () => {},
+  );
   if (entries) {
     // Bound the array: drop the oldest entry before appending when at the cap.
     if (entries.length >= MAX_ENTRIES_PER_KEY) {

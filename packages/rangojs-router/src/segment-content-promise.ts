@@ -1,67 +1,32 @@
 import type { ReactNode } from "react";
 
-/**
- * Stable Promise wrappers keyed on the component itself. Objects (React
- * elements, functions, lazy payloads) land in a WeakMap so entries GC when
- * the underlying component is released; primitives (string, number, boolean,
- * null) land in a Map so memoization still applies to text-/null-backed
- * segments like those in partial-update flows. Keeping this cache outside
- * the segment eliminates preservation fields on ResolvedSegment — it survives
- * reconciliation naturally because the component ref is what's stable.
- *
- * Browser-only. On the server each SSR render needs a fresh pending promise
- * so Suspense can emit the loading fallback HTML before content streams. A
- * shared already-resolved promise has `.status === "fulfilled"` attached by
- * React on its first observation — subsequent `use()` calls return
- * synchronously without suspending, so the Suspense fallback never makes it
- * into the initial HTML. Route-definition components share refs across
- * requests, so a global cache would leak tracked state between renders.
- */
 const IS_BROWSER = typeof window !== "undefined";
-const objectContentCache = IS_BROWSER
-  ? new WeakMap<object, Promise<ReactNode>>()
-  : null;
-const primitiveContentCache = IS_BROWSER
-  ? new Map<unknown, Promise<ReactNode>>()
-  : null;
 
 /**
- * Return a stable Promise wrapping `component`, memoized on the component ref.
+ * What a RouteContentWrapper receives as `content`.
  *
- * A fresh `Promise.resolve(component)` each render would suspend for one
- * microtask and briefly commit the loading fallback inside Suspender — the
- * intercept / parallel-slot flicker this indirection prevents. Reusing the
- * same Promise ref keeps React's `use()` in "known fulfilled" state after
- * the first observation.
+ * Browser: a component that is not already a promise is handed over as the
+ * node itself, which Suspender renders without `use()`. It was a memoized
+ * `Promise.resolve(component)`, which React knows as fulfilled only after it
+ * has read it. A boundary on screen that had been rendered with the node (a
+ * forceAwait commit: a prefetched click, popstate) and was next handed a
+ * promise it had not read, in a render that cannot wait, showed its loading()
+ * fallback over content it held for 300 ms.
+ *
+ * Server: a fresh `Promise.resolve(component)` per call. A shared resolved
+ * promise would carry React's `.status` across requests and skip the Suspense
+ * fallback in the streamed HTML.
+ *
+ * A component that is already a promise (a Flight-streamed segment) is
+ * returned as is in both environments.
  *
  * @internal
  */
 export function getMemoizedContentPromise(
   component: ReactNode,
-): Promise<ReactNode> {
+): Promise<ReactNode> | ReactNode {
   if (component instanceof Promise) {
     return component as Promise<ReactNode>;
   }
-
-  if (!objectContentCache || !primitiveContentCache) {
-    return Promise.resolve(component);
-  }
-
-  if (component !== null && typeof component === "object") {
-    const cached = objectContentCache.get(component);
-    if (cached) {
-      return cached;
-    }
-    const promise = Promise.resolve(component);
-    objectContentCache.set(component, promise);
-    return promise;
-  }
-
-  const cached = primitiveContentCache.get(component);
-  if (cached) {
-    return cached;
-  }
-  const promise = Promise.resolve(component);
-  primitiveContentCache.set(component, promise);
-  return promise;
+  return IS_BROWSER ? component : Promise.resolve(component);
 }
