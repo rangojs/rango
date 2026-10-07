@@ -24,6 +24,7 @@ import {
   DEFAULT_FUNCTION_TTL,
 } from "./cache-policy.js";
 import { reportCacheError } from "./cache-error.js";
+import { responseStartedAt } from "./invalidation-order.js";
 
 const CACHE_REGISTRY_KEY = "__rsc_router_segment_cache_registry__";
 const RESPONSE_CACHE_REGISTRY_KEY = "__rsc_router_response_cache_registry__";
@@ -329,6 +330,7 @@ export class MemorySegmentCacheStore<
     ttl: number,
     _swr?: number,
   ): Promise<void> {
+    if (this.invalidatedAfter(data.tags, data.taggedAt)) return;
     const entry: CachedEntryData = {
       ...data,
       expiresAt: Date.now() + ttl * 1000,
@@ -387,6 +389,7 @@ export class MemorySegmentCacheStore<
     tags?: string[],
   ): Promise<void> {
     try {
+      const startedAt = responseStartedAt(response);
       const body = await response.clone().arrayBuffer();
       const headers: [string, string][] = [];
       response.headers.forEach((value, name) => {
@@ -397,6 +400,8 @@ export class MemorySegmentCacheStore<
       const swrWindow = resolveSwrWindow(swr, this.defaults);
       const { staleAt, expiresAt } = computeExpiration(ttl, swrWindow);
 
+      // After the last await before the write.
+      if (this.invalidatedAfter(tags, startedAt)) return;
       const prefixedKey = `res:${key}`;
       this.unregisterTags(prefixedKey);
       this.evictIfNeeded(this.responseCache, key, "res");
@@ -444,6 +449,7 @@ export class MemorySegmentCacheStore<
     value: string,
     options?: CacheItemOptions,
   ): Promise<void> {
+    if (this.invalidatedAfter(options?.tags, options?.startedAt)) return;
     const ttl = resolveTtl(options?.ttl, this.defaults, DEFAULT_FUNCTION_TTL);
     const swrWindow = resolveSwrWindow(options?.swr, this.defaults);
     const { staleAt, expiresAt } = computeExpiration(ttl, swrWindow);
@@ -515,7 +521,23 @@ export class MemorySegmentCacheStore<
     return this.tagsInvalidatedSince(tags, sinceMs);
   }
 
-  private tagsInvalidatedSince(tags: string[], sinceMs: number): boolean {
+  /**
+   * A tag invalidated in a millisecond after the write's execution started
+   * (#1068). Strictly after: the start's own millisecond is ambiguous, and
+   * invalidation-order.ts orders those exactly.
+   */
+  private invalidatedAfter(
+    tags: readonly string[] | undefined,
+    startedAt: number | undefined,
+  ): boolean {
+    if (!tags || tags.length === 0 || startedAt === undefined) return false;
+    return this.tagsInvalidatedSince(tags, startedAt + 1);
+  }
+
+  private tagsInvalidatedSince(
+    tags: readonly string[],
+    sinceMs: number,
+  ): boolean {
     for (const tag of tags) {
       const at = this.tagInvalidatedAt.get(tag);
       // >= so a same-millisecond invalidation wins (freshness over staleness),

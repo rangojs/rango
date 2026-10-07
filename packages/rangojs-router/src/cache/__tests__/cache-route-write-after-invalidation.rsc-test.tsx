@@ -55,6 +55,7 @@ let serveStale = false;
 let router: any;
 let store: MemorySegmentCacheStore;
 const written: string[] = [];
+const stamps: (number | undefined)[] = [];
 
 beforeAll(async () => {
   store = new MemorySegmentCacheStore();
@@ -66,6 +67,7 @@ beforeAll(async () => {
   const set = store.set.bind(store);
   store.set = async (key, data, ...rest) => {
     written.push(data.segments.map((s) => s.encoded).join(""));
+    stamps.push(data.taggedAt);
     return set(key, data, ...rest);
   };
   router = createRouter({} as any);
@@ -90,6 +92,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   await store.clear();
   written.length = 0;
+  stamps.length = 0;
   source = "old";
   gate = Promise.resolve();
   handlerCalls = 0;
@@ -106,13 +109,17 @@ function context(request: Request): RequestContext<any> {
   } as any) as RequestContext<any>;
 }
 
-/** One document request, its record write included. */
-async function serve(): Promise<void> {
+/**
+ * One document request, its record write included. `delayMs` passes between
+ * the request's creation and the match.
+ */
+async function serve(delayMs = 0): Promise<void> {
   const request = new Request("https://example.com/stock", {
     headers: { accept: "text/html" },
   });
   const reqCtx = context(request);
   await runWithRequestContext(reqCtx, async () => {
+    if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
     await router.match(request, { env: {} });
     for (const cb of reqCtx._onResponseCallbacks.splice(0)) {
       cb(new Response(null, { status: reqCtx.res.status }));
@@ -179,5 +186,36 @@ describe("a route cache() record rendered before another request's updateTag() (
     expect(written).toHaveLength(1);
     await serve();
     expect(handlerCalls).toBe(1);
+  });
+
+  // #1068: the record's stamp is the render's start, not the write's, so the
+  // store's read-side marker check rejects a record an invalidation landed
+  // under.
+  it("MISS: the record is stamped with the start of its render", async () => {
+    const before = Date.now();
+    const release = hold();
+    const first = serve();
+    await vi.waitFor(() => expect(handlerCalls).toBe(1));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const heldUntil = Date.now();
+    release();
+    await first;
+
+    expect(stamps).toHaveLength(1);
+    expect(stamps[0]).toBeGreaterThanOrEqual(before);
+    expect(stamps[0]).toBeLessThan(heldUntil - 20);
+  });
+
+  // The request is created 30 ms before the match: a stamp taken from the
+  // request, not from the refresh, would be 30 ms older.
+  it("a stale refresh is stamped with its own start, not its request's", async () => {
+    await serve();
+    serveStale = true;
+    const requestAt = Date.now();
+    await serve(30);
+    serveStale = false;
+
+    expect(stamps).toHaveLength(2);
+    expect(stamps[1]!).toBeGreaterThanOrEqual(requestAt + 25);
   });
 });

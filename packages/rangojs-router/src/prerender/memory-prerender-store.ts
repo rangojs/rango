@@ -16,7 +16,7 @@ import {
 
 export interface MemoryPrerenderStore extends WritablePrerenderStore {
   delete(key: PrerenderKey): Promise<void>;
-  markStale(tags: string[]): Promise<void>;
+  markStale(routerId: string, tags: string[]): Promise<void>;
   /** Synchronous read by structured key (tests). */
   peek(key: PrerenderKey): PrerenderStoredEntry | null;
   /** All stored [serializedKey, entry] pairs (tests). */
@@ -40,38 +40,45 @@ export function createMemoryPrerenderStore(
   options: MemoryPrerenderStoreOptions = {},
 ): MemoryPrerenderStore {
   const now = options.now ?? (() => Date.now());
-  const map = new Map<string, PrerenderStoredEntry>();
+  // The owning router per entry: the serialized key cannot be split back.
+  const map = new Map<
+    string,
+    { routerId: string; stored: PrerenderStoredEntry }
+  >();
 
   return {
     async get(key: PrerenderKey): Promise<PrerenderStoredEntry | null> {
-      return map.get(serializePrerenderKey(key)) ?? null;
+      return map.get(serializePrerenderKey(key))?.stored ?? null;
     },
 
     async set(key: PrerenderKey, stored: PrerenderStoredEntry): Promise<void> {
-      map.set(serializePrerenderKey(key), stored);
+      map.set(serializePrerenderKey(key), { routerId: key.routerId, stored });
     },
 
     async delete(key: PrerenderKey): Promise<void> {
       map.delete(serializePrerenderKey(key));
     },
 
-    async markStale(tags: string[]): Promise<void> {
+    async markStale(routerId: string, tags: string[]): Promise<void> {
       if (tags.length === 0) return;
       const tagSet = new Set(tags);
       const at = now();
-      for (const stored of map.values()) {
-        if (stored.meta.tags.some((t) => tagSet.has(t))) {
-          lowerStoredEntryStaleAt(stored, at);
+      for (const entry of map.values()) {
+        if (
+          entry.routerId === routerId &&
+          entry.stored.meta.tags.some((t) => tagSet.has(t))
+        ) {
+          lowerStoredEntryStaleAt(entry.stored, at);
         }
       }
     },
 
     peek(key: PrerenderKey): PrerenderStoredEntry | null {
-      return map.get(serializePrerenderKey(key)) ?? null;
+      return map.get(serializePrerenderKey(key))?.stored ?? null;
     },
 
     entries(): [string, PrerenderStoredEntry][] {
-      return [...map.entries()];
+      return [...map].map(([k, v]) => [k, v.stored]);
     },
 
     clear(): void {

@@ -139,7 +139,10 @@ it, because the route decides which rules apply (an on-demand key carries no
 search, a warm's keys do).
 
 #640's `skipped-not-on-demand` is gone: that branch is now the warm path. #640
-is not released yet, so the status is removed, not deprecated.
+is not released yet, so the status is removed, not deprecated. (#1060 gave the
+name to `prerender.remove()` on a route that is not on-demand, which must
+never turn into a warm; a refresh still never returns it. See
+`ondemand-prerender.md`, "Removing A Page".)
 
 ## Path table
 

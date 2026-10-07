@@ -107,6 +107,7 @@ import {
   type MarkerFetch,
   type MarkerMemoOutcome,
 } from "../isolate-tag-memo.js";
+import { responseStartedAt, taggedStamp } from "../invalidation-order.js";
 
 /**
  * Minimal structural shape of the Vercel Runtime Cache returned by `getCache()`
@@ -455,9 +456,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-/** The envelope's `ta` write stamp, on tagged entries only. */
-function tagStamp(tags: string[]): { ta?: number } {
-  return tags.length > 0 ? { ta: Date.now() } : {};
+/**
+ * The envelope's `ta` stamp, on tagged entries only: the producing execution's
+ * start when the writer passed it, else write time (#1068). Only the request
+ * mask reads it (expireTag keeps no queryable history), so it decides whether
+ * the invalidating request's own late write is masked.
+ */
+function tagStamp(tags: string[], startedAt?: number): { ta?: number } {
+  const ta = taggedStamp(tags, startedAt);
+  return ta === undefined ? {} : { ta };
 }
 
 /**
@@ -656,7 +663,7 @@ export class VercelCacheStore<
         d,
         s: staleAt,
         e: expiresAt,
-        ...tagStamp(safeTags),
+        ...tagStamp(safeTags, data.taggedAt),
       };
       await this.write(
         this.toStoreKey(key, "s"),
@@ -804,7 +811,7 @@ export class VercelCacheStore<
         s: staleAt,
         e: expiresAt,
         t: safeTags.length > 0 ? safeTags : undefined,
-        ...tagStamp(safeTags),
+        ...tagStamp(safeTags, responseStartedAt(response)),
       };
       await this.write(
         this.toStoreKey(key, "r"),
@@ -910,7 +917,7 @@ export class VercelCacheStore<
         s: staleAt,
         e: expiresAt,
         t: safeTags.length > 0 ? safeTags : undefined,
-        ...tagStamp(safeTags),
+        ...tagStamp(safeTags, options?.startedAt),
       };
       await this.write(
         this.toStoreKey(key, "i"),

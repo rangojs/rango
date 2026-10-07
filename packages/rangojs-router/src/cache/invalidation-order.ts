@@ -43,6 +43,59 @@ export interface ExecutionStart {
   readonly at: number;
 }
 
+/**
+ * The `taggedAt` / `ta` stamp a store writes on a tagged data entry: the start
+ * of the execution that produced the value (`startedAt`), so a marker written
+ * while it ran rejects the entry on read (#1068). Write time when the writer
+ * knows no start. Never later than now: a start from a skewed clock must not
+ * stamp the future, which would make the entry look newer than every marker.
+ */
+export function entryStamp(startedAt: number | undefined): number {
+  const now = Date.now();
+  // 0 is "no start", not the epoch: no marker is older than it, so such an
+  // entry would never be rejected.
+  return typeof startedAt === "number" &&
+    Number.isFinite(startedAt) &&
+    startedAt > 0
+    ? Math.min(startedAt, now)
+    : now;
+}
+
+/** The stamp of a data entry: `entryStamp` for a tagged entry, none otherwise. */
+export function taggedStamp(
+  tags: readonly string[] | undefined,
+  startedAt: number | undefined,
+): number | undefined {
+  return Array.isArray(tags) && tags.length > 0
+    ? entryStamp(startedAt)
+    : undefined;
+}
+
+/**
+ * putResponse has no options object to carry the start and takes no new
+ * positional parameter, so the writer marks the Response it hands over.
+ * On globalThis like the order: a second evaluated copy of this module that
+ * wrote the mark must be read by the store's copy, else the stamp silently
+ * falls back to write time.
+ */
+const responseStarts: WeakMap<Response, number> = ((globalThis as any)[
+  Symbol.for("rangojs-router:response-execution-start")
+] ??= new WeakMap());
+
+/** Mark the execution start behind a Response handed to putResponse. */
+export function markResponseStart(
+  response: Response,
+  start: ExecutionStart,
+): Response {
+  responseStarts.set(response, start.at);
+  return response;
+}
+
+/** The start a writer marked on `response`, if any. */
+export function responseStartedAt(response: Response): number | undefined {
+  return responseStarts.get(response);
+}
+
 /** Record an execution's start, before it reads its data. */
 export function executionStart(): ExecutionStart {
   return { seq: order.seq, at: Date.now() };

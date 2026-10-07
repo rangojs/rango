@@ -764,6 +764,7 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
                         ttl: profile.ttl,
                         swr: profile.swr,
                         tags: freshTags.length > 0 ? freshTags : undefined,
+                        startedAt: start.at,
                       });
                       noteWarmWrite(requestCtx, "item");
                     }
@@ -1020,6 +1021,7 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
           ttl: profile.ttl,
           swr: profile.swr,
           tags: tags.length > 0 ? tags : undefined,
+          startedAt: start.at,
         });
         noteWarmWrite(requestCtx, "item");
       } catch (writeError) {
