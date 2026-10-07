@@ -16,6 +16,7 @@ import {
   mergeLocationState,
   pushHistoryWithIdx,
 } from "./history-state.js";
+import { cancelPendingFill } from "./pending-fill.js";
 
 export { resolveNavigationState } from "./history-state.js";
 
@@ -173,6 +174,11 @@ export function createNavigationTransaction(
     }
 
     if (!traversal) handleNavigationStart();
+
+    // A navigation replaces the tree a pending fill belongs to. An action
+    // refetch (storeOnly) merges into it: the fill checks what is left of
+    // its placeholders when it lands (partial-update.ts runFill).
+    if (!storeOnly) cancelPendingFill();
 
     store.setSegmentIds(segmentIds);
     store.setCurrentUrl(url);

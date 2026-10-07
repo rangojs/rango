@@ -14,6 +14,8 @@ const addTransitionType: ((type: string) => void) | undefined =
 import type { RenderSegmentsOptions } from "../segment-system.js";
 import { reconcileSegments } from "./segment-reconciler.js";
 import type { ReconcileActor } from "./segment-reconciler.js";
+import { clearPendingFill, setPendingFill } from "./pending-fill.js";
+import { emitNetworkError, toNetworkError } from "./network-error-handler.js";
 import {
   hasActiveIntercept as hasActiveInterceptSlots,
   isInterceptSegment,
@@ -106,6 +108,49 @@ export interface PartialUpdateConfig {
   ) => Promise<ReactNode> | ReactNode;
   /** RSC version getter — returns the current version (may change after HMR) */
   getVersion?: () => string | undefined;
+  /**
+   * A fill (`prefetch: false`) is not a navigation: it has no transaction to
+   * carry a redirect, or the location state the server set, to their owner.
+   * The bridge that owns navigation supplies both. Without them a redirect
+   * is a document navigation and the state is dropped.
+   */
+  fill?: {
+    redirect(url: string, state?: Record<string, unknown>): void;
+    locationState(state: Record<string, unknown>): void;
+  };
+}
+
+/** A promise the browser created for a deferred segment's missing value. */
+interface Gate {
+  promise: Promise<unknown>;
+  resolve(value: unknown): void;
+  reject(error: unknown): void;
+}
+
+/**
+ * One adoption of a payload that carries deferred segments (`prefetch:
+ * false`), from the moment its gates are armed to the moment its fill lands
+ * or is abandoned. See docs/design/prefetch-false.md, "The browser".
+ */
+interface Fill {
+  /** Placeholder segment (the payload's object) -> its gate. */
+  gates: Map<ResolvedSegment, Gate>;
+  /** The adopted payload's `matched`, which its handle stream still reads. */
+  matched: string[];
+  /** The adoption's transition({ when }) decision, reused by the fill. */
+  gatedOff: boolean;
+  controller: AbortController;
+  /** The response arrived: from here it is dropped, never aborted mid-read. */
+  responded: boolean;
+  cancelled: boolean;
+  /** tx.commit() ran for the adoption: its placeholders are on screen. */
+  committed: boolean;
+  /** Settles with `committed`, or false when the adoption is abandoned. */
+  whenCommitted: Promise<boolean>;
+  commit(): void;
+  cancel(): void;
+  /** Resolves once the fill has landed and streamed, or was abandoned. */
+  done: Promise<void>;
 }
 
 /**
@@ -188,10 +233,233 @@ export function createPartialUpdater(
     getVersion = () => undefined,
   } = config;
 
+  /**
+   * The segments the page on screen holds. A placeholder (`prefetch: false`,
+   * waiting for its fill) is not a copy of its segment: it never stands in
+   * for one in a reconcile, and its id is never sent as held (tx.commit below
+   * leaves it out of the store's ids).
+   */
   function getCurrentCachedSegments(): ResolvedSegment[] {
     const currentKey = store.getHistoryKey();
-    const cached = store.getCachedSegments(currentKey);
-    return cached?.segments || [];
+    const segments = store.getCachedSegments(currentKey)?.segments || [];
+    return segments.some((s) => s.deferred)
+      ? segments.filter((s) => !s.deferred)
+      : segments;
+  }
+
+  /**
+   * Arm a gate on every deferred segment of an adopted payload: a deferred
+   * loader's gate is its `loaderData`, a deferred unit's is its `component`.
+   * To the rest of the client a gate is a stream that has not arrived yet.
+   */
+  function armGates(placeholders: ResolvedSegment[], matched: string[]): Fill {
+    const gates = new Map<ResolvedSegment, Gate>();
+    for (const segment of placeholders) {
+      let resolve!: Gate["resolve"];
+      let reject!: Gate["reject"];
+      const promise = new Promise<unknown>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      // A rejected gate nobody reads is not an unhandled rejection.
+      promise.catch(() => {});
+      if (segment.type === "loader") segment.loaderData = promise;
+      else segment.component = promise as ReactNode;
+      gates.set(segment, { promise, resolve, reject });
+    }
+    let settleCommitted!: (committed: boolean) => void;
+    const fill: Fill = {
+      gates,
+      matched,
+      gatedOff: false,
+      controller: new AbortController(),
+      responded: false,
+      cancelled: false,
+      committed: false,
+      whenCommitted: new Promise<boolean>((res) => {
+        settleCommitted = res;
+      }),
+      commit() {
+        fill.committed = true;
+        settleCommitted(true);
+        setPendingFill(fill.cancel);
+      },
+      cancel() {
+        if (fill.cancelled) return;
+        fill.cancelled = true;
+        settleCommitted(false);
+        // Aborting a Flight stream mid-read makes the decoder throw
+        // asynchronously: abort only while waiting for the response.
+        if (!fill.responded) fill.controller.abort();
+      },
+      done: Promise.resolve(),
+    };
+    return fill;
+  }
+
+  /** A gate that will not be resolved must not stay a pending stream. */
+  function releaseGate(placeholder: ResolvedSegment, gate: Gate): void {
+    if (placeholder.type === "loader") {
+      loaderStore.releasePendingStream(placeholder.loaderId!, gate.promise);
+    }
+  }
+
+  /**
+   * The fill request of one adoption: fetch what the prefetch deferred, merge
+   * it into the entry on screen and resolve the gates. Never rejects.
+   */
+  async function runFill(
+    fill: Fill,
+    url: string,
+    heldIds: string[],
+  ): Promise<void> {
+    let filled = false;
+    let streamComplete: Promise<void> | undefined;
+    try {
+      const result = await client.fetchPartial({
+        targetUrl: url,
+        segmentIds: heldIds,
+        // The page the fill completes is the page it is on.
+        previousUrl: url,
+        fill: true,
+        signal: fill.controller.signal,
+        version: getVersion(),
+        routerId: store.getRouterId?.(),
+      });
+      fill.responded = true;
+      // The fill can beat the adoption's own commit (its render awaits).
+      if (!(await fill.whenCommitted)) return;
+
+      const metadata = result.payload.metadata;
+      if (metadata?.redirect) {
+        const target = metadata.redirect.external
+          ? validateExternalRedirect(
+              metadata.redirect.url,
+              window.location.origin,
+            )
+          : validateRedirectOrigin(
+              metadata.redirect.url,
+              window.location.origin,
+            );
+        if (!target) return;
+        if (metadata.redirect.external || !config.fill) {
+          window.location.assign(target);
+        } else {
+          config.fill.redirect(target, metadata.locationState);
+        }
+        return;
+      }
+      if (!metadata?.isPartial) {
+        throw new Error("[rango] The fill response is not a partial payload.");
+      }
+
+      // The entry on screen must still hold this adoption's placeholders: by
+      // object, not by history key, so a shallow navigation that copied the
+      // entry to a new key is still filled, and an action refetch that
+      // already rendered them is not overwritten.
+      const live = store.getCachedSegments(store.getHistoryKey())?.segments;
+      if (!live?.some((s) => fill.gates.has(s))) return;
+
+      const matched = metadata.matched || [];
+      const reconciled = reconcileSegments({
+        actor: "stale-revalidation",
+        matched,
+        diff: metadata.diff || [],
+        serverSegments: metadata.segments || [],
+        cachedSegments: live.filter((s) => !s.deferred),
+        insertMissingDiff: true,
+      });
+      const present = new Set(reconciled.segments.map((s) => s.id));
+      const missing = matched.filter((id) => !present.has(id));
+      if (missing.length > 0) {
+        throw new Error(
+          `[rango] The fill response is missing segments: [${missing.join(", ")}]`,
+        );
+      }
+
+      // No forceAwait: what the fill is still streaming keeps the fallback
+      // its placeholder is already showing.
+      const root = await renderSegments(reconciled.mainSegments, {
+        transitionGatedOff: fill.gatedOff,
+        interceptSegments:
+          reconciled.interceptSegments.length > 0
+            ? reconciled.interceptSegments
+            : undefined,
+      });
+      if (
+        fill.cancelled ||
+        store.getCachedSegments(store.getHistoryKey())?.segments !== live
+      ) {
+        return;
+      }
+
+      // The fill belongs to the visit that adopted: the entry is rewritten in
+      // place, not re-cached. cacheSegmentsForHistory would advance the
+      // store's nav instance and disown the adoption's handle stream, and
+      // would reset the entry's stale flag.
+      live.splice(0, live.length, ...reconciled.segments);
+      store.setSegmentIds(matched);
+      // The adoption's handle stream (NavigationProvider processHandles)
+      // reads its payload's `matched` on every yield and drops the buckets of
+      // segments outside it. A deferred unit's `matched` stops at the unit:
+      // a late yield would delete what the fill pushed below it.
+      fill.matched.splice(0, fill.matched.length, ...matched);
+      if (metadata.locationState) {
+        config.fill?.locationState(metadata.locationState);
+      }
+      filled = true;
+      streamComplete = result.streamComplete;
+      commitInTransition(
+        onUpdate,
+        reconciled.mainSegments,
+        { root, metadata, scroll: { enabled: false } },
+        [],
+      );
+      // Last: release whatever is still suspended on a gate. The value is the
+      // one the committed tree reads, so the order of the two cannot matter.
+      const filledById = new Map(reconciled.segments.map((s) => [s.id, s]));
+      for (const [placeholder, gate] of fill.gates) {
+        const next = filledById.get(placeholder.id);
+        if (!next) releaseGate(placeholder, gate);
+        else {
+          gate.resolve(
+            placeholder.type === "loader" ? next.loaderData : next.component,
+          );
+        }
+      }
+    } catch (error) {
+      if (fill.cancelled) return;
+      if (error instanceof ServerRedirect) {
+        const target = validateRedirectOrigin(
+          error.url,
+          window.location.origin,
+        );
+        if (!target) return;
+        if (config.fill) config.fill.redirect(target, error.state);
+        else window.location.assign(target);
+        return;
+      }
+      const networkError = toNetworkError(error, {
+        url,
+        operation: "navigation",
+      });
+      if (networkError) {
+        console.error("[Browser] Network error during fill:", networkError);
+        emitNetworkError(onUpdate, networkError, url);
+        return;
+      }
+      // Into the nearest error boundary, where a failed stream lands.
+      console.error("[Browser] Unprocessable fill response:", error);
+      for (const gate of fill.gates.values()) gate.reject(error);
+    } finally {
+      clearPendingFill(fill.cancel);
+      if (!filled) {
+        for (const [placeholder, gate] of fill.gates) {
+          releaseGate(placeholder, gate);
+        }
+      }
+      await streamComplete?.catch(() => {});
+    }
   }
 
   async function fetchPartialUpdate(
@@ -201,6 +469,33 @@ export function createPartialUpdater(
     signal: AbortSignal | undefined,
     tx: BoundTransaction,
     mode: UpdateMode = { type: "navigate" },
+  ): Promise<void> {
+    const adoption: { fill?: Fill } = {};
+    try {
+      await applyPartialUpdate(
+        adoption,
+        targetUrl,
+        segmentIds,
+        isRetry,
+        signal,
+        tx,
+        mode,
+      );
+    } finally {
+      // An adoption that never committed (aborted, failed) has no tree to
+      // fill: stop its request.
+      if (adoption.fill && !adoption.fill.committed) adoption.fill.cancel();
+    }
+  }
+
+  async function applyPartialUpdate(
+    adoption: { fill?: Fill },
+    targetUrl: string,
+    segmentIds: string[] | undefined,
+    isRetry: boolean,
+    signal: AbortSignal | undefined,
+    tx: BoundTransaction,
+    mode: UpdateMode,
   ): Promise<void> {
     const segmentState = store.getSegmentState();
     const url = targetUrl || window.location.href;
@@ -354,7 +649,14 @@ export function createPartialUpdater(
     // Side effect only: end the streaming token once the stream settles.
     // The wrapped promise was never read as a value; only the .end() matters.
     // The .catch keeps an unhandled rejection from leaking if the stream errors.
-    rawStreamComplete.then(() => streamingToken.end()).catch(() => {});
+    // A payload with deferred segments is still streaming until its fill has
+    // (adoption.fill is set below, before this function first awaits).
+    rawStreamComplete
+      .then(() => {
+        if (!adoption.fill) return streamingToken.end();
+        return adoption.fill.done.then(() => streamingToken.end());
+      })
+      .catch(() => {});
 
     const currentRouterId = store.getRouterId?.();
     if (
@@ -518,12 +820,26 @@ export function createPartialUpdater(
           ? "stale-revalidation"
           : "navigation";
 
+      // prefetch: false. A payload that carries deferred segments (an adopted
+      // prefetch, whatever answered it) commits at once with a gate in place
+      // of each missing value, and one fill request fetches them.
+      const placeholders = (newSegments || []).filter((s) => s.deferred);
+      const fill =
+        placeholders.length > 0
+          ? armGates(placeholders, matchedIds)
+          : undefined;
+      const deferredIds = new Set(placeholders.map((s) => s.id));
+
       const reconciled = reconcileSegments({
         actor,
         matched: matchedIds,
         diff: diff || [],
         serverSegments: newSegments || [],
-        cachedSegments: cachedSegs,
+        // A placeholder replaces the copy the client holds, structure
+        // included: its fallback has to show.
+        cachedSegments: fill
+          ? cachedSegs.filter((s) => !deferredIds.has(s.id))
+          : cachedSegs,
         insertMissingDiff: true,
       });
 
@@ -574,6 +890,18 @@ export function createPartialUpdater(
       // reach renderSegments. The response carries no decision, so a reused
       // prefetch is decided against the real source.
       const gatedOff = decideGatedOff(reconciled.segments, payload.metadata);
+
+      // The fill starts now, beside the render and the commit, not after
+      // them. It lists what the client holds once this payload commits.
+      if (fill) {
+        fill.gatedOff = gatedOff;
+        adoption.fill = fill;
+        fill.done = runFill(
+          fill,
+          url,
+          matchedIds.filter((id) => !deferredIds.has(id)),
+        );
+      }
       const renderOptions = {
         transitionGatedOff: gatedOff,
         isAction: mode.type === "action",
@@ -653,7 +981,11 @@ export function createPartialUpdater(
         }
       }
 
-      const allSegmentIds = matchedIds;
+      // A placeholder is not held: every later request from this page
+      // leaves its id out, so the server renders it.
+      const allSegmentIds = fill
+        ? matchedIds.filter((id) => !deferredIds.has(id))
+        : matchedIds;
       const serverLocationState = payload.metadata?.locationState;
       const overrides: CommitOverrides = {
         routeName: payload.metadata?.routeName,
@@ -669,6 +1001,8 @@ export function createPartialUpdater(
         reconciled.segments,
         overrides,
       );
+      // After tx.commit(), which cancels the fill of the page being left.
+      fill?.commit();
 
       if (mode.type === "stale-revalidation") {
         const historyKeyNow = store.getHistoryKey();
