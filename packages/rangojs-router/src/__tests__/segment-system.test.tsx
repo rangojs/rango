@@ -1852,5 +1852,238 @@ describe("segment-system", () => {
         expect(secondWrapper.props.content).toBe(firstContent);
       });
     });
+
+    // prefetch: false (docs/design/prefetch-false.md). A deferred segment's
+    // value is a gate: a promise the browser resolves when the fill request
+    // lands (browser/partial-update.ts). The tree build must never wait for
+    // one: the fill is only merged once the build has returned.
+    describe("deferred segments (prefetch: false)", () => {
+      const gate = () => new Promise<never>(() => {});
+      const fallback = createElement("div", null, "Loading...");
+
+      /** Fails instead of hanging when the build waits on a gate. */
+      function built(tree: Promise<ReactNode>): Promise<ReactNode> {
+        return Promise.race([
+          tree,
+          new Promise<never>((_, reject) =>
+            setTimeout(
+              () => reject(new Error("renderSegments waited on a gate")),
+              200,
+            ),
+          ),
+        ]);
+      }
+
+      it.each([{ forceAwait: true }, { isAction: true }])(
+        "settles the other loaders and leaves the gate to the read site under loading() (%o)",
+        async (options) => {
+          const reviews = gate();
+          const segments: ResolvedSegment[] = [
+            seg({ id: "R0", type: "route", loading: fallback }),
+            seg({
+              id: "R0D0.price",
+              type: "loader",
+              loaderId: "price",
+              loaderData: Promise.resolve({ price: 12 }),
+            }),
+            seg({
+              id: "R0D1.reviews",
+              type: "loader",
+              loaderId: "reviews",
+              loaderData: reviews,
+              deferred: true,
+            }),
+          ];
+
+          const tree = toTreeNode(
+            await built(renderSegments(segments, options)),
+          );
+          const boundary = collectByType(tree, MockLoaderBoundary)[0];
+          expect(boundary.props.loaderStreams).toEqual({
+            price: { price: 12 },
+            reviews,
+          });
+          expect(boundary.props.loaderStreams.reviews).toBe(reviews);
+          expect(boundary.props.loaderIds).toEqual(["price", "reviews"]);
+          expect(
+            collectByType(tree, MockStreamedLoaderErrorBoundary),
+          ).toHaveLength(1);
+        },
+      );
+
+      it("settles the other loaders and leaves the gate to the read site without loading()", async () => {
+        const reviews = gate();
+        const segments: ResolvedSegment[] = [
+          seg({ id: "R0", type: "route" }),
+          seg({
+            id: "R0D0.price",
+            type: "loader",
+            loaderId: "price",
+            loaderData: Promise.resolve({ price: 12 }),
+          }),
+          seg({
+            id: "R0D1.reviews",
+            type: "loader",
+            loaderId: "reviews",
+            loaderData: reviews,
+            deferred: true,
+          }),
+        ];
+
+        const tree = toTreeNode(
+          await built(renderSegments(segments, { forceAwait: true })),
+        );
+        const outlet = collectByType(tree, MockOutletProvider)[0];
+        expect(outlet.props.loaderData).toBeUndefined();
+        expect(outlet.props.loaderStreams).toEqual({
+          price: { price: 12 },
+          reviews,
+        });
+      });
+
+      it("leaves a settled sibling's unhandled error to the read site", async () => {
+        const segments: ResolvedSegment[] = [
+          seg({ id: "R0", type: "route" }),
+          seg({
+            id: "R0D0.price",
+            type: "loader",
+            loaderId: "price",
+            loaderData: Promise.resolve({
+              __loaderResult: true,
+              ok: false,
+              error: { message: "boom", name: "Error" },
+              fallback: null,
+            }),
+          }),
+          seg({
+            id: "R0D1.reviews",
+            type: "loader",
+            loaderId: "reviews",
+            loaderData: gate(),
+            deferred: true,
+          }),
+        ];
+
+        // The aggregate lane this replaces throws while the tree is built.
+        const tree = toTreeNode(
+          await built(renderSegments(segments, { forceAwait: true })),
+        );
+        const outlet = collectByType(tree, MockOutletProvider)[0];
+        expect(() =>
+          decodeLoaderEntry(outlet.props.loaderStreams.price),
+        ).toThrow("boom");
+      });
+
+      it.each([{ forceAwait: true }, { isAction: true }, {}])(
+        "passes a deferred unit's gate to its fallback boundary unawaited (%o)",
+        async (options) => {
+          const content = gate();
+          const segments: ResolvedSegment[] = [
+            seg({
+              id: "R0",
+              type: "route",
+              component: content as unknown as ReactNode,
+              loading: fallback,
+              deferred: true,
+            }),
+          ];
+
+          const tree = toTreeNode(
+            await built(renderSegments(segments, options)),
+          );
+          const wrapper = collectByType(tree, MockRouteContentWrapper)[0];
+          expect(wrapper.props.content).toBe(content);
+          expect(wrapper.props.fallback).toBe(fallback);
+        },
+      );
+
+      it("does not wait on a deferred unit that has no fallback to show", async () => {
+        const segments: ResolvedSegment[] = [
+          seg({
+            id: "R0",
+            type: "route",
+            component: gate() as unknown as ReactNode,
+            deferred: true,
+          }),
+        ];
+
+        await built(renderSegments(segments, { forceAwait: true }));
+      });
+
+      it("does not settle a slot's aggregate that holds a gate", async () => {
+        const segments: ResolvedSegment[] = [
+          seg({ id: "L0", type: "layout" }),
+          seg({
+            id: "L0.@side",
+            type: "parallel",
+            slot: "@side",
+            namespace: "side",
+            loading: fallback,
+          }),
+          seg({
+            id: "L0D0.side",
+            type: "loader",
+            namespace: "side",
+            loaderId: "side",
+            loaderData: gate(),
+            deferred: true,
+          }),
+          seg({ id: "L0R0", type: "route" }),
+        ];
+
+        const tree = toTreeNode(
+          await built(renderSegments(segments, { forceAwait: true })),
+        );
+        const layout = collectByType(tree, MockOutletProvider).find(
+          (o) => o.props.segment.id === "L0",
+        )!;
+        expect(layout.props.parallel[0].loaderDataPromise).toBeInstanceOf(
+          Promise,
+        );
+      });
+
+      it("builds the same tree shape for the placeholder and for the filled segments", async () => {
+        const shape = (node: TreeNode | null): unknown =>
+          node && [node.typeName, ...node.children.map(shape)];
+        const placeholder: ResolvedSegment[] = [
+          seg({ id: "L0", type: "layout" }),
+          seg({
+            id: "L0R0",
+            type: "route",
+            component: gate() as unknown as ReactNode,
+            loading: fallback,
+            deferred: true,
+          }),
+          seg({
+            id: "L0R0D0.data",
+            type: "loader",
+            loaderId: "data",
+            loaderData: gate(),
+            deferred: true,
+          }),
+        ];
+        const filled: ResolvedSegment[] = [
+          seg({ id: "L0", type: "layout" }),
+          seg({ id: "L0R0", type: "route", loading: fallback }),
+          seg({
+            id: "L0R0D0.data",
+            type: "loader",
+            loaderId: "data",
+            loaderData: Promise.resolve({ value: 1 }),
+          }),
+        ];
+
+        // The adoption commits on the forceAwait lane, the fill on the
+        // streams lane: the fill must replace props, never elements.
+        const before = toTreeNode(
+          await built(renderSegments(placeholder, { forceAwait: true })),
+        );
+        const after = toTreeNode(await renderSegments(filled));
+        expect(shape(before)).toEqual(shape(after));
+        const keys = (tree: TreeNode | null) =>
+          collectByType(tree, MockLoaderBoundary).map((b) => b.props.outletKey);
+        expect(keys(before)).toEqual(keys(after));
+      });
+    });
   });
 });

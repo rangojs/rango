@@ -947,4 +947,147 @@ describe("rendered barrier", () => {
       expect(firstPromise).toBe(secondPromise);
     });
   });
+
+  // docs/design/prefetch-false.md, R12 and R13. The plan rides the handler
+  // context (segment-resolution/prefetch-deferral.ts); match-api.ts sets it
+  // on every request of a tree that declares `prefetch: false`.
+  describe("rendered() and prefetch: false", () => {
+    const unitEntry = { type: "route", id: "orders", shortCode: "L0R1" };
+
+    function plan(options: {
+      mode?: "prefetch" | "fill";
+      deferrable?: string[];
+      unit?: boolean;
+      deferredUnit?: string;
+    }) {
+      return {
+        mode: options.mode,
+        storedFrom: Infinity,
+        deferredUnit: options.deferredUnit,
+        scope: {
+          loaders: new Set(),
+          loaderIds: new Set(options.deferrable ?? []),
+          units: new Map(options.unit ? [[unitEntry, 1]] : []),
+        },
+      };
+    }
+
+    /** A DSL loader that awaits rendered(), run with `deferral` as the plan. */
+    function run(id: string, deferral: ReturnType<typeof plan>) {
+      mockInsideLoaderScope = true;
+      mockRequestContext = createMockRequestContext();
+      const ctx = createMockContext();
+      (ctx as any)._prefetchDeferral = deferral;
+      setupLoaderAccess(ctx, new Map());
+      const loader = createLoader(id, async (loaderCtx) => {
+        await loaderCtx.rendered();
+        return "data";
+      });
+      return {
+        result: ctx.use(loader) as Promise<string>,
+        resolveBarrier: () =>
+          mockRequestContext._resolveRenderBarrier(["L0", "L0R1"]),
+      };
+    }
+
+    it.each([[undefined], ["prefetch" as const], ["fill" as const]])(
+      "R12: a deferrable loader cannot call rendered(), on any request (mode %s)",
+      async (mode) => {
+        const { result } = run(
+          "ReviewsLoader",
+          plan({ mode, deferrable: ["ReviewsLoader"] }),
+        );
+        const message = await result.then(
+          () => "resolved",
+          (error: Error) => error.message,
+        );
+
+        expect(message).toContain('"ReviewsLoader"');
+        expect(message).toContain("loader(Def, { prefetch: false })");
+        expect(message).toContain("loading(fallback, { prefetch: false })");
+        // Both fixes.
+        expect(message).toContain("Remove { prefetch: false }");
+        expect(message).toContain("stop calling ctx.rendered()");
+      },
+    );
+
+    it("R12: a loader outside the deferrable set still reads the barrier", async () => {
+      const { result, resolveBarrier } = run(
+        "PriceLoader",
+        plan({ deferrable: ["ReviewsLoader"] }),
+      );
+      await Promise.resolve();
+      resolveBarrier();
+      await expect(result).resolves.toBe("data");
+    });
+
+    it("R13: rejects in a prefetch that skipped a handler, naming the segment", async () => {
+      const deferral = plan({ mode: "prefetch", unit: true });
+      const { result, resolveBarrier } = run("OuterLoader", deferral);
+      await Promise.resolve();
+      // Resolution decides the unit while the loader waits for the barrier.
+      deferral.deferredUnit = "L0R1";
+      resolveBarrier();
+
+      const message = await result.then(
+        () => "resolved",
+        (error: Error) => error.message,
+      );
+      expect(message).toContain('"OuterLoader"');
+      expect(message).toContain('"L0R1"');
+      expect(message).toContain("loading(fallback, { prefetch: false })");
+      expect(message).toContain("stop calling ctx.rendered()");
+    });
+
+    it("R13: a prefetch that deferred only loaders does not trip it", async () => {
+      const { result, resolveBarrier } = run(
+        "OuterLoader",
+        plan({ mode: "prefetch", deferrable: ["ReviewsLoader"] }),
+      );
+      await Promise.resolve();
+      resolveBarrier();
+      await expect(result).resolves.toBe("data");
+    });
+
+    it("refuses rendered() in a fill: the held handlers do not run", async () => {
+      const { result } = run("OuterLoader", plan({ mode: "fill" }));
+      await expect(result).rejects.toThrow(
+        'ctx.rendered() is not available to loader "OuterLoader" in a fill request',
+      );
+    });
+
+    it("R13: warns once in development when a prefetch of the tree would trip it", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const first = run("WarnedLoader", plan({ unit: true }));
+      await Promise.resolve();
+      first.resolveBarrier();
+      // A document or a navigation is unaffected: the warning is all it gets.
+      await expect(first.result).resolves.toBe("data");
+
+      const second = run("WarnedLoader", plan({ unit: true }));
+      await Promise.resolve();
+      second.resolveBarrier();
+      await second.result;
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      const message = warn.mock.calls[0][0] as string;
+      expect(message).toContain('"WarnedLoader"');
+      expect(message).toContain('"L0R1"');
+      expect(message).toContain("ctx.rendered() throws in the prefetch");
+      warn.mockRestore();
+    });
+
+    it("R13: does not warn when no handler can be skipped", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const { result, resolveBarrier } = run(
+        "QuietLoader",
+        plan({ deferrable: ["ReviewsLoader"] }),
+      );
+      await Promise.resolve();
+      resolveBarrier();
+      await result;
+      expect(warn).not.toHaveBeenCalled();
+      warn.mockRestore();
+    });
+  });
 });

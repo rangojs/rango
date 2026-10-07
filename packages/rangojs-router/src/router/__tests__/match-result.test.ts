@@ -223,6 +223,40 @@ describe("match-result", () => {
       expect(result.segments[0].type).toBe("loader");
     });
 
+    // prefetch: false. A deferred unit has a null component like a held
+    // segment, but it replaces the client's copy with its fallback.
+    it("should send a deferred unit the client already holds, with its marker", () => {
+      const ctx = createMockContext({
+        isFullMatch: false,
+        clientSegmentIds: ["layout", "route"],
+      });
+      const state = createPipelineState();
+      state.matchedIds = ["layout", "route"];
+
+      const segments = [
+        createSegment("layout", { component: null, type: "layout" }),
+        createSegment("route", {
+          component: null,
+          type: "route",
+          loading: "Skeleton",
+          deferred: true,
+          _handlerRan: false,
+        }),
+      ];
+
+      const result = buildMatchResult(segments, ctx, state);
+
+      expect(result.segments.map((s) => s.id)).toEqual(["route"]);
+      expect(result.segments[0]).toMatchObject({
+        deferred: true,
+        component: null,
+        loading: "Skeleton",
+      });
+      expect(result.diff).toEqual(["route"]);
+      // Its handler did not run: its handle buckets are not swept.
+      expect(result.resolvedIds).toEqual([]);
+    });
+
     it("should include intercept segments in matched array", () => {
       const ctx = createMockContext({ isFullMatch: false });
       const state = createPipelineState();

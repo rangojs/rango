@@ -822,6 +822,49 @@ describe("createDocumentCacheMiddleware", () => {
       expect(response.headers.has("x-document-cache-status")).toBe(false);
     });
 
+    // prefetch: false (R7): a fill is the second half of one adoption,
+    // rendered against what that client holds.
+    it("should neither store nor serve a fill request", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      const middleware = createDocumentCacheMiddleware();
+      const fillUrl =
+        "http://localhost/page?_rsc_partial=true&_rsc_segments=root&_rsc_fill=1";
+      const cacheable = (body: string) =>
+        vi
+          .fn()
+          .mockResolvedValue(
+            new Response(body, { headers: { "Cache-Control": "s-maxage=60" } }),
+          );
+
+      // A navigation with the same segment list is stored first.
+      await middleware(
+        createMockMiddlewareContext(
+          "http://localhost/page?_rsc_partial=true&_rsc_segments=root",
+        ),
+        cacheable("navigation"),
+      );
+      await vi.runAllTimersAsync();
+      expect(mockStore.cache.size).toBe(1);
+
+      const next = cacheable("fill");
+      const response = (await middleware(
+        createMockMiddlewareContext(fillUrl),
+        next,
+      )) as Response;
+      await vi.runAllTimersAsync();
+
+      expect(next).toHaveBeenCalledTimes(1);
+      expect(await response.text()).toBe("fill");
+      expect(response.headers.has("x-document-cache-status")).toBe(false);
+      expect(mockStore.cache.size).toBe(1);
+    });
+
     it("should skip configured paths", async () => {
       const { createDocumentCacheMiddleware } =
         await import("../document-cache.js");
@@ -1101,6 +1144,89 @@ describe("createDocumentCacheMiddleware", () => {
       expect(probeNext).toHaveBeenCalledTimes(1);
       expect(probeResponse.headers.get("x-document-cache-status")).toBe("MISS");
       expect(await probeResponse.text()).toBe("decoded elements");
+    });
+
+    // prefetch: false (docs/design/prefetch-false.md, R7): a prefetch body
+    // may carry deferred segments and never answers a navigation, nor the
+    // other way round.
+    it("keeps a prefetch and a navigation of the same URL in separate slots", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+      const middleware = createDocumentCacheMiddleware();
+      const url =
+        "http://localhost/page?_rsc_partial=true&_rsc_segments=root,layout";
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+      const serve = async (body: string, headers?: Record<string, string>) => {
+        const next = vi.fn().mockResolvedValue(
+          new Response(body, {
+            headers: { "Cache-Control": "s-maxage=60" },
+          }),
+        );
+        const response = (await middleware(
+          createMockMiddlewareContext(url, { headers }),
+          next,
+        )) as Response;
+        await vi.runAllTimersAsync();
+        return {
+          status: response.headers.get("x-document-cache-status"),
+          body: await response.text(),
+        };
+      };
+      const prefetch = { "X-Rango-Prefetch": "1" };
+
+      expect(await serve("with deferred segments", prefetch)).toEqual({
+        status: "MISS",
+        body: "with deferred segments",
+      });
+      // The navigation is not answered with the prefetch's body.
+      expect(await serve("complete")).toEqual({
+        status: "MISS",
+        body: "complete",
+      });
+      // Each mode hits its own slot afterwards.
+      expect(await serve("unused", prefetch)).toEqual({
+        status: "HIT",
+        body: "with deferred segments",
+      });
+      expect(await serve("unused")).toEqual({
+        status: "HIT",
+        body: "complete",
+      });
+      expect([...mockStore.cache.keys()].sort()).toEqual([
+        expect.stringMatching(/:prefetch:rsc$/),
+        expect.not.stringMatching(/:prefetch/),
+      ]);
+    });
+
+    it("gives a document request no prefetch slot, whatever its headers say", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+      const middleware = createDocumentCacheMiddleware();
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+      const next = vi.fn().mockResolvedValue(
+        new Response("<html>", {
+          headers: { "Cache-Control": "s-maxage=60" },
+        }),
+      );
+      await middleware(
+        createMockMiddlewareContext("http://localhost/page", {
+          headers: { "X-Rango-Prefetch": "1" },
+        }),
+        next,
+      );
+      await vi.runAllTimersAsync();
+
+      expect([...mockStore.cache.keys()]).toEqual([
+        expect.not.stringMatching(/:prefetch/),
+      ]);
     });
 
     it("bypasses an existing response-cache hit during fragment recovery", async () => {
