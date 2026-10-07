@@ -1,7 +1,15 @@
 import { Suspense } from "react";
-import { urls, createLoader, Prerender } from "@rangojs/router";
+import {
+  urls,
+  createLoader,
+  notFound,
+  Prerender,
+  redirect,
+} from "@rangojs/router";
 import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
+import { PrefetchFalseNotes } from "../components/PrefetchFalseNotes.js";
 import { PrefetchFalseValue } from "../components/PrefetchFalseValue.js";
+import { PfNotes } from "./prefetch-false.handle.js";
 import { countRun, readRunCounts } from "../prefetch-false-counts.js";
 
 // `prefetch: false` (docs/design/prefetch-false.md): one page per case, all
@@ -20,6 +28,11 @@ import { countRun, readRunCounts } from "../prefetch-false-counts.js";
 // `loader.price`). `unit`, `cached`, `section` and `slot` count their route
 // handler (`<c>.handler`); `section` counts its flagged layout
 // (`section.layout`) and `slot` its slot handler (`slot.side`).
+//
+// Four cases have no value to show: their deferred work ends another way.
+// `throws` and `missing` render pf-<c>-error / pf-<c>-not-found, `redirects`
+// lands on the `control` page, and `handle` pushes a note the hub layout
+// lists as pf-note-handle.
 
 const runOf = (ctx: any): string => ctx.searchParams.get("run") ?? "";
 
@@ -53,6 +66,21 @@ export const PfSectionLoader = createLoader((ctx) =>
 );
 export const PfSlotLoader = createLoader((ctx) => work(ctx, "slot.data", 100));
 export const PfBareLoader = createLoader((ctx) => work(ctx, "bare.data", 100));
+export const PfThrowsLoader = createLoader(async (ctx) => {
+  await work(ctx, "throws.data", 100);
+  throw new Error("pf-throws");
+});
+export const PfMissingLoader = createLoader(async (ctx) => {
+  await work(ctx, "missing.data", 100);
+  return notFound("pf-missing");
+});
+export const PfRedirectsLoader = createLoader(async (ctx) => {
+  await work(ctx, "redirects.data", 100);
+  throw redirect(`/prefetch-false/control?run=${runOf(ctx)}`);
+});
+export const PfHandleLoader = createLoader((ctx) =>
+  work(ctx, "handle.data", 100),
+);
 
 const CASES = [
   "loader",
@@ -60,6 +88,10 @@ const CASES = [
   "section",
   "slot",
   "bare",
+  "throws",
+  "missing",
+  "redirects",
+  "handle",
   "cached",
   "prerendered",
   "ppr",
@@ -90,6 +122,7 @@ function PrefetchFalseLayout(ctx: any) {
           </Link>
         ))}
       </nav>
+      <PrefetchFalseNotes />
       <Outlet />
     </div>
   );
@@ -174,6 +207,23 @@ function BarePage() {
   );
 }
 
+// Deferred work that does not end in a value: the read is all there is.
+const signalPage = (name: string, loader: any) => () => (
+  <div data-testid={`pf-${name}-page`}>
+    <PrefetchFalseValue loader={loader} testId={`pf-${name}-value`} />
+  </div>
+);
+
+// A deferred handler that pushes a handle: the push arrives with the fill.
+function HandlePage(ctx: any) {
+  ctx.use(PfNotes)("handle");
+  return (
+    <div data-testid="pf-handle-page">
+      <PrefetchFalseValue loader={PfHandleLoader} testId="pf-handle-value" />
+    </div>
+  );
+}
+
 function CachedPage(ctx: any) {
   countRun(runOf(ctx), "cached.handler");
   return (
@@ -222,7 +272,16 @@ function ControlPage() {
 }
 
 export const prefetchFalsePatterns = urls(
-  ({ path, layout, loader, loading, cache, parallel }) => [
+  ({
+    path,
+    layout,
+    loader,
+    loading,
+    cache,
+    parallel,
+    errorBoundary,
+    notFoundBoundary,
+  }) => [
     path.json(
       "/__counts",
       (ctx): Record<string, number> => readRunCounts(runOf(ctx)),
@@ -268,6 +327,46 @@ export const prefetchFalsePatterns = urls(
       // on screen until the fill returns.
       path("/bare", BarePage, { name: "bare" }, () => [
         loader(PfBareLoader, { prefetch: false }),
+      ]),
+
+      // What deferred work can end in besides a value. Each lands where it
+      // would for work that streams behind loading(), once the fill returns.
+      path(
+        "/throws",
+        signalPage("throws", PfThrowsLoader),
+        { name: "throws" },
+        () => [
+          loader(PfThrowsLoader, { prefetch: false }),
+          loading(fallback("throws")),
+          errorBoundary((props) => (
+            <div data-testid="pf-throws-error">{props.error.message}</div>
+          )),
+        ],
+      ),
+      path(
+        "/missing",
+        signalPage("missing", PfMissingLoader),
+        { name: "missing" },
+        () => [
+          loader(PfMissingLoader, { prefetch: false }),
+          loading(fallback("missing")),
+          notFoundBoundary(({ notFound: info }) => (
+            <div data-testid="pf-missing-not-found">{info.message}</div>
+          )),
+        ],
+      ),
+      path(
+        "/redirects",
+        signalPage("redirects", PfRedirectsLoader),
+        { name: "redirects" },
+        () => [
+          loader(PfRedirectsLoader, { prefetch: false }),
+          loading(fallback("redirects")),
+        ],
+      ),
+      path("/handle", HandlePage, { name: "handle" }, () => [
+        loader(PfHandleLoader),
+        loading(fallback("handle"), { prefetch: false }),
       ]),
 
       // Stored handler output: cache() serves the handler as usual, only the

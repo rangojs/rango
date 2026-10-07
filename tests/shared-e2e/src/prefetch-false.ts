@@ -293,6 +293,49 @@ export async function expectNoBoundaryHoldsThePageLeftUntilTheFillReturns(
   expect(requests.filter((r) => isFill(r.url()))).toHaveLength(1);
 }
 
+export interface PrefetchFalseOutcome {
+  /** The case name: the page is `/prefetch-false/<name>`. */
+  name: string;
+  /** Test id on screen once the fill has landed, and not before. */
+  shows: string;
+  /** The case whose page the deferred work redirects to. */
+  landsOn?: string;
+}
+
+/**
+ * Deferred work that ends in something other than a value: an error, a
+ * `notFound()`, a `redirect()`, a handle push. The outcome arrives with the
+ * fill, where it would for work that streams behind `loading()`: not in the
+ * prefetch, and not before the fill returns.
+ */
+export async function expectDeferredOutcomeArrivesWithTheFill(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+  spec: PrefetchFalseOutcome,
+): Promise<void> {
+  const { name } = spec;
+  const hub = await openHub(page, fixture);
+  const requests = recordPartials(page, hub.pathname(name));
+  await prefetchCase(page, hub, name);
+  expect((await hub.counts())[`${name}.data`] ?? 0).toBe(0);
+
+  const fills = await holdFills(page);
+  await byId(page, `pf-link-${name}`).click();
+  await expect(page).toHaveURL(hub.pageUrl(name));
+  await expect(byId(page, `pf-${name}-fallback`)).toBeVisible();
+  await expect
+    .poll(() => requests.filter((r) => isFill(r.url())).length)
+    .toBe(1);
+  await expect(byId(page, spec.shows)).toHaveCount(0);
+
+  await fills.release();
+  await expect(byId(page, spec.shows)).toBeVisible();
+  await expect(byId(page, `pf-${name}-fallback`)).toHaveCount(0);
+  await expect(page).toHaveURL(hub.pageUrl(spec.landsOn ?? name));
+  expect((await hub.counts())[`${name}.data`]).toBe(1);
+  expect(requests.filter((r) => isFill(r.url()))).toHaveLength(1);
+}
+
 /**
  * Control: a route with no flag. The prefetch runs everything, and the click
  * that adopts it sends no request at all.

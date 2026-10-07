@@ -24,6 +24,7 @@ export { runCacheVersionScenario } from "./cache-version-scenario.js";
 export type { CacheVersionScenarioOptions } from "./cache-version-scenario.js";
 export {
   expectBackAndForwardKeepTheFilledPage,
+  expectDeferredOutcomeArrivesWithTheFill,
   expectDocumentAwaitsLoaderThatPrefetchSkips,
   expectEveryAdoptionSendsItsOwnFill,
   expectLeavingBeforeTheFillAbortsItAndBackRefetches,
