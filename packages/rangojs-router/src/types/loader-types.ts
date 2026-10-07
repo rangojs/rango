@@ -209,6 +209,12 @@ export type LoaderOptions = {
    * holds the transition), and one fill request runs the loader. A document
    * request and a navigation with no prefetch to adopt run it as usual.
    *
+   * The flag applies only to a segment the client does not have yet. A
+   * loader the client already holds (the same route with new params, say)
+   * runs in the prefetch when it revalidates, exactly as without the flag:
+   * a click that adopts a prefetch is never worse than the same click with
+   * no prefetch at all.
+   *
    * Limits: a handler that awaits the loader with `ctx.use()` makes it run in
    * the prefetch anyway; the loader cannot call `ctx.rendered()` (it throws
    * on every request); on a `ppr` route the flag is ignored for an

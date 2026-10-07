@@ -278,16 +278,110 @@ describe("a prefetch: deferral replaces execution", () => {
     expect(plan!.deferredUnit).toBe("L0L1");
   });
 
-  it("does not defer a held flagged layout that does not re-render", async () => {
+  // The flag applies only to a segment the client does not have yet.
+  it("under a held flagged layout a new route's handler and loaders run", async () => {
     const section = entry("layout", "L0L1", flagged);
-    const route = entry("route", "R2");
-    const { segments, plan } = await resolve([section, route], "prefetch", [
-      "L0L1",
-    ]);
+    const route = entry("route", "R2", { loader: [loaderEntry("page")] });
+    const { segments, byId, plan } = await resolve(
+      [section, route],
+      "prefetch",
+      ["L0L1"],
+    );
 
     expect(section.handler).not.toHaveBeenCalled();
     expect(route.handler).toHaveBeenCalledTimes(1);
+    // Behind the section's fallback, which this navigation does not show.
+    expect(ran()).toEqual(["page"]);
+    expect("loaderData" in byId.get("R2D0.page")!).toBe(true);
     expect(segments.some((s) => s.deferred)).toBe(false);
+    expect(plan!.deferredUnit).toBeUndefined();
+  });
+
+  it("renders a held flagged layout whose revalidate() returns true, and everything below it", async () => {
+    const predicate = vi.fn(() => true);
+    const section = entry("layout", "L0L1", {
+      ...flagged,
+      revalidate: [predicate],
+      loader: [loaderEntry("section")],
+    });
+    const route = entry("route", "R2", { loader: [loaderEntry("page")] });
+    const { segments, byId, plan } = await resolve(
+      [section, route],
+      "prefetch",
+      ["L0L1"],
+    );
+
+    expect(predicate).toHaveBeenCalledTimes(1);
+    expect(section.handler).toHaveBeenCalledTimes(1);
+    expect(route.handler).toHaveBeenCalledTimes(1);
+    expect(byId.get("L0L1")!.component).toBe("content-L0L1");
+    // The section's own loader is new to the client; its unit is not.
+    expect(ran()).toEqual(["section", "page"]);
+    expect(segments.some((s) => s.deferred)).toBe(false);
+    expect(plan!.deferredUnit).toBeUndefined();
+  });
+
+  it("renders a held flagged route that re-renders", async () => {
+    const route = entry("route", "R1", {
+      ...flagged,
+      revalidate: [() => true],
+    });
+    const { byId, plan } = await resolve([route], "prefetch", ["R1"]);
+
+    expect(route.handler).toHaveBeenCalledTimes(1);
+    expect(byId.get("R1")!.deferred).toBeUndefined();
+    expect(plan!.deferredUnit).toBeUndefined();
+  });
+
+  it("runs a flagged loader on a held segment when it revalidates", async () => {
+    const predicate = vi.fn(() => true);
+    const reviews = { ...loaderEntry("reviews", { prefetch: false }) };
+    reviews.revalidate = [predicate];
+    const route = entry("route", "R1", {
+      loading: "fallback",
+      loader: [reviews],
+    });
+    const { byId } = await resolve([route], "prefetch", ["R1", "R1D0.reviews"]);
+
+    expect(predicate).toHaveBeenCalledTimes(1);
+    expect(ran()).toEqual(["reviews"]);
+    expect(byId.get("R1D0.reviews")!.deferred).toBeUndefined();
+  });
+
+  it("a new route under a held flagged layout is still deferred by its own flagged loading()", async () => {
+    const section = entry("layout", "L0L1", flagged);
+    const route = entry("route", "R2", {
+      ...flagged,
+      loader: [loaderEntry("page")],
+    });
+    const { byId, plan } = await resolve([section, route], "prefetch", [
+      "L0L1",
+    ]);
+
+    expect(route.handler).not.toHaveBeenCalled();
+    expect(ran()).toEqual([]);
+    expect(byId.get("R2")).toMatchObject({ deferred: true, component: null });
+    expect(byId.get("R2D0.page")).toMatchObject({ deferred: true });
+    expect(plan!.deferredUnit).toBe("R2");
+  });
+
+  it("does not defer a held slot with its own flagged loading()", async () => {
+    const slot = entry("parallel", "P0", {
+      ...flagged,
+      revalidate: [() => true],
+      handler: { "@side": vi.fn(() => "slot") },
+      loader: [loaderEntry("slot")],
+    });
+    const route = entry("route", "R1", { parallel: { "@side": slot } });
+    const { byId, plan } = await resolve([route], "prefetch", [
+      "R1",
+      "R1.@side",
+    ]);
+
+    expect(slot.handler["@side"]).toHaveBeenCalledTimes(1);
+    expect(byId.get("R1.@side")!.deferred).toBeUndefined();
+    // New to the client, behind a fallback the client already holds.
+    expect(byId.get("R1D0.slot")!.deferred).toBeUndefined();
     expect(plan!.deferredUnit).toBeUndefined();
   });
 

@@ -62,6 +62,11 @@ const CachedReviewsLoader = counted("cachedReviews");
 const OrdersLoader = counted("orders-loader");
 const SectionLoader = counted("section-loader");
 const SectionPageLoader = counted("section-page-loader");
+const SectionPlainLoader = counted("section-plain-loader");
+const SectionOwnLoader = counted("section-own-loader");
+const SectionCachedLoader = counted("section-cached-loader");
+const TwinCachedLoader = counted("twin-cached-loader");
+const RevalLoader = counted("reval-loader");
 const CachedPageLoader = counted("cached-loader");
 const PprLiveLoader = counted("ppr-live");
 const PprBakeLoader = counted("ppr-bake");
@@ -211,6 +216,49 @@ function makeRouter() {
                 { name: "sectionA" },
                 () => [loader(SectionPageLoader)],
               ),
+              // Siblings inside the section: no loading() of its own, its own
+              // flagged loading(), and a cache() route.
+              path("/section/plain", page("section-plain"), () => [
+                loader(SectionPlainLoader),
+              ]),
+              path("/section/own", page("section-own"), () => [
+                loader(SectionOwnLoader),
+                loading(<p>section-own-loading</p>, { prefetch: false }),
+              ]),
+              path("/section/cached", page("section-cached"), () => [
+                cache({ ttl: 60 }),
+                loader(SectionCachedLoader),
+              ]),
+            ]),
+            // A flagged layout that re-renders on every navigation, and a
+            // flagged loader that does: held segments, never deferred.
+            layout(page("reval"), () => [
+              loading(<p>reval-loading</p>, { prefetch: false }),
+              revalidate(() => {
+                ran("reval-predicate");
+                return true;
+              }),
+              path("/reval/a", page("reval-a"), { name: "revalA" }),
+              path("/reval/b", page("reval-b"), { name: "revalB" }),
+            ]),
+            path("/reval-loader", page("reval-loader-page"), () => [
+              loader(RevalLoader, { prefetch: false }, () => [
+                revalidate(() => {
+                  ran("reval-loader-predicate");
+                  return true;
+                }),
+              ]),
+              loading(<p>reval-loader-loading</p>),
+            ]),
+            // The section's twin with no flag: what the cache() route under
+            // it does is what the one under the flagged layout must do.
+            layout(page("twin"), () => [
+              loading(<p>twin-loading</p>),
+              path("/twin/a", page("twin-a"), { name: "twinA" }),
+              path("/twin/cached", page("twin-cached"), () => [
+                cache({ ttl: 60 }),
+                loader(TwinCachedLoader),
+              ]),
             ]),
             path("/cached", page("cached"), { name: "cached" }, () => [
               cache({ ttl: 60 }),
@@ -1070,5 +1118,280 @@ describe("R13: a prefetch that skipped a handler cannot satisfy the barrier", ()
     expect(count("barrier-loader-page")).toBe(1);
     expect(count("outer-rendered")).toBe(1);
     expect(errors).toEqual([]);
+  });
+});
+
+// The rule: the flag applies only to a segment the client does not have yet.
+// A segment the client holds is never deferred, whether or not it re-renders.
+describe("the flag applies only to a segment the client does not have yet", () => {
+  const resetRuns = (): void => {
+    for (const key of Object.keys(runs)) delete runs[key];
+  };
+
+  /** Navigate to `at` from "/", then count from zero. Returns what the client holds. */
+  async function standingOn(
+    serve: ReturnType<typeof setup>["serve"],
+    at: string,
+  ): Promise<string[]> {
+    const { matched } = payloadOf(await serve(at, { partial: { from: "/" } }));
+    resetRuns();
+    return matched;
+  }
+
+  it("a new flagged layout takes a sibling route with it, and one fill runs everything once", async () => {
+    const { prefetch, fill } = setup();
+    const prefetched = payloadOf(await prefetch("/section/plain"));
+    expect({
+      layout: count("section"),
+      route: count("section-plain"),
+      loader: count("section-plain-loader"),
+    }).toEqual({ layout: 0, route: 0, loader: 0 });
+    expect(
+      prefetched.segments.filter((s) => s.type === "layout" && s.deferred),
+    ).toEqual([expect.objectContaining({ component: null })]);
+    expect(prefetched.segments.some((s) => s.type === "route")).toBe(false);
+    expect(prefetched.find(SectionPlainLoader.$$id)).toBeUndefined();
+
+    const filled = payloadOf(await fill("/section/plain", prefetched));
+    expect({
+      layout: count("section"),
+      route: count("section-plain"),
+      loader: count("section-plain-loader"),
+    }).toEqual({ layout: 1, route: 1, loader: 1 });
+    expect(filled.deferred).toEqual([]);
+  });
+
+  it("under a held flagged layout a plain sibling's handler and loader run in the prefetch: nothing is deferred", async () => {
+    const { serve } = setup();
+    const held = await standingOn(serve, "/section/a");
+
+    const result = await serve("/section/plain", {
+      partial: { from: "/section/a", segments: held, prefetch: true },
+    });
+    const payload = payloadOf(result);
+    expect({
+      layout: count("section"),
+      route: count("section-plain"),
+      loader: count("section-plain-loader"),
+    }).toEqual({ layout: 0, route: 1, loader: 1 });
+    expect(payload.deferred).toEqual([]);
+    expect(result.flight).not.toContain('"deferred"');
+    expect(present(payload.find(SectionPlainLoader.$$id)!.loaderData)).toBe(
+      true,
+    );
+    // What a navigation sends for the same request.
+    const navigation = payloadOf(
+      await serve("/section/plain", {
+        partial: { from: "/section/a", segments: held },
+      }),
+    );
+    expect(payload.ids).toEqual(navigation.ids);
+    expect(payload.matched).toEqual(navigation.matched);
+  });
+
+  it("under a held flagged layout a sibling with its own flagged loading() is still its own unit", async () => {
+    const { serve } = setup();
+    const held = await standingOn(serve, "/section/a");
+
+    const result = await serve("/section/own", {
+      partial: { from: "/section/a", segments: held, prefetch: true },
+    });
+    const prefetched = payloadOf(result);
+    expect({
+      layout: count("section"),
+      route: count("section-own"),
+      loader: count("section-own-loader"),
+    }).toEqual({ layout: 0, route: 0, loader: 0 });
+    const route = prefetched.segments.find((s) => s.type === "route")!;
+    expect(route).toMatchObject({ deferred: true, component: null });
+    expect(result.flight).toContain("section-own-loading");
+    expect(prefetched.find(SectionOwnLoader.$$id)).toMatchObject({
+      deferred: true,
+    });
+
+    // The fill the browser sends: what it held, the placeholders left out.
+    const filled = payloadOf(
+      await serve("/section/own", {
+        partial: {
+          from: "/section/own",
+          segments: prefetched.matched.filter(
+            (id) => !prefetched.deferred.includes(id),
+          ),
+          fill: true,
+        },
+      }),
+    );
+    expect({
+      layout: count("section"),
+      route: count("section-own"),
+      loader: count("section-own-loader"),
+    }).toEqual({ layout: 0, route: 1, loader: 1 });
+    expect(filled.deferred).toEqual([]);
+  });
+
+  it("a held flagged layout whose revalidate() returns true is rendered by the prefetch, as by a navigation", async () => {
+    const { serve } = setup();
+    const held = await standingOn(serve, "/reval/a");
+
+    const request = { from: "/reval/a", segments: held };
+    const navigation = payloadOf(await serve("/reval/b", { partial: request }));
+    expect({
+      predicate: count("reval-predicate"),
+      layout: count("reval"),
+      route: count("reval-b"),
+    }).toEqual({ predicate: 1, layout: 1, route: 1 });
+    resetRuns();
+
+    const result = await serve("/reval/b", {
+      partial: { ...request, prefetch: true },
+    });
+    const payload = payloadOf(result);
+    expect({
+      predicate: count("reval-predicate"),
+      layout: count("reval"),
+      route: count("reval-b"),
+    }).toEqual({ predicate: 1, layout: 1, route: 1 });
+    expect(payload.deferred).toEqual([]);
+    expect(result.flight).not.toContain('"deferred"');
+    expect(payload.ids).toEqual(navigation.ids);
+    expect(payload.matched).toEqual(navigation.matched);
+    expect(payload.diff).toEqual(navigation.diff);
+    const layout = payload.segments.find((s) => s.type === "layout")!;
+    expect(present(layout.component)).toBe(true);
+  });
+
+  it("a flagged loader on a held segment that revalidates runs in the prefetch", async () => {
+    const { serve } = setup();
+    const held = await standingOn(serve, "/reval-loader");
+
+    const result = await serve("/reval-loader", {
+      partial: { from: "/reval-loader", segments: held, prefetch: true },
+    });
+    const payload = payloadOf(result);
+    expect({
+      predicate: count("reval-loader-predicate"),
+      loader: count("reval-loader"),
+    }).toEqual({ predicate: 1, loader: 1 });
+    expect(payload.deferred).toEqual([]);
+    expect(present(payload.find(RevalLoader.$$id)!.loaderData)).toBe(true);
+  });
+
+  it("the same route with new params: the prefetch runs the handler and the flagged loader, and defers nothing", async () => {
+    const { serve } = setup();
+    const held = await standingOn(serve, "/product/1");
+
+    const request = { from: "/product/1", segments: held };
+    const navigation = payloadOf(
+      await serve("/product/2", { partial: request }),
+    );
+    const afterNavigation = { ...runs };
+    resetRuns();
+
+    const result = await serve("/product/2", {
+      partial: { ...request, prefetch: true },
+    });
+    const payload = payloadOf(result);
+    expect(runs).toEqual(afterNavigation);
+    expect(count("reviews")).toBe(1);
+    expect(count("product")).toBe(1);
+    expect(payload.deferred).toEqual([]);
+    expect(result.flight).not.toContain('"deferred"');
+    expect(payload.ids).toEqual(navigation.ids);
+  });
+
+  it("a flagged loader on a new segment is still deferred when the layout above it is held", async () => {
+    const { serve } = setup();
+    const held = await standingOn(serve, "/elsewhere");
+
+    const payload = payloadOf(
+      await serve("/product/1", {
+        partial: { from: "/elsewhere", segments: held, prefetch: true },
+      }),
+    );
+    expect(count("reviews")).toBe(0);
+    expect(count("price")).toBe(1);
+    expect(payload.deferred).toEqual([payload.find(ReviewsLoader.$$id)!.id]);
+  });
+});
+
+// A cache() route under a flagged layout must use its record the way the
+// same route under an unflagged layout does (issue found in review: the
+// record was skipped for every prefetch of the tree, not only for one that
+// deferred the layout).
+describe("a cache() route under a flagged layout uses its record like its unflagged twin", () => {
+  it("held layout: three prefetches run the cached handler once and defer nothing", async () => {
+    const { serve } = setup();
+    const visit = async (section: string) => {
+      const { matched } = payloadOf(
+        await serve(`/${section}/a`, { partial: { from: "/" } }),
+      );
+      const deferred: string[][] = [];
+      for (let i = 0; i < 3; i++) {
+        const payload = payloadOf(
+          await serve(`/${section}/cached`, {
+            partial: {
+              from: `/${section}/a`,
+              segments: matched,
+              prefetch: true,
+            },
+          }),
+        );
+        deferred.push(payload.deferred);
+      }
+      return deferred;
+    };
+
+    expect(await visit("twin")).toEqual([[], [], []]);
+    expect(await visit("section")).toEqual([[], [], []]);
+    expect({
+      twin: count("twin-cached"),
+      section: count("section-cached"),
+    }).toEqual({ twin: 1, section: 1 });
+    // Loaders are never stored: each prefetch ran them.
+    expect(count("section-cached-loader")).toBe(count("twin-cached-loader"));
+  });
+
+  it("new layout: three prefetch-and-fill visits run the cached handler once", async () => {
+    const { serve, prefetch, fill } = setup();
+    for (let i = 0; i < 3; i++) {
+      const prefetched = payloadOf(await prefetch("/section/cached"));
+      // The layout is deferred, and the record below it with it.
+      expect(prefetched.segments.some((s) => s.type === "route")).toBe(false);
+      await fill("/section/cached", prefetched);
+    }
+    for (let i = 0; i < 3; i++) {
+      await serve("/twin/cached", { partial: { from: "/" } });
+    }
+    expect({
+      twin: count("twin-cached"),
+      section: count("section-cached"),
+    }).toEqual({ twin: 1, section: 1 });
+    // The layouts are above the boundary: rendered on every visit, both.
+    expect(count("section")).toBe(count("twin"));
+  });
+
+  it("a fill that holds part of what the record covers does not write it", async () => {
+    const { serve, cacheStore } = setup();
+    // /cached: cache() on the route, so the record covers the route alone.
+    const prefetched = payloadOf(
+      await serve("/cached", {
+        partial: { from: "/", segments: [], prefetch: true },
+      }),
+    );
+    const written = cacheStore.getStats().size;
+    expect(written).toBeGreaterThan(0);
+    await cacheStore.clear();
+    // The fill holds the route: it renders the loader, not the record's part.
+    await serve("/cached", {
+      partial: {
+        from: "/cached",
+        segments: prefetched.matched.filter(
+          (id) => !prefetched.deferred.includes(id),
+        ),
+        fill: true,
+      },
+    });
+    expect(cacheStore.getStats().size).toBe(0);
+    expect(count("cached")).toBe(1);
   });
 });

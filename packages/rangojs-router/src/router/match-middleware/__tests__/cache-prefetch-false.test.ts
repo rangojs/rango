@@ -54,11 +54,12 @@ import { seg, gen, makeCacheStoreRouterContextStub } from "./helpers.js";
 // `prefetch: false` and the route cache() record
 // (docs/design/prefetch-false.md, "cache(), ppr and Prerender" and R5).
 //
-// - A fill keeps every stored segment the client holds, without a predicate,
-//   and writes nothing.
-// - A prefetch that can skip a layout or route above the cache boundary
-//   neither reads nor writes the record: reading would replay the handle
-//   pushes of segments the response does not carry.
+// - A fill keeps every stored segment the client holds, without a predicate.
+//   It writes the record only when it holds nothing the record covers.
+// - A prefetch that skips a layout above the cache boundary neither reads nor
+//   writes the record: reading would replay the handle pushes of segments the
+//   response does not carry. It skips the layout only when the client does
+//   not hold it; decided per request, never per tree.
 // - Any other prefetch reads and writes it as before.
 
 const LAYOUT = "L0";
@@ -100,8 +101,8 @@ const plans = {
       {},
       { enabled: true, boundary: ROUTE } as any,
     ),
-  // The layout above the boundary is flagged: a prefetch skips it and, with
-  // it, everything the record holds.
+  // The layout above the boundary is flagged: a prefetch from a client that
+  // does not hold it skips it and, with it, everything the record holds.
   prefetchUnitAbove: () =>
     planPrefetchDeferral(
       [chainEntry("layout", LAYOUT, true), chainEntry("route", ROUTE, false)],
@@ -187,15 +188,28 @@ async function lookup(
   };
 }
 
-async function store(plan: PrefetchDeferral | undefined) {
+/**
+ * `held`: what the client holds. A held route arrives with no component, as
+ * resolution leaves a segment it did not render.
+ */
+async function store(
+  plan: PrefetchDeferral | undefined,
+  held: string[] = [],
+  routerContext: any = makeCacheStoreRouterContextStub(),
+) {
   const cacheRoute = vi.fn(async () => {});
   const request = new Request("https://app.test/p");
   const ctx = {
-    cacheScope: { enabled: true, cacheRoute, recordTags: vi.fn() },
+    cacheScope: {
+      enabled: true,
+      cacheRoute,
+      recordTags: vi.fn(),
+      covers: (id: string) => id === ROUTE,
+    },
     isAction: false,
     request,
     pathname: "/p",
-    clientSegmentSet: new Set<string>(),
+    clientSegmentSet: new Set<string>(held),
     metricsStore: undefined,
     isIntercept: false,
     matched: { params: {}, routeKey: "list" },
@@ -220,9 +234,12 @@ async function store(plan: PrefetchDeferral | undefined) {
   });
 
   const yielded: string[] = [];
-  await runWithRouterContext(makeCacheStoreRouterContextStub(), () =>
+  await runWithRouterContext(routerContext, () =>
     runWithRequestContext(reqCtx, async () => {
-      for await (const s of withCacheStore(ctx, state)(gen([seg(ROUTE)]))) {
+      const route = held.includes(ROUTE)
+        ? seg(ROUTE, { component: null })
+        : seg(ROUTE);
+      for await (const s of withCacheStore(ctx, state)(gen([route]))) {
         yielded.push(s.id);
       }
       for (const cb of reqCtx._onResponseCallbacks) {
@@ -271,7 +288,7 @@ describe("withCacheLookup and prefetch: false", () => {
     expect(result.sent).toEqual({ [LAYOUT]: false, [ROUTE]: true });
   });
 
-  it("a prefetch that can skip a layout above the boundary does not read the record", async () => {
+  it("a prefetch that skips a layout above the boundary does not read the record", async () => {
     const result = await lookup(plans.prefetchUnitAbove(), {
       routeRevalidates: false,
       clientSegments: [],
@@ -279,6 +296,17 @@ describe("withCacheLookup and prefetch: false", () => {
     expect(result.hit).toBe(false);
     // What live resolution yields, placeholder included, is the response.
     expect(Object.keys(result.sent)).toEqual(["live-render"]);
+  });
+
+  // The same tree, from a client that holds the flagged layout: nothing
+  // above the record is skipped, so the record answers.
+  it("a prefetch that holds the flagged layout above the boundary reads the record", async () => {
+    const result = await lookup(plans.prefetchUnitAbove(), {
+      routeRevalidates: false,
+      clientSegments: [LAYOUT],
+    });
+    expect(result.hit).toBe(true);
+    expect(result.sent).toEqual({ [LAYOUT]: false, [ROUTE]: true });
   });
 });
 
@@ -369,11 +397,33 @@ describe("withCacheStore and prefetch: false", () => {
     expect(await store(plans.prefetchStoredUnit())).toHaveBeenCalledTimes(1);
   });
 
-  it("a fill writes nothing: it rendered only what one client was missing", async () => {
-    expect(await store(plans.fill())).not.toHaveBeenCalled();
+  it("a fill that holds nothing the record covers writes it", async () => {
+    expect(await store(plans.fill())).toHaveBeenCalledTimes(1);
+    // Holding the layout above the boundary changes nothing.
+    expect(await store(plans.fill(), [LAYOUT])).toHaveBeenCalledTimes(1);
   });
 
-  it("a prefetch that can skip a layout above the boundary writes nothing", async () => {
+  it("a fill that holds a segment the record covers writes nothing and re-renders nothing", async () => {
+    const stub = makeCacheStoreRouterContextStub();
+    expect(await store(plans.fill(), [ROUTE], stub)).not.toHaveBeenCalled();
+    // No proactive re-render either: it would run handlers a fill must not.
+    expect(stub.createHandleStore).not.toHaveBeenCalled();
+  });
+
+  it("control: a navigation that holds a covered segment re-renders the route to write it", async () => {
+    const stub = makeCacheStoreRouterContextStub();
+    await store(plans.none(), [ROUTE], stub);
+    // rerenderAndCacheRoute's first step.
+    expect(stub.createHandleStore).toHaveBeenCalled();
+  });
+
+  it("a prefetch that skips a layout above the boundary writes nothing", async () => {
     expect(await store(plans.prefetchUnitAbove())).not.toHaveBeenCalled();
+  });
+
+  it("a prefetch that holds the flagged layout above the boundary writes the record", async () => {
+    expect(
+      await store(plans.prefetchUnitAbove(), [LAYOUT]),
+    ).toHaveBeenCalledTimes(1);
   });
 });

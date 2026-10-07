@@ -235,13 +235,13 @@ export function buildMatchResult<TEnv>(
     resolvedIds = [];
     for (const s of allSegments) {
       if (s._handlerRan) resolvedIds.push(s.id);
-      // A deferred unit (prefetch: false) is sent even when the client holds
-      // its id: it replaces that copy with the fallback until the fill lands.
+      // A deferred unit (prefetch: false) has a null component and is sent:
+      // only a segment the client does not hold is ever deferred
+      // (segment-resolution/prefetch-deferral.ts).
       if (
         s.component !== null ||
         s.type === "loader" ||
-        !clientIdSet.has(s.id) ||
-        s.deferred
+        !clientIdSet.has(s.id)
       ) {
         segmentsToRender.push(s);
       }
