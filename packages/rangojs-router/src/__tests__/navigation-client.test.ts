@@ -836,4 +836,65 @@ describe("navigation-client", () => {
       expect(init.cache).toBeUndefined();
     });
   });
+
+  // prefetch: false (docs/design/prefetch-false.md, R5 and R7): the request
+  // that follows an adopted prefetch with deferred segments.
+  describe("fill request", () => {
+    async function fill() {
+      const fetchMock = vi.fn(
+        async (_url: string | URL, _init?: RequestInit) =>
+          new Response(null, { status: 200 }),
+      );
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+      // A prefetch of the same page is in the cache, complete.
+      consumePrefetchMock.mockReturnValue(makeEntry({}, "wildcard", true));
+      const client = createNavigationClient({
+        createFromFetch: async (responsePromise: Promise<Response>) => {
+          await responsePromise;
+          return { metadata: { matched: [], diff: [], isPartial: true } };
+        },
+      } as any);
+      const result = await client.fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/products",
+        segmentIds: ["root", "route"],
+        fill: true,
+      });
+      const [url, init] = fetchMock.mock.calls[0]!;
+      return {
+        url: new URL(String(url)),
+        init: init as RequestInit,
+        fetchMock,
+        result,
+      };
+    }
+
+    it("marks the URL and lists the segments the client holds", async () => {
+      const { url } = await fill();
+      expect(url.searchParams.get("_rsc_fill")).toBe("1");
+      expect(url.searchParams.get("_rsc_partial")).toBe("true");
+      expect(url.searchParams.get("_rsc_segments")).toBe("root,route");
+    });
+
+    it("is never answered from a prefetch, in memory or in flight", async () => {
+      const { fetchMock, result } = await fill();
+      expect(consumePrefetchMock).not.toHaveBeenCalled();
+      expect(consumeInflightPrefetchMock).not.toHaveBeenCalled();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(result.fullyPrefetched).toBe(false);
+    });
+
+    it("bypasses the HTTP cache and is not a prefetch", async () => {
+      const { init } = await fill();
+      expect(init.cache).toBe("no-store");
+      expect(
+        (init.headers as Record<string, string>)["X-Rango-Prefetch"],
+      ).toBeUndefined();
+    });
+
+    it("cancels no prefetch: the page it completes keeps its links warm", async () => {
+      await fill();
+      expect(cancelAllPrefetchesMock).not.toHaveBeenCalled();
+    });
+  });
 });

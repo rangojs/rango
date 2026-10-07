@@ -242,6 +242,23 @@ describe("clientUrls", () => {
     ).toThrow(/stream was replaced.*ssr: false/);
   });
 
+  // A clientUrls() route presents its destination in the browser: a prefetch
+  // has nothing to defer behind (docs/design/prefetch-false.md, "Limits").
+  it("rejects the prefetch option, which only urls() loaders take", () => {
+    const AccountLoader = loader("loaders#account");
+    for (const prefetch of [false, true]) {
+      expect(() =>
+        clientUrls(({ path, loader: useLoader }) => [
+          path("/x", AccountPage, () => [
+            useLoader(AccountLoader, { prefetch } as never),
+          ]),
+        ]),
+      ).toThrow(
+        /clientUrls\(\) loader\(\) does not take prefetch.*Declare the route in urls\(\)/,
+      );
+    }
+  });
+
   it("rejects ssr: false on intercept loaders", () => {
     const DetailLoader = loader("loaders#detail");
     expect(() =>

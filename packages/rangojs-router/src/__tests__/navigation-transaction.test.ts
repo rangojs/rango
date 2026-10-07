@@ -487,3 +487,66 @@ describe("createNavigationTransaction traversal commit", () => {
     tx[Symbol.dispose]();
   });
 });
+
+// prefetch: false (docs/design/prefetch-false.md, "Abort"): a fill is
+// cancelled when the tree it belongs to is replaced, not when a navigation
+// merely starts.
+describe("createNavigationTransaction and a pending fill", () => {
+  async function pendingFill() {
+    const { setPendingFill, cancelPendingFill } =
+      await import("../browser/pending-fill");
+    const cancel = vi.fn();
+    setPendingFill(cancel);
+    return { cancel, cancelPendingFill };
+  }
+
+  function transaction(options: Record<string, unknown>) {
+    const { store, eventController } = createTestContext();
+    const tx = createNavigationTransaction(
+      store,
+      eventController,
+      "http://localhost/target",
+      { replace: true },
+    );
+    return {
+      tx,
+      commit: () => {
+        tx.commit({
+          url: "http://localhost/target",
+          segmentIds: [],
+          segments: [],
+          ...options,
+        });
+        tx[Symbol.dispose]();
+      },
+    };
+  }
+
+  it("is not cancelled by a navigation that only starts", async () => {
+    const { cancel, cancelPendingFill } = await pendingFill();
+    const { tx } = transaction({});
+    expect(cancel).not.toHaveBeenCalled();
+    tx[Symbol.dispose]();
+    expect(cancel).not.toHaveBeenCalled();
+    cancelPendingFill();
+  });
+
+  it.each([{}, { traversal: true }])(
+    "is cancelled by a commit that replaces the page (%o)",
+    async (options) => {
+      const { cancel } = await pendingFill();
+      transaction(options).commit();
+      expect(cancel).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([{ storeOnly: true }, { cacheOnly: true }])(
+    "survives a commit that keeps the page (%o)",
+    async (options) => {
+      const { cancel, cancelPendingFill } = await pendingFill();
+      transaction(options).commit();
+      expect(cancel).not.toHaveBeenCalled();
+      cancelPendingFill();
+    },
+  );
+});
