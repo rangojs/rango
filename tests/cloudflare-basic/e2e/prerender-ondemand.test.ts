@@ -2,6 +2,7 @@ import { expect, test, type APIResponse, type Page } from "@playwright/test";
 import { useFixture, type Fixture } from "./fixture";
 import { waitForHydration, expectNoPageError, testId } from "./helper";
 import {
+  expectDeclinedBakedParamServedLive,
   expectDeclinedPassthroughParamServedLive,
   expectFailedRefreshKeepsStoredPage,
   expectManyReturnsOneResultPerTargetInOrder,
@@ -9,7 +10,6 @@ import {
   expectRemovedPassthroughPageRunsLiveHandler,
   expectRemovedUnbakedPageAnswers404,
   type PrerenderOutcomesFixture,
-  type PrerenderRemoveFixture,
 } from "@shared/e2e";
 
 test.describe.configure({ mode: "serial" });
@@ -311,40 +311,44 @@ function definePlainOnDemandFlow(f: Fixture) {
 // Removing a refreshed page (#1060), on the KV store. The plain route's baked
 // "intro" is shared with the plain flows above, which refresh it first (this
 // file is serial); the Passthrough route's baked "removable" belongs to these
-// tests alone. The bodies are shared with
-// packages/rangojs-router/e2e/on-demand-prerender.test.ts.
-function defineRemoveFlow(f: Fixture) {
-  const fixture = (): PrerenderRemoveFixture => ({
-    pageUrl: (slug) => f.url(`/guide-plain/${slug}`),
-    triggerUrl: (slug) => f.url(`/guide-plain-trigger/${slug}`),
-    tag: (slug) => `guide-plain:${slug}`,
-    slugTestId: "gp-slug",
-    actionTestId: "gp-action-noop",
-    bakedSlug: "intro",
-    passthrough: {
-      pageUrl: (slug) => f.url(`/guides/${slug}`),
-      triggerUrl: (slug) => f.url(`/guide-trigger/${slug}`),
-      sourceTestId: "guide-source",
-      bakedSlug: "removable",
-    },
-  });
+// tests alone, as is "decline-baked" for the decline case. The bodies are
+// shared with packages/rangojs-router/e2e/on-demand-prerender.test.ts.
+const guideFixture = (f: Fixture): PrerenderOutcomesFixture => ({
+  path: (slug) => `/guide-plain/${slug}`,
+  stampTestId: "gp-stamp",
+  onDemandTestId: "gp-ondemand",
+  pageUrl: (slug) => f.url(`/guide-plain/${slug}`),
+  triggerUrl: (slug) => f.url(`/guide-plain-trigger/${slug}`),
+  tag: (slug) => `guide-plain:${slug}`,
+  slugTestId: "gp-slug",
+  actionTestId: "gp-action-noop",
+  bakedSlug: "intro",
+  passthrough: {
+    pageUrl: (slug) => f.url(`/guides/${slug}`),
+    triggerUrl: (slug) => f.url(`/guide-trigger/${slug}`),
+    sourceTestId: "guide-source",
+    bakedSlug: "removable",
+    declineBakedSlug: "decline-baked",
+  },
+});
 
+function defineRemoveFlow(f: Fixture) {
   test("a removed page answers 404 for a baked param, to a request and to a server action: the build-time entry does not come back", async ({
     page,
   }) => {
-    await expectRemovedBakedPageAnswers404(page, fixture());
+    await expectRemovedBakedPageAnswers404(page, guideFixture(f));
   });
 
   test("a removed page answers 404 for a param only a refresh produced, to a request and to a server action", async ({
     page,
   }) => {
-    await expectRemovedUnbakedPageAnswers404(page, fixture());
+    await expectRemovedUnbakedPageAnswers404(page, guideFixture(f));
   });
 
   test("a Passthrough route's removed page is answered by its live handler, not the build-time entry", async ({
     page,
   }) => {
-    await expectRemovedPassthroughPageRunsLiveHandler(page, fixture());
+    await expectRemovedPassthroughPageRunsLiveHandler(page, guideFixture(f));
   });
 }
 
@@ -352,36 +356,28 @@ function defineRemoveFlow(f: Fixture) {
 // skipped-passthrough, on the KV store. The bodies are shared with
 // packages/rangojs-router/e2e/on-demand-prerender.test.ts.
 function defineOutcomesFlow(f: Fixture) {
-  const fixture = (): PrerenderOutcomesFixture => ({
-    path: (slug) => `/guide-plain/${slug}`,
-    pageUrl: (slug) => f.url(`/guide-plain/${slug}`),
-    triggerUrl: (slug) => f.url(`/guide-plain-trigger/${slug}`),
-    slugTestId: "gp-slug",
-    stampTestId: "gp-stamp",
-    onDemandTestId: "gp-ondemand",
-    passthrough: {
-      pageUrl: (slug) => f.url(`/guides/${slug}`),
-      triggerUrl: (slug) => f.url(`/guide-trigger/${slug}`),
-      sourceTestId: "guide-source",
-    },
-  });
-
   test("prerender.many() returns one result per target in order, and each rendered page then serves from the store", async ({
     page,
   }) => {
-    await expectManyReturnsOneResultPerTargetInOrder(page, fixture());
+    await expectManyReturnsOneResultPerTargetInOrder(page, guideFixture(f));
   });
 
   test("a refresh that fails any other way is render-failed, and the stored page keeps serving", async ({
     page,
   }) => {
-    await expectFailedRefreshKeepsStoredPage(page, fixture());
+    await expectFailedRefreshKeepsStoredPage(page, guideFixture(f));
   });
 
   test("a Passthrough param the build handler declines is skipped-passthrough, and the live handler serves it", async ({
     page,
   }) => {
-    await expectDeclinedPassthroughParamServedLive(page, fixture());
+    await expectDeclinedPassthroughParamServedLive(page, guideFixture(f));
+  });
+
+  test("a baked param that is declined is served by the live handler, not the stored page or the build-time entry", async ({
+    page,
+  }) => {
+    await expectDeclinedBakedParamServedLive(page, guideFixture(f));
   });
 }
 

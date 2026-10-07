@@ -50,12 +50,20 @@ export interface StoredEntryOptions {
 interface StoredEnvelope {
   v: 1;
   meta: {
+    /**
+     * When the render started, not when the entry was written: a `markStale()`
+     * at or after it (strictly after in an in-process store) covers the entry.
+     * A `remove()` marker renders nothing and carries its write time.
+     */
     storedAt: number;
     /**
      * Absent = never stale. Soft metadata only; controls `onRevalidate`
-     * scheduling, not serving. A store may lower it (KV tag markers do).
+     * scheduling, not serving. Counts the ttl from the write. A store may
+     * lower it (tag markers do).
      */
     staleAt?: number;
+    /** The configured ttl in seconds, as a result reports it. Absent = none. */
+    ttl?: number;
     tags: string[];
     /** The key's `version` at write time; verified on read. */
     version: string;
@@ -114,7 +122,10 @@ export interface WritablePrerenderStore {
 
   /**
    * Mark the entries of router `routerId` (`PrerenderKey.routerId`) carrying
-   * any of `tags` stale (they keep serving). Scope it to that router: routers
+   * any of `tags` stale (they keep serving). A mark covers an entry whose
+   * `meta.storedAt` it is at or after (strictly after for an in-process
+   * store), including one `set()` after the mark: a store that marks held
+   * entries in place has to remember its marks. Scope it to that router: routers
    * behind a host router share one store, and a tag is only meaningful inside
    * the router whose routes declared it. Optional: without it,
    * `router.prerender().markStale()` is a no-op for this store.
@@ -132,13 +143,15 @@ export function serializePrerenderKey(key: PrerenderKey): string {
 
 /**
  * @internal Compose the versioned envelope the trigger hands to `store.set()`.
- * `now` is passed explicitly so tests stay deterministic.
+ * `now` is `meta.storedAt`; `staleFrom` (default `now`) is where the ttl
+ * starts counting. Both are passed explicitly so tests stay deterministic.
  */
 export function composeStoredEntry(
   key: PrerenderKey,
   entry: PrerenderEntry,
   options: StoredEntryOptions,
   now: number,
+  staleFrom: number = now,
 ): StoredPage {
   // Only a finite, non-negative ttl produces a staleAt: NaN would never go
   // stale and a negative ttl would be stale on every request.
@@ -151,7 +164,12 @@ export function composeStoredEntry(
     entry,
     meta: {
       storedAt: now,
-      ...(hasTtl ? { staleAt: now + (options.ttl as number) * 1000 } : {}),
+      ...(hasTtl
+        ? {
+            staleAt: staleFrom + (options.ttl as number) * 1000,
+            ttl: options.ttl as number,
+          }
+        : {}),
       tags: options.tags,
       version: key.version,
       params: options.params,
@@ -169,12 +187,14 @@ export function composeStoredTombstone(
   key: PrerenderKey,
   options: StoredEntryOptions,
   now: number,
+  staleFrom: number = now,
 ): StoredTombstone {
   const { v, meta } = composeStoredEntry(
     key,
     { segments: [], handles: "" },
     options,
     now,
+    staleFrom,
   );
   return { v, removed: true, meta };
 }

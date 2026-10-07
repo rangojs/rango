@@ -57,14 +57,16 @@ export function createMemoryPrerenderStore(
     },
 
     async set(key: PrerenderKey, stored: PrerenderStoredEntry): Promise<void> {
-      // Same comparison as the KV store's read (cloudflare.ts): a mark at or
-      // after storedAt covers the entry. It marks, never refuses: a stale
-      // entry keeps serving.
+      // Strictly after storedAt, unlike the KV read (cloudflare.ts, `>=`): in
+      // one process a mark and a render start can share a millisecond with the
+      // mark first, which `>=` would read as invalidating that render. KV's
+      // marker write is I/O, so a same-millisecond marker there is ambiguous.
+      // Marks, never refuses: a stale entry keeps serving.
       const routerMarks = marks.get(key.routerId);
       if (routerMarks) {
         for (const tag of stored.meta.tags) {
           const at = routerMarks.get(tag);
-          if (at != null && at >= stored.meta.storedAt) {
+          if (at != null && at > stored.meta.storedAt) {
             lowerStoredEntryStaleAt(stored, at);
           }
         }

@@ -24,10 +24,12 @@
  * - A `notFound()` in the render is not a failure: it stores a "removed"
  *   marker in place of the page, stamped with the route's ttl and tags so it
  *   is rechecked like a page. `prerender.remove()` stores one without
- *   rendering, which never goes stale. A page and a render's marker are
- *   stamped with the render's start (`storedAt`), so a `markStale()` that
- *   lands during the render marks the result; the ttl counts from it too. A Passthrough build handler that
+ *   rendering, which never goes stale. A Passthrough build handler that
  *   declines (`ctx.passthrough()`) stores one too, so its live handler answers.
+ * - A page and a render's marker (a `notFound()` or a decline) carry the
+ *   render's start as `storedAt`, so a `markStale()` that lands during the
+ *   render marks the result; `staleAt` counts the ttl from the write. A
+ *   `remove()` marker renders nothing and carries its write time.
  * - An on-demand target is path-only (its key carries no search); a warm
  *   target keeps its search params, which cache keys carry.
  * - A warm writes only to a store shared beyond the place the call runs.
@@ -489,9 +491,9 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
       routeName: match.routeName,
       key: keyStr,
       tags: meta.tags,
-      ...(meta.staleAt != null
-        ? { ttl: Math.round((meta.staleAt - meta.storedAt) / 1000) }
-        : {}),
+      // The configured ttl, not staleAt - storedAt: storedAt is the render's
+      // start and a markStale() lowers staleAt, so the difference is neither.
+      ...(meta.ttl != null ? { ttl: meta.ttl } : {}),
     });
     // Replace-on-success: a failed write leaves the prior durable entry (and
     // the bundled manifest fallback) in place.
@@ -613,25 +615,30 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
         params: match.params,
       };
       if (!noPage) {
-        // A marker that landed while this render ran (a remove(), or another
-        // refresh's notFound()) is not overwritten by its page. This narrows
-        // the race, it cannot close it: the read and the write are two store
-        // calls, and KV is eventually consistent. Otherwise last write wins.
+        // A marker stored after this render started is not overwritten by its
+        // page: a remove() (stamped with its write time) always qualifies. A
+        // render's own marker carries that render's start, so only a render
+        // that started later than this one wins; an older render's notFound()
+        // does not (this one read newer data). This narrows the race, it
+        // cannot close it: the read and the write are two store calls, and KV
+        // is eventually consistent. Otherwise last write wins.
         const current = await readVerifiedStoredEntry(store, key, match.params);
         if (current?.removed === true && current.meta.storedAt > startedAt) {
           return held("removed", current.meta);
         }
       }
       // The router composes the envelope; the store only persists it.
+      const writtenAt = Date.now();
       await store.set(
         key,
         noPage
-          ? composeStoredTombstone(key, stamp, startedAt)
+          ? composeStoredTombstone(key, stamp, startedAt, writtenAt)
           : composeStoredEntry(
               key,
               { segments: produced.segments, handles: produced.handles },
               stamp,
               startedAt,
+              writtenAt,
             ),
       );
     } catch (err) {

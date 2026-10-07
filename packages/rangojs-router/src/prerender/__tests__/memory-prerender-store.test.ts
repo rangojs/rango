@@ -374,6 +374,7 @@ describe("the removed marker (tombstone)", () => {
       meta: {
         storedAt: 1000,
         staleAt: 61_000,
+        ttl: 60,
         tags: ["product:42"],
         version: "b1",
         params,
@@ -497,11 +498,11 @@ describe("a write rendered before a markStale()", () => {
     expect(held!.entry).toBe(entry);
   });
 
-  it("a mark in the stamp's own millisecond covers it, like the KV store", async () => {
+  it("a mark in the stamp's own millisecond leaves it fresh (strictly after, unlike KV)", async () => {
     const store = createMemoryPrerenderStore({ now: () => 5000 });
     await store.markStale("r1", ["t"]);
     await store.set(key(), stamp(5000));
-    expect((await store.get(key()))!.meta.staleAt).toBe(5000);
+    expect((await store.get(key()))!.meta.staleAt).toBe(5000 + 600_000);
   });
 
   it("a write rendered after the mark, another tag or another router is left alone", async () => {

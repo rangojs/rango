@@ -354,4 +354,25 @@ describe("on-demand prerender: router.prerender() then serve", () => {
       params: { slug: "intro" },
     });
   });
+
+  // A refresh right after markStale() in the same process renders content
+  // newer than the mark: the entry is fresh, whatever millisecond each ran in.
+  it("markStale() then a refresh in the same tick leaves a fresh entry that schedules no onRevalidate", async () => {
+    const onRevalidate = vi.fn();
+    const router = makeRouter({ store, onRevalidate });
+    const prerender = router.prerender({ env: {} });
+    const slugs = Array.from({ length: 25 }, (_, i) => `tick-${i}`);
+
+    for (const slug of slugs) {
+      await prerender.markStale([`article:${slug}`]);
+      await prerender(`/article/${slug}`);
+    }
+    for (const slug of slugs) {
+      expect(
+        await prerender(`/article/${slug}`, { onlyIfStale: true }),
+      ).toMatchObject({ ok: true, status: "already-fresh" });
+      await serveShellRequest(router, `/article/${slug}`);
+    }
+    expect(onRevalidate).not.toHaveBeenCalled();
+  });
 });

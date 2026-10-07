@@ -265,6 +265,7 @@ import {
   guidePlainFailKey,
   guidePlainGoneKey,
 } from "./pages/guide-plain.js";
+import { guideDeclineKey } from "./pages/guides-handler.js";
 import { GuidePlainLoader } from "./loaders/guide-plain.js";
 import { suspenseDemoPatterns } from "./pages/suspense-demo.js";
 import { releasesPatterns } from "./pages/releases.js";
@@ -326,12 +327,14 @@ const docsPatterns = createDocsPatterns({ articles: docsArticles });
 
 // Serialize a PrerenderResult for the e2e: Error instances don't survive
 // Response.json, so flatten to the message.
+function flattenResult(result: PrerenderResult): unknown {
+  return !result.ok && result.error instanceof Error
+    ? { ...result, error: result.error.message }
+    : result;
+}
+
 function prerenderResultJson(result: PrerenderResult): Response {
-  return Response.json(
-    !result.ok && result.error instanceof Error
-      ? { ...result, error: result.error.message }
-      : result,
-  );
+  return Response.json(flattenResult(result));
 }
 
 // On-demand prerender trigger handler. Explicitly typed as Handler so the lazy
@@ -339,8 +342,16 @@ function prerenderResultJson(result: PrerenderResult): Response {
 // module's type from the router (which is built from urlpatterns) — that would
 // be a circular type. Returns the PrerenderResult as JSON for the e2e.
 // ?remove=1 removes the page instead (prerender.remove()): the live handler
-// answers the next request.
+// answers the next request. ?decline=1 / ?decline=0 make the build handler
+// decline the slug (ctx.passthrough()) / stop declining it.
 const GuidesTrigger: Handler<{ slug: string }> = async (ctx) => {
+  const decline = ctx.url.searchParams.get("decline");
+  if (decline) {
+    const declineKey = guideDeclineKey(ctx.params.slug);
+    if (decline === "1") await ctx.env.PRERENDER_KV.put(declineKey, "1");
+    else await ctx.env.PRERENDER_KV.delete(declineKey);
+    return Response.json({ decline: decline === "1" });
+  }
   const { router } = await import("./router.js");
   const prerender = router.prerender({
     env: ctx.env,
@@ -395,14 +406,7 @@ const GuidePlainTrigger: Handler<{ slug: string }> = async (ctx) => {
   }
   const targets = ctx.url.searchParams.getAll("target");
   if (targets.length > 0) {
-    const results = await prerender.many(targets);
-    return Response.json(
-      results.map((r) =>
-        !r.ok && r.error instanceof Error
-          ? { ...r, error: r.error.message }
-          : r,
-      ),
-    );
+    return Response.json((await prerender.many(targets)).map(flattenResult));
   }
   const target = {
     route: "guidePlain",

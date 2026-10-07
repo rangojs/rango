@@ -8,3 +8,8 @@ export const goneSlugs: Set<string> = new Set();
 // The same for a data source that is down: the plain producer throws for a
 // slug in this set (?fail=1 / ?fail=0), so a refresh is `render-failed`.
 export const failSlugs: Set<string> = new Set();
+
+// And a Passthrough build handler that declines a baked param on demand: the
+// handler calls ctx.passthrough() for a slug in this set (?decline=1 /
+// ?decline=0 on /od-trigger), so a refresh is `skipped-passthrough`.
+export const declineSlugs: Set<string> = new Set();

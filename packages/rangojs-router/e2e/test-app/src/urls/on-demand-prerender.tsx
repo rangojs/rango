@@ -6,7 +6,7 @@ import {
   notFound,
   type Handler,
 } from "@rangojs/router";
-import { failSlugs, goneSlugs } from "../od-gone.js";
+import { declineSlugs, failSlugs, goneSlugs } from "../od-gone.js";
 import { FreshStampLoader, PrerenderTestLoader } from "../loaders.js";
 import { PrerenderClientTest } from "../components/PrerenderClientTest.js";
 import { OnDemandFreshStamp } from "../components/OnDemandFreshStamp.js";
@@ -21,12 +21,14 @@ import type { PrerenderResult } from "@rangojs/router/prerender";
 
 // Serialize a PrerenderResult for the e2e: Error instances don't survive
 // Response.json, so flatten to the message.
+function flattenResult(result: PrerenderResult): unknown {
+  return !result.ok && result.error instanceof Error
+    ? { ...result, error: result.error.message }
+    : result;
+}
+
 function prerenderResultJson(result: PrerenderResult): Response {
-  return Response.json(
-    !result.ok && result.error instanceof Error
-      ? { ...result, error: result.error.message }
-      : result,
-  );
+  return Response.json(flattenResult(result));
 }
 
 // On-demand (ISR-style) prerender fixture.
@@ -39,13 +41,23 @@ function prerenderResultJson(result: PrerenderResult): Response {
 // ctx.onDemand is true during an on-demand refresh, false during a static build
 // render. od-stamp is captured ONCE per render, so a stored (overlay/baked)
 // entry replays an identical stamp across serves — the frozen-payload proof.
-// "removable" is baked for the removal e2e alone, which removes its page.
+// "removable" is baked for the removal e2e alone, which removes its page, and
+// "decline-baked" for the decline e2e alone, which toggles its decline.
 export const OnDemandDetailDef = Prerender<{ slug: string }>(
-  async () => [{ slug: "baked" }, { slug: "removable" }],
+  async () => [
+    { slug: "baked" },
+    { slug: "removable" },
+    { slug: "decline-baked" },
+  ],
   async (ctx) => {
     // A param the build handler declines: the live handler answers for it
     // (skipped-passthrough). Prefix-keyed so no other test's slug is touched.
-    if (ctx.params.slug.startsWith("declined-")) return ctx.passthrough();
+    if (
+      ctx.params.slug.startsWith("declined-") ||
+      declineSlugs.has(ctx.params.slug)
+    ) {
+      return ctx.passthrough();
+    }
     const stamp = new Date().toISOString();
     return (
       <div data-testid="od-detail">
@@ -90,10 +102,17 @@ export const OnDemandDetail = Passthrough(OnDemandDetailDef, async (ctx) => {
 // unaffected; cloudflare-basic's triggers use the object target.
 //
 // ?remove=1 removes the page instead (prerender.remove()): the live handler
-// answers the next request.
+// answers the next request. ?decline=1 / ?decline=0 make the build handler
+// decline the slug (ctx.passthrough()) / stop declining it.
 export const OnDemandTrigger: Handler<{ slug: string }> = async (ctx) => {
   const { router } = await import("../router.js");
   const prerender = router.prerender({ env: ctx.env as AppEnv });
+  const decline = ctx.searchParams.get("decline");
+  if (decline) {
+    if (decline === "1") declineSlugs.add(ctx.params.slug);
+    else declineSlugs.delete(ctx.params.slug);
+    return Response.json({ decline: declineSlugs.has(ctx.params.slug) });
+  }
   const target = `/on-demand/${ctx.params.slug}`;
   const result =
     ctx.searchParams.get("remove") === "1"
@@ -162,14 +181,7 @@ export const OnDemandPlainTrigger: Handler<{ slug: string }> = async (ctx) => {
   }
   const targets = ctx.searchParams.getAll("target");
   if (targets.length > 0) {
-    const results = await prerender.many(targets);
-    return Response.json(
-      results.map((r) =>
-        !r.ok && r.error instanceof Error
-          ? { ...r, error: r.error.message }
-          : r,
-      ),
-    );
+    return Response.json((await prerender.many(targets)).map(flattenResult));
   }
   const target = `/on-demand-plain/${ctx.params.slug}`;
   if (ctx.searchParams.get("remove") === "1") {
