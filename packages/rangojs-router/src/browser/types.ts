@@ -311,6 +311,14 @@ export interface NavigationUpdate {
     /** Function to check if streaming is in progress */
     isStreaming?: () => boolean;
   };
+  /**
+   * This update completes a page an earlier update presented (a `prefetch:
+   * false` fill): it carries no scroll action and must not clear one. React
+   * can hold the adoption's commit until the fill lands (no boundary to fall
+   * back to, or one already revealed); the scroll that update queued is then
+   * applied with this one.
+   */
+  keepScroll?: true;
 }
 
 /**

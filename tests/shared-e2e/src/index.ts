@@ -57,10 +57,15 @@ export type {
   SuspenseAuditCounters,
 } from "./console-guard.js";
 export {
+  expectBackAndForwardDuringAFillEndOnTheFilledPage,
   expectBackAndForwardKeepTheFilledPage,
+  expectClickDuringThePrefetchAdoptsIt,
+  expectClickFromAScrolledPageEndsAtTheTop,
   expectDeferredOutcomeArrivesWithTheFill,
   expectDocumentAwaitsLoaderThatPrefetchSkips,
+  expectDoubleClickEndsOnTheLastFill,
   expectEveryAdoptionSendsItsOwnFill,
+  expectFailedFillReachesTheNetworkErrorBoundary,
   expectLeavingBeforeTheFillAbortsItAndBackRefetches,
   expectNoBoundaryHoldsThePageLeftUntilTheFillReturns,
   expectPrefetchSkipsFlaggedWorkAndClickFillsIt,
