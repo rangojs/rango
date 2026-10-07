@@ -70,6 +70,7 @@ import {
 import type { HandlerContext } from "../handler-context.js";
 import type { RscPayload, SSRModule } from "../types.js";
 import type { PartialCacheOptions } from "../../types.js";
+import { shellCacheKey } from "../../testing/shell-status.js";
 import {
   getCatalog,
   getStamp,
@@ -205,6 +206,8 @@ async function serve(
     tasks.push(Promise.resolve().then(task));
   };
   const ctx = makeCtx(router);
+  // As rsc/handler.ts does: the cache keys carry the serving router.
+  reqCtx._routerId = router.id;
   const response = await runWithRequestContext(reqCtx, async () => {
     // What rsc/handler.ts does before dispatching the render.
     const plan = await classifyRequest(request, url, {
@@ -233,15 +236,18 @@ async function serve(
   return { response, body };
 }
 
-const SHELL_KEY = (path: string, partition?: string) =>
-  `localhost${path}:shell${partition === undefined ? "" : `|${encodeURIComponent(partition)}`}`;
+type Partition = Parameters<typeof shellCacheKey>[3];
+
+const SHELL_KEY = (router: Router, path: string, partition?: Partition) =>
+  shellCacheKey(router, path, undefined, partition);
 
 async function storedEntry(
+  router: Router,
   store: MemorySegmentCacheStore,
   path: string,
-  partition?: string,
+  partition?: Partition,
 ): Promise<ShellCacheEntry> {
-  const hit = await store.getShell(SHELL_KEY(path, partition));
+  const hit = await store.getShell(SHELL_KEY(router, path, partition));
   if (!hit) throw new Error(`no shell stored for ${path}`);
   return hit.entry;
 }
@@ -284,11 +290,11 @@ async function captureThenDrift(
   harness: ReturnType<typeof makeStore>,
   path: string,
   headers?: Record<string, string>,
-  partition?: string,
+  partition?: Partition,
 ): Promise<ShellCacheEntry> {
   const miss = await serve(router, harness.store, path, { headers });
   expect(miss.response.headers.get("x-rango-shell")).toBe("MISS");
-  const entry = await storedEntry(harness.store, path, partition);
+  const entry = await storedEntry(router, harness.store, path, partition);
   source.generation = 2;
   harness.dropItems();
   harness.itemReads.length = 0;
@@ -339,7 +345,7 @@ describe("PPR snapshot pruning: no HIT runs a handler, so every document entry p
     capture?: Record<string, string>;
     hit?: Record<string, string>;
     beforeHit?: () => Promise<void> | void;
-    /** The request partition the route's key() gives the capture and HIT. */
+    /** The route's key() result for the capture and the HIT. */
     partition?: string;
   }> = [
     {
@@ -357,7 +363,7 @@ describe("PPR snapshot pruning: no HIT runs a handler, so every document entry p
       },
       capture: { "x-variant": "a" },
       hit: { "x-variant": "a" },
-      partition: "key:variant%3Aa",
+      partition: "variant:a",
     },
   ];
 
@@ -383,7 +389,7 @@ describe("PPR snapshot pruning: no HIT runs a handler, so every document entry p
         capture,
         partition,
       );
-      expect(entry.docKey).toBe("doc:localhost/scoped");
+      expect(entry.docKey).toBe(`doc:${router.id}@localhost/scoped`);
       expect(families(entry.snapshot)).toEqual(["segment:doc"]);
 
       await beforeHit?.();
@@ -436,9 +442,9 @@ describe("PPR snapshot pruning: no HIT runs a handler, so every document entry p
       harness,
       "/segmented",
       { "x-segment": "a" },
-      "doc:localhost/segmented|a",
+      { generated: [`doc:${router.id}@localhost/segmented|a`] },
     );
-    expect(entry.docKey).toBe("doc:localhost/segmented|a");
+    expect(entry.docKey).toBe(`doc:${router.id}@localhost/segmented|a`);
     expect(families(entry.snapshot)).toEqual(["segment:doc"]);
 
     const served = await serve(router, harness.store, "/segmented", {
@@ -671,7 +677,7 @@ describe("PPR snapshot pruning: a doc record that fails to decode on a HIT", () 
     const entry = await captureThenDrift(router, harness, "/corrupt");
     expect(families(entry.snapshot)).toEqual(["segment:doc"]);
     await harness.store.putShell(
-      SHELL_KEY("/corrupt"),
+      SHELL_KEY(router, "/corrupt"),
       {
         ...entry,
         snapshot: entry.snapshot!.map((record) =>
@@ -703,7 +709,7 @@ describe("PPR snapshot pruning: a doc record that fails to decode on a HIT", () 
       expect(pageRuns).toBe(runsBefore + 1);
 
       // The recapture replaced the tombstone with a sound entry at g2.
-      const healed = await storedEntry(harness.store, "/corrupt");
+      const healed = await storedEntry(router, harness.store, "/corrupt");
       expect(healed.navigationOnly).toBeUndefined();
       const healedDoc = healed.snapshot?.find((r) => r.key === healed.docKey)
         ?.value as { segments: unknown[] } | undefined;
@@ -732,7 +738,7 @@ describe("PPR snapshot pruning: a doc record that fails to decode on a HIT", () 
     const entry = await captureThenDrift(router, harness, "/tomb");
     // What the degrade writes (rsc-rendering.ts degradeUnreplayableShell).
     await harness.store.putShell(
-      SHELL_KEY("/tomb"),
+      SHELL_KEY(router, "/tomb"),
       {
         reactVersion: entry.reactVersion,
         buildVersion: entry.buildVersion,

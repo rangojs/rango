@@ -191,7 +191,9 @@ function setup(cacheStore: SegmentCacheStore = new MemorySegmentCacheStore()) {
     url: string,
     extra: Omit<ServeShellRequestOptions, "cacheStore"> = {},
   ) => serveShellRequest(router, url, { cacheStore, ...extra });
-  return { cacheStore, serve };
+  /** The router's default record key for a document request to `path`. */
+  const docKey = (path: string): string => `doc:${router.id}@localhost${path}`;
+  return { cacheStore, serve, router, docKey };
 }
 
 const tier = (name: string) => ({ headers: { "x-tier": name } });
@@ -199,13 +201,15 @@ const locale = (name: string) => ({ headers: { "x-locale": name } });
 
 describe("serveShellRequest: namespaced key() results (#975)", () => {
   it("the record key and the shell partition namespace the key() result; shellCacheKey builds the production key", async () => {
-    const { serve, cacheStore } = setup();
+    const { serve, cacheStore, router } = setup();
     const url = "http://localhost/ns/tiered";
 
     const gold = await serve("/ns/tiered", tier("gold"));
     expect(gold.shellStatus).toBe("MISS");
-    expect(gold.key).toBe(shellCacheKey(url, undefined, "tier:gold"));
-    expect(gold.key).toBe("localhost/ns/tiered:shell|key%3Atier%253Agold");
+    expect(gold.key).toBe(shellCacheKey(router, url, undefined, "tier:gold"));
+    expect(gold.key).toBe(
+      `${router.id}@localhost/ns/tiered:shell|key%3Atier%253Agold`,
+    );
     expect(await cacheStore.get("key:tier%3Agold")).not.toBeNull();
 
     const hit = await serve("/ns/tiered", tier("gold"));
@@ -214,12 +218,13 @@ describe("serveShellRequest: namespaced key() results (#975)", () => {
   });
 
   it("a raw key() result can't write a route's content under another route's default key", async () => {
-    const { serve, cacheStore } = setup();
+    const { serve, cacheStore, docKey } = setup();
+    const victimKey = docKey("/ns/victim");
 
-    await serve("/ns/bare", tier("doc:localhost/ns/victim"));
-    expect(await cacheStore.get("doc:localhost/ns/victim")).toBeNull();
+    await serve("/ns/bare", tier(victimKey));
+    expect(await cacheStore.get(victimKey)).toBeNull();
     expect(
-      await cacheStore.get("key:doc%3Alocalhost%2Fns%2Fvictim"),
+      await cacheStore.get(`key:${encodeURIComponent(victimKey)}`),
     ).not.toBeNull();
 
     const victim = await serve("/ns/victim");
@@ -230,7 +235,7 @@ describe("serveShellRequest: namespaced key() results (#975)", () => {
 
 describe("serveShellRequest: a nested cache() inherits the enclosing scopes (#974)", () => {
   it("an enclosing condition() returning false: no record, no shell, the handler runs every time", async () => {
-    const { serve, cacheStore } = setup();
+    const { serve, cacheStore, router, docKey } = setup();
     const url = "http://localhost/gated/page";
     runs.gated = 0;
 
@@ -239,8 +244,8 @@ describe("serveShellRequest: a nested cache() inherits the enclosing scopes (#97
     expect(first.shellStatus).not.toBe("HIT");
     expect(second.shellStatus).not.toBe("HIT");
     expect(second.flight).toContain("gated-run-2");
-    expect(await cacheStore.getShell!(shellCacheKey(url))).toBeNull();
-    expect(await cacheStore.get("doc:localhost/gated/page")).toBeNull();
+    expect(await cacheStore.getShell!(shellCacheKey(router, url))).toBeNull();
+    expect(await cacheStore.get(docKey("/gated/page"))).toBeNull();
 
     // Allowed, the nested scope caches and the shell captures as before.
     gate.allow = true;
@@ -251,8 +256,8 @@ describe("serveShellRequest: a nested cache() inherits the enclosing scopes (#97
   });
 
   it("enclosing tags tag the nested record and its shell: updateTag(outer) evicts both", async () => {
-    const { serve, cacheStore } = setup();
-    const recordKey = "doc:localhost/tagged/page";
+    const { serve, cacheStore, router, docKey } = setup();
+    const recordKey = docKey("/tagged/page");
 
     expect((await serve("/tagged/page")).shellStatus).toBe("MISS");
     const hit = await serve("/tagged/page");
@@ -269,7 +274,9 @@ describe("serveShellRequest: a nested cache() inherits the enclosing scopes (#97
     });
     expect(await cacheStore.get(recordKey)).toBeNull();
     expect(
-      await cacheStore.getShell!(shellCacheKey("http://localhost/tagged/page")),
+      await cacheStore.getShell!(
+        shellCacheKey(router, "http://localhost/tagged/page"),
+      ),
     ).toBeNull();
     expect((await serve("/tagged/page")).shellStatus).toBe("MISS");
     const fresh = await serve("/tagged/page");
@@ -278,8 +285,9 @@ describe("serveShellRequest: a nested cache() inherits the enclosing scopes (#97
   });
 
   it("an enclosing scope on another store partitions the nested record and the shell by its keyGenerator", async () => {
-    const { serve } = setup();
+    const { serve, router, docKey } = setup();
     const url = "http://localhost/localized/page";
+    const defaultKey = docKey("/localized/page");
 
     const en = await serve("/localized/page", locale("en"));
     expect(en.shellStatus).toBe("MISS");
@@ -288,8 +296,8 @@ describe("serveShellRequest: a nested cache() inherits the enclosing scopes (#97
     expect(de.flight).toContain("locale-de");
     expect(de.flight).not.toContain("locale-en");
     expect(en.key).toBe(
-      shellCacheKey(url, undefined, {
-        generated: ["doc:localhost/localized/page|en"],
+      shellCacheKey(router, url, undefined, {
+        generated: [`${defaultKey}|en`],
       }),
     );
 
@@ -305,13 +313,13 @@ describe("serveShellRequest: a nested cache() inherits the enclosing scopes (#97
     for (const name of ["en", "de"]) {
       expect(
         await nestedStore.get(
-          `doc%3Alocalhost%2Flocalized%2Fpage%7C${name}|doc%3Alocalhost%2Flocalized%2Fpage`,
+          `${encodeURIComponent(`${defaultKey}|${name}`)}|${encodeURIComponent(defaultKey)}`,
         ),
       ).not.toBeNull();
     }
   });
   it("keyGenerator parts keep their position: a store returning the default key never merges two partitions", async () => {
-    const { serve } = setup();
+    const { serve, router, docKey } = setup();
     const url = "http://localhost/positional/page";
     const visit = (localeName: string, region: string) => ({
       headers: { "x-locale": localeName, "x-region": region },
@@ -326,25 +334,26 @@ describe("serveShellRequest: a nested cache() inherits the enclosing scopes (#97
     expect(deUs.flight).toContain("locale-de-region-us");
     expect(deUs.flight).not.toContain("locale-en");
 
-    const generated = "doc:localhost/positional/page|de";
+    const generated = `${docKey("/positional/page")}|de`;
     expect(enDe.key).toBe(
-      shellCacheKey(url, undefined, { generated: ["", generated] }),
+      shellCacheKey(router, url, undefined, { generated: ["", generated] }),
     );
     expect(deUs.key).toBe(
-      shellCacheKey(url, undefined, { generated: [generated, ""] }),
+      shellCacheKey(router, url, undefined, { generated: [generated, ""] }),
     );
     // Both default: the unpartitioned shell, as before.
     const enUs = await serve("/positional/page", visit("en", "us"));
-    expect(enUs.key).toBe(shellCacheKey(url));
+    expect(enUs.key).toBe(shellCacheKey(router, url));
   });
 
   it("an outer cache() on the app store partitions a nested cache({ store })", async () => {
-    const { serve } = setup(
+    const { serve, docKey } = setup(
       new MemorySegmentCacheStore({
         keyGenerator: (ctx: RequestContext, defaultKey: string) =>
           `${defaultKey}|${localeOf(ctx)}`,
       }),
     );
+    const defaultKey = docKey("/app-localized/page");
 
     expect((await serve("/app-localized/page", locale("en"))).shellStatus).toBe(
       "MISS",
@@ -356,7 +365,7 @@ describe("serveShellRequest: a nested cache() inherits the enclosing scopes (#97
     for (const name of ["en", "de"]) {
       expect(
         await appNestedStore.get(
-          `doc%3Alocalhost%2Fapp-localized%2Fpage%7C${name}|doc%3Alocalhost%2Fapp-localized%2Fpage`,
+          `${encodeURIComponent(`${defaultKey}|${name}`)}|${encodeURIComponent(defaultKey)}`,
         ),
       ).not.toBeNull();
     }

@@ -1044,8 +1044,8 @@ export const shellCachePatterns = urls(
       ): Promise<{ stored: boolean; refused: boolean; passes: number }> => {
         const url = new URL(ctx.request.url);
         const probe = url.searchParams.get("probe") ?? "";
-        const { cacheStore } = await import("../router.js");
-        const key = `${url.host}/shell-cache/flight-error?probe=${probe}:shell`;
+        const { cacheStore, router } = await import("../router.js");
+        const key = `${router.id}@${url.host}/shell-cache/flight-error?probe=${probe}:shell`;
         const marker = `(probe=${probe})`;
         return {
           passes: shellFlightErrorPasses.get(probe) ?? 0,
@@ -1287,9 +1287,9 @@ export const shellCachePatterns = urls(
         const url = new URL(ctx.request.url);
         const target = url.searchParams.get("target") ?? "";
         const mode = url.searchParams.get("mode") ?? "postponed";
-        const { cacheStore } = await import("../router.js");
+        const { cacheStore, router } = await import("../router.js");
         const t = new URL(target, url);
-        const key = `${t.host}${t.pathname}${t.search}:shell`;
+        const key = `${router.id}@${t.host}${t.pathname}${t.search}:shell`;
         const hit = await cacheStore.getShell(key);
         if (!hit) return { ok: false, found: false };
         const entry = { ...hit.entry };

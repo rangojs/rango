@@ -9,7 +9,8 @@
  *   1. options.key(requestCtx) — full override, stored namespaced as
  *      loader:{loaderId}:key:{encodeURIComponent(result)} (#1009)
  *   2. store.keyGenerator(requestCtx, defaultKey) — store-level modification
- *   3. loader:{loaderId}:{host}{pathname}:{sortedParams} — default
+ *   3. loader:{loaderId}:{routerId}@{host}{pathname}:{sortedParams} — default
+ *      (a loader's ctx is one router's: cache-key-utils.ts, the router rule)
  *
  * Values are serialized via RSC Flight (serializeResult/deserializeResult),
  * supporting ReactNode, Promises, null, and all RSC-serializable types.
@@ -77,7 +78,7 @@ import {
 import { observePhase, PHASES } from "../instrument.js";
 import {
   KEY_PART_PREFIX,
-  sortedRouteParams,
+  requestKeyBase,
 } from "../../cache/cache-key-utils.js";
 import {
   resolveTtl,
@@ -139,17 +140,6 @@ function debugLoaderCacheLog(message: string): void {
   }
 }
 
-function getDefaultLoaderCacheKey(
-  loaderId: string,
-  host: string,
-  pathname: string,
-  params: Record<string, string>,
-): string {
-  const paramStr = sortedRouteParams(params);
-  const base = paramStr ? `${pathname}:${paramStr}` : pathname;
-  return `loader:${loaderId}:${host}${base}`;
-}
-
 /**
  * A loader's own `key()` result as its entry key (#1009). The result is
  * often request input, and the item family (`getItem`/`setItem`) has no
@@ -160,7 +150,7 @@ function getDefaultLoaderCacheKey(
  * - an encoded result holds no `:`, so the key reads unambiguously from
  *   the right (result, `key:`, loader id), and two namespaced keys are
  *   equal only for the same loader and result;
- * - a default key `loader:<id>:<host><pathname>...` holds a `/` past its
+ * - a default key `loader:<id>:[<router>@]<host><pathname>...` holds a `/` past its
  *   id, and an encoded result holds none, so the two are equal only if one
  *   loader's id is literally `<other id>:<host>/<path>...`. Loader ids can
  *   hold `:` (a dev id is a root-relative path, absolute `D:/...` on
@@ -189,8 +179,9 @@ async function resolveLoaderKey(
   // (cache-runtime pushes ctx.url.host). Without it, a multi-tenant host router
   // serving the same pathname for different hosts would leak one host's cached
   // loader data to another.
-  const host = getRequestContext()?.url?.host ?? "localhost";
-  const defaultKey = getDefaultLoaderCacheKey(loaderId, host, pathname, params);
+  const requestCtx = getRequestContext();
+  const host = requestCtx?.url?.host ?? "localhost";
+  const defaultKey = `loader:${loaderId}:${requestKeyBase(requestCtx, host, pathname, undefined, params)}`;
   if (options === false) return { key: defaultKey, declared: false };
   const keyFn = options.key;
   return {

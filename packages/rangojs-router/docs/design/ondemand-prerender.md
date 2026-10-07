@@ -196,6 +196,15 @@ TTL resolves route `onDemand.ttl` > router `ttl` > never stale, and it
 is soft staleness metadata on the stored entry, never a hard store expiry — see
 Store Model for why that distinction is load-bearing.
 
+Two timestamps, two meanings. `meta.storedAt` is when the render started: a
+`markStale()` that lands while the render runs is at or after it, so it marks
+the entry the render stores (#1072). `meta.staleAt` counts the ttl from the
+write, so a render slower than its ttl is not born stale (that would have it
+re-queue itself through `onRevalidate` with no visitor). The same holds for the
+marker of a refresh that hit `notFound()` and for a `ctx.passthrough()` decline.
+A `remove()` marker renders nothing and carries its write time in both. A
+result's `ttl` is the configured one (`meta.ttl`), never `staleAt - storedAt`.
+
 The important part is that store resolution is per call or per request, not a
 module singleton. Cloudflare, Vercel, and multi-tenant apps must not memoize one
 request's binding and reuse it for another tenant. Today's production prerender
@@ -568,12 +577,24 @@ stores scope by `routerId` (the memory store by the key's router id, KV by the
 marker key). Runtime-cache markers are a separate store and are not scoped
 here.
 
+Both shipped stores also mark an entry written after the mark. KV compares its
+tag marker with `storedAt` on read (`marker >= storedAt`: the marker write is
+I/O, so a same-millisecond marker is ambiguous and counts). The memory store
+remembers when each tag was last marked per router id and, in `set()`, lowers
+`staleAt` of an entry whose `storedAt` is strictly before that mark. Strictly,
+because in one process a `markStale()` followed by a refresh in the same
+millisecond is ordered, and `>=` would store that refresh stale (the rule
+`MemorySegmentCacheStore` follows, `caching.md`). Both mark and never refuse:
+the entry keeps serving. A custom store that marks held entries in place has to
+remember its marks for a write stamped before one it has taken.
+
 ```ts
 interface StoredEnvelope {
   v: 1;
   meta: {
-    storedAt: number;
-    staleAt?: number; // absent = never stale
+    storedAt: number; // when the render started (a remove(): the write)
+    staleAt?: number; // absent = never stale; the ttl counts from the write
+    ttl?: number; // the configured ttl, as a result reports it
     tags: string[];
     version: string; // the key's version at write time
     params: Record<string, string>; // verified against the request on read
@@ -832,6 +853,13 @@ one entry that most needs a recheck.
 `remove()` and a refresh of the same page are two writes to one key, with no
 lock between them. Whichever lands last is what requests see, and two cases
 are worth knowing.
+
+Two refreshes of one page race. A marker stored after a render started is not
+overwritten by that render's page, and a render's own marker (a `notFound()` or
+a decline) carries that render's start. So a `remove()` always wins over a
+render in flight, since its marker carries its write time, while an older
+render's `notFound()` marker does not win over a render that started after it:
+the later render read newer data, and its page is kept.
 
 A job queued before the removal. `onRevalidate` fired for the page while it
 was stale, the page was removed, and the queued job runs after that. If it

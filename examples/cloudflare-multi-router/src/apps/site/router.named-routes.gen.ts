@@ -6,6 +6,7 @@ export const NamedRoutes = {
   "group.section.item.leaf": "/g/:id/sub/leaf",
   home: "/",
   lookup: { path: "/lookup", search: { q: "string" } },
+  pricing: "/pricing",
 } as const;
 
 // Aliased so the augmentation below does not pay a homomorphic mapped-type

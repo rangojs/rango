@@ -59,7 +59,10 @@ const SHELL = {
 };
 
 describe("PPR shell memo through the public store API", () => {
-  const key = shellCacheKey("https://shop.example.com/products/1?b=2&a=1");
+  const key = shellCacheKey(
+    { id: "shop" },
+    "https://shop.example.com/products/1?b=2&a=1",
+  );
 
   it("serves a repeat shell read from memory, and reads again with { shellMs: 0 }", async () => {
     const memoOn = countingCache();

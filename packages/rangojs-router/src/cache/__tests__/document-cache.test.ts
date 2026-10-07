@@ -1539,6 +1539,84 @@ describe("createDocumentCacheMiddleware", () => {
     });
   });
 
+  // #1065: a hostOverride cookie, or a warm under another router's host, puts
+  // two routers on one host and path over one store.
+  describe("router isolation (two routers on one host and path)", () => {
+    it("isolates the default key by router so one router never serves another's response", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+      const middleware = createDocumentCacheMiddleware();
+      const serveAs = async (
+        routerId: string,
+        body: string,
+      ): Promise<{
+        status: string | null;
+        body: string;
+        rendered: boolean;
+      }> => {
+        // What rsc/handler.ts stamps before the middleware chain runs.
+        Object.assign(mockRequestCtx, { _routerId: routerId });
+        const next = vi
+          .fn()
+          .mockResolvedValue(
+            new Response(body, { headers: { "Cache-Control": "s-maxage=60" } }),
+          );
+        const response = (await middleware(
+          createMockMiddlewareContext("http://preview.dev/pricing"),
+          next,
+        )) as Response;
+        await vi.runAllTimersAsync();
+        return {
+          status: response.headers.get("x-document-cache-status"),
+          body: await response.text(),
+          rendered: next.mock.calls.length > 0,
+        };
+      };
+
+      expect(await serveAs("app-a", "A pricing")).toEqual({
+        status: "MISS",
+        body: "A pricing",
+        rendered: true,
+      });
+      expect(await serveAs("app-b", "B pricing")).toEqual({
+        status: "MISS",
+        body: "B pricing",
+        rendered: true,
+      });
+      expect(await serveAs("app-a", "unused")).toEqual({
+        status: "HIT",
+        body: "A pricing",
+        rendered: false,
+      });
+
+      expect([...mockStore.cache.keys()].sort()).toEqual([
+        "app-a@preview.dev/pricing:html",
+        "app-b@preview.dev/pricing:html",
+      ]);
+    });
+
+    it("a keyGenerator owns its key: no router part is added", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+      const middleware = createDocumentCacheMiddleware({
+        keyGenerator: (url) => `custom:${url.pathname}`,
+      });
+      Object.assign(mockRequestCtx, { _routerId: "app-a" });
+
+      await middleware(
+        createMockMiddlewareContext("http://preview.dev/pricing"),
+        vi.fn().mockResolvedValue(
+          new Response("A pricing", {
+            headers: { "Cache-Control": "s-maxage=60" },
+          }),
+        ),
+      );
+      await vi.runAllTimersAsync();
+
+      expect([...mockStore.cache.keys()]).toEqual(["custom:/pricing:html"]);
+    });
+  });
+
   describe("debug logging", () => {
     it("should not log when debug is false", async () => {
       const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});

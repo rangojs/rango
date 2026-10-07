@@ -302,25 +302,26 @@ local/dev behavior, not as proof that segment SWR is active.
 
 ## Key Differences
 
-|                      | `cache()` DSL                                         | `"use cache"` directive                                                             |
-| -------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| **Scope**            | Route segment tree (handler + children + parallels)   | Single function return value                                                        |
-| **Defined at**       | Route definition site (`urls.ts`)                     | Inside function body or at file top                                                 |
-| **Cache key**        | Request type + host + pathname + params + search      | Function identity + serialized non-tainted args                                     |
-| **Execution on hit** | All-or-nothing: entire handler skipped                | Partial: function body skipped, calling code runs                                   |
-| **Runtime control**  | `condition` to disable, custom `key` function         | None — if the directive is present, it caches                                       |
-| **Side effects**     | Response side effects throw inside the boundary       | `ctx.headers.set()`, `ctx.set()`, etc. throw                                        |
-| **Handle data**      | Handler pushes replayed; loader pushes re-run live    | Captured and replayed when it receives `ctx`                                        |
-| **Loaders**          | Always fresh — excluded from cache, opt-in per loader | Can be used inside loaders                                                          |
-| **Nesting**          | Inner TTLs override; `key()` partitions compose       | Compose by calling cached functions from uncached; inner tags reach the outer entry |
+|                      | `cache()` DSL                                             | `"use cache"` directive                                                             |
+| -------------------- | --------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| **Scope**            | Route segment tree (handler + children + parallels)       | Single function return value                                                        |
+| **Defined at**       | Route definition site (`urls.ts`)                         | Inside function body or at file top                                                 |
+| **Cache key**        | Request type + router + host + pathname + params + search | Function identity + serialized non-tainted args                                     |
+| **Execution on hit** | All-or-nothing: entire handler skipped                    | Partial: function body skipped, calling code runs                                   |
+| **Runtime control**  | `condition` to disable, custom `key` function             | None — if the directive is present, it caches                                       |
+| **Side effects**     | Response side effects throw inside the boundary           | `ctx.headers.set()`, `ctx.set()`, etc. throw                                        |
+| **Handle data**      | Handler pushes replayed; loader pushes re-run live        | Captured and replayed when it receives `ctx`                                        |
+| **Loaders**          | Always fresh — excluded from cache, opt-in per loader     | Can be used inside loaders                                                          |
+| **Nesting**          | Inner TTLs override; `key()` partitions compose           | Compose by calling cached functions from uncached; inner tags reach the outer entry |
 
 ### cache() Cache Key
 
-The default key is `{requestType}:{host}{pathname}[:params][?search]`, where
-requestType is `doc`, `partial`, or `intercept`. The same URL is therefore cached
-separately for full document loads, client navigations, and intercept
+The default key is `{requestType}:{routerId}@{host}{pathname}[:params][?search]`,
+where requestType is `doc`, `partial`, or `intercept`. The same URL is therefore
+cached separately for full document loads, client navigations, and intercept
 navigations. The host keeps tenants apart when one deployment serves several
-domains; the search part is sorted, excludes the router's internal params, and
+domains, and the router id keeps two routers on one store apart when both
+serve the same host and path (see `/host-router`, "Shared cache store"); the search part is sorted, excludes the router's internal params, and
 honors `createRouter({ cache: { searchParams } })`.
 
 A custom `key` function replaces the whole default key (e.g., to key by user role
@@ -344,8 +345,8 @@ The key is `use-cache:{functionId}:{serializedArgs}` where functionId is a stabl
 ID from the Vite transform (module path + export name) and args are serialized
 (stable JSON when every arg is JSON-safe, RSC `encodeReply()` otherwise).
 Request-scoped arguments are excluded: route fields read off `ctx` (handler,
-loader or middleware: host, route name, pathname, params, search) and a
-`Request`'s URL are folded in, and `env`
+loader or middleware: router id, host, route name, pathname, params, search) and
+a `Request`'s URL are folded in, and `env`
 is left out. React element slots stay out of the key; any other argument that
 cannot be serialized (a function, a class instance) runs the call uncached. See
 `/use-cache`.

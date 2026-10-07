@@ -262,8 +262,10 @@ import { guidesPatterns } from "./pages/guides.js";
 import {
   GuidePlainDef,
   GuideSwrDef,
+  guidePlainFailKey,
   guidePlainGoneKey,
 } from "./pages/guide-plain.js";
+import { guideDeclineKey } from "./pages/guides-handler.js";
 import { GuidePlainLoader } from "./loaders/guide-plain.js";
 import { suspenseDemoPatterns } from "./pages/suspense-demo.js";
 import { releasesPatterns } from "./pages/releases.js";
@@ -326,12 +328,14 @@ const docsPatterns = createDocsPatterns({ articles: docsArticles });
 
 // Serialize a PrerenderResult for the e2e: Error instances don't survive
 // Response.json, so flatten to the message.
+function flattenResult(result: PrerenderResult): unknown {
+  return !result.ok && result.error instanceof Error
+    ? { ...result, error: result.error.message }
+    : result;
+}
+
 function prerenderResultJson(result: PrerenderResult): Response {
-  return Response.json(
-    !result.ok && result.error instanceof Error
-      ? { ...result, error: result.error.message }
-      : result,
-  );
+  return Response.json(flattenResult(result));
 }
 
 // On-demand prerender trigger handler. Explicitly typed as Handler so the lazy
@@ -339,8 +343,16 @@ function prerenderResultJson(result: PrerenderResult): Response {
 // module's type from the router (which is built from urlpatterns) — that would
 // be a circular type. Returns the PrerenderResult as JSON for the e2e.
 // ?remove=1 removes the page instead (prerender.remove()): the live handler
-// answers the next request.
+// answers the next request. ?decline=1 / ?decline=0 make the build handler
+// decline the slug (ctx.passthrough()) / stop declining it.
 const GuidesTrigger: Handler<{ slug: string }> = async (ctx) => {
+  const decline = ctx.url.searchParams.get("decline");
+  if (decline) {
+    const declineKey = guideDeclineKey(ctx.params.slug);
+    if (decline === "1") await ctx.env.PRERENDER_KV.put(declineKey, "1");
+    else await ctx.env.PRERENDER_KV.delete(declineKey);
+    return Response.json({ decline: decline === "1" });
+  }
   const { router } = await import("./router.js");
   const prerender = router.prerender({
     env: ctx.env,
@@ -364,6 +376,10 @@ const GuidesTrigger: Handler<{ slug: string }> = async (ctx) => {
 //   ?remove=1           -> prerender.remove(): the "removed" marker, no render
 //   ?gone=1 / ?gone=0   -> delete / restore the slug in the data source, so
 //                          the next refresh hits notFound() or renders again
+//   ?fail=1 / ?fail=0   -> take the data source down / bring it back, so the
+//                          next refresh throws something other than notFound()
+//   ?target=<path> (repeated) -> prerender.many(targets): the results as a
+//                          JSON array in target order
 const GuidePlainTrigger: Handler<{ slug: string }> = async (ctx) => {
   const { router } = await import("./router.js");
   const prerender = router.prerender({
@@ -381,6 +397,17 @@ const GuidePlainTrigger: Handler<{ slug: string }> = async (ctx) => {
     if (gone === "1") await ctx.env.PRERENDER_KV.put(goneKey, "1");
     else await ctx.env.PRERENDER_KV.delete(goneKey);
     return Response.json({ gone: gone === "1" });
+  }
+  const fail = ctx.url.searchParams.get("fail");
+  if (fail) {
+    const failKey = guidePlainFailKey(ctx.params.slug);
+    if (fail === "1") await ctx.env.PRERENDER_KV.put(failKey, "1");
+    else await ctx.env.PRERENDER_KV.delete(failKey);
+    return Response.json({ fail: fail === "1" });
+  }
+  const targets = ctx.url.searchParams.getAll("target");
+  if (targets.length > 0) {
+    return Response.json((await prerender.many(targets)).map(flattenResult));
   }
   const target = {
     route: "guidePlain",
@@ -537,15 +564,17 @@ function CrossStorePage(ctx: HandlerContext): ReactNode {
 }
 
 // /test/loader-key-* (issue #1009): the loader's value, and the victim
-// loader's id, which its default key carries.
+// loader's id and the router's id, which its default key carries.
 async function LoaderKeyVictimPage(
   ctx: HandlerContext<{ probe: string }>,
 ): Promise<ReactNode> {
   const { from, stamp } = await ctx.use(LoaderKeyVictimLoader);
+  const { router } = await import("./router.js");
   return (
     <div>
       <p data-testid="nested-scope-render">{`${from}:${stamp}`}</p>
       <p data-testid="loader-key-victim-id">{LoaderKeyVictimLoader.$$id}</p>
+      <p data-testid="cache-key-router-id">{router.id}</p>
     </div>
   );
 }
@@ -1015,7 +1044,8 @@ export const urlpatterns = urls(
       }> => {
         const target = ctx.searchParams.get("target") ?? "";
         const targetUrl = new URL(target, ctx.url);
-        const key = `${targetUrl.host}${targetUrl.pathname}${targetUrl.search}:shell`;
+        const { router } = await import("./router.js");
+        const key = `${router.id}@${targetUrl.host}${targetUrl.pathname}${targetUrl.search}:shell`;
         const requestContext = getRequestContext<AppBindings>();
         const store = new CFCacheStore({
           ctx: requestContext.executionContext!,

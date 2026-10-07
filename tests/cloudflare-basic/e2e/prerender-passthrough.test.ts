@@ -341,11 +341,12 @@ test.describe("prerender passthrough assets (production)", () => {
     const jsonMatch = manifestCode.match(/JSON\.parse\('(.+)'\)/);
     expect(jsonMatch).toBeTruthy();
     const manifest: Record<string, string> = JSON.parse(jsonMatch![1]);
-    // 3 known slugs: routing, caching, removable — each has a param hash key
+    // 4 known slugs: routing, caching, removable, decline-baked — each has a
+    // param hash key
     const guidesKeys = Object.keys(manifest).filter((k) =>
       k.startsWith("guides.detail/"),
     );
-    expect(guidesKeys).toHaveLength(3);
+    expect(guidesKeys).toHaveLength(4);
   });
 
   test("prerender asset files for guides have valid segments and handles", () => {
@@ -361,7 +362,7 @@ test.describe("prerender passthrough assets (production)", () => {
     const guidesSpecifiers = Object.entries(manifest)
       .filter(([k]) => k.startsWith("guides.detail/"))
       .map(([, v]) => v);
-    expect(guidesSpecifiers).toHaveLength(3);
+    expect(guidesSpecifiers).toHaveLength(4);
 
     for (const specifier of guidesSpecifiers) {
       // Specifiers are like "./assets/__pr-abcd1234.js"

@@ -826,7 +826,8 @@ page"), `no-match`, `no-store`, `skipped-personalized`,
 `skipped-unsupported-target` (a target with `?search` or `#hash`),
 `skipped-passthrough`, `render-failed` and `store-failed`. Every failure keeps
 the previous entry, except `skipped-passthrough`, which hands the page to the
-live handler.
+live handler. A `markStale()` that lands while a refresh renders marks the entry that
+refresh stores.
 
 A route that is not on-demand is not refused: the same call warms its runtime
 caches instead (see "Warm any route before traffic"). An on-demand route gets
@@ -1087,12 +1088,11 @@ with several routers behind a host router calls it on each router:
   its cache keys carry the host: pass the host the visitors use as `origin`
   (`router.prerender({ env, ctx, origin: "https://a.example" })`), or a path
   target resolves against the calling request's origin. A multi-router app
-  passes `origin` or a full URL on every warm: a host router can forward one
-  host and path to either router (`hostOverride` from a cookie, `fallback()`
-  after a cookie error), and the PPR shell key (`{host}{path}:shell`) has no
-  router id, so two routers sharing a cache store on one host and path share a
-  shell. Do not give two routers the same `version`; with equal versions one
-  serves the other's page (#1065).
+  passes `origin` or a full URL on every warm, so each router warms the host
+  its visitors use. A warm that resolves another router's host stores the
+  warming router's entries under that host; the router that owns the host
+  never reads them (cache keys start with the router's id: `/host-router`,
+  "Shared cache store").
 
 ### KV tag markers
 

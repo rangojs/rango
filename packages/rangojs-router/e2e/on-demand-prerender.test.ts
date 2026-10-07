@@ -2,10 +2,14 @@ import { expect, test, type APIResponse, type Page } from "@playwright/test";
 import { useFixture, type Fixture } from "./fixture";
 import { waitForHydration, expectNoPageError } from "./helper";
 import {
+  expectDeclinedBakedParamServedLive,
+  expectDeclinedPassthroughParamServedLive,
+  expectFailedRefreshKeepsStoredPage,
+  expectManyReturnsOneResultPerTargetInOrder,
   expectRemovedBakedPageAnswers404,
   expectRemovedPassthroughPageRunsLiveHandler,
   expectRemovedUnbakedPageAnswers404,
-  type PrerenderRemoveFixture,
+  type PrerenderOutcomesFixture,
 } from "@shared/e2e";
 
 // On-demand (ISR-style) prerender: a Passthrough + `{ onDemand }` route serves
@@ -288,9 +292,13 @@ async function exerciseRefreshInsideAction(f: Fixture, page: Page) {
 
 // Removing a refreshed page (#1060). Each baked slug belongs to one test here
 // and to no other test: the plain route's "baked", and the Passthrough
-// route's "removable" (its "baked" is exerciseKnownPrerender's). The bodies
-// are shared with tests/cloudflare-basic/e2e/prerender-ondemand.test.ts.
-const removeFixture = (f: Fixture): PrerenderRemoveFixture => ({
+// route's "removable" (its "baked" is exerciseKnownPrerender's), and
+// "decline-baked" for the decline case. The bodies are shared with
+// tests/cloudflare-basic/e2e/prerender-ondemand.test.ts.
+const removeFixture = (f: Fixture): PrerenderOutcomesFixture => ({
+  path: (slug) => `/on-demand-plain/${slug}`,
+  stampTestId: "od-plain-stamp",
+  onDemandTestId: "od-plain-ondemand",
   pageUrl: (slug) => f.url(`/on-demand-plain/${slug}`),
   triggerUrl: (slug) => f.url(`/od-plain-trigger/${slug}`),
   tag: (slug) => `od-plain:${slug}`,
@@ -302,6 +310,7 @@ const removeFixture = (f: Fixture): PrerenderRemoveFixture => ({
     triggerUrl: (slug) => f.url(`/od-trigger/${slug}`),
     sourceTestId: "od-source",
     bakedSlug: "removable",
+    declineBakedSlug: "decline-baked",
   },
 });
 
@@ -325,9 +334,39 @@ function defineRemoveTests(f: Fixture) {
   });
 }
 
+// Results with no page to show for them (#1060): many(), render-failed and
+// skipped-passthrough. The bodies are shared with
+// tests/cloudflare-basic/e2e/prerender-ondemand.test.ts.
+function defineOutcomeTests(f: Fixture) {
+  test("prerender.many() returns one result per target in order, and each rendered page then serves from the store", async ({
+    page,
+  }) => {
+    await expectManyReturnsOneResultPerTargetInOrder(page, removeFixture(f));
+  });
+
+  test("a refresh that fails any other way is render-failed, and the stored page keeps serving", async ({
+    page,
+  }) => {
+    await expectFailedRefreshKeepsStoredPage(page, removeFixture(f));
+  });
+
+  test("a Passthrough param the build handler declines is skipped-passthrough, and the live handler serves it", async ({
+    page,
+  }) => {
+    await expectDeclinedPassthroughParamServedLive(page, removeFixture(f));
+  });
+
+  test("a baked param that is declined is served by the live handler, not the stored page or the build-time entry", async ({
+    page,
+  }) => {
+    await expectDeclinedBakedParamServedLive(page, removeFixture(f));
+  });
+}
+
 test.describe("on-demand prerender (dev mode)", () => {
   const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
   defineRemoveTests(f);
+  defineOutcomeTests(f);
 
   test("live handler until triggered, then durable overlay serves prerender", async ({
     page,
@@ -396,6 +435,7 @@ test.describe("on-demand prerender (dev mode)", () => {
 test.describe("on-demand prerender (production)", () => {
   const f = useFixture({ root: "./e2e/test-app", mode: "build" });
   defineRemoveTests(f);
+  defineOutcomeTests(f);
 
   test("live handler until triggered, then durable overlay serves prerender", async ({
     page,

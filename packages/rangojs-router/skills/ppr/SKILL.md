@@ -170,7 +170,7 @@ The partition follows nested scopes (issue #970): a `ppr` route under a
 inner boundary has none, and by both composed (outermost first, joined by
 `|`) when it has its own. Each `key()` result is namespaced as `key:` plus
 its URI encoding (issue #975), exactly as in the record key, so the shell of
-`key: () => "tier:gold"` is `<host><path>:shell|key%3Atier%253Agold`. The
+`key: () => "tier:gold"` is `<router>@<host><path>:shell|key%3Atier%253Agold`. The
 route's record adds the inner boundary's own default key when it has no
 `key`; the shell partition does not, since the shell key already carries the
 URL (a store `keyGenerator`'s result is kept when it adds anything, an
@@ -220,10 +220,10 @@ does not render from: otherwise the first variant captured is served for every
 value of it.
 
 In tests, `serveShellRequest` reports the key the serve path resolved
-(`result.key`, partition included); `shellCacheKey(url, searchParams,
+(`result.key`, partition included); `shellCacheKey(router, url, searchParams,
 partition)` builds the same key from the `key()` result, namespacing it as
 production does. Under nested keyed scopes, pass the `key()` results as an
-array, outermost first (`shellCacheKey(url, undefined, ["tier:gold",
+array, outermost first (`shellCacheKey(router, url, undefined, ["tier:gold",
 "v:a"])`); for a store `keyGenerator` partition pass
 `{ keys, generated }` (`/testing`, `cache-prerender.md`).
 
@@ -264,7 +264,7 @@ On a document GET to a ppr route the router runs:
    DSL `middleware()`; both are guards, and the COMMIT POINT is after all of
    them: any rejection/redirect/401 wins before a single shell byte, on MISS
    and on a warmed HIT alike;
-3. **shell lookup** — `getShell(key)` on the app store (key =
+3. **shell lookup** — `getShell(key)` on the app store (key = router id +
    host+pathname+sorted search). `CFCacheStore` stores the entry prelude-first
    and the serve path reads only its head and prelude here, with the tag-marker
    read running alongside; the capture snapshot is read off the commit path.
@@ -584,17 +584,18 @@ Import from `@rangojs/router/testing` (Vitest) or `@rangojs/router/testing/e2e`
 | `assertShellStatus(res, "HIT" \| "MISS")`         | Document Response from a real RSC serve / e2e `page.request` |
 | `assertPprReplayStatus(res, expected)`            | Partial response fresh/stale replay or bounded bypass        |
 | `parsePprReplayStatus(res)`                       | Read structured replay/bypass status or null                 |
-| `shellCacheKey(url)`                              | Production store key for `store.getShell` / custom stores    |
+| `shellCacheKey(router, url)`                      | Production store key for `store.getShell` / custom stores    |
 | `MemorySegmentCacheStore` + `getShell`/`putShell` | Custom store contract / tag eviction (no faked HIT)          |
 | `serveShellRequest(router, url, opts)`            | A real MISS → capture → HIT (react-server Vitest)            |
 
 ```ts
 import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 import { assertShellStatus, shellCacheKey } from "@rangojs/router/testing";
+import { router } from "./router";
 
 // Unit: store + key (after a real putShell / capture flush in e2e)
 const store = new MemorySegmentCacheStore();
-const key = shellCacheKey("http://localhost/products/1");
+const key = shellCacheKey(router, "http://localhost/products/1");
 // ... after production putShell ...
 expect(await store.getShell(key)).not.toBeNull();
 
@@ -1381,8 +1382,9 @@ shrink what the shell bakes or move large regions under a live loader's
 boundary.
 
 The shell store is always the app-level `createRouter({ cache })` store; the
-default key is `${host}${pathname}${sortedSearch}:shell` (host-scoped so
-multi-tenant shells never collide).
+default key is `${routerId}@${host}${pathname}${sortedSearch}:shell`: host-scoped
+so multi-tenant shells never collide, and router-scoped so two routers on one
+store keep their own (see `/host-router`, "Shared cache store").
 
 These options control the in-function shell entry only. They do not emit HTTP
 `Cache-Control`. Adding `s-maxage` separately allows a platform CDN to cache the

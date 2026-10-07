@@ -180,6 +180,8 @@ async function serve(
   }) as RequestContext<unknown>;
   lastRequestContext = reqCtx;
   const ctx = makeCtx(router);
+  // As rsc/handler.ts does: the cache keys carry the serving router.
+  reqCtx._routerId = router.id;
   const response = await runWithRequestContext(reqCtx, async () => {
     const plan = await classifyRequest(request, url, {
       findMatch: (router as unknown as ClassifyRequestDeps).findMatch,
@@ -220,8 +222,6 @@ async function invalidate(store: SegmentCacheStore, tag: string) {
   await runWithRequestContext(reqCtx, () => updateTag(tag));
 }
 
-const SHELL_KEY = shellCacheKey("/c");
-
 const sortedTags = (tags: string[] | undefined): string[] =>
   [...(tags ?? [])].sort();
 
@@ -229,6 +229,8 @@ describe("route records and shells over a loader-cache HIT (#964)", () => {
   let router: Router;
   let store: MemorySegmentCacheStore;
 
+  /** The router's shell key for /c. */
+  const shellKey = (): string => shellCacheKey(router, "/c");
   /** The route records written so far: key and tags. */
   const records = () =>
     vi
@@ -239,7 +241,7 @@ describe("route records and shells over a loader-cache HIT (#964)", () => {
     sortedTags(
       (
         store as unknown as { shellCache: Map<string, { tags?: string[] }> }
-      ).shellCache.get(SHELL_KEY)?.tags,
+      ).shellCache.get(shellKey())?.tags,
     );
 
   beforeEach(async () => {
@@ -286,12 +288,12 @@ describe("route records and shells over a loader-cache HIT (#964)", () => {
     await serve(router, store, "/c");
     const recordKey = records().at(-1)!.key;
     expect(bodyRuns).toBe(1);
-    expect(await store.getShell(SHELL_KEY)).not.toBeNull();
+    expect(await store.getShell(shellKey())).not.toBeNull();
     expect(await store.get(recordKey)).not.toBeNull();
 
     await invalidate(store, BODY_TAG);
 
-    expect(await store.getShell(SHELL_KEY)).toBeNull();
+    expect(await store.getShell(shellKey())).toBeNull();
     expect(await store.get(recordKey)).toBeNull();
     const again = await serve(router, store, "/c");
     expect(again.headers.get("x-rango-shell")).toBe("MISS");

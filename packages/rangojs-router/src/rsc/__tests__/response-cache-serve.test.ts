@@ -153,6 +153,31 @@ describe("serveResponseRouteWithCache: outside its own request context", () => {
   });
 });
 
+// #1065: two routers can serve one host and path over one store (a
+// hostOverride cookie, a warm under another router's host).
+describe("serveResponseRouteWithCache: the default key names the serving router", () => {
+  it("two routers on one host and path write two entries", async () => {
+    const store = new MemorySegmentCacheStore();
+    const keys: string[] = [];
+    for (const routerId of ["app-a", "app-b"]) {
+      const { reqCtx, putResponse, serve } = setup({ ttl: 60 }, store);
+      // What rsc/handler.ts stamps before a response route is served.
+      reqCtx._routerId = routerId;
+      reqCtx.waitUntil = (fn) => {
+        void fn();
+      };
+      await runWithRequestContext(reqCtx, serve);
+      await vi.waitFor(() => expect(putResponse).toHaveBeenCalledTimes(1));
+      keys.push(String(putResponse.mock.calls[0]![0]));
+      putResponse.mockRestore();
+    }
+    expect(keys).toEqual([
+      "response:json:app-a@localhost/api/data",
+      "response:json:app-b@localhost/api/data",
+    ]);
+  });
+});
+
 describe("serveResponseRouteWithCache: router.prerender() warm", () => {
   function harness(handler: () => Response = () => Response.json({ n: 1 })) {
     const store = new MemorySegmentCacheStore();

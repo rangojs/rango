@@ -127,7 +127,7 @@ fast path**, end to end, in production today — for routes wrapped in
 `cache()`. `withCacheLookup` (match-middleware/cache-lookup.ts) is the
 innermost pipeline phase; on a hit it deserializes the stored segments,
 replays handle data, and runs `resolveLoadersOnly` — loaders fresh, handlers
-never executed. The doc-level entry (`doc:{host}{pathname}…`, ALL non-loader
+never executed. The doc-level entry (`doc:{routerId}@{host}{pathname}…`, ALL non-loader
 segments in one `CachedEntryData`) is written by `cacheRoute`, and the shell
 snapshot machinery (PR #691) already records segment-family writes into the
 `ShellCacheEntry.snapshot` at capture and replays them through the

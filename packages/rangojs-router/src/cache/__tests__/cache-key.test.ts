@@ -547,6 +547,46 @@ describe("segment cache key generation", () => {
     });
   });
 
+  // #1065: a host and path do not name a router. rsc/handler.ts stamps the
+  // serving router's id on the request context before any cache is read.
+  describe("router isolation", () => {
+    const lookupKey = async (
+      routerId: string | undefined,
+      search = "",
+      intercept = false,
+    ): Promise<string> => {
+      const store = { get: vi.fn().mockResolvedValue(null), set: vi.fn() };
+      mockGetRequestContext.mockReturnValue({
+        ...makeRequestContext(search, "shop.example"),
+        _routerId: routerId,
+      });
+      await new CacheScope({ store } as any).lookupRoute(
+        "/test",
+        {},
+        intercept,
+      );
+      return store.get.mock.calls[0][0] as string;
+    };
+
+    it("two routers on one host and path read two keys", async () => {
+      expect(await lookupKey("app-a")).toBe("doc:app-a@shop.example/test");
+      expect(await lookupKey("app-b")).toBe("doc:app-b@shop.example/test");
+    });
+
+    it("the router part leads the key base in every request type", async () => {
+      expect(await lookupKey("app-a", "?_rsc_partial=1&q=1")).toBe(
+        "partial:app-a@shop.example/test?q=1",
+      );
+      expect(await lookupKey("app-a", "", true)).toBe(
+        "intercept:app-a@shop.example/test",
+      );
+    });
+
+    it("a request context without a router id keeps the host-and-path key", async () => {
+      expect(await lookupKey(undefined)).toBe("doc:shop.example/test");
+    });
+  });
+
   describe("degrade-to-miss on key() error", () => {
     // A throwing consumer key() must NOT crash the foreground render. The key
     // resolution happens inside lookupRoute's try, so a throw degrades to a

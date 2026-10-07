@@ -6,7 +6,10 @@
  * pulling the capture orchestration module or shell-serve.ts (React).
  */
 
-import { sortedSearchString } from "../cache/cache-key-utils.js";
+import {
+  routerKeyPrefix,
+  sortedSearchString,
+} from "../cache/cache-key-utils.js";
 import type { SearchParamsFilter } from "../cache/search-params-filter.js";
 
 /**
@@ -85,13 +88,14 @@ export function shellSearchSeed(url: URL, filter?: SearchParamsFilter): string {
 }
 
 /**
- * Shell cache key: host + pathname + sorted search + a `:shell` namespace suffix
- * (so it can never collide with a document-cache key; the store further isolates
- * the shell family internally).
+ * Shell cache key: router id + host + pathname + sorted search + a `:shell`
+ * namespace suffix (so it can never collide with a document-cache key; the
+ * store further isolates the shell family internally).
  *
  * The key includes the request HOST: in a multi-tenant host-router deployment
  * (one worker, one shared KV/runtime-cache store) a host-less key would serve
- * tenant A's captured shell to tenant B's users.
+ * tenant A's captured shell to tenant B's users. It starts with the serving
+ * ROUTER for the same reason (cache-key-utils.ts, the router rule).
  *
  * `filter` is the request's compiled `cache.searchParams` config
  * (ctx._searchParamsFilter): excluded params collapse onto one shell slot.
@@ -99,8 +103,12 @@ export function shellSearchSeed(url: URL, filter?: SearchParamsFilter): string {
  * and lookup makes every shell request a permanent miss. The testing helper
  * `shellCacheKey` (testing/shell-status.ts) builds its key with it too.
  */
-export function buildShellKey(url: URL, filter?: SearchParamsFilter): string {
-  return `${url.host}${url.pathname}${shellSearchSeed(url, filter)}:shell`;
+export function buildShellKey(
+  routerId: string,
+  url: URL,
+  filter?: SearchParamsFilter,
+): string {
+  return `${routerKeyPrefix(routerId)}${url.host}${url.pathname}${shellSearchSeed(url, filter)}:shell`;
 }
 
 /**

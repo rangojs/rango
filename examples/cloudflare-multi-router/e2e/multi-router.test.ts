@@ -43,6 +43,53 @@ async function readRangoStateAt(
   }, name);
 }
 
+/**
+ * Site and admin share one cache (src/cache.ts) and both have a `ppr` page at
+ * /pricing. With the host-override cookie both answer under one host and
+ * path, so nothing but the router tells their shells apart (issue #1065).
+ * Called from the dev and the production describe.
+ */
+function sharedCacheShellTests(f: { url: (url?: string) => string }): void {
+  test.describe("shared cache store: one host and path, two apps", () => {
+    test("each app serves its own ppr shell", async ({ page }) => {
+      const apps = [
+        { host: "localhost", title: "Site pricing" },
+        { host: "admin.localhost", title: "Admin pricing" },
+      ];
+      const seen = new Map<string, Set<string | null>>();
+      const serve = async (app: (typeof apps)[number]) => {
+        await page.context().clearCookies();
+        await page
+          .context()
+          .addCookies([
+            { name: "x-rango-host", value: app.host, url: f.url("/") },
+          ]);
+        const response = await page.goto(f.url("/pricing"));
+        const title = await testId(page, "pricing-title").textContent();
+        seen.set(app.host, (seen.get(app.host) ?? new Set()).add(title));
+        return { shell: response?.headers()["x-rango-shell"], title };
+      };
+      const ownHit = (app: (typeof apps)[number]) => ({
+        shell: "HIT",
+        title: app.title,
+      });
+
+      // The capture runs after the MISS response: poll each app to its HIT.
+      for (const app of apps) {
+        await expect.poll(() => serve(app)).toEqual(ownHit(app));
+      }
+      // Neither capture replaced the other app's shell.
+      for (const app of apps) {
+        expect(await serve(app)).toEqual(ownHit(app));
+      }
+      // No response on the way, MISS or HIT, was the other app's page.
+      for (const app of apps) {
+        expect([...seen.get(app.host)!]).toEqual([app.title]);
+      }
+    });
+  });
+}
+
 // ----- DEV MODE -----
 
 test.describe("multi-router (dev)", () => {
@@ -50,6 +97,8 @@ test.describe("multi-router (dev)", () => {
     root: ".",
     mode: "dev",
   });
+
+  sharedCacheShellTests(f);
 
   test.describe("per-router search schemas (same-named routes)", () => {
     test("site /lookup parses with site's schema, not admin's", async ({
@@ -720,6 +769,8 @@ test.describe("multi-router (production)", () => {
     root: ".",
     mode: "build",
   });
+
+  sharedCacheShellTests(f);
 
   test.describe("per-router search schemas (same-named routes)", () => {
     test("site /lookup parses with site's schema, not admin's", async ({

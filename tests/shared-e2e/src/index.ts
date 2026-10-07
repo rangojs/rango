@@ -3325,3 +3325,196 @@ export async function expectRemovedPassthroughPageRunsLiveHandler(
   await page.goto(pageUrl(slug));
   await expect(source).toHaveText("prerender");
 }
+
+// ---------------------------------------------------------------------------
+// Result statuses of on-demand prerender that have no page to show for them
+// (issue #1060): `prerender.many()` over a mix of targets, a refresh whose
+// handler fails, and a Passthrough build handler that declines a param.
+// Shared by the same two suites as the removal helpers above.
+// ---------------------------------------------------------------------------
+
+/**
+ * What the removal fixture has, plus what these cases need. Each app fills one
+ * object for all the on-demand helpers.
+ * - `path(slug)`: the pathname of the plain `Prerender(..., { onDemand })`
+ *   route for `slug`: what `prerender.many()` is given as a target.
+ * - `triggerUrl(slug)`: GET with repeated `?target=<path>` answers
+ *   `prerender.many(targets)` as a JSON array in target order;
+ *   `?fail=1` makes the plain handler throw (not `notFound()`) for `slug` on
+ *   its next refresh and `?fail=0` restores it.
+ * - `stampTestId` renders a value captured once per render, and
+ *   `onDemandTestId` reads `true` for a page the on-demand producer rendered.
+ * - `passthrough.triggerUrl(slug)` also takes `?decline=1` / `?decline=0`: the
+ *   build handler calls `ctx.passthrough()` for `slug` while it is set. It
+ *   always does for a slug that starts with `declined-`. `declineBakedSlug` is
+ *   a slug the build bakes on that route, requested by no other test.
+ */
+export interface PrerenderOutcomesFixture extends PrerenderRemoveFixture {
+  path: (slug: string) => string;
+  stampTestId: string;
+  onDemandTestId: string;
+  passthrough: PrerenderRemoveFixture["passthrough"] & {
+    declineBakedSlug: string;
+  };
+}
+
+/** The page serves from the store (200, rendered on demand); its render stamp. */
+async function readStoredStamp(
+  page: Page,
+  fixture: PrerenderOutcomesFixture,
+  slug: string,
+): Promise<string> {
+  const response = await page.goto(fixture.pageUrl(slug));
+  expect(response?.status()).toBe(200);
+  await waitForShellHydration(page);
+  await expect(byTestId(page, fixture.slugTestId)).toHaveText(slug);
+  await expect(byTestId(page, fixture.onDemandTestId)).toHaveText("true");
+  return (await byTestId(page, fixture.stampTestId).textContent()) ?? "";
+}
+
+/**
+ * `prerender.many([...])` over a mix of targets returns one result per target,
+ * in the order given, and each page it rendered then serves from the store: a
+ * second request replays the stamp the refresh captured.
+ */
+export async function expectManyReturnsOneResultPerTargetInOrder(
+  page: Page,
+  fixture: PrerenderOutcomesFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const first = pushProbe("many-a");
+  const second = pushProbe("many-b");
+  const targets = [
+    fixture.path(first),
+    `${fixture.path(second)}#top`,
+    fixture.path(second),
+    `${fixture.path(first)}?preview=1`,
+  ];
+  const query = targets.map((t) => `target=${encodeURIComponent(t)}`).join("&");
+
+  const results = (await removeTrigger(
+    page,
+    fixture.triggerUrl("many"),
+    `?${query}`,
+  )) as { ok: boolean; status: string; target: string }[];
+  expect(results, JSON.stringify(results)).toHaveLength(targets.length);
+  expect(
+    results.map((r) => [r.ok, r.status, r.target]),
+    JSON.stringify(results),
+  ).toEqual([
+    [true, "rendered", fixture.path(first)],
+    [false, "skipped-unsupported-target", fixture.path(second)],
+    [true, "rendered", fixture.path(second)],
+    [false, "skipped-unsupported-target", fixture.path(first)],
+  ]);
+
+  for (const slug of [first, second]) {
+    const stamp = await readStoredStamp(page, fixture, slug);
+    expect(await readStoredStamp(page, fixture, slug)).toBe(stamp);
+  }
+}
+
+/**
+ * A refresh whose handler throws something other than `notFound()` is
+ * `render-failed`, and the page stored before it keeps serving: same stamp,
+ * not a 404 and not a re-render. A refresh once the data source is back
+ * replaces it.
+ */
+export async function expectFailedRefreshKeepsStoredPage(
+  page: Page,
+  fixture: PrerenderOutcomesFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const slug = pushProbe("failed");
+  const trigger = fixture.triggerUrl(slug);
+  await refreshPage(page, trigger);
+  const stamp = await readStoredStamp(page, fixture, slug);
+
+  await removeTrigger(page, trigger, "?fail=1");
+  try {
+    const failed = await removeTrigger(page, trigger);
+    expect(failed, JSON.stringify(failed)).toMatchObject({
+      ok: false,
+      path: "on-demand",
+      status: "render-failed",
+      error: "upstream 500",
+    });
+    expect(await readStoredStamp(page, fixture, slug)).toBe(stamp);
+  } finally {
+    await removeTrigger(page, trigger, "?fail=0");
+  }
+
+  await refreshPage(page, trigger);
+  expect(await readStoredStamp(page, fixture, slug)).not.toBe(stamp);
+}
+
+/**
+ * A `Passthrough` build handler that calls `ctx.passthrough()` for a param:
+ * the refresh is `skipped-passthrough`, the next request is served by the
+ * live handler, and a second refresh answers the same.
+ */
+export async function expectDeclinedPassthroughParamServedLive(
+  page: Page,
+  fixture: PrerenderOutcomesFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const { pageUrl, triggerUrl, sourceTestId } = fixture.passthrough;
+  const slug = `declined-${pushProbe("param")}`;
+  const source = byTestId(page, sourceTestId);
+
+  const expectDeclined = async (): Promise<void> => {
+    const declined = await removeTrigger(page, triggerUrl(slug));
+    expect(declined, JSON.stringify(declined)).toMatchObject({
+      ok: false,
+      path: "on-demand",
+      status: "skipped-passthrough",
+    });
+  };
+
+  await expectDeclined();
+  const response = await page.goto(pageUrl(slug));
+  expect(response?.status()).toBe(200);
+  await waitForShellHydration(page);
+  await expect(source).toHaveText("live");
+  await expectDeclined();
+}
+
+/**
+ * A param the build bakes, then declined: the page a refresh stored is served
+ * (`prerender`), and once the build handler declines the param the refresh is
+ * `skipped-passthrough` and the live handler answers. Neither the stored page
+ * nor the build-time entry does, so a decline stores a marker over them. A
+ * refresh once it stops declining brings the page back.
+ */
+export async function expectDeclinedBakedParamServedLive(
+  page: Page,
+  fixture: PrerenderOutcomesFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const { pageUrl, triggerUrl, sourceTestId, declineBakedSlug } =
+    fixture.passthrough;
+  const source = byTestId(page, sourceTestId);
+
+  await refreshPage(page, triggerUrl(declineBakedSlug));
+  await page.goto(pageUrl(declineBakedSlug));
+  await expect(source).toHaveText("prerender");
+
+  await removeTrigger(page, triggerUrl(declineBakedSlug), "?decline=1");
+  try {
+    const declined = await removeTrigger(page, triggerUrl(declineBakedSlug));
+    expect(declined, JSON.stringify(declined)).toMatchObject({
+      ok: false,
+      path: "on-demand",
+      status: "skipped-passthrough",
+    });
+    const response = await page.goto(pageUrl(declineBakedSlug));
+    expect(response?.status()).toBe(200);
+    await expect(source).toHaveText("live");
+  } finally {
+    await removeTrigger(page, triggerUrl(declineBakedSlug), "?decline=0");
+  }
+
+  await refreshPage(page, triggerUrl(declineBakedSlug));
+  await page.goto(pageUrl(declineBakedSlug));
+  await expect(source).toHaveText("prerender");
+}

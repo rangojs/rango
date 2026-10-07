@@ -40,6 +40,7 @@ import { createHandle } from "../../handle.js";
 import { buildRouterTrieFromUrlpatterns } from "../manifest-init.js";
 import { handleRscRendering } from "../rsc-rendering.js";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
+import { shellCacheKey } from "../../testing/shell-status.js";
 import { CFCacheStore } from "../../cache/cf/cf-cache-store.js";
 import type { CachedEntryData, SegmentCacheStore } from "../../cache/types.js";
 import {
@@ -239,6 +240,8 @@ async function serve(
     executionContext,
   }) as RequestContext<unknown>;
   const ctx = makeCtx(router);
+  // As rsc/handler.ts does: the cache keys carry the serving router.
+  reqCtx._routerId = router.id;
   const response = await runWithRequestContext(reqCtx, async () => {
     const plan = await classifyRequest(request, url, {
       findMatch: (router as unknown as ClassifyRequestDeps).findMatch,
@@ -267,15 +270,17 @@ async function serve(
   return response;
 }
 
-const SHELL_KEY = "localhost/tagged:shell";
+const shellKey = (router: Router): string => shellCacheKey(router, "/tagged");
 
-/** The tags the stored shell entry is invalidatable by. */
+/** The tags the store's one shell entry (/tagged) is invalidatable by. */
 function shellTags(store: MemorySegmentCacheStore): string[] {
   const shells = (
     store as unknown as { shellCache: Map<string, { tags?: string[] }> }
   ).shellCache;
-  const entry = shells.get(SHELL_KEY);
-  if (!entry) throw new Error("no shell stored");
+  const [entry, ...others] = [...shells.values()];
+  if (!entry || others.length > 0) {
+    throw new Error(`expected one shell stored, found ${shells.size}`);
+  }
   return entry.tags ?? [];
 }
 
@@ -349,7 +354,7 @@ describe("PPR capture over the route's cache() record (#957)", () => {
       expect(calls.layout).toBe(1);
 
       await store.invalidateTags([tag]);
-      expect(await store.getShell(SHELL_KEY)).toBeNull();
+      expect(await store.getShell(shellKey(router))).toBeNull();
 
       const again = await serve(router, store, "/tagged");
       expect(again.headers.get("x-rango-shell")).toBe("MISS");
@@ -359,7 +364,7 @@ describe("PPR capture over the route's cache() record (#957)", () => {
 
       // The second generation is evictable too.
       await store.invalidateTags([tag]);
-      expect(await store.getShell(SHELL_KEY)).toBeNull();
+      expect(await store.getShell(shellKey(router))).toBeNull();
     },
   );
 });

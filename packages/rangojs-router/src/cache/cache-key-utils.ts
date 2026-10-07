@@ -65,20 +65,37 @@ export function sortedRouteParams(
 }
 
 /**
- * Host-namespaced cache key base: `${host}${pathname}[:params][?search]`.
+ * THE ROUTER RULE (#1065). A key that names one router's output for a host
+ * and path starts with the router part, `{encodeURIComponent(routerId)}@`. A
+ * key that names a function and its arguments, or a tag, does not.
  *
- * The ONE composition of the host-namespacing rule, shared by the segment tier
- * (cache-scope.ts) and the document tier (document-cache.ts) so the rule cannot
- * drift between them. Host prefixing matters because VercelCacheStore /
- * MemorySegmentCacheStore key by the raw string (only CFCacheStore adds host
- * internally) -- on a single function serving multiple domains an
- * un-namespaced key bleeds tenant A's cached response to tenant B.
+ * - With the part: PPR shells and the build-shell manifest (buildShellKey,
+ *   buildShellManifestKey); route cache() records, the document cache and
+ *   response routes (cacheKeyBase); a loader's own cache() entry; a
+ *   `"use cache"` entry of a call that takes a ctx (a ctx is one router's:
+ *   its variables, env and reverse() map).
+ * - Without: a `"use cache"` entry of plain arguments or a bare Request
+ *   (requestArgKey); tag markers; a key the app builds itself
+ *   (`cache({ key })`, a `keyGenerator`).
  *
- * Output is BYTE-STABLE by contract: changing the composition silently
- * invalidates every persisted cache entry on upgrade. Callers append their own
- * tier-specific suffixes (`:rsc`/`:html`, segment hash) after this base.
+ * Why: a host and path do not name a router. A `hostOverride` cookie picks
+ * the router and forwards the request unmodified, and a `router.prerender()`
+ * warm requests whatever origin it resolved, so two routers on one store
+ * built one key and read each other's entry.
+ *
+ * The id (router.ts) has to be the same in every isolate and in build-time
+ * discovery: an explicit `id` and the injected `$$id` are, the `router_{n}`
+ * fallback is for a single router only (discover-routers.ts warns about
+ * more). Encoded, the id holds no `@` or `/`, and a host holds no `@`, so a
+ * key has a router part exactly when its first `@` comes before its first
+ * `/`: no id can be chosen to spell another router's key.
  */
-export function cacheKeyBase(
+export function routerKeyPrefix(routerId: string): string {
+  return `${encodeURIComponent(routerId)}@`;
+}
+
+/** `{host}{pathname}[:params][?search]`: what follows the router part. */
+function hostPathKey(
   host: string,
   pathname: string,
   searchParams?: URLSearchParams,
@@ -94,6 +111,68 @@ export function cacheKeyBase(
   if (paramStr) key += `:${paramStr}`;
   if (searchStr) key += `?${searchStr}`;
   return key;
+}
+
+/**
+ * Key base of one router's output (the router rule, routerKeyPrefix):
+ * `${routerId}@${host}${pathname}[:params][?search]`.
+ *
+ * The ONE composition of the namespacing rule, shared by the segment tier
+ * (cache-scope.ts), the document tier (document-cache.ts), the response tier
+ * (rsc/response-cache-serve.ts) and the loader cache so the rule cannot drift
+ * between them. Host prefixing matters because VercelCacheStore /
+ * MemorySegmentCacheStore key by the raw string (only CFCacheStore adds host
+ * internally) -- on a single function serving multiple domains an
+ * un-namespaced key bleeds tenant A's cached response to tenant B.
+ *
+ * Output is BYTE-STABLE by contract: changing the composition silently
+ * invalidates every persisted cache entry on upgrade. Callers append their own
+ * tier-specific suffixes (`:rsc`/`:html`, segment hash) after this base.
+ */
+export function cacheKeyBase(
+  routerId: string,
+  host: string,
+  pathname: string,
+  searchParams?: URLSearchParams,
+  params?: Record<string, string>,
+  filter?: SearchParamsFilter,
+): string {
+  return `${routerKeyPrefix(routerId)}${hostPathKey(host, pathname, searchParams, params, filter)}`;
+}
+
+/**
+ * cacheKeyBase for the request context `ctx`. rsc/handler.ts sets `_routerId`
+ * before the request scope opens and derived contexts inherit it, so a served
+ * request always has one. Only a hand-built context has none (a unit test,
+ * the runLoader / renderHandler primitives): its key has no router part,
+ * which no router's key equals (routerKeyPrefix).
+ */
+export function requestKeyBase(
+  ctx: { readonly _routerId?: string } | null | undefined,
+  host: string,
+  pathname: string,
+  searchParams?: URLSearchParams,
+  params?: Record<string, string>,
+  filter?: SearchParamsFilter,
+): string {
+  const routerId = ctx?._routerId;
+  return routerId === undefined
+    ? hostPathKey(host, pathname, searchParams, params, filter)
+    : cacheKeyBase(routerId, host, pathname, searchParams, params, filter);
+}
+
+/**
+ * The `"use cache"` key part of a bare Request argument: its URL, with no
+ * router part (the router rule, routerKeyPrefix).
+ */
+export function requestArgKey(url: URL, filter?: SearchParamsFilter): string {
+  return hostPathKey(
+    url.host,
+    url.pathname,
+    url.searchParams,
+    undefined,
+    filter,
+  );
 }
 
 /**

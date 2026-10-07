@@ -125,13 +125,15 @@ function CrossStorePage(ctx: HandlerContext) {
 }
 
 // /cache-test/loader-key-* (issue #1009): the loader's value, and the
-// victim loader's id, which its default key carries.
+// victim loader's id and the router's id, which its default key carries.
 async function LoaderKeyVictimPage(ctx: HandlerContext<{ probe: string }>) {
   const { from, stamp } = await ctx.use(LoaderKeyVictimLoader);
+  const { router } = await import("../router.js");
   return (
     <div>
       <p data-testid="nested-scope-render">{`${from}:${stamp}`}</p>
       <p data-testid="loader-key-victim-id">{LoaderKeyVictimLoader.$$id}</p>
+      <p data-testid="cache-key-router-id">{router.id}</p>
     </div>
   );
 }

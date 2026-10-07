@@ -60,6 +60,101 @@ function hostRoutingTests(port: number) {
     expect(res?.status()).toBe(404);
   });
 
+  // Issue #1065. The cookie picks the app and the request is forwarded as it
+  // came, so both apps serve `localhost:<port>/shelled` over one cache store.
+  // Keyed by host and path alone, app B's request was a HIT with app A's
+  // shell (one version, as in dev) or each capture replaced the other app's
+  // shell (per-router versions, as in a build).
+  test("a hostOverride cookie switches apps on one URL: each app serves its own ppr shell", async ({
+    page,
+  }) => {
+    const pages: Record<string, string> = {
+      "a.localhost": "App A shelled",
+      "b.localhost": "App B shelled",
+    };
+    const seen: Record<string, Set<string | null>> = {
+      "a.localhost": new Set(),
+      "b.localhost": new Set(),
+    };
+    const serve = async (host: string) => {
+      await page.context().clearCookies();
+      await page.context().addCookies([
+        {
+          name: "x-rango-host",
+          value: host,
+          url: `http://localhost:${port}`,
+        },
+      ]);
+      const response = await page.goto(`http://localhost:${port}/shelled`);
+      const text = await page.getByTestId("shelled").textContent();
+      seen[host]!.add(text);
+      return { shell: response?.headers()["x-rango-shell"], page: text };
+    };
+    const ownHit = (host: string) => ({ shell: "HIT", page: pages[host] });
+
+    // The capture runs after the MISS response: poll each app to its HIT.
+    for (const host of ["a.localhost", "b.localhost"]) {
+      await expect.poll(() => serve(host)).toEqual(ownHit(host));
+    }
+
+    // Neither capture replaced the other app's shell.
+    expect(await serve("a.localhost")).toEqual(ownHit("a.localhost"));
+    expect(await serve("b.localhost")).toEqual(ownHit("b.localhost"));
+
+    // No response on the way, MISS or HIT, was the other app's page.
+    for (const host of Object.keys(pages)) {
+      expect([...seen[host]!]).toEqual([pages[host]]);
+    }
+  });
+
+  // Issue #1065. Both apps mount one loader with its own cache(), and each
+  // app's middleware sets the brand it reads: the cached value is one
+  // router's. Keyed by loader, host and path alone, app B rendered app A's.
+  test("a hostOverride cookie switches apps on one URL: each app reads its own cached loader value", async ({
+    page,
+  }) => {
+    const brand = async (host: string) => {
+      await page.context().clearCookies();
+      await page.context().addCookies([
+        {
+          name: "x-rango-host",
+          value: host,
+          url: `http://localhost:${port}`,
+        },
+      ]);
+      await page.goto(`http://localhost:${port}/brand`);
+      return page.getByTestId("brand").textContent();
+    };
+
+    // Twice each: the second read is served from the entry the first wrote.
+    expect(await brand("a.localhost")).toBe("App A brand-a");
+    expect(await brand("a.localhost")).toBe("App A brand-a");
+    expect(await brand("b.localhost")).toBe("App B brand-b");
+    expect(await brand("b.localhost")).toBe("App B brand-b");
+    expect(await brand("a.localhost")).toBe("App A brand-a");
+  });
+
+  // Issue #1065. Both apps call one "use cache" function with their handler
+  // ctx, and each names a route `account` at its own path: what ctx.reverse()
+  // returns is one router's. Keyed by host and path alone, app B rendered the
+  // URL app A cached.
+  test('a hostOverride cookie switches apps on one URL: each app reads its own "use cache" value of a function that takes ctx', async ({
+    page,
+  }) => {
+    const nav = async (host: string) => {
+      await visit(page, host);
+      await page.goto(`http://localhost:${port}/nav`);
+      return page.getByTestId("nav").textContent();
+    };
+
+    // Twice each: the second read is served from the entry the first wrote.
+    expect(await nav("a.localhost")).toBe("App A /a-account");
+    expect(await nav("a.localhost")).toBe("App A /a-account");
+    expect(await nav("b.localhost")).toBe("App B /b-account");
+    expect(await nav("b.localhost")).toBe("App B /b-account");
+    expect(await nav("a.localhost")).toBe("App A /a-account");
+  });
+
   test("cache invalidation re-warms a persistent plain anchor", async ({
     page,
   }) => {
