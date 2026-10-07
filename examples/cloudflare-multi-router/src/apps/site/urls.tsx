@@ -40,10 +40,22 @@ function LookupPage(ctx: HandlerContext) {
   );
 }
 
+// A `ppr` page: its static shell is captured once and served from the shared
+// cache (src/cache.ts). The admin app has a page at the same path; with the
+// host-override cookie both answer under one host, each from its own shell.
+function PricingPage() {
+  return (
+    <main data-testid="site-pricing-page">
+      <h1 data-testid="pricing-title">Site pricing</h1>
+    </main>
+  );
+}
+
 export const sitePatterns = urls(({ path, layout, include }) => [
   layout(<SiteLayout />, () => [
     path("/", HomePage, { name: "home" }),
     path("/about", AboutPage, { name: "about" }),
+    path("/pricing", PricingPage, { name: "pricing", ppr: true }),
     path("/lookup", LookupPage, { name: "lookup", search: { q: "string" } }),
     include("/api", siteApiPatterns, { name: "api" }),
     // #506: nested lazy-include chain group -> section -> item -> leaf.
