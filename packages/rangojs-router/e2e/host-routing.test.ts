@@ -107,6 +107,33 @@ function hostRoutingTests(port: number) {
     }
   });
 
+  // Issue #1065. Both apps mount one loader with its own cache(), and each
+  // app's middleware sets the brand it reads: the cached value is one
+  // router's. Keyed by loader, host and path alone, app B rendered app A's.
+  test("a hostOverride cookie switches apps on one URL: each app reads its own cached loader value", async ({
+    page,
+  }) => {
+    const brand = async (host: string) => {
+      await page.context().clearCookies();
+      await page.context().addCookies([
+        {
+          name: "x-rango-host",
+          value: host,
+          url: `http://localhost:${port}`,
+        },
+      ]);
+      await page.goto(`http://localhost:${port}/brand`);
+      return page.getByTestId("brand").textContent();
+    };
+
+    // Twice each: the second read is served from the entry the first wrote.
+    expect(await brand("a.localhost")).toBe("App A brand-a");
+    expect(await brand("a.localhost")).toBe("App A brand-a");
+    expect(await brand("b.localhost")).toBe("App B brand-b");
+    expect(await brand("b.localhost")).toBe("App B brand-b");
+    expect(await brand("a.localhost")).toBe("App A brand-a");
+  });
+
   test("cache invalidation re-warms a persistent plain anchor", async ({
     page,
   }) => {
