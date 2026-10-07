@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 
 // lookupRoute deserializes cached segments through segment-codec; same
 // JSON-based Flight stand-in as cache-lookup-shell-replay-fallback.test.ts.
@@ -31,7 +31,7 @@ function pluginRscMock() {
 vi.mock("@vitejs/plugin-rsc/rsc/server", pluginRscMock);
 vi.mock("@vitejs/plugin-rsc/rsc/client", pluginRscMock);
 
-import { withCacheLookup } from "../cache-lookup.js";
+import { setPrerenderStoreForTests, withCacheLookup } from "../cache-lookup.js";
 import { withCacheStore } from "../cache-store.js";
 import { runWithRouterContext } from "../../router-context.js";
 import {
@@ -279,6 +279,84 @@ describe("withCacheLookup and prefetch: false", () => {
     expect(result.hit).toBe(false);
     // What live resolution yields, placeholder included, is the response.
     expect(Object.keys(result.sent)).toEqual(["live-render"]);
+  });
+});
+
+// The prerender store answers before the cache scope (yieldFromStore). It
+// re-sends a held stored segment when the params changed; a fill keeps it
+// whatever the request says about where the client came from.
+describe("withCacheLookup: a fill served from the prerender store", () => {
+  afterEach(() => {
+    setPrerenderStoreForTests(undefined);
+  });
+
+  async function fromStore(plan: PrefetchDeferral | undefined) {
+    setPrerenderStoreForTests({
+      get: async () => ({
+        segments: await serializeSegments([seg(ROUTE)]),
+        handles: "",
+      }),
+    } as any);
+    const url = new URL("http://localhost/guide/b");
+    const request = new Request(
+      "http://localhost/guide/b?_rsc_partial=true&_rsc_segments=L0R0",
+    );
+    const reqCtx = createRequestContext<any>({
+      env: {},
+      request,
+      url,
+      variables: {},
+    }) as RequestContext<any>;
+    const ctx = {
+      cacheScope: null,
+      isAction: false,
+      isIntercept: false,
+      isFullMatch: false,
+      request,
+      pathname: "/guide/b",
+      url,
+      // The client says it came from another slug.
+      prevUrl: new URL("http://localhost/guide/a"),
+      prevParams: { slug: "a" },
+      clientSegmentSet: new Set([ROUTE]),
+      entries: [{ ...chainEntry("route", ROUTE, false), isPrerender: true }],
+      matched: { params: { slug: "b" }, routeKey: "guide", pr: true },
+      routeKey: "guide",
+      metricsStore: undefined,
+      stale: false,
+      handlerContext: { _prefetchDeferral: plan },
+      Store: { run: <T>(fn: () => T) => fn() },
+    } as unknown as MatchContext<any>;
+    const state = {
+      cacheHit: false,
+      interceptSegments: [],
+    } as unknown as MatchPipelineState;
+    const routerContext = {
+      evaluateRevalidation: vi.fn(),
+      resolveLoadersOnly: undefined,
+      resolveLoadersOnlyWithRevalidation: vi.fn(async () => ({
+        segments: [],
+        matchedIds: [],
+      })),
+    } as any;
+
+    const yielded: ResolvedSegment[] = [];
+    await runWithRouterContext(routerContext, () =>
+      runWithRequestContext(reqCtx, async () => {
+        const mw = withCacheLookup(ctx, state);
+        for await (const segment of mw(gen([]))) yielded.push(segment);
+      }),
+    );
+    expect(state.cacheHit).toBe(true);
+    return Object.fromEntries(yielded.map((s) => [s.id, s.component !== null]));
+  }
+
+  it("control: a navigation re-sends a held stored segment when the params changed", async () => {
+    expect(await fromStore(plans.none())).toEqual({ [ROUTE]: true });
+  });
+
+  it("a fill keeps it", async () => {
+    expect(await fromStore(plans.fill())).toEqual({ [ROUTE]: false });
   });
 });
 

@@ -8,6 +8,7 @@ import {
   getPrefetchDeferral,
   isFillRequest,
   markUnitDeferred,
+  partialDeferralMode,
   planPrefetchDeferral,
   resolveDeferralScope,
   type PrefetchDeferral,
@@ -206,6 +207,51 @@ describe("resolveDeferralScope", () => {
     });
     const chain = [entry("layout"), route];
     expect(resolveDeferralScope(chain)).toBe(resolveDeferralScope(chain));
+  });
+});
+
+describe("partialDeferralMode", () => {
+  // A plain GET navigation that carries the prefetch header.
+  const PREFETCH = {
+    fill: false,
+    prefetch: true,
+    method: "GET",
+    isAction: false,
+    isIntercept: false,
+    isShellCapture: false,
+  };
+
+  it("is a prefetch for a plain GET navigation with the prefetch header", () => {
+    expect(partialDeferralMode(PREFETCH)).toBe("prefetch");
+    expect(partialDeferralMode({ ...PREFETCH, prefetch: false })).toBe(
+      undefined,
+    );
+  });
+
+  // Each condition on its own: today an action is also a POST and a capture
+  // runs the full match, so no request shows them apart.
+  it.each([
+    ["an action revalidation", { isAction: true }],
+    ["a request that resolves an intercept", { isIntercept: true }],
+    ["a shell capture", { isShellCapture: true }],
+    ["a POST", { method: "POST" }],
+    ["a HEAD", { method: "HEAD" }],
+  ])("is never a prefetch for %s", (_label, override) => {
+    expect(partialDeferralMode({ ...PREFETCH, ...override })).toBe(undefined);
+  });
+
+  it("is a fill whenever the URL carries the marker, whatever else it says", () => {
+    expect(partialDeferralMode({ ...PREFETCH, fill: true })).toBe("fill");
+    expect(
+      partialDeferralMode({
+        fill: true,
+        prefetch: false,
+        method: "POST",
+        isAction: true,
+        isIntercept: true,
+        isShellCapture: true,
+      }),
+    ).toBe("fill");
   });
 });
 

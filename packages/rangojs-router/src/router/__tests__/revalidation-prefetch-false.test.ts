@@ -358,6 +358,42 @@ describe("a fill: held is skipped outright", () => {
     ).toEqual(["R1D1.reviews"]);
   });
 
+  it("skips a held orphan layout without asking its predicate", async () => {
+    const orphanPredicate = vi.fn(() => true);
+    const orphan = entry("layout", "R1L0", { revalidate: [orphanPredicate] });
+    const route = entry("route", "R1", {
+      loading: "fallback",
+      layout: [orphan],
+      loader: [loaderEntry("reviews", { prefetch: false })],
+    });
+    const { segments } = await resolve([entry("layout", "L0"), route], "fill", [
+      "L0",
+      "R1",
+      "R1L0",
+    ]);
+
+    expect(orphanPredicate).not.toHaveBeenCalled();
+    expect(orphan.handler).not.toHaveBeenCalled();
+    expect(route.handler).not.toHaveBeenCalled();
+    expect(ran()).toEqual(["reviews"]);
+    // Held segments carry nothing: only the loader the client lacks does.
+    expect(
+      segments
+        .filter((s) => s.component !== null || s.loaderData !== undefined)
+        .map((s) => s.id),
+    ).toEqual(["R1D0.reviews"]);
+  });
+
+  it("renders an orphan layout the client does not hold", async () => {
+    const orphan = entry("layout", "R1L0");
+    const route = entry("route", "R1", { layout: [orphan] });
+    const { byId } = await resolve([route], "fill", ["R1"]);
+
+    expect(route.handler).not.toHaveBeenCalled();
+    expect(orphan.handler).toHaveBeenCalledTimes(1);
+    expect(byId.get("R1L0")).toMatchObject({ type: "layout" });
+  });
+
   it("renders a deferred unit and what is below it", async () => {
     const slotPredicate = vi.fn(() => false);
     const slot = entry("parallel", "P0", {
