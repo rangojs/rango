@@ -1,9 +1,14 @@
 import { test } from "@playwright/test";
 import {
+  expectBackAndForwardDuringAFillEndOnTheFilledPage,
   expectBackAndForwardKeepTheFilledPage,
+  expectClickDuringThePrefetchAdoptsIt,
+  expectClickFromAScrolledPageEndsAtTheTop,
   expectDeferredOutcomeArrivesWithTheFill,
   expectDocumentAwaitsLoaderThatPrefetchSkips,
+  expectDoubleClickEndsOnTheLastFill,
   expectEveryAdoptionSendsItsOwnFill,
+  expectFailedFillReachesTheNetworkErrorBoundary,
   expectLeavingBeforeTheFillAbortsItAndBackRefetches,
   expectNoBoundaryHoldsThePageLeftUntilTheFillReturns,
   expectPrefetchSkipsFlaggedWorkAndClickFillsIt,
@@ -164,6 +169,47 @@ function prefetchFalseSuite(f: ReturnType<typeof useFixture>) {
   }) => {
     using _ = expectNoPageError(page);
     await expectEveryAdoptionSendsItsOwnFill(page, fixture());
+  });
+
+  for (const spec of [
+    { name: "bare" },
+    { name: "loader", samePage: true },
+    { name: "control", unflagged: true },
+  ]) {
+    test(`a click from a scrolled page ends at the top: ${spec.name}${spec.samePage ? ", from its own page" : ""}`, async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await expectClickFromAScrolledPageEndsAtTheTop(page, fixture(), spec);
+    });
+  }
+
+  for (const name of ["loader", "unit", "bare"]) {
+    test(`a click while the prefetch is still in flight adopts it: ${name}`, async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await expectClickDuringThePrefetchAdoptsIt(page, fixture(), name);
+    });
+  }
+
+  test("a double click on one link ends on the last fill", async ({ page }) => {
+    using _ = expectNoPageError(page);
+    await expectDoubleClickEndsOnTheLastFill(page, fixture());
+  });
+
+  test("back and forward during a fill end on the filled page", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectBackAndForwardDuringAFillEndOnTheFilledPage(page, fixture());
+  });
+
+  test("a fill the network drops reaches the network error boundary", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectFailedFillReachesTheNetworkErrorBoundary(page, fixture());
   });
 
   test("control: a route with no flag is prefetched whole and the click sends nothing", async ({

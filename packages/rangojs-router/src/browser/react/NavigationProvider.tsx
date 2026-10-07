@@ -434,7 +434,9 @@ export function NavigationProvider({
       // after React commits this state update to the DOM.
       // Always assign (even undefined) to clear stale scroll from prior navigations,
       // so server actions or error updates don't accidentally replay old scroll.
-      pendingScrollRef.current = update.scroll;
+      // A fill (keepScroll) is the exception: it finishes the navigation whose
+      // scroll may still be waiting for a commit React held for it.
+      if (!update.keepScroll) pendingScrollRef.current = update.scroll;
 
       setPayload({
         root: update.root,

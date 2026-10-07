@@ -151,6 +151,18 @@ async function holdFills(
   };
 }
 
+type RequestKind = "prefetch" | "fill" | "navigation";
+
+function kindsOf(requests: Request[]): RequestKind[] {
+  return requests.map((request) =>
+    isFill(request.url())
+      ? "fill"
+      : request.headers()["x-rango-prefetch"] === "1"
+        ? "prefetch"
+        : "navigation",
+  );
+}
+
 function pick(
   counts: Record<string, number>,
   names: string[],
@@ -244,17 +256,10 @@ export async function expectPrefetchSkipsFlaggedWorkAndClickFillsIt(
     "the click did not run again what the prefetch ran",
   ).toEqual(pick(afterPrefetch, prefetchedWork));
 
-  const kinds = requests.map((request) =>
-    isFill(request.url())
-      ? "fill"
-      : request.headers()["x-rango-prefetch"] === "1"
-        ? "prefetch"
-        : "navigation",
-  );
-  expect(kinds, "one prefetch, then one fill, and no navigation").toEqual([
-    "prefetch",
-    "fill",
-  ]);
+  expect(
+    kindsOf(requests),
+    "one prefetch, then one fill, and no navigation",
+  ).toEqual(["prefetch", "fill"]);
   const fill = requests[1];
   expect(
     fill.headers()["x-rango-prefetch"],
@@ -483,4 +488,197 @@ export async function expectEveryAdoptionSendsItsOwnFill(
   expect(
     pick(await hub.counts(), ["loader.data", "loader.price", "loader.handler"]),
   ).toEqual({ "loader.data": 2, "loader.price": 1, "loader.handler": 1 });
+}
+
+export interface PrefetchFalseScrollCase {
+  /** The case name: the page is `/prefetch-false/<name>`. */
+  name: string;
+  /** Click the link a second time, from the case's own page. */
+  samePage?: boolean;
+  /** A route with no flag: the click sends no fill. */
+  unflagged?: boolean;
+}
+
+/**
+ * A click from a scrolled page ends at the top. Also when React holds the
+ * adoption's commit until the fill returns, so the fill's update is the one
+ * that commits: a read with no boundary to show a fallback in, or a second
+ * click on the page's own link, whose boundaries are already revealed.
+ */
+export async function expectClickFromAScrolledPageEndsAtTheTop(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+  spec: PrefetchFalseScrollCase,
+): Promise<void> {
+  const { name } = spec;
+  const hub = await openHub(page, fixture);
+  await prefetchCase(page, hub, name);
+  let run = 1;
+  if (spec.samePage) {
+    await byId(page, `pf-link-${name}`).click();
+    await expect(byId(page, `pf-${name}-value`)).toHaveText(`${name}.data:1`);
+    if (!spec.unflagged) run = 2;
+  }
+
+  const requests = recordPartials(page, hub.pathname(name));
+  const fills = await holdFills(page);
+  await page.addStyleTag({ content: "body { min-height: 4000px; }" });
+  await page.evaluate(() => window.scrollTo(0, 600));
+  expect(await page.evaluate(() => window.scrollY)).toBe(600);
+  // A DOM click: Playwright's own would scroll the link into view first.
+  await byId(page, `pf-link-${name}`).evaluate((link) =>
+    (link as HTMLElement).click(),
+  );
+  if (!spec.unflagged) {
+    await expect
+      .poll(() => requests.filter((r) => isFill(r.url())).length)
+      .toBe(1);
+  }
+  await fills.release();
+
+  await expect(byId(page, `pf-${name}-value`)).toHaveText(
+    `${name}.data:${run}`,
+  );
+  await expect(page).toHaveURL(hub.pageUrl(name));
+  await expect
+    .poll(() => page.evaluate(() => window.scrollY), {
+      message: "the click scrolled to the top",
+    })
+    .toBe(0);
+}
+
+/**
+ * A click while the prefetch is still in flight adopts that prefetch when it
+ * answers: one prefetch and one fill, and no navigation request of its own.
+ */
+export async function expectClickDuringThePrefetchAdoptsIt(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+  name: string,
+): Promise<void> {
+  const hub = await openHub(page, fixture);
+  const requests = recordPartials(page, hub.pathname(name));
+  await page.route(
+    (url) =>
+      isPartialFor(url.href, hub.pathname(name)) &&
+      !url.searchParams.has("_rsc_fill"),
+    async (route) => {
+      if (route.request().headers()["x-rango-prefetch"] === "1") {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      await route.continue().catch(() => {});
+    },
+  );
+
+  await byId(page, `pf-link-${name}`).hover();
+  await expect.poll(() => requests.length, "the prefetch is in flight").toBe(1);
+  await byId(page, `pf-link-${name}`).click();
+
+  await expect(byId(page, `pf-${name}-value`)).toHaveText(`${name}.data:1`, {
+    timeout: 15_000,
+  });
+  expect(
+    kindsOf(requests),
+    "the click adopted the prefetch it found in flight",
+  ).toEqual(["prefetch", "fill"]);
+  expect((await hub.counts())[`${name}.data`]).toBe(1);
+}
+
+/**
+ * Two quick clicks on one link are two adoptions of the one prefetch, and the
+ * second replaces the first, its fill included. The page ends on the value of
+ * the last fill, with no fallback left and no navigation request.
+ */
+export async function expectDoubleClickEndsOnTheLastFill(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+): Promise<void> {
+  const hub = await openHub(page, fixture);
+  const requests = recordPartials(page, hub.pathname("loader"));
+  await prefetchCase(page, hub, "loader");
+
+  await byId(page, "pf-link-loader").dblclick();
+  await expect(page).toHaveURL(hub.pageUrl("loader"));
+  // The first fill may or may not have reached the server before the second
+  // click replaced it: the value on screen is the last run's either way.
+  await expect
+    .poll(
+      async () => {
+        const runs = (await hub.counts())["loader.data"] ?? 0;
+        const value = await byId(page, "pf-loader-value")
+          .textContent({ timeout: 250 })
+          .catch(() => null);
+        return runs > 0 && value === `loader.data:${runs}`;
+      },
+      { message: "the page shows the last fill", timeout: 15_000 },
+    )
+    .toBe(true);
+  await expect(byId(page, "pf-loader-fallback")).toHaveCount(0);
+
+  const kinds = kindsOf(requests);
+  expect(kinds[0]).toBe("prefetch");
+  expect(kinds).not.toContain("navigation");
+  const fills = kinds.filter((kind) => kind === "fill").length;
+  expect(fills, "one fill per adoption").toBeGreaterThanOrEqual(1);
+  expect(fills).toBeLessThanOrEqual(2);
+  expect(
+    pick(await hub.counts(), ["loader.price", "loader.handler"]),
+    "what the prefetch ran did not run again",
+  ).toEqual({ "loader.price": 1, "loader.handler": 1 });
+}
+
+/**
+ * Back and forward while the fill is in flight. Going back cancels the fill;
+ * the entry returned to still holds its placeholders, so it is fetched, never
+ * restored with a fallback nobody fills.
+ */
+export async function expectBackAndForwardDuringAFillEndOnTheFilledPage(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+): Promise<void> {
+  const hub = await openHub(page, fixture);
+  await prefetchCase(page, hub, "unit");
+
+  const fills = await holdFills(page);
+  await byId(page, "pf-link-unit").click();
+  await expect(page).toHaveURL(hub.pageUrl("unit"));
+  await expect(byId(page, "pf-unit-fallback")).toBeVisible();
+
+  await page.goBack();
+  await expect(byId(page, "pf-hub")).toBeVisible();
+  await page.goForward();
+  await expect(page).toHaveURL(hub.pageUrl("unit"));
+  await fills.release();
+
+  await expect(byId(page, "pf-unit-value")).toHaveText("unit.data:1", {
+    timeout: 15_000,
+  });
+  await expect(byId(page, "pf-unit-fallback")).toHaveCount(0);
+  expect(pick(await hub.counts(), ["unit.handler", "unit.data"])).toEqual({
+    "unit.handler": 1,
+    "unit.data": 1,
+  });
+}
+
+/**
+ * A fill the network drops does not leave the fallback up: the router's
+ * network error boundary takes over, as it does for a navigation that failed.
+ */
+export async function expectFailedFillReachesTheNetworkErrorBoundary(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+): Promise<void> {
+  const hub = await openHub(page, fixture);
+  await prefetchCase(page, hub, "loader");
+  await page.route(
+    (url) => url.searchParams.has("_rsc_fill"),
+    (route) => route.abort("failed"),
+  );
+
+  await byId(page, "pf-link-loader").click();
+  await expect(
+    page.getByRole("heading", { name: "Connection Error" }),
+  ).toBeVisible();
+  await expect(byId(page, "pf-loader-fallback")).toHaveCount(0);
+  expect((await hub.counts())["loader.data"] ?? 0).toBe(0);
 }

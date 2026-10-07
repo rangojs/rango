@@ -384,7 +384,13 @@ describe("the fill landing", () => {
 
     expect(onUpdate).toHaveBeenCalledTimes(2);
     expect(lane).toBe(true);
-    expect(onUpdate.mock.calls[1][0].scroll).toEqual({ enabled: false });
+    // The fill owns no scroll action and must not clear the adoption's:
+    // React may still be holding that commit (NavigationProvider reads
+    // keepScroll). An explicit `scroll` here, even a disabled one, would
+    // replace it.
+    const fillUpdate = onUpdate.mock.calls[1][0];
+    expect(fillUpdate.keepScroll).toBe(true);
+    expect("scroll" in fillUpdate).toBe(false);
     await expect(gate).resolves.toEqual({ reviews: 5 });
   });
 
@@ -594,7 +600,7 @@ describe("a fill that does not land", () => {
     await flush();
 
     await expect(gate).rejects.toThrow(
-      "The fill response is missing segments: [L0R0D1.reviews, L0R0D2.extra]",
+      "[rango] fill: missing segments [L0R0D1.reviews, L0R0D2.extra]",
     );
     expect(onUpdate).toHaveBeenCalledTimes(1);
   });
@@ -659,19 +665,59 @@ describe("a fill that does not land", () => {
     expect(assign).toHaveBeenCalledWith("http://localhost/login");
   });
 
-  it("does not follow a redirect to another origin", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    const assign = stubLocation();
-    const adoption = loaderAdoption();
-    const hooks = { redirect: vi.fn(), locationState: vi.fn() };
-    const { navigate, fill } = setup(adoption, { fill: hooks });
-    await navigate();
+  // A redirect the client refuses to follow ends the fill with nothing to
+  // show. Returning quietly would leave the fallback up for good: the gates
+  // reject, so the nearest error boundary takes over.
+  describe("a redirect the client does not follow", () => {
+    it.each([
+      [
+        "a redirect of the whole response to another origin",
+        () =>
+          Promise.reject(
+            new ServerRedirect("https://evil.example/", undefined),
+          ),
+      ],
+      [
+        "a redirect in the payload to another origin",
+        () =>
+          Promise.resolve({
+            payload: {
+              metadata: { redirect: { url: "https://evil.example/" } },
+            },
+            streamComplete: Promise.resolve(),
+          }),
+      ],
+      [
+        "an external redirect in the payload with a scheme that is not http",
+        () =>
+          Promise.resolve({
+            payload: {
+              metadata: {
+                redirect: { url: "javascript:alert(1)", external: true },
+              },
+            },
+            streamComplete: Promise.resolve(),
+          }),
+      ],
+    ])("%s rejects the gates", async (_label, response) => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const assign = stubLocation();
+      const adoption = loaderAdoption();
+      const hooks = { redirect: vi.fn(), locationState: vi.fn() };
+      const { navigate, fill, onUpdate } = setup(adoption, { fill: hooks });
+      await navigate();
+      const gate = adoption.reviews.loaderData as Promise<unknown>;
+      const pending = vi.spyOn(loaderStore, "releasePendingStream");
 
-    fill.reject(new ServerRedirect("https://evil.example/", undefined));
-    await flush();
+      response().then(fill.resolve, fill.reject);
+      await flush();
 
-    expect(hooks.redirect).not.toHaveBeenCalled();
-    expect(assign).not.toHaveBeenCalled();
+      expect(hooks.redirect).not.toHaveBeenCalled();
+      expect(assign).not.toHaveBeenCalled();
+      await expect(gate).rejects.toThrow("[rango] fill: redirect not followed");
+      expect(pending).toHaveBeenCalledWith("reviews", gate);
+      expect(onUpdate).toHaveBeenCalledTimes(1);
+    });
   });
 });
 

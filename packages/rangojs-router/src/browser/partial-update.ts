@@ -120,6 +120,8 @@ export interface PartialUpdateConfig {
   };
 }
 
+const FILL_REDIRECT_NOT_FOLLOWED = "[rango] fill: redirect not followed";
+
 /** A promise the browser created for a deferred segment's missing value. */
 interface Gate {
   promise: Promise<unknown>;
@@ -341,7 +343,7 @@ export function createPartialUpdater(
               metadata.redirect.url,
               window.location.origin,
             );
-        if (!target) return;
+        if (!target) throw new Error(FILL_REDIRECT_NOT_FOLLOWED);
         if (metadata.redirect.external || !config.fill) {
           window.location.assign(target);
         } else {
@@ -350,7 +352,7 @@ export function createPartialUpdater(
         return;
       }
       if (!metadata?.isPartial) {
-        throw new Error("[rango] The fill response is not a partial payload.");
+        throw new Error("[rango] fill: not a partial payload");
       }
 
       // The entry on screen must still hold this adoption's placeholders: by
@@ -373,7 +375,7 @@ export function createPartialUpdater(
       const missing = matched.filter((id) => !present.has(id));
       if (missing.length > 0) {
         throw new Error(
-          `[rango] The fill response is missing segments: [${missing.join(", ")}]`,
+          `[rango] fill: missing segments [${missing.join(", ")}]`,
         );
       }
 
@@ -412,7 +414,7 @@ export function createPartialUpdater(
       commitInTransition(
         onUpdate,
         reconciled.mainSegments,
-        { root, metadata, scroll: { enabled: false } },
+        { root, metadata, keepScroll: true },
         [],
       );
       // Last: release whatever is still suspended on a gate. The value is the
@@ -427,29 +429,32 @@ export function createPartialUpdater(
           );
         }
       }
-    } catch (error) {
+    } catch (thrown) {
       if (fill.cancelled) return;
+      let error = thrown;
       if (error instanceof ServerRedirect) {
         const target = validateRedirectOrigin(
           error.url,
           window.location.origin,
         );
-        if (!target) return;
-        if (config.fill) config.fill.redirect(target, error.state);
-        else window.location.assign(target);
-        return;
+        if (target) {
+          if (config.fill) config.fill.redirect(target, error.state);
+          else window.location.assign(target);
+          return;
+        }
+        error = new Error(FILL_REDIRECT_NOT_FOLLOWED);
       }
+      console.error("[rango] fill failed:", error);
       const networkError = toNetworkError(error, {
         url,
         operation: "navigation",
       });
       if (networkError) {
-        console.error("[Browser] Network error during fill:", networkError);
         emitNetworkError(onUpdate, networkError, url);
         return;
       }
-      // Into the nearest error boundary, where a failed stream lands.
-      console.error("[Browser] Unprocessable fill response:", error);
+      // Into the nearest error boundary, where a failed stream lands. A
+      // failure that settled nothing would leave the fallback up for good.
       for (const gate of fill.gates.values()) gate.reject(error);
     } finally {
       clearPendingFill(fill.cancel);

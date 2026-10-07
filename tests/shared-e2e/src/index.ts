@@ -23,10 +23,15 @@ export type { DeployFixture, DeployFixtureOptions } from "./deploy-fixture.js";
 export { runCacheVersionScenario } from "./cache-version-scenario.js";
 export type { CacheVersionScenarioOptions } from "./cache-version-scenario.js";
 export {
+  expectBackAndForwardDuringAFillEndOnTheFilledPage,
   expectBackAndForwardKeepTheFilledPage,
+  expectClickDuringThePrefetchAdoptsIt,
+  expectClickFromAScrolledPageEndsAtTheTop,
   expectDeferredOutcomeArrivesWithTheFill,
   expectDocumentAwaitsLoaderThatPrefetchSkips,
+  expectDoubleClickEndsOnTheLastFill,
   expectEveryAdoptionSendsItsOwnFill,
+  expectFailedFillReachesTheNetworkErrorBoundary,
   expectLeavingBeforeTheFillAbortsItAndBackRefetches,
   expectNoBoundaryHoldsThePageLeftUntilTheFillReturns,
   expectPrefetchSkipsFlaggedWorkAndClickFillsIt,
