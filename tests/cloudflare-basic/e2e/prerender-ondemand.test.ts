@@ -1,6 +1,12 @@
 import { expect, test, type APIResponse, type Page } from "@playwright/test";
 import { useFixture, type Fixture } from "./fixture";
 import { waitForHydration, expectNoPageError, testId } from "./helper";
+import {
+  expectRemovedBakedPageAnswers404,
+  expectRemovedPassthroughPageRunsLiveHandler,
+  expectRemovedUnbakedPageAnswers404,
+  type PrerenderRemoveFixture,
+} from "@shared/e2e";
 
 test.describe.configure({ mode: "serial" });
 
@@ -298,10 +304,51 @@ function definePlainOnDemandFlow(f: Fixture) {
   });
 }
 
+// Removing a refreshed page (#1060), on the KV store. The plain route's baked
+// "intro" is shared with the plain flows above, which refresh it first (this
+// file is serial); the Passthrough route's baked "removable" belongs to these
+// tests alone. The bodies are shared with
+// packages/rangojs-router/e2e/on-demand-prerender.test.ts.
+function defineRemoveFlow(f: Fixture) {
+  const fixture = (): PrerenderRemoveFixture => ({
+    pageUrl: (slug) => f.url(`/guide-plain/${slug}`),
+    triggerUrl: (slug) => f.url(`/guide-plain-trigger/${slug}`),
+    tag: (slug) => `guide-plain:${slug}`,
+    slugTestId: "gp-slug",
+    actionTestId: "gp-action-noop",
+    bakedSlug: "intro",
+    passthrough: {
+      pageUrl: (slug) => f.url(`/guides/${slug}`),
+      triggerUrl: (slug) => f.url(`/guide-trigger/${slug}`),
+      sourceTestId: "guide-source",
+      bakedSlug: "removable",
+    },
+  });
+
+  test("a removed page answers 404 for a baked param, to a request and to a server action: the build-time entry does not come back", async ({
+    page,
+  }) => {
+    await expectRemovedBakedPageAnswers404(page, fixture());
+  });
+
+  test("a removed page answers 404 for a param only a refresh produced, to a request and to a server action", async ({
+    page,
+  }) => {
+    await expectRemovedUnbakedPageAnswers404(page, fixture());
+  });
+
+  test("a Passthrough route's removed page is answered by its live handler, not the build-time entry", async ({
+    page,
+  }) => {
+    await expectRemovedPassthroughPageRunsLiveHandler(page, fixture());
+  });
+}
+
 test.describe("on-demand prerender (production)", () => {
   const f = useFixture({ root: ".", mode: "build" });
   defineOnDemandFlow(f);
   definePlainOnDemandFlow(f);
+  defineRemoveFlow(f);
 
   test("plain onDemand route: unbaked param 404s until refreshed", async ({
     page,
@@ -332,6 +379,7 @@ test.describe("on-demand prerender (dev)", () => {
   const f = useFixture({ root: ".", mode: "dev" });
   defineOnDemandFlow(f);
   definePlainOnDemandFlow(f);
+  defineRemoveFlow(f);
 
   test("plain onDemand route: unbaked param renders live (dev fall-through)", async ({
     page,

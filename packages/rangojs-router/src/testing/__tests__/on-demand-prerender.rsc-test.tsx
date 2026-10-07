@@ -290,6 +290,9 @@ describe("on-demand prerender: router.prerender() then serve", () => {
       onRevalidate,
     });
     await router.prerender({ env: {} })("/hot/a");
+    // The refresh read the key once before its write (the removal race
+    // check): count the two requests' reads only.
+    reads = 0;
 
     const env = { binding: "live" };
     await Promise.all([
