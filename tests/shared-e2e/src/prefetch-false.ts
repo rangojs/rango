@@ -493,17 +493,40 @@ export async function expectEveryAdoptionSendsItsOwnFill(
 export interface PrefetchFalseScrollCase {
   /** The case name: the page is `/prefetch-false/<name>`. */
   name: string;
+  /**
+   * What reaches the page first. The body forces the order; it is never left
+   * to timing.
+   *
+   * - `"fill"`: the fill's update, while React still holds the adoption's
+   *   commit. React cannot commit a tree that suspends where no fallback can
+   *   show: the route has no boundary, or (`samePage`) the click is on the
+   *   page's own link, whose boundary is already revealed. The fill is held
+   *   meanwhile, and the body checks that nothing of the adoption is on screen.
+   * - `"fallback"`: the adoption's commit. The fill is held until the fallback
+   *   is on screen.
+   * - `"none"`: a route with no flag. The click sends no fill.
+   */
+  first: "fill" | "fallback" | "none";
   /** Click the link a second time, from the case's own page. */
   samePage?: boolean;
-  /** A route with no flag: the click sends no fill. */
-  unflagged?: boolean;
+  /**
+   * `first: "fallback"` only: scroll down again while the fallback shows. The
+   * fill must leave that position alone, so the page ends there, not at the
+   * top.
+   */
+  scrollWhileWaiting?: boolean;
 }
 
 /**
- * A click from a scrolled page ends at the top. Also when React holds the
- * adoption's commit until the fill returns, so the fill's update is the one
- * that commits: a read with no boundary to show a fallback in, or a second
- * click on the page's own link, whose boundaries are already revealed.
+ * A click from a scrolled page scrolls to the top, once, whichever of the
+ * adoption's commit and the fill reaches the page first. Scroll belongs to
+ * the navigation; a fill says nothing about it.
+ *
+ * Scar tissue: the fill used to carry "do not scroll", and it replaced the
+ * navigation's pending scroll whenever it reached the page before React had
+ * committed the adoption. The fill's update is emitted on the first chunk of
+ * its response, a few milliseconds after the click, so from the hub that was
+ * a race the fill usually won.
  */
 export async function expectClickFromAScrolledPageEndsAtTheTop(
   page: Page,
@@ -517,34 +540,73 @@ export async function expectClickFromAScrolledPageEndsAtTheTop(
   if (spec.samePage) {
     await byId(page, `pf-link-${name}`).click();
     await expect(byId(page, `pf-${name}-value`)).toHaveText(`${name}.data:1`);
-    if (!spec.unflagged) run = 2;
+    run = 2;
   }
 
   const requests = recordPartials(page, hub.pathname(name));
   const fills = await holdFills(page);
+  const scrollY = () => page.evaluate(() => window.scrollY);
+  const scrollTo = async (y: number) => {
+    await page.evaluate((top) => window.scrollTo(0, top), y);
+    expect(await scrollY(), `the page can scroll to ${y}`).toBe(y);
+  };
   await page.addStyleTag({ content: "body { min-height: 4000px; }" });
-  await page.evaluate(() => window.scrollTo(0, 600));
-  expect(await page.evaluate(() => window.scrollY)).toBe(600);
+  await scrollTo(600);
   // A DOM click: Playwright's own would scroll the link into view first.
   await byId(page, `pf-link-${name}`).evaluate((link) =>
     (link as HTMLElement).click(),
   );
-  if (!spec.unflagged) {
+
+  if (spec.first !== "none") {
     await expect
-      .poll(() => requests.filter((r) => isFill(r.url())).length)
+      .poll(
+        () => requests.filter((r) => isFill(r.url())).length,
+        "the fill is in flight, and held",
+      )
       .toBe(1);
+  }
+  if (spec.first === "fill") {
+    // Long enough for a fallback React meant to show to be on screen.
+    await page.waitForTimeout(500);
+    await expect(
+      byId(page, `pf-${name}-fallback`),
+      "React holds the adoption's commit: no fallback",
+    ).toHaveCount(0);
+    if (spec.samePage) {
+      await expect(byId(page, `pf-${name}-value`)).toHaveText(`${name}.data:1`);
+    } else {
+      await expect(byId(page, "pf-hub")).toBeVisible();
+      await expect(byId(page, `pf-${name}-page`)).toHaveCount(0);
+    }
+  }
+  if (spec.first === "fallback") {
+    await expect(byId(page, `pf-${name}-fallback`)).toBeVisible();
+    await expect
+      .poll(scrollY, "the adoption's commit scrolled to the top")
+      .toBe(0);
+    if (spec.scrollWhileWaiting) await scrollTo(300);
   }
   await fills.release();
 
   await expect(byId(page, `pf-${name}-value`)).toHaveText(
     `${name}.data:${run}`,
   );
+  await expect(byId(page, `pf-${name}-fallback`)).toHaveCount(0);
   await expect(page).toHaveURL(hub.pageUrl(name));
-  await expect
-    .poll(() => page.evaluate(() => window.scrollY), {
-      message: "the click scrolled to the top",
-    })
-    .toBe(0);
+  // Past the layout effect of the commit that showed the value.
+  await page.evaluate(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      ),
+  );
+  if (spec.scrollWhileWaiting) {
+    expect(await scrollY(), "the fill did not scroll").toBe(300);
+  } else {
+    await expect
+      .poll(scrollY, { message: "the click scrolled to the top" })
+      .toBe(0);
+  }
 }
 
 /**
@@ -586,8 +648,15 @@ export async function expectClickDuringThePrefetchAdoptsIt(
 
 /**
  * Two quick clicks on one link are two adoptions of the one prefetch, and the
- * second replaces the first, its fill included. The page ends on the value of
- * the last fill, with no fallback left and no navigation request.
+ * second replaces the first, its fill included. The page ends on what the
+ * last adoption's fill returned, with no fallback left and no navigation
+ * request.
+ *
+ * "The last fill" is the last one the page sent, not the highest run count.
+ * The two fills leave a millisecond apart and the first is aborted only after
+ * it is on the wire, so the server can start them in either order (it did, 1
+ * run in 30 on workerd). The body reads each fill's answer itself and
+ * compares the page with the one the last request got.
  */
 export async function expectDoubleClickEndsOnTheLastFill(
   page: Page,
@@ -597,22 +666,34 @@ export async function expectDoubleClickEndsOnTheLastFill(
   const requests = recordPartials(page, hub.pathname("loader"));
   await prefetchCase(page, hub, "loader");
 
+  // One entry per fill, in the order the page sent them.
+  const answers: Array<{ run?: string }> = [];
+  await page.route(
+    (url) => url.searchParams.has("_rsc_fill"),
+    async (route) => {
+      const answer: { run?: string } = {};
+      answers.push(answer);
+      try {
+        const response = await route.fetch();
+        const body = await response.text();
+        answer.run = /"name":"loader\.data","n":(\d+)/.exec(body)?.[1];
+        await route.fulfill({ response, body });
+      } catch {
+        // The page aborted this fill: the next adoption replaced it.
+      }
+    },
+  );
+
   await byId(page, "pf-link-loader").dblclick();
   await expect(page).toHaveURL(hub.pageUrl("loader"));
-  // The first fill may or may not have reached the server before the second
-  // click replaced it: the value on screen is the last run's either way.
-  await expect
-    .poll(
-      async () => {
-        const runs = (await hub.counts())["loader.data"] ?? 0;
-        const value = await byId(page, "pf-loader-value")
-          .textContent({ timeout: 250 })
-          .catch(() => null);
-        return runs > 0 && value === `loader.data:${runs}`;
-      },
-      { message: "the page shows the last fill", timeout: 15_000 },
-    )
-    .toBe(true);
+  // Both adoptions have sent what they send once the network is quiet.
+  await page.waitForLoadState("networkidle");
+  const last = answers[answers.length - 1];
+  expect(last?.run, "the last adoption's fill was answered").toBeDefined();
+  await expect(
+    byId(page, "pf-loader-value"),
+    "the page shows what the last adoption's fill returned",
+  ).toHaveText(`loader.data:${last!.run}`);
   await expect(byId(page, "pf-loader-fallback")).toHaveCount(0);
 
   const kinds = kindsOf(requests);
@@ -681,4 +762,32 @@ export async function expectFailedFillReachesTheNetworkErrorBoundary(
   ).toBeVisible();
   await expect(byId(page, "pf-loader-fallback")).toHaveCount(0);
   expect((await hub.counts())["loader.data"] ?? 0).toBe(0);
+}
+
+/**
+ * A fill answered with something the client cannot use (here a 500 with a
+ * text body) ends like a navigation answered that way: the router's error
+ * boundary replaces the page, no fallback is left waiting, and nothing is
+ * thrown outside React. Call it under the suite's page-error guard.
+ */
+export async function expectUnusableFillReachesTheErrorBoundary(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+): Promise<void> {
+  const hub = await openHub(page, fixture);
+  await prefetchCase(page, hub, "loader");
+  await page.route(
+    (url) => url.searchParams.has("_rsc_fill"),
+    (route) =>
+      route.fulfill({ status: 500, contentType: "text/plain", body: "boom" }),
+  );
+
+  await byId(page, "pf-link-loader").click();
+  await expect(
+    page.getByRole("heading", { name: "Internal Server Error" }),
+  ).toBeVisible();
+  await expect(byId(page, "pf-loader-fallback")).toHaveCount(0);
+  await expect(byId(page, "pf-loader-value")).toHaveCount(0);
+  // Long enough for a rejection nobody handles to be reported.
+  await page.waitForTimeout(300);
 }

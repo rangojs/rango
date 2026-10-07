@@ -13,7 +13,9 @@ import {
   expectNoBoundaryHoldsThePageLeftUntilTheFillReturns,
   expectPrefetchSkipsFlaggedWorkAndClickFillsIt,
   expectUnflaggedRouteIsPrefetchedWhole,
+  expectUnusableFillReachesTheErrorBoundary,
   type PrefetchFalseFixture,
+  type PrefetchFalseScrollCase,
 } from "@shared/e2e";
 import { useFixture, type Fixture } from "./fixture";
 import { expectNoPageError } from "./helper";
@@ -172,12 +174,31 @@ function prefetchFalseSuite(f: Fixture) {
     await expectEveryAdoptionSendsItsOwnFill(page, fixture());
   });
 
-  for (const spec of [
-    { name: "bare" },
-    { name: "loader", samePage: true },
-    { name: "control", unflagged: true },
-  ]) {
-    test(`a click from a scrolled page ends at the top: ${spec.name}${spec.samePage ? ", from its own page" : ""}`, async ({
+  // Both orders, forced: the fill before React commits the adoption, and the
+  // adoption's fallback before the fill.
+  const scrollCases: Array<[string, PrefetchFalseScrollCase]> = [
+    [
+      "bare, no boundary: the fill lands first",
+      { name: "bare", first: "fill" },
+    ],
+    [
+      "loader, from its own page: the fill lands first",
+      { name: "loader", first: "fill", samePage: true },
+    ],
+    [
+      "unit, from its own page: the fill lands first",
+      { name: "unit", first: "fill", samePage: true },
+    ],
+    ["loader: the fallback shows first", { name: "loader", first: "fallback" }],
+    ["unit: the fallback shows first", { name: "unit", first: "fallback" }],
+    [
+      "loader: the reader scrolls while the fallback shows, the fill leaves it",
+      { name: "loader", first: "fallback", scrollWhileWaiting: true },
+    ],
+    ["control, no flag", { name: "control", first: "none" }],
+  ];
+  for (const [title, spec] of scrollCases) {
+    test(`a click from a scrolled page ends at the top: ${title}`, async ({
       page,
     }) => {
       using _ = expectNoPageError(page);
@@ -211,6 +232,13 @@ function prefetchFalseSuite(f: Fixture) {
   }) => {
     using _ = expectNoPageError(page);
     await expectFailedFillReachesTheNetworkErrorBoundary(page, fixture());
+  });
+
+  test("a fill the client cannot use reaches the error boundary, with no uncaught error", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectUnusableFillReachesTheErrorBoundary(page, fixture());
   });
 
   test("control: a route with no flag is prefetched whole and the click sends nothing", async ({

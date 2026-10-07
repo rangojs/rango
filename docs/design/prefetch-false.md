@@ -441,14 +441,40 @@ segments outside it. A deferred unit's `matched` stops at the unit, so a late
 yield from the adoption would delete what the fill had pushed below it
 (breadcrumbs from a deferred route, say).
 
-The fill's update carries no scroll action, and it must not clear one
-either (`NavigationUpdate.keepScroll`). This is scar tissue. React holds the
-adoption's commit when nothing can show a fallback: a read with no boundary,
-or a second click on the page's own link, whose boundaries are already
-revealed. The scroll the adoption queued is then still waiting when the fill
-lands, and `NavigationProvider` replaces the pending action on every update.
-A fill that said "do not scroll" left the visitor at the old scroll position
-on a new page.
+The fill's update says nothing about scroll. Scroll belongs to the
+navigation transaction: `tx.commit()` decides it, the adoption's update
+carries the decision, and `NavigationProvider` holds that one pending action
+(`pendingScrollRef`) until the React commit that follows, where
+`handleNavigationEnd` applies it. A fill is not a transaction, so it has no
+decision to carry.
+
+This is scar tissue, in two parts. The fill used to send
+`scroll: { enabled: false }`, and the provider used to assign the pending
+action on every update, `undefined` included. So a fill that reached the
+provider before React had committed the adoption replaced the adoption's
+pending scroll, and the visitor stayed at the old scroll position on a new
+page. That happens more often than you would guess. The fill's update is not
+emitted when its loaders finish. It is emitted when the first chunk of its
+response arrives, a few milliseconds after the click, with the loader data
+still pending inside it. The adoption's commit is a transition, which React
+renders in a later task, so the two race: on a fresh page the fill won 7
+clicks out of 8 (measured from the hub, 100 ms loaders, dev and production).
+And on two kinds of page React cannot commit the adoption at all until the
+fill lands: a read with no boundary, and a second click on the page's own
+link, whose boundaries are already revealed.
+
+The rule now, for every update and not only the fill: an update that carries
+a transaction's decision sets the pending action, the commit that follows
+consumes it once, and an update with no decision (a server action, an error
+update, a fill) neither sets nor clears it. You might worry that with nothing
+clearing the slot an old scroll could be replayed by a later action. It
+cannot: every update re-renders the provider, and the commit that follows
+consumes whatever is pending. `src/testing/__tests__/navigation-scroll-slot.test.tsx`
+pins all four sides through the real provider: an update with no decision
+does not cost a pending navigation its scroll, a later one does not replay
+it, the second of two navigations wins, and a traversal's restore survives.
+The browser suites force both orders (the fill before the adoption's commit,
+the fallback before the fill) and never leave it to timing.
 
 A fill has no navigation transaction, so two things a transaction normally
 carries need another way to their owner. `PartialUpdateConfig.fill` is that
@@ -480,9 +506,10 @@ offer it as `targetCacheSegments` (`hasUsableCache` in
 `src/browser/navigation-bridge.ts`). So returning to the entry fetches what
 is missing; it never restores a tree suspended on a gate nobody will resolve.
 
-An abandoned gate is never settled. Resolving it with nothing or rejecting it
-would both show up in a tree that may still be mounted for a moment. It is
-only untracked: `loaderStore.releasePendingStream()` removes it from the
+A gate is resolved by its fill or never settled at all. Resolving an
+abandoned one with nothing would show up in a tree that may still be mounted
+for a moment, and a gate is never rejected (see "Failure"). It is only
+untracked: `loaderStore.releasePendingStream()` removes it from the
 pending streams, so `useLoader().isLoading` and the streaming indicators do
 not wait on it forever.
 
@@ -512,17 +539,61 @@ and idle-time prefetching waits for it.
 
 ### Failure
 
-- A response the client cannot use (undecodable, not partial, missing
-  segments): every gate rejects with the error, which React delivers to the
-  nearest error boundary, the same place a rejected streamed loader lands.
-- A network failure goes to `emitNetworkError`, like a failed navigation.
-- A redirect for the whole response (middleware, say, because the session
-  expired between prefetch and click) is followed, as a replace navigation
-  through `PartialUpdateConfig.fill.redirect`. An external redirect, or a
-  client built without the hook, is a document navigation.
-- A redirect the client refuses to follow (another origin, or an external one
-  whose scheme is not http) rejects the gates like any other unusable
-  response. Returning quietly would leave the fallback up for good.
+A fill that fails ends the way a navigation that fails does. `runFill()`
+hands the error to `emitNavigationError` (`browser/network-error-handler.ts`),
+the emitter the navigation bridge uses: the error replaces the page, and the
+router's error boundary takes over. That covers:
+
+- a response the client cannot use: undecodable (a 500 with a text body, say),
+  not partial, or missing segments;
+- a network failure, which the same emitter shows as the network error page;
+- a redirect the client refuses to follow: another origin, or an external one
+  whose scheme is not http. Returning quietly here left the fallback up for
+  good.
+
+Two conditions hold the error back. It waits for the adoption's commit: a
+fill can fail while the adoption is still rendering, and an error shown then
+would be replaced a moment later by the adoption's own commit, whose fallback
+would wait for a fill that already failed. And it is shown only on a page
+that still holds this adoption's placeholders, the same identity check the
+merge makes: after an action refetch rendered the missing segments, a late
+failure of the fill is nobody's problem.
+
+The gates are never rejected, and this is scar tissue. The first version
+rejected them, so that React would throw at each reader into its nearest
+error boundary. It worked on screen, and it also raised an uncaught
+`Connection closed.` in the page: the tree builds aggregate promises over a
+segment's loaders (`getMemoizedLoaderPromise` in
+`src/segment-loader-promise.ts`), and nothing handles an aggregate when a
+gate inside it rejects. A navigation answered with the same 500 raises
+nothing, so the fill now takes the navigation's path. The cost is where the
+error shows: at the page's error boundary, not at the one nearest the read.
+
+A redirect for the whole response (middleware, say, because the session
+expired between prefetch and click) is not a failure. It is followed as a
+replace navigation through `PartialUpdateConfig.fill.redirect`; an external
+redirect, or a client built without the hook, is a document navigation.
+
+### What DevTools shows
+
+A fill request shows up in the Network panel as `(canceled)`, and Playwright
+reports it as `requestfailed` with `net::ERR_ABORTED`. Nothing was aborted
+and nothing is lost. Chromium reports every response that carries
+`Cache-Control: no-store` this way once its body has been read to the end
+through a stream reader, which is how a Flight payload is read. The report
+comes after the reader has seen the end of the stream, with every byte
+delivered.
+
+How that was established, so you do not have to repeat it: no code in the
+page aborts or cancels (`AbortController.abort`, the fill's signal, and every
+stream and reader `cancel` were instrumented and stayed silent); a bare
+`fetch()` of the same URL from the page, read with `getReader()`, ends the
+same way with no router code involved, and ends as finished when a proxy
+removes the header or changes it to `no-cache`; and through a proxy that
+re-emits the body in four pieces 250 ms apart and closes the stream 250 ms
+after the last one, all four pieces reach the page, the value renders, and
+the report comes at the close. The header stays: it is what keeps a fill out
+of every HTTP cache between the server and the page (R7).
 
 ### Reuse within `prefetchCacheTTL`
 

@@ -15,7 +15,10 @@ import type { RenderSegmentsOptions } from "../segment-system.js";
 import { reconcileSegments } from "./segment-reconciler.js";
 import type { ReconcileActor } from "./segment-reconciler.js";
 import { clearPendingFill, setPendingFill } from "./pending-fill.js";
-import { emitNetworkError, toNetworkError } from "./network-error-handler.js";
+import {
+  emitNavigationError,
+  toNetworkError,
+} from "./network-error-handler.js";
 import {
   hasActiveIntercept as hasActiveInterceptSlots,
   isInterceptSegment,
@@ -126,7 +129,6 @@ const FILL_REDIRECT_NOT_FOLLOWED = "[rango] fill: redirect not followed";
 interface Gate {
   promise: Promise<unknown>;
   resolve(value: unknown): void;
-  reject(error: unknown): void;
 }
 
 /**
@@ -258,16 +260,12 @@ export function createPartialUpdater(
     const gates = new Map<ResolvedSegment, Gate>();
     for (const segment of placeholders) {
       let resolve!: Gate["resolve"];
-      let reject!: Gate["reject"];
-      const promise = new Promise<unknown>((res, rej) => {
+      const promise = new Promise<unknown>((res) => {
         resolve = res;
-        reject = rej;
       });
-      // A rejected gate nobody reads is not an unhandled rejection.
-      promise.catch(() => {});
       if (segment.type === "loader") segment.loaderData = promise;
       else segment.component = promise as ReactNode;
-      gates.set(segment, { promise, resolve, reject });
+      gates.set(segment, { promise, resolve });
     }
     let settleCommitted!: (committed: boolean) => void;
     const fill: Fill = {
@@ -304,6 +302,17 @@ export function createPartialUpdater(
     if (placeholder.type === "loader") {
       loaderStore.releasePendingStream(placeholder.loaderId!, gate.promise);
     }
+  }
+
+  /**
+   * The entry on screen, while it still holds this adoption's placeholders.
+   * By object, not by history key: a shallow navigation that copied the entry
+   * to a new key is still the page the fill is for, and an action refetch
+   * that already rendered the missing segments is not.
+   */
+  function entryToFill(fill: Fill): ResolvedSegment[] | undefined {
+    const live = store.getCachedSegments(store.getHistoryKey())?.segments;
+    return live?.some((s) => fill.gates.has(s)) ? live : undefined;
   }
 
   /**
@@ -355,12 +364,8 @@ export function createPartialUpdater(
         throw new Error("[rango] fill: not a partial payload");
       }
 
-      // The entry on screen must still hold this adoption's placeholders: by
-      // object, not by history key, so a shallow navigation that copied the
-      // entry to a new key is still filled, and an action refetch that
-      // already rendered them is not overwritten.
-      const live = store.getCachedSegments(store.getHistoryKey())?.segments;
-      if (!live?.some((s) => fill.gates.has(s))) return;
+      const live = entryToFill(fill);
+      if (!live) return;
 
       const matched = metadata.matched || [];
       const reconciled = reconcileSegments({
@@ -411,10 +416,13 @@ export function createPartialUpdater(
       }
       filled = true;
       streamComplete = result.streamComplete;
+      // No `scroll`: a fill is not a navigation transaction. A decision
+      // here, even "do not scroll", would replace the adoption's pending one
+      // (NavigationProvider), and React may still be holding that commit.
       commitInTransition(
         onUpdate,
         reconciled.mainSegments,
-        { root, metadata, keepScroll: true },
+        { root, metadata },
         [],
       );
       // Last: release whatever is still suspended on a gate. The value is the
@@ -445,17 +453,19 @@ export function createPartialUpdater(
         error = new Error(FILL_REDIRECT_NOT_FOLLOWED);
       }
       console.error("[rango] fill failed:", error);
-      const networkError = toNetworkError(error, {
+      // Shown the way a navigation the client cannot process is
+      // (navigation-bridge.ts): the error replaces the page, so an error
+      // boundary takes over and no fallback is left waiting. Only on a page
+      // that still waits for this fill, and not before the adoption has
+      // committed: its commit would replace the error. The gates are never
+      // rejected. A rejected gate is an unhandled rejection of every
+      // aggregate built over it (segment-loader-promise.ts).
+      if (!(await fill.whenCommitted) || !entryToFill(fill)) return;
+      emitNavigationError(
+        onUpdate,
+        toNetworkError(error, { url, operation: "navigation" }) ?? error,
         url,
-        operation: "navigation",
-      });
-      if (networkError) {
-        emitNetworkError(onUpdate, networkError, url);
-        return;
-      }
-      // Into the nearest error boundary, where a failed stream lands. A
-      // failure that settled nothing would leave the fallback up for good.
-      for (const gate of fill.gates.values()) gate.reject(error);
+      );
     } finally {
       clearPendingFill(fill.cancel);
       if (!filled) {

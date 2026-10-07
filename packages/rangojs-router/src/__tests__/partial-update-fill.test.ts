@@ -239,6 +239,24 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/** The message of the error the last update throws into the tree, if any. */
+function errorOf(onUpdate: ReturnType<typeof vi.fn>): string | undefined {
+  const update = onUpdate.mock.calls.at(-1)?.[0];
+  if (!update?.metadata?.isError) return undefined;
+  return (update.root.props.error as Error).message;
+}
+
+/** Whether `promise` has settled, either way, by the next macrotask. */
+async function settled(promise: Promise<unknown>): Promise<boolean> {
+  let done = false;
+  promise.then(
+    () => (done = true),
+    () => (done = true),
+  );
+  await flush();
+  return done;
+}
+
 /** A redirect is validated against, and may leave through, window.location. */
 function stubLocation() {
   const assign = vi.fn();
@@ -384,13 +402,14 @@ describe("the fill landing", () => {
 
     expect(onUpdate).toHaveBeenCalledTimes(2);
     expect(lane).toBe(true);
-    // The fill owns no scroll action and must not clear the adoption's:
-    // React may still be holding that commit (NavigationProvider reads
-    // keepScroll). An explicit `scroll` here, even a disabled one, would
-    // replace it.
-    const fillUpdate = onUpdate.mock.calls[1][0];
-    expect(fillUpdate.keepScroll).toBe(true);
-    expect("scroll" in fillUpdate).toBe(false);
+    // A fill is not a navigation transaction and says nothing about scroll.
+    // An explicit `scroll` here, even a disabled one, would replace the
+    // adoption's pending decision while React still holds that commit
+    // (testing/__tests__/navigation-scroll-slot.test.tsx).
+    expect(Object.keys(onUpdate.mock.calls[1][0]).sort()).toEqual([
+      "metadata",
+      "root",
+    ]);
     await expect(gate).resolves.toEqual({ reviews: 5 });
   });
 
@@ -588,20 +607,87 @@ describe("a fill that does not land", () => {
     expect(calls[1].signal?.aborted).toBe(true);
   });
 
-  it("rejects the gates when the response cannot be used", async () => {
+  // A fill the client cannot use ends like a navigation it cannot process
+  // (navigation-bridge.ts): the error replaces the page, so an error boundary
+  // takes over. The gates are left alone. A rejected gate is an unhandled
+  // rejection of every aggregate built over it (segment-loader-promise.ts).
+  it("shows a response it cannot use as an error, and settles no gate", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const adoption = loaderAdoption();
     const { navigate, fill, onUpdate } = setup(adoption);
     await navigate();
     const gate = adoption.reviews.loaderData as Promise<unknown>;
+    loaderStore.trackPendingStream("reviews", gate);
 
     // Lists a segment the client does not hold and does not send it.
     fill.resolve(fillPayload([], [...adoption.matched, "L0R0D2.extra"]));
     await flush();
 
-    await expect(gate).rejects.toThrow(
+    expect(errorOf(onUpdate)).toBe(
       "[rango] fill: missing segments [L0R0D1.reviews, L0R0D2.extra]",
     );
+    expect(await settled(gate)).toBe(false);
+    expect(loaderStore.isStreamPending("reviews")).toBe(false);
+  });
+
+  it("shows a response that is not a partial payload as an error", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const adoption = loaderAdoption();
+    const { navigate, fill, onUpdate } = setup(adoption);
+    await navigate();
+
+    fill.resolve({
+      payload: { metadata: { segments: [] } },
+      streamComplete: Promise.resolve(),
+    });
+    await flush();
+
+    expect(errorOf(onUpdate)).toBe("[rango] fill: not a partial payload");
+  });
+
+  it("holds a failure until the adoption has committed", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const adoption = loaderAdoption();
+    const rendering = deferred<string>();
+    const { navigate, fill, onUpdate } = setup(adoption, {
+      renderSegments: () => rendering.promise,
+    });
+    const navigation = navigate();
+    await flush();
+
+    // The fill fails while the adoption is still rendering. Shown now, the
+    // error would be replaced by the adoption's own commit a moment later,
+    // and its fallback would then wait for a fill that already failed.
+    fill.reject(new Error("undecodable"));
+    await flush();
+    expect(onUpdate).not.toHaveBeenCalled();
+
+    rendering.resolve("tree");
+    await navigation;
+    await flush();
+    expect(onUpdate).toHaveBeenCalledTimes(2);
+    expect(errorOf(onUpdate)).toBe("undecodable");
+  });
+
+  it("shows no failure on a page that no longer waits for the fill", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const adoption = loaderAdoption();
+    const { navigate, fill, store, onUpdate } = setup(adoption);
+    await navigate();
+    // An action refetch already rendered the deferred loader.
+    store.cache.set("/product", {
+      segments: [
+        adoption.layout,
+        adoption.route,
+        adoption.price,
+        loaderSeg("L0R0D1.reviews", "reviews", { reviews: 9 }),
+      ],
+      stale: false,
+    });
+
+    fill.reject(new NetworkError("offline", { url: URL_PAGE }));
+    await flush();
+
     expect(onUpdate).toHaveBeenCalledTimes(1);
   });
 
@@ -611,11 +697,15 @@ describe("a fill that does not land", () => {
     const { navigate, fill, onUpdate } = setup(adoption);
     await navigate();
 
-    fill.reject(new NetworkError("offline", { url: URL_PAGE }));
+    // What fetch() throws when the network drops, not a NetworkError yet: the
+    // network error page is picked by the error's class.
+    fill.reject(new TypeError("Failed to fetch"));
     await flush();
 
     expect(onUpdate).toHaveBeenCalledTimes(2);
-    expect(onUpdate.mock.calls[1][0].metadata.isError).toBe(true);
+    const update = onUpdate.mock.calls[1][0];
+    expect(update.metadata.isError).toBe(true);
+    expect(update.root.props.error).toBeInstanceOf(NetworkError);
   });
 
   it("follows a redirect of the whole response through the bridge", async () => {
@@ -666,8 +756,7 @@ describe("a fill that does not land", () => {
   });
 
   // A redirect the client refuses to follow ends the fill with nothing to
-  // show. Returning quietly would leave the fallback up for good: the gates
-  // reject, so the nearest error boundary takes over.
+  // show. Returning quietly would leave the fallback up for good.
   describe("a redirect the client does not follow", () => {
     it.each([
       [
@@ -699,24 +788,20 @@ describe("a fill that does not land", () => {
             streamComplete: Promise.resolve(),
           }),
       ],
-    ])("%s rejects the gates", async (_label, response) => {
+    ])("%s ends in an error", async (_label, response) => {
       vi.spyOn(console, "error").mockImplementation(() => {});
       const assign = stubLocation();
       const adoption = loaderAdoption();
       const hooks = { redirect: vi.fn(), locationState: vi.fn() };
       const { navigate, fill, onUpdate } = setup(adoption, { fill: hooks });
       await navigate();
-      const gate = adoption.reviews.loaderData as Promise<unknown>;
-      const pending = vi.spyOn(loaderStore, "releasePendingStream");
 
       response().then(fill.resolve, fill.reject);
       await flush();
 
       expect(hooks.redirect).not.toHaveBeenCalled();
       expect(assign).not.toHaveBeenCalled();
-      await expect(gate).rejects.toThrow("[rango] fill: redirect not followed");
-      expect(pending).toHaveBeenCalledWith("reviews", gate);
-      expect(onUpdate).toHaveBeenCalledTimes(1);
+      expect(errorOf(onUpdate)).toBe("[rango] fill: redirect not followed");
     });
   });
 });
