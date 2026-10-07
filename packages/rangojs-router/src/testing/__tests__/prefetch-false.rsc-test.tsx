@@ -33,6 +33,7 @@ import {
   createRouter,
   createVar,
   Prerender,
+  Static,
   urls,
   type HandlerContext,
 } from "../../index.rsc.js";
@@ -71,6 +72,46 @@ const SideLoader = counted("side-loader");
 const ModalLoader = counted("modal-loader");
 const HeldLoader = counted("held-loader");
 const UnderCacheLoader = counted("under-cache-loader");
+const StaticLoader = counted("static-loader");
+const GalleryLoader = counted("gallery-loader");
+
+const tick = (): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, 5));
+
+// Flagged loaders that something else reads with ctx.use(), in time or late
+// (docs/design/prefetch-false.md, "Limits").
+const EarlyDepLoader = counted("early-dep");
+const LateDepLoader = counted("late-dep");
+const StreamedEarlyDepLoader = counted("streamed-early-dep");
+const StreamedLateDepLoader = counted("streamed-late-dep");
+
+/** Not deferred itself; reads the flagged loader before its first await. */
+const EarlyReaderLoader = createLoader(async (ctx) => {
+  const dep = await ctx.use(EarlyDepLoader);
+  return { dep: dep.value };
+});
+
+/** Not deferred itself; reads the flagged loader after an await. */
+const LateReaderLoader = createLoader(async (ctx) => {
+  await tick();
+  const dep = await ctx.use(LateDepLoader);
+  return { dep: dep.value };
+});
+
+/** Under loading(), so streamed: reads before its first await. */
+async function StreamedEarlyPage(
+  ctx: HandlerContext,
+): Promise<React.ReactNode> {
+  const { value } = await ctx.use(StreamedEarlyDepLoader);
+  return <p>{value}</p>;
+}
+
+/** Under loading(), so streamed: reads after an await. */
+async function StreamedLatePage(ctx: HandlerContext): Promise<React.ReactNode> {
+  await tick();
+  const { value } = await ctx.use(StreamedLateDepLoader);
+  return <p>{value}</p>;
+}
 
 const Notes = createHandle<string>();
 
@@ -212,6 +253,13 @@ function makeRouter() {
             intercept("@modal", ".item", page("modal"), () => [
               loader(ModalLoader, { prefetch: false }),
             ]),
+            // An intercept whose target sits under a flagged layout.
+            layout(page("gallery"), () => [
+              loading(<p>gallery-loading</p>, { prefetch: false }),
+              loader(GalleryLoader),
+              path("/gallery/:id", page("photo"), { name: "photo" }),
+            ]),
+            intercept("@modal", ".photo", page("photo-modal")),
             layout(page("held"), () => [
               revalidate(() => {
                 ran("held-predicate");
@@ -226,7 +274,35 @@ function makeRouter() {
               path("/held", page("held-page"), { name: "held" }, () => [
                 loader(ReviewsLoader, { prefetch: false }),
                 loading(<p>held-loading</p>),
+                layout(page("held-orphan"), () => [
+                  revalidate(() => {
+                    ran("held-orphan-predicate");
+                    return true;
+                  }),
+                ]),
               ]),
+            ]),
+            path("/static", Static(page("static")), { name: "static" }, () => [
+              loader(StaticLoader),
+              loading(<p>static-loading</p>, { prefetch: false }),
+            ]),
+            path("/reads-early", page("reads-early"), () => [
+              loader(EarlyReaderLoader),
+              loader(EarlyDepLoader, { prefetch: false }),
+              loading(<p>reads-early-loading</p>),
+            ]),
+            path("/reads-late", page("reads-late"), () => [
+              loader(LateReaderLoader),
+              loader(LateDepLoader, { prefetch: false }),
+              loading(<p>reads-late-loading</p>),
+            ]),
+            path("/streamed-early", StreamedEarlyPage, () => [
+              loader(StreamedEarlyDepLoader, { prefetch: false }),
+              loading(<p>streamed-early-loading</p>),
+            ]),
+            path("/streamed-late", StreamedLatePage, () => [
+              loader(StreamedLateDepLoader, { prefetch: false }),
+              loading(<p>streamed-late-loading</p>),
             ]),
             path("/flagged-rendered", page("flagged-rendered-page"), () => [
               loader(FlaggedRenderedLoader, { prefetch: false }),
@@ -533,6 +609,26 @@ describe("R2: a flagged loading() entry in a prefetch", () => {
     await prefetch("/pre", "/elsewhere");
     expect(count("pre")).toBe(bakes);
   });
+
+  it("on a Static route the handler is served as usual and the loader behind the fallback is deferred", async () => {
+    const { prefetch, fill } = setup();
+    const prefetched = payloadOf(await prefetch("/static"));
+    const route = prefetched.segments.find((s) => s.type === "route")!;
+    expect(route.deferred).toBeUndefined();
+    expect(present(route.component)).toBe(true);
+    expect(count("static")).toBe(1);
+    expect(count("static-loader")).toBe(0);
+    expect(prefetched.deferred).toEqual([
+      prefetched.find(StaticLoader.$$id)!.id,
+    ]);
+
+    const filled = payloadOf(await fill("/static", prefetched));
+    expect(filled.ids).toEqual(prefetched.deferred);
+    expect({
+      handler: count("static"),
+      loader: count("static-loader"),
+    }).toEqual({ handler: 1, loader: 1 });
+  });
 });
 
 describe("R3: ssr: false with prefetch: false", () => {
@@ -607,6 +703,8 @@ describe("R5: the fill request", () => {
     const prefetched = payloadOf(await prefetch("/held"));
     expect(count("held")).toBe(1);
     expect(count("held-loader")).toBe(1);
+    // The layout nested under the route: an orphan layout, held like the rest.
+    expect(count("held-orphan")).toBe(1);
     const before = { ...runs };
 
     const payload = payloadOf(await fill("/held", prefetched));
@@ -614,9 +712,13 @@ describe("R5: the fill request", () => {
     expect(count("held")).toBe(before.held);
     expect(count("held-loader")).toBe(before["held-loader"]);
     expect(count("held-page")).toBe(before["held-page"]);
+    expect(count("held-orphan")).toBe(1);
     expect(count("held-predicate")).toBe(before["held-predicate"] ?? 0);
     expect(count("held-loader-predicate")).toBe(
       before["held-loader-predicate"] ?? 0,
+    );
+    expect(count("held-orphan-predicate")).toBe(
+      before["held-orphan-predicate"] ?? 0,
     );
     expect(payload.ids).toEqual(prefetched.deferred);
 
@@ -631,6 +733,9 @@ describe("R5: the fill request", () => {
     });
     expect(count("held-predicate")).toBeGreaterThan(
       before["held-predicate"] ?? 0,
+    );
+    expect(count("held-orphan-predicate")).toBeGreaterThan(
+      before["held-orphan-predicate"] ?? 0,
     );
   });
 
@@ -810,6 +915,76 @@ describe("R8: where the flag cannot be honoured the work runs in the prefetch", 
     expect(count("modal-loader")).toBe(1);
     expect(payload.deferred).toEqual([]);
     expect(result.flight).not.toContain('"deferred"');
+  });
+
+  it("an intercept prefetch renders a flagged layout of its target's chain", async () => {
+    const { prefetch } = setup();
+    // The route is replaced by the intercept; the layouts above it are
+    // resolved by the shared funnel, which is where a prefetch defers.
+    const result = await prefetch("/gallery/1", "/");
+    const payload = payloadOf(result);
+    expect(result.flight).toContain("photo-modal-run-1");
+    expect(payload.deferred).toEqual([]);
+    expect(result.flight).not.toContain('"deferred"');
+    expect({
+      layout: count("gallery"),
+      loader: count("gallery-loader"),
+      route: count("photo"),
+    }).toEqual({ layout: 1, loader: 1, route: 0 });
+  });
+
+  it("control: the same target with no intercept to resolve defers its flagged layout", async () => {
+    const { serve } = setup();
+    // From the target itself nothing intercepts: an ordinary prefetch.
+    const payload = payloadOf(
+      await serve("/gallery/1", {
+        partial: { from: "/gallery/2", segments: [], prefetch: true },
+      }),
+    );
+    expect(payload.deferred.length).toBeGreaterThan(0);
+    expect(count("gallery")).toBe(0);
+  });
+
+  describe("a flagged loader something else reads with ctx.use()", () => {
+    it("a loader that reads it before its first await: one run, in the prefetch, nothing deferred", async () => {
+      const { prefetch } = setup();
+      const payload = payloadOf(await prefetch("/reads-early"));
+      expect(count("early-dep")).toBe(1);
+      expect(payload.deferred).toEqual([]);
+      expect(present(payload.find(EarlyDepLoader.$$id)!.loaderData)).toBe(true);
+    });
+
+    it("a streamed handler that reads it before its first await: one run, nothing deferred", async () => {
+      const { prefetch } = setup();
+      const payload = payloadOf(await prefetch("/streamed-early"));
+      expect(count("streamed-early-dep")).toBe(1);
+      expect(payload.deferred).toEqual([]);
+    });
+
+    // The two late readers. The loader runs for its reader after resolution
+    // has emitted its segment as deferred, so the fill runs it again: data is
+    // never missing, only fetched twice.
+    it.each([
+      ["a loader that reads it after an await", "/reads-late", "late-dep"],
+      [
+        "a streamed handler that reads it after an await",
+        "/streamed-late",
+        "streamed-late-dep",
+      ],
+    ])(
+      "%s: it runs in the prefetch and again in the fill",
+      async (_l, url, dep) => {
+        const { prefetch, fill } = setup();
+        const prefetched = payloadOf(await prefetch(url));
+        expect(count(dep)).toBe(1);
+        expect(prefetched.deferred).toHaveLength(1);
+
+        const filled = payloadOf(await fill(url, prefetched));
+        expect(count(dep)).toBe(2);
+        expect(filled.ids).toEqual(prefetched.deferred);
+        expect(present(filled.segments[0]!.loaderData)).toBe(true);
+      },
+    );
   });
 });
 

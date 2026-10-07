@@ -55,8 +55,8 @@ import {
 } from "./route-snapshot.js";
 import { resolveNavigation } from "./navigation-snapshot.js";
 import {
+  partialDeferralMode,
   planPrefetchDeferral,
-  type PrefetchDeferral,
 } from "./segment-resolution/prefetch-deferral.js";
 
 /**
@@ -465,26 +465,17 @@ export async function createMatchContextForPartial<TEnv>(
   if (cacheScope) armRecordTagOwners();
   if (bindsLoaderCache(snapshot.entries)) armLoaderTagSets();
 
-  // `prefetch: false` (segment-resolution/prefetch-deferral.ts). A fill is
-  // marked on the raw URL (browser/navigation-client.ts) and wins over the
-  // prefetch header. A prefetch defers only on a plain GET navigation: an
-  // intercept resolves its loaders outside the shared funnel, and a shell
-  // capture is never a prefetch whatever the request that scheduled it sent.
-  let deferralMode: PrefetchDeferral["mode"];
-  if (rawUrl.searchParams.has("_rsc_fill")) {
-    deferralMode = "fill";
-  } else if (
-    request.method === "GET" &&
-    !isAction &&
-    !isIntercept &&
-    !reqCtx?._shellCaptureRun &&
-    requestHeaders(request).has("X-Rango-Prefetch")
-  ) {
-    deferralMode = "prefetch";
-  }
+  // `prefetch: false` (segment-resolution/prefetch-deferral.ts).
   const deferral = planPrefetchDeferral(
     snapshot.entries,
-    deferralMode,
+    partialDeferralMode({
+      fill: rawUrl.searchParams.has("_rsc_fill"),
+      prefetch: requestHeaders(request).has("X-Rango-Prefetch"),
+      method: request.method,
+      isAction,
+      isIntercept,
+      isShellCapture: reqCtx?._shellCaptureRun === true,
+    }),
     matched,
     cacheScope,
   );
