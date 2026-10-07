@@ -828,6 +828,12 @@ function* preparePayloadPlan<TEnv>(
       };
     }
 
+    // What a prefetch defers depends on what the source page holds: a page
+    // that holds the segment gets it rendered. Adopted from another page, a
+    // deferring payload held the click on a fill for content a plain click
+    // showed at once, and ran held work again.
+    const deferring = result.segments.some((s) => s.deferred);
+    if (deferring) reqCtx._payloadDeferred = true;
     return {
       kind: "payload",
       payload: {
@@ -857,13 +863,7 @@ function* preparePayloadPlan<TEnv>(
           stateCookieName: ctx.router.resolvedStateCookieName,
         },
       },
-      // What a prefetch defers depends on what the source page holds: a
-      // page that holds the segment gets it rendered. Adopted from another
-      // page, a deferring payload held the click on a fill for content a
-      // plain click showed at once, and ran held work again.
-      sourceScoped:
-        result.interceptTargeted === true ||
-        result.segments.some((s) => s.deferred),
+      sourceScoped: result.interceptTargeted === true || deferring,
       pprReplayStatus,
       healKey,
     };
@@ -1213,15 +1213,18 @@ function renderPreparedRscResponse<TEnv>(
       rscHeaders["cache-control"] = cc;
     }
   }
-  // prefetch: false (docs/design/prefetch-false.md, R7). A flagged tree's
-  // prefetch carries deferred units a navigation must never be answered
-  // with, so the two vary on the header; an unflagged route keeps its exact
-  // `vary`. A fill is the second half of one adoption: never stored.
-  if (isPartial && reqCtx._prefetchFlagged) {
-    rscHeaders.vary += ", X-Rango-Prefetch";
-  }
-  if (isPartial && reqCtx.originalUrl.searchParams.has("_rsc_fill")) {
-    rscHeaders["cache-control"] = "no-store";
+  // prefetch: false (docs/design/prefetch-false.md, R7). A response that
+  // carries deferred units answers one page's prefetch, and a fill is the
+  // second half of one adoption: neither is reused, by the browser, a
+  // shared cache or the document cache (which also refuses a payload marked
+  // `_payloadDeferred`), whatever Cache-Control the route set. So no stored
+  // body can hand a navigation a deferred unit, and a route with no flag
+  // keeps its headers.
+  if (
+    reqCtx._payloadDeferred ||
+    (isPartial && reqCtx.originalUrl.searchParams.has("_rsc_fill"))
+  ) {
+    rscHeaders["cache-control"] = NOT_REUSED;
   }
 
   const isFlightResponse = isRscRequest(request, url, isPartial);
@@ -1706,6 +1709,17 @@ function publishTailTiming(
 }
 
 const PENDING = Symbol("pending");
+
+/**
+ * Cache-Control of a response nothing may store for reuse: one that carries
+ * deferred units (`prefetch: false`), and a fill. `private` keeps it out of
+ * shared caches; `no-cache` makes the browser ask again, and with no
+ * validator on the response that is a full request. Not `no-store`:
+ * Chromium reports a `no-store` fetch whose body is read through a stream
+ * as canceled (net::ERR_ABORTED in DevTools, and Playwright's
+ * response.finished() never settles), though every byte arrived.
+ */
+const NOT_REUSED = "private, no-cache";
 
 /**
  * Whether `value` is not a promise, or a promise that has already settled:

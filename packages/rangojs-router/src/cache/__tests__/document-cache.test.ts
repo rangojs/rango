@@ -1146,172 +1146,183 @@ describe("createDocumentCacheMiddleware", () => {
       expect(await probeResponse.text()).toBe("decoded elements");
     });
 
-    // prefetch: false (docs/design/prefetch-false.md, R7). The plain slot
-    // holds complete bodies only and is shared by a navigation and a prefetch;
-    // a prefetch body of a flagged tree, which may carry deferred segments,
-    // has its own slot that only a prefetch reads.
-    describe("prefetch and navigation slots", () => {
+    // prefetch: false (docs/design/prefetch-false.md, R7). One slot per key,
+    // read once, as without the feature: a response that carries deferred
+    // units is never written, so every stored body is complete and answers a
+    // navigation and a prefetch alike.
+    describe("a prefetch and a navigation share one slot", () => {
       const url =
         "http://localhost/page?_rsc_partial=true&_rsc_segments=root,layout";
       const PREFETCH = { "X-Rango-Prefetch": "1" };
-      // What rsc-rendering.ts sends for a partial response of a flagged tree.
-      const FLAGGED_VARY = "X-Rango-State, X-Rango-Prefetch";
 
-      async function slots() {
+      async function slot() {
         const { createDocumentCacheMiddleware } =
           await import("../document-cache.js");
         const middleware = createDocumentCacheMiddleware();
         const originalModule = await import("../../server/request-context.js");
-        vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
-          mockRequestCtx as any,
-        );
         const reads = vi.spyOn(mockStore, "getResponse");
+        const writes = vi.spyOn(mockStore, "putResponse");
         const serve = async (
           body: string,
-          options: { prefetch?: boolean; vary?: string } = {},
+          options: {
+            prefetch?: boolean;
+            /** The render marks its payload as carrying deferred units. */
+            deferring?: boolean;
+            cacheControl?: string;
+            at?: string;
+          } = {},
         ) => {
-          reads.mockClear();
-          const next = vi.fn().mockResolvedValue(
-            new Response(body, {
-              headers: {
-                "Cache-Control": "s-maxage=60, stale-while-revalidate=600",
-                ...(options.vary ? { Vary: options.vary } : {}),
-              },
-            }),
+          // One request context per request, as in production.
+          mockRequestCtx = createMockRequestContext(mockStore);
+          vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+            mockRequestCtx as any,
           );
+          reads.mockClear();
+          writes.mockClear();
+          const requestCtx = mockRequestCtx as any;
+          const next = vi.fn(async () => {
+            if (options.deferring) requestCtx._payloadDeferred = true;
+            return new Response(body, {
+              headers: {
+                "Cache-Control":
+                  options.cacheControl ??
+                  "s-maxage=60, stale-while-revalidate=600",
+              },
+            });
+          });
           const response = (await middleware(
-            createMockMiddlewareContext(url, {
+            createMockMiddlewareContext(options.at ?? url, {
               headers: options.prefetch ? PREFETCH : undefined,
             }),
             next,
           )) as Response;
-          const result = {
-            status: response.headers.get("x-document-cache-status"),
-            body: await response.text(),
-            reads: reads.mock.calls.length,
-          };
+          const status = response.headers.get("x-document-cache-status");
+          const text = await response.text();
           await vi.runAllTimersAsync();
-          return result;
+          return {
+            status,
+            body: text,
+            reads: reads.mock.calls.length,
+            writes: writes.mock.calls.length,
+          };
         };
-        const keys = () => [...mockStore.cache.keys()].sort();
-        return { serve, keys };
+        return { serve, keys: () => [...mockStore.cache.keys()] };
       }
 
-      it("a tree with no flag shares one slot, whichever request comes first", async () => {
-        const { serve, keys } = await slots();
-        // A prefetch that misses the plain slot looks in its own: two reads.
+      it("reads the store once per request, whatever its kind", async () => {
+        const { serve, keys } = await slot();
         expect(await serve("page", { prefetch: true })).toEqual({
           status: "MISS",
           body: "page",
-          reads: 2,
+          reads: 1,
+          writes: 1,
         });
         expect(await serve("unused")).toEqual({
           status: "HIT",
           body: "page",
           reads: 1,
+          writes: 0,
         });
         expect(await serve("unused", { prefetch: true })).toEqual({
           status: "HIT",
           body: "page",
           reads: 1,
+          writes: 0,
         });
-        expect(keys()).toEqual([expect.not.stringMatching(/:prefetch/)]);
+        expect(
+          await serve("<html>", { at: "http://localhost/page" }),
+        ).toMatchObject({ status: "MISS", reads: 1, writes: 1 });
+        // The partial key and the document key: no slot of its own for a
+        // prefetch.
+        expect(keys()).toHaveLength(2);
       });
 
-      it("a navigation of a tree with no flag warms the slot a prefetch reads", async () => {
-        const { serve } = await slots();
+      it("a navigation warms what a prefetch reads", async () => {
+        const { serve } = await slot();
         expect((await serve("page")).status).toBe("MISS");
         expect(await serve("unused", { prefetch: true })).toEqual({
           status: "HIT",
           body: "page",
           reads: 1,
+          writes: 0,
         });
       });
 
-      it("the prefetch body of a flagged tree never answers a navigation", async () => {
-        const { serve, keys } = await slots();
-        const deferred = { prefetch: true, vary: FLAGGED_VARY };
-        expect(await serve("with deferred segments", deferred)).toEqual({
-          status: "MISS",
-          body: "with deferred segments",
-          reads: 2,
-        });
-        expect(keys()).toEqual([expect.stringMatching(/:prefetch:rsc$/)]);
-        // The same prefetch again is served from its slot.
-        expect(await serve("unused", deferred)).toEqual({
-          status: "HIT",
-          body: "with deferred segments",
-          reads: 2,
-        });
-        // A navigation reads the plain slot only.
-        expect(await serve("complete", { vary: FLAGGED_VARY })).toEqual({
+      it("a response that carries deferred units is not written", async () => {
+        const { serve, keys } = await slot();
+        const deferring = { prefetch: true, deferring: true };
+        for (const body of ["deferred", "deferred again"]) {
+          // No status: the response is not one this cache stores.
+          expect(await serve(body, deferring)).toEqual({
+            status: null,
+            body,
+            reads: 1,
+            writes: 0,
+          });
+        }
+        expect(keys()).toEqual([]);
+        // So a navigation with the same key renders its own body.
+        expect(await serve("complete")).toMatchObject({
           status: "MISS",
           body: "complete",
-          reads: 1,
+          writes: 1,
         });
-        expect(await serve("unused", { vary: FLAGGED_VARY })).toEqual({
-          status: "HIT",
-          body: "complete",
-          reads: 1,
-        });
-        expect(keys()).toEqual([
-          expect.stringMatching(/:prefetch:rsc$/),
-          expect.not.stringMatching(/:prefetch/),
-        ]);
+        expect((await serve("unused")).body).toBe("complete");
       });
 
-      it("picks the prefetch slot from the request context when the response lost its Vary", async () => {
-        const { serve, keys } = await slots();
-        // An app middleware that rewrites Vary must not move a body with
-        // deferred segments into the slot navigations read.
-        (mockRequestCtx as any)._prefetchFlagged = true;
-        await serve("with deferred segments", { prefetch: true });
-        expect(keys()).toEqual([expect.stringMatching(/:prefetch:rsc$/)]);
-        expect((await serve("complete")).status).toBe("MISS");
-      });
-
-      it("a fresh complete body answers a prefetch of a flagged tree", async () => {
-        const { serve } = await slots();
-        await serve("with deferred segments", {
+      // rsc-rendering.ts answers such a response with `private, no-cache`,
+      // which this cache refuses on its own. The marker holds when an app
+      // middleware writes Cache-Control after next().
+      it("refuses it whatever Cache-Control the response ends up with", async () => {
+        const { serve, keys } = await slot();
+        await serve("deferred", {
           prefetch: true,
-          vary: FLAGGED_VARY,
+          deferring: true,
+          cacheControl: "public, s-maxage=3600",
         });
-        await serve("complete", { vary: FLAGGED_VARY });
-        // Complete, so the click that adopts it sends no fill, and one read.
-        expect(
-          await serve("unused", { prefetch: true, vary: FLAGGED_VARY }),
-        ).toEqual({ status: "HIT", body: "complete", reads: 1 });
+        expect(keys()).toEqual([]);
       });
 
-      it("a stale complete body of a flagged tree does not answer a prefetch", async () => {
-        const { serve } = await slots();
-        await serve("complete", { vary: FLAGGED_VARY });
+      it("a stored complete body answers the prefetch that would have deferred", async () => {
+        const { serve } = await slot();
+        await serve("complete");
+        // Complete, so the click that adopts it sends no fill.
+        expect(
+          await serve("unused", { prefetch: true, deferring: true }),
+        ).toEqual({ status: "HIT", body: "complete", reads: 1, writes: 0 });
+      });
+
+      it("a stale complete body is served to a prefetch whose refresh defers, and is left for a navigation to refresh", async () => {
+        const { serve } = await slot();
+        await serve("complete");
         vi.advanceTimersByTime(61_000);
 
-        // Revalidating it would render a prefetch, whose body belongs in the
-        // other slot: the stale entry would never be replaced.
-        expect(
-          await serve("with deferred segments", {
-            prefetch: true,
-            vary: FLAGGED_VARY,
-          }),
-        ).toEqual({ status: "MISS", body: "with deferred segments", reads: 2 });
-        expect(
-          await serve("unused", { prefetch: true, vary: FLAGGED_VARY }),
-        ).toEqual({ status: "HIT", body: "with deferred segments", reads: 2 });
-        // The navigation still revalidates its own slot, with its own body.
-        expect(await serve("complete again", { vary: FLAGGED_VARY })).toEqual({
+        const deferring = { prefetch: true, deferring: true };
+        for (let i = 0; i < 2; i++) {
+          // The refresh rendered the prefetch: nothing to store.
+          expect(await serve("deferred", deferring)).toEqual({
+            status: "STALE",
+            body: "complete",
+            reads: 1,
+            writes: 0,
+          });
+        }
+        expect(await serve("complete again")).toEqual({
           status: "STALE",
           body: "complete",
           reads: 1,
+          writes: 1,
         });
-        expect((await serve("unused", { vary: FLAGGED_VARY })).body).toBe(
-          "complete again",
-        );
+        expect(await serve("unused", { prefetch: true })).toEqual({
+          status: "HIT",
+          body: "complete again",
+          reads: 1,
+          writes: 0,
+        });
       });
 
-      it("a stale body of a tree with no flag is revalidated by a prefetch, into the shared slot", async () => {
-        const { serve, keys } = await slots();
+      it("a stale body is refreshed by a prefetch that defers nothing", async () => {
+        const { serve } = await slot();
         await serve("page");
         vi.advanceTimersByTime(61_000);
 
@@ -1319,52 +1330,10 @@ describe("createDocumentCacheMiddleware", () => {
           status: "STALE",
           body: "page",
           reads: 1,
+          writes: 1,
         });
-        expect(await serve("unused")).toEqual({
-          status: "HIT",
-          body: "page again",
-          reads: 1,
-        });
-        expect(keys()).toEqual([expect.not.stringMatching(/:prefetch/)]);
+        expect((await serve("unused")).body).toBe("page again");
       });
-
-      it("a stale prefetch body is revalidated into its own slot", async () => {
-        const { serve, keys } = await slots();
-        const deferred = { prefetch: true, vary: FLAGGED_VARY };
-        await serve("with deferred segments", deferred);
-        vi.advanceTimersByTime(61_000);
-
-        expect((await serve("deferred again", deferred)).status).toBe("STALE");
-        expect((await serve("unused", deferred)).body).toBe("deferred again");
-        expect(keys()).toEqual([expect.stringMatching(/:prefetch:rsc$/)]);
-      });
-    });
-
-    it("gives a document request no prefetch slot, whatever its headers say", async () => {
-      const { createDocumentCacheMiddleware } =
-        await import("../document-cache.js");
-      const middleware = createDocumentCacheMiddleware();
-
-      const originalModule = await import("../../server/request-context.js");
-      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
-        mockRequestCtx as any,
-      );
-      const next = vi.fn().mockResolvedValue(
-        new Response("<html>", {
-          headers: { "Cache-Control": "s-maxage=60" },
-        }),
-      );
-      await middleware(
-        createMockMiddlewareContext("http://localhost/page", {
-          headers: { "X-Rango-Prefetch": "1" },
-        }),
-        next,
-      );
-      await vi.runAllTimersAsync();
-
-      expect([...mockStore.cache.keys()]).toEqual([
-        expect.not.stringMatching(/:prefetch/),
-      ]);
     });
 
     it("bypasses an existing response-cache hit during fragment recovery", async () => {

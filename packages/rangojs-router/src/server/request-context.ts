@@ -714,6 +714,14 @@ export interface RequestContext<
   _payloadVisitorTheme?: boolean;
 
   /**
+   * @internal Set by the partial render when its payload carries deferred
+   * units (`prefetch: false`): what one page's prefetch left for the fill.
+   * The document cache does not store that response, whatever Cache-Control
+   * it ends up with (docs/design/prefetch-false.md, R7).
+   */
+  _payloadDeferred?: boolean;
+
+  /**
    * Attach location state entries to the current response.
    *
    * For partial (SPA) requests, the state is included in the RSC payload
@@ -826,14 +834,6 @@ export interface RequestContext<
    * Avoids rebuilding the snapshot on every loader ctx.use(handle) call.
    */
   _renderBarrierHandleSnapshot?: HandleData;
-
-  /**
-   * @internal The partial request's matched tree declares `prefetch: false`,
-   * so a prefetch of it and a navigation to it differ: the response varies
-   * on X-Rango-Prefetch (rsc-rendering.ts). Set by
-   * createMatchContextForPartial (router/match-api.ts).
-   */
-  _prefetchFlagged?: true;
 
   /**
    * @internal The deadlock guard window is closed (no further handler-awaits-
@@ -1008,6 +1008,7 @@ export type PublicRequestContext<
   | "_readTheme"
   | "_documentCacheRender"
   | "_payloadVisitorTheme"
+  | "_payloadDeferred"
   | "_locationState"
   | "_routeName"
   | "_prevRouteKey"
@@ -1022,7 +1023,6 @@ export type PublicRequestContext<
   | "_handlerLoaderDeps"
   | "_awaitBeforeFlushLoaderIds"
   | "_renderBarrierHandleSnapshot"
-  | "_prefetchFlagged"
   | "_renderBarrierGuardClosed"
   | "_reportBackgroundError"
   | "_debugPerformance"

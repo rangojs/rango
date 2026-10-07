@@ -118,7 +118,10 @@ function parseCacheControl(header: string | null): CacheDirectives | null {
  */
 function shouldCacheResponse(
   response: Response,
-  requestCtx?: Pick<RequestContext, "_payloadVisitorTheme">,
+  requestCtx?: Pick<
+    RequestContext,
+    "_payloadVisitorTheme" | "_payloadDeferred"
+  >,
 ): CacheDirectives | null {
   // Only cache successful responses
   if (response.status !== 200) {
@@ -139,6 +142,15 @@ function shouldCacheResponse(
   // response opted in (a Cache-Control written after next()), so
   // payloadInitialTheme could not render the default.
   if (requestCtx?._payloadVisitorTheme) {
+    return null;
+  }
+
+  // prefetch: false. The payload carries deferred units: it answers one
+  // page's prefetch and nothing else. parseCacheControl refuses the
+  // Cache-Control it is sent with (rsc-rendering.ts NOT_REUSED), but a
+  // middleware can replace that after next(), and a navigation answered
+  // with this body would show a fallback no fill ever replaces.
+  if (requestCtx?._payloadDeferred) {
     return null;
   }
 
@@ -206,32 +218,6 @@ function addCacheStatusHeader(
       headers,
     });
   }
-}
-
-/** A response whose `Vary` lists X-Rango-Prefetch: its tree declares `prefetch: false`. */
-function variesOnPrefetch(response: Response): boolean {
-  return (
-    response.headers.get("vary")?.toLowerCase().includes("x-rango-prefetch") ??
-    false
-  );
-}
-
-/**
- * Whether a plain-slot entry answers a prefetch (see the slot comment in
- * createDocumentCacheMiddleware). A fresh one always does: it is a complete
- * body, so the click that adopts it needs no fill. A stale one does only for
- * a tree with no flag. Revalidating it re-renders the prefetch, and for a
- * flagged tree that body goes to the other slot: the stale entry would be
- * served, and re-rendered, by every prefetch until a navigation replaced it.
- */
-function answersPrefetch(
-  cached: { response: Response; shouldRevalidate: boolean } | null,
-): boolean {
-  return (
-    cached !== null &&
-    cached.response.status === 200 &&
-    (!cached.shouldRevalidate || !variesOnPrefetch(cached.response))
-  );
 }
 
 /**
@@ -357,8 +343,8 @@ export function createDocumentCacheMiddleware<TEnv = any>(
     }
 
     // Skip fill requests (prefetch: false): a fill is the second half of one
-    // adoption, rendered against what that client holds, never stored and
-    // never served from a stored body (docs/design/prefetch-false.md, R7).
+    // adoption, rendered against what that client holds. Never served from a
+    // stored body and never stored.
     if (rawUrl.searchParams.has("_rsc_fill")) {
       return next();
     }
@@ -428,46 +414,27 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       // The keyGenerator branch is left untouched: a consumer-supplied generator
       // owns its own namespacing (auto-prefixing host would silently change their
       // existing keys and double any host they already include).
-      const keyBase =
-        (keyGenerator
-          ? keyGenerator(url)
-          : cacheKeyBase(
-              url.host,
-              url.pathname,
-              url.searchParams,
-              undefined,
-              requestCtx?._searchParamsFilter,
-            )) +
-        segmentHash +
-        fragmentSuffix;
-      // prefetch: false (docs/design/prefetch-false.md, R7). The plain slot
-      // holds complete bodies only: a navigation's, or the prefetch of a tree
-      // with no flag, which is the same body. The `:prefetch` slot holds the
-      // prefetch body of a flagged tree, which may carry deferred units; only
-      // a prefetch reads it. This middleware runs before classification and
-      // cannot tell whether the route declares a flag, so a prefetch reads
-      // the plain slot first and a write picks its slot after the render.
-      const plainKey = keyBase + typeSuffix;
-      const prefetchKey =
-        isPartial && requestHeaders(ctx.request).has("X-Rango-Prefetch")
-          ? keyBase + ":prefetch" + typeSuffix
-          : undefined;
-      const writeKey = (rendered: Response): string =>
-        prefetchKey &&
-        (requestCtx._prefetchFlagged || variesOnPrefetch(rendered))
-          ? prefetchKey
-          : plainKey;
-
+      const cacheKey = keyGenerator
+        ? keyGenerator(url) + segmentHash + fragmentSuffix + typeSuffix
+        : cacheKeyBase(
+            url.host,
+            url.pathname,
+            url.searchParams,
+            undefined,
+            requestCtx?._searchParamsFilter,
+          ) +
+          segmentHash +
+          fragmentSuffix +
+          typeSuffix;
       // 1. Check cache
       // Recovery must reach CacheScope's server decoder so it can evict the bad
       // segment. Treat it as a miss, then let the ordinary write path replace
       // the corrupt fragment-capable response with the valid fallback bytes.
       // A router.prerender() warm is a miss too: it renders and replaces.
-      const skipRead = isFragmentRecovery || isWarmReplace(requestCtx);
-      let cached = skipRead ? null : await store.getResponse(plainKey);
-      if (prefetchKey && !skipRead && !answersPrefetch(cached)) {
-        cached = await store.getResponse(prefetchKey);
-      }
+      const cached =
+        isFragmentRecovery || isWarmReplace(requestCtx)
+          ? null
+          : await store.getResponse(cacheKey);
       // Every path past the lookup either returns a fresh HIT, which renders
       // nothing, or renders a response this cache may store.
       requestCtx._documentCacheRender = true;
@@ -520,7 +487,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
                   const tags = collectRequestTags(requestCtx);
                   if (await predatesInvalidation(store, tags, start)) return;
                   await store.putResponse!(
-                    writeKey(fresh),
+                    cacheKey,
                     new Response(body, fresh),
                     directives.sMaxAge!,
                     directives.staleWhileRevalidate,
@@ -591,7 +558,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
             const tags = collectRequestTags(requestCtx);
             if (await predatesInvalidation(store, tags, start)) return;
             await store.putResponse!(
-              writeKey(originalResponse),
+              cacheKey,
               new Response(body, originalResponse),
               directives.sMaxAge!,
               directives.staleWhileRevalidate,

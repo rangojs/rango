@@ -484,15 +484,6 @@ export async function createMatchContextForPartial<TEnv>(
   );
   (handlerContext as InternalHandlerContext<any, TEnv>)._prefetchDeferral =
     deferral;
-  // Flagged tree: a prefetch of it and a navigation to it are different
-  // bodies (rsc-rendering.ts adds X-Rango-Prefetch to Vary).
-  if (
-    reqCtx &&
-    deferral &&
-    deferral.scope.loaders.size + deferral.scope.units.size > 0
-  ) {
-    reqCtx._prefetchFlagged = true;
-  }
 
   return {
     request,

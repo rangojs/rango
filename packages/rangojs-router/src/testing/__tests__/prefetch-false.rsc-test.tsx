@@ -41,6 +41,10 @@ import {
   createDocumentCacheMiddleware,
   MemorySegmentCacheStore,
 } from "../../cache/index.js";
+import {
+  SEGMENT_FRAGMENT_CAPABILITY_HEADER,
+  SEGMENT_FRAGMENT_RECOVERY_HEADER,
+} from "../../segment-fragments.js";
 
 const runs: Record<string, number> = {};
 const ran = (name: string): number => (runs[name] = (runs[name] ?? 0) + 1);
@@ -715,7 +719,9 @@ describe("R5: the fill request", () => {
     expect(present(payload.segments[0]!.loaderData)).toBe(true);
     expect(payload.deferred).toEqual([]);
     expect(payload.matched).toEqual(prefetched.matched);
-    expect(result.response.headers.get("cache-control")).toBe("no-store");
+    expect(result.response.headers.get("cache-control")).toBe(
+      "private, no-cache",
+    );
   });
 
   it("runs a deferred route unit: its handler and loader once, nothing it holds", async () => {
@@ -827,105 +833,223 @@ describe("R5: the fill request", () => {
 });
 
 describe("R7: deferral is never stored, and modes never answer each other", () => {
-  it("adds X-Rango-Prefetch to Vary for a flagged route only", async () => {
+  // What a route answers with when the feature is not in play.
+  const PREFETCH_CACHE_CONTROL = "private, max-age=300";
+  // What a response nothing may reuse answers with (rsc-rendering.ts).
+  const NOT_REUSED = "private, no-cache";
+  const VARY = `accept, X-Rango-State, X-RSC-Router-Client-Path, ${SEGMENT_FRAGMENT_CAPABILITY_HEADER}, ${SEGMENT_FRAGMENT_RECOVERY_HEADER}`;
+  const headersOf = (r: ServeShellRequestResult) => ({
+    vary: r.response.headers.get("vary"),
+    cacheControl: r.response.headers.get("cache-control"),
+    scope: r.response.headers.get("x-rsc-prefetch-scope"),
+  });
+
+  it("a route with no flag answers a prefetch and a navigation as it does without the feature", async () => {
     const { prefetch, serve } = setup();
-    const flagged = await prefetch("/product/1");
-    expect(flagged.response.headers.get("vary")).toContain("X-Rango-Prefetch");
-    const nav = await serve("/product/1", { partial: { from: "/" } });
-    expect(nav.response.headers.get("vary")).toContain("X-Rango-Prefetch");
-    const plain = await prefetch("/elsewhere");
-    expect(plain.response.headers.get("vary")).not.toContain(
-      "X-Rango-Prefetch",
-    );
+    expect(headersOf(await prefetch("/elsewhere"))).toEqual({
+      vary: VARY,
+      cacheControl: PREFETCH_CACHE_CONTROL,
+      scope: null,
+    });
+    expect(
+      headersOf(await serve("/elsewhere", { partial: { from: "/" } })),
+    ).toEqual({ vary: VARY, cacheControl: null, scope: null });
+  });
+
+  it("a prefetch that defers is for its source page only and is not to be stored", async () => {
+    const { prefetch } = setup();
+    for (const url of ["/product/1", "/orders"]) {
+      const result = await prefetch(url);
+      expect(payloadOf(result).deferred.length).toBeGreaterThan(0);
+      expect(headersOf(result)).toEqual({
+        vary: VARY,
+        cacheControl: NOT_REUSED,
+        scope: "source",
+      });
+    }
+  });
+
+  it("a flagged tree answers like any other when nothing is deferred", async () => {
+    const { serve } = setup();
+    expect(
+      headersOf(await serve("/product/1", { partial: { from: "/" } })),
+    ).toEqual({ vary: VARY, cacheControl: null, scope: null });
+
+    // A prefetch from a page that holds the flagged segments.
+    const held = payloadOf(
+      await serve("/orders", { partial: { from: "/" } }),
+    ).matched;
+    const result = await serve("/orders", {
+      partial: { from: "/orders", segments: held, prefetch: true },
+    });
+    expect(payloadOf(result).deferred).toEqual([]);
+    expect(headersOf(result)).toEqual({
+      vary: VARY,
+      cacheControl: PREFETCH_CACHE_CONTROL,
+      scope: null,
+    });
   });
 
   describe("the document cache", () => {
-    /** One cacheable route at /doc, flagged or not, behind the middleware. */
+    class CountingStore extends MemorySegmentCacheStore {
+      reads = 0;
+      writes = 0;
+      override getResponse(key: string) {
+        this.reads++;
+        return super.getResponse(key);
+      }
+      override putResponse(
+        ...args: Parameters<MemorySegmentCacheStore["putResponse"]>
+      ) {
+        this.writes++;
+        return super.putResponse(...args);
+      }
+    }
+
+    /** A handler whose response opts into the document cache. */
+    const cacheable = (name: string) => (ctx: HandlerContext) => {
+      ctx.headers.set("Cache-Control", "s-maxage=60");
+      return <p>{`${name}-run-${ran(name)}`}</p>;
+    };
+
+    /**
+     * Two cacheable routes under one layout, behind the middleware. The
+     * layout's loader, flagged or not, is what a prefetch from "/" defers; a
+     * client on /doc holds the layout, so its prefetch of /doc/other defers
+     * nothing.
+     */
     function docCache(flagged: boolean) {
-      const cacheStore = new MemorySegmentCacheStore();
+      const cacheStore = new CountingStore();
       const router = createRouter({ prefetchCacheTTL: false })
         .use(createDocumentCacheMiddleware())
         .routes(
-          urls(({ path, loader, loading }) => [
+          urls(({ path, layout, loader, loading }) => [
             path("/", page("doc-home"), { name: "home" }),
-            path(
-              "/doc",
-              (ctx) => {
-                ctx.headers.set("Cache-Control", "s-maxage=60");
-                return <p>{`doc-run-${ran("doc")}`}</p>;
-              },
-              { name: "doc" },
-              () => [
-                loader(ReviewsLoader, flagged ? { prefetch: false } : {}),
-                loading(<p>doc-loading</p>),
-              ],
-            ),
+            layout(page("doc-layout"), () => [
+              loader(ReviewsLoader, flagged ? { prefetch: false } : {}),
+              loading(<p>doc-loading</p>),
+              path("/doc", cacheable("doc"), { name: "doc" }),
+              path("/doc/other", cacheable("doc-other"), { name: "docOther" }),
+            ]),
           ]),
         );
-      const serve = (partial: ServeShellRequestOptions["partial"]) =>
-        serveShellRequest(router, "/doc", { cacheStore, partial });
+      /** One request, with what it read from and wrote to the store. */
+      const serve = async (
+        partial: ServeShellRequestOptions["partial"],
+        url = "/doc",
+      ) => {
+        const before = { reads: cacheStore.reads, writes: cacheStore.writes };
+        const result = await serveShellRequest(router, url, {
+          cacheStore,
+          partial,
+        });
+        return {
+          result,
+          status: result.response.headers.get("x-document-cache-status"),
+          reads: cacheStore.reads - before.reads,
+          writes: cacheStore.writes - before.writes,
+        };
+      };
       return { serve };
     }
-    const status = (r: ServeShellRequestResult) =>
-      r.response.headers.get("x-document-cache-status");
 
-    it("a route with no flag shares one slot between a prefetch and a navigation", async () => {
+    it("a route with no flag reads the store once per request and shares one entry", async () => {
       const { serve } = docCache(false);
-      // The prefetch warms the slot the navigation reads, and the other way
+      // The prefetch warms what the navigation reads, and the other way
       // round: the two are the same body.
-      expect(status(await serve({ from: "/", prefetch: true }))).toBe("MISS");
-      const nav = await serve({ from: "/" });
-      expect(status(nav)).toBe("HIT");
-      expect(status(await serve({ from: "/", prefetch: true }))).toBe("HIT");
-      expect({ doc: count("doc"), reviews: count("reviews") }).toEqual({
-        doc: 1,
-        reviews: 1,
+      expect(await serve({ from: "/", prefetch: true })).toMatchObject({
+        status: "MISS",
+        reads: 1,
+        writes: 1,
       });
-      expect(payloadOf(nav).deferred).toEqual([]);
+      const nav = await serve({ from: "/" });
+      expect(nav).toMatchObject({ status: "HIT", reads: 1, writes: 0 });
+      expect(await serve({ from: "/", prefetch: true })).toMatchObject({
+        status: "HIT",
+        reads: 1,
+        writes: 0,
+      });
+      expect(await serve(undefined)).toMatchObject({
+        status: "MISS",
+        reads: 1,
+        writes: 1,
+      });
+      expect({ doc: count("doc"), reviews: count("reviews") }).toEqual({
+        doc: 2,
+        reviews: 2,
+      });
+      expect(payloadOf(nav.result).deferred).toEqual([]);
     });
 
-    it("a navigation is never answered with a body that carries deferred units", async () => {
+    it("a prefetch that defers writes nothing, and a navigation is never answered with it", async () => {
       const { serve } = docCache(true);
-      const first = await serve({ from: "/", prefetch: true });
-      expect(status(first)).toBe("MISS");
-      expect(payloadOf(first).deferred).toHaveLength(1);
-      // The same prefetch again is the stored prefetch body.
-      const again = await serve({ from: "/", prefetch: true });
-      expect(status(again)).toBe("HIT");
-      expect(payloadOf(again).deferred).toHaveLength(1);
+      for (let i = 0; i < 2; i++) {
+        const prefetched = await serve({ from: "/", prefetch: true });
+        // No status: the response is not one this cache stores.
+        expect(prefetched).toMatchObject({
+          status: null,
+          reads: 1,
+          writes: 0,
+        });
+        expect(payloadOf(prefetched.result).deferred).toHaveLength(1);
+        expect(prefetched.result.response.headers.get("cache-control")).toBe(
+          "private, no-cache",
+        );
+      }
       expect(count("reviews")).toBe(0);
 
-      // A navigation with the same segments is not answered by it.
+      // A navigation with the same segments renders its own body.
       const nav = await serve({ from: "/" });
-      expect(status(nav)).toBe("MISS");
-      expect(payloadOf(nav).deferred).toEqual([]);
+      expect(nav).toMatchObject({ status: "MISS", reads: 1, writes: 1 });
+      expect(payloadOf(nav.result).deferred).toEqual([]);
       expect(count("reviews")).toBe(1);
-      // And its own body is stored for the next navigation.
       const navAgain = await serve({ from: "/" });
-      expect(status(navAgain)).toBe("HIT");
-      expect(payloadOf(navAgain).deferred).toEqual([]);
+      expect(navAgain).toMatchObject({ status: "HIT", reads: 1, writes: 0 });
+      expect(payloadOf(navAgain.result).deferred).toEqual([]);
       expect(count("reviews")).toBe(1);
     });
 
     it("a stored complete navigation body answers a later prefetch of a flagged route", async () => {
       const { serve } = docCache(true);
-      expect(status(await serve({ from: "/" }))).toBe("MISS");
+      expect((await serve({ from: "/" })).status).toBe("MISS");
       expect(count("reviews")).toBe(1);
 
       // Complete, so the click that adopts it sends no fill, and serving it
       // ran nothing.
       const prefetched = await serve({ from: "/", prefetch: true });
-      expect(status(prefetched)).toBe("HIT");
-      expect(payloadOf(prefetched).deferred).toEqual([]);
+      expect(prefetched).toMatchObject({ status: "HIT", reads: 1, writes: 0 });
+      expect(payloadOf(prefetched.result).deferred).toEqual([]);
       expect({ doc: count("doc"), reviews: count("reviews") }).toEqual({
         doc: 1,
         reviews: 1,
       });
     });
 
+    it("a prefetch of a flagged tree that defers nothing is stored and served as any prefetch", async () => {
+      const { serve } = docCache(true);
+      const held = payloadOf((await serve({ from: "/" })).result).matched;
+      const from = { from: "/doc", segments: held };
+
+      const prefetched = await serve({ ...from, prefetch: true }, "/doc/other");
+      expect(prefetched).toMatchObject({ status: "MISS", reads: 1, writes: 1 });
+      expect(payloadOf(prefetched.result).deferred).toEqual([]);
+      expect(
+        await serve({ ...from, prefetch: true }, "/doc/other"),
+      ).toMatchObject({ status: "HIT", reads: 1, writes: 0 });
+      // The same body answers the navigation.
+      const nav = await serve(from, "/doc/other");
+      expect(nav).toMatchObject({ status: "HIT", reads: 1, writes: 0 });
+      expect(payloadOf(nav.result).ids).toEqual(
+        payloadOf(prefetched.result).ids,
+      );
+      expect(count("doc-other")).toBe(1);
+    });
+
     it("a fill is never stored and never served from the cache", async () => {
       const { serve } = docCache(true);
-      const prefetched = payloadOf(await serve({ from: "/", prefetch: true }));
+      const prefetched = payloadOf(
+        (await serve({ from: "/", prefetch: true })).result,
+      );
       const held = prefetched.matched.filter(
         (id) => !prefetched.deferred.includes(id),
       );
@@ -935,9 +1059,11 @@ describe("R7: deferral is never stored, and modes never answer each other", () =
           segments: held,
           fill: true,
         });
-        expect(status(filled)).toBeNull();
+        expect(filled).toMatchObject({ status: null, reads: 0, writes: 0 });
         expect(count("reviews")).toBe(expected);
-        expect(filled.response.headers.get("cache-control")).toBe("no-store");
+        expect(filled.result.response.headers.get("cache-control")).toBe(
+          "private, no-cache",
+        );
       }
     });
   });

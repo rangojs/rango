@@ -1229,6 +1229,10 @@ export async function expectPrefetchThatDeferredStaysWithItsPage(
       response.headers()["x-rsc-prefetch-scope"],
       "on the hub the segment is new: the prefetch defers it, for the hub",
     ).toBe("source");
+    expect(
+      response.headers()["cache-control"],
+      "and a response that defers is never reused",
+    ).toBe("private, no-cache");
   }
 
   await prefetchCase(page, hub, from);
