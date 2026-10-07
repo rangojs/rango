@@ -56,6 +56,19 @@ export type {
   ConsoleRule,
   SuspenseAuditCounters,
 } from "./console-guard.js";
+export {
+  expectBackAndForwardKeepTheFilledPage,
+  expectDocumentAwaitsLoaderThatPrefetchSkips,
+  expectEveryAdoptionSendsItsOwnFill,
+  expectLeavingBeforeTheFillAbortsItAndBackRefetches,
+  expectNoBoundaryHoldsThePageLeftUntilTheFillReturns,
+  expectPrefetchSkipsFlaggedWorkAndClickFillsIt,
+  expectUnflaggedRouteIsPrefetchedWhole,
+} from "./prefetch-false.js";
+export type {
+  PrefetchFalseCase,
+  PrefetchFalseFixture,
+} from "./prefetch-false.js";
 
 /**
  * Shared end-to-end test utilities for HMR-driven tests across apps.
