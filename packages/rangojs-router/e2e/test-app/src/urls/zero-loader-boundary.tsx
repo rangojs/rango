@@ -1,23 +1,74 @@
-import { urls, type Handler } from "@rangojs/router";
-import { Link, Outlet } from "@rangojs/router/client";
+import { urls, loader, loading, type Handler } from "@rangojs/router";
+import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
+import {
+  ZlbLayoutLoader,
+  ZlbRouteLoader,
+  ZlbSlotLoader,
+} from "./zero-loader-boundary.loaders.js";
+import {
+  ZlbLayoutValue,
+  ZlbRouteValue,
+  ZlbSlotValue,
+} from "./zero-loader-boundary.client.js";
 
 /**
- * A layout with loading() and no loaders over two plain children. The hub
- * sits outside the layout, so entering /zlb/a mounts the layout fresh; the
- * hub's two links enter it by a hover-prefetched click and by a plain click.
- * /zlb/a links to /zlb/b with prefetch off.
+ * Held-boundary fixtures. The hub (/zlb) sits outside every layout, so
+ * entering /<s>/a mounts the layout fresh; per scenario s the hub has a
+ * hover-prefetched and a plain link to /<s>/a, and /<s>/a links to /<s>/b
+ * with prefetch off.
+ *
+ *  - zlb : layout with loading() and no loaders
+ *  - zlbl: layout with loading() and one loader read by useLoader
+ *  - zlbs: parallel slot with its own loader and loading()
+ *  - zlbr: layout without loading(); each child route has its own loader and
+ *          loading() (the new route's fallback may show, the layout is held)
  */
+
+function HubLinks({ s }: { s: string }) {
+  return (
+    <div>
+      <Link
+        to={`/${s}/a` as string}
+        data-testid={`${s}-hub-prefetched`}
+        prefetch="hover"
+      >
+        {s} a (hover prefetch)
+      </Link>
+      <Link
+        to={`/${s}/a` as string}
+        data-testid={`${s}-hub-plain`}
+        prefetch="none"
+      >
+        {s} a (no prefetch)
+      </Link>
+    </div>
+  );
+}
 
 const ZlbHub: Handler = () => (
   <div data-testid="zlb-hub">
-    <Link to="/zlb/a" data-testid="zlb-hub-prefetched" prefetch="hover">
-      a (hover prefetch)
-    </Link>
-    <Link to="/zlb/a" data-testid="zlb-hub-plain" prefetch="none">
-      a (no prefetch)
-    </Link>
+    {["zlb", "zlbl", "zlbs", "zlbr"].map((s) => (
+      <HubLinks key={s} s={s} />
+    ))}
   </div>
 );
+
+function toB(s: string) {
+  return (
+    <Link to={`/${s}/b` as string} data-testid={`${s}-to-b`} prefetch="none">
+      b
+    </Link>
+  );
+}
+
+const page =
+  (s: string, which: "a" | "b"): Handler =>
+  () => (
+    <div data-testid={`${s}-${which}`}>
+      {which}
+      {which === "a" ? toB(s) : null}
+    </div>
+  );
 
 const ZlbLayout: Handler = () => (
   <div data-testid="zlb-layout">
@@ -25,22 +76,77 @@ const ZlbLayout: Handler = () => (
   </div>
 );
 
-const ZlbA: Handler = () => (
-  <div data-testid="zlb-a">
-    a
-    <Link to="/zlb/b" data-testid="zlb-to-b" prefetch="none">
-      b
-    </Link>
+const ZlbLLayout: Handler = () => (
+  <div data-testid="zlbl-layout">
+    <ZlbLayoutValue />
+    <Outlet />
   </div>
 );
 
-const ZlbB: Handler = () => <div data-testid="zlb-b">b</div>;
+const ZlbSLayout: Handler = () => (
+  <div data-testid="zlbs-layout">
+    <Outlet />
+    <ParallelOutlet name="@zlbsSlot" />
+  </div>
+);
 
-export const zeroLoaderBoundaryPatterns = urls(({ layout, path, loading }) => [
-  path("/zlb", ZlbHub, { name: "zlbHub" }),
-  layout(ZlbLayout, () => [
-    loading(<div data-testid="zlb-fallback">zlb-loading</div>),
-    path("/zlb/a", ZlbA, { name: "zlbA" }),
-    path("/zlb/b", ZlbB, { name: "zlbB" }),
-  ]),
-]);
+const ZlbSSlot: Handler = () => (
+  <div data-testid="zlbs-slot">
+    <ZlbSlotValue />
+  </div>
+);
+
+const ZlbRLayout: Handler = () => (
+  <div data-testid="zlbr-layout">
+    <Outlet />
+  </div>
+);
+
+const routePage =
+  (which: "a" | "b"): Handler =>
+  () => (
+    <div data-testid={`zlbr-${which}`}>
+      {which}
+      <ZlbRouteValue testId={`zlbr-${which}-value`} />
+      {which === "a" ? toB("zlbr") : null}
+    </div>
+  );
+
+export const zeroLoaderBoundaryPatterns = urls(
+  ({ layout, path, loading, parallel }) => [
+    path("/zlb", ZlbHub, { name: "zlbHub" }),
+
+    layout(ZlbLayout, () => [
+      loading(<div data-testid="zlb-fallback">zlb-loading</div>),
+      path("/zlb/a", page("zlb", "a"), { name: "zlbA" }),
+      path("/zlb/b", page("zlb", "b"), { name: "zlbB" }),
+    ]),
+
+    layout(ZlbLLayout, () => [
+      loader(ZlbLayoutLoader),
+      loading(<div data-testid="zlbl-fallback">zlbl-loading</div>),
+      path("/zlbl/a", page("zlbl", "a"), { name: "zlblA" }),
+      path("/zlbl/b", page("zlbl", "b"), { name: "zlblB" }),
+    ]),
+
+    layout(ZlbSLayout, () => [
+      parallel({ "@zlbsSlot": ZlbSSlot }, () => [
+        loader(ZlbSlotLoader),
+        loading(<div data-testid="zlbs-fallback">zlbs-loading</div>),
+      ]),
+      path("/zlbs/a", page("zlbs", "a"), { name: "zlbsA" }),
+      path("/zlbs/b", page("zlbs", "b"), { name: "zlbsB" }),
+    ]),
+
+    layout(ZlbRLayout, () => [
+      path("/zlbr/a", routePage("a"), { name: "zlbrA" }, () => [
+        loader(ZlbRouteLoader),
+        loading(<div data-testid="zlbr-fallback">zlbr-loading</div>),
+      ]),
+      path("/zlbr/b", routePage("b"), { name: "zlbrB" }, () => [
+        loader(ZlbRouteLoader),
+        loading(<div data-testid="zlbr-fallback">zlbr-loading</div>),
+      ]),
+    ]),
+  ],
+);

@@ -1,11 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
 
 /**
- * A layout with loading() and no loaders, children /zlb/a and /zlb/b, a hub
- * at /zlb. Entering /zlb/a by a fully prefetched click and then clicking to
- * the un-prefetched /zlb/b must not show the layout's fallback (a boundary
- * with no loaders was handed a promise React had not read). Both apps mount
- * the same fixture and call this from a dev and a (production) describe.
+ * Held-boundary scenarios. Entering /<s>/a by a fully prefetched click and
+ * then clicking to the un-prefetched /<s>/b must not replace a boundary
+ * already on screen with its loading() fallback (the router handed it a
+ * promise React had not read). Fixture: zero-loader-boundary.tsx in each
+ * app; both apps call this from a dev and a (production) describe.
  */
 
 export interface ZeroLoaderBoundaryScenarioOptions {
@@ -13,41 +13,83 @@ export interface ZeroLoaderBoundaryScenarioOptions {
   waitForHydration: (page: Page) => Promise<void>;
 }
 
-async function watchBoundary(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    const w = window as unknown as {
-      __zlb: { fallback: boolean; detached: boolean; obs: MutationObserver };
-    };
-    const state = {
-      fallback: document.querySelector('[data-testid="zlb-fallback"]') != null,
-      detached: false,
-    };
-    const has = (n: Node, id: string): boolean =>
-      n.nodeType === 1 &&
-      ((n as Element).matches?.(`[data-testid="${id}"]`) ||
-        (n as Element).querySelector?.(`[data-testid="${id}"]`) != null);
-    const obs = new MutationObserver((records) => {
-      for (const r of records) {
-        for (const n of Array.from(r.addedNodes)) {
-          if (has(n, "zlb-fallback")) state.fallback = true;
-        }
-        for (const n of Array.from(r.removedNodes)) {
-          if (has(n, "zlb-layout")) state.detached = true;
-        }
-      }
-    });
-    obs.observe(document.documentElement, { childList: true, subtree: true });
-    w.__zlb = Object.assign(state, { obs });
-  });
+interface Scenario {
+  name: string;
+  s: string;
+  // Test ids that must stay attached and visible across the click.
+  held: string[];
+  // false: the new route may show its own fallback (route-sibling control).
+  noFallback: boolean;
 }
 
-async function readBoundary(
+const SCENARIOS: Scenario[] = [
+  {
+    name: "layout with loading() and no loaders",
+    s: "zlb",
+    held: ["zlb-layout"],
+    noFallback: true,
+  },
+  {
+    name: "layout with loading() and a loader",
+    s: "zlbl",
+    held: ["zlbl-layout", "zlbl-value"],
+    noFallback: true,
+  },
+  {
+    name: "parallel slot with a loader and loading()",
+    s: "zlbs",
+    held: ["zlbs-slot", "zlbs-slot-value"],
+    noFallback: true,
+  },
+  {
+    name: "route siblings with their own loader and loading()",
+    s: "zlbr",
+    held: ["zlbr-layout"],
+    noFallback: false,
+  },
+];
+
+type Probe = {
+  fallback: boolean;
+  detached: boolean;
+  obs: MutationObserver;
+};
+
+async function watch(page: Page, s: string, held: string[]): Promise<void> {
+  await page.evaluate(
+    ({ s, held }) => {
+      const w = window as unknown as { __zlb: Probe };
+      const state = {
+        fallback:
+          document.querySelector(`[data-testid="${s}-fallback"]`) != null,
+        detached: false,
+      };
+      const has = (n: Node, id: string): boolean =>
+        n.nodeType === 1 &&
+        ((n as Element).matches?.(`[data-testid="${id}"]`) ||
+          (n as Element).querySelector?.(`[data-testid="${id}"]`) != null);
+      const obs = new MutationObserver((records) => {
+        for (const r of records) {
+          for (const n of Array.from(r.addedNodes)) {
+            if (has(n, `${s}-fallback`)) state.fallback = true;
+          }
+          for (const n of Array.from(r.removedNodes)) {
+            if (held.some((id) => has(n, id))) state.detached = true;
+          }
+        }
+      });
+      obs.observe(document.documentElement, { childList: true, subtree: true });
+      w.__zlb = Object.assign(state, { obs });
+    },
+    { s, held },
+  );
+}
+
+async function read(
   page: Page,
 ): Promise<{ fallback: boolean; detached: boolean }> {
   return page.evaluate(() => {
-    const w = window as unknown as {
-      __zlb: { fallback: boolean; detached: boolean; obs: MutationObserver };
-    };
+    const w = window as unknown as { __zlb: Probe };
     w.__zlb.obs.disconnect();
     return { fallback: w.__zlb.fallback, detached: w.__zlb.detached };
   });
@@ -61,16 +103,36 @@ function trackRequestsFor(page: Page, pathname: string): string[] {
   return seen;
 }
 
-async function clickThroughToB(page: Page, bRequests: string[]) {
-  expect(bRequests, "/zlb/b must not have been requested yet").toEqual([]);
-  await watchBoundary(page);
-  await page.locator('[data-testid="zlb-to-b"]').click();
-  await expect(page.locator('[data-testid="zlb-b"]')).toBeVisible();
-  const seen = await readBoundary(page);
-  expect(seen.fallback, "the layout's loading() fallback must not appear").toBe(
-    false,
-  );
-  expect(seen.detached, "the layout on screen must not be detached").toBe(
+async function expectHeldVisible(page: Page, held: string[]): Promise<void> {
+  for (const id of held) {
+    await expect(page.locator(`[data-testid="${id}"]`)).toBeVisible();
+  }
+}
+
+async function clickThroughToB(
+  page: Page,
+  sc: Scenario,
+  bRequests: string[],
+): Promise<void> {
+  await expect(page.locator(`[data-testid="${sc.s}-a"]`)).toBeVisible();
+  await expectHeldVisible(page, sc.held);
+  expect(bRequests, `/${sc.s}/b must not have been requested yet`).toEqual([]);
+
+  await watch(page, sc.s, sc.held);
+  await page.locator(`[data-testid="${sc.s}-to-b"]`).click();
+  await expect(page.locator(`[data-testid="${sc.s}-b"]`)).toBeVisible();
+  // A held boundary hidden behind its fallback is not visible until the
+  // fallback goes, so this also waits out a flash before the probe is read.
+  await expectHeldVisible(page, sc.held);
+  const seen = await read(page);
+
+  if (sc.noFallback) {
+    expect(
+      seen.fallback,
+      `the ${sc.s} loading() fallback must not appear`,
+    ).toBe(false);
+  }
+  expect(seen.detached, "a boundary on screen must not be detached").toBe(
     false,
   );
 }
@@ -78,49 +140,59 @@ async function clickThroughToB(page: Page, bRequests: string[]) {
 export function runZeroLoaderBoundaryTests(
   options: ZeroLoaderBoundaryScenarioOptions,
 ): void {
-  const { url, waitForHydration } = options;
+  const { url } = options;
 
-  test("a plain click to an un-prefetched sibling after a fully prefetched click shows no layout fallback", async ({
-    page,
-  }) => {
-    const bRequests = trackRequestsFor(page, "/zlb/b");
-    await page.goto(url("/zlb"));
-    await waitForHydration(page);
+  // A dev server that optimizes a dependency on the first visit reloads the
+  // page once; load again rather than time out on that reload.
+  const waitForHydration = async (page: Page, pathname: string) => {
+    try {
+      await options.waitForHydration(page);
+    } catch {
+      await page.goto(url(pathname));
+      await options.waitForHydration(page);
+    }
+  };
 
-    const prefetched = page.waitForResponse((resp) => {
-      const u = new URL(resp.url());
-      return u.pathname === "/zlb/a" && u.searchParams.has("_rsc_partial");
+  for (const sc of SCENARIOS) {
+    test(`${sc.name}: a plain click to an un-prefetched sibling after a fully prefetched click keeps what is on screen`, async ({
+      page,
+    }) => {
+      const bRequests = trackRequestsFor(page, `/${sc.s}/b`);
+      await page.goto(url("/zlb"));
+      await waitForHydration(page, "/zlb");
+
+      const prefetched = page.waitForResponse((resp) => {
+        const u = new URL(resp.url());
+        return (
+          u.pathname === `/${sc.s}/a` && u.searchParams.has("_rsc_partial")
+        );
+      });
+      await page.hover(`[data-testid="${sc.s}-hub-prefetched"]`);
+      await (await prefetched).finished();
+
+      await page.locator(`[data-testid="${sc.s}-hub-prefetched"]`).click();
+      await clickThroughToB(page, sc, bRequests);
     });
-    await page.hover('[data-testid="zlb-hub-prefetched"]');
-    await (await prefetched).finished();
 
-    await page.locator('[data-testid="zlb-hub-prefetched"]').click();
-    await expect(page.locator('[data-testid="zlb-a"]')).toBeVisible();
+    test(`${sc.name}, control: entering by a plain click, then a plain click`, async ({
+      page,
+    }) => {
+      const bRequests = trackRequestsFor(page, `/${sc.s}/b`);
+      await page.goto(url("/zlb"));
+      await waitForHydration(page, "/zlb");
 
-    await clickThroughToB(page, bRequests);
-  });
+      await page.locator(`[data-testid="${sc.s}-hub-plain"]`).click();
+      await clickThroughToB(page, sc, bRequests);
+    });
 
-  test("control: entering by a plain click shows no layout fallback on the next click", async ({
-    page,
-  }) => {
-    const bRequests = trackRequestsFor(page, "/zlb/b");
-    await page.goto(url("/zlb"));
-    await waitForHydration(page);
+    test(`${sc.name}, control: loading the document, then a plain click`, async ({
+      page,
+    }) => {
+      const bRequests = trackRequestsFor(page, `/${sc.s}/b`);
+      await page.goto(url(`/${sc.s}/a`));
+      await waitForHydration(page, `/${sc.s}/a`);
 
-    await page.locator('[data-testid="zlb-hub-plain"]').click();
-    await expect(page.locator('[data-testid="zlb-a"]')).toBeVisible();
-
-    await clickThroughToB(page, bRequests);
-  });
-
-  test("control: loading the document on the layout shows no fallback on the next click", async ({
-    page,
-  }) => {
-    const bRequests = trackRequestsFor(page, "/zlb/b");
-    await page.goto(url("/zlb/a"));
-    await waitForHydration(page);
-    await expect(page.locator('[data-testid="zlb-a"]')).toBeVisible();
-
-    await clickThroughToB(page, bRequests);
-  });
+      await clickThroughToB(page, sc, bRequests);
+    });
+  }
 }
