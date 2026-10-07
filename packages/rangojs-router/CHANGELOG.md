@@ -14,6 +14,23 @@ expiry.
 A custom `WritablePrerenderStore` implements `markStale(routerId, tags)` and
 marks only entries whose `key.routerId` equals `routerId`.
 
+### Fixed: a render that started before `updateTag()` is no longer served as fresh after it ([#1068](https://github.com/rangojs/rango/issues/1068))
+
+`CFCacheStore` and `VercelCacheStore` stamped a cached entry with the time it
+was written. A render that began before an invalidation and finished after it
+was therefore stored as newer than the invalidation, holding old content. The
+stores now stamp `set`, `setItem` and `putResponse` entries with the start of
+the render that produced them (a stale-while-revalidate refresh stamps its
+own). `CFCacheStore` with KV markers then rejects such an entry on any later
+read, and `MemorySegmentCacheStore` refuses the write. `VercelCacheStore` and
+`CFCacheStore` L1 hits in purge mode or without KV compare no marker on a data
+read: there the stamp protects only the request that invalidated (its mask now
+also covers a late write from another instance), and a later request still
+gets the entry unless the write gate skipped the write
+([#1071](https://github.com/rangojs/rango/issues/1071)). Nothing to change in
+your app; a custom store keeps working and may read the optional
+`CacheItemOptions.startedAt` and `CachedEntryData.taggedAt` to do the same.
+
 ### Added: `router.prerender()` warms any route before traffic ([#1062](https://github.com/rangojs/rango/issues/1062))
 
 After a deploy that changes server code, and after an `updateTag()`, every

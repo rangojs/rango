@@ -800,6 +800,7 @@ function executeLoaderData<TEnv>(
             ...o,
             tags: entryTags.length > 0 ? entryTags : undefined,
             ...(handles ? { handles } : {}),
+            startedAt: start?.at,
           });
           noteWarmWrite(requestCtxForExecute, "item");
         }),

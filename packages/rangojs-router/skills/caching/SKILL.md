@@ -300,8 +300,13 @@ is not stored after it. A `"use cache"` call, a stale entry's background
 refresh, a loader's own `cache()`, a route `cache()` render or a
 document-cache render that read its data before one of its tags was
 invalidated still returns what it read, but its store write is skipped:
-every store stamps an entry when it is written, so the old value would be
-served as newer than the invalidation. The next read runs it again. A
+the old value would be served as newer than the invalidation. The next read
+runs it again. A write that gets through anyway (another colo's marker not
+visible yet) is still rejected on later reads by `CFCacheStore` with KV, which
+stamps an entry with the start of the execution that produced it, not its
+write time; `MemorySegmentCacheStore` refuses such a write. `VercelCacheStore`
+and `CFCacheStore` L1 hits in purge mode or without KV read no marker for
+data, so the write gate is their only guard across requests. A
 `"use cache"` call already running when one of its tags is invalidated is
 not joined by later calls either. Its tags include those of the
 `"use cache"` functions it calls. Another isolate's invalidation is caught
