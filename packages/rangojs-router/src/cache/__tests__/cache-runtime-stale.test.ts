@@ -767,6 +767,66 @@ describe("use cache stale revalidation handle preservation", () => {
     expect(keyA).not.toBe(keyB);
   });
 
+  // #1065: a hostOverride cookie sends one host and path to two routers, and
+  // a ctx is one router's (its variables, env, reverse() map).
+  it("a ctx argument keys the entry by the serving router; a bare Request does not", async () => {
+    const mockStore = {
+      getItem: vi.fn().mockResolvedValue(null),
+      setItem: vi.fn().mockResolvedValue(undefined),
+    };
+    const waitUntilFns: Array<() => Promise<void>> = [];
+    const serveAs = (routerId: string): void => {
+      mockGetRequestContext.mockReturnValue({
+        _routerId: routerId,
+        _cacheStore: mockStore,
+        _cacheProfiles: { default: { ttl: 60 } },
+        _handleStore: {
+          push: vi.fn(),
+          settled: Promise.resolve(),
+          getDataForSegment: vi.fn().mockReturnValue({}),
+        },
+        waitUntil: (fn: () => Promise<void>) => {
+          waitUntilFns.push(fn);
+        },
+      });
+    };
+    const keysOf = async (
+      id: string,
+      arg: () => unknown,
+    ): Promise<string[]> => {
+      const cached = registerCachedFunction(
+        async (_arg: any) => "result",
+        id,
+        "default",
+      );
+      mockStore.setItem.mockClear();
+      for (const routerId of ["app-a", "app-b"]) {
+        serveAs(routerId);
+        await cached(arg());
+        for (const f of waitUntilFns.splice(0)) await f();
+      }
+      return mockStore.setItem.mock.calls.map(([key]) => key as string);
+    };
+
+    const [ctxA, ctxB] = await keysOf("ctx-fn", () => ({
+      [NOCACHE_SYMBOL]: true,
+      params: { id: "1" },
+      pathname: "/products",
+      searchParams: new URLSearchParams(),
+      url: new URL("https://shop.example/products"),
+    }));
+    expect(ctxA).toContain("app-a@shop.example");
+    expect(ctxB).toContain("app-b@shop.example");
+
+    const [requestA, requestB] = await keysOf(
+      "request-fn",
+      () => new Request("https://shop.example/products"),
+    );
+    expect(requestA).toContain("shop.example/products");
+    expect(requestA).not.toContain("@");
+    expect(requestB).toBe(requestA);
+  });
+
   it("produces separate cache entries for different route names with same pathname/params", async () => {
     const mockStore = {
       getItem: vi.fn().mockResolvedValue(null),

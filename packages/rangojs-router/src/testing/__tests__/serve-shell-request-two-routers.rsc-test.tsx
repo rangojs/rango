@@ -7,10 +7,9 @@
  * must read and write its own shell.
  *
  * Both routers name the route `shelled` at `/shelled`: nothing but the router
- * tells the two pages apart.
+ * tells the two pages apart (helpers/two-router-fixture.tsx).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import React from "react";
 
 vi.mock(
   "@vitejs/plugin-rsc/rsc/server",
@@ -27,82 +26,20 @@ import {
   type ServeShellRequestResult,
 } from "../flight.entry.js";
 import { setBuildVersions } from "../index.js";
-import { createRouter, urls } from "../../index.rsc.js";
-import {
-  MemorySegmentCacheStore,
-  type SegmentCacheStore,
-} from "../../cache/index.js";
 import { createHostRouter } from "../../host/index.js";
+import {
+  makeRouters,
+  memoryStore,
+  ownHit,
+  ownMiss,
+  resetRuns,
+  runs,
+  shellServed,
+  type App,
+  type TestRouter,
+} from "./helpers/two-router-fixture.js";
 
-/**
- * One store both routers use, visible to every location, as the KV-backed
- * store of a deployed multi-router worker is.
- */
-class SharedMemoryStore extends MemorySegmentCacheStore {
-  readonly scope = "global" as const;
-}
-
-type App = "a" | "b";
-
-/** Handler runs per router: a served shell that is not the router's own runs none. */
-const runs: Record<App, number> = { a: 0, b: 0 };
-
-function makeRouter(app: App, store: SegmentCacheStore, version?: string) {
-  return createRouter({
-    id: `app-${app}`,
-    cache: { store },
-    ...(version !== undefined && { version }),
-  }).routes(
-    urls(({ path }) => [
-      path(
-        "/shelled",
-        () => {
-          runs[app] += 1;
-          return <h1>{`app-${app}-page`}</h1>;
-        },
-        { name: "shelled", ppr: true },
-      ),
-    ]),
-  );
-}
-
-type TestRouter = ReturnType<typeof makeRouter>;
-
-function makeRouters(
-  store: SegmentCacheStore,
-  version?: string,
-): Record<App, TestRouter> {
-  return {
-    a: makeRouter("a", store, version),
-    b: makeRouter("b", store, version),
-  };
-}
-
-/** The pages a response text names: one router's, never the other's. */
-function pagesIn(text: string | undefined): string[] {
-  return [...new Set(text?.match(/app-[ab]-page/g) ?? [])];
-}
-
-/** A document the router rendered itself: a MISS with its own page. */
-function expectOwnMiss(result: ServeShellRequestResult, app: App): void {
-  expect({
-    shell: result.shellStatus,
-    pages: pagesIn(result.body),
-  }).toEqual({ shell: "MISS", pages: [`app-${app}-page`] });
-}
-
-/** A HIT whose prelude and tail are the router's own page. */
-function expectOwnHit(result: ServeShellRequestResult, app: App): void {
-  expect({
-    shell: result.shellStatus,
-    prelude: pagesIn(result.prelude),
-    pages: pagesIn(result.body),
-  }).toEqual({
-    shell: "HIT",
-    prelude: [`app-${app}-page`],
-    pages: [`app-${app}-page`],
-  });
-}
+const sharedStore = () => memoryStore().cacheStore;
 
 /** Each router has its own cache versions, as a production build gives them. */
 function setPerRouterVersions(): void {
@@ -119,8 +56,7 @@ function setPerRouterVersions(): void {
 beforeEach(async () => {
   await resetShellTestState();
   setBuildVersions();
-  runs.a = 0;
-  runs.b = 0;
+  resetRuns();
 });
 
 afterEach(() => {
@@ -130,6 +66,8 @@ afterEach(() => {
 
 describe("two routers on one host and path, one cache store", () => {
   const SHARED_URL = "http://shared.example/shelled";
+  const served = async (router: TestRouter) =>
+    shellServed(await serveShellRequest(router, SHARED_URL));
 
   it.each([
     {
@@ -146,33 +84,33 @@ describe("two routers on one host and path, one cache store", () => {
   ])(
     "$versions: a router never serves the other's shell",
     async ({ arrange }) => {
-      const { a, b } = makeRouters(new SharedMemoryStore(), arrange());
+      const { a, b } = makeRouters(sharedStore(), { version: arrange() });
 
-      expectOwnMiss(await serveShellRequest(a, SHARED_URL), "a");
+      expect(await served(a)).toEqual(ownMiss("a"));
 
-      expectOwnMiss(await serveShellRequest(b, SHARED_URL), "b");
+      expect(await served(b)).toEqual(ownMiss("b"));
       expect(runs.b).toBeGreaterThan(0);
 
-      expectOwnHit(await serveShellRequest(a, SHARED_URL), "a");
-      expectOwnHit(await serveShellRequest(b, SHARED_URL), "b");
+      expect(await served(a)).toEqual(ownHit("a"));
+      expect(await served(b)).toEqual(ownHit("b"));
     },
   );
 
   it("per-router versions: neither router's capture evicts the other's shell", async () => {
     setPerRouterVersions();
-    const { a, b } = makeRouters(new SharedMemoryStore());
+    const { a, b } = makeRouters(sharedStore());
 
-    expectOwnMiss(await serveShellRequest(a, SHARED_URL), "a");
-    expectOwnMiss(await serveShellRequest(b, SHARED_URL), "b");
+    expect(await served(a)).toEqual(ownMiss("a"));
+    expect(await served(b)).toEqual(ownMiss("b"));
 
     // Each router's second request reads the shell its own first one captured.
-    expectOwnHit(await serveShellRequest(a, SHARED_URL), "a");
-    expectOwnHit(await serveShellRequest(b, SHARED_URL), "b");
-    expectOwnHit(await serveShellRequest(a, SHARED_URL), "a");
+    expect(await served(a)).toEqual(ownHit("a"));
+    expect(await served(b)).toEqual(ownHit("b"));
+    expect(await served(a)).toEqual(ownHit("a"));
   });
 
   it("each router keeps its own shell entry in the shared store", async () => {
-    const { a, b } = makeRouters(new SharedMemoryStore());
+    const { a, b } = makeRouters(sharedStore());
 
     const fromA = await serveShellRequest(a, SHARED_URL);
     const fromB = await serveShellRequest(b, SHARED_URL);
@@ -183,14 +121,14 @@ describe("two routers on one host and path, one cache store", () => {
   });
 
   it("a navigation replays the shell of the router it is sent to", async () => {
-    const { a, b } = makeRouters(new SharedMemoryStore());
+    const { a, b } = makeRouters(sharedStore());
     await serveShellRequest(a, SHARED_URL);
 
     // Router B has captured nothing: its navigation finds no entry to replay.
     const cold = await serveShellRequest(b, SHARED_URL, { partial: true });
     expect({
       replay: cold.replayStatus,
-      pages: pagesIn(cold.body),
+      pages: shellServed(cold).pages,
     }).toEqual({
       replay: { outcome: "BYPASS", reason: "no-entry" },
       pages: ["app-b-page"],
@@ -199,7 +137,7 @@ describe("two routers on one host and path, one cache store", () => {
     const own = await serveShellRequest(a, SHARED_URL, { partial: true });
     expect({
       replay: own.replayStatus?.outcome,
-      pages: pagesIn(own.body),
+      pages: shellServed(own).pages,
     }).toEqual({ replay: "HIT", pages: ["app-a-page"] });
   });
 });
@@ -212,17 +150,15 @@ describe("createHostRouter({ hostOverride }): a cookie picks the router for one 
    * host, and the `app` cookie names the app to serve there. The matched
    * handler gets the request unmodified, so both routers see `preview.dev`.
    */
-  function makePreview(routers: Record<App, TestRouter>): {
-    request: (app: App) => Promise<ServeShellRequestResult>;
-  } {
-    const served: ServeShellRequestResult[] = [];
+  function makePreview(routers: Record<App, TestRouter>) {
+    const results: ServeShellRequestResult[] = [];
     const serve =
       (router: TestRouter) =>
       async (request: Request): Promise<Response> => {
         const result = await serveShellRequest(router, request.url, {
           headers: request.headers,
         });
-        served.push(result);
+        results.push(result);
         return new Response(result.body, result.response);
       };
     const host = createHostRouter({
@@ -230,46 +166,46 @@ describe("createHostRouter({ hostOverride }): a cookie picks the router for one 
     });
     host.host("a.internal").map(serve(routers.a));
     host.host("b.internal").map(serve(routers.b));
-    return {
-      request: async (app) => {
-        await host.match(
-          new Request(PREVIEW_URL, {
-            headers: { accept: "text/html", cookie: `app=${app}.internal` },
-          }),
-        );
-        return served.pop()!;
-      },
+    return async (app: App) => {
+      await host.match(
+        new Request(PREVIEW_URL, {
+          headers: { accept: "text/html", cookie: `app=${app}.internal` },
+        }),
+      );
+      return shellServed(results.pop()!);
     };
   }
 
   it("one version: the second app's request is not a HIT with the first app's shell", async () => {
     setBuildVersions({ data: "d1", document: "h1" });
-    const preview = makePreview(makeRouters(new SharedMemoryStore()));
+    const preview = makePreview(makeRouters(sharedStore()));
 
-    expectOwnMiss(await preview.request("a"), "a");
-    expectOwnMiss(await preview.request("b"), "b");
+    expect(await preview("a")).toEqual(ownMiss("a"));
+    expect(await preview("b")).toEqual(ownMiss("b"));
 
-    expectOwnHit(await preview.request("a"), "a");
-    expectOwnHit(await preview.request("b"), "b");
+    expect(await preview("a")).toEqual(ownHit("a"));
+    expect(await preview("b")).toEqual(ownHit("b"));
   });
 
   it("per-router versions: switching the cookie back and forth keeps both shells", async () => {
     setPerRouterVersions();
-    const preview = makePreview(makeRouters(new SharedMemoryStore()));
+    const preview = makePreview(makeRouters(sharedStore()));
 
-    expectOwnMiss(await preview.request("a"), "a");
-    expectOwnMiss(await preview.request("b"), "b");
-    expectOwnHit(await preview.request("a"), "a");
-    expectOwnHit(await preview.request("b"), "b");
+    expect(await preview("a")).toEqual(ownMiss("a"));
+    expect(await preview("b")).toEqual(ownMiss("b"));
+    expect(await preview("a")).toEqual(ownHit("a"));
+    expect(await preview("b")).toEqual(ownHit("b"));
   });
 });
 
 describe("router.prerender() warm under another router's host", () => {
   const B_HOST_URL = "http://b.example/shelled";
+  const served = async (router: TestRouter) =>
+    shellServed(await serveShellRequest(router, B_HOST_URL));
 
   it("a shell one router warmed on a host is not served by the router that owns the host", async () => {
     setBuildVersions({ data: "d1", document: "h1" });
-    const { a, b } = makeRouters(new SharedMemoryStore());
+    const { a, b } = makeRouters(sharedStore());
 
     // Router B's host, resolved as router A's warm origin: what a route of B
     // calling A's runner with no `origin` does.
@@ -277,11 +213,11 @@ describe("router.prerender() warm under another router's host", () => {
     expect(warmed).toMatchObject({ ok: true, status: "warmed" });
     expect(runs.b).toBe(0);
 
-    expectOwnMiss(await serveShellRequest(b, B_HOST_URL), "b");
+    expect(await served(b)).toEqual(ownMiss("b"));
     expect(runs.b).toBeGreaterThan(0);
 
-    expectOwnHit(await serveShellRequest(b, B_HOST_URL), "b");
+    expect(await served(b)).toEqual(ownHit("b"));
     // The warm was not wasted: router A serves it where A is asked for it.
-    expectOwnHit(await serveShellRequest(a, B_HOST_URL), "a");
+    expect(await served(a)).toEqual(ownHit("a"));
   });
 });

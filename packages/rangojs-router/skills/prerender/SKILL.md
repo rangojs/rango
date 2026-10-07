@@ -1078,12 +1078,10 @@ with several routers behind a host router calls it on each router:
   (`router.prerender({ env, ctx, origin: "https://a.example" })`), or a path
   target resolves against the calling request's origin. A multi-router app
   passes `origin` or a full URL on every warm, so each router warms the host
-  its visitors use. A warm that resolves another router's host writes entries
-  nobody reads, not a wrong page: every key that names a router's output
-  starts with that router's id (`{routerId}@{host}{path}...`), so two routers
-  on one cache store keep their own shells and records for the same host and
-  path, whatever `version` they run (see `/host-router`, "Shared cache
-  store").
+  its visitors use. A warm that resolves another router's host stores the
+  warming router's entries under that host; the router that owns the host
+  never reads them (cache keys start with the router's id: `/host-router`,
+  "Shared cache store").
 
 ### KV tag markers
 

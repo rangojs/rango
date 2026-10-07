@@ -345,8 +345,8 @@ The key is `use-cache:{functionId}:{serializedArgs}` where functionId is a stabl
 ID from the Vite transform (module path + export name) and args are serialized
 (stable JSON when every arg is JSON-safe, RSC `encodeReply()` otherwise).
 Request-scoped arguments are excluded: route fields read off `ctx` (handler,
-loader or middleware: host, route name, pathname, params, search) and a
-`Request`'s URL are folded in, and `env`
+loader or middleware: router id, host, route name, pathname, params, search) and
+a `Request`'s URL are folded in, and `env`
 is left out. React element slots stay out of the key; any other argument that
 cannot be serialized (a function, a class instance) runs the call uncached. See
 `/use-cache`.

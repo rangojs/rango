@@ -22,7 +22,7 @@ import {
   type RequestContext,
 } from "../server/request-context.js";
 import { mayNeedSSR } from "../rsc/ssr-setup.js";
-import { cacheKeyBase } from "./cache-key-utils.js";
+import { requestKeyBase } from "./cache-key-utils.js";
 import { runBackground } from "./background-task.js";
 import {
   isWarmReplace,
@@ -248,11 +248,14 @@ export interface DocumentCacheOptions<TEnv = any> {
   /**
    * Custom cache key generator.
    *
-   * Replaces the default `host + pathname + search` key entirely. On a
-   * multi-domain deployment served by one function you MUST include `url.host`
-   * (or an equivalent tenant discriminator) yourself — the default key is
-   * host-namespaced, but a custom generator's output is used verbatim, so
-   * omitting host bleeds one hostname's cached response to another.
+   * Replaces the default `router id + host + pathname + search` key entirely.
+   * On a multi-domain deployment served by one function you MUST include
+   * `url.host` (or an equivalent tenant discriminator) yourself — the default
+   * key is host-namespaced, but a custom generator's output is used verbatim,
+   * so omitting host bleeds one hostname's cached response to another. The
+   * same goes for the router: two routers that share a cache store and can
+   * serve one host and path (a `hostOverride` cookie) need a generator that
+   * tells them apart.
    */
   keyGenerator?: (url: URL) => string;
 
@@ -402,8 +405,8 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       // existing keys and double any host they already include).
       const cacheKey = keyGenerator
         ? keyGenerator(url) + segmentHash + fragmentSuffix + typeSuffix
-        : cacheKeyBase(
-            requestCtx?._routerId,
+        : requestKeyBase(
+            requestCtx,
             url.host,
             url.pathname,
             url.searchParams,

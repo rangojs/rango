@@ -386,7 +386,13 @@ The host entry (the file that creates the host router and its middleware) is not
 
 ## Shared cache store
 
-Sub-apps may share one cache store (one KV namespace, one `MemorySegmentCacheStore`). Every entry that is a router's output for a host and path is keyed by that router as well: PPR shells (document, navigation and build-time), route `cache()` records, document-cache responses and response-route entries all start with the router's id (`{routerId}@{host}{path}...`). So two sub-apps never read each other's entry, including where they serve the same host and path:
+Sub-apps may share one cache store (one KV namespace, one `MemorySegmentCacheStore`). Every entry that is a router's output for a host and path is keyed by that router as well; its key starts with the router's id (`{routerId}@{host}{path}...`):
+
+- PPR shells (document, navigation and build-time);
+- route `cache()` records, document-cache responses and response-route entries;
+- a loader's own `cache()` entry, and a `"use cache"` entry of a function called with a handler or loader `ctx`. A `ctx` is one router's: its context variables, its `env`, its `reverse()` map.
+
+So two sub-apps never read each other's entry, including where they serve the same host and path:
 
 - with the `hostOverride` cookie, which picks the app and forwards the request unchanged, so every app answers under the one preview origin;
 - after a `fallback()` that hands a request to another app's handler;
@@ -394,4 +400,4 @@ Sub-apps may share one cache store (one KV namespace, one `MemorySegmentCacheSto
 
 There is nothing to configure and no namespace to manage. What it relies on is that each router has a stable id: the one the Vite plugin injects for a `createRouter({ ... })` call written with an object literal, or the `id` you pass (`createRouter({ id: "admin", ... })`). A router the plugin cannot reach, for example `createRouter(options)` with an options variable, falls back to a counter (`router_0`, `router_1`, ...) that follows module evaluation order. One such router is fine. With more than one, the build already warns (`N routers use auto-generated IDs`), because routes and cache versions are matched by the same id; the fix is the same here: pass the object literal inline or set an `id`.
 
-Not keyed by router, on purpose: a loader's `cache()` entry (keyed by the loader and its inputs), `"use cache"` items (the function and its arguments), tag markers (an invalidation reaches every app), and any key you build yourself (`cache({ key })`, the document cache's `keyGenerator`).
+Not keyed by router, on purpose: a `"use cache"` entry of a function called with plain arguments or the bare `Request` (the function and its arguments name no router, so both apps share the entry), tag markers (an invalidation reaches every app), and any key you build yourself (`cache({ key })` on a route or a loader, the document cache's `keyGenerator`): keep those apart yourself where two apps must not share them.

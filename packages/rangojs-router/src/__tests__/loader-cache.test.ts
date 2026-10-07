@@ -234,6 +234,30 @@ describe("loader-cache", () => {
       expect(keyA).not.toBe(keyB);
     });
 
+    it("the default key names the serving router (#1065)", async () => {
+      // A loader's ctx is one router's (its variables, env, reverse() map), and
+      // a hostOverride cookie sends one host and path to two routers.
+      const keyFor = async (routerId: string) => {
+        mockRequestCtx._routerId = routerId;
+        const store = createMockStore();
+        await resolveLoaderData(
+          createLoaderEntry(createMockLoader("shared-loader"), { store }),
+          createMockCtx({ id: "1" }),
+          "/dashboard",
+        );
+        return (store.getItem as any).mock.calls[0][0] as string;
+      };
+
+      const keyA = await keyFor("app-a");
+      const keyB = await keyFor("app/b");
+      delete mockRequestCtx._routerId;
+
+      expect(keyA).toBe("loader:shared-loader:app-a@localhost/dashboard:id=1");
+      expect(keyB).toBe(
+        "loader:shared-loader:app%2Fb@localhost/dashboard:id=1",
+      );
+    });
+
     it("priority 1: options.key overrides default", async () => {
       const store = createMockStore();
       const loader = createMockLoader("loader-custom-key");

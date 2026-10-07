@@ -151,11 +151,15 @@ argument. The same holds for a loader's own `cache()` (`/loader` → "Cache Key"
 
 The tainted `ctx` object is excluded from arg serialization (see below), but
 route-identifying fields read off it are extracted into `serializedArgs`:
-`url.host`, route name (`_routeName`), `pathname`, `params`, response type
-(`_responseType`), and the user-facing sorted search params (internal `_rsc*`/`__`
-params excluded). The same cached function called with `ctx` on different routes,
-param combinations, hosts, response types, or query variants therefore produces
-distinct cache entries -- not one shared entry.
+the serving router's id and `url.host` (`{routerId}@{host}`), route name
+(`_routeName`), `pathname`, `params`, response type (`_responseType`), and the
+user-facing sorted search params (internal `_rsc*`/`__` params excluded). The
+same cached function called with `ctx` on different routes, param combinations,
+hosts, response types, or query variants therefore produces distinct cache
+entries -- not one shared entry. Two routers that call it on one host and path
+keep two entries as well: a `ctx` is one router's (`/host-router`, "Shared
+cache store"). A bare `Request` argument folds in its URL only, so it names no
+router.
 
 ## Request-Scoped Arguments (ctx, Request, env)
 

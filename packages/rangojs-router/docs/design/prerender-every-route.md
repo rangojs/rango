@@ -233,7 +233,8 @@ shipped store's `set` is a replace (Cache API `put`, KV `put`, Vercel
 
 `executeLoaderData` hands `readThroughItem` a `getItem` that answers `null` in
 replace mode, so the read-through takes its miss path: the body runs, the value
-is served, and `setItem` replaces the entry (`loader:{id}:{host}{path}:{params}`,
+is served, and `setItem` replaces the entry
+(`loader:{id}:{routerId}@{host}{path}:{params}`,
 or the loader's own namespaced `key()` result). The identity rule (#972: an
 undeclared key fails on an identity read) and the `predatesInvalidation` gate in
 the `setItem` closure are unchanged. No SWR path runs.

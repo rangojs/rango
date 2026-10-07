@@ -234,11 +234,19 @@ does not when two routers answer under the same host and path:
 With one cache store behind both routers, what went wrong depended on their
 versions:
 
-| Versions of the two routers                                                              | `ppr` shell                                                                                                                  | `cache()` records, document cache, response routes |
-| ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| The same (development, or one `version` on both routers or on the store)                 | The second app's request was a HIT with the first app's page                                                                 | The second app was served the first app's entry    |
-| Their own (a production build), on `MemorySegmentCacheStore` or a store without versions | Each app's capture replaced the other's shell: a request after the other app's was a MISS again, so neither app kept a shell | The second app was served the first app's entry    |
-| Their own, on `CFCacheStore` or `VercelCacheStore`                                       | Stored apart already: the version is in the storage key                                                                      | Stored apart already                               |
+| Versions of the two routers                                                              | `ppr` shell                                                                                                                  | Every other entry listed below                  |
+| ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| The same (development, or one `version` on both routers or on the store)                 | The second app's request was a HIT with the first app's page                                                                 | The second app was served the first app's entry |
+| Their own (a production build), on `MemorySegmentCacheStore` or a store without versions | Each app's capture replaced the other's shell: a request after the other app's was a MISS again, so neither app kept a shell | The second app was served the first app's entry |
+| Their own, on `CFCacheStore` or `VercelCacheStore`                                       | Stored apart already: the version is in the storage key                                                                      | Stored apart already                            |
+
+The other entries are the ones that hold one router's output: a route's
+`cache()` record, a document-cache response, a response route's entry, a
+loader's own `cache()` entry, and a `"use cache"` entry of a function called
+with a handler or loader `ctx`. A `ctx` belongs to one router (its context
+variables, its `env`, its `reverse()` map), so a loader both apps mount, or a
+`"use cache"` function both call with `ctx`, returned the first app's value
+to the second.
 
 A build-time shell had the same gap: `vite build` staged it under the
 pathname, so another router with a `ppr` route on that pathname and the same
@@ -247,7 +255,7 @@ pathname, so another router with a `ppr` route on that pathname and the same
 Those keys now start with the id of the router that serves the request
 (`{routerId}@{host}{path}...`), and a build-time shell is staged under the id
 of the router it was captured for. Each app reads and writes its own shells,
-records and responses.
+records, responses, loader entries and `ctx`-keyed `"use cache"` entries.
 
 ```ts
 // preview.dev serves every app; the cookie names the one to show
@@ -267,15 +275,23 @@ options as an object literal, so the Vite plugin gives the router an id, or
 pass `id`. The build's existing `N routers use auto-generated IDs` warning
 names the case that has neither.
 
-After upgrading, the stored keys are new, so `ppr` shells are captured again
-and `cache()` records, document-cache responses and response-route entries
-refill once. An upgrade starts every router on new cache versions anyway; an
-app that pins `version` starts cold once as well. A single-router app
-otherwise behaves as before: the same hits and misses and the same number of
-store reads. Unchanged, because they are not one router's output for a host
-and path: a loader's own `cache()` entry, `"use cache"` items, tag markers,
-and keys you build yourself (`cache({ key })`, the document cache's
-`keyGenerator`).
+After upgrading, the stored keys are new. What that costs depends on where
+the app's cache versions come from:
+
+- **Build-computed versions (the default):** nothing extra. Upgrading the
+  router already changes every cache version, so this release refills every
+  stored entry with or without the new keys.
+- **A pinned `version`** (`createRouter({ version })`, or `version` on the
+  store), and **a custom store that ignores versions:** the entries above are
+  lost once. `ppr` shells are captured again, and records, responses, loader
+  entries and `"use cache"` entries called with `ctx` refill on their next
+  request.
+
+A single-router app otherwise behaves as before: the same hits and misses and
+the same number of store reads. Unchanged, because they name no router: a
+`"use cache"` entry of a function called with plain arguments or a bare
+`Request`, tag markers, and keys you build yourself (`cache({ key })` on a
+route or a loader, the document cache's `keyGenerator`).
 
 ### Breaking: the testing helper `shellCacheKey()` takes the router first ([#1065](https://github.com/rangojs/rango/issues/1065))
 

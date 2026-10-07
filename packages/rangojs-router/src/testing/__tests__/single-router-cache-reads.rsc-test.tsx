@@ -18,11 +18,9 @@ vi.mock(
 
 import { resetShellTestState, serveShellRequest } from "../flight.entry.js";
 import { dispatch } from "../index.js";
-import { createRouter, urls, type HandlerContext } from "../../index.rsc.js";
-import {
-  MemorySegmentCacheStore,
-  createDocumentCacheMiddleware,
-} from "../../cache/index.js";
+import { createRouter, urls } from "../../index.rsc.js";
+import { MemorySegmentCacheStore } from "../../cache/index.js";
+import { makeRouter } from "./helpers/two-router-fixture.js";
 
 const READS = ["getShell", "get", "getResponse"] as const;
 type Read = (typeof READS)[number];
@@ -38,28 +36,7 @@ function setup() {
     get: vi.spyOn(store, "get"),
     getResponse: vi.spyOn(store, "getResponse"),
   };
-  const router = createRouter({ cache: { store } })
-    .use("/stored", createDocumentCacheMiddleware())
-    .routes(
-      urls(({ path, cache }) => [
-        path("/shelled", () => <h1>shelled-page</h1>, {
-          name: "shelled",
-          ppr: true,
-        }),
-        cache({ ttl: 300 }, () => [
-          path("/cached", () => <p>cached-page</p>, { name: "cached" }),
-          path.json("/api/data", () => ({ ok: true }), { name: "data" }),
-        ]),
-        path(
-          "/stored",
-          (ctx: HandlerContext) => {
-            ctx.headers.set("Cache-Control", "s-maxage=60");
-            return <p>stored-page</p>;
-          },
-          { name: "stored" },
-        ),
-      ]),
-    );
+  const router = makeRouter("a", store);
 
   /** The reads since the last call, and the keys they asked for. */
   const take = (): { counts: ReadCounts; keys: string[] } => {
@@ -145,7 +122,10 @@ describe("a single router: the key's router part adds no store read", () => {
 // counts on: the same router comes back under a new id. Vitest runs no
 // transform, so every router here is on the counter.
 describe("a router module re-evaluated on the counter fallback id", () => {
-  function makeRouter(store: MemorySegmentCacheStore, runs: { page: number }) {
+  function makeCounterRouter(
+    store: MemorySegmentCacheStore,
+    runs: { page: number },
+  ) {
     return createRouter({ cache: { store } }).routes(
       urls(({ path }) => [
         path(
@@ -163,13 +143,13 @@ describe("a router module re-evaluated on the counter fallback id", () => {
   it("costs one recapture: the new instance misses once, then serves its own shell", async () => {
     const store = new MemorySegmentCacheStore();
     const runs = { page: 0 };
-    const before = makeRouter(store, runs);
+    const before = makeCounterRouter(store, runs);
     const captured = await serveShellRequest(before, "/shelled");
     expect((await serveShellRequest(before, "/shelled")).shellStatus).toBe(
       "HIT",
     );
 
-    const after = makeRouter(store, runs);
+    const after = makeCounterRouter(store, runs);
     expect([before.id, after.id]).toEqual([
       expect.stringMatching(/^router_\d+$/),
       expect.stringMatching(/^router_\d+$/),

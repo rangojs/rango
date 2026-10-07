@@ -3,6 +3,8 @@ import {
   sortedSearchString,
   sortedRouteParams,
   cacheKeyBase,
+  requestArgKey,
+  requestKeyBase,
   routerKeyPrefix,
 } from "../cache-key-utils.js";
 import { compileSearchParamsFilter } from "../search-params-filter.js";
@@ -114,7 +116,7 @@ describe("cacheKeyBase with cache.searchParams filter", () => {
   it("collapses excluded-param variants onto one key", () => {
     const filter = compileSearchParamsFilter({ exclude: ["utm_*"] });
     const a = cacheKeyBase(
-      undefined,
+      "app",
       "example.com",
       "/products",
       new URLSearchParams("utm_source=tw"),
@@ -122,26 +124,26 @@ describe("cacheKeyBase with cache.searchParams filter", () => {
       filter,
     );
     const b = cacheKeyBase(
-      undefined,
+      "app",
       "example.com",
       "/products",
       new URLSearchParams("utm_source=ig"),
       undefined,
       filter,
     );
-    expect(a).toBe("example.com/products");
+    expect(a).toBe("app@example.com/products");
     expect(b).toBe(a);
   });
 
   it("without a filter, variants stay distinct (default behavior unchanged)", () => {
     const a = cacheKeyBase(
-      undefined,
+      "app",
       "example.com",
       "/products",
       new URLSearchParams("utm_source=tw"),
     );
     const b = cacheKeyBase(
-      undefined,
+      "app",
       "example.com",
       "/products",
       new URLSearchParams("utm_source=ig"),
@@ -154,10 +156,9 @@ describe("cacheKeyBase with cache.searchParams filter", () => {
 // under another router's host), so a key that names a router's output starts
 // with the router's id.
 describe("routerKeyPrefix", () => {
-  it("is the encoded id and `@`, or nothing without a router", () => {
+  it("is the encoded id and `@`", () => {
     expect(routerKeyPrefix("a1b2c3d4")).toBe("a1b2c3d4@");
     expect(routerKeyPrefix("router_0")).toBe("router_0@");
-    expect(routerKeyPrefix(undefined)).toBe("");
   });
 
   it("encodes an explicit id, so the first `@` always ends the router part", () => {
@@ -195,20 +196,52 @@ describe("cacheKeyBase router part", () => {
     );
   });
 
-  it("without a router the base is the host and path alone", () => {
-    expect(cacheKeyBase(undefined, "shop.example", "/p")).toBe(
-      "shop.example/p",
-    );
-  });
-
   it("a router key never equals a router-less key: its first `@` comes before its first `/`", () => {
     // A path may hold an `@` (`/@user`); a host never does.
-    const routerLess = cacheKeyBase(undefined, "shop.example", "/@user");
+    const routerLess = requestArgKey(new URL("http://shop.example/@user"));
     const withRouter = cacheKeyBase("shop.example", "x", "/@user");
     expect(routerLess).toBe("shop.example/@user");
     expect(withRouter).toBe("shop.example@x/@user");
     expect(routerLess.indexOf("@")).toBeGreaterThan(routerLess.indexOf("/"));
     expect(withRouter.indexOf("@")).toBeLessThan(withRouter.indexOf("/"));
+  });
+});
+
+describe("requestKeyBase", () => {
+  it("is the serving router's cacheKeyBase", () => {
+    expect(
+      requestKeyBase({ _routerId: "app-a" }, "shop.example", "/p", undefined, {
+        id: "1",
+      }),
+    ).toBe(cacheKeyBase("app-a", "shop.example", "/p", undefined, { id: "1" }));
+  });
+
+  // A hand-built context (a unit test, runLoader, renderHandler): no served
+  // request is without a router id.
+  it.each([undefined, null, {}])(
+    "a context without a router id (%j) keeps the host and path alone",
+    (ctx) => {
+      expect(
+        requestKeyBase(
+          ctx,
+          "shop.example",
+          "/p",
+          new URLSearchParams("b=2&a=1"),
+        ),
+      ).toBe("shop.example/p?a=1&b=2");
+    },
+  );
+});
+
+describe("requestArgKey", () => {
+  it("is the URL's host, path and filtered search, with no router part", () => {
+    const filter = compileSearchParamsFilter({ exclude: ["utm_*"] });
+    expect(
+      requestArgKey(
+        new URL("http://shop.example/p?b=2&utm_source=x&a=1"),
+        filter,
+      ),
+    ).toBe("shop.example/p?a=1&b=2");
   });
 });
 

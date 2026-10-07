@@ -1370,12 +1370,8 @@ boundary.
 
 The shell store is always the app-level `createRouter({ cache })` store; the
 default key is `${routerId}@${host}${pathname}${sortedSearch}:shell`: host-scoped
-so multi-tenant shells never collide, and router-scoped so two routers that
-share a store keep their own shell when both serve one host and path (a
-`createHostRouter({ hostOverride })` cookie, a `router.prerender()` warm under
-another router's host). The id is the router's own (`createRouter({ id })`, or
-the one the Vite plugin injects), so there is nothing to configure; see
-`/host-router`, "Shared cache store".
+so multi-tenant shells never collide, and router-scoped so two routers on one
+store keep their own (see `/host-router`, "Shared cache store").
 
 These options control the in-function shell entry only. They do not emit HTTP
 `Cache-Control`. Adding `s-maxage` separately allows a platform CDN to cache the

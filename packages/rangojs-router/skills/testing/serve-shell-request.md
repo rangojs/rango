@@ -204,7 +204,7 @@ A partial request has no HTML step, so its `key` is the URL's key without a part
 
 ## Two routers on one cache store
 
-A shell belongs to the router that captured it: its key starts with the router's id (`shellCacheKey(router, url)`). Two routers that share a store and serve the same host and path, which a `createHostRouter({ hostOverride })` cookie or a `router.prerender()` warm under another router's host makes possible, each read and write their own (see `/host-router`, "Shared cache store"). Serve both against one store to pin it:
+A shell's key starts with its router's id (`shellCacheKey(router, url)`), so two routers that share a store and serve the same host and path each read and write their own (why and when: `/host-router`, "Shared cache store"). Serve both against one store to pin it:
 
 ```ts
 const store = new MemorySegmentCacheStore();
