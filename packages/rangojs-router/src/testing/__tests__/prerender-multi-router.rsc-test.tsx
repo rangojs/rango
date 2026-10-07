@@ -252,6 +252,8 @@ describe("router.prerender() with two routers sharing stores", () => {
       const b = makeRouter("b", { prerender: shared, cache });
       await a.prerender({ env: {} })("/article/x");
       await b.prerender({ env: {} })("/article/x");
+      const bStaleAt = (await shared.get(keyFor("b")))!.meta.staleAt;
+      expect(bStaleAt).toBeGreaterThan(Date.now());
 
       await a.prerender({ env: {} }).markStale(["p:x"]);
 
@@ -259,7 +261,7 @@ describe("router.prerender() with two routers sharing stores", () => {
       const bEntry = (await shared.get(keyFor("b")))!.meta;
       expect(aEntry.staleAt).toBeLessThanOrEqual(Date.now());
       // B keeps the staleAt its own ttl gave it.
-      expect(bEntry.staleAt).toBe(bEntry.storedAt + 3600 * 1000);
+      expect(bEntry.staleAt).toBe(bStaleAt);
     });
   });
 
