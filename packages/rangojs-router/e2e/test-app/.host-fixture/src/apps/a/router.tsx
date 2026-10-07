@@ -1,4 +1,5 @@
 import { createRouter } from "@rangojs/router";
+import { accountPath } from "../../account-path.js";
 import { Brand, BrandLoader } from "../../brand.js";
 import { cacheStore } from "../../cache-store.js";
 import { Document } from "../../document.js";
@@ -27,6 +28,16 @@ export const router = createRouter({
       ),
       { name: "brand" },
       () => [loader(BrandLoader, () => [cache({ ttl: 300 })])],
+    ),
+    // App B names its own path `account` and calls the same "use cache"
+    // function from the same /nav.
+    path("/a-account", () => <main>App A account</main>, { name: "account" }),
+    path(
+      "/nav",
+      async (ctx) => (
+        <main data-testid="nav">{`App A ${await accountPath(ctx)}`}</main>
+      ),
+      { name: "nav" },
     ),
     // App B has the same route name and path: with the hostOverride cookie
     // only the router tells the two shells apart.

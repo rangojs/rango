@@ -1,4 +1,5 @@
 import { createRouter } from "@rangojs/router";
+import { accountPath } from "../../account-path.js";
 import { Brand, BrandLoader } from "../../brand.js";
 import { cacheStore } from "../../cache-store.js";
 import { Document } from "../../document.js";
@@ -28,5 +29,13 @@ export const router = createRouter({
       ),
       { name: "brand" },
       () => [loader(BrandLoader, () => [cache({ ttl: 300 })])],
+    ),
+    path("/b-account", () => <main>App B account</main>, { name: "account" }),
+    path(
+      "/nav",
+      async (ctx) => (
+        <main data-testid="nav">{`App B ${await accountPath(ctx)}`}</main>
+      ),
+      { name: "nav" },
     ),
   ]);

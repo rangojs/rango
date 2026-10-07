@@ -134,6 +134,27 @@ function hostRoutingTests(port: number) {
     expect(await brand("a.localhost")).toBe("App A brand-a");
   });
 
+  // Issue #1065. Both apps call one "use cache" function with their handler
+  // ctx, and each names a route `account` at its own path: what ctx.reverse()
+  // returns is one router's. Keyed by host and path alone, app B rendered the
+  // URL app A cached.
+  test('a hostOverride cookie switches apps on one URL: each app reads its own "use cache" value of a function that takes ctx', async ({
+    page,
+  }) => {
+    const nav = async (host: string) => {
+      await visit(page, host);
+      await page.goto(`http://localhost:${port}/nav`);
+      return page.getByTestId("nav").textContent();
+    };
+
+    // Twice each: the second read is served from the entry the first wrote.
+    expect(await nav("a.localhost")).toBe("App A /a-account");
+    expect(await nav("a.localhost")).toBe("App A /a-account");
+    expect(await nav("b.localhost")).toBe("App B /b-account");
+    expect(await nav("b.localhost")).toBe("App B /b-account");
+    expect(await nav("a.localhost")).toBe("App A /a-account");
+  });
+
   test("cache invalidation re-warms a persistent plain anchor", async ({
     page,
   }) => {
