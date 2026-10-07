@@ -458,9 +458,12 @@ stored handler output is served and written as before, hit or miss, and
 behind the fallback, never the cached handler. A `cache()` route below a
 layout with a flagged `loading()` keeps using its record whenever the browser
 already holds that layout; only a prefetch that defers the layout itself (it
-is new to the page) leaves the record unread and unwritten. A prefetch body and a
-navigation body are stored apart, and a fill response is stored nowhere. See
-`/loader` → "`prefetch: false`".
+is new to the page) leaves the record unread and unwritten. A response that
+carries deferred work is never stored: the document cache refuses it and it
+is sent `cache-control: private, no-cache`, whatever `Cache-Control` the route
+set. A fill response is stored nowhere either. Every body the document cache
+does hold is complete, so one entry answers a prefetch and a navigation, as
+without the flag. See `/loader` → "`prefetch: false`".
 
 ## Global Cache Configuration
 

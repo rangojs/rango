@@ -385,16 +385,18 @@ server projection.
   so a click that adopts a prefetch is never worse than the same click with no
   prefetch. The click that adopts the payload
   commits it, shows the fallback and sends one fill request (`_rsc_fill=1`)
-  that runs only the deferred work. Server plan and decisions:
+  that runs only the deferred work. A response that defers is for the page
+  that prefetched it (`x-rsc-prefetch-scope: source`) and is never stored.
+  Server plan and decisions:
   `router/segment-resolution/prefetch-deferral.ts` (`resolveDeferralScope`,
   `PrefetchDeferral` on `InternalHandlerContext._prefetchDeferral`),
   `segment-resolution/revalidation.ts`; stored routes (`cache()`, `ppr`,
   `Prerender`) defer loaders only. Browser: `browser/partial-update.ts`
   (gates, `runFill`), the in-flight fill slot in `browser/pending-fill.ts`.
   `ctx.rendered()` is refused for a deferrable loader on every request kind
-  (`router/loader-resolution.ts`). The document cache stores the prefetch
-  body of a flagged tree under a `:prefetch` key only prefetches read, keeps
-  one slot for trees with no flag, and skips `_rsc_fill`
+  (`router/loader-resolution.ts`). The document cache keeps one slot,
+  refuses a payload that carries deferred units
+  (`RequestContext._payloadDeferred`) and skips `_rsc_fill`
   (`cache/document-cache.ts`). Inert
   in `clientUrls()` groups and `intercept()`; `clientUrls()` `loader()`
   rejects the option in development. Design:

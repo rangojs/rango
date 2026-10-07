@@ -1123,7 +1123,9 @@ What happens:
   in the prefetch when it revalidates, exactly as without the flag, and the
   click sends no second request. The rule: a click that adopts a prefetch is
   never worse than the same click with no prefetch at all, and content on
-  screen is never swapped for a fallback because of the flag.
+  screen is never swapped for a fallback because of the flag. For the same
+  reason a prefetch that deferred something is used only on the page that
+  made it: a page that already shows the segment makes its own prefetch.
 - A **click** that adopts that prefetch is never blocked by the loader. A
   deferred loader behaves like a loader that is still streaming, and where
   the page reads it (`useLoader(ReviewsLoader)`) React does what it does for
@@ -1164,7 +1166,9 @@ The limits:
 - **A boundary is required for a fallback.** With no `loading()` on the entry
   and no `<Suspense>` around the read, nothing can show a fallback, so React
   holds the page being left on screen until the fill returns. The URL has
-  already changed. There is no definition-time error.
+  already changed, and `useNavigation()` reads `state: "loading"` for that
+  time, as on any navigation that is still streaming, so a progress bar
+  shows. There is no definition-time error.
 - **`ctx.rendered()` is refused.** A loader that can be deferred throws on
   every request kind (a document load included, so you see it the first time
   you open the page in development) if it calls `await ctx.rendered()`. The

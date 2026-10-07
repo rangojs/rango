@@ -1,7 +1,7 @@
 # `prefetch: false`: keeping expensive work out of prefetches
 
 Status: built. Written on 2026-10-07 against main `844ccda5`, from the behaviour
-contract agreed with the maintainer the same day. The rules below (R1 to R14)
+contract agreed with the maintainer the same day. The rules below (R1 to R15)
 are that contract; the mechanics are what the code does.
 
 Read [caching.md](./caching.md) first if you have not, and
@@ -91,6 +91,7 @@ Three words carry the rest of this document:
 | Prefetch request, segment new to the client                          | not executed, marked deferred (R1)          | see R2                                       |
 | Prefetch request, segment the client holds                           | runs when it revalidates, as before (R14)   | renders when it revalidates, as before (R14) |
 | Click that adopts a payload with deferred units                      | fallback shows; fill request sent (R4)      | fallback shows; fill request sent (R4)       |
+| Click on another page than the one that prefetched                   | that prefetch is not used (R15)             | that prefetch is not used (R15)              |
 | Fill request                                                         | executes; only missing ids are emitted (R5) | executes; only missing ids are emitted (R5)  |
 | Action revalidation, popstate, no-JS (PE)                            | unchanged                                   | unchanged                                    |
 | Shell capture, warm request, on-demand prerender, `_rsc_loader` lane | unchanged (none is a prefetch)              | unchanged                                    |
@@ -133,10 +134,10 @@ apply: the document awaits the loader, a prefetch skips it. On a `ppr` route
 an `ssr: false` loader is the bake lane (shell material, served from the
 record), so the flag is ignored there and development logs a warning.
 
-**R4. Adoption.** Any payload the client adopts that carries deferred units is
-committed at once, whatever its source. The deferred units show their
-fallback. Exactly one fill request is sent per adoption, started before the
-tree is rendered.
+**R4. Adoption.** A payload that carries deferred units is committed at once
+when the client adopts it, and it is adopted only on the page that prefetched
+it (R15). The deferred units show their fallback. Exactly one fill request is
+sent per adoption, started before the tree is rendered.
 
 **R5. Fill.** A partial request to the same URL. `_rsc_segments` lists what
 the client holds, so the deferred ids are absent. It carries `_rsc_fill=1` and
@@ -151,18 +152,24 @@ later.
 
 **R7. Deferral belongs to one response, never to stored data.** A deferred
 marker is never written to a segment cache entry, a `ppr` shell record, the
-prerender store or a loader cache entry. A stored body that carries deferred
-units answers prefetch requests only: never a navigation, never a fill. Fill
-responses are stored neither in the document cache nor in the browser HTTP
-cache, and a fill is never answered from one. A stored body that is complete
-may answer a prefetch; "The document cache" below says why.
+prerender store or a loader cache entry. A response that carries deferred
+units is never stored for reuse: not in the document cache, not by the
+browser's HTTP cache or a shared cache in front of the app, and in the
+browser's in-memory prefetch cache only under the page that sent the prefetch
+(R15). So no stored body can answer a navigation with a deferred unit. A fill
+response is stored nowhere, and a fill is never answered from a stored body. A
+stored body that is complete may answer a prefetch; "The document cache" below
+says why.
 
 **R8. Safe degrade.** Where the flag cannot be honoured the work runs in the
 prefetch, as before. Never missing data, never a hole with no fill.
 
 **R9. No change without the flag.** A prefetch response for a route with no
 flag is byte-identical to what it was. Pinned by
-`src/testing/__tests__/prefetch-false-unflagged.rsc-test.tsx`.
+`src/testing/__tests__/prefetch-false-unflagged.rsc-test.tsx`. Such a route
+also does one document-cache read per request and answers with the `vary` and
+`cache-control` it has on main (`prefetch-false.rsc-test.tsx`, "a route with
+no flag answers a prefetch and a navigation as it does without the feature").
 
 **R10. Context limitation.** Deferred work runs in the fill request.
 Middleware runs there as on any render pass. Handlers outside the deferred
@@ -172,6 +179,8 @@ has (execution-model.md, "Revalidation Contract", semantic matrix row `[R1]`).
 
 **R11. No boundary.** A flagged loader whose read site has no boundary makes
 React hold the transition until the fill returns. No definition-time error.
+`useNavigation()` reads `loading` for that time, as it does on a plain
+navigation that is still streaming, so a progress bar shows.
 
 **R12. A deferrable loader cannot call `ctx.rendered()`.** It throws on every
 request kind, document included, so you see it on the first load in
@@ -197,8 +206,17 @@ request's `_rsc_segments`. This is what defines the unit:
   with its own flagged `loading()` under a held layout is its own unit.
 - So a same-route navigation (same route, other params: the client holds the
   route and its loader segments) behaves as it does without the flag. The
-  prefetch runs everything and the click sends no fill. That is for a prefetch
-  taken on that page; "Limits" covers one taken elsewhere.
+  prefetch runs everything and the click sends no fill. A prefetch taken on
+  another page is not used for that click (R15).
+
+**R15. A prefetch that deferred something is adopted only on the page it was
+made on.** What a prefetch defers depends on what its source page holds
+(R14), so a response that carries deferred units is for that page. It is sent
+with `x-rsc-prefetch-scope: source`, the scope a route an intercept targets
+already uses, and the browser's prefetch cache then keys it by the source page
+and the segments that page held. A page that holds the segment makes its own
+prefetch, which defers nothing for it, and a click there never sends a fill
+for content it is showing.
 
 Why so strict? A placeholder over a segment that is on screen would put a
 fallback where the visitor is looking at content, or hold the click on a fill
@@ -275,10 +293,23 @@ the request is a fill:
   their `$$id`s, unit candidates).
 - `mode`: `"prefetch"` for a GET partial request with `X-Rango-Prefetch` that
   is not an action, not a shell capture and resolves no intercept; `"fill"`
-  when the raw URL carries `_rsc_fill`; otherwise unset. The decision is one
-  function, `partialDeferralMode()`, with a truth table beside it: an action
-  is always a POST and a capture always runs the full match, so no real
-  request can show those conditions apart.
+  when the raw URL carries `_rsc_fill`; otherwise unset. The header and the
+  param are read once, when the request context is created (`requestKind()`,
+  kept as `RequestContext._requestKind`; the names are `PREFETCH_HEADER` and
+  `FILL_PARAM`). The decision is one function, `partialDeferralMode()`, with a
+  truth table beside it: an action is always a POST and a capture always runs
+  the full match, so no real request can show those conditions apart.
+- `held`: the client's segment ids as the request listed them in
+  `_rsc_segments`. Deferral reads this set and no other. It is the set
+  `buildMatchResult` filters the response with, and it is not the set
+  resolution works on: the match drops a route's id from that one to force a
+  same-route render from an intercept source. Deferring on the forced set
+  skipped the handler of a route the response then left out as held, so the
+  click got nothing for it.
+- `skipped` and `skipsChain`: for a prefetch, the segment ids of the units
+  this request skips, and whether one of them is a chain entry. `defersUnit()`
+  and `defersAboveRecord()` are lookups on them. One computation, so the
+  resolver and the cache middleware cannot disagree about what was skipped.
 - `storedFrom`: the first chain index whose handler output is stored. `0` for
   a `ppr` leaf and for `Prerender` routes, the `cache()` boundary's index when
   the route's scope is enabled, `Infinity` otherwise. A `Prerender` route
@@ -288,9 +319,10 @@ the request is a fill:
 - `deferredUnit`: the id of the handler unit this prefetch skipped, set during
   resolution.
 
-Why the handler context and not the request context? A shell capture derives
-its request context from the request that scheduled it, so a field there would
-leak a prefetch's mode into a capture. The background re-renders
+Why is the mode on the handler context when the request kind is on the
+request context? The kind is a fact about the request. The mode is a decision
+about one match. A shell capture derives its request context from the request
+that scheduled it, so a mode there would leak a prefetch's into a capture. The background re-renders
 (`rerenderAndCacheRoute`, a stale route-cache refresh) build their own handler
 context and so start with no plan, which is what they need: none of them is a
 prefetch.
@@ -316,7 +348,11 @@ path. The document path (`fresh.ts`) never defers.
   remount" below).
 - `buildMatchResult` (`src/router/match-result.ts`) needs no special case: a
   deferred segment is never one the client holds, so the ordinary "send what
-  the client lacks" filter keeps it.
+  the client lacks" filter keeps it. Both sides read the ids the request
+  listed (`PrefetchDeferral.held`).
+- The partial render (`src/rsc/rsc-rendering.ts`) looks at what it is about
+  to send. One deferred segment makes the response source-scoped (R15), marks
+  `RequestContext._payloadDeferred` and sets its `cache-control` (R7).
 
 In a fill, every one of those decision points answers
 `!clientSegmentIds.has(id)` and nothing else. The two store paths in
@@ -397,71 +433,96 @@ because the document cache middleware (`src/cache/document-cache.ts`) decides
 from the raw URL before the request is classified, and `stripInternalParams`
 already removes every `_rsc*` param from the URL handlers see.
 
-### Keeping the modes apart (R7)
+### Keeping deferral out of storage (R7)
 
-- **Document cache**: two slots, and a request with `_rsc_fill` skips the
+- **Document cache**: one slot per key, as on main. A response whose payload
+  carries deferred units is refused, and a request with `_rsc_fill` skips the
   cache the way `_rsc_action` and `_rsc_loader` do. See "The document cache"
   below.
-- **`Vary`**: a partial response for a route whose tree declares a flag lists
-  `X-Rango-Prefetch` (`renderPreparedRscResponse` in
-  `src/rsc/rsc-rendering.ts`, from `RequestContext._prefetchFlagged`). A route
-  with no flag keeps the exact `vary` string it had (R9).
-- **Fill responses** are `cache-control: no-store`, and the browser sends the
-  fill with `cache: "no-store"`.
-- **Client prefetch cache**: a fill never reads or writes it
+- **HTTP caches**: such a response, and a fill response, are sent with
+  `cache-control: private, no-cache` (`NOT_REUSED` in
+  `src/rsc/rsc-rendering.ts`), whatever `Cache-Control` the route set. The
+  browser also sends the fill with `cache: "no-store"`. `Vary` is the string
+  main has: nothing varies on the prefetch header, because no stored response
+  differs by it.
+- **Client prefetch cache**: a response that defers is kept under its source
+  page only (R15). A fill never reads or writes the cache
   (`src/browser/navigation-client.ts`), and its URL carries `_rsc_fill`, so
   its key could not match a prefetch entry anyway.
+
+Why does a deferring response need a `cache-control` of its own? You might
+expect "no header" to be enough: a source-scoped prefetch gets none from the
+router. But the route's own header reaches the response wherever the render
+set none (`applyStubHeaders` in `src/rsc/helpers.ts`), and a route that opts
+into the document cache does it with `s-maxage`. A prefetch and a navigation
+with the same held segments share a URL, so a CDN honouring that header would
+store a body with deferred units and answer a navigation with it. The render
+sets the header, so the route's cannot apply.
+
+Why `private, no-cache` and not `no-store`? This is scar tissue. A fill used
+to be answered `no-store`, and showed up in the Network panel as `(canceled)`
+(Playwright: `requestfailed`, `net::ERR_ABORTED`). Nothing was aborted.
+Chromium reports every `no-store` response that way once its body has been
+read to the end through a stream reader, which is how a Flight payload is
+read. A bare `fetch()` of the same URL read with `getReader()` or `tee()`
+ends the same way with no router code involved, and ends as finished when the
+header is `no-cache`. It was documented and left alone while only fills
+carried the header. With deferring prefetches carrying it too, every hover on
+a flagged link read as canceled, and Playwright's `response.finished()` never
+settled on the second one. `private, no-cache` keeps both out of every cache
+that could reuse them: a shared cache may not store it, and the browser has
+to revalidate and has no validator to do it with, so it asks again in full.
 
 ### The document cache
 
 The middleware (`createDocumentCacheMiddleware`, `src/cache/document-cache.ts`)
 answers a request before the router has matched it. It cannot know whether
-the route declares a flag, so it cannot decide up front which body a prefetch
-should get. It decides from what it finds and from what the render says:
+the route declares a flag, and it does not need to. It keeps one entry per
+key, reads it once per request, and stores only complete bodies:
 
-| Slot                        | Holds                                                                 | Read by                               |
-| --------------------------- | --------------------------------------------------------------------- | ------------------------------------- |
-| plain (the key main has)    | complete bodies: a navigation, or the prefetch of a tree with no flag | navigations, and prefetches first     |
-| `:prefetch` (suffix in key) | the prefetch body of a flagged tree, which may carry deferred units   | prefetches that found no plain answer |
+- A **write** is refused when the payload carries deferred units. The partial
+  render marks `RequestContext._payloadDeferred` and `shouldCacheResponse()`
+  returns null for it, the way it does for a payload that carries the
+  visitor's theme. The response's own `private, no-cache` would be refused
+  too, but a middleware can replace `Cache-Control` after `next()`. The marker
+  cannot be replaced.
+- A **navigation** and a **prefetch** read the same entry. Every stored body
+  is complete, so either can be answered with it.
+- A **fill** skips the cache.
 
-- A **navigation** reads the plain slot and nothing else. Nothing with a
-  deferred unit is ever written there, so it can never be answered with one.
-- A **prefetch** reads the plain slot first. A fresh entry there is served.
-  Otherwise it reads the `:prefetch` slot: one extra read, paid only by a
-  prefetch that found no plain answer.
-- A **write** picks its slot after the render. A prefetch's body goes to
-  `:prefetch` when the tree declares a flag (`RequestContext._prefetchFlagged`,
-  or the response's own `Vary`, whichever says so) and to the plain slot
-  otherwise.
+So a route with no flag behaves as it does on main: one slot, one read, the
+same headers. The file differs from main by the fill's skip and that one
+refusal.
 
-So a route with no flag behaves as it did before the feature: a prefetch and
-a navigation with the same held segments share one entry, in either order.
-An earlier version of this code gave every prefetch its own slot, and the
-handler of an unflagged cached route ran twice where it used to run once.
+This is the third design, and the first two are scar tissue. The first gave
+every prefetch its own slot, and the handler of an unflagged cached route ran
+twice where it used to run once. The second kept a `:prefetch` slot for the
+prefetch body of a flagged tree and varied on `X-Rango-Prefetch`. Every
+prefetch that missed the plain slot then read a second key, flagged tree or
+not: on Cloudflare, one more KV read for apps that never use the flag. Both
+existed to keep two kinds of stored body apart. Storing only one kind removes
+the need.
 
 Can a complete navigation body answer a prefetch of a flagged tree? Yes, and
-on purpose. You might expect strict separation, a prefetch of a flagged tree
-always getting the deferred body. Three reasons it is not:
+on purpose. You might expect a prefetch of a flagged tree to always get the
+deferred body. Two reasons it does not:
 
 1. The stored body is complete. The click that adopts it has nothing to wait
    for and sends no fill.
 2. Serving it runs nothing. Keeping expensive work out of prefetches is the
    whole point of the flag, and a cache hit is no work at all.
-3. Strict separation would make the flagged work run on every prefetched
-   click (a fill is never cached) while a plain click was a cache hit. The
-   flag would cost server time on exactly the routes that opted into caching.
 
-One exception: a **stale** plain entry of a flagged tree does not answer a
-prefetch. Serving stale means re-rendering in the background, and that
-re-render is a prefetch of a flagged tree, so its body goes to the other
-slot. The stale entry would be served, and re-rendered, by every prefetch
-until a navigation replaced it. The prefetch falls through to its own slot
-instead. The middleware tells a flagged tree's stale entry by the `Vary` the
-stored response carries; if an app middleware rewrote it, the cost is only
-that loop, never a wrong body.
+What does a prefetch that defers cost here? One render each time, the cheap
+one the flag asks for: nothing answers it but a complete body a navigation
+left behind. A **stale** complete entry still answers a prefetch, as it
+answers a navigation. Its background refresh re-renders the request that hit
+it, and when that is a prefetch that defers, nothing is written. The entry
+stays stale until a navigation refreshes it or it expires, and until then
+each prefetch is served the stale body and pays one deferred render in the
+background, which is what it would have paid with no entry at all.
 
-Pinned by `src/cache/__tests__/document-cache.test.ts` ("prefetch and
-navigation slots") and, through a real router, by
+Pinned by `src/cache/__tests__/document-cache.test.ts` ("a prefetch and a
+navigation share one slot") and, through a real router, by
 `src/testing/__tests__/prefetch-false.rsc-test.tsx` ("the document cache").
 
 ## The browser
@@ -470,7 +531,7 @@ navigation slots") and, through a real router, by
 
 `fetchPartialUpdate` (`src/browser/partial-update.ts`) is where every partial
 payload is reconciled and committed. When the payload it is about to commit
-carries deferred segments, three things happen before the tree is built:
+carries deferred segments, two things happen before the tree is built:
 
 1. `armGates()` gives each deferred segment a **gate**: a promise the browser
    created. A deferred loader's gate becomes its `loaderData`; a deferred
@@ -479,17 +540,31 @@ carries deferred segments, three things happen before the tree is built:
    knows how to show. This happens before the reconcile, on the payload's own
    segment objects. That is safe because every adoption decodes its own
    payload (see "Reuse" below).
-2. The reconcile runs without the page's copies of the deferred ids. This one
-   is scar tissue. The reconciler keeps the cached component when the server
-   sends `component: null` for a layout the client holds, and the navigation
-   actor keeps the cached `loading`. On a same-route navigation that turned a
-   deferred unit back into the old page's content, with no fallback and no
-   gate. A deferred id has no usable copy, so it is given none.
-3. `runFill()` starts the fill request (`client.fetchPartial({ fill: true })`)
+2. `runFill()` starts the fill request (`client.fetchPartial({ fill: true })`)
    with its own `AbortController`, and the commit proceeds on the lane it
    would have taken anyway. A fully prefetched payload still commits in a
    transition with `forceAwait`; `renderSegments`
    (`src/segment-system.tsx`) skips the awaits that would wait on a gate.
+
+The reconcile needs no special case. A payload that defers is adopted only on
+the page that prefetched it, with the segments that page held when it did
+(R15), so a deferred id is always new to the page: there is no copy of the
+segment to keep, and none to hide.
+
+That is scar tissue. The prefetch cache used to hand such a payload to any
+page, and the browser tried to make that safe: the reconcile ran without the
+page's copies of the deferred ids, and a unit the page already showed had its
+gate resolved at once (`Gate.fresh`). It could not be made safe. A prefetch
+made on the hub and adopted inside the section it had deferred held the click
+on a fill for content a plain click showed at once, and ran held work again.
+Measured in production: `slot` to `slot-b` with slow loaders showed the new
+page at 706 ms against 8 ms, and ran `slot.side` and `slot.data` again;
+`section` to `section-own` with a 600 ms layout showed nothing until 608 ms
+where the plain click had the fallback at 7 ms. 28 of 30 such clicks sent a
+fill. The fix is on the server, where the response says which page it is for,
+and the browser code for the other pages is gone.
+`expectPrefetchThatDeferredStaysWithItsPage` pins it in both apps and both
+modes, including a prefetch still in flight when the click happens elsewhere.
 
 The store never reports a placeholder as held. `tx.commit` receives the
 matched ids minus the deferred ones, so `_rsc_segments` of every later request
@@ -552,7 +627,8 @@ the gate is resolved once React has committed that tree
 `NavigationProvider`). React then retries the boundary, throttled like any
 other, and the sequence is the plain navigation's.
 
-Two things keep that from hanging, and both are scar tissue of the first try:
+Two refinements, both scar tissue. The first keeps a gate from staying
+pending for good, the second keeps the reveal on time:
 
 - `onCommit` also fires when a _later_ update commits. React commits only the
   last of the updates it batches, and an urgent update can supersede a
@@ -560,14 +636,22 @@ Two things keep that from hanging, and both are scar tissue of the first try:
   leave its gate pending for good. An _earlier_ update that commits meanwhile
   does not fire it. `src/testing/__tests__/navigation-update-on-commit.test.tsx`
   pins the order through the real provider.
-- Only a unit whose fallback can show waits for the commit (`Gate.fresh`: the
-  page being left has no copy of the unit's segment). The browser's prefetch
-  cache is not keyed by the source page, so a prefetch taken on the hub can be
-  adopted on the unit's own page, where the unit's content is on screen. React
-  never commits a tree that suspends where content is showing: it holds the
-  old page, which is what you want, and it would hold the fill's tree too if
-  that still read the gate. Such a unit gets its content in the fill's tree
-  and its gate resolved at once, as before.
+- Not under a view transition. There the fill's own transition has to wait
+  for the one the adoption started, which lasts about as long as React's
+  throttle, and every retry that suspends again under a `<ViewTransition>`
+  starts a transition of its own that the reveal then waits for. The gate's
+  retry does exactly that when the unit reads a loader that is still
+  streaming. Measured in production on a unit under `transition()`: two more
+  view transitions than the plain click, and the content 280 ms late. So when
+  the commit will run as a view transition (`shouldStartViewTransition`, and
+  the browser has the API) the unit's content goes straight into the fill's
+  tree and its gate is resolved with it.
+
+A fill that carries loaders only renders no tree at all. It commits the tree
+the adoption rendered (`Fill.root`), whose reads resolve with the gates. A
+new tree there was one more commit with nothing to show for it and, under
+`transition()`, one more view transition: a flagged loader made three
+`startViewTransition` calls where the plain click makes two.
 
 The fill's update says nothing about scroll. Scroll belongs to the
 navigation transaction: `tx.commit()` decides it, the adoption's update
@@ -632,17 +716,42 @@ redirect is a document navigation and the state is dropped.
 Three things a page can observe, each checked against a plain navigation
 whose loader is still streaming:
 
-- **`useNavigation()`** reads `state: "idle"` and `isStreaming: true`. The
-  adoption's transaction has committed, and its streaming token stays open
-  until the fill has landed and streamed (`fetchPartialUpdate` ends it on
-  `adoption.fill.done`). A plain navigation reads the same once it has
-  committed. It reads `"loading"` before that, which an adopted click never
-  shows: its commit is immediate.
+- **`useNavigation()`** reads what it reads on a plain navigation that is
+  still streaming: `state: "loading"` until React commits the adopted
+  payload, then `"idle"` with `isStreaming: true` until the fill has landed
+  and streamed (the adoption's streaming token stays open until then). Where
+  a fallback can show, that commit is immediate and `"loading"` lasts a few
+  milliseconds, as on a plain click. Where nothing can show one (R11) React
+  holds the commit until the fill returns, and `"loading"` is what an app's
+  progress bar has to see for all of that time.
+
+  It used not to. The adoption commits in the task of the click, so the
+  controller goes to `loading` and back before React has rendered either, and
+  the state after the commit reaches React inside the payload update's
+  transition (`flushRouteState`), which React was holding. Hub to `bare` with
+  slow loaders, production: the plain click read `loading` from 5 to 712 ms,
+  the adopted one read `idle` until 709 ms. Now the adoption's update is
+  handed over through `emitAdoption()` (`browser/pending-fill.ts`), and while
+  that runs `useNavigation()` sets its optimistic value to `loading` inside
+  the same transition. An optimistic value shows at once and gives way to the
+  real state when its transition commits, so the pin lasts exactly as long as
+  React holds the commit.
+
+  Releasing the pin from outside was tried first (a flag on the controller,
+  cleared in `onCommit`) and is wrong. The release is then a transition of
+  its own, which under `transition()` waits for the entering view transition
+  and starts another: three view transitions for two, and the content 280 ms
+  late. `src/testing/__tests__/navigation-adoption-loading.test.tsx` pins the
+  behaviour through the real provider, and
+  `expectPendingFillReadsLikeAStreamingNavigation` in the browser, on a unit
+  and on a read with no boundary.
+
 - **View transitions.** The fill commits through `commitInTransition` with no
   transition type, and reuses the adoption's `transition({ when })` decision
-  (`fill.gatedOff`). On a route with `transition()` and a flagged loader the
-  browser gets two `document.startViewTransition` calls, the commit and the
-  reveal, with or without the prefetch.
+  (passed to `runFill`). On a route with `transition()` and a flagged loader
+  the browser gets two `document.startViewTransition` calls, the commit and
+  the reveal, with or without the prefetch, with fast and with slow loaders.
+  "Limits" has the one case that still differs.
 - **Handle data.** A push from a handler the prefetch ran travels in the
   prefetched payload's handle stream, so it is on screen with the click's
   commit: breadcrumbs and titles from the part that was not deferred do not
@@ -739,32 +848,18 @@ expired between prefetch and click) is not a failure. It is followed as a
 replace navigation through `PartialUpdateConfig.fill.redirect`; an external
 redirect, or a client built without the hook, is a document navigation.
 
-### What DevTools shows
-
-A fill request shows up in the Network panel as `(canceled)`, and Playwright
-reports it as `requestfailed` with `net::ERR_ABORTED`. Nothing was aborted
-and nothing is lost. Chromium reports every response that carries
-`Cache-Control: no-store` this way once its body has been read to the end
-through a stream reader, which is how a Flight payload is read. The report
-comes after the reader has seen the end of the stream, with every byte
-delivered.
-
-How that was established, so you do not have to repeat it: no code in the
-page aborts or cancels (`AbortController.abort`, the fill's signal, and every
-stream and reader `cancel` were instrumented and stayed silent); a bare
-`fetch()` of the same URL from the page, read with `getReader()`, ends the
-same way with no router code involved, and ends as finished when a proxy
-removes the header or changes it to `no-cache`; and through a proxy that
-re-emits the body in four pieces 250 ms apart and closes the stream 250 ms
-after the last one, all four pieces reach the page, the value renders, and
-the report comes at the close. The header stays: it is what keeps a fill out
-of every HTTP cache between the server and the page (R7).
-
 ### Reuse within `prefetchCacheTTL`
 
 A prefetch entry respawns on every adoption (`makeRespawn` in
 `prefetch/fetch.ts`), so each adoption decodes its own payload, arms its own
 gates and sends its own fill.
+
+An entry that defers lives under its source page's key, which includes the
+segments that page held (`buildSourceKey` in `prefetch/cache.ts`). Coming
+back to a page the client still has in its history cache is a different
+request: it lists that page's segments, so the key does not match and the
+click is a plain navigation over the cached copy
+(`expectRevisitUsesWhatTheClientHolds`).
 
 ## `ctx.rendered()`: R12 and R13
 
@@ -802,16 +897,12 @@ segments. A fill refuses `rendered()` outright for the same reason R12 exists.
 
 ## Limits
 
-- A prefetch is answered for the page that sent it, and the browser's
-  prefetch cache is not keyed by that page. A prefetch taken where a flagged
-  segment was new can be adopted on a page that holds it: the hub's prefetch
-  of a section route, clicked from inside the section, or `item/b` prefetched
-  on the hub and clicked from `item/a`. The payload then defers something the
-  page holds, and the click sends a fill where a prefetch taken on that page
-  would have sent nothing. The promise still holds, and the parity cases pin
-  it: React keeps the content on screen until the fill's tree can replace it,
-  and the click shows no fallback a plain navigation would not show. The cost
-  is one handler run: the fill renders the held layout the prefetch skipped.
+- A deferred unit under `transition()` whose content reads a loader that
+  outlasts the entering view transition starts one view transition more than
+  the plain click. Measured in production with a 700 ms loader: calls at about
+  3, 296 and 707 ms against 9 and 714 ms. The extra one changes nothing on
+  screen and the content is not late (complete at 713 ms against 725). The
+  parity list allows it for that one case (`idleViewTransitions`).
 - An orphan layout's flagged `loading()` defers its loaders but not its
   handler. A route's handler runs before its orphan layouts, so there is
   nothing left to skip by the time the orphan is reached.
@@ -858,6 +949,7 @@ shows 0 runs after the hover and 1 after the click, an unflagged case shows 1
 after the hover. `run` keys the counters: each value you pick has its own, and
 "Start a new run" picks a fresh one. `&tall=1` adds spacers so the page
 scrolls, for checking that a navigation ends at the top. `&slow=1` makes every
-deferred loader take 600 ms longer, so you can watch a fallback. Without `manual=1`
+deferred loader take 600 ms longer, so you can watch a fallback, and
+`&hslow=1` does the same to the section layout's handler. Without `manual=1`
 the panel, the badge and the polling are not rendered, which is what the
 suites see. Every link carries the flags that are set.
