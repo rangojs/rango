@@ -48,10 +48,27 @@ keeps what is on screen wherever it can, and the flag must never cost you
 that, so a segment the browser already holds is never deferred. The promise
 the feature makes, and the one to check any change against: **a click that
 adopts a prefetch with deferred units is never worse than the same click with
-no prefetch at all. It shows a fallback only where that plain navigation would
-show the same fallback, it waits only where that plain navigation would wait,
-and content that is already on screen is never replaced by a fallback, blanked
-or remounted while a fill is pending.**
+no prefetch at all. It never covers more of the page with a fallback than
+that plain navigation does, and never for longer; it waits only where the
+plain navigation would wait; and content that is already on screen is never
+replaced by a fallback, blanked or remounted while a fill is pending.**
+
+What a deferred loader does to the click follows from one sentence: **a
+deferred loader never blocks the navigation, and behaves like a loader that
+is still streaming.** React then decides what shows, as it does for any
+value that has not arrived:
+
+| Where the page reads the loader             | What the adopted click shows                               |
+| ------------------------------------------- | ---------------------------------------------------------- |
+| Inside its own `<Suspense>`                 | The page at once, with that fallback in it, then the value |
+| Nearest boundary is the route's `loading()` | That fallback, as on a plain click                         |
+| No boundary at all                          | The page being left, until the fill returns (R11)          |
+
+The first row can be a finer fallback than the plain click shows. With no
+prefetch the whole route is still streaming, so its `loading()` covers it;
+with the prefetch adopted everything but the deferred value is already
+there. That is less fallback for no longer, which the promise allows. The
+shared suite pins it (`expectDeferredLoaderShowsItsOwnFallbackAtOnce`).
 
 Three words carry the rest of this document:
 
@@ -84,8 +101,17 @@ These are the invariants. If you change this feature, these are what must
 still hold.
 
 **R1. A flagged loader on a segment that is new to the client is not executed
-in a prefetch.** Its own `cache()` is not read either, even when it would hit.
-Its segment is in the payload, marked deferred, with no data.
+in a prefetch.** Its own `cache()` is not read either, even when it would hit,
+and no `"use cache"` function it calls is consulted. That is by intent: a
+prefetch that looked would have to run the loader on a miss, which is the
+work the flag keeps out. Its segment is in the payload, marked deferred, with
+no data. The fill is where the loader runs, so the fill reads through both:
+a warm `cache()` entry is served and the loader body does not run, a cold one
+runs and stores, and a `"use cache"` function inside deferred work (a flagged
+loader, or a handler behind a flagged `loading()`) hits or stores as on any
+request. Pinned by `prefetch-false.rsc-test.tsx` ("a fill serves the loader's
+cache() when it is warm", "a fill runs the loader and stores its cache() when
+it is cold", and the `"use cache" in deferred work` describe).
 
 **R2. A flagged `loading()` entry that is new to the client, in a prefetch.**
 Two cases, and which one applies depends on whether the entry's handler output

@@ -45,6 +45,10 @@ import {
   SEGMENT_FRAGMENT_CAPABILITY_HEADER,
   SEGMENT_FRAGMENT_RECOVERY_HEADER,
 } from "../../segment-fragments.js";
+import {
+  ratingsFor,
+  runs as cachedRuns,
+} from "./fixtures/prefetch-false-use-cache-data.js";
 
 const runs: Record<string, number> = {};
 const ran = (name: string): number => (runs[name] = (runs[name] ?? 0) + 1);
@@ -72,6 +76,11 @@ const SectionCachedLoader = counted("section-cached-loader");
 const TwinCachedLoader = counted("twin-cached-loader");
 const RevalLoader = counted("reval-loader");
 const CachedPageLoader = counted("cached-loader");
+/** Reads a "use cache" function: its own run is counted, and the function's. */
+const RatingsLoader = createLoader(async () => {
+  ran("ratings-loader");
+  return { value: await ratingsFor("loader") };
+});
 const PprLiveLoader = counted("ppr-live");
 const PprBakeLoader = counted("ppr-bake");
 const PreLoader = counted("pre-loader");
@@ -207,6 +216,18 @@ function makeRouter() {
               ]),
               loading(<p>cached-loader-loading</p>),
             ]),
+            path("/ratings", page("ratings-page"), () => [
+              loader(RatingsLoader, { prefetch: false }),
+              loading(<p>ratings-loading</p>),
+            ]),
+            path(
+              "/ratings-unit",
+              async () => {
+                ran("ratings-unit");
+                return <p>{await ratingsFor("handler")}</p>;
+              },
+              () => [loading(<p>ratings-unit-loading</p>, { prefetch: false })],
+            ),
             path("/orders", page("orders"), { name: "orders" }, () => [
               loader(OrdersLoader),
               loading(<p>orders-loading</p>, { prefetch: false }),
@@ -480,6 +501,7 @@ function setup(cacheStore = new MemorySegmentCacheStore()) {
 
 beforeEach(async () => {
   for (const key of Object.keys(runs)) delete runs[key];
+  for (const key of Object.keys(cachedRuns)) delete cachedRuns[key];
   errors.length = 0;
   await resetShellTestState();
 });
@@ -521,6 +543,40 @@ describe("R1: a flagged loader in a prefetch", () => {
     expect(cached.deferred).toBe(true);
     expect("loaderData" in cached).toBe(false);
     expect(count("cachedReviews")).toBe(1);
+  });
+
+  // The fill is where the deferred loader runs, so that is where its cache()
+  // is read and written: the prefetch above reads neither, by intent.
+  it("a fill serves the loader's cache() when it is warm: the loader does not run", async () => {
+    const { serve, prefetch, fill } = setup();
+    await serve("/cached-loader");
+    expect(count("cachedReviews")).toBe(1);
+
+    const prefetched = payloadOf(await prefetch("/cached-loader"));
+    const filled = await fill("/cached-loader", prefetched);
+    expect(count("cachedReviews")).toBe(1);
+    expect(
+      present(payloadOf(filled).find(CachedReviewsLoader.$$id)!.loaderData),
+    ).toBe(true);
+    expect(filled.flight).toContain("cachedReviews-run-1");
+  });
+
+  it("a fill runs the loader and stores its cache() when it is cold, and the next visit's fill hits", async () => {
+    const { prefetch, fill } = setup();
+    const prefetched = payloadOf(await prefetch("/cached-loader"));
+    expect(count("cachedReviews")).toBe(0);
+
+    const first = await fill("/cached-loader", prefetched);
+    expect(count("cachedReviews")).toBe(1);
+    expect(first.flight).toContain("cachedReviews-run-1");
+
+    // The next visit: its prefetch still reads nothing, its fill hits.
+    const again = payloadOf(await prefetch("/cached-loader"));
+    expect(again.deferred).toEqual(prefetched.deferred);
+    expect(count("cachedReviews")).toBe(1);
+    const second = await fill("/cached-loader", again);
+    expect(count("cachedReviews")).toBe(1);
+    expect(second.flight).toContain("cachedReviews-run-1");
   });
 
   it("runs on a navigation with no prefetch to adopt, and on a document request", async () => {
@@ -829,6 +885,72 @@ describe("R5: the fill request", () => {
     expect(record.segments).toHaveLength(1);
     expect(JSON.stringify(record.segments)).toContain("cached-run-2");
     expect(JSON.stringify(record.segments)).not.toContain("deferred");
+  });
+});
+
+describe('"use cache" in deferred work', () => {
+  it("inside a flagged loader: a prefetch reads nothing, the first fill runs and stores, the second fill hits", async () => {
+    const { prefetch, fill } = setup();
+    const prefetched = payloadOf(await prefetch("/ratings"));
+    expect(prefetched.deferred).toHaveLength(1);
+    expect({ loader: count("ratings-loader"), fn: cachedRuns.loader }).toEqual({
+      loader: 0,
+      fn: undefined,
+    });
+
+    const first = await fill("/ratings", prefetched);
+    expect({ loader: count("ratings-loader"), fn: cachedRuns.loader }).toEqual({
+      loader: 1,
+      fn: 1,
+    });
+    expect(first.flight).toContain("loader-ratings-1");
+
+    // A warm entry changes nothing for a prefetch: it still defers.
+    const again = payloadOf(await prefetch("/ratings"));
+    expect(again.deferred).toEqual(prefetched.deferred);
+    expect({ loader: count("ratings-loader"), fn: cachedRuns.loader }).toEqual({
+      loader: 1,
+      fn: 1,
+    });
+    const second = await fill("/ratings", again);
+    // The loader runs again; the function it reads does not.
+    expect({ loader: count("ratings-loader"), fn: cachedRuns.loader }).toEqual({
+      loader: 2,
+      fn: 1,
+    });
+    expect(second.flight).toContain("loader-ratings-1");
+  });
+
+  it("inside a deferred handler: a prefetch reads nothing, the first fill runs and stores, the second fill hits", async () => {
+    const { prefetch, fill } = setup();
+    const prefetched = payloadOf(await prefetch("/ratings-unit"));
+    expect(prefetched.deferred).toHaveLength(1);
+    expect({ unit: count("ratings-unit"), fn: cachedRuns.handler }).toEqual({
+      unit: 0,
+      fn: undefined,
+    });
+
+    const first = await fill("/ratings-unit", prefetched);
+    await first.readDeferred();
+    expect({ unit: count("ratings-unit"), fn: cachedRuns.handler }).toEqual({
+      unit: 1,
+      fn: 1,
+    });
+    expect(first.flight).toContain("handler-ratings-1");
+
+    const again = payloadOf(await prefetch("/ratings-unit"));
+    expect(again.deferred).toEqual(prefetched.deferred);
+    expect({ unit: count("ratings-unit"), fn: cachedRuns.handler }).toEqual({
+      unit: 1,
+      fn: 1,
+    });
+    const second = await fill("/ratings-unit", again);
+    await second.readDeferred();
+    expect({ unit: count("ratings-unit"), fn: cachedRuns.handler }).toEqual({
+      unit: 2,
+      fn: 1,
+    });
+    expect(second.flight).toContain("handler-ratings-1");
   });
 });
 

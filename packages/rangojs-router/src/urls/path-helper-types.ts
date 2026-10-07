@@ -383,12 +383,14 @@ export type PathHelpers<TEnv> = {
    * entry's segment is new to the client: the entry's handler, its loaders,
    * its orphan layouts and parallel slots and, for a layout, every deeper
    * entry. The click that adopts the prefetch shows the fallback and fetches
-   * them in one follow-up request. A segment the client already holds is
-   * never deferred: a prefetch renders it as usual when it revalidates, and
-   * what is below it follows its own flags. To keep a child out of prefetches
-   * while moving inside a section, flag the child's own loading(). An entry
-   * whose handler output is stored (cache(), ppr, Prerender/Static) is served
-   * as usual and only its loaders are skipped.
+   * them in one follow-up request, which reads cache() and "use cache" as
+   * any request does (a prefetch reads neither for skipped work). A segment
+   * the client already holds is never deferred: a prefetch renders it as
+   * usual when it revalidates, and what is below it follows its own flags.
+   * To keep a child out of prefetches while moving inside a section, flag
+   * the child's own loading(). An entry whose handler output is stored
+   * (cache(), ppr, Prerender/Static) is served as usual and only its loaders
+   * are skipped.
    */
   loading: (
     component: ReactNode | (() => ReactNode),
