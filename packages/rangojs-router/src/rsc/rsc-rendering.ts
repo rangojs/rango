@@ -714,13 +714,18 @@ function* shellServePlan<TEnv>(
     // route warned. A search-bearing URL never reads one: nothing to probe.
     const routeName = reqCtx._classifiedRoute?.routeKey;
     if (
-      !partitionBuildShellCheckDone(url.pathname, routeName) &&
+      !partitionBuildShellCheckDone(ctx.router.id, url.pathname, routeName) &&
       shellSearchSeed(url, reqCtx._searchParamsFilter) === ""
     ) {
       const found = yield* step("build-shell-check", () =>
         hasBuildShell(ctx.router.id, url.pathname, devShellLookup),
       );
-      notePartitionBuildShellCheck(url.pathname, routeName, found);
+      notePartitionBuildShellCheck(
+        ctx.router.id,
+        url.pathname,
+        routeName,
+        found,
+      );
     }
   } else {
     buildHit = yield* step("build-shell-lookup", () =>

@@ -1,9 +1,12 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createElement } from "react";
 import {
   buildShellKey,
   navigationShellKey,
+  notePartitionBuildShellCheck,
+  partitionBuildShellCheckDone,
   partitionShellKey,
+  resetShellServeStateForTests,
   resolvePprConfig,
   shellReloadScript,
   shellSearchSeed,
@@ -254,6 +257,35 @@ describe("buildShellKey — a shell belongs to one router", () => {
     expect(buildShellKey("a@preview.dev", new URL("https://x/shelled"))).toBe(
       "a%40preview.dev@x/shelled:shell",
     );
+  });
+});
+
+// hasBuildShell answers per router (the manifest key carries the router), so
+// what one router's probe found says nothing about another router's.
+describe("partition build-shell probe memo — per router", () => {
+  beforeEach(() => {
+    resetShellServeStateForTests();
+  });
+
+  it("a path one router found without a build shell is still probed for another", () => {
+    notePartitionBuildShellCheck("app-a", "/p", "page", false);
+
+    expect(partitionBuildShellCheckDone("app-a", "/p", "page")).toBe(true);
+    expect(partitionBuildShellCheckDone("app-b", "/p", "page")).toBe(false);
+  });
+
+  it("a route one router warned about still warns for another router's route of that name", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      notePartitionBuildShellCheck("app-a", "/p", "page", true);
+      expect(partitionBuildShellCheckDone("app-a", "/p", "page")).toBe(true);
+      expect(partitionBuildShellCheckDone("app-b", "/p", "page")).toBe(false);
+
+      notePartitionBuildShellCheck("app-b", "/p", "page", true);
+      expect(warn).toHaveBeenCalledTimes(2);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
