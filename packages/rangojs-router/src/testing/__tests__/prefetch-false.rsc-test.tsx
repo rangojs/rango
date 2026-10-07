@@ -978,13 +978,17 @@ describe("R7: deferral is never stored, and modes never answer each other", () =
     ).toEqual({ vary: VARY, cacheControl: null, scope: null });
   });
 
-  it("a prefetch that defers is for its source page only and is not to be stored", async () => {
+  // `Vary` names the prefetch header on this response only. A navigation has
+  // the same URL as its prefetch, and a browser that kept the body answers
+  // from it without asking while it reloads a document for back/forward: the
+  // header keeps a deferring body from answering a navigation there.
+  it("a prefetch that defers is for its source page only, is not to be reused and never answers a navigation", async () => {
     const { prefetch } = setup();
     for (const url of ["/product/1", "/orders"]) {
       const result = await prefetch(url);
       expect(payloadOf(result).deferred.length).toBeGreaterThan(0);
       expect(headersOf(result)).toEqual({
-        vary: VARY,
+        vary: `${VARY}, X-Rango-Prefetch`,
         cacheControl: NOT_REUSED,
         scope: "source",
       });
