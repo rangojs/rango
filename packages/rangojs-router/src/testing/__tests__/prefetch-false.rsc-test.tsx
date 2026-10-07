@@ -31,6 +31,7 @@ import {
   createHandle,
   createLoader,
   createRouter,
+  createVar,
   Prerender,
   urls,
   type HandlerContext,
@@ -94,6 +95,24 @@ const OuterRenderedLoader = createLoader(async (ctx) => {
   return { notes: ctx.get(Notes) };
 });
 
+const FromMiddleware = createVar<string>();
+const FromLayout = createVar<string>();
+
+/** Deferred work reporting what it can read from context (R10). */
+const ContextLoader = createLoader(async (ctx) => {
+  ran("context-loader");
+  return {
+    middleware: `middleware:${ctx.get(FromMiddleware) ?? "missing"}`,
+    layout: `layout:${ctx.get(FromLayout) ?? "missing"}`,
+  };
+});
+
+function ContextLayout(ctx: HandlerContext): React.ReactNode {
+  ran("context-layout");
+  ctx.set(FromLayout, "set");
+  return <p>context-layout</p>;
+}
+
 async function AwaitedPage(ctx: HandlerContext): Promise<React.ReactNode> {
   ran("awaited-page");
   const { value } = await ctx.use(AwaitedLoader);
@@ -107,138 +126,157 @@ function makeRouter() {
     onError: ({ error }) => {
       errors.push(error instanceof Error ? error.message : String(error));
     },
-  }).routes(
-    urls(
-      ({
-        path,
-        layout,
-        loader,
-        loading,
-        cache,
-        parallel,
-        intercept,
-        revalidate,
-      }) => [
-        layout(page("shell"), () => [
-          path("/", page("home"), { name: "home" }),
-          path("/elsewhere", page("elsewhere"), { name: "elsewhere" }),
-          path("/product/:id", page("product"), { name: "product" }, () => [
-            loader(PriceLoader),
-            loader(ReviewsLoader, { prefetch: false }),
-            loading(<p>product-loading</p>),
-          ]),
-          path("/cached-loader", page("cached-loader-page"), () => [
-            loader(CachedReviewsLoader, { prefetch: false }, () => [
+  })
+    .use(async (ctx, next) => {
+      ctx.set(FromMiddleware, "set");
+      await next();
+    })
+    .routes(
+      urls(
+        ({
+          path,
+          layout,
+          loader,
+          loading,
+          cache,
+          parallel,
+          intercept,
+          revalidate,
+        }) => [
+          layout(page("shell"), () => [
+            path("/", page("home"), { name: "home" }),
+            path("/elsewhere", page("elsewhere"), { name: "elsewhere" }),
+            path("/product/:id", page("product"), { name: "product" }, () => [
+              loader(PriceLoader),
+              loader(ReviewsLoader, { prefetch: false }),
+              loading(<p>product-loading</p>),
+            ]),
+            path("/cached-loader", page("cached-loader-page"), () => [
+              loader(CachedReviewsLoader, { prefetch: false }, () => [
+                cache({ ttl: 60 }),
+              ]),
+              loading(<p>cached-loader-loading</p>),
+            ]),
+            path("/orders", page("orders"), { name: "orders" }, () => [
+              loader(OrdersLoader),
+              loading(<p>orders-loading</p>, { prefetch: false }),
+            ]),
+            layout(page("section"), () => [
+              loading(<p>section-loading</p>, { prefetch: false }),
+              loader(SectionLoader),
+              path(
+                "/section/a",
+                page("section-a"),
+                { name: "sectionA" },
+                () => [loader(SectionPageLoader)],
+              ),
+            ]),
+            path("/cached", page("cached"), { name: "cached" }, () => [
               cache({ ttl: 60 }),
+              loader(CachedPageLoader),
+              loading(<p>cached-loading</p>, { prefetch: false }),
             ]),
-            loading(<p>cached-loader-loading</p>),
-          ]),
-          path("/orders", page("orders"), { name: "orders" }, () => [
-            loader(OrdersLoader),
-            loading(<p>orders-loading</p>, { prefetch: false }),
-          ]),
-          layout(page("section"), () => [
-            loading(<p>section-loading</p>, { prefetch: false }),
-            loader(SectionLoader),
-            path("/section/a", page("section-a"), { name: "sectionA" }, () => [
-              loader(SectionPageLoader),
+            layout(page("above-cache"), () => [
+              loading(<p>above-cache-loading</p>, { prefetch: false }),
+              path("/above-cache", page("under-cache"), () => [
+                cache({ ttl: 60 }),
+                loader(UnderCacheLoader),
+              ]),
             ]),
-          ]),
-          path("/cached", page("cached"), { name: "cached" }, () => [
-            cache({ ttl: 60 }),
-            loader(CachedPageLoader),
-            loading(<p>cached-loading</p>, { prefetch: false }),
-          ]),
-          layout(page("above-cache"), () => [
-            loading(<p>above-cache-loading</p>, { prefetch: false }),
-            path("/above-cache", page("under-cache"), () => [
-              cache({ ttl: 60 }),
-              loader(UnderCacheLoader),
+            path("/ppr", page("ppr"), { name: "ppr", ppr: true }, () => [
+              loader(PprLiveLoader, { prefetch: false }),
+              loader(PprBakeLoader, { ssr: false, prefetch: false }),
+              loading(<p>ppr-loading</p>),
             ]),
-          ]),
-          path("/ppr", page("ppr"), { name: "ppr", ppr: true }, () => [
-            loader(PprLiveLoader, { prefetch: false }),
-            loader(PprBakeLoader, { ssr: false, prefetch: false }),
-            loading(<p>ppr-loading</p>),
-          ]),
-          path("/pre", Prerender(page("pre")), { name: "pre" }, () => [
-            loader(PreLoader),
-            loading(<p>pre-loading</p>, { prefetch: false }),
-          ]),
-          path("/ssr-false", page("ssr-false-page"), () => [
-            loader(SsrFalseLoader, { ssr: false, prefetch: false }),
-            loading(<p>ssr-false-loading</p>),
-          ]),
-          path("/awaited", AwaitedPage, { name: "awaited" }, () => [
-            loader(AwaitedLoader, { prefetch: false }),
-          ]),
-          path("/slot", page("slot-page"), { name: "slot" }, () => [
-            parallel({ "@side": page("side") }, () => [
-              loader(SideLoader),
-              loading(<p>side-loading</p>, { prefetch: false }),
+            path("/pre", Prerender(page("pre")), { name: "pre" }, () => [
+              loader(PreLoader),
+              loading(<p>pre-loading</p>, { prefetch: false }),
             ]),
-          ]),
-          path("/item/:id", page("item"), { name: "item" }, () => [
-            loader(ReviewsLoader, { prefetch: false }),
-            loading(<p>item-loading</p>, { prefetch: false }),
-          ]),
-          intercept("@modal", ".item", page("modal"), () => [
-            loader(ModalLoader, { prefetch: false }),
-          ]),
-          layout(page("held"), () => [
-            revalidate(() => {
-              ran("held-predicate");
-              return true;
-            }),
-            loader(HeldLoader, () => [
+            path("/ssr-false", page("ssr-false-page"), () => [
+              loader(SsrFalseLoader, { ssr: false, prefetch: false }),
+              loading(<p>ssr-false-loading</p>),
+            ]),
+            path("/awaited", AwaitedPage, { name: "awaited" }, () => [
+              loader(AwaitedLoader, { prefetch: false }),
+            ]),
+            path("/slot", page("slot-page"), { name: "slot" }, () => [
+              parallel({ "@side": page("side") }, () => [
+                loader(SideLoader),
+                loading(<p>side-loading</p>, { prefetch: false }),
+              ]),
+            ]),
+            path("/item/:id", page("item"), { name: "item" }, () => [
+              loader(ReviewsLoader, { prefetch: false }),
+              loading(<p>item-loading</p>, { prefetch: false }),
+            ]),
+            intercept("@modal", ".item", page("modal"), () => [
+              loader(ModalLoader, { prefetch: false }),
+            ]),
+            layout(page("held"), () => [
               revalidate(() => {
-                ran("held-loader-predicate");
+                ran("held-predicate");
                 return true;
               }),
-            ]),
-            path("/held", page("held-page"), { name: "held" }, () => [
-              loader(ReviewsLoader, { prefetch: false }),
-              loading(<p>held-loading</p>),
-            ]),
-          ]),
-          path("/flagged-rendered", page("flagged-rendered-page"), () => [
-            loader(FlaggedRenderedLoader, { prefetch: false }),
-            loading(<p>flagged-rendered-loading</p>),
-          ]),
-          path("/behind-rendered", page("behind-rendered-page"), () => [
-            loader(BehindRenderedLoader),
-            loading(<p>behind-rendered-loading</p>, { prefetch: false }),
-          ]),
-          layout(page("outer"), () => [
-            loader(OuterRenderedLoader),
-            path(
-              "/barrier-unit",
-              (ctx) => {
-                ran("barrier-unit");
-                ctx.use(Notes)("unit-note");
-                return <p>barrier-unit</p>;
-              },
-              { name: "barrierUnit" },
-              () => [loading(<p>barrier-loading</p>, { prefetch: false })],
-            ),
-            path(
-              "/barrier-loader",
-              (ctx) => {
-                ran("barrier-loader-page");
-                ctx.use(Notes)("page-note");
-                return <p>barrier-loader</p>;
-              },
-              { name: "barrierLoader" },
-              () => [
+              loader(HeldLoader, () => [
+                revalidate(() => {
+                  ran("held-loader-predicate");
+                  return true;
+                }),
+              ]),
+              path("/held", page("held-page"), { name: "held" }, () => [
                 loader(ReviewsLoader, { prefetch: false }),
-                loading(<p>barrier-loader-loading</p>),
-              ],
-            ),
+                loading(<p>held-loading</p>),
+              ]),
+            ]),
+            path("/flagged-rendered", page("flagged-rendered-page"), () => [
+              loader(FlaggedRenderedLoader, { prefetch: false }),
+              loading(<p>flagged-rendered-loading</p>),
+            ]),
+            path("/behind-rendered", page("behind-rendered-page"), () => [
+              loader(BehindRenderedLoader),
+              loading(<p>behind-rendered-loading</p>, { prefetch: false }),
+            ]),
+            layout(ContextLayout, () => [
+              path(
+                "/context",
+                page("context-page"),
+                { name: "context" },
+                () => [
+                  loader(ContextLoader, { prefetch: false }),
+                  loading(<p>context-loading</p>),
+                ],
+              ),
+            ]),
+            layout(page("outer"), () => [
+              loader(OuterRenderedLoader),
+              path(
+                "/barrier-unit",
+                (ctx) => {
+                  ran("barrier-unit");
+                  ctx.use(Notes)("unit-note");
+                  return <p>barrier-unit</p>;
+                },
+                { name: "barrierUnit" },
+                () => [loading(<p>barrier-loading</p>, { prefetch: false })],
+              ),
+              path(
+                "/barrier-loader",
+                (ctx) => {
+                  ran("barrier-loader-page");
+                  ctx.use(Notes)("page-note");
+                  return <p>barrier-loader</p>;
+                },
+                { name: "barrierLoader" },
+                () => [
+                  loader(ReviewsLoader, { prefetch: false }),
+                  loading(<p>barrier-loader-loading</p>),
+                ],
+              ),
+            ]),
           ]),
-        ]),
-      ],
-    ),
-  );
+        ],
+      ),
+    );
 }
 
 type Wire = {
@@ -680,6 +718,30 @@ describe("R8: where the flag cannot be honoured the work runs in the prefetch", 
     expect(count("modal-loader")).toBe(1);
     expect(payload.deferred).toEqual([]);
     expect(result.flight).not.toContain('"deferred"');
+  });
+});
+
+describe("R10: what deferred work can read from context", () => {
+  it("control: on a navigation the loader reads what the layout above it set", async () => {
+    const { serve } = setup();
+    const result = await serve("/context", { partial: { from: "/" } });
+    expect(count("context-layout")).toBe(1);
+    expect(result.flight).toContain("middleware:set");
+    expect(result.flight).toContain("layout:set");
+  });
+
+  it("in the fill, middleware context is there and a held layout's ctx.set() is not", async () => {
+    const { prefetch, fill } = setup();
+    const prefetched = payloadOf(await prefetch("/context"));
+    expect(count("context-loader")).toBe(0);
+    expect(count("context-layout")).toBe(1);
+
+    const result = await fill("/context", prefetched);
+    expect(count("context-loader")).toBe(1);
+    // The layout is held: the fill does not run it again.
+    expect(count("context-layout")).toBe(1);
+    expect(result.flight).toContain("middleware:set");
+    expect(result.flight).toContain("layout:missing");
   });
 });
 

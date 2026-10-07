@@ -215,6 +215,11 @@ export async function expectPrefetchSkipsFlaggedWorkAndClickFillsIt(
     pick(await hub.counts(), deferred),
     "the fallback shows before the flagged work has run",
   ).toEqual(before);
+  // What the click committed: the fill must merge into these very nodes.
+  const committed = ["pf-layout", ...(spec.shownWhileMissing ?? [])];
+  const nodes = await Promise.all(
+    committed.map((id) => byId(page, id).elementHandle()),
+  );
 
   await fills.release();
   await expect(byId(page, `pf-${name}-value`)).toHaveText(
@@ -222,6 +227,12 @@ export async function expectPrefetchSkipsFlaggedWorkAndClickFillsIt(
   );
   await expect(byId(page, `pf-${name}-page`)).toBeVisible();
   await expect(byId(page, `pf-${name}-fallback`)).toHaveCount(0);
+  for (const [index, id] of committed.entries()) {
+    expect(
+      await nodes[index]!.evaluate((node) => node.isConnected),
+      `the fill did not remount ${id}`,
+    ).toBe(true);
+  }
 
   const afterClick = await hub.counts();
   expect(

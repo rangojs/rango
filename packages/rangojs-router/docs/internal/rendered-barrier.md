@@ -75,14 +75,72 @@ const PricesLoader = createLoader(async (ctx) => {
 
 ## Guard Rules
 
-| Condition                                        | Behavior                                              |
-| ------------------------------------------------ | ----------------------------------------------------- |
-| `rendered()` in DSL loader, no streaming         | Resolves after handlers settle                        |
-| `rendered()` in DSL loader, tree has `loading()` | Waits for streaming handlers to settle, then resolves |
-| `rendered()` in handler-invoked loader           | Throws `Error` ("only available in DSL loaders")      |
-| `rendered()` while a handler awaits this loader  | Throws (deadlock guard)                               |
-| `ctx.use(handle)` before `await ctx.rendered()`  | Throws                                                |
-| `ctx.use(handle)` after `await ctx.rendered()`   | Returns collected handle data                         |
+| Condition                                         | Behavior                                              |
+| ------------------------------------------------- | ----------------------------------------------------- |
+| `rendered()` in DSL loader, no streaming          | Resolves after handlers settle                        |
+| `rendered()` in DSL loader, tree has `loading()`  | Waits for streaming handlers to settle, then resolves |
+| `rendered()` in handler-invoked loader            | Throws `Error` ("only available in DSL loaders")      |
+| `rendered()` while a handler awaits this loader   | Throws (deadlock guard)                               |
+| `ctx.use(handle)` before `await ctx.rendered()`   | Throws                                                |
+| `ctx.use(handle)` after `await ctx.rendered()`    | Returns collected handle data                         |
+| `rendered()` in a loader a prefetch can defer     | Throws, on every request kind                         |
+| `rendered()` in a prefetch that skipped a handler | Rejects once the barrier resolves, naming the segment |
+| `rendered()` in a fill request                    | Throws                                                |
+
+### `prefetch: false` and the barrier
+
+The last three rows come from `prefetch: false`
+(`docs/design/prefetch-false.md`). They exist because the barrier's promise
+is "every non-loader segment of this request has settled", and a prefetch
+with deferred work, or the fill that follows it, is a request where that is
+not true of the page.
+
+**A deferrable loader cannot call `rendered()` at all.** Deferrable means the
+loader is registered with `loader(Def, { prefetch: false })`, or it sits
+behind a `loading(fallback, { prefetch: false })`: on that entry, in its
+slots and orphan layouts, or under it in the chain when the entry is a
+layout. Such a loader runs in the fill request, where its own entry is held
+by the client and the entry's handler does not run. There is no render to
+wait for and the handle data it wants is not there.
+
+It throws on every request kind (document, navigation, prefetch, fill), not
+only in the fill. That is deliberate: automatic prefetch is off in
+development by default, so an error that only fired in a fill would first be
+seen in production. Throwing on the document load shows it on the first page
+view. The message names the loader and gives both fixes: remove
+`{ prefetch: false }` from the loader or from the `loading()` above it, or
+stop calling `ctx.rendered()`.
+
+The consequence to know: a deferrable loader cannot read handle data, since
+`ctx.get(handle)` needs the barrier first. Pushing a handle from one is still
+fine (`ctx.use(handle)` is the write); the push streams with the fill.
+
+**A prefetch that skipped a handler cannot satisfy the barrier for anyone.**
+When a prefetch defers a handler unit (a flagged `loading()` on an entry
+whose handler output is not stored), that handler's pushes do not exist in
+the request. A loader outside the unit, say an outer layout's, that awaits
+`rendered()` would read a handle list with a hole in it, and the fill never
+re-runs that loader. So in such a prefetch the call rejects, with a message
+naming the skipped segment, and the loader is an error on the click that
+adopts the prefetch. On a document or a navigation the same loader works; in
+development it logs one warning there, so the combination is seen before
+production.
+
+We looked at deferring that loader too, so it would run in the fill beside
+the unit. It does not work: the fill skips every handler the prefetch already
+rendered, so the loader would see the unit's pushes and miss everyone else's.
+The same hole, on the other side.
+
+A prefetch that defers only loaders does not trip this. The barrier never
+covered loader segments.
+
+Where: `createLoaderExecutor` in `router/loader-resolution.ts`, reading the
+plan `router/match-api.ts` leaves on the handler context
+(`InternalHandlerContext._prefetchDeferral`,
+`router/segment-resolution/prefetch-deferral.ts`). Pinned by
+`router/__tests__/rendered-barrier.test.ts` ("rendered() and prefetch:
+false") and, through a real request, by
+`testing/__tests__/prefetch-false.rsc-test.tsx` (R12, R13).
 
 ## Implementation Notes
 
