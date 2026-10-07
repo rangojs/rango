@@ -10,6 +10,7 @@ import {
   markUnitDeferred,
   partialDeferralMode,
   planPrefetchDeferral,
+  requestKind,
   resolveDeferralScope,
   type PrefetchDeferral,
 } from "../prefetch-deferral";
@@ -214,6 +215,37 @@ describe("resolveDeferralScope", () => {
     });
     const chain = [entry("layout"), route];
     expect(resolveDeferralScope(chain)).toBe(resolveDeferralScope(chain));
+  });
+});
+
+// Read once, when the request context is created: what the request says it
+// is. Whether a prefetch defers is partialDeferralMode's decision, below.
+describe("requestKind", () => {
+  const kindOf = (url: string, headers?: Record<string, string>) =>
+    requestKind(new Request(url, { headers }), new URL(url));
+  const PARTIAL = "http://localhost/p?_rsc_partial=true&_rsc_segments=L0";
+
+  it("is a prefetch by the header and a fill by the param", () => {
+    expect(kindOf(PARTIAL, { "X-Rango-Prefetch": "1" })).toBe("prefetch");
+    expect(kindOf(`${PARTIAL}&_rsc_fill=1`)).toBe("fill");
+    expect(kindOf(PARTIAL)).toBe(undefined);
+  });
+
+  it("is a fill when a request carries both", () => {
+    expect(kindOf(`${PARTIAL}&_rsc_fill=1`, { "X-Rango-Prefetch": "1" })).toBe(
+      "fill",
+    );
+  });
+
+  // The match passes the request context's URL: the request's own may have
+  // lost its internal params.
+  it("reads the param from the raw URL it is given", () => {
+    expect(
+      requestKind(
+        new Request("http://localhost/p"),
+        new URL(`${PARTIAL}&_rsc_fill=1`),
+      ),
+    ).toBe("fill");
   });
 });
 

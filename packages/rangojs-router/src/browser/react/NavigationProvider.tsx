@@ -315,7 +315,10 @@ export function NavigationProvider({
   nonce,
 }: NavigationProviderProps): ReactNode {
   // Track current payload for rendering (this triggers re-renders)
-  const [payload, setPayload] = useState(initialPayload);
+  // `at` numbers the payloads handed to React (see commitsRef).
+  const [payload, setPayload] = useState<NavigationUpdate & { at?: number }>(
+    initialPayload,
+  );
   // The location state of the entry `payload` renders (LocationStateContext).
   // Only ever set next to setPayload, or for a commit that has no payload.
   const [locationState, setLocationState] = useState(
@@ -412,19 +415,19 @@ export function NavigationProvider({
   // The last navigation's scroll decision, until React commits its update.
   const pendingScrollRef = useRef<NavigationUpdate["scroll"]>(undefined);
 
-  // NavigationUpdate.onCommit. `order` numbers every payload handed to
-  // React. A commit calls back its own update and the earlier ones still
+  // NavigationUpdate.onCommit. Every payload handed to React is numbered
+  // (`at`). A commit calls back its own update and the earlier ones still
   // waiting (React batched or superseded them: they will not commit on their
   // own), never a later one.
   const commitsRef = useRef({
     count: 0,
-    order: new WeakMap<object, number>(),
     waiting: [] as { at: number; onCommit: () => void }[],
   });
 
   useLayoutEffect(() => {
-    const { order, waiting } = commitsRef.current;
-    const at = order.get(payload) ?? 0;
+    const { waiting } = commitsRef.current;
+    if (waiting.length === 0) return;
+    const at = payload.at ?? 0;
     while (waiting.length > 0 && waiting[0].at <= at) {
       waiting.shift()!.onCommit();
     }
@@ -457,14 +460,12 @@ export function NavigationProvider({
       // stale is replayed: every update commits, and that commit consumes.
       if (update.scroll) pendingScrollRef.current = update.scroll;
 
-      const next = { root: update.root, metadata: update.metadata };
       const commits = commitsRef.current;
       const at = ++commits.count;
-      commits.order.set(next, at);
       if (update.onCommit) {
         commits.waiting.push({ at, onCommit: update.onCommit });
       }
-      setPayload(next);
+      setPayload({ root: update.root, metadata: update.metadata, at });
       // The state of the entry this payload renders, as its commit recorded
       // it: one update, so one lane, so one React commit with the tree.
       setLocationState(eventController.getLocationState());

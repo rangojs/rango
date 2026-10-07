@@ -14,6 +14,7 @@
  */
 
 import { requestHeaders } from "../server/request-headers.js";
+import { FILL_PARAM } from "../router/segment-resolution/prefetch-deferral.js";
 import type { MiddlewareFn, MiddlewareContext } from "../router/middleware.js";
 import { hasPerClientSignal } from "../browser/cookie-name.js";
 import {
@@ -344,8 +345,9 @@ export function createDocumentCacheMiddleware<TEnv = any>(
 
     // Skip fill requests (prefetch: false): a fill is the second half of one
     // adoption, rendered against what that client holds. Never served from a
-    // stored body and never stored.
-    if (rawUrl.searchParams.has("_rsc_fill")) {
+    // stored body and never stored. Asked of the raw URL like the two skips
+    // above: the request context is not read yet.
+    if (rawUrl.searchParams.has(FILL_PARAM)) {
       return next();
     }
 

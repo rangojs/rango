@@ -1203,11 +1203,10 @@ function renderPreparedRscResponse<TEnv>(
     rscHeaders["x-rsc-prefetch-scope"] = "source";
   }
   // Enable browser HTTP caching for prefetch responses only.
-  // Requires X-Rango-Prefetch header (sent by Link prefetch fetch),
-  // a source-agnostic response (see sourceScoped above), and a configured
-  // cache-control value (false disables caching).
-  const isPrefetch = requestHeaders(request).has("X-Rango-Prefetch");
-  if (isPrefetch && isPartial && !sourceScoped) {
+  // Requires a prefetch request (X-Rango-Prefetch, sent by Link prefetch
+  // fetch), a source-agnostic response (see sourceScoped above), and a
+  // configured cache-control value (false disables caching).
+  if (reqCtx._requestKind === "prefetch" && isPartial && !sourceScoped) {
     const cc = ctx.router.prefetchCacheControl;
     if (cc) {
       rscHeaders["cache-control"] = cc;
@@ -1222,7 +1221,7 @@ function renderPreparedRscResponse<TEnv>(
   // keeps its headers.
   if (
     reqCtx._payloadDeferred ||
-    (isPartial && reqCtx.originalUrl.searchParams.has("_rsc_fill"))
+    (isPartial && reqCtx._requestKind === "fill")
   ) {
     rscHeaders["cache-control"] = NOT_REUSED;
   }

@@ -778,10 +778,10 @@ export async function renderSegments(
           // loader paid the pre-flush await, settle the aggregate so
           // LoaderResolver decodes the array without a Flight-chunk use().
           const settleParallelAggregate =
-            !hasDeferred(ownedLoaders) &&
             (forceAwait ||
               isAction ||
-              ownedLoaders.every((l) => l.awaitBeforeFlush === true));
+              ownedLoaders.every((l) => l.awaitBeforeFlush === true)) &&
+            !hasDeferred(ownedLoaders);
           if (settleParallelAggregate) {
             const parallelAwaitStart = segDebug ? performance.now() : 0;
             p.loaderDataPromise =

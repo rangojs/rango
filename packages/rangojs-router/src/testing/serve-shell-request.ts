@@ -57,6 +57,10 @@ import {
   SHELL_CAPTURE_MAX_WAIT_MS,
 } from "../rsc/shell-capture-constants.js";
 import { SEGMENT_FRAGMENT_CAPABILITY_HEADER } from "../segment-fragments.js";
+import {
+  FILL_PARAM,
+  PREFETCH_HEADER,
+} from "../router/segment-resolution/prefetch-deferral.js";
 import { resolveDeferredHandleValues } from "../handles/deferred-resolution.js";
 import type { HandleData } from "../server/handle-store.js";
 import { _getRequestContext } from "../server/request-context.js";
@@ -449,9 +453,9 @@ function buildRequest(url: URL, options: ServeShellRequestOptions): Request {
   target.searchParams.set("_rsc_segments", segments.join(","));
   // As the browser sends them: browser/navigation-client.ts (fill) and
   // browser/prefetch/fetch.ts (prefetch).
-  if (fill) target.searchParams.set("_rsc_fill", "1");
-  if (prefetch && !headers.has("X-Rango-Prefetch")) {
-    headers.set("X-Rango-Prefetch", "1");
+  if (fill) target.searchParams.set(FILL_PARAM, "1");
+  if (prefetch && !headers.has(PREFETCH_HEADER)) {
+    headers.set(PREFETCH_HEADER, "1");
   }
   if (!headers.has("X-RSC-Router-Client-Path")) {
     headers.set("X-RSC-Router-Client-Path", new URL(from, url).href);

@@ -122,6 +122,21 @@ export function setupNavigationBridgeDelegatedPrefetch(
 }
 
 /**
+ * A history entry's segments, when they can be shown. An entry left before
+ * its fill landed (`prefetch: false`) holds placeholders, not segments:
+ * restoring it would suspend on gates nobody resolves, so it is fetched.
+ */
+function isRestorable(
+  segments: ResolvedSegment[] | undefined,
+): segments is ResolvedSegment[] {
+  return (
+    segments !== undefined &&
+    segments.length > 0 &&
+    !segments.some((s) => s.deferred)
+  );
+}
+
+/**
  * Create a navigation bridge for handling client-side navigation
  *
  * The bridge coordinates all navigation operations:
@@ -148,9 +163,6 @@ export function createNavigationBridge(
   } = config;
   let version = config.version;
 
-  // Bound to the bridge below: a fill follows a redirect as a navigation.
-  let navigateTo: NavigationBridge["navigate"] | undefined;
-
   // Create shared partial updater
   const fetchPartialUpdate = createPartialUpdater({
     store,
@@ -159,8 +171,9 @@ export function createNavigationBridge(
     renderSegments,
     getVersion: () => version,
     fill: {
+      // A fill follows a redirect as a navigation (`bridge` is below).
       redirect: (url, state) =>
-        void navigateTo?.(url, { state, replace: true, _skipCache: true }),
+        void bridge.navigate(url, { state, replace: true, _skipCache: true }),
       locationState: (state) =>
         eventController.commitLocationState(mergeLocationState(state)),
     },
@@ -376,11 +389,7 @@ export function createNavigationBridge(
       // 4. redirect-with-state - force re-render so hooks read fresh state
       // 5. stale cache - server action invalidated it, need fresh data with loading state
       const hasUsableCache =
-        cachedSegments &&
-        cachedSegments.length > 0 &&
-        // An entry left before its fill landed (prefetch: false) holds
-        // placeholders, not segments: fetch it.
-        !cachedSegments.some((s) => s.deferred) &&
+        isRestorable(cachedSegments) &&
         !isInterceptOnlyCache(cachedSegments) &&
         !hasInterceptCache &&
         !isLeavingIntercept &&
@@ -655,13 +664,7 @@ export function createNavigationBridge(
       // revalidates (SWR) instead of serving it as fresh.
       const isStale = (cached?.stale ?? false) || isActionFenceActive();
 
-      // An entry left before its fill landed (prefetch: false) holds
-      // placeholders: restoring it would suspend on gates nobody resolves.
-      if (
-        cachedSegments &&
-        cachedSegments.length > 0 &&
-        !cachedSegments.some((s) => s.deferred)
-      ) {
+      if (isRestorable(cachedSegments)) {
         // transition({ when }) decides the restore (kind "pop") against the
         // entry being left, so before the store moves to the restored entry.
         // The decision the entry was committed with is not reused: it was
@@ -945,7 +948,6 @@ export function createNavigationBridge(
       store.clearHistoryCache();
     },
   };
-  navigateTo = (url, options) => bridge.navigate(url, options);
   return bridge;
 }
 

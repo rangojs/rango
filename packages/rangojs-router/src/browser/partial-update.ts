@@ -146,8 +146,6 @@ interface Fill {
   gates: Map<ResolvedSegment, Gate>;
   /** The adopted payload's `matched`, which its handle stream still reads. */
   matched: string[];
-  /** The adoption's transition({ when }) decision, reused by the fill. */
-  gatedOff: boolean;
   controller: AbortController;
   /** The response arrived: from here it is dropped, never aborted mid-read. */
   responded: boolean;
@@ -160,8 +158,13 @@ interface Fill {
   whenCommitted: Promise<boolean>;
   commit(): void;
   cancel(): void;
+}
+
+/** What one fetchPartialUpdate call adopted, if its payload deferred. */
+interface Adoption {
+  fill?: Fill;
   /** Resolves once the fill has landed and streamed, or was abandoned. */
-  done: Promise<void>;
+  filled?: Promise<void>;
 }
 
 /**
@@ -278,7 +281,6 @@ export function createPartialUpdater(
     const fill: Fill = {
       gates,
       matched,
-      gatedOff: false,
       controller: new AbortController(),
       responded: false,
       cancelled: false,
@@ -299,7 +301,6 @@ export function createPartialUpdater(
         // asynchronously: abort only while waiting for the response.
         if (!fill.responded) fill.controller.abort();
       },
-      done: Promise.resolve(),
     };
     return fill;
   }
@@ -322,17 +323,60 @@ export function createPartialUpdater(
     return live?.some((s) => fill.gates.has(s)) ? live : undefined;
   }
 
+  /** A payload redirect's target, or null when the client refuses it. */
+  function redirectTarget(redirect: {
+    url: string;
+    external?: boolean;
+  }): string | null {
+    return redirect.external
+      ? validateExternalRedirect(redirect.url, window.location.origin)
+      : validateRedirectOrigin(redirect.url, window.location.origin);
+  }
+
+  /**
+   * Follow a redirect a fill was answered with: a replace navigation through
+   * the bridge, a document navigation for an external target or with no
+   * bridge. False when the client refuses the target.
+   */
+  function followFillRedirect(
+    redirect: { url: string; external?: boolean },
+    state: Record<string, unknown> | undefined,
+  ): boolean {
+    const target = redirectTarget(redirect);
+    if (!target) return false;
+    if (redirect.external || !config.fill) window.location.assign(target);
+    else config.fill.redirect(target, state);
+    return true;
+  }
+
   /**
    * The fill request of one adoption: fetch what the prefetch deferred, merge
-   * it into the entry on screen and resolve the gates. Never rejects.
+   * it into the entry on screen and resolve the gates. `gatedOff` is the
+   * adoption's transition({ when }) decision, which the fill reuses.
+   * Resolves once the fill has landed and streamed, or was abandoned. Never
+   * rejects.
    */
-  async function runFill(
+  function runFill(
     fill: Fill,
     url: string,
     heldIds: string[],
+    gatedOff: boolean,
   ): Promise<void> {
-    let filled = false;
-    let streamComplete: Promise<void> | undefined;
+    // The stream is awaited out here: landFill's frame holds the payload,
+    // the reconciled segments and the tree, and is gone once it returns.
+    const landed: { streamComplete?: Promise<void> } = {};
+    return landFill(fill, url, heldIds, gatedOff, landed).then(() =>
+      landed.streamComplete?.catch(() => {}),
+    );
+  }
+
+  async function landFill(
+    fill: Fill,
+    url: string,
+    heldIds: string[],
+    gatedOff: boolean,
+    landed: { streamComplete?: Promise<void> },
+  ): Promise<void> {
     try {
       const result = await client.fetchPartial({
         targetUrl: url,
@@ -350,20 +394,8 @@ export function createPartialUpdater(
 
       const metadata = result.payload.metadata;
       if (metadata?.redirect) {
-        const target = metadata.redirect.external
-          ? validateExternalRedirect(
-              metadata.redirect.url,
-              window.location.origin,
-            )
-          : validateRedirectOrigin(
-              metadata.redirect.url,
-              window.location.origin,
-            );
-        if (!target) throw new Error(FILL_REDIRECT_NOT_FOLLOWED);
-        if (metadata.redirect.external || !config.fill) {
-          window.location.assign(target);
-        } else {
-          config.fill.redirect(target, metadata.locationState);
+        if (!followFillRedirect(metadata.redirect, metadata.locationState)) {
+          throw new Error(FILL_REDIRECT_NOT_FOLLOWED);
         }
         return;
       }
@@ -413,7 +445,7 @@ export function createPartialUpdater(
         "ViewTransition" in React &&
         typeof document !== "undefined" &&
         "startViewTransition" in document &&
-        shouldStartViewTransition(reconciled.segments, fill.gatedOff);
+        shouldStartViewTransition(reconciled.segments, gatedOff);
       const filledById = new Map(reconciled.segments.map((s) => [s.id, s]));
       const revealed = new Map<Gate, unknown>();
       let hasUnit = false;
@@ -434,7 +466,7 @@ export function createPartialUpdater(
       // its placeholder is already showing.
       const root = hasUnit
         ? await renderSegments(reconciled.mainSegments, {
-            transitionGatedOff: fill.gatedOff,
+            transitionGatedOff: gatedOff,
             interceptSegments:
               reconciled.interceptSegments.length > 0
                 ? reconciled.interceptSegments
@@ -462,8 +494,7 @@ export function createPartialUpdater(
       if (metadata.locationState) {
         config.fill?.locationState(metadata.locationState);
       }
-      filled = true;
-      streamComplete = result.streamComplete;
+      landed.streamComplete = result.streamComplete;
       // No `scroll`: a fill is not a navigation transaction. A decision
       // here, even "do not scroll", would replace the adoption's pending one
       // (NavigationProvider), and React may still be holding that commit.
@@ -497,15 +528,7 @@ export function createPartialUpdater(
       if (fill.cancelled) return;
       let error = thrown;
       if (error instanceof ServerRedirect) {
-        const target = validateRedirectOrigin(
-          error.url,
-          window.location.origin,
-        );
-        if (target) {
-          if (config.fill) config.fill.redirect(target, error.state);
-          else window.location.assign(target);
-          return;
-        }
+        if (followFillRedirect({ url: error.url }, error.state)) return;
         error = new Error(FILL_REDIRECT_NOT_FOLLOWED);
       }
       console.error("[rango] fill failed:", error);
@@ -524,12 +547,11 @@ export function createPartialUpdater(
       );
     } finally {
       clearPendingFill(fill.cancel);
-      if (!filled) {
+      if (!landed.streamComplete) {
         for (const [placeholder, gate] of fill.gates) {
           releaseGate(placeholder, gate);
         }
       }
-      await streamComplete?.catch(() => {});
     }
   }
 
@@ -541,7 +563,7 @@ export function createPartialUpdater(
     tx: BoundTransaction,
     mode: UpdateMode = { type: "navigate" },
   ): Promise<void> {
-    const adoption: { fill?: Fill } = {};
+    const adoption: Adoption = {};
     try {
       await applyPartialUpdate(
         adoption,
@@ -560,7 +582,7 @@ export function createPartialUpdater(
   }
 
   async function applyPartialUpdate(
-    adoption: { fill?: Fill },
+    adoption: Adoption,
     targetUrl: string,
     segmentIds: string[] | undefined,
     isRetry: boolean,
@@ -721,11 +743,11 @@ export function createPartialUpdater(
     // The wrapped promise was never read as a value; only the .end() matters.
     // The .catch keeps an unhandled rejection from leaking if the stream errors.
     // A payload with deferred segments is still streaming until its fill has
-    // (adoption.fill is set below, before this function first awaits).
+    // (adoption.filled is set below, before this function first awaits).
     rawStreamComplete
       .then(() => {
-        if (!adoption.fill) return streamingToken.end();
-        return adoption.fill.done.then(() => streamingToken.end());
+        if (!adoption.filled) return streamingToken.end();
+        return adoption.filled.then(() => streamingToken.end());
       })
       .catch(() => {});
 
@@ -753,29 +775,22 @@ export function createPartialUpdater(
       // waives the same-origin check the app opted out of, NOT scheme safety, so
       // a forged payload carrying a javascript:/data: URL cannot script via
       // location.assign.
-      if (payload.metadata.redirect.external) {
-        const externalUrl = validateExternalRedirect(
-          payload.metadata.redirect.url,
-          window.location.origin,
-        );
-        if (!externalUrl) {
-          debugLog("[Browser] Ignoring blocked external redirect payload");
-          return;
-        }
-        debugLog("[Browser] External redirect (hard navigation)");
-        window.location.assign(externalUrl);
-        return;
-      }
-      const redirectUrl = validateRedirectOrigin(
-        payload.metadata.redirect.url,
-        window.location.origin,
-      );
+      const { redirect } = payload.metadata;
+      const redirectUrl = redirectTarget(redirect);
       if (!redirectUrl) {
-        debugLog("[Browser] Ignoring blocked redirect payload");
+        debugLog(
+          redirect.external
+            ? "[Browser] Ignoring blocked external redirect payload"
+            : "[Browser] Ignoring blocked redirect payload",
+        );
         return;
       }
-      const serverState = payload.metadata.locationState;
-      throw new ServerRedirect(redirectUrl, serverState);
+      if (redirect.external) {
+        debugLog("[Browser] External redirect (hard navigation)");
+        window.location.assign(redirectUrl);
+        return;
+      }
+      throw new ServerRedirect(redirectUrl, payload.metadata.locationState);
     }
 
     if (payload.metadata?.isPartial) {
@@ -894,16 +909,16 @@ export function createPartialUpdater(
       // prefetch: false. A payload that carries deferred segments (an adopted
       // prefetch, whatever answered it) commits at once with a gate in place
       // of each missing value, and one fill request fetches them.
-      const placeholders = (newSegments || []).filter((s) => s.deferred);
-      const fill =
-        placeholders.length > 0
-          ? armGates(placeholders, matchedIds)
-          : undefined;
-      // A placeholder is not held: every later request from this page
-      // leaves its id out, so the server renders it.
-      const heldIds = fill
-        ? matchedIds.filter((id) => !placeholders.some((s) => s.id === id))
-        : matchedIds;
+      let fill: Fill | undefined;
+      let heldIds = matchedIds;
+      if (newSegments?.some((s) => s.deferred)) {
+        const placeholders = newSegments.filter((s) => s.deferred);
+        fill = armGates(placeholders, matchedIds);
+        // A placeholder is not held: every later request from this page
+        // leaves its id out, so the server renders it.
+        const deferredIds = new Set(placeholders.map((s) => s.id));
+        heldIds = matchedIds.filter((id) => !deferredIds.has(id));
+      }
 
       const reconciled = reconcileSegments({
         actor,
@@ -965,9 +980,8 @@ export function createPartialUpdater(
       // The fill starts now, beside the render and the commit, not after
       // them. It lists what the client holds once this payload commits.
       if (fill) {
-        fill.gatedOff = gatedOff;
         adoption.fill = fill;
-        fill.done = runFill(fill, url, heldIds);
+        adoption.filled = runFill(fill, url, heldIds, gatedOff);
       }
       const renderOptions = {
         transitionGatedOff: gatedOff,
