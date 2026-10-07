@@ -557,6 +557,9 @@ export const NamedRoutes = {
   warmPersonal: "/warm/personal",
   warmShell: "/warm/shell",
   warmTrigger: "/warm/__trigger",
+  zlbA: "/zlb/a",
+  zlbB: "/zlb/b",
+  zlbHub: "/zlb",
 } as const;
 
 // Aliased so the augmentation below does not pay a homomorphic mapped-type
