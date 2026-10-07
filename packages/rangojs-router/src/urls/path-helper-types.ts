@@ -362,6 +362,10 @@ export type PathHelpers<TEnv> = {
    * flag BAKES: the loader executes at shell capture and its settled return
    * freezes into the shell (nested promises stay live holes) — the pre-flush
    * promise applied to the prelude.
+   *
+   * Pass `{ prefetch: false }` to keep the loader out of prefetches: a
+   * prefetch skips it and the click that adopts the prefetch fetches it in
+   * one follow-up request (see {@link LoaderOptions}).
    */
   loader: <TData>(
     loaderDef: LoaderDefinition<TData>,
@@ -370,11 +374,19 @@ export type PathHelpers<TEnv> = {
   ) => LoaderItem;
 
   /**
-   * Attach a loading component to the current route/layout
+   * Attach a loading component to the current route/layout.
+   *
+   * `{ ssr: false }` skips the fallback on document requests. `{ prefetch:
+   * false }` keeps everything behind the fallback out of prefetches: the
+   * entry's handler, its loaders, its orphan layouts and parallel slots and,
+   * for a layout, every deeper entry. The click that adopts the prefetch
+   * shows the fallback and fetches them in one follow-up request. An entry
+   * whose handler output is stored (cache(), ppr, Prerender/Static) is served
+   * as usual and only its loaders are skipped.
    */
   loading: (
     component: ReactNode | (() => ReactNode),
-    options?: { ssr?: boolean },
+    options?: { ssr?: boolean; prefetch?: boolean },
   ) => LoadingItem;
 
   /**

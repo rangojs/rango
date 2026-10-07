@@ -117,6 +117,13 @@ export type EntryPropDatas = {
  */
 export type EntryPropRender = {
   loading?: ReactNode | false;
+  /**
+   * loading(fallback, { prefetch: false }) with a renderable fallback: a
+   * prefetch defers what the fallback covers
+   * (router/segment-resolution/prefetch-deferral.ts). Set on both DSL
+   * evaluations, whatever `ssr` did to `loading`.
+   */
+  loadingPrefetch?: false;
   transition?: TransitionConfig;
 };
 
@@ -150,6 +157,11 @@ export type LoaderEntry = {
    * navigation evaluation never has it.
    */
   bake?: true;
+  /**
+   * loader(Def, { prefetch: false }): a prefetch defers this registration
+   * (router/segment-resolution/prefetch-deferral.ts).
+   */
+  prefetch?: false;
 };
 
 /**

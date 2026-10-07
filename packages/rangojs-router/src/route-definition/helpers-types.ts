@@ -328,6 +328,14 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * loader(RecommendationsLoader),  // still streams behind loading()
    * ```
    *
+   * Pass `{ prefetch: false }` to keep the loader out of prefetches: a
+   * prefetch skips it and the click that adopts the prefetch fetches it in
+   * one follow-up request (see {@link LoaderOptions}).
+   *
+   * ```typescript
+   * loader(ReviewsLoader, { prefetch: false }),
+   * ```
+   *
    * @param loaderDef - Loader created with createLoader()
    * @param optionsOrUse - Delivery options, or the use() callback when passing none
    * @param use - Optional callback for loader-specific revalidation rules
@@ -345,14 +353,24 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *
    * // Skip loading on SSR, only show on client navigation
    * loading(<Skeleton />, { ssr: false })
+   *
+   * // Keep everything behind this fallback out of prefetches
+   * loading(<Skeleton />, { prefetch: false })
    * ```
    * @param component - The loading UI to show during navigation
    * @param options - Configuration options
    * @param options.ssr - If false, skip showing loading on document requests (SSR)
+   * @param options.prefetch - If false, a prefetch skips the entry's handler,
+   *   its loaders, its orphan layouts and parallel slots and, for a layout,
+   *   every deeper entry; the click that adopts the prefetch shows this
+   *   fallback and fetches them in one follow-up request. An entry whose
+   *   handler output is stored (cache(), ppr, Prerender/Static) is served as
+   *   usual and only its loaders are skipped. Loaders behind the fallback
+   *   cannot call ctx.rendered().
    */
   loading: (
     component: ReactNode | (() => ReactNode),
-    options?: { ssr?: boolean },
+    options?: { ssr?: boolean; prefetch?: boolean },
   ) => LoadingItem;
   /**
    * Attach an error boundary to catch errors in this segment and children

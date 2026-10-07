@@ -186,7 +186,7 @@ export interface ClientUrlHelpers {
    */
   readonly loader: <TData>(
     definition: LoaderDefinition<TData>,
-    optionsOrUse?: LoaderOptions | ClientUrlUse,
+    optionsOrUse?: Pick<LoaderOptions, "ssr"> | ClientUrlUse,
     use?: ClientUrlUse,
   ) => ClientUrlItem;
   readonly loading: (component: ReactNode) => ClientUrlItem;
