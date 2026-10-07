@@ -91,6 +91,23 @@ interface BoundCommitOverrides {
 }
 
 /**
+ * What a commit decided about scroll, in the shape the update that follows
+ * carries it (NavigationUpdate.scroll). A navigation always decides, and "do
+ * not scroll" is a decision (`<Link scroll={false}>`, an intercept): it
+ * replaces a pending one. A commit that is not a navigation decides nothing:
+ * an action refetch into the entry on screen (`storeOnly`) and a cache-only
+ * commit return no `scroll`, and their update leaves a pending decision alone
+ * (react/NavigationProvider.tsx).
+ *
+ * Scar tissue: those two used to answer `scroll: false`. An action refetch
+ * that landed before React committed a navigation then replaced the
+ * navigation's pending scroll with "do not scroll".
+ */
+export interface CommitResult {
+  scroll?: { enabled: boolean | undefined };
+}
+
+/**
  * Bound transaction with pre-configured commit options (without segmentIds/segments)
  */
 export interface BoundTransaction {
@@ -105,12 +122,12 @@ export interface BoundTransaction {
   readonly transitionGatedOff?: boolean;
   /** Start streaming and get a token to end it when the stream completes */
   startStreaming(): StreamingToken;
-  /** Commit the navigation. Returns the effective scroll option for the caller to handle. */
+  /** Commit the navigation. Returns its scroll decision, for the update. */
   commit(
     segmentIds: string[],
     segments: ResolvedSegment[],
     overrides?: BoundCommitOverrides,
-  ): { scroll?: boolean };
+  ): CommitResult;
 }
 
 /**
@@ -118,7 +135,7 @@ export interface BoundTransaction {
  * Uses the event controller handle for lifecycle management
  */
 interface NavigationTransaction extends Disposable {
-  commit(options: CommitOptions): { scroll?: boolean };
+  commit(options: CommitOptions): CommitResult;
   with(
     options: Omit<CommitOptions, "segmentIds" | "segments">,
   ): BoundTransaction;
@@ -144,7 +161,7 @@ export function createNavigationTransaction(
   /**
    * Commit the navigation - updates store and URL atomically
    */
-  function commit(opts: CommitOptions): { scroll?: boolean } {
+  function commit(opts: CommitOptions): CommitResult {
     committed = true;
 
     const {
@@ -170,7 +187,7 @@ export function createNavigationTransaction(
       store.cacheSegmentsForHistory(historyKey, segments, currentHandleData);
       handle.complete(parsedUrl);
       debugLog("[Browser] Cache-only commit, historyKey:", historyKey);
-      return { scroll: false };
+      return {};
     }
 
     if (!traversal) handleNavigationStart();
@@ -195,7 +212,7 @@ export function createNavigationTransaction(
       store.rememberDisplayedEntry(opts.routeName);
       debugLog("[Browser] Store updated (action)");
       handle.complete(parsedUrl);
-      return { scroll: false };
+      return {};
     }
 
     if (traversal) {
@@ -208,7 +225,7 @@ export function createNavigationTransaction(
       eventController.commitLocationState(entryState, opts.treeless);
       handle.complete(parsedUrl);
       debugLog("[Browser] Traversal committed, historyKey:", historyKey);
-      return { scroll };
+      return { scroll: { enabled: scroll } };
     }
 
     const historyState = buildHistoryState(
@@ -230,7 +247,7 @@ export function createNavigationTransaction(
       intercept ? "(intercept)" : "",
     );
 
-    return { scroll };
+    return { scroll: { enabled: scroll } };
   }
 
   return {

@@ -2,7 +2,10 @@
 import { startTransition, use, type ReactNode } from "react";
 import { act, cleanup } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createNavigationTransaction } from "../../browser/navigation-transaction.js";
+import { createPartialUpdater } from "../../browser/partial-update.js";
 import type { NavigationUpdate } from "../../browser/types.js";
+import type { ResolvedSegment } from "../../types.js";
 import { renderRoute } from "../render-route.js";
 
 // Scroll belongs to the navigation transaction. The transaction decides it
@@ -195,5 +198,176 @@ describe("the pending scroll action", () => {
     expect(handleNavigationEnd).toHaveBeenCalledWith(
       expect.objectContaining({ restore: true }),
     );
+  });
+});
+
+// The same slot, fed by the real pieces: createPartialUpdater and
+// createNavigationTransaction over renderRoute's store, event controller and
+// provider. The action refetch is the call refetchRoute() makes in
+// browser/server-action-bridge.ts: a transaction bound `storeOnly`, mode
+// "action". A store-only commit is not a navigation, so its update carries no
+// scroll at all.
+//
+// Scar tissue: the transaction used to answer `scroll: false` for it, which
+// reached the provider as "do not scroll" and replaced the pending decision
+// of a navigation React had not committed yet.
+describe("an action refetch and a navigation's scroll", () => {
+  async function mountWithUpdater() {
+    const { router, getByTestId } = await renderRoute(
+      [{ path: "/", Component: () => <p data-testid="page">home</p> }],
+      { request: "/" },
+    );
+    handleNavigationEnd.mockClear();
+    const ids = router.store.getSegmentState().currentSegmentIds;
+    const routeId = ids[ids.length - 1];
+    const updates: NavigationUpdate[] = [];
+    // What the next render shows: the updater renders the reconciled
+    // segments through this.
+    const trees: ReactNode[] = [];
+    const updater = createPartialUpdater({
+      store: router.store,
+      client: {
+        fetchPartial: async () => ({
+          payload: {
+            metadata: {
+              isPartial: true,
+              pathname: "/",
+              matched: ids,
+              diff: [routeId],
+              segments: [
+                {
+                  id: routeId,
+                  namespace: "test",
+                  type: "route",
+                  index: 0,
+                  component: "rendered",
+                  params: {},
+                } as unknown as ResolvedSegment,
+              ],
+            },
+          },
+          streamComplete: Promise.resolve(),
+          // The lane a prefetched navigation commits in: a transition.
+          fullyPrefetched: true,
+        }),
+      } as any,
+      onUpdate: (update) => {
+        updates.push(update);
+        router.store.emitUpdate(update);
+      },
+      renderSegments: () => trees.shift(),
+    });
+    const here = (): string => window.location.href;
+
+    /** A navigation whose tree is `tree`, through a real transaction. */
+    const navigate = async (
+      tree: ReactNode,
+      options: { scroll?: boolean } = {},
+    ) => {
+      trees.push(tree);
+      const tx = createNavigationTransaction(
+        router.store,
+        router.eventController,
+        here(),
+        { replace: true },
+      );
+      await act(async () => {
+        await updater(
+          here(),
+          [],
+          false,
+          tx.handle.signal,
+          tx.with({ url: here(), replace: true, ...options }),
+        );
+      });
+      tx[Symbol.dispose]();
+    };
+
+    /** refetchRoute() of server-action-bridge.ts. */
+    const actionRefetch = async (tree: ReactNode) => {
+      trees.push(tree);
+      const tx = createNavigationTransaction(
+        router.store,
+        router.eventController,
+        here(),
+        { replace: true, skipLoadingState: true },
+      );
+      await act(async () => {
+        await updater(
+          here(),
+          [],
+          false,
+          tx.handle.signal,
+          tx.with({ url: here(), storeOnly: true }),
+          { type: "action" },
+        );
+      });
+      tx[Symbol.dispose]();
+    };
+
+    return {
+      navigate,
+      actionRefetch,
+      updates,
+      shown: () => getByTestId("page").textContent,
+    };
+  }
+
+  const page = (name: string) => <p data-testid="page">{name}</p>;
+
+  it("lands before React commits the navigation: the navigation still scrolls", async () => {
+    const { navigate, actionRefetch, updates, shown } =
+      await mountWithUpdater();
+    const gate = deferred<string>();
+    function Held() {
+      return <p data-testid="page">{use(gate.promise)}</p>;
+    }
+
+    await navigate(<Held />);
+    expect(shown(), "React holds the navigation's commit").toBe("home");
+    expect(updates[0].scroll).toEqual({ enabled: undefined });
+    expect(handleNavigationEnd).not.toHaveBeenCalled();
+
+    await actionRefetch(page("after the action"));
+
+    expect(shown()).toBe("after the action");
+    expect(handleNavigationEnd).toHaveBeenCalledTimes(1);
+    expect(handleNavigationEnd).toHaveBeenCalledWith(
+      expect.objectContaining({ restore: undefined, scroll: undefined }),
+    );
+    expect("scroll" in updates[1], "the action's update says nothing").toBe(
+      false,
+    );
+  });
+
+  it("lands after a committed navigation: it does not scroll", async () => {
+    const { navigate, actionRefetch, updates, shown } =
+      await mountWithUpdater();
+
+    await navigate(page("next"));
+    expect(shown()).toBe("next");
+    expect(handleNavigationEnd).toHaveBeenCalledTimes(1);
+
+    await actionRefetch(page("after the action"));
+    expect(shown()).toBe("after the action");
+    expect("scroll" in updates[1]).toBe(false);
+    expect(handleNavigationEnd).toHaveBeenCalledTimes(1);
+  });
+
+  // The distinction: a navigation that decided not to scroll is a decision,
+  // and it does replace an earlier pending one.
+  it("a navigation with scroll: false still replaces a pending decision", async () => {
+    const { navigate, updates, shown } = await mountWithUpdater();
+    const gate = deferred<string>();
+    function Held() {
+      return <p data-testid="page">{use(gate.promise)}</p>;
+    }
+
+    await navigate(<Held />);
+    await navigate(page("no scroll"), { scroll: false });
+
+    expect(updates[1].scroll).toEqual({ enabled: false });
+    expect(shown()).toBe("no scroll");
+    expect(handleNavigationEnd).not.toHaveBeenCalled();
   });
 });

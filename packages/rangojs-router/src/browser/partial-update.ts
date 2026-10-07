@@ -50,12 +50,6 @@ import { buildHistoryState } from "./history-state.js";
 import { addLocationState } from "./react/location-state-shared.js";
 import type { TransitionWhenKind } from "../types/segments.js";
 
-function toScrollPayload(
-  scroll: boolean | undefined,
-): NonNullable<NavigationUpdate["scroll"]> {
-  return { enabled: scroll !== false ? scroll : false };
-}
-
 /**
  * Hold/animate decision for a commit: a non-intercept segment carries a
  * transition, no intercept is presented, and this navigation's
@@ -778,7 +772,7 @@ export function createPartialUpdater(
               ...metadataWithoutHandles,
               cachedHandleData: mode.targetCacheHandleData,
             },
-            scroll: toScrollPayload(commitScroll),
+            ...(commitScroll && { scroll: commitScroll }),
           };
 
           if (shouldStartViewTransition(existingSegments, cachedGatedOff)) {
@@ -811,7 +805,7 @@ export function createPartialUpdater(
           onUpdate({
             root: newTree,
             metadata: payload.metadata,
-            scroll: toScrollPayload(leaveScroll),
+            ...(leaveScroll && { scroll: leaveScroll }),
           });
 
           debugLog("[Browser] Navigation complete (left intercept)");
@@ -1060,12 +1054,12 @@ export function createPartialUpdater(
       // metadata); popstate navigations get no optimistic presentation anyway.
       setActiveInterceptTargets(payload.metadata?.interceptTargets);
 
-      const scrollPayload = toScrollPayload(navScroll);
-
+      // No scroll for a commit that is not a navigation (an action refetch):
+      // navigation-transaction.ts CommitResult.
       const update: NavigationUpdate = {
         root: newTree,
         metadata: payload.metadata!,
-        scroll: scrollPayload,
+        ...(navScroll && { scroll: navScroll }),
       };
       if (
         !gatedOff &&
@@ -1164,11 +1158,10 @@ export function createPartialUpdater(
         segments,
         fullGatedOff,
       );
-      const fullScrollPayload = toScrollPayload(fullScroll);
       const fullUpdate: NavigationUpdate = {
         root: newTree,
         metadata: payload.metadata!,
-        scroll: fullScrollPayload,
+        ...(fullScroll && { scroll: fullScroll }),
       };
 
       if (mode.type === "stale-revalidation") {
