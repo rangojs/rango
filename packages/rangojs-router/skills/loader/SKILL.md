@@ -662,9 +662,11 @@ HIT".
 
 ### Cache Key
 
-The default cache key is `loader:{loaderId}:{host}{pathname}:{sortedParams}`
-(the host keeps multi-tenant hosts from sharing entries). This can be customized
-at two levels:
+The default cache key is
+`loader:{loaderId}:{routerId}@{host}{pathname}:{sortedParams}`: the host keeps
+multi-tenant hosts from sharing entries, and the router id keeps two routers
+that mount the loader on one store apart (see `/host-router`, "Shared cache
+store"). This can be customized at two levels:
 
 ```typescript
 import { cookies } from "@rangojs/router";
@@ -688,7 +690,7 @@ Resolution priority (same order as route-level `cache()`):
    `loader:{loaderId}:key:` plus the result's URI encoding
 2. `store.keyGenerator(ctx, defaultKey)` — store-level modification, stored
    as returned
-3. Default key — `loader:{loaderId}:{host}{pathname}:{sortedParams}`
+3. Default key — `loader:{loaderId}:{routerId}@{host}{pathname}:{sortedParams}`
 
 Because the `key()` result is namespaced by the loader id, no value it
 returns, request input included, can name another loader's entry or a

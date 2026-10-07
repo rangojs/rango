@@ -150,8 +150,9 @@ createDocumentCacheMiddleware({
   // Skip specific paths (matched by pathname prefix)
   skipPaths: ["/api", "/admin"],
 
-  // Custom cache key base. Replaces host + pathname + search entirely, so
-  // include the host yourself when one deployment serves several domains.
+  // Custom cache key base. Replaces router id + host + pathname + search
+  // entirely, so include the host yourself when one deployment serves several
+  // domains.
   keyGenerator: (url) => `${url.host}${url.pathname}`,
 
   // Conditional caching, evaluated per request (receives the middleware ctx)
@@ -162,13 +163,13 @@ createDocumentCacheMiddleware({
 });
 ```
 
-The default key is the host, pathname, and sorted search string (internal `_rsc*` params removed, `cache.searchParams` filtering applied), followed by suffixes that separate the response kinds one URL can produce:
+The default key is the serving router's id, the host, pathname, and sorted search string (internal `_rsc*` params removed, `cache.searchParams` filtering applied), followed by suffixes that separate the response kinds one URL can produce:
 
-- HTML document requests: `{host}{pathname}[?search]:html`
-- RSC requests (client navigations and full-document Flight fetches): `{host}{pathname}[?search]:rsc`
+- HTML document requests: `{routerId}@{host}{pathname}[?search]:html`
+- RSC requests (client navigations and full-document Flight fetches): `{routerId}@{host}{pathname}[?search]:rsc`
 - Client navigations additionally add a hash of the segments the client already has, so navigations from pages with different layouts get different cached payloads, and a `:fragments` marker when the client accepts fragment envelopes.
 
-The segment hash matters because a navigation to `/blog/hello` from inside the blog layout needs a different RSC partial than one arriving from an unrelated layout. A custom `keyGenerator(url)` replaces only the `{host}{pathname}[?search]` base; the variant suffixes are still appended.
+The segment hash matters because a navigation to `/blog/hello` from inside the blog layout needs a different RSC partial than one arriving from an unrelated layout. A custom `keyGenerator(url)` replaces the whole `{routerId}@{host}{pathname}[?search]` base, router id included; the variant suffixes are still appended. The router id keeps two routers that share a store apart when both serve one host and path ([Sharing one cache store](/docs/rango/guides/host-router#sharing-one-cache-store)).
 
 ## What gets cached — and what never does
 
@@ -213,13 +214,13 @@ pipeline — inner caches included — and then frozen whole. An external CDN si
 outside the router and skips even the wrapping global middleware because the
 function never runs.
 
-| Feature      | Document Cache                        | Segment Cache (`cache()`)         |
-| ------------ | ------------------------------------- | --------------------------------- |
-| Granularity  | Full response                         | Individual segments               |
-| Opt-in       | `Cache-Control` `s-maxage`            | `cache({ ttl, swr })`             |
-| Loaders      | Frozen with the response              | Always run fresh                  |
-| Use case     | Static pages                          | Dynamic compositions              |
-| Key includes | host + URL + variant (+ segment hash) | host + pathname + params + search |
+| Feature      | Document Cache                                 | Segment Cache (`cache()`)                  |
+| ------------ | ---------------------------------------------- | ------------------------------------------ |
+| Granularity  | Full response                                  | Individual segments                        |
+| Opt-in       | `Cache-Control` `s-maxage`                     | `cache({ ttl, swr })`                      |
+| Loaders      | Frozen with the response                       | Always run fresh                           |
+| Use case     | Static pages                                   | Dynamic compositions                       |
+| Key includes | router + host + URL + variant (+ segment hash) | router + host + pathname + params + search |
 
 Use the document cache for mostly-static pages. Use segment `cache()` when different parts of a page have different cache requirements, and [use cache](/docs/rango/guides/use-cache) when a single function should memoize its own output.
 

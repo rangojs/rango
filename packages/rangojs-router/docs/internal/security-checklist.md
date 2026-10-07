@@ -293,8 +293,10 @@ shared cache stores (e.g. multiple custom domains on the same CF worker):
 - **GET/HEAD only** — POST/PUT/etc. skip the cache (no read, no write).
 - **Per-client signals** — `Set-Cookie` / `x-rango-keep-cache` on the live
   response skip `putResponse` (still return the live body).
-- **Default key** — `response:{type}:` + `cacheKeyBase(host, path, searchParams)`
-  (sorted search; reserved `_rsc*` / allowlisted `__*` params excluded).
+- **Default key** — `response:{type}:` + `cacheKeyBase(routerId, host, path, searchParams)`
+  (the serving router's id first, so two routers on one host and path keep
+  their own entry, #1065; sorted search; reserved `_rsc*` / allowlisted `__*`
+  params excluded).
 
 Userland pins in `dispatch.test.ts` (`cached response routes`): POST not
 cached; Set-Cookie not stored; reordered query params share a key; reserved

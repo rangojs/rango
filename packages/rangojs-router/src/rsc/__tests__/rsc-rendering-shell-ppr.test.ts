@@ -63,6 +63,7 @@ import {
   hasBuildShell,
   resetBuildShellManifestForTests,
 } from "../shell-build-manifest.js";
+import { buildShellManifestKey } from "../../prerender/shell-manifest-key.js";
 import { installNativeBase64 } from "../../cache/cf/__tests__/native-base64.js";
 import {
   CFCacheStore,
@@ -304,7 +305,7 @@ function fullSsrModule() {
   } as unknown as SSRModule;
 }
 
-const KEY = "localhost/p:shell";
+const KEY = "test-router@localhost/p:shell";
 const NAVIGATION_KEY = `${KEY}:navigation`;
 
 beforeEach(() => {
@@ -654,9 +655,12 @@ describe("handleRscRendering — integrated PPR serve: the gate before the commi
     expect(getShell).not.toHaveBeenCalled();
     expect(scheduleMock).not.toHaveBeenCalled();
     // The marker never partitions the shell key.
-    expect(buildShellKey(new URL("http://localhost/p?_rsc_shell=miss"))).toBe(
-      KEY,
-    );
+    expect(
+      buildShellKey(
+        "test-router",
+        new URL("http://localhost/p?_rsc_shell=miss"),
+      ),
+    ).toBe(KEY);
   });
 
   it("a partitioned request for a route with no build shell does not warn, and the route is probed once", async () => {
@@ -777,7 +781,7 @@ describe("handleRscRendering — integrated PPR serve: the gate before the commi
     beforeEach(() => {
       resetBuildShellManifestForTests();
       (globalThis as any).__loadShellManifestModule = async () => ({
-        default: { "/p": "/p" },
+        default: { [buildShellManifestKey("test-router", "/p")]: "/p" },
         loadShellAsset: async () => ({
           default: {
             entry: shellEntry({ docKey: undefined }),
@@ -878,7 +882,7 @@ describe("handleRscRendering — integrated PPR serve: the gate before the commi
         expect(warnings).toHaveLength(1);
         expect(warnings[0]).toContain('Route "product" ("/p")');
         expect(
-          vi.mocked(hasBuildShell).mock.calls.map(([path]) => path),
+          vi.mocked(hasBuildShell).mock.calls.map(([, path]) => path),
         ).toEqual(["/q", "/p"]);
       } finally {
         warn.mockRestore();
@@ -2597,7 +2601,12 @@ describe("handleRscRendering — integrated PPR serve: bypasses", () => {
 
   it("host-scoped keys: one host's shell never serves another host with the same path", async () => {
     const store = new MemorySegmentCacheStore();
-    await store.putShell("tenant-a.example/page:shell", shellEntry(), 300, 30);
+    await store.putShell(
+      "test-router@tenant-a.example/page:shell",
+      shellEntry(),
+      300,
+      30,
+    );
     const ssrModule = fullSsrModule();
 
     const { response } = await run({
@@ -2611,7 +2620,7 @@ describe("handleRscRendering — integrated PPR serve: bypasses", () => {
     expect(response.headers.get("x-rango-shell")).toBe("MISS");
     expect(ssrModule.resumeShellHTML).not.toHaveBeenCalled();
     expect((scheduleMock.mock.calls[0]![6] as any).key).toBe(
-      "tenant-b.example/page:shell",
+      "test-router@tenant-b.example/page:shell",
     );
   });
 });
@@ -3977,7 +3986,7 @@ describe("handleRscRendering — integrated PPR serve: a router.prerender() warm
       resetShellServeStateForTests();
       vi.mocked(hasBuildShell).mockClear();
       loadManifest = vi.fn(async () => ({
-        default: { "/p": "/p" },
+        default: { [buildShellManifestKey("test-router", "/p")]: "/p" },
         loadShellAsset: async () => ({
           default: {
             entry: shellEntry({ docKey: undefined }),

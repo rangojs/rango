@@ -755,7 +755,7 @@ applications do not have to remember to mark every context manually.
 
 For a `"use cache"` function, a tainted context object is not serialized wholesale
 into the cache key. Rango instead extracts the safe identity dimensions that make
-the call reusable without collisions: host, route name, pathname, params, response
+the call reusable without collisions: router, host, route name, pathname, params, response
 type, and normalized user-facing search params. A shared cached function called
 from two hosts, route scopes, param sets, or query variants therefore does not
 collapse into one entry just because both calls received a `ctx` object.

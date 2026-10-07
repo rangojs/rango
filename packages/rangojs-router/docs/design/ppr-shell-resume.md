@@ -1535,8 +1535,10 @@ once-per-key warning, since the declared intent cannot be honored).
 `shell-serve.ts` owns the config/key/store helpers the render layer uses at the
 commit point: `resolvePprConfig` (normalizes the route's `ppr` option;
 `DEFAULT_PPR_TTL_SECONDS` = 300), `buildShellKey`
-(`${host}${pathname}${sortedSearch}:shell` — host-scoped so multi-tenant shells
-never collide), `shellSearchSeed` (the key's search portion, ALSO the string
+(`${routerId}@${host}${pathname}${sortedSearch}:shell` — host-scoped so
+multi-tenant shells never collide, and router-scoped so two routers that
+serve one host and path through a `hostOverride` cookie or a warm keep their
+own shell, #1065; see caching.md "The router part"), `shellSearchSeed` (the key's search portion, ALSO the string
 the capture and resume SSR renders seed their store with — search is part of
 shell identity, so static-part `useSearchParams` reads bake what the key
 names; one shared derivation is what keeps key, capture, and resume

@@ -9,6 +9,7 @@ import {
   shellCacheKey,
   SHELL_STATUS_HEADER,
 } from "@rangojs/router/testing";
+import { router } from "../src/router.js";
 
 // Userland dogfood of the PPR shell STORE family + shell-status helpers through
 // the PUBLIC @rangojs/router/cache and @rangojs/router/testing surfaces.
@@ -33,20 +34,20 @@ function entry(overrides: Partial<ShellCacheEntry> = {}): ShellCacheEntry {
 describe("shell store family (mini dogfood, public surface)", () => {
   it("round-trips a shell entry under shellCacheKey with ttl/swr semantics", async () => {
     const store = new MemorySegmentCacheStore({ defaults: { ttl: 60 } });
-    const key = shellCacheKey("http://localhost/page");
+    const key = shellCacheKey(router, "http://localhost/page");
     await store.putShell(key, entry(), 300, 60);
     const hit = await store.getShell(key);
     expect(hit).not.toBeNull();
     expect(hit!.entry.postponed).toBe(JSON.stringify({ hole: 1 }));
     expect(hit!.shouldRevalidate).toBe(false);
     expect(
-      await store.getShell(shellCacheKey("http://localhost/other")),
+      await store.getShell(shellCacheKey(router, "http://localhost/other")),
     ).toBeNull();
   });
 
   it("participates in tag invalidation alongside the other families", async () => {
     const store = new MemorySegmentCacheStore();
-    const key = shellCacheKey("http://localhost/tagged");
+    const key = shellCacheKey(router, "http://localhost/tagged");
     await store.putShell(key, entry(), 300, 60, ["banner"]);
     await store.setItem("banner-item", "v1", { ttl: 300, tags: ["banner"] });
     await store.invalidateTags(["banner"]);

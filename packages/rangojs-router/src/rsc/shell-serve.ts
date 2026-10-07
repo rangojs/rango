@@ -35,6 +35,7 @@ import {
   resetShellWarningsForTests,
   warnOnce,
 } from "./shell-capture-constants.js";
+import { routerKeyPrefix } from "../cache/cache-key-utils.js";
 
 export {
   PPR_REPLAY_STATUS_HEADER,
@@ -529,8 +530,9 @@ export function warnPprWindowCappedOnce(
 
 /**
  * Paths a partitioned request found without a build shell. Build shells are
- * per path (a param route prerenders some of its paths), so a negative is
- * kept per path, not per route; cleared when full, so it stays bounded.
+ * per router and path (a param route prerenders some of its paths), so a
+ * negative is kept per router and path, not per route; cleared when full, so
+ * it stays bounded.
  */
 const pathsWithoutBuildShell = new Set<string>();
 const PATHS_WITHOUT_BUILD_SHELL_MAX = 1_000;
@@ -540,12 +542,14 @@ const PATHS_WITHOUT_BUILD_SHELL_MAX = 1_000;
  * already warned, or its path was already found without one.
  */
 export function partitionBuildShellCheckDone(
+  routerId: string,
   pathname: string,
   routeName: string | undefined,
 ): boolean {
+  const router = routerKeyPrefix(routerId);
   return (
-    hasWarnedOnce("partition-build-shell", routeName ?? pathname) ||
-    pathsWithoutBuildShell.has(pathname)
+    hasWarnedOnce("partition-build-shell", router + (routeName ?? pathname)) ||
+    pathsWithoutBuildShell.has(router + pathname)
   );
 }
 
@@ -560,21 +564,23 @@ export function partitionBuildShellCheckDone(
  * with no build shell stays silent.
  */
 export function notePartitionBuildShellCheck(
+  routerId: string,
   pathname: string,
   routeName: string | undefined,
   found: boolean,
 ): void {
+  const router = routerKeyPrefix(routerId);
   if (!found) {
     if (pathsWithoutBuildShell.size >= PATHS_WITHOUT_BUILD_SHELL_MAX) {
       pathsWithoutBuildShell.clear();
     }
-    pathsWithoutBuildShell.add(pathname);
+    pathsWithoutBuildShell.add(router + pathname);
     return;
   }
   // Concurrent first requests can both probe; one of them warns.
   warnOnce(
     "partition-build-shell",
-    routeName ?? pathname,
+    router + (routeName ?? pathname),
     () =>
       `[rango] Route ${routeName ? `"${routeName}" ` : ""}("${pathname}") has a ` +
       "build-time shell, but its request partition (a cache({ key }) enclosing the route, " +

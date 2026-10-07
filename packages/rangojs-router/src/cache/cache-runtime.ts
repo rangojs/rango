@@ -42,7 +42,11 @@ import {
 } from "./handle-snapshot.js";
 import { startHandleCapture, useCacheRecordKey } from "./handle-capture.js";
 import { isHandle } from "../handle.js";
-import { cacheKeyBase, sortedSearchString } from "./cache-key-utils.js";
+import {
+  requestArgKey,
+  requestKeyBase,
+  sortedSearchString,
+} from "./cache-key-utils.js";
 import { encodeKV } from "../encode-kv.js";
 import { runBackground } from "./background-task.js";
 import { observePhase, PHASES } from "../router/instrument.js";
@@ -492,9 +496,11 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
         }
         if (ctx.params && typeof ctx.params === "object") {
           // Include host to prevent cross-host cache collisions (same
-          // pattern as route-level cache-scope.ts key generation).
+          // pattern as route-level cache-scope.ts key generation), led by the
+          // router part: a ctx is one router's (cache-key-utils.ts, the
+          // router rule).
           if (ctx.url?.host) {
-            keyArgs.push(ctx.url.host);
+            keyArgs.push(requestKeyBase(requestCtx, ctx.url.host, ""));
           }
           // Include route name to prevent collisions when the same cached
           // function is reused across routes with identical pathname/params
@@ -522,15 +528,8 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       } else if (arg instanceof Request) {
         // A raw Request (ctx.request) is request-scoped like ctx: fold in its
         // URL with the same host-namespacing and search normalization.
-        const url = new URL(arg.url);
         keyArgs.push(
-          cacheKeyBase(
-            url.host,
-            url.pathname,
-            url.searchParams,
-            undefined,
-            requestCtx?._searchParamsFilter,
-          ),
+          requestArgKey(new URL(arg.url), requestCtx?._searchParamsFilter),
         );
       } else if (arg != null && arg === requestCtx?.env) {
         // The request's env is left out: constant per deployment, and its

@@ -78,7 +78,9 @@ describe("cache.searchParams key filtering (dispatch)", () => {
 
     // The stored key carries no search suffix: excluded-only URLs share the
     // bare-path slot.
-    const cached = await store.getResponse("response:json:localhost/tracked");
+    const cached = await store.getResponse(
+      `response:json:${router.id}@localhost/tracked`,
+    );
     expect(cached).not.toBeNull();
   });
 

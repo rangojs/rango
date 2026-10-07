@@ -206,10 +206,10 @@ export async function runShellPrerenderPhase(
     const staged: Array<{ key: string; value: string }> = [];
     let skipCount = 0;
 
-    // Manifest keys are pathname-only (see shell-manifest-key.ts): two
-    // candidates on one pathname (two routers prerendering the same path)
-    // would be ambiguous at serve time — decline ALL of that pathname's
-    // entries rather than bake a wrong-router shell.
+    // A candidate names no router (the sweep below gives it to the first one
+    // whose match lands on its route): two candidates on one pathname (two
+    // routers prerendering the same path) would be ambiguous — decline ALL of
+    // that pathname's entries rather than bake a wrong-router shell.
     const pathCounts = new Map<string, number>();
     for (const cand of candidates) {
       pathCounts.set(cand.urlPath, (pathCounts.get(cand.urlPath) ?? 0) + 1);
@@ -282,7 +282,7 @@ export async function runShellPrerenderPhase(
             tags: res.tags,
           };
           staged.push({
-            key: buildShellManifestKey(cand.urlPath),
+            key: buildShellManifestKey(routerId, cand.urlPath),
             value: JSON.stringify(value),
           });
           console.log(

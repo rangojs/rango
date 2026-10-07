@@ -73,6 +73,7 @@ function run(
   command: string,
   args: string[],
   cwd: string,
+  extraEnv: NodeJS.ProcessEnv = {},
 ): Promise<{ code: number | null; output: string }> {
   return new Promise((resolvePromise, reject) => {
     // The key comes from rango({ encryptionKey }) only; an inherited
@@ -85,6 +86,7 @@ function run(
     for (const name of Object.keys(env)) {
       if (name.startsWith("VITEST")) delete env[name];
     }
+    Object.assign(env, extraEnv);
     const child = spawn(command, args, { cwd, env });
     let output = "";
     child.stdout.on("data", (chunk) => (output += chunk));
@@ -97,18 +99,25 @@ function run(
 let pluginEntry: Promise<string> | undefined;
 
 /**
+ * One bundle directory per process: test files run in parallel workers, and a
+ * shared one let each file's bundling delete the bundle another file's build
+ * was loading ("Could not resolve .../vite/index.js").
+ */
+const pluginDir = join(
+  packageRoot,
+  "node_modules",
+  ".rango-cache-versions-test",
+  String(process.pid),
+);
+
+/**
  * Bundle src/vite/index.ts the way `pnpm build` does, into a directory under
  * the package's node_modules so the bundle's bare imports resolve.
  */
 export function bundlePluginFromSource(): Promise<string> {
   pluginEntry ??= (async () => {
-    const outDir = join(
-      packageRoot,
-      "node_modules",
-      ".rango-cache-versions-test",
-      "vite",
-    );
-    rmSync(outDir, { recursive: true, force: true });
+    const outDir = join(pluginDir, "vite");
+    rmSync(pluginDir, { recursive: true, force: true });
     mkdirSync(join(outDir, "plugins"), { recursive: true });
     const outfile = join(outDir, "index.js");
     const esbuild = join(packageRoot, "node_modules", ".bin", "esbuild");
@@ -135,7 +144,10 @@ export function bundlePluginFromSource(): Promise<string> {
   return pluginEntry;
 }
 
-/** A directory to hold fixture copies, removed by the returned function. */
+/**
+ * A directory to hold fixture copies. The returned function removes it, and
+ * this process's plugin bundle with it.
+ */
 export function createFixtureWorkspace(): {
   dir: string;
   cleanup: () => void;
@@ -145,7 +157,14 @@ export function createFixtureWorkspace(): {
   const dir = realpathSync(
     mkdtempSync(join(tmpdir(), "rango-cache-versions-")),
   );
-  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+  return {
+    dir,
+    cleanup: () => {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(pluginDir, { recursive: true, force: true });
+      pluginEntry = undefined;
+    },
+  };
 }
 
 function linkDependency(root: string, name: string, target: string): void {
@@ -245,4 +264,57 @@ export async function buildFixture(
     unownedFiles: report.unownedFiles,
     output,
   };
+}
+
+export interface FixtureResponse {
+  url: string;
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+}
+
+const RESPONSES_MARKER = "__FIXTURE_RESPONSES__";
+
+const SERVE_SCRIPT = `
+const { default: handler } = await import("./dist/rsc/index.js");
+const out = [];
+for (const url of process.argv.slice(2)) {
+  const response = await handler(
+    new Request(url, { headers: { accept: "text/html" } }),
+    { env: {}, ctx: { waitUntil() {}, passThroughOnException() {} } },
+  );
+  out.push({
+    url,
+    status: response.status,
+    headers: Object.fromEntries(response.headers),
+    body: await response.text(),
+  });
+}
+process.stdout.write("\\n${RESPONSES_MARKER}" + JSON.stringify(out) + "\\n");
+process.exit(0);
+`;
+
+/**
+ * Document requests served by a built fixture's server entry, in order, in a
+ * process of their own: the first one is the first request of a cold server.
+ */
+export async function requestBuiltFixture(
+  root: string,
+  urls: string[],
+): Promise<FixtureResponse[]> {
+  const script = join(root, "serve-requests.mjs");
+  writeFileSync(script, SERVE_SCRIPT);
+  const { code, output } = await run(
+    process.execPath,
+    [script, ...urls],
+    root,
+    { NODE_ENV: "production" },
+  );
+  const marker = output.lastIndexOf(RESPONSES_MARKER);
+  if (code !== 0 || marker === -1) {
+    throw new Error(`serving ${root} failed (exit ${code}):\n${output}`);
+  }
+  return JSON.parse(
+    output.slice(marker + RESPONSES_MARKER.length).split("\n")[0]!,
+  ) as FixtureResponse[];
 }

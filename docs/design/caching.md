@@ -391,28 +391,158 @@ Compose cached + fresh segments into single RSC stream
 
 ## Cache Key Structure
 
-Cache keys combine request type prefix, pathname, sorted route params, and sorted user-facing search params:
+Cache keys combine request type prefix, the serving router's id, host, pathname, sorted route params, and sorted user-facing search params:
 
 ```
-{prefix}:{pathname}:{sortedParams}?{sortedSearchParams}
+{prefix}:{routerId}@{host}{pathname}:{sortedParams}?{sortedSearchParams}
 ```
 
 - **Prefix**: `doc` (full page), `partial` (navigation), or `intercept` (modal/overlay).
+- **Router and host**: `{routerId}@{host}` says whose output the entry is. See [The router part](#the-router-part-whose-output-an-entry-is) below.
 - **Search params**: User-facing params are included (sorted, URL-encoded). Router-internal params are excluded: `_rsc*` by prefix, plus an exact allowlist of `__`-prefixed params (`__no_cache`, `__rsc`, `__html`) — deliberately not a blanket `__*` filter, so consumer params like `__variant` still key the cache (see `src/cache/cache-key-utils.ts`).
 - **Partial response capability**: document-cache entries append a fragment-capable variant when `X-Rango-Fragment-Passthrough: 1` is present. The middleware can return before route matching, so its key must mirror the RSC response's `Vary` contract and never serve fragment envelopes to a legacy or context-less client. `X-Rango-Fragment-Recovery: 1` skips that variant's read so the failed fragment retry reaches segment decode and eviction, then the ordinary write path replaces the corrupt response bytes with the valid fallback.
 - **Determinism**: Both route params and search params are sorted alphabetically for stable keys regardless of insertion order.
 
 ```typescript
-// Examples:
-// "doc:/products"
-// "partial:/products:slug=shoes"
-// "partial:/products:slug=shoes?page=2&sort=asc"
-// "intercept:/products:slug=shoes"
+// Examples (router id "a1b2c3d4", host "shop.example"):
+// "doc:a1b2c3d4@shop.example/products"
+// "partial:a1b2c3d4@shop.example/products:slug=shoes"
+// "partial:a1b2c3d4@shop.example/products:slug=shoes?page=2&sort=asc"
+// "intercept:a1b2c3d4@shop.example/products:slug=shoes"
 ```
 
 For `"use cache"` functions, cache keys follow the format `use-cache:{functionId}:{serializedArgs}` where tainted ctx arguments contribute `pathname`, `params`, `_responseType`, and normalized search params to the key.
 
 Request data the key does not see must not reach the stored value, so the non-cacheable variable guard applies in both scopes. A `ctx.get()` of a `createVar({ cache: false })` variable (or a value written with `{ cache: false }`) throws inside a `cache()` boundary and inside a `"use cache"` body, whether it reads through `getRequestContext()`, a handler ctx, or a response-route ctx. The fix at the call site is to read the value outside and pass it in as an argument, which puts it in the key. The guard is `assertNonCacheableReadAllowed` (`src/server/context.ts`), called only after `isNonCacheable()` matches, so ordinary reads skip it. It is a wrapper over `guardIdentityRead`, the one guard `cookies()`, `headers()` and the theme reads go through too, so all four refuse in the same places: a PPR capture first, then a `"use cache"` body, then a `cache()` boundary. Loader bodies stay exempt under `cache()` (a route `cache()` never stores a loader's value). Under `"use cache"` nothing is exempt: a loader body entered inside the cached function (`await ctx.use(Loader)`) runs as part of that body, and its value is part of what the function returns and stores. Before, a non-cacheable `ctx.get()` there was exempt while `cookies()` threw, and the entry kept the first request's value under a key that did not include it.
+
+### The router part: whose output an entry is
+
+You would expect a host and a path to name a page. With one router they do.
+With several routers behind `createHostRouter()` they usually still do,
+because the host router sends each host to one router. Two things break that
+(issue #1065):
+
+- **`hostOverride`.** `createHostRouter({ hostOverride })` picks the router
+  from a cookie and forwards the request as it came. On a preview origin every
+  app is then served under the same URL host, and a `fallback()` after a cookie
+  error does the same.
+- **A warm under another router's host.** `router.prerender()` requests the
+  origin it resolved. Called from a route of another router with no `origin`,
+  that is the other router's host.
+
+Either way two routers on one cache store build the same host-and-path key.
+The only thing between them used to be the version, and how that failed
+depends on the versions and on the store:
+
+- **Equal versions** (a dev server gives every router one stamp; so does one
+  `version` set on both routers or on the store). The two keys are one string
+  on every store. Router B's request was a HIT with router A's shell, and B
+  read A's `cache()` record, document-cache response, response-route entry,
+  cached loader value and `ctx`-keyed `"use cache"` value.
+- **Per-router versions** (what a build gives you). `CFCacheStore` and
+  `VercelCacheStore` put the version in the storage key (next section), so
+  the stored entries were already apart there. A store with no version in its
+  keys (`MemorySegmentCacheStore`, a custom store) kept one shell slot: the
+  entry's version stamp (`isValidShellHit`, `src/rsc/shell-serve.ts`) turned
+  router B's read into a MISS, B's capture replaced A's shell, and A's next
+  request did the same to B's, so neither kept one. Records carry no stamp
+  and were shared outright.
+
+On every store the per-isolate capture state is keyed by the shell key
+(`inFlightCaptures`, `refusedCaptures` in `src/rsc/shell-capture.ts`), so the
+two routers also shared one in-flight guard and one refusal backoff per URL.
+
+So every key that names a router's output for a host and path starts with the
+router: `routerKeyPrefix(routerId)` in `src/cache/cache-key-utils.ts`, which is
+`{encodeURIComponent(router.id)}@`. `cacheKeyBase` and `buildShellKey` take the
+id as their first argument, and the id is the serving router's:
+`RequestContext._routerId`, which `src/rsc/handler.ts` sets before any cache is
+read, or `ctx.router.id` on the render path. The encoding is what keeps the key
+unambiguous: an encoded id holds no `@` or `/` and a host holds no `@`, so a
+key carries a router part exactly when its first `@` comes before its first
+`/`, and no explicit `id` can be chosen to spell another router's key.
+
+| Family                                                        | Built in                                                                                                       | Key                                                                                                              | Router part                                                       |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| PPR document shell                                            | `buildShellKey` (`src/rsc/shell-capture-constants.ts`), called from `src/rsc/rsc-rendering.ts`                 | `{routerId}@{host}{path}[?search]:shell`                                                                         | yes                                                               |
+| Navigation-only shell, `key()` partitions                     | `navigationShellKey`, `partitionShellKey` (same module)                                                        | the document shell key + `:navigation` / `\|{partition}`                                                         | yes, inherited from the base key                                  |
+| Build-time shell manifest                                     | `buildShellManifestKey` (`src/prerender/shell-manifest-key.ts`)                                                | `{routerId}@{path}`                                                                                              | yes                                                               |
+| Route `cache()` records                                       | `getDefaultRouteCacheKey` (`src/cache/cache-scope.ts`)                                                         | `doc:\|partial:\|intercept:` + `cacheKeyBase`                                                                    | yes                                                               |
+| Document cache                                                | `createDocumentCacheMiddleware` (`src/cache/document-cache.ts`)                                                | `cacheKeyBase` + segment hash + `:html` / `:rsc`                                                                 | yes                                                               |
+| Response routes                                               | `serveResponseRouteWithCache` (`src/rsc/response-cache-serve.ts`)                                              | `response:{type}:` + `cacheKeyBase`                                                                              | yes                                                               |
+| Per-isolate shell state                                       | the shell memo, the capture stampede guard and backoff (`src/rsc/shell-capture.ts`, `src/cache/shell-memo.ts`) | the shell key                                                                                                    | yes, they are keyed by the shell key                              |
+| Loader cache                                                  | `resolveLoaderKey` (`src/router/segment-resolution/loader-cache.ts`)                                           | `loader:{loaderId}:` + `cacheKeyBase`                                                                            | yes: a loader's `ctx` is one router's                             |
+| `"use cache"` called with a handler or loader `ctx`           | `src/cache/cache-runtime.ts`                                                                                   | `use-cache:{functionId}:{args}`, the `ctx` folded in as `{routerId}@{host}`, route name, path, params and search | yes: same reason                                                  |
+| `"use cache"` called with plain arguments or a bare `Request` | `src/cache/cache-runtime.ts` (`requestArgKey` for the `Request`)                                               | `use-cache:{functionId}:{args}`                                                                                  | no: keyed by the function and its arguments, which name no router |
+| A loader's `key()`                                            | `loaderKeyFromResult` (`loader-cache.ts`)                                                                      | `loader:{loaderId}:key:{encoded result}`                                                                         | no: a full override, like the row below                           |
+| On-demand prerender overlay                                   | `src/prerender/writable-store.ts`                                                                              | `prerender:{routerId}:{version}:{routeName}:{paramHash}`                                                         | already there                                                     |
+| Tag markers                                                   | the stores                                                                                                     | `__tag__/{tag}`, `rg:tm:{tag}`                                                                                   | no: an invalidation reaches every router and every version        |
+| Your own keys: `cache({ key })`, `keyGenerator(url)`          | your code                                                                                                      | what you return                                                                                                  | no: a full override owns its namespace, as it owns the host       |
+
+The three built-in stores add nothing of their own that names a host and path.
+`CFCacheStore` and `VercelCacheStore` wrap the key they are given in a version
+and a family prefix, and `MemorySegmentCacheStore` uses it as it is, which is
+why the two-router tests run on it: nothing but the key keeps the routers
+apart there.
+
+Two rows look like "a function and its arguments" and are not. A loader's
+cache key starts with the loader definition's id, and a `"use cache"` key
+with the function's, so it is tempting to say two routers that reach the same
+entry are running one function over one set of inputs. They are not when the
+function is handed a `ctx`: a `ctx` is one router's. It reads that router's
+context variables (set by that router's middleware), its `env`, and its
+`reverse()` map. Two routers that mounted one loader on the same host and
+path, each setting a `Brand` variable in its own middleware, had the second
+router render the first one's brand; a `"use cache"` function called with
+`ctx` returned the first router's `ctx.reverse()` URLs to the second
+(`src/testing/__tests__/two-routers-cache-records.rsc-test.tsx` pins both).
+So both carry the router part. A `"use cache"` function called with plain
+arguments, or with the bare `Request`, reads nothing of a router, and its key
+stays the function and its arguments: the same test pins that two routers
+share that one entry.
+
+A request context always has a router id when a request is served
+(`src/rsc/handler.ts` sets it before the request scope opens, and derived
+contexts inherit it). Only a hand-built context has none: a unit test, or the
+`runLoader` / `renderHandler` testing primitives. `requestKeyBase` builds
+those keys without a router part, which no served request's key can equal.
+
+**The id has to be the same everywhere.** The key is only useful if every
+isolate, and the build that captures a shell ahead of time, compute the same id
+for the same router. `router.id` (`src/router.ts`) is, in order:
+
+1. `createRouter({ id })`, if you pass one.
+2. The `$$id` the Vite transform injects: a hash of the router's root-relative
+   file and its position among that file's `createRouter()` calls (`routerId`
+   in `src/vite/plugins/expose-ids/router-transform.ts`). Build-time discovery,
+   the bundle and every isolate run the same transformed source, so they agree.
+3. `router_{n}`, a counter, when the transform cannot reach the call (an
+   options variable instead of an object literal, for instance). A single
+   router on the counter is `router_0` everywhere, build included
+   (`src/vite/__tests__/build-shell-router-key.test.ts` pins that its build-time
+   shell is a HIT on a cold server). Several routers on the counter get ids in
+   module evaluation order, which a lazy host router does not fix.
+
+So a multi-router app needs explicit or injected ids. That is not a new rule:
+the lazy route manifest and the cache versions are keyed by the same id, and
+build discovery already warns when more than one router is on the counter
+(`src/vite/discovery/discover-routers.ts`). The cache keys inherit the
+requirement; they add no option and nothing for an app author to manage.
+
+Two doubts worth answering. Does a single-router app pay for this? No: the
+part is a prefix on a key the request already builds, and
+`src/testing/__tests__/single-router-cache-reads.rsc-test.tsx` pins the same
+number of store reads as before. And in dev, where a router on the counter
+gets a new id each time its module is re-evaluated? The new instance misses
+once and captures its own shell; the old id's entry runs out on its ttl (the
+same test file pins this). A dev server already bumps the version stamp on
+every server edit (`bumpVersion` in `src/vite/plugins/version-plugin.ts`), so
+that request was a miss before as well.
+
+What the change costs once: the stored keys changed. An app on build-computed
+versions loses nothing extra, because a router upgrade already changes every
+cache version. An app that pins `version`, and a custom store that ignores
+versions, recapture shells and refill the keyed entries once.
 
 ### Versions: which build may read an entry
 
@@ -901,7 +1031,7 @@ up the route's partition. It doesn't. A loader's own `cache()` and `"use
 cache"` are independent layers, keyed only by what they declare: the loader
 entry by `key()` (stored as `loader:{id}:key:{encoded result}`, see "Loader
 key results are namespaced" below), else the store's `keyGenerator`, else
-the default `loader:{id}:{host}{pathname}:{sortedParams}`
+the default `loader:{id}:{routerId}@{host}{pathname}:{sortedParams}`
 (`resolveLoaderKey` in `src/router/segment-resolution/loader-cache.ts`); a
 `"use cache"` entry by its id and arguments. The default loader key names no
 user, so one entry serves everyone.
@@ -1552,9 +1682,10 @@ the route scheme's `key:` part (`KEY_PART_PREFIX`) behind the loader's own
 - An encoded result holds no `:`, so a namespaced key reads unambiguously
   from the right: the result, then `key:`, then the loader id. Two
   namespaced keys are equal only for the same loader and the same result.
-- A default key `loader:{id}:{host}{pathname}...` holds a `/` past its id,
-  and an encoded result holds none. So a namespaced key equals a default key
-  only if one loader's id is literally `<other id>:<host>/<path>...`.
+- A default key `loader:{id}:{routerId}@{host}{pathname}...` holds a `/` past
+  its id, and an encoded result holds none. So a namespaced key equals a
+  default key only if one loader's id is literally
+  `<other id>:<router>@<host>/<path>...`.
 
 You might expect the argument to rest on loader ids holding no `:`. It
 can't: a dev id is a root-relative path plus `#<export>`, and on Windows a

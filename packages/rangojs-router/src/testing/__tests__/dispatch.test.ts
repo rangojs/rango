@@ -416,7 +416,9 @@ describe("dispatch", () => {
       await flushWrites();
 
       // Default key: response:{type}: + cacheKeyBase(host, path, searchParams).
-      const cached = await store.getResponse("response:json:localhost/cached2");
+      const cached = await store.getResponse(
+        `response:json:${router.id}@localhost/cached2`,
+      );
       expect(cached).not.toBeNull();
       expect(cached?.response.status).toBe(200);
     });
@@ -444,7 +446,9 @@ describe("dispatch", () => {
 
       expect(second).toEqual(first);
       expect(
-        await store.getResponse("response:json:localhost/cached-child"),
+        await store.getResponse(
+          `response:json:${router.id}@localhost/cached-child`,
+        ),
       ).not.toBeNull();
     });
 
@@ -643,7 +647,7 @@ describe("dispatch", () => {
       ).json();
       expect(second).toEqual(first);
       const cached = await store.getResponse(
-        "response:json:localhost/cached-rscparam",
+        `response:json:${router.id}@localhost/cached-rscparam`,
       );
       expect(cached).not.toBeNull();
     });
@@ -714,9 +718,9 @@ describe("dispatch", () => {
       await get("/nested/composed", composed);
       await get("/nested/composed", { ...composed, "x-tier": "silver" });
       expect(putSpy.mock.calls.map(([key]) => key)).toEqual([
-        "response:key:tier%3Agold|response%3Ajson%3Alocalhost%2Fnested%2Finherit",
-        "response:key:tier%3Asilver|response%3Ajson%3Alocalhost%2Fnested%2Finherit",
-        "response:key:tier%3Agold|response%3Ajson%3Alocalhost%2Fnested%2Fsibling",
+        `response:key:tier%3Agold|${encodeURIComponent(`response:json:${router.id}@localhost/nested/inherit`)}`,
+        `response:key:tier%3Asilver|${encodeURIComponent(`response:json:${router.id}@localhost/nested/inherit`)}`,
+        `response:key:tier%3Agold|${encodeURIComponent(`response:json:${router.id}@localhost/nested/sibling`)}`,
         "response:key:tier%3Agold|key:v%3Aa",
         "response:key:tier%3Asilver|key:v%3Aa",
       ]);
@@ -768,9 +772,9 @@ describe("dispatch", () => {
       expect(await get("gold", "de")).toMatchObject({ lang: "de" });
       expect(await get("silver", "en")).toMatchObject({ tier: "silver" });
       expect(putSpy.mock.calls.map(([key]) => key)).toEqual([
-        "response:key:tier%3Agold|response%3Ajson%3Alocalhost%2Fnested%2Flang%7Clang%3Den",
-        "response:key:tier%3Agold|response%3Ajson%3Alocalhost%2Fnested%2Flang%7Clang%3Dde",
-        "response:key:tier%3Asilver|response%3Ajson%3Alocalhost%2Fnested%2Flang%7Clang%3Den",
+        `response:key:tier%3Agold|${encodeURIComponent(`response:json:${router.id}@localhost/nested/lang|lang=en`)}`,
+        `response:key:tier%3Agold|${encodeURIComponent(`response:json:${router.id}@localhost/nested/lang|lang=de`)}`,
+        `response:key:tier%3Asilver|${encodeURIComponent(`response:json:${router.id}@localhost/nested/lang|lang=en`)}`,
       ]);
       putSpy.mockRestore();
     });

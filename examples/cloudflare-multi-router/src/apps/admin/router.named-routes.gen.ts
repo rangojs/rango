@@ -3,6 +3,7 @@ export const NamedRoutes = {
   "api.status": "/api/status",
   home: "/",
   lookup: { path: "/lookup", search: { page: "number" } },
+  pricing: "/pricing",
   users: "/users",
 } as const;
 

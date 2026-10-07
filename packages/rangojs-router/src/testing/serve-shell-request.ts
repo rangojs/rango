@@ -521,7 +521,8 @@ export async function serveShellRequest<TEnv = any>(
     recorder.cache && recorder.cache.enabled !== false
       ? recorder.cache
       : undefined;
-  const key = recorder.shellKey ?? shellCacheKey(target, config?.searchParams);
+  const key =
+    recorder.shellKey ?? shellCacheKey(router, target, config?.searchParams);
   const tail = recorder.tail;
   const isFlight =
     recorder.rendered ||

@@ -213,6 +213,14 @@ Without a registered fallback, a failed override returns a `400` JSON response (
 
 For visibility into matching decisions, `createHostRouter({ debug: true })` logs pattern matching, route registration, and cookie override decisions to the console.
 
+## Sharing one cache store
+
+Sub-apps can share one cache store (one KV namespace, one `MemorySegmentCacheStore`). The override cookie forwards the request unchanged, so on a preview origin every app answers under the same host and path. They still never read each other's entries: every cache key that holds one router's output starts with that router's id (`{routerId}@{host}{path}...`). That covers PPR shells, route `cache()` records, document-cache responses, response-route entries, a loader's own `cache()` entry, and a `"use cache"` entry of a function called with `ctx`.
+
+There is nothing to configure. Each router needs a stable id, which a multi-router app needs for its routes already: write the `createRouter({ ... })` options as an object literal so the Vite plugin gives the router an id, or pass `id` yourself. The build warns (`N routers use auto-generated IDs`) when more than one router has neither.
+
+Keys you build yourself are yours to keep apart: a `cache({ key })` result and the document cache's `keyGenerator` output carry no router id, just as they carry no host.
+
 ## Testing
 
 ```ts

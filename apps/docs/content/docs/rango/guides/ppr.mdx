@@ -48,7 +48,7 @@ export const router = createRouter<AppBindings>({
 });
 ```
 
-A route without `ppr` pays zero cost: no store read, no capture, no logs. `ppr` is per page route — declaring it on a layout is not supported. The shell is keyed per host + pathname + sorted search, shared across all users — which is exactly why the identity rules below exist.
+A route without `ppr` pays zero cost: no store read, no capture, no logs. `ppr` is per page route — declaring it on a layout is not supported. The shell is keyed per router + host + pathname + sorted search, shared across all users — which is exactly why the identity rules below exist.
 
 Each distinct key is a capture and a stored shell of its own, so keep what varies it to a small, known set. Query strings count: a product page reached as `/products/1?color=red&size=m` and `/products/1?color=blue&size=m` has one shell per distinct query, and a tracking param a link appends (`utm_*`, a click id) mints another. [`cache.searchParams`](/docs/rango/reference/create-router#cache) on `createRouter` drops params from the key (`{ exclude: TRACKING_SEARCH_PARAMS }`, or an `{ include: [...] }` allowlist); exclude only a param the shell does not render from, or the first variant captured is served for every value of it. The same holds for request partitions (the route's `cache({ key })` or the store's `keyGenerator`, see [Per-user data](#per-user-data)): normalize what the key reads to the values you serve.
 

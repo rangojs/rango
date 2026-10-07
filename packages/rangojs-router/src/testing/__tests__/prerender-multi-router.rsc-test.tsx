@@ -354,8 +354,8 @@ describe("router.prerender() with two routers sharing stores", () => {
       // The runner's `origin` is the host the warm requests: cache keys carry it.
       await a.prerender({ env: {}, origin: `http://${B_HOST}` })("/shelled");
 
-      // A's warm wrote a shell under B's host. The shell key has no router id
-      // (#1065); only the per-router versions keep B from serving it here.
+      // A's warm wrote a shell under B's host. The shell key starts with the
+      // router's id (#1065), so B never reads it, whatever the versions are.
       await app.get(B_HOST, "/shelled");
       expect(app.served.b?.shellStatus).toBe("MISS");
 

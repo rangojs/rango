@@ -2214,13 +2214,16 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
         `/shell-cache/__corrupt?target=${encodeURIComponent(one)}&mode=stale`,
       ),
     );
-    expect(await aged.json()).toEqual({
+    const agedEntry = await aged.json();
+    expect(agedEntry).toEqual({
       ok: true,
       found: true,
-      segmentKeys: [
-        `doc:${new URL(one).host}/shell-cache/stale-replay/1:id=1?probe=${probe}`,
-      ],
+      // The route's doc record, under the serving router's key.
+      segmentKeys: [expect.stringMatching(/^doc:[^@/]+@/)],
     });
+    expect(agedEntry.segmentKeys[0].split("@")[1]).toBe(
+      `${new URL(one).host}/shell-cache/stale-replay/1:id=1?probe=${probe}`,
+    );
     await page.waitForTimeout(1_200);
 
     // Match the production race: a stale document HIT starts background

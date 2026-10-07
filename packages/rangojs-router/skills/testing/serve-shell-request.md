@@ -166,9 +166,12 @@ const silver = await serveShellRequest(router, "/pricing", tier("silver"));
 expect(silver.shellStatus).toBe("MISS"); // its own capture, never gold's shell
 const gold = await serveShellRequest(router, "/pricing", tier("gold"));
 expect(gold.shellStatus).toBe("HIT");
-expect(gold.key).toBe(shellCacheKey("/pricing", undefined, "tier:gold"));
-// "localhost/pricing:shell|key%3Atier%253Agold": the key() result is
-// namespaced as production stores it (issue #975).
+expect(gold.key).toBe(
+  shellCacheKey(router, "/pricing", undefined, "tier:gold"),
+);
+// "{router.id}@localhost/pricing:shell|key%3Atier%253Agold": the router the
+// shell belongs to, then the key() result namespaced as production stores it
+// (issue #975).
 expect(await gold.readEntry()).not.toBeNull();
 ```
 
@@ -181,7 +184,7 @@ Under nested keyed `cache()` boundaries the partition is their `key()` results c
 //   ]),
 // ])
 expect(result.key).toBe(
-  shellCacheKey("/plans", undefined, ["tier:gold", "v:a"]),
+  shellCacheKey(router, "/plans", undefined, ["tier:gold", "v:a"]),
 );
 ```
 
@@ -191,13 +194,32 @@ A store `keyGenerator` result that partitions the record partitions the shell to
 // createRouter({ cache: { store: localeStore } }), where localeStore's
 // keyGenerator returns `${defaultKey}|${locale}`
 expect(result.key).toBe(
-  shellCacheKey("/pricing", undefined, {
-    generated: ["doc:localhost/pricing|de"],
+  shellCacheKey(router, "/pricing", undefined, {
+    generated: [`doc:${router.id}@localhost/pricing|de`],
   }),
 );
 ```
 
 A partial request has no HTML step, so its `key` is the URL's key without a partition: read a partitioned route's entry from a document request's result.
+
+## Two routers on one cache store
+
+A shell's key starts with its router's id (`shellCacheKey(router, url)`), so two routers that share a store and serve the same host and path each read and write their own (why and when: `/host-router`, "Shared cache store"). Serve both against one store to pin it:
+
+```ts
+const store = new MemorySegmentCacheStore();
+// appA and appB: createRouter({ id: "app-a" | "app-b", cache: { store } }),
+// each with path("/pricing", ..., { ppr: true })
+const url = "http://preview.dev/pricing";
+
+await serveShellRequest(appA, url); // MISS + capture
+const fromB = await serveShellRequest(appB, url);
+expect(fromB.shellStatus).toBe("MISS"); // never app A's shell
+expect((await serveShellRequest(appA, url)).shellStatus).toBe("HIT");
+expect((await serveShellRequest(appB, url)).shellStatus).toBe("HIT");
+```
+
+Vitest runs no Vite id transform, so give each router an explicit `id` when a test builds more than one, and do not reuse one `id` for routers with different routes in the same file: the route manifest is registered per id.
 
 ## Handles and loader data
 
