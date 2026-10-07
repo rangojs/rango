@@ -299,8 +299,12 @@ async function servePrerenderArtifacts(
   const internal = toInternal(router);
   const matched = await internal.findMatch(pathname);
   // A build bakes an on-demand route only for the params getParams() lists;
-  // a refresh-only page serves from its prerender store alone.
-  if (!matched?.pr || matched.od) return undefined;
+  // a refresh-only page serves from its prerender store alone. A Passthrough
+  // route is baked here like a build bakes it: the `devMode` render below
+  // asks its getParams() and declines a param it does not list. A plain
+  // on-demand route is not: nothing here asks its getParams(), and baking
+  // every requested param would hide the 404 an unbaked one answers.
+  if (!matched?.pr || (matched.od && !matched.pt)) return undefined;
   let artifacts = prerenderArtifacts.get(router);
   if (!artifacts) {
     prerenderArtifacts.set(

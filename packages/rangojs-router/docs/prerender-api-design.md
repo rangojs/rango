@@ -45,7 +45,10 @@ route was pre-rendered.
   sets both `onDemand` and `ppr` throws at definition (a refresh cannot replace
   the captured shell atomically). A plain (non-Passthrough) `onDemand` route keeps the
   pr-miss contract in production: an overlay+manifest miss is a 404
-  (`DataNotFoundError`), never an in-request producer render. A refresh cannot
+  (`DataNotFoundError`), never an in-request producer render. A page is taken
+  out of service by a "removed" marker in the overlay (`prerender.remove()`,
+  or a refresh whose handler calls `notFound()`), which also hides the
+  build-time entry below it. A refresh cannot
   reach connected clients until their prefetch/HTTP caches expire — see the
   staleness call-outs in `docs/design/ondemand-prerender.md`.
 

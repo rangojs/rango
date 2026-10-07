@@ -36,6 +36,7 @@ import type { RouteMatchResult } from "./pattern-matching.js";
 import type { RouterVersions } from "../router-versions.js";
 import type { OnDemandRouteConfig } from "../prerender/on-demand.js";
 import { isPrerenderPersonalizationError } from "../prerender/producer-guard.js";
+import { isDataNotFoundError } from "../errors.js";
 
 export interface PrerenderMatchDeps<TEnv = any> {
   /** Owning router id; scopes bake-time root-scope/search-schema lookups the
@@ -97,6 +98,8 @@ export async function matchForPrerender<TEnv = any>(
    *  the sinks store it as-is (no longer merge raw records). */
   interceptHandles?: string;
   passthrough?: true;
+  /** On-demand only: the render hit `notFound()` and nothing else failed. */
+  notFound?: true;
   /** Route-level onDemand config (ttl/tags) read off the route entry; only set
    *  when `onDemand` and the route declared an onDemand object literal. */
   onDemandConfig?: OnDemandRouteConfig;
@@ -130,7 +133,10 @@ export async function matchForPrerender<TEnv = any>(
     passthrough: true as const,
   });
 
-  return runWithRouterContext(routerCtx, () =>
+  // Set inside the render; out here for the notFound() outcome at the end.
+  let onDemandConfig: OnDemandRouteConfig | undefined;
+
+  const rendered = runWithRouterContext(routerCtx, () =>
     routerCtx.getContext().runIsolated(matched.routeKey, async () => {
       // 2. Load the manifest entry tree
       const manifestEntry = await loadManifest(
@@ -151,7 +157,6 @@ export async function matchForPrerender<TEnv = any>(
       // retained route entry. `tags` is a function, so it can't ride the trie; the
       // trigger resolves it from here. Only an object literal carries config;
       // `onDemand: true` uses router-level defaults (config stays undefined).
-      let onDemandConfig: OnDemandRouteConfig | undefined;
       if (onDemand) {
         const routeEntry = entries.find(
           (e) =>
@@ -352,7 +357,7 @@ export async function matchForPrerender<TEnv = any>(
         // resolves thenables before testing (a sync check would miss it and bake a
         // corrupt artifact).
         if (await detectPrerenderPassthrough(allSegments)) {
-          return passthroughResult();
+          return { ...passthroughResult(), onDemandConfig };
         }
 
         // 10. Filter out any loader segments (belt-and-suspenders)
@@ -377,6 +382,16 @@ export async function matchForPrerender<TEnv = any>(
         const flightErrors: unknown[] = [];
         const onFlightError = (error: unknown): void => {
           flightErrors.push(error);
+        };
+        // The collected error to rethrow. On an on-demand refresh a failure
+        // goes ahead of a notFound(): a render that hit a missing item AND a
+        // failing data source must keep the page (render-failed), not remove
+        // it because the notFound() happened to be reported first.
+        const firstFlightError = (): unknown => {
+          const failure = onDemand
+            ? flightErrors.findIndex((e) => !isDataNotFoundError(e))
+            : -1;
+          return flightErrors[failure === -1 ? 0 : failure];
         };
         const serializedSegments = await serializeSegments(
           nonLoaderSegments,
@@ -406,7 +421,7 @@ export async function matchForPrerender<TEnv = any>(
         }
         const handles = await encodeHandles(handlesRecord, onFlightError);
         // Before intercept resolution, as a handler throw would be.
-        if (flightErrors.length > 0) throw flightErrors[0];
+        if (flightErrors.length > 0) throw firstFlightError();
 
         // Use the trie-level route key (e.g., "docs", "docs.article")
         const routeName = matched.routeKey;
@@ -545,7 +560,7 @@ export async function matchForPrerender<TEnv = any>(
           }
         }
 
-        if (flightErrors.length > 0) throw flightErrors[0];
+        if (flightErrors.length > 0) throw firstFlightError();
 
         return {
           segments: serializedSegments,
@@ -560,6 +575,25 @@ export async function matchForPrerender<TEnv = any>(
       });
     }),
   );
+  // A build or dev render keeps the throw (the caller's onError policy).
+  if (!onDemand) return rendered;
+  // An on-demand refresh reports a notFound() anywhere in the render (a
+  // handler's throw, or the only kind of error Flight collected) as an
+  // outcome, with the route's onDemand config: the trigger stores the
+  // "removed" marker stamped like a page (create-prerender-trigger.ts).
+  try {
+    return await rendered;
+  } catch (error) {
+    if (!isDataNotFoundError(error)) throw error;
+    return {
+      segments: [],
+      handles: "",
+      routeName: matched.routeKey,
+      params: matchedParams,
+      notFound: true,
+      onDemandConfig,
+    };
+  }
 }
 
 /**

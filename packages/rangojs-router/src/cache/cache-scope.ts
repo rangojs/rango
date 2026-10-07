@@ -1106,14 +1106,17 @@ export class CacheScope {
         // normally; stored, every HIT would render that error until expiry.
         if (flightErrors.length > 0) throw flightErrors[0];
 
+        const recordTags = collectRecordTags(requestCtx, tags, [
+          ...nonLoaderSegments.map((s) => s.id),
+          handlesOwnerId,
+        ]);
         const data: CachedEntryData = {
           segments: serializedSegments,
           handles: encodedHandles,
           expiresAt: Date.now() + ttl * 1000,
-          tags: collectRecordTags(requestCtx, tags, [
-            ...nonLoaderSegments.map((s) => s.id),
-            handlesOwnerId,
-          ]),
+          tags: recordTags,
+          // The stamp is the render's start, not the write's (#1068).
+          ...(start && recordTags?.length ? { taggedAt: start.at } : {}),
         };
         if (handleOwners && encodedHandles) data.handleOwners = handleOwners;
 

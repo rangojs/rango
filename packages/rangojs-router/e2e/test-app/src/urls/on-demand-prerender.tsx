@@ -3,8 +3,10 @@ import {
   Prerender,
   Passthrough,
   cookies,
+  notFound,
   type Handler,
 } from "@rangojs/router";
+import { goneSlugs } from "../od-gone.js";
 import { FreshStampLoader, PrerenderTestLoader } from "../loaders.js";
 import { PrerenderClientTest } from "../components/PrerenderClientTest.js";
 import { OnDemandFreshStamp } from "../components/OnDemandFreshStamp.js";
@@ -37,8 +39,9 @@ function prerenderResultJson(result: PrerenderResult): Response {
 // ctx.onDemand is true during an on-demand refresh, false during a static build
 // render. od-stamp is captured ONCE per render, so a stored (overlay/baked)
 // entry replays an identical stamp across serves — the frozen-payload proof.
+// "removable" is baked for the removal e2e alone, which removes its page.
 export const OnDemandDetailDef = Prerender<{ slug: string }>(
-  async () => [{ slug: "baked" }],
+  async () => [{ slug: "baked" }, { slug: "removable" }],
   async (ctx) => {
     const stamp = new Date().toISOString();
     return (
@@ -82,11 +85,17 @@ export const OnDemandDetail = Passthrough(OnDemandDetailDef, async (ctx) => {
 // `string`), so the mapped object-target union collapses to one member whose
 // params are `never`. `router.reverse()` infers the route name instead and is
 // unaffected; cloudflare-basic's triggers use the object target.
+//
+// ?remove=1 removes the page instead (prerender.remove()): the live handler
+// answers the next request.
 export const OnDemandTrigger: Handler<{ slug: string }> = async (ctx) => {
   const { router } = await import("../router.js");
-  const result = await router.prerender({ env: ctx.env as AppEnv })(
-    `/on-demand/${ctx.params.slug}`,
-  );
+  const prerender = router.prerender({ env: ctx.env as AppEnv });
+  const target = `/on-demand/${ctx.params.slug}`;
+  const result =
+    ctx.searchParams.get("remove") === "1"
+      ? await prerender.remove(target)
+      : await prerender(target);
   return prerenderResultJson(result);
 };
 
@@ -95,9 +104,12 @@ export const OnDemandTrigger: Handler<{ slug: string }> = async (ctx) => {
 // gateOnDemandProducer throws DataNotFoundError -> 404. Dev keeps the live
 // fall-through. od-plain-stamp is captured once per render (frozen-payload
 // proof); the FreshStampLoader value differs per request (loaders-fresh proof).
+// A slug the e2e deleted from the data source (goneSlugs) is a notFound(): a
+// refresh of it stores the "removed" marker.
 export const OnDemandPlainDef = Prerender<{ slug: string }>(
   async () => [{ slug: "baked" }],
   async (ctx) => {
+    if (goneSlugs.has(ctx.params.slug)) notFound();
     const stamp = new Date().toISOString();
     return (
       <div data-testid="od-plain-detail">
@@ -117,7 +129,10 @@ export const OnDemandPlainDef = Prerender<{ slug: string }>(
 
 // Trigger for the plain route. Query switches exercise the trigger's
 // companions: ?onlyIfStale=1 (cron-sweep opt-in -> "already-fresh" on a fresh
-// entry) and ?markStale=<tag> (marks matching entries stale).
+// entry), ?markStale=<tag> (marks matching entries stale), ?remove=1
+// (prerender.remove(): the "removed" marker, nothing rendered) and ?gone=1 /
+// ?gone=0 (delete / restore the slug in the data source, so the next refresh
+// hits notFound() or renders again).
 export const OnDemandPlainTrigger: Handler<{ slug: string }> = async (ctx) => {
   const { router } = await import("../router.js");
   const prerender = router.prerender({ env: ctx.env as AppEnv });
@@ -126,8 +141,18 @@ export const OnDemandPlainTrigger: Handler<{ slug: string }> = async (ctx) => {
     await prerender.markStale([staleTag]);
     return Response.json({ markedStale: staleTag });
   }
+  const gone = ctx.searchParams.get("gone");
+  if (gone) {
+    if (gone === "1") goneSlugs.add(ctx.params.slug);
+    else goneSlugs.delete(ctx.params.slug);
+    return Response.json({ gone: goneSlugs.has(ctx.params.slug) });
+  }
+  const target = `/on-demand-plain/${ctx.params.slug}`;
+  if (ctx.searchParams.get("remove") === "1") {
+    return prerenderResultJson(await prerender.remove(target));
+  }
   const result = await prerender(
-    `/on-demand-plain/${ctx.params.slug}`,
+    target,
     ctx.searchParams.get("onlyIfStale") === "1"
       ? { onlyIfStale: true }
       : undefined,

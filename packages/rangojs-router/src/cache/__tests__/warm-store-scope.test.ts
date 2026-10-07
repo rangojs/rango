@@ -51,6 +51,13 @@ describe("resolveWarmStoreScope", () => {
     );
   });
 
+  it("MemorySegmentCacheStore({ scope: global }) is global in production", () => {
+    const store = new MemorySegmentCacheStore({ scope: "global" });
+
+    expect(resolveWarmStoreScope(store, false)).toBe("global");
+    expect(resolveWarmStoreScope(store, true)).toBe("global");
+  });
+
   it("MemorySegmentCacheStore counts as shared under the Vite dev server", () => {
     const store = new MemorySegmentCacheStore();
 

@@ -301,8 +301,13 @@ is not stored after it. A `"use cache"` call, a stale entry's background
 refresh, a loader's own `cache()`, a route `cache()` render or a
 document-cache render that read its data before one of its tags was
 invalidated still returns what it read, but its store write is skipped:
-every store stamps an entry when it is written, so the old value would be
-served as newer than the invalidation. The next read runs it again. A
+the old value would be served as newer than the invalidation. The next read
+runs it again. A write that gets through anyway (another colo's marker not
+visible yet) is still rejected on later reads by `CFCacheStore` with KV, which
+stamps an entry with the start of the execution that produced it, not its
+write time; `MemorySegmentCacheStore` refuses such a write. `VercelCacheStore`
+and `CFCacheStore` L1 hits in purge mode or without KV read no marker for
+data, so the write gate is their only guard across requests. A
 `"use cache"` call already running when one of its tags is invalidated is
 not joined by later calls either. Its tags include those of the
 `"use cache"` functions it calls. Another isolate's invalidation is caught
@@ -539,7 +544,8 @@ A warm only writes to a store that is shared beyond the place the call runs.
 Each store says where its entries can be read (`scope`): `CFCacheStore` with
 `kv` is `"global"`, without `kv` `"local"`; `VercelCacheStore` is `"regional"`
 (a warm fills the region it runs in); `MemorySegmentCacheStore` is `"local"`
-(refused in production, allowed under the dev server).
+(refused in production, allowed under the dev server; a single-process server
+opts in with `new MemorySegmentCacheStore({ scope: "global" })`).
 
 ### Memory Store
 
@@ -553,6 +559,7 @@ const store = new MemorySegmentCacheStore({
   defaults: { ttl: 60 }, // segments ignore swr on this store
   maxEntries: 1000, // per-family FIFO cap (default 1000)
   name: "app", // optional: keep entries across Vite HMR module reloads
+  scope: "local", // default; "global" only when ONE process serves the app (see /prerender warming)
 });
 ```
 

@@ -16,18 +16,22 @@ import { onErrorLog } from "./error-log.js";
 import { recordShellCaptureEvent } from "./shell-capture-events.js";
 import { swrLog } from "./swr-log.js";
 
-// One process serves this app, in dev and in the production preview, so this
-// store is the only copy of its entries. It says so: router.prerender() warms
-// a route only into a store shared beyond the process that runs the call, and
-// the shipped MemorySegmentCacheStore declares "local" (refused in
-// production). Only the warm gate reads the declaration
-// (e2e/prerender-warm.test.ts).
-class SingleProcessCacheStore extends MemorySegmentCacheStore {
-  readonly scope = "global" as const;
-}
-
 // App-level cache store with defaults
-export const cacheStore = new SingleProcessCacheStore({
+// One process serves this app, in dev and in the production preview, so this
+// store is the only copy of its entries and says so: router.prerender() warms
+// only into a store shared beyond the process that runs the call, and the
+// default MemorySegmentCacheStore declares "local" (refused in production).
+export const cacheStore = new MemorySegmentCacheStore({
+  scope: "global",
+  defaults: { ttl: 60, swr: 120 },
+});
+
+// The shipped store, scope "local": what /warm/__trigger?localStore=1 makes
+// the warm gate read (the env it passes carries warmLocalStore). Requests
+// themselves never carry the flag, so they keep using cacheStore. AppBindings
+// stays empty (ctx.env is untyped across the app): the flag is read through a
+// local cast here and set through one in urls/prerender-warm.tsx.
+const localScopeStore = new MemorySegmentCacheStore({
   defaults: { ttl: 60, swr: 120 },
 });
 
@@ -202,10 +206,12 @@ export const router = createRouter<AppEnv>({
   // (exercised by search-params-cache-key.test.ts via /spk/cached). Byte-stable
   // for every URL that carries none of these params, so other suites see the
   // exact same keys as before.
-  cache: {
-    store: cacheStore,
+  cache: (env) => ({
+    store: (env as { warmLocalStore?: boolean } | undefined)?.warmLocalStore
+      ? localScopeStore
+      : cacheStore,
     searchParams: { exclude: ["utm_*", "x_e2e_excluded"] },
-  },
+  }),
   // PPR capture outcomes, read back by /shell-cache/__capture-events so a
   // suite waits for the capture's outcome instead of a timing gap. A function
   // sink logs nothing.

@@ -259,7 +259,11 @@ import {
 } from "./pages/inline.js";
 import { clientReversePatterns } from "./pages/client-reverse.js";
 import { guidesPatterns } from "./pages/guides.js";
-import { GuidePlainDef, GuideSwrDef } from "./pages/guide-plain.js";
+import {
+  GuidePlainDef,
+  GuideSwrDef,
+  guidePlainGoneKey,
+} from "./pages/guide-plain.js";
 import { GuidePlainLoader } from "./loaders/guide-plain.js";
 import { suspenseDemoPatterns } from "./pages/suspense-demo.js";
 import { releasesPatterns } from "./pages/releases.js";
@@ -333,12 +337,22 @@ function prerenderResultJson(result: PrerenderResult): Response {
 // `import("./router.js")` inside it does not force TypeScript to infer this
 // module's type from the router (which is built from urlpatterns) — that would
 // be a circular type. Returns the PrerenderResult as JSON for the e2e.
+// ?remove=1 removes the page instead (prerender.remove()): the live handler
+// answers the next request.
 const GuidesTrigger: Handler<{ slug: string }> = async (ctx) => {
   const { router } = await import("./router.js");
-  const result = await router.prerender({
+  const prerender = router.prerender({
     env: ctx.env,
     ctx: ctx.executionContext,
-  })({ route: "guides.detail", params: { slug: ctx.params.slug } });
+  });
+  const target = {
+    route: "guides.detail",
+    params: { slug: ctx.params.slug },
+  } as const;
+  const result =
+    ctx.url.searchParams.get("remove") === "1"
+      ? await prerender.remove(target)
+      : await prerender(target);
   return prerenderResultJson(result);
 };
 
@@ -346,6 +360,9 @@ const GuidesTrigger: Handler<{ slug: string }> = async (ctx) => {
 //   default             -> plain refresh (always renders)
 //   ?onlyIfStale=1      -> cron-sweep opt-in; "already-fresh" when entry fresh
 //   ?markStale=<t>      -> KV tag-marker mark-stale (no render)
+//   ?remove=1           -> prerender.remove(): the "removed" marker, no render
+//   ?gone=1 / ?gone=0   -> delete / restore the slug in the data source, so
+//                          the next refresh hits notFound() or renders again
 const GuidePlainTrigger: Handler<{ slug: string }> = async (ctx) => {
   const { router } = await import("./router.js");
   const prerender = router.prerender({
@@ -357,9 +374,23 @@ const GuidePlainTrigger: Handler<{ slug: string }> = async (ctx) => {
     await prerender.markStale([staleTag]);
     return Response.json({ markedStale: staleTag });
   }
+  const gone = ctx.url.searchParams.get("gone");
+  if (gone) {
+    const goneKey = guidePlainGoneKey(ctx.params.slug);
+    if (gone === "1") await ctx.env.PRERENDER_KV.put(goneKey, "1");
+    else await ctx.env.PRERENDER_KV.delete(goneKey);
+    return Response.json({ gone: gone === "1" });
+  }
+  const target = {
+    route: "guidePlain",
+    params: { slug: ctx.params.slug },
+  } as const;
+  if (ctx.url.searchParams.get("remove") === "1") {
+    return prerenderResultJson(await prerender.remove(target));
+  }
   const onlyIfStale = ctx.url.searchParams.get("onlyIfStale") === "1";
   const result = await prerender(
-    { route: "guidePlain", params: { slug: ctx.params.slug } },
+    target,
     onlyIfStale ? { onlyIfStale: true } : undefined,
   );
   return prerenderResultJson(result);
