@@ -340,7 +340,7 @@ export async function resolveLoadersWithRevalidation<TEnv>(
         );
       // Deferral replaces execution: the loader would have run, and its
       // cache() is not read either (resolveLoaderData is never reached).
-      if (defersLoader(ctx, loaderEntry)) {
+      if (defersLoader(ctx, loaderEntry, segmentId, clientSegmentIds)) {
         const deferred: ResolvedSegment = {
           id: segmentId,
           namespace: entry.id,
@@ -804,7 +804,9 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
 
     // A slot with its own flagged loading() is its own unit: a prefetch
     // sends its fallback instead of running the slot handler.
-    const deferSlot = shouldResolve && defersUnit(context, parallelEntry);
+    const deferSlot =
+      shouldResolve &&
+      defersUnit(context, parallelEntry, parallelId, clientSegmentIds);
     if (deferSlot) markUnitDeferred(context, parallelId);
     const { component, handlerRan } = deferSlot
       ? { component: null, handlerRan: false }
@@ -952,7 +954,7 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
     async () => {
       // Deferral replaces execution: the handler would have run, and a
       // prefetch sends the entry's fallback in its place.
-      if (defersUnit(context, entry)) {
+      if (defersUnit(context, entry, entry.shortCode, clientSegmentIds)) {
         deferred = true;
         markUnitDeferred(context, entry.shortCode);
         return null;

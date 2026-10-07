@@ -100,7 +100,7 @@ import { pushRevalidationTraceEntry, isTraceActive } from "../logging.js";
 import { treeHasStreaming } from "./segment-resolution.js";
 import { loaderPins } from "../segment-resolution/loader-cache.js";
 import {
-  chainUnitPossible,
+  defersAboveRecord,
   isFillRequest,
 } from "../segment-resolution/prefetch-deferral.js";
 import type { PrerenderStore, PrerenderEntry } from "../../prerender/store.js";
@@ -718,14 +718,14 @@ export function withCacheLookup<TEnv>(
       throw new ShellRecordUnavailableError(tailMarker.fixedDocKey);
     }
 
-    // A prefetch that can defer a layout or route above the boundary
-    // (prefetch: false) emits nothing the record holds: reading it would
-    // replay the handle pushes of segments the response does not carry.
-    // withCacheStore skips the write for the same request.
+    // A prefetch that defers a layout above the boundary (prefetch: false)
+    // emits nothing the record holds: reading it would replay the handle
+    // pushes of segments the response does not carry. withCacheStore skips
+    // the write for the same request.
     if (
       ctx.isAction ||
       !ctx.cacheScope?.enabled ||
-      chainUnitPossible(ctx.handlerContext)
+      defersAboveRecord(ctx.handlerContext, ctx.clientSegmentSet)
     ) {
       yield* source;
       if (ms) {

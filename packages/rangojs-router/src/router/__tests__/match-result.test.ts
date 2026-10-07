@@ -224,11 +224,11 @@ describe("match-result", () => {
     });
 
     // prefetch: false. A deferred unit has a null component like a held
-    // segment, but it replaces the client's copy with its fallback.
-    it("should send a deferred unit the client already holds, with its marker", () => {
+    // segment, and is new to the client: only such a segment is deferred.
+    it("should send a deferred unit with its marker", () => {
       const ctx = createMockContext({
         isFullMatch: false,
-        clientSegmentIds: ["layout", "route"],
+        clientSegmentIds: ["layout"],
       });
       const state = createPipelineState();
       state.matchedIds = ["layout", "route"];

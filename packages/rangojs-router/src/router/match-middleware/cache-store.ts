@@ -115,7 +115,7 @@ import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
 import type { GeneratorMiddleware } from "./cache-lookup.js";
 import { rerenderAndCacheRoute } from "./background-revalidation.js";
 import {
-  chainUnitPossible,
+  defersAboveRecord,
   isFillRequest,
 } from "../segment-resolution/prefetch-deferral.js";
 
@@ -153,20 +153,15 @@ export function withCacheStore<TEnv>(
     // segments were collected into allSegments either way).
     recordShellCaptureDocRecord(ctx, state, allSegments);
 
-    // prefetch: false (prefetch-deferral.ts). A prefetch that can defer a
-    // unit above the boundary did not read the record (withCacheLookup) and
-    // could only write an incomplete one. A fill renders what the client is
-    // missing and nothing else: a write would be partial, and the proactive
-    // re-render below would run the handlers the fill must not run. The
-    // stale-hit refresh skips a fill for the same reason
-    // (withBackgroundRevalidation).
+    // prefetch: false (prefetch-deferral.ts). A prefetch that deferred a
+    // layout above the boundary did not read the record (withCacheLookup)
+    // and could only write an incomplete one.
     if (
       !ctx.cacheScope?.enabled ||
       ctx.isAction ||
       state.cacheHit ||
       ctx.request.method !== "GET" ||
-      isFillRequest(ctx.handlerContext) ||
-      chainUnitPossible(ctx.handlerContext)
+      defersAboveRecord(ctx.handlerContext, ctx.clientSegmentSet)
     ) {
       if (ms) {
         ms.metrics.push({
@@ -204,6 +199,14 @@ export function withCacheStore<TEnv>(
         ctx.clientSegmentSet.has(s.id) &&
         cacheScope.covers(s.id, s.namespace),
     );
+
+    // A fill renders what the client is missing and nothing else. When that
+    // is everything the record covers, it writes like any other request.
+    // When the client holds part of it, the write would be partial, and the
+    // proactive re-render below would run handlers a fill must not run. The
+    // stale-hit refresh skips a fill for the same reason
+    // (withBackgroundRevalidation).
+    if (hasNullComponents && isFillRequest(ctx.handlerContext)) return;
 
     const requestCtx = getRequestContext();
     if (!requestCtx) return;

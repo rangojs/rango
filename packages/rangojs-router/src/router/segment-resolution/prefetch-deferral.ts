@@ -11,10 +11,17 @@
  * would inherit a prefetch's mode.
  *
  * The decisions themselves are made in revalidation.ts, by asking this module.
+ *
+ * One rule runs through every decision: the flag applies only to a segment
+ * the client does not have yet. A segment the client holds is never deferred,
+ * whether or not it re-renders, and nothing is deferred because of it. A
+ * placeholder over content that is on screen would replace it with a fallback,
+ * or make the click wait where a plain navigation would not.
  */
 
 import {
   getParallelEntries,
+  getParallelSlotEntries,
   isPprEntry,
   type EntryData,
   type LoaderEntry,
@@ -24,8 +31,13 @@ import type { CacheScope } from "../../cache/cache-scope.js";
 
 /** Static, per matched chain. */
 export interface DeferralScope {
-  /** Loader registrations a prefetch defers when they would run. */
-  readonly loaders: ReadonlySet<LoaderEntry>;
+  /**
+   * Loader registrations a prefetch can defer, each with what makes it so:
+   * `true` for its own flag, else the segment ids of the flagged entries whose
+   * fallback covers it. A covered loader is deferred only while one of those
+   * segments is new to the client.
+   */
+  readonly loaders: ReadonlyMap<LoaderEntry, true | readonly string[]>;
   /** `$$id`s of `loaders`: the loaders that cannot call ctx.rendered(). */
   readonly loaderIds: ReadonlySet<string>;
   /**
@@ -55,7 +67,7 @@ export interface PrefetchDeferral {
 }
 
 const EMPTY_SCOPE: DeferralScope = {
-  loaders: new Set(),
+  loaders: new Map(),
   loaderIds: new Set(),
   units: new Map(),
 };
@@ -80,7 +92,7 @@ export function resolveDeferralScope(
   const cached = scopes.get(leaf);
   if (cached) return cached;
 
-  const loaders = new Set<LoaderEntry>();
+  const loaders = new Map<LoaderEntry, true | readonly string[]>();
   const loaderIds = new Set<string>();
   const units = new Map<EntryData, number>();
   const chain = new Set(entries);
@@ -91,9 +103,16 @@ export function resolveDeferralScope(
   // render loading() themselves (segment-system.tsx): the flag is inert.
   const inert = leaf.clientGroup !== undefined;
 
-  const collect = (entry: EntryData, behind: boolean, index: number): void => {
+  // `behind`: the segment ids of the flagged entries whose fallback covers
+  // `entry`'s loaders.
+  const collect = (
+    entry: EntryData,
+    behind: readonly string[],
+    index: number,
+  ): void => {
     for (const loaderEntry of entry.loader ?? []) {
-      if (!behind && loaderEntry.prefetch !== false) continue;
+      const own = loaderEntry.prefetch === false;
+      if (!own && behind.length === 0) continue;
       if (pprRoute && loaderEntry.bake) {
         if (
           process.env.NODE_ENV !== "production" &&
@@ -108,31 +127,43 @@ export function resolveDeferralScope(
         }
         continue;
       }
-      loaders.add(loaderEntry);
+      loaders.set(loaderEntry, own ? true : behind);
       loaderIds.add(loaderEntry.loader.$$id);
     }
     for (const parallelEntry of getParallelEntries(entry.parallel)) {
       const flagged = flagsLoading(parallelEntry);
       if (flagged) units.set(parallelEntry, index);
-      collect(parallelEntry, behind || flagged, index);
+      // A slot's segment id, as resolveParallelSegmentsWithRevalidation
+      // (revalidation.ts) forms it.
+      const slotIds = flagged
+        ? getParallelSlotEntries(entry.parallel)
+            .filter((slot) => slot.entry === parallelEntry)
+            .map((slot) => `${entry.shortCode}.${slot.slot}`)
+        : [];
+      collect(parallelEntry, [...behind, ...slotIds], index);
     }
     for (const orphan of entry.layout) {
       if (chain.has(orphan)) continue;
       // An orphan layout's handler is awaited after its owner's ran
       // (revalidation.ts resolveOrphanLayoutWithRevalidation): never a unit,
       // its loaders are still behind its fallback.
-      collect(orphan, behind || flagsLoading(orphan), index);
+      collect(
+        orphan,
+        flagsLoading(orphan) ? [...behind, orphan.shortCode] : behind,
+        index,
+      );
     }
   };
 
   if (!inert) {
-    let behind = false;
+    let behind: readonly string[] = [];
     entries.forEach((entry, index) => {
       const flagged = flagsLoading(entry);
       if (flagged) units.set(entry, index);
-      collect(entry, behind || flagged, index);
+      const own = flagged ? [...behind, entry.shortCode] : behind;
+      collect(entry, own, index);
       // A layout's fallback covers its outlet: every deeper chain entry.
-      if (flagged && entry.type !== "route") behind = true;
+      if (flagged && entry.type !== "route") behind = own;
     });
   }
 
@@ -221,13 +252,22 @@ export function isFillRequest(ctx: HandlerContext<any, any>): boolean {
   return getPrefetchDeferral(ctx)?.mode === "fill";
 }
 
-/** This prefetch defers `loaderEntry` when it would run. */
+/**
+ * This prefetch defers `loaderEntry`, whose segment is `segmentId`: the client
+ * does not hold that segment, and the loader is flagged itself or sits behind
+ * the fallback of a flagged entry the client does not hold either. Under a
+ * flagged layout the client holds, a new route's loaders run.
+ */
 export function defersLoader(
   ctx: HandlerContext<any, any>,
   loaderEntry: LoaderEntry,
+  segmentId: string,
+  held: ReadonlySet<string>,
 ): boolean {
   const plan = getPrefetchDeferral(ctx);
-  return plan?.mode === "prefetch" && plan.scope.loaders.has(loaderEntry);
+  if (plan?.mode !== "prefetch" || held.has(segmentId)) return false;
+  const by = plan.scope.loaders.get(loaderEntry);
+  return by === true || (by !== undefined && by.some((id) => !held.has(id)));
 }
 
 function unitEligible(plan: PrefetchDeferral, entry: EntryData): boolean {
@@ -239,13 +279,23 @@ function unitEligible(plan: PrefetchDeferral, entry: EntryData): boolean {
   );
 }
 
-/** This prefetch skips `entry`'s handler when it would run. */
+/**
+ * This prefetch skips the handler of `entry`, whose segment is `segmentId`:
+ * a unit the client does not hold. A held segment that re-renders is rendered
+ * by the prefetch, as by a navigation.
+ */
 export function defersUnit(
   ctx: HandlerContext<any, any>,
   entry: EntryData,
+  segmentId: string,
+  held: ReadonlySet<string>,
 ): boolean {
   const plan = getPrefetchDeferral(ctx);
-  return plan?.mode === "prefetch" && unitEligible(plan, entry);
+  return (
+    plan?.mode === "prefetch" &&
+    !held.has(segmentId) &&
+    unitEligible(plan, entry)
+  );
 }
 
 /**
@@ -263,15 +313,26 @@ export function firstUnitCandidate(
 }
 
 /**
- * This prefetch can skip a layout or route above the route cache's boundary,
- * and with it everything the record below holds: withCacheLookup and
- * withCacheStore leave the record alone for it.
+ * This prefetch skips a layout above the route cache's boundary, and with it
+ * everything the record below holds: withCacheLookup and withCacheStore leave
+ * the record alone for it. Decided per request, from what the client holds:
+ * a prefetch of the same tree that holds the layout reads and writes the
+ * record like any other request.
  */
-export function chainUnitPossible(ctx: HandlerContext<any, any>): boolean {
+export function defersAboveRecord(
+  ctx: HandlerContext<any, any>,
+  held: ReadonlySet<string>,
+): boolean {
   const plan = getPrefetchDeferral(ctx);
   if (plan?.mode !== "prefetch") return false;
   for (const entry of plan.scope.units.keys()) {
-    if (entry.type !== "parallel" && unitEligible(plan, entry)) return true;
+    if (
+      entry.type !== "parallel" &&
+      !held.has(entry.shortCode) &&
+      unitEligible(plan, entry)
+    ) {
+      return true;
+    }
   }
   return false;
 }
