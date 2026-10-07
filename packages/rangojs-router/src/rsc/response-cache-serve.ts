@@ -102,10 +102,11 @@ export async function serveResponseRouteWithCache(
     return undefined;
   }
 
-  // Default key: response:{type}: + host-namespaced base (sorted search, reserved
-  // _rsc*/__* params excluded). Same composition as document/segment tiers so
-  // the host-namespacing and search-normalization rules cannot drift.
-  let cacheKey = `response:${responseType}:${cacheKeyBase(url.host, url.pathname, url.searchParams, undefined, reqCtx._searchParamsFilter)}`;
+  // Default key: response:{type}: + router- and host-namespaced base (sorted
+  // search, reserved _rsc*/__* params excluded). Same composition as
+  // document/segment tiers so the namespacing and search-normalization rules
+  // cannot drift.
+  let cacheKey = `response:${responseType}:${cacheKeyBase(reqCtx._routerId, url.host, url.pathname, url.searchParams, undefined, reqCtx._searchParamsFilter)}`;
 
   // Keyed like the segment record (CacheScope.resolveKeyFrom): with key()
   // results on the cache() chain (a full override, namespaced, #975) or an

@@ -6,7 +6,10 @@
  * pulling the capture orchestration module or shell-serve.ts (React).
  */
 
-import { sortedSearchString } from "../cache/cache-key-utils.js";
+import {
+  routerKeyPrefix,
+  sortedSearchString,
+} from "../cache/cache-key-utils.js";
 import type { SearchParamsFilter } from "../cache/search-params-filter.js";
 
 /**
@@ -85,13 +88,20 @@ export function shellSearchSeed(url: URL, filter?: SearchParamsFilter): string {
 }
 
 /**
- * Shell cache key: host + pathname + sorted search + a `:shell` namespace suffix
- * (so it can never collide with a document-cache key; the store further isolates
- * the shell family internally).
+ * Shell cache key: router id + host + pathname + sorted search + a `:shell`
+ * namespace suffix (so it can never collide with a document-cache key; the
+ * store further isolates the shell family internally).
  *
  * The key includes the request HOST: in a multi-tenant host-router deployment
  * (one worker, one shared KV/runtime-cache store) a host-less key would serve
  * tenant A's captured shell to tenant B's users.
+ *
+ * And the serving ROUTER (routerKeyPrefix, #1065): a host and path reach two
+ * routers through a `hostOverride` cookie or a warm under another router's
+ * host. Keyed by host and path alone, router B's request was a HIT with
+ * router A's prelude whenever their versions matched (the entry's version
+ * stamp was the only guard), and with per-router versions each capture
+ * replaced the other router's shell.
  *
  * `filter` is the request's compiled `cache.searchParams` config
  * (ctx._searchParamsFilter): excluded params collapse onto one shell slot.
@@ -99,8 +109,12 @@ export function shellSearchSeed(url: URL, filter?: SearchParamsFilter): string {
  * and lookup makes every shell request a permanent miss. The testing helper
  * `shellCacheKey` (testing/shell-status.ts) builds its key with it too.
  */
-export function buildShellKey(url: URL, filter?: SearchParamsFilter): string {
-  return `${url.host}${url.pathname}${shellSearchSeed(url, filter)}:shell`;
+export function buildShellKey(
+  routerId: string,
+  url: URL,
+  filter?: SearchParamsFilter,
+): string {
+  return `${routerKeyPrefix(routerId)}${url.host}${url.pathname}${shellSearchSeed(url, filter)}:shell`;
 }
 
 /**

@@ -62,14 +62,16 @@ describe("dispatch: response-route cache keys are namespaced (#975)", () => {
     const get = client(router);
 
     // Unnamespaced, this header named /api/b's entry
-    // (`response:json:localhost/api/b`) and /api/b served /api/a's body.
-    expect(await get("/api/a", { "x-k": "json:localhost/api/b" })).toEqual({
+    // (`response:json:{router}@localhost/api/b`) and /api/b served /api/a's
+    // body.
+    const victim = `json:${router.id}@localhost/api/b`;
+    expect(await get("/api/a", { "x-k": victim })).toEqual({
       from: "a",
     });
     expect(await get("/api/b")).toEqual({ from: "b" });
     expect(putSpy.mock.calls.map(([key]) => key)).toEqual([
-      "response:key:json%3Alocalhost%2Fapi%2Fb",
-      "response:json:localhost/api/b",
+      `response:key:${encodeURIComponent(victim)}`,
+      `response:${victim}`,
     ]);
   });
 });
@@ -167,9 +169,12 @@ describe("dispatch: a nested response-route cache() inherits the enclosing scope
       locale: "de",
       run: en.run + 1,
     });
-    expect(putSpy.mock.calls.map(([key]) => key)).toEqual([
-      "response:response%3Ajson%3Alocalhost%2Fapi%2Fgreeting%7Cen|response%3Ajson%3Alocalhost%2Fapi%2Fgreeting",
-      "response:response%3Ajson%3Alocalhost%2Fapi%2Fgreeting%7Cde|response%3Ajson%3Alocalhost%2Fapi%2Fgreeting",
-    ]);
+    const defaultKey = `response:json:${router.id}@localhost/api/greeting`;
+    expect(putSpy.mock.calls.map(([key]) => key)).toEqual(
+      ["en", "de"].map(
+        (locale) =>
+          `response:${encodeURIComponent(`${defaultKey}|${locale}`)}|${encodeURIComponent(defaultKey)}`,
+      ),
+    );
   });
 });

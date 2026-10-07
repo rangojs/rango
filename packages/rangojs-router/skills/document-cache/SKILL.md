@@ -175,20 +175,22 @@ header or logs to identify an actual CDN hit.
 
 ## Cache Key Generation
 
-The default key is the host, pathname, and sorted search string (internal
-`_rsc*` params removed, `cache.searchParams` filtering applied), followed by
-suffixes that separate response variants:
+The default key is the serving router's id, the host, pathname, and sorted
+search string (internal `_rsc*` params removed, `cache.searchParams` filtering
+applied), followed by suffixes that separate response variants:
 
-- HTML document requests: `{host}{pathname}[?search]:html`
+- HTML document requests: `{routerId}@{host}{pathname}[?search]:html`
 - RSC requests (client navigations and full-document Flight fetches):
-  `{host}{pathname}[?search]:rsc`
+  `{routerId}@{host}{pathname}[?search]:rsc`
 - Client navigations additionally add a hash of the segments the client already
   has (`:{segmentHash}`), so navigations from pages with different layouts get
   different cached payloads, and a `:fragments` marker when the client accepts
   fragment envelopes.
 
-A custom `keyGenerator(url)` replaces only the `{host}{pathname}[?search]` part;
-the variant suffixes are still appended.
+A custom `keyGenerator(url)` replaces the whole
+`{routerId}@{host}{pathname}[?search]` part, router id included, so a generator
+used by routers that share a store must keep them apart itself; the variant
+suffixes are still appended.
 
 ## What Gets Cached
 
@@ -320,13 +322,13 @@ everything else.
 
 ## Document Cache vs Segment Cache
 
-| Feature      | Document Cache                        | Segment Cache (`cache()`)         |
-| ------------ | ------------------------------------- | --------------------------------- |
-| Granularity  | Full response                         | Individual segments               |
-| Opt-in       | `Cache-Control` `s-maxage`            | `cache({ ttl, swr })`             |
-| Loaders      | Frozen with the response              | Always run fresh                  |
-| Use case     | Static pages                          | Dynamic compositions              |
-| Key includes | host + URL + variant (+ segment hash) | host + pathname + params + search |
+| Feature      | Document Cache                                 | Segment Cache (`cache()`)                  |
+| ------------ | ---------------------------------------------- | ------------------------------------------ |
+| Granularity  | Full response                                  | Individual segments                        |
+| Opt-in       | `Cache-Control` `s-maxage`                     | `cache({ ttl, swr })`                      |
+| Loaders      | Frozen with the response                       | Always run fresh                           |
+| Use case     | Static pages                                   | Dynamic compositions                       |
+| Key includes | router + host + URL + variant (+ segment hash) | router + host + pathname + params + search |
 
 Use document cache for mostly-static pages. Use segment cache when different parts of a page have different cache requirements.
 

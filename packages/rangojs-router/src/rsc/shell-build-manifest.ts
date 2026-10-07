@@ -55,7 +55,7 @@ export interface BuildShellEntry {
 }
 
 interface ShellManifestModule {
-  /** Manifest key (pathname — see shell-manifest-key.ts) -> asset specifier. */
+  /** Manifest key (router id + pathname, shell-manifest-key.ts) -> asset specifier. */
   default: Record<string, string>;
   loadShellAsset: (spec: string) => Promise<{ default: BuildShellEntry }>;
 }
@@ -92,9 +92,8 @@ function loadManifest(): Promise<ShellManifestModule | null> {
  * the document HIT decodes the prelude once per serve (openShellDocument),
  * partial replay never does. `null` memoizes a failed verdict —
  * deterministically invalid. Keyed by the asking router's document version as
- * well as the spec: the manifest key is pathname-only (shell-manifest-key.ts),
- * so under a host router two routers with different versions can ask about one
- * record.
+ * well as the spec: the verdict depends on both, and a spec is a content hash,
+ * not a router's.
  */
 const validatedSpecs = new Map<string, ValidatedBuildShellEntry | null>();
 
@@ -266,13 +265,14 @@ async function fetchDevShellEntry(
 }
 
 /**
- * Whether a build-time shell exists for `pathname` (the caller checks the
- * request is search-less, like the entries lookupBuildShell serves): a
- * manifest entry for the path in production, a Prerender route in dev. No
- * asset load and no dev capture: it only decides whether a request that
- * cannot read the build shell deserves a warning.
+ * Whether the router `routerId` has a build-time shell for `pathname` (the
+ * caller checks the request is search-less, like the entries lookupBuildShell
+ * serves): a manifest entry for the path in production, a Prerender route in
+ * dev. No asset load and no dev capture: it only decides whether a request
+ * that cannot read the build shell deserves a warning.
  */
 export async function hasBuildShell(
+  routerId: string,
   pathname: string,
   dev?: DevShellLookup,
 ): Promise<boolean> {
@@ -280,12 +280,14 @@ export async function hasBuildShell(
     return dev?.isPrerenderRoute === true;
   }
   const mod = await loadManifest();
-  return mod?.default[buildShellManifestKey(pathname)] !== undefined;
+  return mod?.default[buildShellManifestKey(routerId, pathname)] !== undefined;
 }
 
 /**
- * Look up the baked shell entry for a request, applying every serve gate:
- * search-less requests only (the build captured the bare pathname; a
+ * Look up the shell the build baked for the serving router (`routerId`) and
+ * this request, applying every serve gate: the router's own entry only (the
+ * manifest key, shell-manifest-key.ts), search-less requests only (the build
+ * captured the bare pathname; a
  * search-bearing URL has its own shell identity owned by runtime capture),
  * version validity, payload integrity, and tag-invalidation markers. Returns
  * null on any gate failure — the caller degrades to the ordinary MISS path
@@ -297,6 +299,7 @@ export async function hasBuildShell(
  * traffic the shell was prerendered for.
  */
 export async function lookupBuildShell(
+  routerId: string,
   url: URL,
   buildVersion: string,
   store: SegmentCacheStore,
@@ -314,7 +317,7 @@ export async function lookupBuildShell(
     if (hasManifest) {
       const mod = await loadManifest();
       if (!mod) return null;
-      const spec = mod.default[buildShellManifestKey(url.pathname)];
+      const spec = mod.default[buildShellManifestKey(routerId, url.pathname)];
       if (!spec) return null;
       record = await validatedManifestRecord(mod, spec, buildVersion);
     } else if (dev) {
@@ -341,7 +344,7 @@ export async function lookupBuildShell(
         // diagnostic; the route keeps runtime-capture semantics.
         warnOnce(
           "build-shell-tag-check",
-          buildShellManifestKey(url.pathname),
+          buildShellManifestKey(routerId, url.pathname),
           () =>
             `[rango] Build-time shell for "${url.pathname}" carries cache tags, but ` +
             "the app cache store cannot answer tag-invalidation history durably " +

@@ -398,6 +398,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       const cacheKey = keyGenerator
         ? keyGenerator(url) + segmentHash + fragmentSuffix + typeSuffix
         : cacheKeyBase(
+            requestCtx?._routerId,
             url.host,
             url.pathname,
             url.searchParams,

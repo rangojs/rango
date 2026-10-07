@@ -138,7 +138,7 @@ function getDefaultRouteCacheKey(
     ? "intercept"
     : (prefixOverride ?? (isPartial ? "partial" : "doc"));
 
-  return `${prefix}:${cacheKeyBase(host, pathname, searchParams, params, ctx?._searchParamsFilter)}`;
+  return `${prefix}:${cacheKeyBase(ctx?._routerId, host, pathname, searchParams, params, ctx?._searchParamsFilter)}`;
 }
 
 // ============================================================================
@@ -1177,7 +1177,8 @@ function collectRecordTags(
  * enclosing scopes on another store (#974) and of a scope without its own
  * `key()` (#970)); with none, the app store's keyGenerator result
  * given the document default key. Undefined (synchronously, with no work)
- * when neither applies: the shell key stays host + path + filtered search.
+ * when neither applies: the shell key stays router + host + path + filtered
+ * search.
  * Resolves to null when the partition is the default key itself (a
  * keyGenerator that returns it unchanged): that partitions nothing, so the
  * shell stays unpartitioned and keeps its build shell. The shell's key, its

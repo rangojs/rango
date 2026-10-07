@@ -521,10 +521,13 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
         }
       } else if (arg instanceof Request) {
         // A raw Request (ctx.request) is request-scoped like ctx: fold in its
-        // URL with the same host-namespacing and search normalization.
+        // URL with the same host-namespacing and search normalization. No
+        // router part: the entry is keyed by the function and its arguments,
+        // whichever router calls it.
         const url = new URL(arg.url);
         keyArgs.push(
           cacheKeyBase(
+            undefined,
             url.host,
             url.pathname,
             url.searchParams,

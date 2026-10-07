@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { createElement } from "react";
 import {
   buildShellKey,
+  navigationShellKey,
+  partitionShellKey,
   resolvePprConfig,
   shellReloadScript,
   shellSearchSeed,
@@ -219,8 +221,38 @@ describe("shellSearchSeed — the key's search portion IS the render seed", () =
 
   it("buildShellKey embeds exactly the seed, so key and render can never disagree", () => {
     const url = new URL("https://shop.example/products?b=2&a=1");
-    expect(buildShellKey(url)).toBe(
-      `shop.example/products${shellSearchSeed(url)}:shell`,
+    expect(buildShellKey("shop", url)).toBe(
+      `shop@shop.example/products${shellSearchSeed(url)}:shell`,
+    );
+  });
+});
+
+// #1065: a hostOverride cookie or a warm under another router's host puts two
+// routers on one host and path. Keyed by host and path alone, they shared one
+// shell entry.
+describe("buildShellKey — a shell belongs to one router", () => {
+  const url = new URL("https://preview.dev/shelled");
+
+  it("two routers on one host and path build two keys", () => {
+    expect(buildShellKey("app-a", url)).toBe("app-a@preview.dev/shelled:shell");
+    expect(buildShellKey("app-b", url)).toBe("app-b@preview.dev/shelled:shell");
+  });
+
+  it("the partition and the navigation entry stay under the router's key", () => {
+    const key = buildShellKey("app-a", url);
+    expect(partitionShellKey(key, "tier:gold")).toBe(
+      "app-a@preview.dev/shelled:shell|tier%3Agold",
+    );
+    expect(navigationShellKey(key)).toBe(
+      "app-a@preview.dev/shelled:shell:navigation",
+    );
+  });
+
+  it("encodes the id: an explicit id cannot name another router's shell", () => {
+    // Raw, the id `a@x` on host `y` and the id `a` on host `x@y` would be one
+    // string; a host holds no `@`, and neither does an encoded id.
+    expect(buildShellKey("a@preview.dev", new URL("https://x/shelled"))).toBe(
+      "a%40preview.dev@x/shelled:shell",
     );
   });
 });
@@ -256,7 +288,10 @@ describe("shellReloadScript", () => {
 
   it("the marker never partitions the shell key", () => {
     expect(
-      buildShellKey(new URL("https://shop.test/p?b=2&_rsc_shell=miss&a=1")),
-    ).toBe(buildShellKey(new URL("https://shop.test/p?a=1&b=2")));
+      buildShellKey(
+        "shop",
+        new URL("https://shop.test/p?b=2&_rsc_shell=miss&a=1"),
+      ),
+    ).toBe(buildShellKey("shop", new URL("https://shop.test/p?a=1&b=2")));
   });
 });

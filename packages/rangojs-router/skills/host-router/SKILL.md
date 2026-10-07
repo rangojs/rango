@@ -383,3 +383,15 @@ Each `createRouter()` app has its own cache version, computed by `vite build` fr
 | Server code shared by A and B changes | cleared for A and B | cleared for A and B   | A's and B's tabs reload |
 
 The host entry (the file that creates the host router and its middleware) is not part of a lazily mounted sub-app's version. If host middleware changes what an app renders from inside a cache boundary, change that app's `version` or invalidate its tags. See `/cache-guide`.
+
+## Shared cache store
+
+Sub-apps may share one cache store (one KV namespace, one `MemorySegmentCacheStore`). Every entry that is a router's output for a host and path is keyed by that router as well: PPR shells (document, navigation and build-time), route `cache()` records, document-cache responses and response-route entries all start with the router's id (`{routerId}@{host}{path}...`). So two sub-apps never read each other's entry, including where they serve the same host and path:
+
+- with the `hostOverride` cookie, which picks the app and forwards the request unchanged, so every app answers under the one preview origin;
+- after a `fallback()` that hands a request to another app's handler;
+- after a `router.prerender()` warm that resolved another app's host as its origin.
+
+There is nothing to configure and no namespace to manage. What it relies on is that each router has a stable id: the one the Vite plugin injects for a `createRouter({ ... })` call written with an object literal, or the `id` you pass (`createRouter({ id: "admin", ... })`). A router the plugin cannot reach, for example `createRouter(options)` with an options variable, falls back to a counter (`router_0`, `router_1`, ...) that follows module evaluation order. One such router is fine. With more than one, the build already warns (`N routers use auto-generated IDs`), because routes and cache versions are matched by the same id; the fix is the same here: pass the object literal inline or set an `id`.
+
+Not keyed by router, on purpose: a loader's `cache()` entry (keyed by the loader and its inputs), `"use cache"` items (the function and its arguments), tag markers (an invalidation reaches every app), and any key you build yourself (`cache({ key })`, the document cache's `keyGenerator`).

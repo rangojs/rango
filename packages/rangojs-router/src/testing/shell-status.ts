@@ -15,7 +15,7 @@
  * 2. **Smallest status signals:** `x-rango-shell` (`HIT` | `MISS`) on document
  *    GETs, and `x-rango-ppr-replay` on partial requests to ppr routes. A replay
  *    HIT is reported only when matching consumes the captured segment record.
- *    Secondary unit signal: `store.getShell(shellCacheKey(url))` after a real
+ *    Secondary unit signal: `store.getShell(shellCacheKey(router, url))` after a real
  *    capture flush (background `putShell`). There is no Flight flag for shell HIT.
  *
  * 3. **A real MISS → capture → HIT in unit tests:** `serveShellRequest`
@@ -82,10 +82,16 @@ export interface ShellCachePartition {
 }
 
 /**
- * Shell store key for a document URL: the production `buildShellKey` (host +
- * pathname + sorted search + `:shell`) and `partitionShellKey`, both from the
- * React-free leaf `rsc/shell-capture-constants.ts`, so the testing barrel never
- * imports the shell-serve module (it pulls React).
+ * Shell store key of `router` for a document URL: the production
+ * `buildShellKey` (router id + host + pathname + sorted search + `:shell`)
+ * and `partitionShellKey`, both from the React-free leaf
+ * `rsc/shell-capture-constants.ts`, so the testing barrel never imports the
+ * shell-serve module (it pulls React).
+ *
+ * `router` is the router that serves the URL, or anything carrying its `id`
+ * (`{ id }` where the router cannot be imported, as in a Playwright test). A
+ * shell belongs to one router: two routers serving one host and path keep
+ * two entries.
  *
  * Accepts a `URL` or an absolute/relative request URL string (relative strings
  * resolve against `http://localhost`). Pass the router's `cache.searchParams`
@@ -101,13 +107,18 @@ export interface ShellCachePartition {
  *   `{ keys, generated }` (see {@link ShellCachePartition}).
  */
 export function shellCacheKey(
+  router: { readonly id: string },
   url: URL | string,
   searchParams?: CacheSearchParams,
   partition?: string | readonly string[] | ShellCachePartition,
 ): string {
   const resolved =
     typeof url === "string" ? new URL(url, "http://localhost") : url;
-  const key = buildShellKey(resolved, compileSearchParamsFilter(searchParams));
+  const key = buildShellKey(
+    router.id,
+    resolved,
+    compileSearchParamsFilter(searchParams),
+  );
   if (partition === undefined) return key;
   const { keys = [], generated = [] }: ShellCachePartition =
     typeof partition === "string"

@@ -983,7 +983,8 @@ export const urlpatterns = urls(
       }> => {
         const target = ctx.searchParams.get("target") ?? "";
         const targetUrl = new URL(target, ctx.url);
-        const key = `${targetUrl.host}${targetUrl.pathname}${targetUrl.search}:shell`;
+        const { router } = await import("./router.js");
+        const key = `${router.id}@${targetUrl.host}${targetUrl.pathname}${targetUrl.search}:shell`;
         const requestContext = getRequestContext<AppBindings>();
         const store = new CFCacheStore({
           ctx: requestContext.executionContext!,

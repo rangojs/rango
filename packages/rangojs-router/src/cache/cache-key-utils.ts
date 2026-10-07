@@ -65,20 +65,49 @@ export function sortedRouteParams(
 }
 
 /**
- * Host-namespaced cache key base: `${host}${pathname}[:params][?search]`.
+ * The router part of a key that names one router's output for a host and
+ * path: `{encodeURIComponent(routerId)}@`, or "" without a router.
  *
- * The ONE composition of the host-namespacing rule, shared by the segment tier
- * (cache-scope.ts) and the document tier (document-cache.ts) so the rule cannot
- * drift between them. Host prefixing matters because VercelCacheStore /
- * MemorySegmentCacheStore key by the raw string (only CFCacheStore adds host
- * internally) -- on a single function serving multiple domains an
- * un-namespaced key bleeds tenant A's cached response to tenant B.
+ * A host and path do not name a router (#1065): a `hostOverride` cookie picks
+ * the router and forwards the request unmodified, and a `router.prerender()`
+ * warm requests whatever origin it resolved. Without this part two routers on
+ * one store shared a shell, a route record and a document-cache response.
+ *
+ * The id (router.ts) has to be the same in every isolate and in build-time
+ * discovery: an explicit `id` and the injected `$$id` are, the `router_{n}`
+ * fallback is for a single router only. The lazy route manifest and the cache
+ * versions are keyed by the same id, and discover-routers.ts warns about
+ * several routers on the fallback.
+ *
+ * Encoded, the id holds no `@` or `/`, and a host holds no `@`: no id can be
+ * chosen to spell another router's key.
+ */
+export function routerKeyPrefix(routerId: string | undefined): string {
+  return routerId === undefined ? "" : `${encodeURIComponent(routerId)}@`;
+}
+
+/**
+ * Router- and host-namespaced cache key base:
+ * `[${routerId}@]${host}${pathname}[:params][?search]`.
+ *
+ * The ONE composition of the namespacing rule, shared by the segment tier
+ * (cache-scope.ts), the document tier (document-cache.ts) and the response
+ * tier (rsc/response-cache-serve.ts) so the rule cannot drift between them.
+ * Host prefixing matters because VercelCacheStore / MemorySegmentCacheStore
+ * key by the raw string (only CFCacheStore adds host internally) -- on a
+ * single function serving multiple domains an un-namespaced key bleeds tenant
+ * A's cached response to tenant B.
+ *
+ * `routerId` is the serving router's (RequestContext._routerId, see
+ * routerKeyPrefix); `undefined` for a key that names no router's output (a
+ * `"use cache"` argument, cache-runtime.ts).
  *
  * Output is BYTE-STABLE by contract: changing the composition silently
  * invalidates every persisted cache entry on upgrade. Callers append their own
  * tier-specific suffixes (`:rsc`/`:html`, segment hash) after this base.
  */
 export function cacheKeyBase(
+  routerId: string | undefined,
   host: string,
   pathname: string,
   searchParams?: URLSearchParams,
@@ -90,7 +119,7 @@ export function cacheKeyBase(
     ? sortedSearchString(searchParams, filter)
     : "";
 
-  let key = `${host}${pathname}`;
+  let key = `${routerKeyPrefix(routerId)}${host}${pathname}`;
   if (paramStr) key += `:${paramStr}`;
   if (searchStr) key += `?${searchStr}`;
   return key;

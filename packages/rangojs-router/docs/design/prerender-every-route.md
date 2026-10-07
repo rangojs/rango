@@ -204,7 +204,7 @@ first, so `cache(false)` and a refusing `condition()` still answer `bypass`
 resolving the key or reading the store. The miss lets `withCacheStore`
 (`router/match-middleware/cache-store.ts`) run its write path unchanged:
 `cacheRoute` resolves the same key a visitor would (`getDefaultRouteCacheKey`:
-`doc:` + `cacheKeyBase(host, pathname, search, params, filter)`, then the
+`doc:` + `cacheKeyBase(routerId, host, pathname, search, params, filter)`, then the
 `key()` / `keyGenerator` chain) and calls `store.set`, which replaces. Every
 shipped store's `set` is a replace (Cache API `put`, KV `put`, Vercel
 `cache.set`, `Map.set`).
@@ -306,8 +306,11 @@ into a new shell is exactly what a warm must not produce.
   `caches.shell: "refused"` with `refusal: "invalidated"`.
 - **Versions:** the store prefixes the document version; the entry's
   `buildVersion` is the handler's version, as on any capture.
-- **`cache.searchParams`:** the key is `buildShellKey(url, filter)`, the
-  search seed `shellSearchSeed(url, filter)`; both come from the warm's URL.
+- **`cache.searchParams`:** the key is `buildShellKey(routerId, url, filter)`,
+  the search seed `shellSearchSeed(url, filter)`; the URL is the warm's, the
+  router the one whose runner was called. A warm under another router's host
+  writes the warming router's shell, which the host's own router never reads
+  (#1065).
 - **Partitions:** `resolveRequestShellKey` runs the route's `key()` /
   `keyGenerator` against the header-less request, so only that partition is
   warmed.

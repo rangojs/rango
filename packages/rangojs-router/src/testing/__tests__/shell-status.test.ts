@@ -26,73 +26,104 @@ function entry(overrides: Partial<ShellCacheEntry> = {}): ShellCacheEntry {
   };
 }
 
+/** The router the keys below belong to: anything carrying a router's id. */
+const ROUTER = { id: "shop" };
+
 describe("shellCacheKey (production key identity)", () => {
+  // #1065: a shell belongs to one router. Keyed by host and path alone, two
+  // routers serving one host and path (a hostOverride cookie, a warm under
+  // another router's host) read and overwrote each other's shell.
+  it("carries the router's id: two routers on one URL have two keys", () => {
+    const url = "http://shop.test/p";
+    expect(shellCacheKey(ROUTER, url)).toBe("shop@shop.test/p:shell");
+    expect(shellCacheKey({ id: "preview" }, url)).toBe(
+      "preview@shop.test/p:shell",
+    );
+    expect(shellCacheKey({ id: "a/b@c" }, url)).toBe(
+      "a%2Fb%40c@shop.test/p:shell",
+    );
+  });
+
   it("appends a key() result's partition exactly as the serve path does: namespaced (#975)", () => {
     const url = new URL("http://shop.test/p?b=2&a=1");
-    expect(shellCacheKey(url, undefined, "tier:gold")).toBe(
-      partitionShellKey(buildShellKey(url), "key:tier%3Agold"),
+    expect(shellCacheKey(ROUTER, url, undefined, "tier:gold")).toBe(
+      partitionShellKey(buildShellKey(ROUTER.id, url), "key:tier%3Agold"),
     );
-    expect(shellCacheKey(url, undefined, "tier:gold")).not.toBe(
-      shellCacheKey(url, undefined, "tier:silver"),
+    expect(shellCacheKey(ROUTER, url, undefined, "tier:gold")).not.toBe(
+      shellCacheKey(ROUTER, url, undefined, "tier:silver"),
     );
   });
 
   it("encodes the partition, so no partition can end in another key's suffix", () => {
     const url = new URL("http://shop.test/p");
-    const key = shellCacheKey(url, undefined, "tier:gold:navigation");
-    expect(key).toBe("shop.test/p:shell|key%3Atier%253Agold%253Anavigation");
-    expect(key).not.toBe(
-      `${shellCacheKey(url, undefined, "tier:gold")}:navigation`,
+    const key = shellCacheKey(ROUTER, url, undefined, "tier:gold:navigation");
+    expect(key).toBe(
+      "shop@shop.test/p:shell|key%3Atier%253Agold%253Anavigation",
     );
-    expect(shellCacheKey(url, undefined, "a|b")).toBe(
-      "shop.test/p:shell|key%3Aa%257Cb",
+    expect(key).not.toBe(
+      `${shellCacheKey(ROUTER, url, undefined, "tier:gold")}:navigation`,
+    );
+    expect(shellCacheKey(ROUTER, url, undefined, "a|b")).toBe(
+      "shop@shop.test/p:shell|key%3Aa%257Cb",
     );
   });
 
   it("composes nested cache() key() results, outermost first, as the record key does (#970)", () => {
     const url = new URL("http://shop.test/p");
-    expect(shellCacheKey(url, undefined, ["tier:gold", "v:a"])).toBe(
-      partitionShellKey(buildShellKey(url), "key:tier%3Agold|key:v%3Aa"),
+    expect(shellCacheKey(ROUTER, url, undefined, ["tier:gold", "v:a"])).toBe(
+      partitionShellKey(
+        buildShellKey(ROUTER.id, url),
+        "key:tier%3Agold|key:v%3Aa",
+      ),
     );
     // One key() result is the plain partition.
-    expect(shellCacheKey(url, undefined, ["tier:gold"])).toBe(
-      shellCacheKey(url, undefined, "tier:gold"),
+    expect(shellCacheKey(ROUTER, url, undefined, ["tier:gold"])).toBe(
+      shellCacheKey(ROUTER, url, undefined, "tier:gold"),
     );
-    expect(shellCacheKey(url, undefined, ["a|b", "c"])).not.toBe(
-      shellCacheKey(url, undefined, ["a", "b|c"]),
+    expect(shellCacheKey(ROUTER, url, undefined, ["a|b", "c"])).not.toBe(
+      shellCacheKey(ROUTER, url, undefined, ["a", "b|c"]),
     );
   });
 
   it("takes store keyGenerator results as `generated`: a lone one raw, with key() results encoded after them", () => {
     const url = new URL("http://shop.test/p");
     const generated = "doc:shop.test/p|de";
-    expect(shellCacheKey(url, undefined, { generated: [generated] })).toBe(
-      partitionShellKey(buildShellKey(url), generated),
-    );
     expect(
-      shellCacheKey(url, undefined, {
+      shellCacheKey(ROUTER, url, undefined, { generated: [generated] }),
+    ).toBe(partitionShellKey(buildShellKey(ROUTER.id, url), generated));
+    expect(
+      shellCacheKey(ROUTER, url, undefined, {
         keys: ["tier:gold"],
         generated: [generated],
       }),
     ).toBe(
       partitionShellKey(
-        buildShellKey(url),
+        buildShellKey(ROUTER.id, url),
         "key:tier%3Agold|doc%3Ashop.test%2Fp%7Cde",
       ),
     );
-    expect(shellCacheKey(url, undefined, { keys: ["tier:gold"] })).toBe(
-      shellCacheKey(url, undefined, "tier:gold"),
+    expect(shellCacheKey(ROUTER, url, undefined, { keys: ["tier:gold"] })).toBe(
+      shellCacheKey(ROUTER, url, undefined, "tier:gold"),
     );
     // A store whose result is the default key keeps its position as "".
-    expect(shellCacheKey(url, undefined, { generated: ["", generated] })).toBe(
-      partitionShellKey(buildShellKey(url), "|doc%3Ashop.test%2Fp%7Cde"),
+    expect(
+      shellCacheKey(ROUTER, url, undefined, { generated: ["", generated] }),
+    ).toBe(
+      partitionShellKey(
+        buildShellKey(ROUTER.id, url),
+        "|doc%3Ashop.test%2Fp%7Cde",
+      ),
     );
   });
 
   it("no key() or keyGenerator result is no partition", () => {
     const url = new URL("http://shop.test/p");
-    expect(shellCacheKey(url, undefined, [])).toBe(buildShellKey(url));
-    expect(shellCacheKey(url, undefined, {})).toBe(buildShellKey(url));
+    expect(shellCacheKey(ROUTER, url, undefined, [])).toBe(
+      buildShellKey(ROUTER.id, url),
+    );
+    expect(shellCacheKey(ROUTER, url, undefined, {})).toBe(
+      buildShellKey(ROUTER.id, url),
+    );
   });
 
   it("matches rsc/shell-serve buildShellKey for host+path+search", () => {
@@ -104,16 +135,18 @@ describe("shellCacheKey (production key identity)", () => {
     ];
     for (const href of cases) {
       const url = new URL(href);
-      expect(shellCacheKey(url)).toBe(buildShellKey(url));
-      expect(shellCacheKey(href)).toBe(buildShellKey(url));
+      expect(shellCacheKey(ROUTER, url)).toBe(buildShellKey(ROUTER.id, url));
+      expect(shellCacheKey(ROUTER, href)).toBe(buildShellKey(ROUTER.id, url));
     }
   });
 
   it("strips reserved router search params from the key (same as production)", () => {
     const withRsc = new URL("http://localhost/p?page=1&_rsc_partial=1");
     const bare = new URL("http://localhost/p?page=1");
-    expect(shellCacheKey(withRsc)).toBe(shellCacheKey(bare));
-    expect(shellCacheKey(withRsc)).toBe(buildShellKey(withRsc));
+    expect(shellCacheKey(ROUTER, withRsc)).toBe(shellCacheKey(ROUTER, bare));
+    expect(shellCacheKey(ROUTER, withRsc)).toBe(
+      buildShellKey(ROUTER.id, withRsc),
+    );
   });
 
   it("applies cache.searchParams the same way production buildShellKey does", () => {
@@ -121,12 +154,16 @@ describe("shellCacheKey (production key identity)", () => {
     const filter = compileSearchParamsFilter(searchParams);
     const tracked = new URL("http://localhost/p?utm_source=tw&fbclid=1&q=x");
     const bare = new URL("http://localhost/p?q=x");
-    expect(shellCacheKey(tracked, searchParams)).toBe(
-      buildShellKey(tracked, filter),
+    expect(shellCacheKey(ROUTER, tracked, searchParams)).toBe(
+      buildShellKey(ROUTER.id, tracked, filter),
     );
-    expect(shellCacheKey(tracked, searchParams)).toBe(shellCacheKey(bare));
+    expect(shellCacheKey(ROUTER, tracked, searchParams)).toBe(
+      shellCacheKey(ROUTER, bare),
+    );
     // Without the config, tracked params stay in the key.
-    expect(shellCacheKey(tracked)).not.toBe(shellCacheKey(bare));
+    expect(shellCacheKey(ROUTER, tracked)).not.toBe(
+      shellCacheKey(ROUTER, bare),
+    );
   });
 });
 
@@ -236,7 +273,7 @@ describe("MemorySegmentCacheStore + shellCacheKey (public store dogfood)", () =>
   it("stores and retrieves a shell under the production key after putShell", async () => {
     const store = new MemorySegmentCacheStore();
     const url = new URL("http://localhost/products/42?utm=x&sort=price");
-    const key = shellCacheKey(url);
+    const key = shellCacheKey(ROUTER, url);
 
     expect(await store.getShell(key)).toBeNull();
 
@@ -249,7 +286,10 @@ describe("MemorySegmentCacheStore + shellCacheKey (public store dogfood)", () =>
     // A different host must not collide (multi-tenant key contract).
     expect(
       await store.getShell(
-        shellCacheKey("https://other.example.com/products/42?sort=price"),
+        shellCacheKey(
+          ROUTER,
+          "https://other.example.com/products/42?sort=price",
+        ),
       ),
     ).toBeNull();
 

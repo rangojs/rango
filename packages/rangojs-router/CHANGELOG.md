@@ -72,6 +72,85 @@ What to know before you call it:
 returned for these routes, is gone. See the `prerender` skill, "Warm any route
 before traffic".
 
+### Fixed: two routers on one cache store no longer share entries for the same host and path ([#1065](https://github.com/rangojs/rango/issues/1065))
+
+A cached entry was keyed by the request's host and path. That names one page
+while each host goes to one router, the usual `createHostRouter()` setup. It
+does not when two routers answer under the same host and path:
+
+- `createHostRouter({ hostOverride })` picks the app from a cookie and
+  forwards the request unchanged, so on a preview origin every app serves the
+  same URL host;
+- a `fallback()` mapped to an app serves that app under whatever host the
+  request named;
+- `router.prerender()` warms the origin it resolved, which can be another
+  app's host.
+
+With one cache store behind both routers, what went wrong depended on their
+versions:
+
+| Versions of the two routers                                                              | `ppr` shell                                                                                                                  | `cache()` records, document cache, response routes |
+| ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| The same (development, or one `version` on both routers or on the store)                 | The second app's request was a HIT with the first app's page                                                                 | The second app was served the first app's entry    |
+| Their own (a production build), on `MemorySegmentCacheStore` or a store without versions | Each app's capture replaced the other's shell: a request after the other app's was a MISS again, so neither app kept a shell | The second app was served the first app's entry    |
+| Their own, on `CFCacheStore` or `VercelCacheStore`                                       | Stored apart already: the version is in the storage key                                                                      | Stored apart already                               |
+
+A build-time shell had the same gap: `vite build` staged it under the
+pathname, so another router with a `ppr` route on that pathname and the same
+`version` served it.
+
+Those keys now start with the id of the router that serves the request
+(`{routerId}@{host}{path}...`), and a build-time shell is staged under the id
+of the router it was captured for. Each app reads and writes its own shells,
+records and responses.
+
+```ts
+// preview.dev serves every app; the cookie names the one to show
+const host = createHostRouter({
+  hostOverride: { cookieName: "app", allowedHosts: ["preview.dev"] },
+});
+host.host("shop.internal").lazy(() => import("./apps/shop/handler.js"));
+host.host("admin.internal").lazy(() => import("./apps/admin/handler.js"));
+// GET https://preview.dev/pricing with app=shop.internal, then with
+// app=admin.internal: each app gets its own MISS, then its own HIT.
+```
+
+Nothing to configure, and no namespace or version to manage: the id is the
+router's own. Each router of a multi-router app needs a stable one, which
+routes and cache versions need already: write the `createRouter({ ... })`
+options as an object literal, so the Vite plugin gives the router an id, or
+pass `id`. The build's existing `N routers use auto-generated IDs` warning
+names the case that has neither.
+
+After upgrading, the stored keys are new, so `ppr` shells are captured again
+and `cache()` records, document-cache responses and response-route entries
+refill once. An upgrade starts every router on new cache versions anyway; an
+app that pins `version` starts cold once as well. A single-router app
+otherwise behaves as before: the same hits and misses and the same number of
+store reads. Unchanged, because they are not one router's output for a host
+and path: a loader's own `cache()` entry, `"use cache"` items, tag markers,
+and keys you build yourself (`cache({ key })`, the document cache's
+`keyGenerator`).
+
+### Breaking: the testing helper `shellCacheKey()` takes the router first ([#1065](https://github.com/rangojs/rango/issues/1065))
+
+A shell's store key now names the router that serves it, so the helper that
+builds that key needs the router:
+
+```ts
+// Before
+const key = shellCacheKey("/products/1");
+
+// After
+const key = shellCacheKey(router, "/products/1");
+```
+
+`router` is the router under test, or `{ id }` where the router cannot be
+imported (a Playwright test). `searchParams` and `partition` follow as
+before. TypeScript reports every call that still passes the URL first.
+`serveShellRequest()` is unchanged: its `result.key` is the key the serve
+path resolved.
+
 ### Fixed: a superseded link click no longer follows its server redirect ([#1047](https://github.com/rangojs/rango/issues/1047))
 
 When you clicked a link, then clicked another before the first response

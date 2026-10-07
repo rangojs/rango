@@ -164,9 +164,10 @@ cache(
 );
 ```
 
-- **Default key**: `{doc|partial|intercept}:{host}{pathname}[:params][?search]`
+- **Default key**: `{doc|partial|intercept}:{routerId}@{host}{pathname}[:params][?search]`
   — document requests, client navigations, and intercept navigations are cached
-  separately. The search part honors `cache.searchParams` (below).
+  separately, and so are two routers that share a store (see `/host-router`,
+  "Shared cache store"). The search part honors `cache.searchParams` (below).
 - **`key`** is a full override: it bypasses the default key, the store's
   `keyGenerator`, and the search-param filter. The result is stored
   namespaced (`key:` plus its URI encoding), so whatever it returns, request
