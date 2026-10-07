@@ -49,6 +49,7 @@ import {
 export {
   executionStart,
   invalidatedSince,
+  markResponseStart,
   type ExecutionStart,
 } from "./invalidation-order.js";
 
@@ -147,11 +148,12 @@ function markFreshReads(stores: SegmentCacheStore[]): void {
  * The write gate of every cache execution (#977): whether one of `tags` was
  * invalidated after the execution that produced the value started.
  *
- * Every built-in store stamps an entry when it is written (CFCacheStore's
- * `taggedAt`, VercelCacheStore's `ta`) or checks nothing on write
- * (MemorySegmentCacheStore), so a value read before an invalidation and
- * written after it would be served as newer than the invalidation until it
- * expires. Two answers, either one skips the write:
+ * A store stamps an entry with the execution's start (CFCacheStore's
+ * `taggedAt`, VercelCacheStore's `ta`, #1068), but only CFCacheStore with KV
+ * markers rejects it on a later request's read, and MemorySegmentCacheStore
+ * refuses the write. The gate saves the write everywhere and is the only
+ * guard where a read compares nothing. Two answers, either one skips the
+ * write:
  *
  * - this isolate's order (invalidatedSince), which sees every request's
  *   updateTag()/revalidateTag() here, the calling one included;
