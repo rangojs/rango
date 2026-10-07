@@ -229,7 +229,9 @@ export default {
     );
   },
 
-  // Queue consumer: the queue owns dedup across isolates.
+  // Queue consumer: the queue owns dedup across isolates. onlyIfStale: a
+  // message can run after another one refreshed the page, or after
+  // prerender.remove() removed it; then it renders nothing.
   async queue(
     batch: MessageBatch<{ target: PrerenderTargetObject }>,
     env: AppBindings,
@@ -237,7 +239,9 @@ export default {
   ) {
     const targets = batch.messages.map((m) => m.body.target);
     ctx.waitUntil(
-      router.prerender({ env, ctx }).many(targets, { concurrency: 8 }),
+      router
+        .prerender({ env, ctx })
+        .many(targets, { concurrency: 8, onlyIfStale: true }),
     );
   },
 };
