@@ -32,8 +32,29 @@ import {
   type EntryData,
   type LoaderEntry,
 } from "../../server/context.js";
+import { requestHeaders } from "../../server/request-headers.js";
 import type { HandlerContext, InternalHandlerContext } from "../../types.js";
 import type { CacheScope } from "../../cache/cache-scope.js";
+
+/** Request header of a `<Link>` prefetch (browser/prefetch/fetch.ts). */
+export const PREFETCH_HEADER = "X-Rango-Prefetch";
+/** Query param of a fill request (browser/navigation-client.ts). */
+export const FILL_PARAM = "_rsc_fill";
+
+/**
+ * What a request says it is, read once when its context is created
+ * (RequestContext._requestKind). A fill is marked on the raw URL and wins
+ * over the prefetch header. Whether a prefetch defers anything is decided per
+ * match, by partialDeferralMode: a shell capture inherits the context of the
+ * request that scheduled it and is never a prefetch.
+ */
+export function requestKind(
+  request: Request,
+  rawUrl: URL,
+): "prefetch" | "fill" | undefined {
+  if (rawUrl.searchParams.has(FILL_PARAM)) return "fill";
+  return requestHeaders(request).has(PREFETCH_HEADER) ? "prefetch" : undefined;
+}
 
 /** Static, per matched chain. */
 export interface DeferralScope {
@@ -200,9 +221,9 @@ export function resolveDeferralScope(
 }
 
 /**
- * Which half of the feature a partial request is, if either. A fill is marked
- * on the raw URL (browser/navigation-client.ts) and wins over the prefetch
- * header. A prefetch defers only on a plain GET navigation: an action
+ * Which half of the feature a partial request is, if either (`fill` and
+ * `prefetch` are requestKind's answer). A prefetch defers only on a plain GET
+ * navigation: an action
  * re-renders what it changed, an intercept resolves its loaders outside the
  * shared funnel, and a shell capture is never a prefetch whatever the request
  * that scheduled it sent. The four conditions overlap today (an action is a

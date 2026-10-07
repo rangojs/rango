@@ -57,6 +57,7 @@ import { resolveNavigation } from "./navigation-snapshot.js";
 import {
   partialDeferralMode,
   planPrefetchDeferral,
+  requestKind,
 } from "./segment-resolution/prefetch-deferral.js";
 
 /**
@@ -465,12 +466,14 @@ export async function createMatchContextForPartial<TEnv>(
   if (cacheScope) armRecordTagOwners();
   if (bindsLoaderCache(snapshot.entries)) armLoaderTagSets();
 
-  // `prefetch: false` (segment-resolution/prefetch-deferral.ts).
+  // `prefetch: false` (segment-resolution/prefetch-deferral.ts). With no
+  // request context (a match run on its own) the request is asked directly.
+  const kind = reqCtx ? reqCtx._requestKind : requestKind(request, rawUrl);
   const deferral = planPrefetchDeferral(
     snapshot.entries,
     partialDeferralMode({
-      fill: rawUrl.searchParams.has("_rsc_fill"),
-      prefetch: requestHeaders(request).has("X-Rango-Prefetch"),
+      fill: kind === "fill",
+      prefetch: kind === "prefetch",
       method: request.method,
       isAction,
       isIntercept,

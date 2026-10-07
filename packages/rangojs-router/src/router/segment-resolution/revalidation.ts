@@ -14,6 +14,7 @@ import {
   getParallelEntries,
   getParallelSlotEntries,
   type EntryData,
+  type LoaderEntry,
   type ParallelEntryData,
 } from "../../server/context";
 import type {
@@ -317,46 +318,29 @@ export async function resolveLoadersWithRevalidation<TEnv>(
   // (matchPartialWithPprReplay) seeds once its doc record hits.
   const bakeLane = !entryLoadingMasksLoaders(entry.loading);
 
+  const start = (loaderEntry: LoaderEntry, segmentId: string) =>
+    deps.wrapLoaderPromise(
+      runInsideLoaderScope(() =>
+        resolveLoaderData(
+          loaderEntry,
+          ctx,
+          ctx.pathname,
+          // `bake`, not awaitBeforeFlush: a navigation evaluation never
+          // carries awaitBeforeFlush, and an ssr: false loader must pin
+          // here exactly as on the document HIT.
+          bakeLane || loaderEntry.bake === true ? segmentId : null,
+        ),
+      ),
+      entry,
+      segmentId,
+      ctx.pathname,
+      errorContext,
+    );
+
   const loadersToRun = revalidationChecks.filter((c) => c.shouldRun);
   const segments: ResolvedSegment[] = loadersToRun.map(
     ({ loaderEntry, loader, segmentId, index }) => {
-      const run = () =>
-        deps.wrapLoaderPromise(
-          runInsideLoaderScope(() =>
-            resolveLoaderData(
-              loaderEntry,
-              ctx,
-              ctx.pathname,
-              // `bake`, not awaitBeforeFlush: a navigation evaluation never
-              // carries awaitBeforeFlush, and an ssr: false loader must pin
-              // here exactly as on the document HIT.
-              bakeLane || loaderEntry.bake === true ? segmentId : null,
-            ),
-          ),
-          entry,
-          segmentId,
-          ctx.pathname,
-          errorContext,
-        );
-      // Only a loader on a segment the client lacks (defersLoader). It
-      // would have run, and its cache() is not read either
-      // (resolveLoaderData is never reached).
-      if (defersLoader(ctx, loaderEntry, segmentId)) {
-        const deferred: ResolvedSegment = {
-          id: segmentId,
-          namespace: entry.id,
-          type: "loader",
-          index,
-          component: null,
-          params: ctx.params,
-          loaderId: loader.$$id,
-          belongsToRoute,
-          deferred: true,
-        };
-        deferredLoaderRuns.set(deferred, run);
-        return deferred;
-      }
-      return {
+      const base = {
         id: segmentId,
         namespace: entry.id,
         type: "loader" as const,
@@ -364,7 +348,22 @@ export async function resolveLoadersWithRevalidation<TEnv>(
         component: null,
         params: ctx.params,
         loaderId: loader.$$id,
-        loaderData: run(),
+      };
+      // Only a loader on a segment the client lacks (defersLoader). It
+      // would have run, and its cache() is not read either
+      // (resolveLoaderData is never reached).
+      if (defersLoader(ctx, loaderEntry, segmentId)) {
+        const deferred: ResolvedSegment = {
+          ...base,
+          belongsToRoute,
+          deferred: true,
+        };
+        deferredLoaderRuns.set(deferred, () => start(loaderEntry, segmentId));
+        return deferred;
+      }
+      return {
+        ...base,
+        loaderData: start(loaderEntry, segmentId),
         belongsToRoute,
       };
     },
@@ -1158,30 +1157,25 @@ export async function resolveSegmentWithRevalidation<TEnv>(
     }
   }
 
-  // A deferred unit's slots do not run; their loaders ride as deferred
-  // segments (resolveDeferredUnitSlotLoaders).
-  const resolveDeferredSlots = () =>
-    resolveDeferredUnitSlotLoaders(
-      entry,
-      context,
-      belongsToRoute,
-      clientSegmentIds,
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      routeKey,
-      deps,
-      actionContext,
-      stale,
-    );
-
-  if (routeHandlerResult) {
-    // Route entry: handler already executed above; resolve parallels
-    // (handler data visible) then push handler segment last for tree order.
-    const parallelResult = routeHandlerResult.segment.deferred
-      ? await resolveDeferredSlots()
-      : await resolveParallelSegmentsWithRevalidation(
+  // The entry's slots. A deferred unit's do not run; their loaders ride as
+  // deferred segments (resolveDeferredUnitSlotLoaders).
+  const resolveSlots = (deferred: boolean | undefined) =>
+    deferred
+      ? resolveDeferredUnitSlotLoaders(
+          entry,
+          context,
+          belongsToRoute,
+          clientSegmentIds,
+          prevParams,
+          request,
+          prevUrl,
+          nextUrl,
+          routeKey,
+          deps,
+          actionContext,
+          stale,
+        )
+      : resolveParallelSegmentsWithRevalidation(
           entry,
           params,
           context,
@@ -1196,6 +1190,13 @@ export async function resolveSegmentWithRevalidation<TEnv>(
           actionContext,
           stale,
         );
+
+  if (routeHandlerResult) {
+    // Route entry: handler already executed above; resolve parallels
+    // (handler data visible) then push handler segment last for tree order.
+    const parallelResult = await resolveSlots(
+      routeHandlerResult.segment.deferred,
+    );
     segments.push(...parallelResult.segments);
     matchedIds.push(...parallelResult.matchedIds);
 
@@ -1222,32 +1223,12 @@ export async function resolveSegmentWithRevalidation<TEnv>(
     segments.push(handlerResult.segment);
     matchedIds.push(handlerResult.matchedId);
 
-    if (handlerResult.segment.deferred) {
-      // Everything the layout's fallback covers is deferred with it:
-      // resolveAllSegmentsWithRevalidation stops the chain walk here.
-      const slotLoaders = await resolveDeferredSlots();
-      segments.push(...slotLoaders.segments);
-      matchedIds.push(...slotLoaders.matchedIds);
-      return { segments, matchedIds };
-    }
-
-    const parallelResult = await resolveParallelSegmentsWithRevalidation(
-      entry,
-      params,
-      context,
-      belongsToRoute,
-      clientSegmentIds,
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      routeKey,
-      deps,
-      actionContext,
-      stale,
-    );
+    const parallelResult = await resolveSlots(handlerResult.segment.deferred);
     segments.push(...parallelResult.segments);
     matchedIds.push(...parallelResult.matchedIds);
+    // Everything the layout's fallback covers is deferred with it:
+    // resolveAllSegmentsWithRevalidation stops the chain walk here.
+    if (handlerResult.segment.deferred) return { segments, matchedIds };
 
     for (const orphan of entry.layout) {
       if (chain?.includes(orphan)) continue;
