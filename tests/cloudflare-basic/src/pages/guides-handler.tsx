@@ -14,6 +14,9 @@ const knownGuides: Record<string, string> = {
 export const GuidesDetailDef = Prerender<{ slug: string }>(
   async () => Object.keys(knownGuides).map((slug) => ({ slug })),
   async (ctx) => {
+    // A param the build handler declines: the live handler answers for it
+    // (skipped-passthrough). Prefix-keyed so no other test's slug is touched.
+    if (ctx.params.slug.startsWith("declined-")) return ctx.passthrough();
     const title = knownGuides[ctx.params.slug] ?? `Guide: ${ctx.params.slug}`;
     const renderedAt = new Date().toISOString();
 

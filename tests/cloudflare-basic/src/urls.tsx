@@ -262,6 +262,7 @@ import { guidesPatterns } from "./pages/guides.js";
 import {
   GuidePlainDef,
   GuideSwrDef,
+  guidePlainFailKey,
   guidePlainGoneKey,
 } from "./pages/guide-plain.js";
 import { GuidePlainLoader } from "./loaders/guide-plain.js";
@@ -363,6 +364,10 @@ const GuidesTrigger: Handler<{ slug: string }> = async (ctx) => {
 //   ?remove=1           -> prerender.remove(): the "removed" marker, no render
 //   ?gone=1 / ?gone=0   -> delete / restore the slug in the data source, so
 //                          the next refresh hits notFound() or renders again
+//   ?fail=1 / ?fail=0   -> take the data source down / bring it back, so the
+//                          next refresh throws something other than notFound()
+//   ?target=<path> (repeated) -> prerender.many(targets): the results as a
+//                          JSON array in target order
 const GuidePlainTrigger: Handler<{ slug: string }> = async (ctx) => {
   const { router } = await import("./router.js");
   const prerender = router.prerender({
@@ -380,6 +385,24 @@ const GuidePlainTrigger: Handler<{ slug: string }> = async (ctx) => {
     if (gone === "1") await ctx.env.PRERENDER_KV.put(goneKey, "1");
     else await ctx.env.PRERENDER_KV.delete(goneKey);
     return Response.json({ gone: gone === "1" });
+  }
+  const fail = ctx.url.searchParams.get("fail");
+  if (fail) {
+    const failKey = guidePlainFailKey(ctx.params.slug);
+    if (fail === "1") await ctx.env.PRERENDER_KV.put(failKey, "1");
+    else await ctx.env.PRERENDER_KV.delete(failKey);
+    return Response.json({ fail: fail === "1" });
+  }
+  const targets = ctx.url.searchParams.getAll("target");
+  if (targets.length > 0) {
+    const results = await prerender.many(targets);
+    return Response.json(
+      results.map((r) =>
+        !r.ok && r.error instanceof Error
+          ? { ...r, error: r.error.message }
+          : r,
+      ),
+    );
   }
   const target = {
     route: "guidePlain",

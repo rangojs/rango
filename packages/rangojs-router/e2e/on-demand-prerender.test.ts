@@ -2,9 +2,13 @@ import { expect, test, type APIResponse, type Page } from "@playwright/test";
 import { useFixture, type Fixture } from "./fixture";
 import { waitForHydration, expectNoPageError } from "./helper";
 import {
+  expectDeclinedPassthroughParamServedLive,
+  expectFailedRefreshKeepsStoredPage,
+  expectManyReturnsOneResultPerTargetInOrder,
   expectRemovedBakedPageAnswers404,
   expectRemovedPassthroughPageRunsLiveHandler,
   expectRemovedUnbakedPageAnswers404,
+  type PrerenderOutcomesFixture,
   type PrerenderRemoveFixture,
 } from "@shared/e2e";
 
@@ -325,9 +329,47 @@ function defineRemoveTests(f: Fixture) {
   });
 }
 
+// Results with no page to show for them (#1060): many(), render-failed and
+// skipped-passthrough. The bodies are shared with
+// tests/cloudflare-basic/e2e/prerender-ondemand.test.ts.
+const outcomesFixture = (f: Fixture): PrerenderOutcomesFixture => ({
+  path: (slug) => `/on-demand-plain/${slug}`,
+  pageUrl: (slug) => f.url(`/on-demand-plain/${slug}`),
+  triggerUrl: (slug) => f.url(`/od-plain-trigger/${slug}`),
+  slugTestId: "od-plain-slug",
+  stampTestId: "od-plain-stamp",
+  onDemandTestId: "od-plain-ondemand",
+  passthrough: {
+    pageUrl: (slug) => f.url(`/on-demand/${slug}`),
+    triggerUrl: (slug) => f.url(`/od-trigger/${slug}`),
+    sourceTestId: "od-source",
+  },
+});
+
+function defineOutcomeTests(f: Fixture) {
+  test("prerender.many() returns one result per target in order, and each rendered page then serves from the store", async ({
+    page,
+  }) => {
+    await expectManyReturnsOneResultPerTargetInOrder(page, outcomesFixture(f));
+  });
+
+  test("a refresh that fails any other way is render-failed, and the stored page keeps serving", async ({
+    page,
+  }) => {
+    await expectFailedRefreshKeepsStoredPage(page, outcomesFixture(f));
+  });
+
+  test("a Passthrough param the build handler declines is skipped-passthrough, and the live handler serves it", async ({
+    page,
+  }) => {
+    await expectDeclinedPassthroughParamServedLive(page, outcomesFixture(f));
+  });
+}
+
 test.describe("on-demand prerender (dev mode)", () => {
   const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
   defineRemoveTests(f);
+  defineOutcomeTests(f);
 
   test("live handler until triggered, then durable overlay serves prerender", async ({
     page,
@@ -396,6 +438,7 @@ test.describe("on-demand prerender (dev mode)", () => {
 test.describe("on-demand prerender (production)", () => {
   const f = useFixture({ root: "./e2e/test-app", mode: "build" });
   defineRemoveTests(f);
+  defineOutcomeTests(f);
 
   test("live handler until triggered, then durable overlay serves prerender", async ({
     page,

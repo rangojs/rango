@@ -2,9 +2,13 @@ import { expect, test, type APIResponse, type Page } from "@playwright/test";
 import { useFixture, type Fixture } from "./fixture";
 import { waitForHydration, expectNoPageError, testId } from "./helper";
 import {
+  expectDeclinedPassthroughParamServedLive,
+  expectFailedRefreshKeepsStoredPage,
+  expectManyReturnsOneResultPerTargetInOrder,
   expectRemovedBakedPageAnswers404,
   expectRemovedPassthroughPageRunsLiveHandler,
   expectRemovedUnbakedPageAnswers404,
+  type PrerenderOutcomesFixture,
   type PrerenderRemoveFixture,
 } from "@shared/e2e";
 
@@ -344,11 +348,49 @@ function defineRemoveFlow(f: Fixture) {
   });
 }
 
+// Results with no page to show for them (#1060): many(), render-failed and
+// skipped-passthrough, on the KV store. The bodies are shared with
+// packages/rangojs-router/e2e/on-demand-prerender.test.ts.
+function defineOutcomesFlow(f: Fixture) {
+  const fixture = (): PrerenderOutcomesFixture => ({
+    path: (slug) => `/guide-plain/${slug}`,
+    pageUrl: (slug) => f.url(`/guide-plain/${slug}`),
+    triggerUrl: (slug) => f.url(`/guide-plain-trigger/${slug}`),
+    slugTestId: "gp-slug",
+    stampTestId: "gp-stamp",
+    onDemandTestId: "gp-ondemand",
+    passthrough: {
+      pageUrl: (slug) => f.url(`/guides/${slug}`),
+      triggerUrl: (slug) => f.url(`/guide-trigger/${slug}`),
+      sourceTestId: "guide-source",
+    },
+  });
+
+  test("prerender.many() returns one result per target in order, and each rendered page then serves from the store", async ({
+    page,
+  }) => {
+    await expectManyReturnsOneResultPerTargetInOrder(page, fixture());
+  });
+
+  test("a refresh that fails any other way is render-failed, and the stored page keeps serving", async ({
+    page,
+  }) => {
+    await expectFailedRefreshKeepsStoredPage(page, fixture());
+  });
+
+  test("a Passthrough param the build handler declines is skipped-passthrough, and the live handler serves it", async ({
+    page,
+  }) => {
+    await expectDeclinedPassthroughParamServedLive(page, fixture());
+  });
+}
+
 test.describe("on-demand prerender (production)", () => {
   const f = useFixture({ root: ".", mode: "build" });
   defineOnDemandFlow(f);
   definePlainOnDemandFlow(f);
   defineRemoveFlow(f);
+  defineOutcomesFlow(f);
 
   test("plain onDemand route: unbaked param 404s until refreshed", async ({
     page,
@@ -380,6 +422,7 @@ test.describe("on-demand prerender (dev)", () => {
   defineOnDemandFlow(f);
   definePlainOnDemandFlow(f);
   defineRemoveFlow(f);
+  defineOutcomesFlow(f);
 
   test("plain onDemand route: unbaked param renders live (dev fall-through)", async ({
     page,
