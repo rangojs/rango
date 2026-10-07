@@ -300,6 +300,19 @@ as any request does; the prefetch read neither for the work it skipped. A hard
 load, a navigation with nothing prefetched, an action and back/forward run
 everything as before.
 
+**Under `transition()` the click commits with the fill.** A route with
+`transition()` commits in a transition: with no prefetch, React keeps the page
+being left until the response starts and then shows the new page with its
+fallback. A prefetched click to a flagged `loading()` on such a route does the
+same with its fill. The URL changes with the click, `useNavigation()` reads
+`loading`, and the page shows, fallback included, when the fill starts
+answering. So the click is the plain click's equal there, not ahead of it;
+what the prefetch saves is the rest of the page, which is not fetched again.
+(Shown with the click, the content could only arrive in a second commit,
+which under a `<ViewTransition>` runs a view transition of its own and delays
+the reveal.) `loader(Def, { prefetch: false })` on a `transition()` route is
+not affected: the page shows with the click.
+
 **Stored output is still served.** Under `cache()`, on a `ppr` route and for a
 `Prerender`/`Static` handler, the handler output is stored, so the prefetch
 looks it up, renders it and writes it exactly as before, hit or miss. Only the
