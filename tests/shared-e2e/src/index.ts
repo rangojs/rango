@@ -58,6 +58,7 @@ export type {
 } from "./console-guard.js";
 export {
   expectBackAndForwardKeepTheFilledPage,
+  expectDeferredOutcomeArrivesWithTheFill,
   expectDocumentAwaitsLoaderThatPrefetchSkips,
   expectEveryAdoptionSendsItsOwnFill,
   expectLeavingBeforeTheFillAbortsItAndBackRefetches,

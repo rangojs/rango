@@ -1,6 +1,7 @@
 import { test } from "@playwright/test";
 import {
   expectBackAndForwardKeepTheFilledPage,
+  expectDeferredOutcomeArrivesWithTheFill,
   expectDocumentAwaitsLoaderThatPrefetchSkips,
   expectEveryAdoptionSendsItsOwnFill,
   expectLeavingBeforeTheFillAbortsItAndBackRefetches,
@@ -69,6 +70,47 @@ function prefetchFalseSuite(f: Fixture) {
   }) => {
     using _ = expectNoPageError(page);
     await expectNoBoundaryHoldsThePageLeftUntilTheFillReturns(page, fixture());
+  });
+
+  test("a deferred loader that throws reaches its error boundary when the fill returns", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectDeferredOutcomeArrivesWithTheFill(page, fixture(), {
+      name: "throws",
+      shows: "pf-throws-error",
+    });
+  });
+
+  test("a deferred loader that calls notFound() reaches its not-found boundary when the fill returns", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectDeferredOutcomeArrivesWithTheFill(page, fixture(), {
+      name: "missing",
+      shows: "pf-missing-not-found",
+    });
+  });
+
+  test("a deferred loader that redirects is followed when the fill returns", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectDeferredOutcomeArrivesWithTheFill(page, fixture(), {
+      name: "redirects",
+      shows: "pf-control-page",
+      landsOn: "control",
+    });
+  });
+
+  test("a deferred handler's handle push arrives with the fill", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectDeferredOutcomeArrivesWithTheFill(page, fixture(), {
+      name: "handle",
+      shows: "pf-note-handle",
+    });
   });
 
   test("a cache() route serves its handler as usual and skips only the loader behind the fallback", async ({
