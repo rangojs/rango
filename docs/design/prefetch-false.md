@@ -672,3 +672,19 @@ segments. A fill refuses `rendered()` outright for the same reason R12 exists.
   deferred work (R10).
 - A page restored from the back/forward cache with a fill in flight shows the
   network error boundary if the browser dropped the request.
+
+### Trying it by hand
+
+The `/prefetch-false` fixture (router test app `src/urls/prefetch-false.tsx`,
+cloudflare-basic `src/pages/prefetch-false.tsx`) is readable in a browser.
+Open `/prefetch-false?run=<anything>&manual=1`. The page lists one link per
+case with a line on what it covers. The panel on the right shows what the
+server ran, one row per counter with its run count, refreshed every 400 ms,
+and a fixed badge shows `scrollY`. The links prefetch on hover only, so hover
+a link, watch the counters, then click it and watch them again: flagged work
+shows 0 runs after the hover and 1 after the click, an unflagged case shows 1
+after the hover. `run` keys the counters: each value you pick has its own, and
+"Start a new run" picks a fresh one. `&tall=1` adds spacers so the page
+scrolls, for checking that a navigation ends at the top. Without `manual=1`
+the panel, the badge and the polling are not rendered, which is what the
+suites see. Every link carries the flags that are set.

@@ -7,6 +7,10 @@ import {
   redirect,
 } from "@rangojs/router";
 import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
+import {
+  PrefetchFalseCounts,
+  PrefetchFalseScroll,
+} from "../components/PrefetchFalseCounts.js";
 import { PrefetchFalseNotes } from "../components/PrefetchFalseNotes.js";
 import { PrefetchFalseValue } from "../components/PrefetchFalseValue.js";
 import { PfNotes } from "./prefetch-false.handle.js";
@@ -33,6 +37,10 @@ import { countRun, readRunCounts } from "../prefetch-false-counts.js";
 // `throws` and `missing` render pf-<c>-error / pf-<c>-not-found, `redirects`
 // lands on the `control` page, and `handle` pushes a note the hub layout
 // lists as pf-note-handle.
+//
+// By hand: /prefetch-false?run=<anything>&manual=1 adds a live panel of the
+// server's run counts and a scrollY badge; &tall=1 makes the page scrollable.
+// Both flags ride on every link. Without them the page is quiet for a suite.
 
 const runOf = (ctx: any): string => ctx.searchParams.get("run") ?? "";
 
@@ -83,53 +91,128 @@ export const PfHandleLoader = createLoader((ctx) =>
 );
 
 const CASES = [
-  "loader",
-  "unit",
-  "section",
-  "slot",
-  "bare",
-  "throws",
-  "missing",
-  "redirects",
-  "handle",
-  "cached",
-  "prerendered",
-  "ppr",
-  "ssr-false",
-  "control",
+  ["loader", "one flagged loader beside an unflagged one, own Suspense"],
+  ["unit", "flagged loading() on a route: handler and loader wait"],
+  ["section", "flagged loading() on a layout: layout and route wait"],
+  ["slot", "flagged loading() on a parallel slot: only the slot waits"],
+  ["bare", "flagged loader, no boundary: the click waits for the fill"],
+  ["throws", "the deferred loader throws: error boundary after the click"],
+  ["missing", "the deferred loader calls notFound()"],
+  ["redirects", "the deferred loader redirects to control"],
+  ["handle", "the deferred handler pushes a handle (listed below)"],
+  ["cached", "cache() route: handler is stored, only the loader waits"],
+  ["prerendered", "Prerender route: only the loader waits"],
+  ["ppr", "ppr route: shell replays, the live loader waits"],
+  ["ssr-false", "ssr: false with prefetch: false"],
+  ["control", "no flag: the prefetch runs everything"],
 ] as const;
+
+const box = {
+  padding: 12,
+  border: "1px solid rgba(128,128,128,0.5)",
+  borderRadius: 6,
+} as const;
 
 function PrefetchFalseLayout(ctx: any) {
   const run = runOf(ctx);
+  const tall = ctx.searchParams.get("tall") === "1";
+  const manual = ctx.searchParams.get("manual") === "1";
+  const query = `run=${run}${manual ? "&manual=1" : ""}${tall ? "&tall=1" : ""}`;
   return (
-    <div data-testid="pf-layout">
-      <nav>
-        <Link
-          to={`/prefetch-false?run=${run}`}
-          data-testid="pf-link-hub"
-          prefetch="none"
-        >
-          hub
-        </Link>
-        {CASES.map((name) => (
-          <Link
-            key={name}
-            to={`/prefetch-false/${name}?run=${run}`}
-            data-testid={`pf-link-${name}`}
-            prefetch="hover"
+    <div
+      data-testid="pf-layout"
+      style={{ fontFamily: "system-ui, sans-serif", lineHeight: 1.5 }}
+    >
+      <h2 style={{ margin: "16px 0 4px" }}>prefetch: false</h2>
+      <p style={{ margin: "0 0 12px", opacity: 0.75 }}>
+        Hover a link to prefetch it, then click it. The panel on the right shows
+        what the server ran.
+      </p>
+      {tall && (
+        <div style={{ ...box, height: 700, opacity: 0.6 }}>
+          Scroll test: this block makes the page tall. Scroll down to the links,
+          then hover and click one. A navigation should end at the top of the
+          page.
+        </div>
+      )}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(0, 1fr) 280px",
+          gap: 24,
+          alignItems: "start",
+        }}
+      >
+        <nav>
+          <ul
+            style={{
+              listStyle: "none",
+              margin: 0,
+              padding: 0,
+              display: "grid",
+              gap: 4,
+            }}
           >
-            {name}
-          </Link>
-        ))}
-      </nav>
+            <li style={{ display: "grid", gridTemplateColumns: "110px 1fr" }}>
+              <Link
+                to={`/prefetch-false?${query}`}
+                data-testid="pf-link-hub"
+                prefetch="none"
+              >
+                hub
+              </Link>
+              <span style={{ opacity: 0.75 }}>
+                an empty page, never prefetched
+              </span>
+            </li>
+            {CASES.map(([name, note]) => (
+              <li
+                key={name}
+                style={{ display: "grid", gridTemplateColumns: "110px 1fr" }}
+              >
+                <Link
+                  to={`/prefetch-false/${name}?${query}`}
+                  data-testid={`pf-link-${name}`}
+                  prefetch="hover"
+                >
+                  {name}
+                </Link>
+                <span style={{ opacity: 0.75 }}>{note}</span>
+              </li>
+            ))}
+          </ul>
+        </nav>
+        {manual && <PrefetchFalseCounts run={run} tall={tall} />}
+      </div>
+      <div style={{ margin: "16px 0 4px", fontSize: 12, opacity: 0.6 }}>
+        HANDLE PUSHES
+      </div>
       <PrefetchFalseNotes />
-      <Outlet />
+      <div style={{ margin: "16px 0 4px", fontSize: 12, opacity: 0.6 }}>
+        PAGE
+      </div>
+      <div style={box}>
+        <Outlet />
+      </div>
+      {tall && <div style={{ height: 1600 }} />}
+      {manual && <PrefetchFalseScroll />}
     </div>
   );
 }
 
 const fallback = (name: string) => (
-  <div data-testid={`pf-${name}-fallback`}>{name} loading</div>
+  <div
+    data-testid={`pf-${name}-fallback`}
+    style={{
+      display: "inline-block",
+      padding: "4px 10px",
+      border: "1px dashed #d9a400",
+      borderRadius: 4,
+      background: "rgba(217,164,0,0.15)",
+    }}
+  >
+    {name} loading
+  </div>
 );
 
 // One flagged loader beside an unflagged one. The flagged read has its own
