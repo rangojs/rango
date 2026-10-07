@@ -1,4 +1,4 @@
-import { Suspense } from "react";
+import { Suspense, ViewTransition } from "react";
 import {
   urls,
   createLoader,
@@ -49,6 +49,17 @@ import { countRun, readRunCounts } from "../prefetch-false-counts.js";
 // print their param as pf-<c>-id. `vt` is a flagged loader on a route with
 // transition().
 //
+// `vt-unit` is a unit on a route with transition(). `vt-unit-off` is the same
+// with transition({ viewTransition: false }): React holds the commit and the
+// router places no <ViewTransition>. `vt-unit-own` adds the app's own boundary
+// around the page, and `unit-own` has that boundary and no transition().
+//
+// `inner` and `vt-inner` are a unit whose content has a boundary of its own
+// around a slower read: pf-<c>-early (counter `<c>.early`) is what the unit's
+// fallback waits for, pf-<c>-late-fallback covers pf-<c>-value, 150 ms behind.
+// `nested` is the same page with no unit: two flagged loaders, each read
+// behind a <Suspense> of its own (pf-nested-outer-fallback around both).
+//
 // pf-nav mirrors useNavigation() as data-state / data-streaming, and
 // pf-outlet is the box the page renders in.
 //
@@ -62,16 +73,26 @@ import { countRun, readRunCounts } from "../prefetch-false-counts.js";
 // &slow=1 makes every `<c>.data` loader take 600 ms longer, past the 300 ms
 // React keeps a fallback up before it reveals what replaces it: the deferred
 // work is then the last thing a plain navigation waits for, too.
+// &delay=<ms> adds that much to the same loaders: where a loader lands
+// between the click and the end of a view transition decides what a reveal
+// has to wait for.
 // &hslow=1 makes the section layout's handler take 600 ms: work a click must
 // not repeat for a layout the page already shows.
+// &boundary=1 puts the heading in a <ViewTransition> of the app's own. It is
+// on screen before, during and after every click, and React starts a view
+// transition for any commit made in a transition while one is mounted.
 // The flags ride on every link. Without them the page is quiet for a suite.
 
 const runOf = (ctx: any): string => ctx.searchParams.get("run") ?? "";
 
+const delayOf = (ctx: any): number =>
+  Number(ctx.searchParams.get("delay") ?? 0) || 0;
+
 async function work(ctx: any, name: string, delayMs: number = 0) {
   const n = countRun(runOf(ctx), name);
-  const slow = ctx.searchParams.get("slow") === "1" && name.endsWith(".data");
-  const wait = delayMs + (slow ? 600 : 0);
+  const timed = name.endsWith(".data") || name.endsWith(".early");
+  const slow = timed && ctx.searchParams.get("slow") === "1";
+  const wait = delayMs + (slow ? 600 : 0) + (timed ? delayOf(ctx) : 0);
   if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
   return { name, n };
 }
@@ -132,6 +153,33 @@ export const PfVtLoader = createLoader((ctx) => work(ctx, "vt.data", 100));
 export const PfVtUnitLoader = createLoader((ctx) =>
   work(ctx, "vt-unit.data", 100),
 );
+export const PfVtUnitOffLoader = createLoader((ctx) =>
+  work(ctx, "vt-unit-off.data", 100),
+);
+export const PfVtUnitOwnLoader = createLoader((ctx) =>
+  work(ctx, "vt-unit-own.data", 100),
+);
+export const PfUnitOwnLoader = createLoader((ctx) =>
+  work(ctx, "unit-own.data", 100),
+);
+export const PfInnerEarlyLoader = createLoader((ctx) =>
+  work(ctx, "inner.early", 100),
+);
+export const PfInnerLoader = createLoader((ctx) =>
+  work(ctx, "inner.data", 250),
+);
+export const PfVtInnerEarlyLoader = createLoader((ctx) =>
+  work(ctx, "vt-inner.early", 100),
+);
+export const PfVtInnerLoader = createLoader((ctx) =>
+  work(ctx, "vt-inner.data", 250),
+);
+export const PfNestedEarlyLoader = createLoader((ctx) =>
+  work(ctx, "nested.early", 100),
+);
+export const PfNestedLoader = createLoader((ctx) =>
+  work(ctx, "nested.data", 250),
+);
 
 const CASES = [
   ["loader", "one flagged loader beside an unflagged one, own Suspense"],
@@ -158,6 +206,12 @@ const CASES = [
   ["item-twin/b", "must behave exactly like item/a to item/b"],
   ["vt", "flagged loader on a route with transition()"],
   ["vt-unit", "flagged loading() on a route with transition()"],
+  ["vt-unit-off", "the same with transition({ viewTransition: false })"],
+  ["vt-unit-own", "and the app's own <ViewTransition> around the page"],
+  ["unit-own", "that boundary on a unit with no transition()"],
+  ["inner", "flagged loading(), a slower read behind its own Suspense"],
+  ["vt-inner", "the same on a route with transition()"],
+  ["nested", "two flagged loaders, the second read in a nested Suspense"],
 ] as const;
 
 const box = {
@@ -172,13 +226,16 @@ function PrefetchFalseLayout(ctx: any) {
   const manual = ctx.searchParams.get("manual") === "1";
   const slow = ctx.searchParams.get("slow") === "1";
   const hslow = ctx.searchParams.get("hslow") === "1";
-  const query = `run=${run}${manual ? "&manual=1" : ""}${tall ? "&tall=1" : ""}${slow ? "&slow=1" : ""}${hslow ? "&hslow=1" : ""}`;
+  const delay = delayOf(ctx);
+  const boundary = ctx.searchParams.get("boundary") === "1";
+  const query = `run=${run}${manual ? "&manual=1" : ""}${tall ? "&tall=1" : ""}${slow ? "&slow=1" : ""}${delay ? `&delay=${delay}` : ""}${hslow ? "&hslow=1" : ""}${boundary ? "&boundary=1" : ""}`;
+  const heading = <h2 style={{ margin: "16px 0 4px" }}>prefetch: false</h2>;
   return (
     <div
       data-testid="pf-layout"
       style={{ fontFamily: "system-ui, sans-serif", lineHeight: 1.5 }}
     >
-      <h2 style={{ margin: "16px 0 4px" }}>prefetch: false</h2>
+      {boundary ? <ViewTransition>{heading}</ViewTransition> : heading}
       <p style={{ margin: "0 0 12px", opacity: 0.75 }}>
         Hover a link to prefetch it, then click it. The panel on the right shows
         what the server ran.
@@ -318,14 +375,26 @@ function SectionPage(ctx: any) {
   );
 }
 
-// Routes inside the section layout. The layout's flag reaches them only
-// while the layout itself is new to the client.
-const sectionSibling = (name: string, loader: any) => (ctx: any) => {
+// A page that counts its handler and reads one loader.
+const countedPage = (name: string, loader: any) => (ctx: any) => {
   countRun(runOf(ctx), `${name}.handler`);
   return (
     <div data-testid={`pf-${name}-page`}>
       <PrefetchFalseValue loader={loader} testId={`pf-${name}-value`} />
     </div>
+  );
+};
+
+// The same page inside a <ViewTransition> the app places: what
+// transition({ viewTransition: false }) is for.
+const ownBoundaryPage = (name: string, loader: any) => (ctx: any) => {
+  countRun(runOf(ctx), `${name}.handler`);
+  return (
+    <ViewTransition>
+      <div data-testid={`pf-${name}-page`}>
+        <PrefetchFalseValue loader={loader} testId={`pf-${name}-value`} />
+      </div>
+    </ViewTransition>
   );
 };
 
@@ -353,6 +422,40 @@ function VtUnitPage(ctx: any) {
   return (
     <div data-testid="pf-vt-unit-page">
       <PrefetchFalseValue loader={PfVtUnitLoader} testId="pf-vt-unit-value" />
+    </div>
+  );
+}
+
+// A unit whose content shows before its slowest read: that read has a
+// boundary of its own.
+const innerPage = (name: string, early: any, late: any) => (ctx: any) => {
+  countRun(runOf(ctx), `${name}.handler`);
+  return (
+    <div data-testid={`pf-${name}-page`}>
+      <PrefetchFalseValue loader={early} testId={`pf-${name}-early`} />
+      <Suspense fallback={fallback(`${name}-late`)}>
+        <PrefetchFalseValue loader={late} testId={`pf-${name}-value`} />
+      </Suspense>
+    </div>
+  );
+};
+
+// Two deferred reads, one boundary inside the other.
+function NestedPage() {
+  return (
+    <div data-testid="pf-nested-page">
+      <Suspense fallback={fallback("nested-outer")}>
+        <PrefetchFalseValue
+          loader={PfNestedEarlyLoader}
+          testId="pf-nested-early"
+        />
+        <Suspense fallback={fallback("nested-late")}>
+          <PrefetchFalseValue
+            loader={PfNestedLoader}
+            testId="pf-nested-value"
+          />
+        </Suspense>
+      </Suspense>
     </div>
   );
 }
@@ -511,13 +614,13 @@ export const prefetchFalsePatterns = urls(
         // record.
         path(
           "/section-plain",
-          sectionSibling("section-plain", PfSectionPlainLoader),
+          countedPage("section-plain", PfSectionPlainLoader),
           { name: "sectionPlain" },
           () => [loader(PfSectionPlainLoader)],
         ),
         path(
           "/section-own",
-          sectionSibling("section-own", PfSectionOwnLoader),
+          countedPage("section-own", PfSectionOwnLoader),
           { name: "sectionOwn" },
           () => [
             loader(PfSectionOwnLoader),
@@ -527,7 +630,7 @@ export const prefetchFalsePatterns = urls(
         cache({ ttl: 600 }, () => [
           path(
             "/section-cached",
-            sectionSibling("section-cached", PfSectionCachedLoader),
+            countedPage("section-cached", PfSectionCachedLoader),
             { name: "sectionCached" },
             () => [loader(PfSectionCachedLoader)],
           ),
@@ -647,6 +750,69 @@ export const prefetchFalsePatterns = urls(
         loader(PfVtUnitLoader),
         loading(fallback("vt-unit"), { prefetch: false }),
         transition(),
+      ]),
+
+      // The same unit with no router boundary, with the app's own boundary
+      // in its place, and with that boundary and no transition() at all.
+      path(
+        "/vt-unit-off",
+        countedPage("vt-unit-off", PfVtUnitOffLoader),
+        { name: "vtUnitOff" },
+        () => [
+          loader(PfVtUnitOffLoader),
+          loading(fallback("vt-unit-off"), { prefetch: false }),
+          transition({ viewTransition: false }),
+        ],
+      ),
+      path(
+        "/vt-unit-own",
+        ownBoundaryPage("vt-unit-own", PfVtUnitOwnLoader),
+        { name: "vtUnitOwn" },
+        () => [
+          loader(PfVtUnitOwnLoader),
+          loading(fallback("vt-unit-own"), { prefetch: false }),
+          transition({ viewTransition: false }),
+        ],
+      ),
+      path(
+        "/unit-own",
+        ownBoundaryPage("unit-own", PfUnitOwnLoader),
+        { name: "unitOwn" },
+        () => [
+          loader(PfUnitOwnLoader),
+          loading(fallback("unit-own"), { prefetch: false }),
+        ],
+      ),
+
+      // A deferred unit with a boundary inside it, without and with a view
+      // transition.
+      path(
+        "/inner",
+        innerPage("inner", PfInnerEarlyLoader, PfInnerLoader),
+        { name: "inner" },
+        () => [
+          loader(PfInnerEarlyLoader),
+          loader(PfInnerLoader),
+          loading(fallback("inner"), { prefetch: false }),
+        ],
+      ),
+      path(
+        "/vt-inner",
+        innerPage("vt-inner", PfVtInnerEarlyLoader, PfVtInnerLoader),
+        { name: "vtInner" },
+        () => [
+          loader(PfVtInnerEarlyLoader),
+          loader(PfVtInnerLoader),
+          loading(fallback("vt-inner"), { prefetch: false }),
+          transition(),
+        ],
+      ),
+
+      // Two flagged loaders read in nested boundaries.
+      path("/nested", NestedPage, { name: "nested" }, () => [
+        loader(PfNestedEarlyLoader, { prefetch: false }),
+        loader(PfNestedLoader, { prefetch: false }),
+        loading(fallback("nested")),
       ]),
 
       // No flag: a prefetch runs everything and the click sends nothing.
