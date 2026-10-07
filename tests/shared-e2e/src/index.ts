@@ -37,10 +37,20 @@ export {
   expectPrefetchSkipsFlaggedWorkAndClickFillsIt,
   expectUnflaggedRouteIsPrefetchedWhole,
   expectUnusableFillReachesTheErrorBoundary,
+  expectAdoptedClickIsNeverWorseThanAPlainClick,
+  recordPlainAndAdoptedClick,
+  expectCachedRouteUnderHeldFlaggedLayoutUsesItsRecord,
+  expectHeldFlaggedLayoutLeavesRoutesToTheirOwnFlags,
+  expectPendingFillReadsLikeAStreamingNavigation,
+  expectPrefetchFromAnotherPageKeepsWhatIsOnScreen,
+  PREFETCH_FALSE_PARITY_CASES,
+  expectSameRouteNavigationIsNeverDeferred,
 } from "./prefetch-false.js";
 export type {
   PrefetchFalseCase,
   PrefetchFalseFixture,
+  PrefetchFalseObservation,
+  PrefetchFalseParityCase,
   PrefetchFalseScrollCase,
 } from "./prefetch-false.js";
 

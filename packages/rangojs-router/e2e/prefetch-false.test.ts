@@ -1,7 +1,9 @@
 import { test } from "@playwright/test";
 import {
+  expectAdoptedClickIsNeverWorseThanAPlainClick,
   expectBackAndForwardDuringAFillEndOnTheFilledPage,
   expectBackAndForwardKeepTheFilledPage,
+  expectCachedRouteUnderHeldFlaggedLayoutUsesItsRecord,
   expectClickDuringThePrefetchAdoptsIt,
   expectClickFromAScrolledPageEndsAtTheTop,
   expectDeferredOutcomeArrivesWithTheFill,
@@ -9,11 +11,16 @@ import {
   expectDoubleClickEndsOnTheLastFill,
   expectEveryAdoptionSendsItsOwnFill,
   expectFailedFillReachesTheNetworkErrorBoundary,
+  expectHeldFlaggedLayoutLeavesRoutesToTheirOwnFlags,
   expectLeavingBeforeTheFillAbortsItAndBackRefetches,
   expectNoBoundaryHoldsThePageLeftUntilTheFillReturns,
+  expectPendingFillReadsLikeAStreamingNavigation,
+  expectPrefetchFromAnotherPageKeepsWhatIsOnScreen,
   expectPrefetchSkipsFlaggedWorkAndClickFillsIt,
+  expectSameRouteNavigationIsNeverDeferred,
   expectUnflaggedRouteIsPrefetchedWhole,
   expectUnusableFillReachesTheErrorBoundary,
+  PREFETCH_FALSE_PARITY_CASES,
   type PrefetchFalseFixture,
   type PrefetchFalseScrollCase,
 } from "@shared/e2e";
@@ -36,7 +43,13 @@ function prefetchFalseSuite(f: Fixture) {
     await expectPrefetchSkipsFlaggedWorkAndClickFillsIt(page, fixture(), {
       name: "loader",
       prefetched: ["loader.price", "loader.handler"],
-      shownWhileMissing: ["pf-loader-page", "pf-loader-price"],
+      // pf-note-loader: the handle push of the handler the prefetch ran is
+      // on screen with the click's commit, not with the fill.
+      shownWhileMissing: [
+        "pf-loader-page",
+        "pf-loader-price",
+        "pf-note-loader",
+      ],
     });
   });
 
@@ -58,6 +71,73 @@ function prefetchFalseSuite(f: Fixture) {
       name: "section",
       deferred: ["section.data", "section.handler", "section.layout"],
     });
+  });
+
+  // The unit is the segment that is new to the client. From the hub the
+  // section layout is new: a route below it waits with it, whatever the route
+  // declares, behind the layout's fallback and in one fill.
+  for (const name of ["section-plain", "section-own"]) {
+    test(`a route below a flagged layout that is new waits with the layout: ${name}`, async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await expectPrefetchSkipsFlaggedWorkAndClickFillsIt(page, fixture(), {
+        name,
+        deferred: [`${name}.data`, `${name}.handler`, "section.layout"],
+        fallback: "pf-section-fallback",
+      });
+    });
+  }
+
+  test("a flagged layout the client holds defers nothing: routes below it follow their own flags", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectHeldFlaggedLayoutLeavesRoutesToTheirOwnFlags(page, fixture());
+  });
+
+  test("a prefetch taken on another page keeps what is on screen when it is adopted", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectPrefetchFromAnotherPageKeepsWhatIsOnScreen(page, fixture());
+  });
+
+  test("a cache() route below a flagged layout the client holds uses its record", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectCachedRouteUnderHeldFlaggedLayoutUsesItsRecord(page, fixture());
+  });
+
+  test("a same-route navigation is never deferred: it reads like the route without the flag", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectSameRouteNavigationIsNeverDeferred(page, fixture());
+  });
+
+  // The invariant: a click that adopts a prefetch is never worse than the
+  // same click with no prefetch at all.
+  for (const spec of PREFETCH_FALSE_PARITY_CASES) {
+    const where = `${spec.from ?? "hub"} to ${spec.name}${spec.prefetchedOn ? ", prefetched on the hub" : ""}`;
+    test(`a click that adopts a prefetch is never worse than a plain click: ${where}`, async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await expectAdoptedClickIsNeverWorseThanAPlainClick(
+        page,
+        fixture(),
+        spec,
+      );
+    });
+  }
+
+  test("useNavigation() reads a pending fill like a navigation that is still streaming", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectPendingFillReadsLikeAStreamingNavigation(page, fixture());
   });
 
   test("a slot with its own flagged loading() is skipped while the route beside it renders", async ({
