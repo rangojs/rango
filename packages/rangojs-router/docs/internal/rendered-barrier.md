@@ -16,12 +16,14 @@ start.
 
 Add `await ctx.rendered()` to loader context. After the promise resolves,
 the non-loader render tree has settled and all handle data is available.
-The loader can then read handles via `ctx.use(handle)`.
+The loader can then read handles via `ctx.get(handle)`. (`ctx.use(handle)` is
+the write: it returns the push function. Reads moved to `ctx.get` so that a
+handle read in a loader is gated on the barrier.)
 
 ```ts
 const PricesLoader = createLoader(async (ctx) => {
   await ctx.rendered();
-  const products = ctx.use(Products); // reads handle data
+  const products = ctx.get(Products); // reads handle data
   return pricing.getLive(products.map((p) => p.id));
 });
 ```
@@ -30,9 +32,10 @@ const PricesLoader = createLoader(async (ctx) => {
 
 - `rendered()` returns a `Promise<void>` that resolves when all non-loader
   segments in the matched tree have settled and handle data is available.
-- After `await ctx.rendered()`, `ctx.use(handle)` returns the accumulated
+- After `await ctx.rendered()`, `ctx.get(handle)` returns the accumulated
   handle data (the collected value, same shape as `useHandle()` on client).
-- Before `await ctx.rendered()`, `ctx.use(handle)` throws.
+- Before `await ctx.rendered()`, `ctx.get(handle)` throws ("ctx.get(handle) in a
+  loader requires \"await ctx.rendered()\" first").
 - `ctx.use(loader)` continues to work normally at any point.
 - `rendered()` is idempotent — multiple calls return the same promise.
 
@@ -81,8 +84,8 @@ const PricesLoader = createLoader(async (ctx) => {
 | `rendered()` in DSL loader, tree has `loading()`  | Waits for streaming handlers to settle, then resolves |
 | `rendered()` in handler-invoked loader            | Throws `Error` ("only available in DSL loaders")      |
 | `rendered()` while a handler awaits this loader   | Throws (deadlock guard)                               |
-| `ctx.use(handle)` before `await ctx.rendered()`   | Throws                                                |
-| `ctx.use(handle)` after `await ctx.rendered()`    | Returns collected handle data                         |
+| `ctx.get(handle)` before `await ctx.rendered()`   | Throws                                                |
+| `ctx.get(handle)` after `await ctx.rendered()`    | Returns collected handle data                         |
 | `rendered()` in a loader a prefetch can defer     | Throws, on every request kind                         |
 | `rendered()` in a prefetch that skipped a handler | Rejects once the barrier resolves, naming the segment |
 | `rendered()` in a fill request                    | Throws                                                |
@@ -156,7 +159,7 @@ The render barrier is a deferred promise on the request context:
   Their async execution is tracked in the handle store (`trackHandler` →
   `store.track`), so `rendered()` additionally seals the store and `await`s
   `handleStore.settled` before resolving — every tracked handler, streaming
-  included, has finished pushing. `ctx.use(handle)` then builds a fresh,
+  included, has finished pushing. `ctx.get(handle)` then builds a fresh,
   complete snapshot. The loader's own segment streams in after, so this does
   not block the shell; the deadlock guard keeps a handler from depending on
   the loader. Promise-valued handle pushes may still be unresolved.
@@ -173,7 +176,7 @@ The render barrier is a deferred promise on the request context:
   `_renderBarrier*` read fell through the prototype to the foreground
   request's barrier — closure-bound to the foreground context and store,
   already resolved, resolver a no-op. A bake-lane loader's
-  `await ctx.rendered()` resolved instantly and `ctx.use(handle)` returned
+  `await ctx.rendered()` resolved instantly and `ctx.get(handle)` returned
   the FOREGROUND's handle snapshot, so foreground per-request handle data
   could bake into the shared shell. With its own barrier the capture runs
   the same lifecycle as a fresh render: barrier resolves at the capture's
@@ -181,9 +184,9 @@ The render barrier is a deferred promise on the request context:
   tree, and the snapshot is built from the capture's store. Pinned by
   `router/__tests__/shell-capture-barrier-isolation.test.ts`.
 
-### Loader `use(handle)` After Barrier
+### Loader `get(handle)` After Barrier
 
-After `rendered()` resolves, the loader's `ctx.use(handle)` reads from
+After `rendered()` resolves, the loader's `ctx.get(handle)` reads from
 the HandleStore. The data is collected using the handle's `collect`
 function (same as `useHandle()` on the client), producing the same shape.
 
@@ -203,7 +206,7 @@ in-flight tracked promises).
 `rendered()` uses it. For a streaming tree it does not trust the eager snapshot
 built when the barrier resolves (incomplete — the `loading()` handlers were
 still in flight); instead it seals the store and `await`s `handleStore.settled`,
-then `ctx.use(handle)` builds a fresh, complete snapshot. The seal is safe
+then `ctx.get(handle)` builds a fresh, complete snapshot. The seal is safe
 because every handler is tracked during `resolveAllSegments`, so by barrier time
 none is unregistered; pushes happen _within_ those tracked promises (before
 `settled`); and the payload's later `stream()` auto-seal is idempotent.
@@ -217,6 +220,6 @@ Known Limitations) — `settled` waits for the handler to push, not for a pushed
 - Broad changes across render, cache, prerender, and streaming to support
   the basic case.
 - Guard logic that is hard to explain in one sentence.
-- `ctx.use(handle)` having "write in handlers, read in loaders" is too
+- `ctx.get(handle)` having "write in handlers, read in loaders" is too
   magical in practice.
 - Tests need too many semantic exceptions.

@@ -666,6 +666,16 @@ build-time shell capture runs it and bakes its settled data into the shell,
 and a shell HIT runs it only when its return carries promises (`/ppr` → "The
 bake lane"). The Flight payload collection itself still skips loaders.
 
+### `prefetch: false` skips only the loaders
+
+A `Prerender` handler's output is stored, so a `loading()` flagged with
+`prefetch: false` on the route does not skip the handler in a `<Link>` prefetch: the
+stored output is served as usual, and only the loaders behind the fallback are
+deferred (a loader registered with `{ prefetch: false }` likewise). The click
+that adopts the prefetch shows the fallback and sends one fill request for
+them. This holds in development, where there is no build artifact, as in
+production. See `/loader` → "`prefetch: false`".
+
 ### Build-time handle data is frozen
 
 Handle values pushed via `ctx.use()` DURING pre-rendering (handler pushes at

@@ -238,6 +238,61 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 ])
 ```
 
+### `loading()` options
+
+`loading(fallback, options?)` takes two options:
+
+| Option            | Effect                                                                                                                      |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `ssr: false`      | Skip the fallback on document requests; it shows on client navigations only.                                                |
+| `prefetch: false` | Keep everything behind this fallback out of `<Link>` prefetches; the click shows the fallback and fetches that part itself. |
+
+```tsx
+path("/orders", OrdersPage, { name: "orders" }, () => [
+  loader(OrdersLoader),
+  loading(<OrdersSkeleton />, { prefetch: false }),
+]),
+```
+
+**What `prefetch: false` defers.** A prefetch of the route skips the entry's
+handler, its loaders, its orphan layouts and its parallel slots. On a
+`layout()` the fallback covers the whole outlet, so every deeper entry is
+skipped too. A parallel slot with its own flagged `loading()` is a separate
+unit: the route beside it still renders in the prefetch. The prefetch payload
+marks each skipped piece deferred and carries the fallback.
+
+**What the click looks like.** The click that adopts the prefetch commits at
+once: the URL changes, the prefetched content shows, and the fallback shows
+where the deferred part goes. The browser sends one second request (the fill)
+that runs only the deferred work, and the result merges into the page without
+remounting what is already there. A hard load, a navigation with nothing
+prefetched, an action and back/forward run everything as before.
+
+**Stored output is still served.** Under `cache()`, on a `ppr` route and for a
+`Prerender`/`Static` handler, the handler output is stored, so the prefetch
+looks it up, renders it and writes it exactly as before, hit or miss. Only the
+loaders behind the fallback are deferred. See `/caching`, `/ppr` and
+`/prerender`.
+
+**Limits.**
+
+- It needs a renderable fallback. `loading(false)` has nothing to show, so the
+  flag does nothing there. The last `loading()` on an entry wins, flag
+  included.
+- A loader behind the fallback cannot call `ctx.rendered()`; it throws on every
+  request kind. See `/loader` → "`prefetch: false`" for this and the other
+  loader limits (`ctx.set()` values, late `redirect()`/`notFound()`, a loader a
+  handler awaits).
+- A layout the client already holds, and that does not re-render on that
+  navigation, is not deferred (its fallback would not show). To keep
+  navigation inside it out of prefetches, flag the route's own `loading()`.
+- An orphan layout's flagged `loading()` defers its loaders but not its
+  handler: the route's handler has already run by then.
+- `clientUrls()` routes and `intercept()` ignore the flag.
+
+To defer a single loader and keep the handler in the prefetch, use
+`loader(Def, { prefetch: false })` instead (see `/loader`).
+
 ## Handler Data Ownership
 
 When a route has children (orphan layouts, parallels), the handler executes
