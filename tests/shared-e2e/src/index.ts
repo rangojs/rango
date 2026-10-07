@@ -70,10 +70,12 @@ export {
   expectNoBoundaryHoldsThePageLeftUntilTheFillReturns,
   expectPrefetchSkipsFlaggedWorkAndClickFillsIt,
   expectUnflaggedRouteIsPrefetchedWhole,
+  expectUnusableFillReachesTheErrorBoundary,
 } from "./prefetch-false.js";
 export type {
   PrefetchFalseCase,
   PrefetchFalseFixture,
+  PrefetchFalseScrollCase,
 } from "./prefetch-false.js";
 
 /**

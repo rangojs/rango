@@ -302,7 +302,12 @@ export interface HistoryEntryMemory {
 export interface NavigationUpdate {
   root: ReactNode | Promise<ReactNode>;
   metadata: RscMetadata;
-  /** Scroll behavior to apply after React commits this update */
+  /**
+   * The scroll decision of the navigation transaction this update commits,
+   * applied after React commits it. Absent on every update that is not a
+   * navigation's (server action, error, `prefetch: false` fill): such an
+   * update says nothing about scroll, and leaves a pending decision alone.
+   */
   scroll?: {
     /** For back/forward: restore saved position */
     restore?: boolean;
@@ -311,14 +316,6 @@ export interface NavigationUpdate {
     /** Function to check if streaming is in progress */
     isStreaming?: () => boolean;
   };
-  /**
-   * This update completes a page an earlier update presented (a `prefetch:
-   * false` fill): it carries no scroll action and must not clear one. React
-   * can hold the adoption's commit until the fill lands (no boundary to fall
-   * back to, or one already revealed); the scroll that update queued is then
-   * applied with this one.
-   */
-  keepScroll?: true;
 }
 
 /**
