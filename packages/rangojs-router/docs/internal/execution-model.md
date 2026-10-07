@@ -88,12 +88,23 @@ and, for a layout, every deeper entry. An entry whose handler output is
 stored (`cache()`, `ppr`, `Prerender`/`Static`) is served as usual and only
 its loaders are left out.
 
-Two things to keep in mind, because both look like bugs the first time:
+Three things to keep in mind, because each looks like a bug the first time:
 
-- **Deferral replaces execution; it never adds a skip.** The partial funnel
-  decides revalidation exactly as before, and only work that _would have
-  run_ is deferred. A flagged loader the client holds and no predicate
-  re-runs is not deferred and not sent, the same as today.
+- **The flag applies only to a segment the client does not have yet.** "New"
+  is the segment's id being absent from `_rsc_segments`. A segment the client
+  holds is never deferred, whether or not its `revalidate()` returns true: a
+  held flagged layout or route renders in the prefetch as it does without the
+  flag, a flagged loader on a held segment runs when it revalidates, and
+  nothing below a held segment is deferred because of it. A new route with its
+  own flagged `loading()` under a held layout is still its own unit. The
+  invariant: a click that adopts a prefetch with deferred units is never worse
+  than the same click with no prefetch at all. It shows a fallback only where
+  that plain navigation would show the same one, waits only where it would
+  wait, and content on screen is never replaced by a fallback, blanked or
+  remounted while a fill is pending.
+- **Deferral replaces execution; it never adds a skip.** A new segment always
+  renders, so the flag only ever turns work that would have run into deferred
+  work. Revalidation of held segments is untouched.
 - **The fill is not a revalidation.** In a fill a segment the client holds is
   skipped outright: no `revalidate()` predicate is called, no handler runs,
   nothing is emitted for it. What renders is exactly the set of ids missing
