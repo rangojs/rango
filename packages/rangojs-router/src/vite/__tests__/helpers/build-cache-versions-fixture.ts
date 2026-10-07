@@ -99,18 +99,25 @@ function run(
 let pluginEntry: Promise<string> | undefined;
 
 /**
+ * One bundle directory per process: test files run in parallel workers, and a
+ * shared one let each file's bundling delete the bundle another file's build
+ * was loading ("Could not resolve .../vite/index.js").
+ */
+const pluginDir = join(
+  packageRoot,
+  "node_modules",
+  ".rango-cache-versions-test",
+  String(process.pid),
+);
+
+/**
  * Bundle src/vite/index.ts the way `pnpm build` does, into a directory under
  * the package's node_modules so the bundle's bare imports resolve.
  */
 export function bundlePluginFromSource(): Promise<string> {
   pluginEntry ??= (async () => {
-    const outDir = join(
-      packageRoot,
-      "node_modules",
-      ".rango-cache-versions-test",
-      "vite",
-    );
-    rmSync(outDir, { recursive: true, force: true });
+    const outDir = join(pluginDir, "vite");
+    rmSync(pluginDir, { recursive: true, force: true });
     mkdirSync(join(outDir, "plugins"), { recursive: true });
     const outfile = join(outDir, "index.js");
     const esbuild = join(packageRoot, "node_modules", ".bin", "esbuild");
@@ -137,7 +144,10 @@ export function bundlePluginFromSource(): Promise<string> {
   return pluginEntry;
 }
 
-/** A directory to hold fixture copies, removed by the returned function. */
+/**
+ * A directory to hold fixture copies. The returned function removes it, and
+ * this process's plugin bundle with it.
+ */
 export function createFixtureWorkspace(): {
   dir: string;
   cleanup: () => void;
@@ -147,7 +157,14 @@ export function createFixtureWorkspace(): {
   const dir = realpathSync(
     mkdtempSync(join(tmpdir(), "rango-cache-versions-")),
   );
-  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+  return {
+    dir,
+    cleanup: () => {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(pluginDir, { recursive: true, force: true });
+      pluginEntry = undefined;
+    },
+  };
 }
 
 function linkDependency(root: string, name: string, target: string): void {

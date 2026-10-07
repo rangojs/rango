@@ -94,14 +94,8 @@ export function shellSearchSeed(url: URL, filter?: SearchParamsFilter): string {
  *
  * The key includes the request HOST: in a multi-tenant host-router deployment
  * (one worker, one shared KV/runtime-cache store) a host-less key would serve
- * tenant A's captured shell to tenant B's users.
- *
- * And the serving ROUTER (routerKeyPrefix, #1065): a host and path reach two
- * routers through a `hostOverride` cookie or a warm under another router's
- * host. Keyed by host and path alone, router B's request was a HIT with
- * router A's prelude whenever their versions matched (the entry's version
- * stamp was the only guard), and with per-router versions each capture
- * replaced the other router's shell.
+ * tenant A's captured shell to tenant B's users. It starts with the serving
+ * ROUTER for the same reason (cache-key-utils.ts, the router rule).
  *
  * `filter` is the request's compiled `cache.searchParams` config
  * (ctx._searchParamsFilter): excluded params collapse onto one shell slot.

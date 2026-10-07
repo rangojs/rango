@@ -40,6 +40,7 @@ import { createHandle } from "../../handle.js";
 import { buildRouterTrieFromUrlpatterns } from "../manifest-init.js";
 import { handleRscRendering } from "../rsc-rendering.js";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
+import { shellCacheKey } from "../../testing/shell-status.js";
 import { CFCacheStore } from "../../cache/cf/cf-cache-store.js";
 import type { CachedEntryData, SegmentCacheStore } from "../../cache/types.js";
 import {
@@ -269,9 +270,7 @@ async function serve(
   return response;
 }
 
-/** The /tagged shell key of `router`. */
-const shellKey = (router: Router): string =>
-  `${router.id}@localhost/tagged:shell`;
+const shellKey = (router: Router): string => shellCacheKey(router, "/tagged");
 
 /** The tags the store's one shell entry (/tagged) is invalidatable by. */
 function shellTags(store: MemorySegmentCacheStore): string[] {

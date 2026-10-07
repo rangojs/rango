@@ -54,6 +54,7 @@ import {
 import type { HandlerContext } from "../handler-context.js";
 import type { RscPayload, SSRModule } from "../types.js";
 import type { PartialCacheOptions } from "../../types.js";
+import { shellCacheKey } from "../../testing/shell-status.js";
 import { getStamp, source } from "./fixtures/shell-prune-data.js";
 
 const PRELUDE = "<html><body>FROZEN-PRELUDE</body></html>";
@@ -221,10 +222,10 @@ async function storedEntry(
   router: Router,
   store: MemorySegmentCacheStore,
   path: string,
-  partition?: string,
+  partition?: Parameters<typeof shellCacheKey>[3],
 ): Promise<ShellCacheEntry | null> {
   const hit = await store.getShell(
-    `${router.id}@localhost${path}:shell${partition === undefined ? "" : `|${encodeURIComponent(partition)}`}`,
+    shellCacheKey(router, path, undefined, partition),
   );
   return hit ? hit.entry : null;
 }
@@ -841,7 +842,7 @@ describe("PPR handlers baked: request-partitioned shells", () => {
     const goldMiss = await serve(router, harness.store, "/tiered", gold);
     expect(goldMiss.response.headers.get("x-rango-shell")).toBe("MISS");
     expect(
-      await storedEntry(router, harness.store, "/tiered", "key:tier%3Agold"),
+      await storedEntry(router, harness.store, "/tiered", "tier:gold"),
     ).not.toBe(null);
     // No unpartitioned shell exists for a partitioned route.
     expect(await storedEntry(router, harness.store, "/tiered")).toBeNull();
@@ -876,10 +877,10 @@ describe("PPR handlers baked: request-partitioned shells", () => {
     // updateTag() of a tag every partition carries evicts every partition.
     await harness.store.invalidateTags(["tiered"]);
     expect(
-      await storedEntry(router, harness.store, "/tiered", "key:tier%3Agold"),
+      await storedEntry(router, harness.store, "/tiered", "tier:gold"),
     ).toBeNull();
     expect(
-      await storedEntry(router, harness.store, "/tiered", "key:tier%3Asilver"),
+      await storedEntry(router, harness.store, "/tiered", "tier:silver"),
     ).toBeNull();
   });
 
@@ -924,7 +925,7 @@ describe("PPR handlers baked: request-partitioned shells", () => {
         headers: { "x-tier": "gold" },
       });
       expect(
-        await storedEntry(router, harness.store, "/tiered", "key:tier%3Agold"),
+        await storedEntry(router, harness.store, "/tiered", "tier:gold"),
       ).not.toBeNull();
 
       fail = true;
@@ -970,12 +971,9 @@ describe("PPR handlers baked: request-partitioned shells", () => {
     expect(deHit.body).toContain("locale-de");
     expect(deHit.body).not.toContain("locale-en");
     expect(
-      await storedEntry(
-        router,
-        harness.store,
-        "/localized",
-        `doc:${router.id}@localhost/localized|en`,
-      ),
+      await storedEntry(router, harness.store, "/localized", {
+        generated: [`doc:${router.id}@localhost/localized|en`],
+      }),
     ).not.toBeNull();
   });
 });

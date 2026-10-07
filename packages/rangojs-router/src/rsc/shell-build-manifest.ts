@@ -92,8 +92,7 @@ function loadManifest(): Promise<ShellManifestModule | null> {
  * the document HIT decodes the prelude once per serve (openShellDocument),
  * partial replay never does. `null` memoizes a failed verdict —
  * deterministically invalid. Keyed by the asking router's document version as
- * well as the spec: the verdict depends on both, and a spec is a content hash,
- * not a router's.
+ * well as the spec: the verdict is that version's.
  */
 const validatedSpecs = new Map<string, ValidatedBuildShellEntry | null>();
 
@@ -265,11 +264,12 @@ async function fetchDevShellEntry(
 }
 
 /**
- * Whether the router `routerId` has a build-time shell for `pathname` (the
- * caller checks the request is search-less, like the entries lookupBuildShell
- * serves): a manifest entry for the path in production, a Prerender route in
- * dev. No asset load and no dev capture: it only decides whether a request
- * that cannot read the build shell deserves a warning.
+ * Whether a build-time shell exists for `pathname` (the caller checks the
+ * request is search-less, like the entries lookupBuildShell serves): a
+ * manifest entry for the path in production, a Prerender route in dev. No
+ * asset load and no dev capture: it only decides whether a request that
+ * cannot read the build shell deserves a warning. The manifest entry is the
+ * one staged for the router `routerId` (shell-manifest-key.ts).
  */
 export async function hasBuildShell(
   routerId: string,
@@ -284,10 +284,9 @@ export async function hasBuildShell(
 }
 
 /**
- * Look up the shell the build baked for the serving router (`routerId`) and
- * this request, applying every serve gate: the router's own entry only (the
- * manifest key, shell-manifest-key.ts), search-less requests only (the build
- * captured the bare pathname; a
+ * Look up the baked shell entry for a request, applying every serve gate:
+ * the serving router's own entry only (`routerId`, shell-manifest-key.ts),
+ * search-less requests only (the build captured the bare pathname; a
  * search-bearing URL has its own shell identity owned by runtime capture),
  * version validity, payload integrity, and tag-invalidation markers. Returns
  * null on any gate failure — the caller degrades to the ordinary MISS path
