@@ -208,6 +208,32 @@ function addCacheStatusHeader(
   }
 }
 
+/** A response whose `Vary` lists X-Rango-Prefetch: its tree declares `prefetch: false`. */
+function variesOnPrefetch(response: Response): boolean {
+  return (
+    response.headers.get("vary")?.toLowerCase().includes("x-rango-prefetch") ??
+    false
+  );
+}
+
+/**
+ * Whether a plain-slot entry answers a prefetch (see the slot comment in
+ * createDocumentCacheMiddleware). A fresh one always does: it is a complete
+ * body, so the click that adopts it needs no fill. A stale one does only for
+ * a tree with no flag. Revalidating it re-renders the prefetch, and for a
+ * flagged tree that body goes to the other slot: the stale entry would be
+ * served, and re-rendered, by every prefetch until a navigation replaced it.
+ */
+function answersPrefetch(
+  cached: { response: Response; shouldRevalidate: boolean } | null,
+): boolean {
+  return (
+    cached !== null &&
+    cached.response.status === 200 &&
+    (!cached.shouldRevalidate || !variesOnPrefetch(cached.response))
+  );
+}
+
 /**
  * Drain and run onResponse callbacks registered on the request context.
  * Mirrors the drain semantics of finalizeResponse() in rsc/helpers.ts:
@@ -394,14 +420,6 @@ export function createDocumentCacheMiddleware<TEnv = any>(
           isFragmentRecovery)
           ? ":fragments"
           : "";
-      // A prefetch body may carry deferred units (prefetch: false) that a
-      // navigation must never be answered with, and the other way round.
-      // This middleware runs before classification and cannot tell whether
-      // the route declares the flag, so every prefetch has its own slot.
-      const prefetchSuffix =
-        isPartial && requestHeaders(ctx.request).has("X-Rango-Prefetch")
-          ? ":prefetch"
-          : "";
       const typeSuffix = isRscRequest ? ":rsc" : ":html";
 
       // Default key rides the shared host-namespaced base (cacheKeyBase) so the
@@ -410,32 +428,46 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       // The keyGenerator branch is left untouched: a consumer-supplied generator
       // owns its own namespacing (auto-prefixing host would silently change their
       // existing keys and double any host they already include).
-      const cacheKey = keyGenerator
-        ? keyGenerator(url) +
-          segmentHash +
-          fragmentSuffix +
-          prefetchSuffix +
-          typeSuffix
-        : cacheKeyBase(
-            url.host,
-            url.pathname,
-            url.searchParams,
-            undefined,
-            requestCtx?._searchParamsFilter,
-          ) +
-          segmentHash +
-          fragmentSuffix +
-          prefetchSuffix +
-          typeSuffix;
+      const keyBase =
+        (keyGenerator
+          ? keyGenerator(url)
+          : cacheKeyBase(
+              url.host,
+              url.pathname,
+              url.searchParams,
+              undefined,
+              requestCtx?._searchParamsFilter,
+            )) +
+        segmentHash +
+        fragmentSuffix;
+      // prefetch: false (docs/design/prefetch-false.md, R7). The plain slot
+      // holds complete bodies only: a navigation's, or the prefetch of a tree
+      // with no flag, which is the same body. The `:prefetch` slot holds the
+      // prefetch body of a flagged tree, which may carry deferred units; only
+      // a prefetch reads it. This middleware runs before classification and
+      // cannot tell whether the route declares a flag, so a prefetch reads
+      // the plain slot first and a write picks its slot after the render.
+      const plainKey = keyBase + typeSuffix;
+      const prefetchKey =
+        isPartial && requestHeaders(ctx.request).has("X-Rango-Prefetch")
+          ? keyBase + ":prefetch" + typeSuffix
+          : undefined;
+      const writeKey = (rendered: Response): string =>
+        prefetchKey &&
+        (requestCtx._prefetchFlagged || variesOnPrefetch(rendered))
+          ? prefetchKey
+          : plainKey;
+
       // 1. Check cache
       // Recovery must reach CacheScope's server decoder so it can evict the bad
       // segment. Treat it as a miss, then let the ordinary write path replace
       // the corrupt fragment-capable response with the valid fallback bytes.
       // A router.prerender() warm is a miss too: it renders and replaces.
-      const cached =
-        isFragmentRecovery || isWarmReplace(requestCtx)
-          ? null
-          : await store.getResponse(cacheKey);
+      const skipRead = isFragmentRecovery || isWarmReplace(requestCtx);
+      let cached = skipRead ? null : await store.getResponse(plainKey);
+      if (prefetchKey && !skipRead && !answersPrefetch(cached)) {
+        cached = await store.getResponse(prefetchKey);
+      }
       // Every path past the lookup either returns a fresh HIT, which renders
       // nothing, or renders a response this cache may store.
       requestCtx._documentCacheRender = true;
@@ -488,7 +520,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
                   const tags = collectRequestTags(requestCtx);
                   if (await predatesInvalidation(store, tags, start)) return;
                   await store.putResponse!(
-                    cacheKey,
+                    writeKey(fresh),
                     new Response(body, fresh),
                     directives.sMaxAge!,
                     directives.staleWhileRevalidate,
@@ -559,7 +591,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
             const tags = collectRequestTags(requestCtx);
             if (await predatesInvalidation(store, tags, start)) return;
             await store.putResponse!(
-              cacheKey,
+              writeKey(originalResponse),
               new Response(body, originalResponse),
               directives.sMaxAge!,
               directives.staleWhileRevalidate,
