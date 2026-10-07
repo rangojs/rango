@@ -1167,10 +1167,46 @@ The limits:
   reaches the error boundary.
 - **A loader with its own `cache()` is skipped in a prefetch even on a hit.**
   The prefetch never reads the loader cache; the fill does.
-- **A loader a handler awaits with `ctx.use()` cannot be deferred.** The
-  handler needs the value to render, so the loader runs in the prefetch. The
-  same holds for a loader another loader reads with `ctx.use()`, and for one a
-  streamed handler reads late (it runs in the prefetch and again in the fill).
+- **A loader something else reads with `ctx.use()` runs in the prefetch.**
+  The reader needs the value, so the flag cannot keep the loader out. When
+  the read is in time, the loader is an ordinary loader for that prefetch:
+  one run, nothing deferred, no fill for it. In time means: inside a handler
+  that has no `loading()` (the router waits for it), or before the reader's
+  first `await`.
+- **Two late readers make it run twice.** The loader runs in the prefetch for
+  its reader and again in the fill, because by the time the read happens the
+  loader's own segment has already been sent as deferred:
+
+  ```tsx
+  // 1. A handler under loading() is streamed: the router does not wait for
+  //    it, so a read after its first await comes late.
+  path(
+    "/product/:id",
+    async (ctx) => {
+      const product = await getProduct(ctx.params.id);
+      const reviews = await ctx.use(ReviewsLoader); // late: runs it here
+      return <Product product={product} reviews={reviews} />;
+    },
+    { name: "product" },
+    () => [
+      loader(ReviewsLoader, { prefetch: false }), // and the fill runs it again
+      loading(<ProductSkeleton />),
+    ],
+  );
+
+  // 2. A loader that is not deferred itself and reads it after an await.
+  const SummaryLoader = createLoader(async (ctx) => {
+    const product = await getProduct(ctx.params.id);
+    const reviews = await ctx.use(ReviewsLoader); // late: two runs
+    return summarize(product, reviews);
+  });
+  ```
+
+  Data is never missing, only fetched twice, and the page shows the fill's
+  value. To get one run, start the read before the first `await`
+  (`const reviews = ctx.use(ReviewsLoader)` at the top, awaited where you
+  need it), or drop the flag from a loader the page cannot render without.
+
 - **No effect in `clientUrls()` routes and `intercept()`.** `clientUrls()`
   `loader()` throws in development if you pass `prefetch`.
 - **`ppr` and `ssr: false`.** On a `ppr` route an `ssr: false` loader is the

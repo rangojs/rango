@@ -112,10 +112,11 @@ later.
 
 **R7. Deferral belongs to one response, never to stored data.** A deferred
 marker is never written to a segment cache entry, a `ppr` shell record, the
-prerender store or a loader cache entry. A stored body of one mode (prefetch
-with deferred units, navigation, fill) never answers a request of another
-mode. Fill responses are stored neither in the document cache nor in the
-browser HTTP cache.
+prerender store or a loader cache entry. A stored body that carries deferred
+units answers prefetch requests only: never a navigation, never a fill. Fill
+responses are stored neither in the document cache nor in the browser HTTP
+cache, and a fill is never answered from one. A stored body that is complete
+may answer a prefetch; "The document cache" below says why.
 
 **R8. Safe degrade.** Where the flag cannot be honoured the work runs in the
 prefetch, as before. Never missing data, never a hole with no fill.
@@ -198,7 +199,10 @@ the request is a fill:
   their `$$id`s, unit candidates).
 - `mode`: `"prefetch"` for a GET partial request with `X-Rango-Prefetch` that
   is not an action, not a shell capture and resolves no intercept; `"fill"`
-  when the raw URL carries `_rsc_fill`; otherwise unset.
+  when the raw URL carries `_rsc_fill`; otherwise unset. The decision is one
+  function, `partialDeferralMode()`, with a truth table beside it: an action
+  is always a POST and a capture always runs the full match, so no real
+  request can show those conditions apart.
 - `storedFrom`: the first chain index whose handler output is stored. `0` for
   a `ppr` leaf and for `Prerender` routes, the `cache()` boundary's index when
   the route's scope is enabled, `Infinity` otherwise. A `Prerender` route
@@ -243,6 +247,15 @@ In a fill, every one of those decision points answers
 `src/router/match-middleware/cache-lookup.ts` (the `cache()` HIT loop and
 `yieldFromStore`) keep a held segment without consulting predicates or the
 params comparison.
+
+A fill also leaves a stale `cache()` record alone. A stale hit normally
+schedules a background re-render of the whole route
+(`withBackgroundRevalidation`), and so did a fill at first: the layout and
+the route handler ran again behind a request whose rule is that no handler of
+a held segment runs. The fill now skips the refresh, as it skips the
+proactive write in `withCacheStore`. Nothing is lost: the record is refreshed
+by the next request that reads it, and the prefetch that came before the
+fill was already one.
 
 ### Handlers that read a flagged loader
 
@@ -298,12 +311,9 @@ already removes every `_rsc*` param from the URL handlers see.
 
 ### Keeping the modes apart (R7)
 
-- **Document cache**: the key gains `:prefetch` for a partial request that
-  carries `X-Rango-Prefetch`, and a request with `_rsc_fill` skips the cache
-  the way `_rsc_action` and `_rsc_loader` do. The middleware runs before
-  classification, so it cannot know whether the route declares a flag; the
-  suffix applies to every prefetch. The cost: a prefetch and a navigation of
-  an unflagged route no longer share a document-cache slot.
+- **Document cache**: two slots, and a request with `_rsc_fill` skips the
+  cache the way `_rsc_action` and `_rsc_loader` do. See "The document cache"
+  below.
 - **`Vary`**: a partial response for a route whose tree declares a flag lists
   `X-Rango-Prefetch` (`renderPreparedRscResponse` in
   `src/rsc/rsc-rendering.ts`, from `RequestContext._prefetchFlagged`). A route
@@ -313,6 +323,58 @@ already removes every `_rsc*` param from the URL handlers see.
 - **Client prefetch cache**: a fill never reads or writes it
   (`src/browser/navigation-client.ts`), and its URL carries `_rsc_fill`, so
   its key could not match a prefetch entry anyway.
+
+### The document cache
+
+The middleware (`createDocumentCacheMiddleware`, `src/cache/document-cache.ts`)
+answers a request before the router has matched it. It cannot know whether
+the route declares a flag, so it cannot decide up front which body a prefetch
+should get. It decides from what it finds and from what the render says:
+
+| Slot                        | Holds                                                                 | Read by                               |
+| --------------------------- | --------------------------------------------------------------------- | ------------------------------------- |
+| plain (the key main has)    | complete bodies: a navigation, or the prefetch of a tree with no flag | navigations, and prefetches first     |
+| `:prefetch` (suffix in key) | the prefetch body of a flagged tree, which may carry deferred units   | prefetches that found no plain answer |
+
+- A **navigation** reads the plain slot and nothing else. Nothing with a
+  deferred unit is ever written there, so it can never be answered with one.
+- A **prefetch** reads the plain slot first. A fresh entry there is served.
+  Otherwise it reads the `:prefetch` slot: one extra read, paid only by a
+  prefetch that found no plain answer.
+- A **write** picks its slot after the render. A prefetch's body goes to
+  `:prefetch` when the tree declares a flag (`RequestContext._prefetchFlagged`,
+  or the response's own `Vary`, whichever says so) and to the plain slot
+  otherwise.
+
+So a route with no flag behaves as it did before the feature: a prefetch and
+a navigation with the same held segments share one entry, in either order.
+An earlier version of this code gave every prefetch its own slot, and the
+handler of an unflagged cached route ran twice where it used to run once.
+
+Can a complete navigation body answer a prefetch of a flagged tree? Yes, and
+on purpose. You might expect strict separation, a prefetch of a flagged tree
+always getting the deferred body. Three reasons it is not:
+
+1. The stored body is complete. The click that adopts it has nothing to wait
+   for and sends no fill.
+2. Serving it runs nothing. Keeping expensive work out of prefetches is the
+   whole point of the flag, and a cache hit is no work at all.
+3. Strict separation would make the flagged work run on every prefetched
+   click (a fill is never cached) while a plain click was a cache hit. The
+   flag would cost server time on exactly the routes that opted into caching.
+
+One exception: a **stale** plain entry of a flagged tree does not answer a
+prefetch. Serving stale means re-rendering in the background, and that
+re-render is a prefetch of a flagged tree, so its body goes to the other
+slot. The stale entry would be served, and re-rendered, by every prefetch
+until a navigation replaced it. The prefetch falls through to its own slot
+instead. The middleware tells a flagged tree's stale entry by the `Vary` the
+stored response carries; if an app middleware rewrote it, the cost is only
+that loop, never a wrong body.
+
+Pinned by `src/cache/__tests__/document-cache.test.ts` ("prefetch and
+navigation slots") and, through a real router, by
+`src/testing/__tests__/prefetch-false.rsc-test.tsx` ("the document cache").
 
 ## The browser
 
@@ -378,6 +440,15 @@ yield of that payload's handle stream and deletes the handle buckets of
 segments outside it. A deferred unit's `matched` stops at the unit, so a late
 yield from the adoption would delete what the fill had pushed below it
 (breadcrumbs from a deferred route, say).
+
+The fill's update carries no scroll action, and it must not clear one
+either (`NavigationUpdate.keepScroll`). This is scar tissue. React holds the
+adoption's commit when nothing can show a fallback: a read with no boundary,
+or a second click on the page's own link, whose boundaries are already
+revealed. The scroll the adoption queued is then still waiting when the fill
+lands, and `NavigationProvider` replaces the pending action on every update.
+A fill that said "do not scroll" left the visitor at the old scroll position
+on a new page.
 
 A fill has no navigation transaction, so two things a transaction normally
 carries need another way to their owner. `PartialUpdateConfig.fill` is that
@@ -449,6 +520,9 @@ and idle-time prefetching waits for it.
   expired between prefetch and click) is followed, as a replace navigation
   through `PartialUpdateConfig.fill.redirect`. An external redirect, or a
   client built without the hook, is a document navigation.
+- A redirect the client refuses to follow (another origin, or an external one
+  whose scheme is not http) rejects the gates like any other unusable
+  response. Returning quietly would leave the fallback up for good.
 
 ### Reuse within `prefetchCacheTTL`
 
@@ -474,8 +548,8 @@ still fine; the push streams with the fill.
 exist in the request. A loader outside the unit that awaits `ctx.rendered()`
 would read a handle list with a hole in it, and the fill never re-runs that
 loader. The contract asks for one of two things: an error, or a safe degrade
-such as deferring that loader too. I looked at the degrade and it is not
-safe. Two reasons:
+such as deferring that loader too. The degrade is tempting and it is not
+safe, for two reasons:
 
 - The decision is only known when the loader calls `rendered()`, which is
   after its segment was emitted as a running loader.
@@ -498,11 +572,31 @@ segments. A fill refuses `rendered()` outright for the same reason R12 exists.
 - An orphan layout's flagged `loading()` defers its loaders but not its
   handler. A route's handler runs before its orphan layouts, so there is
   nothing left to skip by the time the orphan is reached.
-- A flagged loader that another loader reads with `ctx.use()` runs with its
-  reader. So does one a streamed handler reads late (see above).
+- A flagged loader that something else reads with `ctx.use()` runs in the
+  prefetch with its reader. Whether it then runs a second time depends on
+  when the read happens. Resolution checks once, when it has awaited every
+  handler it awaits, which loaders were started (`deliverStartedLoaders` in
+  `revalidation.ts`). A loader started by then is delivered from that run
+  and is not deferred: one run, no fill for it. A read after the check is not
+  seen: the loader runs for its reader, its own segment has already been
+  emitted as deferred, and the fill runs it again. Two readers can be late:
+  1. a handler under `loading()`. It is streamed, so resolution calls it and
+     does not wait for it. A `ctx.use(Flagged)` after its first `await` is
+     late unless resolution happens to be waiting on something else.
+  2. a loader that is not deferred itself and calls `ctx.use(Flagged)` after
+     an `await`. Loaders are started, never awaited, by resolution, so the
+     same holds.
+
+  In both, a read before the reader's first `await` happens while resolution
+  is still calling things and is always in time. A handler with no
+  `loading()` is awaited, so any read inside it is in time. Data is never missing in the
+  late cases, only fetched twice, and the page shows the fill's value. To get
+  one run, start the read before the first `await`, or drop the flag from a
+  loader the page cannot render without.
+
 - `clientUrls()` routes and `intercept()` ignore the flag.
-- A prefetch of an unflagged route and a navigation to it no longer share a
-  document-cache slot.
+- A fill does not refresh a stale `cache()` record (see "Where the decisions
+  are made"). The record waits for the next request that reads it.
 - Values a held handler would have set with `ctx.set()` are not visible to
   deferred work (R10).
 - A page restored from the back/forward cache with a fill in flight shows the
