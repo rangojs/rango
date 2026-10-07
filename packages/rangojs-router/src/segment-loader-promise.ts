@@ -51,13 +51,16 @@ const primitiveLoaderCache = IS_BROWSER
   ? new Map<unknown, LoaderCacheEntry[]>()
   : null;
 
-// In the browser, a single shared empty aggregate is safe (and desirable) —
-// reusing the same resolved promise keeps React's `use()` in a known-fulfilled
-// state across renders. On the server it would leak `.status = "fulfilled"`
-// across requests and skip the Suspense fallback, so we rebuild on each call.
-const SHARED_EMPTY_LOADER_PROMISE: Promise<any[]> | null = IS_BROWSER
-  ? Promise.resolve([])
-  : null;
+// In the browser a boundary with no loaders has nothing to wait for: one
+// shared empty array, which LoaderResolver renders without a `use()`. It was
+// a shared resolved promise, which React knows as fulfilled only once it has
+// read it. A boundary already on screen that was handed it first in a render
+// that cannot wait (a plain click after clicks whose trees were all awaited,
+// such as a prefetched click and its `prefetch: false` fill) showed its
+// fallback again for 300 ms over content it held. On the server every render
+// needs a fresh promise so Suspense emits the fallback, so we rebuild on
+// each call.
+const SHARED_EMPTY_LOADERS: any[] | null = IS_BROWSER ? [] : null;
 
 function hasSameReferences(a: any[], b: any[]): boolean {
   if (a.length !== b.length) {
@@ -130,7 +133,7 @@ export function getMemoizedLoaderPromise(
   loaders: ResolvedSegment[],
 ): Promise<any[]> | any[] {
   if (loaders.length === 0) {
-    return SHARED_EMPTY_LOADER_PROMISE ?? buildLoaderPromise(loaders);
+    return SHARED_EMPTY_LOADERS ?? buildLoaderPromise(loaders);
   }
   if (!objectLoaderCache || !primitiveLoaderCache) {
     return buildLoaderPromise(loaders);
