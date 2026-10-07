@@ -380,7 +380,10 @@ server projection.
   prefetches. A prefetch (partial request with `X-Rango-Prefetch`) skips the
   flagged loaders, and for a flagged `loading()` the entry's handler, loaders,
   orphan layouts and slots (for a layout, every deeper entry), and marks each
-  skipped piece `ResolvedSegment.deferred`. The click that adopts the payload
+  skipped piece `ResolvedSegment.deferred`. Only on a segment the client does
+  not have yet (`defersLoader`, `defersUnit`): one it holds is never deferred,
+  so a click that adopts a prefetch is never worse than the same click with no
+  prefetch. The click that adopts the payload
   commits it, shows the fallback and sends one fill request (`_rsc_fill=1`)
   that runs only the deferred work. Server plan and decisions:
   `router/segment-resolution/prefetch-deferral.ts` (`resolveDeferralScope`,

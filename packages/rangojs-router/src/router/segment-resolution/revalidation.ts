@@ -147,7 +147,7 @@ function deliverStartedLoaders<TEnv>(
  * browser groups them under the unit's segment (segment-system.tsx
  * loaderParentId), so the placeholder's tree has the loader-bearing shape
  * the filled one will have. All of them are behind the unit's fallback, so a
- * prefetch defers each one that would run.
+ * prefetch defers each one the client does not hold.
  */
 async function resolveDeferredUnitSlotLoaders<TEnv>(
   entry: EntryData,
@@ -338,8 +338,9 @@ export async function resolveLoadersWithRevalidation<TEnv>(
           ctx.pathname,
           errorContext,
         );
-      // Deferral replaces execution: the loader would have run, and its
-      // cache() is not read either (resolveLoaderData is never reached).
+      // Only a loader on a segment the client lacks (defersLoader). It
+      // would have run, and its cache() is not read either
+      // (resolveLoaderData is never reached).
       if (defersLoader(ctx, loaderEntry, segmentId, clientSegmentIds)) {
         const deferred: ResolvedSegment = {
           id: segmentId,
@@ -952,8 +953,8 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
       return shouldRevalidate;
     },
     async () => {
-      // Deferral replaces execution: the handler would have run, and a
-      // prefetch sends the entry's fallback in its place.
+      // Only an entry the client lacks (defersUnit). Its handler would
+      // have run, and a prefetch sends the entry's fallback in its place.
       if (defersUnit(context, entry, entry.shortCode, clientSegmentIds)) {
         deferred = true;
         markUnitDeferred(context, entry.shortCode);

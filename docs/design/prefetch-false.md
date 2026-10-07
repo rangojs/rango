@@ -1,7 +1,7 @@
 # `prefetch: false`: keeping expensive work out of prefetches
 
 Status: built. Written on 2026-10-07 against main `844ccda5`, from the behaviour
-contract agreed with the maintainer the same day. The rules below (R1 to R13)
+contract agreed with the maintainer the same day. The rules below (R1 to R14)
 are that contract; the mechanics are what the code does.
 
 Read [caching.md](./caching.md) first if you have not, and
@@ -43,40 +43,53 @@ partial update. Nothing else changes: a hard load, a navigation with no
 prefetch to adopt, an action, a back/forward and a no-JS form post never see a
 deferred segment.
 
+The flag applies only to a segment the client does not have yet. This router
+keeps what is on screen wherever it can, and the flag must never cost you
+that, so a segment the browser already holds is never deferred. The promise
+the feature makes, and the one to check any change against: **a click that
+adopts a prefetch with deferred units is never worse than the same click with
+no prefetch at all. It shows a fallback only where that plain navigation would
+show the same fallback, it waits only where that plain navigation would wait,
+and content that is already on screen is never replaced by a fallback, blanked
+or remounted while a fill is pending.**
+
 Three words carry the rest of this document:
 
 - **Prefetch request**: a partial request (`_rsc_partial`) with the
   `X-Rango-Prefetch` header.
 - **Deferred unit**: work a prefetch skipped, marked `deferred: true` on its
   segment. A deferred loader is one loader segment. A deferred handler unit is
-  an entry's handler plus everything its fallback covers.
+  an entry's handler plus everything its fallback covers. Either is always a
+  segment that is new to the client (R14).
 - **Fill request**: the partial request the browser sends for the same URL
   when it adopts a payload that carries deferred units. It carries
   `_rsc_fill=1`.
 
 ## Path table
 
-| Request kind                                                         | Flagged loader                              | Flagged `loading()` entry                   |
-| -------------------------------------------------------------------- | ------------------------------------------- | ------------------------------------------- |
-| Document request (hard load)                                         | runs, as before                             | runs, as before                             |
-| Navigation with no prefetch to adopt                                 | runs, as before (one request)               | runs, as before (one request)               |
-| Prefetch request                                                     | not executed, marked deferred (R1)          | see R2                                      |
-| Click that adopts a payload with deferred units                      | fallback shows; fill request sent (R4)      | fallback shows; fill request sent (R4)      |
-| Fill request                                                         | executes; only missing ids are emitted (R5) | executes; only missing ids are emitted (R5) |
-| Action revalidation, popstate, no-JS (PE)                            | unchanged                                   | unchanged                                   |
-| Shell capture, warm request, on-demand prerender, `_rsc_loader` lane | unchanged (none is a prefetch)              | unchanged                                   |
+| Request kind                                                         | Flagged loader                              | Flagged `loading()` entry                    |
+| -------------------------------------------------------------------- | ------------------------------------------- | -------------------------------------------- |
+| Document request (hard load)                                         | runs, as before                             | runs, as before                              |
+| Navigation with no prefetch to adopt                                 | runs, as before (one request)               | runs, as before (one request)                |
+| Prefetch request, segment new to the client                          | not executed, marked deferred (R1)          | see R2                                       |
+| Prefetch request, segment the client holds                           | runs when it revalidates, as before (R14)   | renders when it revalidates, as before (R14) |
+| Click that adopts a payload with deferred units                      | fallback shows; fill request sent (R4)      | fallback shows; fill request sent (R4)       |
+| Fill request                                                         | executes; only missing ids are emitted (R5) | executes; only missing ids are emitted (R5)  |
+| Action revalidation, popstate, no-JS (PE)                            | unchanged                                   | unchanged                                    |
+| Shell capture, warm request, on-demand prerender, `_rsc_loader` lane | unchanged (none is a prefetch)              | unchanged                                    |
 
 ## The rules
 
 These are the invariants. If you change this feature, these are what must
 still hold.
 
-**R1. A flagged loader in a prefetch is not executed.** Its own `cache()` is
-not read either, even when it would hit. Its segment is in the payload, marked
-deferred, with no data.
+**R1. A flagged loader on a segment that is new to the client is not executed
+in a prefetch.** Its own `cache()` is not read either, even when it would hit.
+Its segment is in the payload, marked deferred, with no data.
 
-**R2. A flagged `loading()` entry in a prefetch.** Two cases, and which one
-applies depends on whether the entry's handler output is stored.
+**R2. A flagged `loading()` entry that is new to the client, in a prefetch.**
+Two cases, and which one applies depends on whether the entry's handler output
+is stored.
 
 - _Not stored_ (no enabled `cache()` boundary covers it, the route is not
   `ppr`, it is not a `Prerender`/`Static` handler): the handler does not run.
@@ -143,6 +156,31 @@ anyone.** A loader that is not deferrable and awaits `ctx.rendered()` in such
 a prefetch gets an error naming the skipped segment, and development warns
 about the combination on any other request.
 
+**R14. The flag applies only to a segment the client does not have yet.**
+"New to the client" means the segment's id is absent from the prefetch
+request's `_rsc_segments`. This is what defines the unit:
+
+- A segment the client holds is never deferred, whether or not its
+  `revalidate()` returns true. A held layout or route with a flagged
+  `loading()` is rendered by a prefetch exactly as it is without the flag, and
+  a flagged loader on a held segment runs in the prefetch when it revalidates.
+- Nothing is deferred _because of_ a held segment. A route under a flagged
+  layout the client holds follows its own flags: with none, the prefetch runs
+  its handler and its loaders, and the click sends no fill.
+- A segment that is new is deferred by its own flag wherever it sits: a route
+  with its own flagged `loading()` under a held layout is its own unit.
+- So a same-route navigation (same route, other params: the client holds the
+  route and its loader segments) behaves as it does without the flag. The
+  prefetch runs everything and the click sends no fill. That is for a prefetch
+  taken on that page; "Limits" covers one taken elsewhere.
+
+Why so strict? A placeholder over a segment that is on screen would put a
+fallback where the visitor is looking at content, or hold the click on a fill
+where a plain navigation would have streamed. Either breaks the promise in
+"The model in one paragraph". If navigation inside a section has to stay out
+of prefetches, flag the `loading()` of the routes inside it: they are new on
+each of those navigations.
+
 ## Which loaders are deferrable
 
 You will want this list when a loader runs in a prefetch and you expected it
@@ -157,7 +195,8 @@ when any of these holds:
 3. Its entry is an orphan layout or a parallel slot of an entry with a flagged
    `loading()`.
 4. A layout above it in the chain has a flagged `loading()`. A layout's
-   fallback covers its whole outlet, so the flag reaches every deeper entry.
+   fallback covers its whole outlet, so the flag reaches every deeper entry
+   while that layout is new to the client.
 
 And never when:
 
@@ -173,18 +212,29 @@ And never when:
   not deferred at all (R8).
 
 "Deferrable" is a static property of the registration. Whether a deferrable
-loader is actually deferred is decided per request: **deferral replaces
-execution**. The server evaluates revalidation exactly as before, and a
-deferrable loader that would have run is marked deferred instead. One the
-client holds and that would not re-run is kept, as before, and nothing is sent
-for it.
+loader is actually deferred is decided per request, by R14: `defersLoader()`
+answers yes only when the loader's own segment is new to the client and,
+for a loader that is deferrable through an entry's `loading()` (2 to 4)
+rather than its own flag, at least one of those entries is new too. The scope
+keeps, for each such loader, the segment ids of the flagged entries whose
+fallback covers it, so that question is a set lookup. A loader the client
+holds is left to revalidation, exactly as before the feature existed.
 
-The same rule decides handler units. A flagged entry whose handler would run
-in this prefetch becomes the unit. A flagged layout the client already holds
-and that does not re-render is not a unit for that prefetch: its fallback
-would not show on that navigation, so there is nothing for it to cover. If
-navigation inside such a section must stay out of prefetches too, flag the
-route's own `loading()`.
+The same rule decides handler units. `defersUnit()` makes a flagged entry the
+unit when its segment is new to the client and its handler output is not
+stored. A flagged layout the client already holds is not a unit, also when its
+`revalidate()` says to render it again.
+
+Scar tissue, twice. The first version asked "would this run?" instead of "is
+this new?", so a held layout that revalidated was deferred as a unit: on a
+same-route navigation the prefetch skipped the page, and the click put a
+fallback over content the visitor was reading. And "behind a flagged layout"
+was a property of the tree, so with the layout held and not re-rendering, a
+prefetch from inside the section ran the child route's handler and deferred
+its loaders, behind no fallback of their own. Both are pinned from each side
+by `src/testing/__tests__/prefetch-false.rsc-test.tsx` ("the flag applies only
+to a segment the client does not have yet") and in the browser by the section
+cases and the same-route case of the shared suite.
 
 ## The server
 
@@ -225,7 +275,7 @@ All of it is in `src/router/segment-resolution/revalidation.ts`, the partial
 path. The document path (`fresh.ts`) never defers.
 
 - `resolveLoadersWithRevalidation` is the one place a navigation kicks a DSL
-  loader off. A deferrable loader whose revalidation said "run" is emitted as
+  loader off. A loader `defersLoader()` says yes to (R14) is emitted as
   `{ type: "loader", deferred: true }` with no `loaderData`, and
   `resolveLoaderData` is never called, so its `cache()` is not read (R1).
 - `resolveEntryHandlerWithRevalidation` skips a unit's handler and emits the
@@ -238,9 +288,9 @@ path. The document path (`fresh.ts`) never defers.
   loader segments. That is for the browser: the segment tree it builds for the
   placeholder then has the same shape it will have after the fill (see "No
   remount" below).
-- `buildMatchResult` (`src/router/match-result.ts`) keeps a deferred segment
-  even when the client holds its id. Without that, a unit that re-runs on a
-  same-route navigation would be dropped as "the client has it".
+- `buildMatchResult` (`src/router/match-result.ts`) needs no special case: a
+  deferred segment is never one the client holds, so the ordinary "send what
+  the client lacks" filter keeps it.
 
 In a fill, every one of those decision points answers
 `!clientSegmentIds.has(id)` and nothing else. The two store paths in
@@ -253,7 +303,7 @@ schedules a background re-render of the whole route
 (`withBackgroundRevalidation`), and so did a fill at first: the layout and
 the route handler ran again behind a request whose rule is that no handler of
 a held segment runs. The fill now skips the refresh, as it skips the
-proactive write in `withCacheStore`. Nothing is lost: the record is refreshed
+proactive re-render in `withCacheStore`. Nothing is lost: the record is refreshed
 by the next request that reads it, and the prefetch that came before the
 fill was already one.
 
@@ -283,11 +333,23 @@ sees the plan.
 
 One case does need care. A flagged layout above a `cache()` boundary is not
 stored, so it can be a unit, and a unit skips everything below it, the cached
-part included. When that can happen (`chainUnitPossible()`), `withCacheLookup`
-does not read the route cache and `withCacheStore` does not write it for that
-prefetch. Reading would restore the record's handle pushes for segments the
-response does not carry, and a write could only ever store an incomplete
-record.
+part included. When this request defers such a layout (`defersAboveRecord()`:
+a flagged, unstored chain entry the client does not hold), `withCacheLookup`
+does not read the route cache and `withCacheStore` does not write it. Reading
+would restore the record's handle pushes for segments the response does not
+carry, and a write could only ever store an incomplete record.
+
+That is decided per request, from what the client holds, and that is scar
+tissue. It used to be decided per tree (`chainUnitPossible()`): any prefetch
+of a route under a flagged layout skipped the record, also when the client
+held the layout and nothing above the record was deferred, and a fill never
+wrote. With the layout held, three prefetches of a `cache()` route ran its
+handler three times where the same route under an unflagged layout ran it
+once. A fill now writes the record too, when its response holds every segment
+the record covers (the client held none of them). It still does not start the
+proactive re-render a partial response normally triggers: that would run the
+handlers of segments the client holds, behind a request whose rule is that
+they do not run.
 
 ### Wire format
 
@@ -423,9 +485,10 @@ placeholders. By object identity, not by history key: a shallow navigation
 that copied the entry to a new key is still filled, and an action refetch
 that already rendered the missing segments (its request listed them as not
 held) is not overwritten. It reconciles the response against the entry with
-the `"stale-revalidation"` actor, renders, and commits in a transition. Last,
-it resolves each gate with the value the committed tree reads, which releases
-anything still suspended on one.
+the `"stale-revalidation"` actor, renders, and commits in a transition. A
+deferred loader's gate is resolved right then, with the value the committed
+tree reads, which releases anything still suspended on it. A unit's gate is
+resolved a moment later; "Revealing a unit" below says when and why.
 
 The entry is rewritten **in place**: the fill splices the filled segments
 into the array the history cache already holds for the entry, and calls
@@ -440,6 +503,45 @@ yield of that payload's handle stream and deletes the handle buckets of
 segments outside it. A deferred unit's `matched` stops at the unit, so a late
 yield from the adoption would delete what the fill had pushed below it
 (breadcrumbs from a deferred route, say).
+
+### Revealing a unit
+
+A plain navigation to a route with `loading()` shows the fallback and then
+reveals the content through a Suspense retry, and React keeps a fallback up
+for 300 ms before it lets a retry replace it. That throttle is why a loader
+that needs another 100 ms does not flash a second, inner fallback: by the time
+the outer one may go, the inner data is there.
+
+The fill has to reveal a unit the same way, and at first it did not. Its tree
+carried the unit's content, so the fill's own transition revealed it, and a
+transition is not throttled. Measured in production from the hub, on a layout
+unit whose route has its own `loading()`: fallback at 4 ms, the layout with
+the route's fallback inside it at 10 ms, the value at 311 ms. The same click
+with no prefetch shows the fallback at 11 ms and everything at 314 ms. One
+loading state more than the plain navigation, for the same finish.
+
+So a unit's segment keeps reading its gate in the tree the fill commits, and
+the gate is resolved once React has committed that tree
+(`NavigationUpdate.onCommit`, called from a layout effect of
+`NavigationProvider`). React then retries the boundary, throttled like any
+other, and the sequence is the plain navigation's.
+
+Two things keep that from hanging, and both are scar tissue of the first try:
+
+- `onCommit` also fires when a _later_ update commits. React commits only the
+  last of the updates it batches, and an urgent update can supersede a
+  transition it is holding. An update that is skipped that way would otherwise
+  leave its gate pending for good. An _earlier_ update that commits meanwhile
+  does not fire it. `src/testing/__tests__/navigation-update-on-commit.test.tsx`
+  pins the order through the real provider.
+- Only a unit whose fallback can show waits for the commit (`Gate.fresh`: the
+  page being left has no copy of the unit's segment). The browser's prefetch
+  cache is not keyed by the source page, so a prefetch taken on the hub can be
+  adopted on the unit's own page, where the unit's content is on screen. React
+  never commits a tree that suspends where content is showing: it holds the
+  old page, which is what you want, and it would hold the fill's tree too if
+  that still read the gate. Such a unit gets its content in the fill's tree
+  and its gate resolved at once, as before.
 
 The fill's update says nothing about scroll. Scroll belongs to the
 navigation transaction: `tx.commit()` decides it, the adoption's update
@@ -466,13 +568,29 @@ link, whose boundaries are already revealed.
 The rule now, for every update and not only the fill: an update that carries
 a transaction's decision sets the pending action, the commit that follows
 consumes it once, and an update with no decision (a server action, an error
-update, a fill) neither sets nor clears it. You might worry that with nothing
+update, a fill) neither sets nor clears it.
+
+The transaction draws the same line. `commit()` returns its decision in the
+shape the update carries it (`CommitResult` in
+`src/browser/navigation-transaction.ts`). A navigation always decides, and "do
+not scroll" is a decision that replaces a pending one: `<Link scroll={false}>`,
+an intercept, the explicit `scroll: false` commits of the bridge. A commit that
+is not a navigation returns none: an action's store-only refetch into the entry
+on screen, and a cache-only commit. Those two used to answer `scroll: false`,
+which reached the provider as "do not scroll", so an action refetch that
+landed before React had committed a navigation cost the navigation its scroll,
+the fill's bug by another road.
+
+You might worry that with nothing
 clearing the slot an old scroll could be replayed by a later action. It
 cannot: every update re-renders the provider, and the commit that follows
 consumes whatever is pending. `src/testing/__tests__/navigation-scroll-slot.test.tsx`
 pins all four sides through the real provider: an update with no decision
 does not cost a pending navigation its scroll, a later one does not replay
 it, the second of two navigations wins, and a traversal's restore survives.
+The same file drives the action refetch through the real updater and a real
+transaction, the call `refetchRoute()` makes in
+`src/browser/server-action-bridge.ts`.
 The browser suites force both orders (the fill before the adoption's commit,
 the fallback before the fill) and never leave it to timing.
 
@@ -482,6 +600,27 @@ way, supplied by the navigation bridge: `redirect(url, state)` performs a
 replace navigation, and `locationState(state)` merges location state the
 deferred work set into the current history entry. Without the hooks a
 redirect is a document navigation and the state is dropped.
+
+### What the page reads while a fill is pending
+
+Three things a page can observe, each checked against a plain navigation
+whose loader is still streaming:
+
+- **`useNavigation()`** reads `state: "idle"` and `isStreaming: true`. The
+  adoption's transaction has committed, and its streaming token stays open
+  until the fill has landed and streamed (`fetchPartialUpdate` ends it on
+  `adoption.fill.done`). A plain navigation reads the same once it has
+  committed. It reads `"loading"` before that, which an adopted click never
+  shows: its commit is immediate.
+- **View transitions.** The fill commits through `commitInTransition` with no
+  transition type, and reuses the adoption's `transition({ when })` decision
+  (`fill.gatedOff`). On a route with `transition()` and a flagged loader the
+  browser gets two `document.startViewTransition` calls, the commit and the
+  reveal, with or without the prefetch.
+- **Handle data.** A push from a handler the prefetch ran travels in the
+  prefetched payload's handle stream, so it is on screen with the click's
+  commit: breadcrumbs and titles from the part that was not deferred do not
+  wait for the fill. A deferred handler's push arrives with the fill.
 
 ### No remount (R6)
 
@@ -637,9 +776,16 @@ segments. A fill refuses `rendered()` outright for the same reason R12 exists.
 
 ## Limits
 
-- A flagged layout the client already holds and that does not re-render is
-  not a unit (see "Which loaders are deferrable"). Its deferrable loaders are
-  still deferred when they would run.
+- A prefetch is answered for the page that sent it, and the browser's
+  prefetch cache is not keyed by that page. A prefetch taken where a flagged
+  segment was new can be adopted on a page that holds it: the hub's prefetch
+  of a section route, clicked from inside the section, or `item/b` prefetched
+  on the hub and clicked from `item/a`. The payload then defers something the
+  page holds, and the click sends a fill where a prefetch taken on that page
+  would have sent nothing. The promise still holds, and the parity cases pin
+  it: React keeps the content on screen until the fill's tree can replace it,
+  and the click shows no fallback a plain navigation would not show. The cost
+  is one handler run: the fill renders the held layout the prefetch skipped.
 - An orphan layout's flagged `loading()` defers its loaders but not its
   handler. A route's handler runs before its orphan layouts, so there is
   nothing left to skip by the time the orphan is reached.
@@ -685,6 +831,7 @@ a link, watch the counters, then click it and watch them again: flagged work
 shows 0 runs after the hover and 1 after the click, an unflagged case shows 1
 after the hover. `run` keys the counters: each value you pick has its own, and
 "Start a new run" picks a fresh one. `&tall=1` adds spacers so the page
-scrolls, for checking that a navigation ends at the top. Without `manual=1`
+scrolls, for checking that a navigation ends at the top. `&slow=1` makes every
+deferred loader take 600 ms longer, so you can watch a fallback. Without `manual=1`
 the panel, the badge and the polling are not rendered, which is what the
 suites see. Every link carries the flags that are set.

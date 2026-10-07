@@ -254,12 +254,39 @@ path("/orders", OrdersPage, { name: "orders" }, () => [
 ]),
 ```
 
-**What `prefetch: false` defers.** A prefetch of the route skips the entry's
-handler, its loaders, its orphan layouts and its parallel slots. On a
-`layout()` the fallback covers the whole outlet, so every deeper entry is
-skipped too. A parallel slot with its own flagged `loading()` is a separate
-unit: the route beside it still renders in the prefetch. The prefetch payload
-marks each skipped piece deferred and carries the fallback.
+**What `prefetch: false` defers.** The flag applies when the entry is new to
+the browser: the page the prefetch is sent from does not show it. A prefetch
+then skips the entry's handler, its loaders, its orphan layouts and its
+parallel slots. On a `layout()` the fallback covers the whole outlet, so every
+deeper entry is skipped with it. A parallel slot with its own flagged
+`loading()` is a separate unit: the route beside it still renders in the
+prefetch. The prefetch payload marks each skipped piece deferred and carries
+the fallback.
+
+**An entry the browser already holds is never deferred.** Inside a section
+whose `layout()` has a flagged `loading()`, the layout is on screen, so its
+flag has no say: a prefetch of a sibling route renders that route's handler
+and loaders as usual, and the click sends no second request. The same goes for
+a same-route navigation (`/product/a` to `/product/b`). The rule behind it:
+a click that adopts a prefetch is never worse than the same click with no
+prefetch at all. It shows a fallback only where that plain navigation would,
+waits only where it would, and never replaces content that is on screen with a
+fallback. To keep navigation _inside_ a section out of prefetches, flag the
+`loading()` of the routes in it:
+
+```tsx
+layout(AccountLayout, () => [
+  // From outside /account: the layout and the route below wait together.
+  loading(<AccountSkeleton />, { prefetch: false }),
+  // From another /account page: prefetched whole, the layout is on screen.
+  path("/account/profile", ProfilePage, { name: "account.profile" }),
+  // From another /account page: still deferred, by its own flag.
+  path("/account/orders", OrdersPage, { name: "account.orders" }, () => [
+    loader(OrdersLoader),
+    loading(<OrdersSkeleton />, { prefetch: false }),
+  ]),
+]),
+```
 
 **What the click looks like.** The click that adopts the prefetch commits at
 once: the URL changes, the prefetched content shows, and the fallback shows

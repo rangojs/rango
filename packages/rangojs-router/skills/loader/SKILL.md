@@ -1118,6 +1118,12 @@ What happens:
 - A **prefetch** of the route does not run the loader and does not read its
   `cache()`; the payload marks it deferred. The rest of the page prefetches as
   usual.
+- Only on a route the browser does not show yet. A loader the page already
+  holds, on a same-route navigation such as `/product/a` to `/product/b`, runs
+  in the prefetch when it revalidates, exactly as without the flag, and the
+  click sends no second request. The rule: a click that adopts a prefetch is
+  never worse than the same click with no prefetch at all, and content on
+  screen is never swapped for a fallback because of the flag.
 - A **click** that adopts that prefetch commits at once. Where the page reads
   the loader (`useLoader(ReviewsLoader)`) it shows the nearest `loading()` or
   `<Suspense>` fallback, and the browser sends one second request, the fill,

@@ -495,7 +495,10 @@ loading(<OrdersSkeleton />, { prefetch: false }),
 ```
 
 A click that adopts such a prefetch commits what was prefetched, shows the
-fallback for the deferred part, and sends one extra request for it. See
+fallback for the deferred part, and sends one extra request for it. Only what
+is new to the page is deferred: a segment already on screen (the layout of the
+section you are in, the route itself on `/product/a` to `/product/b`) is
+prefetched as usual. See
 `/loader` → "`prefetch: false`" and `/route` → "`loading()` options". To stop
 a link or a whole section from prefetching at all, use the `prefetch` prop or
 `data-prefetch-scope` above.

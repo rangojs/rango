@@ -455,7 +455,10 @@ the fill request that the click sends afterwards reads the loader cache and
 runs the loader on a miss. A route-level `cache()` boundary is unaffected: its
 stored handler output is served and written as before, hit or miss, and
 `loading(fallback, { prefetch: false })` under it defers only the loaders
-behind the fallback, never the cached handler. A prefetch body and a
+behind the fallback, never the cached handler. A `cache()` route below a
+layout with a flagged `loading()` keeps using its record whenever the browser
+already holds that layout; only a prefetch that defers the layout itself (it
+is new to the page) leaves the record unread and unwritten. A prefetch body and a
 navigation body are stored apart, and a fill response is stored nowhere. See
 `/loader` → "`prefetch: false`".
 

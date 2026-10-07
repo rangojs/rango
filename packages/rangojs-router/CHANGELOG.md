@@ -23,6 +23,12 @@ before. Without the options nothing changes.
 
 What to know before you use it:
 
+- **Only what is new to the page is deferred.** A segment the browser already
+  holds is prefetched as usual: the layout of the section you are in, or the
+  route itself on a same-route navigation (`/product/a` to `/product/b`). So a
+  click that adopts a prefetch is never worse than the same click with no
+  prefetch at all, and content on screen is never swapped for a fallback. To
+  defer navigation inside a section, flag the `loading()` of its routes.
 - **A loader needs a boundary.** Put its read under `loading()` or `<Suspense>`;
   with none, the click waits for the fill.
 - **`ctx.rendered()` is refused** in a loader a prefetch can defer, on every
@@ -115,6 +121,18 @@ What to know before you call it:
 `skipped-not-on-demand`, the status an unreleased build of on-demand prerender
 returned for these routes, is gone. See the `prerender` skill, "Warm any route
 before traffic".
+
+### Fixed: a server action that lands while a navigation commits no longer costs the navigation its scroll
+
+A navigation scrolls to the top (or restores a position) when React commits
+its page, and React can take a moment to do that, or hold the commit while a
+transition waits. A server action that finished in that window cancelled the
+scroll: its update reached the page first and was read as "do not scroll", so
+the visitor stayed at the old scroll position on the new page. An action
+update, an action's refetch of the route and an error update now say nothing
+about scroll and leave a pending navigation's decision alone. A navigation
+that asks not to scroll (`<Link scroll={false}>`, an intercept) is honoured
+as before.
 
 ### Fixed: a superseded link click no longer follows its server redirect ([#1047](https://github.com/rangojs/rango/issues/1047))
 
