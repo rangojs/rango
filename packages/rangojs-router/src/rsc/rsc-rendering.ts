@@ -94,6 +94,7 @@ import {
   type DevShellLookup,
 } from "./shell-build-manifest.js";
 import { contextGet } from "../context-var.js";
+import { PREFETCH_HEADER } from "../router/segment-resolution/prefetch-deferral.js";
 import {
   isWarmReplace,
   noteWarmShellEvent,
@@ -1220,16 +1221,22 @@ function renderPreparedRscResponse<TEnv>(
   }
   // prefetch: false (docs/design/prefetch-false.md, R7). A response that
   // carries deferred units answers one page's prefetch, and a fill is the
-  // second half of one adoption: neither is reused, by the browser, a
-  // shared cache or the document cache (which also refuses a payload marked
-  // `_payloadDeferred`), whatever Cache-Control the route set. So no stored
-  // body can hand a navigation a deferred unit, and a route with no flag
-  // keeps its headers.
+  // second half of one adoption: neither is reused by a shared cache or the
+  // document cache (which also refuses a payload marked `_payloadDeferred`),
+  // whatever Cache-Control the route set. A route with no flag keeps its
+  // headers.
   if (
     reqCtx._payloadDeferred ||
     (isPartial && reqCtx._requestKind === "fill")
   ) {
     rscHeaders["cache-control"] = NOT_REUSED;
+  }
+  // The browser may still keep the body, and answers from it without asking
+  // while it reloads a document for back/forward. A navigation is the same
+  // URL as its prefetch: the header that tells them apart keeps the deferring
+  // body from answering one.
+  if (reqCtx._payloadDeferred) {
+    rscHeaders.vary += `, ${PREFETCH_HEADER}`;
   }
 
   const isFlightResponse = isRscRequest(request, url, isPartial);
@@ -1716,10 +1723,14 @@ function publishTailTiming(
 const PENDING = Symbol("pending");
 
 /**
- * Cache-Control of a response nothing may store for reuse: one that carries
+ * Cache-Control of a response that is not to be reused: one that carries
  * deferred units (`prefetch: false`), and a fill. `private` keeps it out of
  * shared caches; `no-cache` makes the browser ask again, and with no
- * validator on the response that is a full request. Not `no-store`:
+ * validator on the response that is a full request. The browser may keep the
+ * body all the same (Chromium does) and answers from it, without asking,
+ * while it reloads a document for back/forward. That is harmless: the client
+ * completes any payload that carries deferred work, wherever it came from.
+ * Not `no-store`:
  * Chromium reports a `no-store` fetch whose body is read through a stream
  * as canceled (net::ERR_ABORTED in DevTools, and Playwright's
  * response.finished() never settles), though every byte arrived.
