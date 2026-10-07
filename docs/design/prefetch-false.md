@@ -201,7 +201,10 @@ the request is a fill:
   when the raw URL carries `_rsc_fill`; otherwise unset.
 - `storedFrom`: the first chain index whose handler output is stored. `0` for
   a `ppr` leaf and for `Prerender` routes, the `cache()` boundary's index when
-  the route's scope is enabled, `Infinity` otherwise.
+  the route's scope is enabled, `Infinity` otherwise. A `Prerender` route
+  counts from its definition (`isPrerender` on the leaf), not from whether
+  this request found an artifact: the dev server has none, and a prefetch
+  there should skip what a production prefetch skips.
 - `deferredUnit`: the id of the handler unit this prefetch skipped, set during
   resolution.
 
@@ -316,20 +319,27 @@ already removes every `_rsc*` param from the URL handlers see.
 ### Adoption
 
 `fetchPartialUpdate` (`src/browser/partial-update.ts`) is where every partial
-payload is reconciled and committed. After reconciling, it looks for deferred
-segments. If there are any, three things happen before the tree is built:
+payload is reconciled and committed. When the payload it is about to commit
+carries deferred segments, three things happen before the tree is built:
 
-1. Each deferred segment gets a **gate**: a promise the browser created. A
-   deferred loader's gate becomes its `loaderData`; a deferred unit's gate
-   becomes its `component`. To the rest of the client a gate is a loader
-   stream that has not arrived yet, which is something it already knows how to
-   show.
-2. The fill request starts (`client.fetchPartial({ fill: true })`), with its
-   own `AbortController`.
-3. The commit proceeds on the lane it would have taken anyway. A fully
-   prefetched payload still commits in a transition with `forceAwait`;
-   `renderSegments` (`src/segment-system.tsx`) skips the awaits that would
-   wait on a gate.
+1. `armGates()` gives each deferred segment a **gate**: a promise the browser
+   created. A deferred loader's gate becomes its `loaderData`; a deferred
+   unit's gate becomes its `component`. To the rest of the client a gate is a
+   loader stream that has not arrived yet, which is something it already
+   knows how to show. This happens before the reconcile, on the payload's own
+   segment objects. That is safe because every adoption decodes its own
+   payload (see "Reuse" below).
+2. The reconcile runs without the page's copies of the deferred ids. This one
+   is scar tissue. The reconciler keeps the cached component when the server
+   sends `component: null` for a layout the client holds, and the navigation
+   actor keeps the cached `loading`. On a same-route navigation that turned a
+   deferred unit back into the old page's content, with no fallback and no
+   gate. A deferred id has no usable copy, so it is given none.
+3. `runFill()` starts the fill request (`client.fetchPartial({ fill: true })`)
+   with its own `AbortController`, and the commit proceeds on the lane it
+   would have taken anyway. A fully prefetched payload still commits in a
+   transition with `forceAwait`; `renderSegments`
+   (`src/segment-system.tsx`) skips the awaits that would wait on a gate.
 
 The store never reports a placeholder as held. `tx.commit` receives the
 matched ids minus the deferred ones, so `_rsc_segments` of every later request
@@ -340,13 +350,41 @@ never a copy of the segment.
 
 ### The fill and the merge
 
-When the fill's payload arrives, `completeFill` checks that the entry on
-screen still holds this adoption's placeholders (object identity, not the
-history key, so a shallow navigation that copies the entry to a new key still
-gets filled). Then it reconciles the response against the entry with the
-`"stale-revalidation"` actor, renders, writes the store and commits in a
-transition. Last, it resolves each gate with the real value, which releases
+The fill request and the adoption's render run side by side, and the request
+can win: the adoption may still be awaiting its own tree when the response
+arrives. So `runFill()` first waits for `whenCommitted`, which settles when
+`tx.commit()` has put the placeholders on screen, or with `false` when the
+adoption is abandoned.
+
+Then it checks that the entry on screen still holds this adoption's
+placeholders. By object identity, not by history key: a shallow navigation
+that copied the entry to a new key is still filled, and an action refetch
+that already rendered the missing segments (its request listed them as not
+held) is not overwritten. It reconciles the response against the entry with
+the `"stale-revalidation"` actor, renders, and commits in a transition. Last,
+it resolves each gate with the value the committed tree reads, which releases
 anything still suspended on one.
+
+The entry is rewritten **in place**: the fill splices the filled segments
+into the array the history cache already holds for the entry, and calls
+`store.setSegmentIds()`. It does not go through `cacheSegmentsForHistory`.
+The fill belongs to the visit that adopted, and re-caching would do two wrong
+things: advance the store's navigation instance, which disowns the adoption's
+still-open handle stream, and reset the entry's stale flag.
+
+For the same reason the fill updates the adoption payload's `matched` array
+in place. `processHandles` in `NavigationProvider` reads `matched` on every
+yield of that payload's handle stream and deletes the handle buckets of
+segments outside it. A deferred unit's `matched` stops at the unit, so a late
+yield from the adoption would delete what the fill had pushed below it
+(breadcrumbs from a deferred route, say).
+
+A fill has no navigation transaction, so two things a transaction normally
+carries need another way to their owner. `PartialUpdateConfig.fill` is that
+way, supplied by the navigation bridge: `redirect(url, state)` performs a
+replace navigation, and `locationState(state)` merges location state the
+deferred work set into the current history entry. Without the hooks a
+redirect is a document navigation and the state is dropped.
 
 ### No remount (R6)
 
@@ -361,14 +399,21 @@ same before and after.
 ### History
 
 The adopted entry is stored with its placeholders, flagged `deferred`. The
-fill's commit overwrites it with the filled segments, and back/forward to it
-is then an ordinary cache restore.
+fill rewrites it in place with the filled segments (above), and back/forward
+to it is then an ordinary cache restore.
 
 If the user leaves first, the fill is cancelled and the entry keeps its
 placeholders. Both readers of the history cache treat such an entry as a miss:
 `handlePopstate` falls through to the fetch path, and `navigate()` does not
-offer it as `targetCacheSegments`. So returning to the entry fetches what is
-missing; it never restores a tree suspended on a gate nobody will resolve.
+offer it as `targetCacheSegments` (`hasUsableCache` in
+`src/browser/navigation-bridge.ts`). So returning to the entry fetches what
+is missing; it never restores a tree suspended on a gate nobody will resolve.
+
+An abandoned gate is never settled. Resolving it with nothing or rejecting it
+would both show up in a tree that may still be mounted for a moment. It is
+only untracked: `loaderStore.releasePendingStream()` removes it from the
+pending streams, so `useLoader().isLoading` and the streaming indicators do
+not wait on it forever.
 
 ### Abort
 
@@ -377,11 +422,18 @@ cancel anything, and a navigation that starts and then fails must not leave
 the page with fallbacks nobody fills. Instead `browser/pending-fill.ts` holds
 the one in-flight fill, and it is cancelled when the tree it belongs to is
 replaced: a navigation transaction that commits
-(`createNavigationTransaction().commit`, cache-only commits excepted), a
-back/forward (`handlePopstate`), or a newer adoption. Cancelling aborts the
-request only while it is waiting for the response; aborting a Flight stream
-mid-read makes the decoder throw asynchronously, so a response that has
-arrived is simply dropped at the identity check.
+(`createNavigationTransaction().commit`), a back/forward (`handlePopstate`),
+or a newer adoption. An adoption that never commits (aborted or failed before
+`tx.commit()`) cancels its own fill. Cancelling aborts the request only while
+it is waiting for the response; aborting a Flight stream mid-read makes the
+decoder throw asynchronously, so a response that has arrived is simply
+dropped.
+
+Two commits deliberately do not cancel: a cache-only commit, which touches no
+tree, and an action's store-only commit, which updates the page the fill is
+for. After an action the identity check decides. If the action's refetch
+replaced the entry's segments the fill finds none of its placeholders and
+drops its response; if the entry is untouched the fill lands.
 
 While a fill is in flight the adoption's streaming token stays open, so
 `useNavigation().isStreaming` is true until the deferred work has streamed in,
@@ -394,7 +446,9 @@ and idle-time prefetching waits for it.
   nearest error boundary, the same place a rejected streamed loader lands.
 - A network failure goes to `emitNetworkError`, like a failed navigation.
 - A redirect for the whole response (middleware, say, because the session
-  expired between prefetch and click) is followed.
+  expired between prefetch and click) is followed, as a replace navigation
+  through `PartialUpdateConfig.fill.redirect`. An external redirect, or a
+  client built without the hook, is a document navigation.
 
 ### Reuse within `prefetchCacheTTL`
 
