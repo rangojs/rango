@@ -161,7 +161,7 @@ export function withCacheStore<TEnv>(
       ctx.isAction ||
       state.cacheHit ||
       ctx.request.method !== "GET" ||
-      defersAboveRecord(ctx.handlerContext, ctx.clientSegmentSet)
+      defersAboveRecord(ctx.handlerContext)
     ) {
       if (ms) {
         ms.metrics.push({

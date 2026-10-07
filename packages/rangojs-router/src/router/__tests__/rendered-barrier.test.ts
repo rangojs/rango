@@ -967,7 +967,9 @@ describe("rendered barrier", () => {
         scope: {
           loaders: new Set(),
           loaderIds: new Set(options.deferrable ?? []),
-          units: new Map(options.unit ? [[unitEntry, 1]] : []),
+          units: new Map(
+            options.unit ? [[unitEntry, { index: 1, ids: ["L0R1"] }]] : [],
+          ),
         },
       };
     }

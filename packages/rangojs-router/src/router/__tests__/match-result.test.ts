@@ -257,6 +257,35 @@ describe("match-result", () => {
       expect(result.resolvedIds).toEqual([]);
     });
 
+    // The filter knows nothing about the marker: what the request listed
+    // as held is never sent with a null component, deferred or not. A
+    // placeholder for a segment on screen would put a fallback over it.
+    // Deferral reads the same ids (prefetch-deferral.ts PrefetchDeferral.held),
+    // so the two cannot disagree; this is the line that holds if they do.
+    it("should not send a placeholder for a segment the client holds", () => {
+      const ctx = createMockContext({
+        isFullMatch: false,
+        clientSegmentIds: ["layout", "route"],
+      });
+      const state = createPipelineState();
+      state.matchedIds = ["layout", "route"];
+
+      const segments = [
+        createSegment("layout", { component: null, type: "layout" }),
+        createSegment("route", {
+          component: null,
+          type: "route",
+          loading: "Skeleton",
+          deferred: true,
+        }),
+      ];
+
+      const result = buildMatchResult(segments, ctx, state);
+
+      expect(result.segments).toEqual([]);
+      expect(result.diff).toEqual([]);
+    });
+
     it("should include intercept segments in matched array", () => {
       const ctx = createMockContext({ isFullMatch: false });
       const state = createPipelineState();
