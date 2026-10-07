@@ -34,6 +34,14 @@ What to know before you use it:
   `loading()` shows when that is the nearest boundary, and with no boundary
   React holds the page being left until the fill returns
   (`useNavigation()` reads `loading` meanwhile).
+- **Under `transition()` a deferred `loading()` commits with its fill.** The
+  click shows the page, fallback included, when the fill starts answering,
+  which is when the same click with no prefetch shows it. React holds the
+  page being left until then and `useNavigation()` reads `loading`.
+  Committed with the click, the content could only arrive in a second
+  commit, which under a `<ViewTransition>` is a view transition of its own
+  that the reveal then waits for. A flagged `loader()` under `transition()`
+  commits with the click.
 - **A prefetch that deferred something is used only on the page that made
   it.** A page that already shows the segment makes its own prefetch, which
   defers nothing for it.
@@ -51,9 +59,13 @@ What to know before you use it:
 - **Double runs.** A flagged loader that a handler under `loading()`, or
   another loader, reads with `ctx.use()` after an `await` runs in the
   prefetch for its reader and again in the fill.
-- **A response that defers is never stored**, by the document cache, the
-  browser or a CDN (`cache-control: private, no-cache`, whatever the route
-  set). The document cache keeps one slot for a prefetch and a navigation, as
+- **A response that defers is never reused** by the document cache or by a
+  shared cache in front of the app (`cache-control: private, no-cache`,
+  whatever the route set), and it never answers a navigation: its `Vary`
+  names `X-Rango-Prefetch`. The browser may keep a copy, which it reuses only
+  while it reloads a page for back/forward, for the same prefetch from the
+  same page; the client completes any payload that carries deferred work.
+  The document cache keeps one slot for a prefetch and a navigation, as
   before, and every body in it is complete.
 
 `@rangojs/router/testing` gets `serveShellRequest(..., { partial: { prefetch,

@@ -385,8 +385,16 @@ server projection.
   so a click that adopts a prefetch is never worse than the same click with no
   prefetch. The click that adopts the payload
   commits it, shows the fallback and sends one fill request (`_rsc_fill=1`)
-  that runs only the deferred work. A response that defers is for the page
-  that prefetched it (`x-rsc-prefetch-scope: source`) and is never stored.
+  that runs only the deferred work. A deferred unit on a page that commits in
+  a transition commits with the fill's first chunk instead (`Fill.land`), as
+  a plain click commits with its response. A fill's updates are urgent, wait
+  for the adoption's commit, and a fill still streaming lands 300 ms after
+  its first chunk (`FALLBACK_THROTTLE_MS`). A response that defers is for the page
+  that prefetched it (`x-rsc-prefetch-scope: source`), is never reused by
+  the document cache or a shared cache (`cache-control: private, no-cache`)
+  and never answers a navigation (`Vary` names `X-Rango-Prefetch`); a copy
+  the browser keeps answers only the same prefetch during a back/forward
+  reload, and the click completes it.
   Server plan and decisions:
   `router/segment-resolution/prefetch-deferral.ts` (`resolveDeferralScope`,
   `PrefetchDeferral` on `InternalHandlerContext._prefetchDeferral`),

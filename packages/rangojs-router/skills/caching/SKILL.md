@@ -465,11 +465,15 @@ behind the fallback, never the cached handler. A `cache()` route below a
 layout with a flagged `loading()` keeps using its record whenever the browser
 already holds that layout; only a prefetch that defers the layout itself (it
 is new to the page) leaves the record unread and unwritten. A response that
-carries deferred work is never stored: the document cache refuses it and it
-is sent `cache-control: private, no-cache`, whatever `Cache-Control` the route
-set. A fill response is stored nowhere either. Every body the document cache
-does hold is complete, so one entry answers a prefetch and a navigation, as
-without the flag. See `/loader` → "`prefetch: false`".
+carries deferred work is never reused: the document cache refuses it, and it
+is sent `cache-control: private, no-cache` with `X-Rango-Prefetch` added to
+`Vary`, whatever `Cache-Control` the route set, so no CDN keeps it and it
+never answers a navigation. A browser may keep a copy and answer the same
+prefetch from it while it reloads the page for back/forward; the click
+completes it like any other. A fill is never answered from a stored body.
+Every body the document cache does hold is complete, so one entry answers a
+prefetch and a navigation, as without the flag. See `/loader` →
+"`prefetch: false`".
 
 ## Global Cache Configuration
 
