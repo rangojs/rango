@@ -2,6 +2,47 @@
 
 ## Unreleased
 
+### Added: `prefetch: false` on `loader()` and `loading()` keeps expensive work out of prefetches
+
+A prefetch renders everything a click would: every handler and every loader.
+With the default `"viewport"` strategy a page with forty product links renders
+forty pages the visitor will mostly never open. Two options now keep the
+expensive part out:
+
+```tsx
+loader(ReviewsLoader, { prefetch: false }); // this loader is skipped in a prefetch
+loading(<OrdersSkeleton />, { prefetch: false }); // everything behind this fallback is skipped
+```
+
+A prefetch of the route skips the flagged work and marks it deferred. When the
+visitor clicks, the page commits at once with the prefetched content, the
+fallback shows where the deferred part goes, and one second request (the fill)
+runs only that part and merges it in without remounting. A hard load, a
+navigation with nothing prefetched, an action and back/forward behave as
+before. Without the options nothing changes.
+
+What to know before you use it:
+
+- **A loader needs a boundary.** Put its read under `loading()` or `<Suspense>`;
+  with none, the click waits for the fill.
+- **`ctx.rendered()` is refused** in a loader a prefetch can defer, on every
+  request, and so is the handle data it unlocks.
+- **A deferred loader cannot see `ctx.set()` values** from handlers the client
+  already holds, and its `redirect()`, `notFound()` and handle pushes arrive
+  after the page is on screen.
+- **Stored routes defer loaders only.** Under `cache()`, `ppr` and `Prerender`
+  the stored handler output is served as before; a loader with its own
+  `cache()` is skipped even on a hit.
+- A loader a handler awaits with `ctx.use()`, `clientUrls()` routes and
+  `intercept()` ignore the flag.
+- The document cache now keys a prefetch separately from a navigation, so a
+  prefetch and a navigation of an unflagged route no longer share a
+  document-cache slot.
+
+`@rangojs/router/testing` gets `serveShellRequest(..., { partial: { prefetch,
+fill } })` and `result.readDeferred()` to test it. See `/loader`, `/route` and
+the design note `docs/design/prefetch-false.md`.
+
 ### Added: `router.prerender()` warms any route before traffic ([#1062](https://github.com/rangojs/rango/issues/1062))
 
 After a deploy that changes server code, and after an `updateTag()`, every

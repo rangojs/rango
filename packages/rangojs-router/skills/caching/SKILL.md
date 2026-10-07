@@ -447,6 +447,18 @@ or a non-cacheable variable fails on a miss unless the loader `cache()` has a
 a `keyGenerator`. Either one switches the check off, so it must itself include
 the value (`/loader` → "Cache Key").
 
+### Loaders and `prefetch: false`
+
+A loader registered with `{ prefetch: false }` is skipped in a `<Link>`
+prefetch, and its own `cache()` is not read either, even when it would hit:
+the fill request that the click sends afterwards reads the loader cache and
+runs the loader on a miss. A route-level `cache()` boundary is unaffected: its
+stored handler output is served and written as before, hit or miss, and
+`loading(fallback, { prefetch: false })` under it defers only the loaders
+behind the fallback, never the cached handler. A prefetch body and a
+navigation body are stored apart, and a fill response is stored nowhere. See
+`/loader` → "`prefetch: false`".
+
 ## Global Cache Configuration
 
 Configure the app-level store on the router. `cache()` boundaries, cached
