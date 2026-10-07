@@ -88,8 +88,22 @@ export interface ServeShellRequestOptions<TEnv = any> {
    * of a document GET: from `from` (default `/`) with `segments` mounted
    * (default none), advertising fragment passthrough. The replay decision is
    * `result.replayStatus`.
+   *
+   * `prefetch: true` sends it as a `<Link>` prefetch does (the
+   * `X-Rango-Prefetch` header), so `prefetch: false` loaders and `loading()`
+   * entries are deferred: `result.readDeferred()` lists them. `fill: true`
+   * sends the request the browser follows an adopted prefetch with
+   * (`_rsc_fill`): pass the ids the prefetch delivered, without the deferred
+   * ones, as `segments`, and the same URL as `from`.
    */
-  partial?: true | { from?: string; segments?: readonly string[] };
+  partial?:
+    | true
+    | {
+        from?: string;
+        segments?: readonly string[];
+        prefetch?: boolean;
+        fill?: boolean;
+      };
 }
 
 /** A response's handle data, as the browser consumes it. */
@@ -149,6 +163,12 @@ export interface ServeShellRequestResult {
    * values resolved. Undefined when no Flight was rendered.
    */
   readHandles(): Promise<ShellRequestHandles | undefined>;
+  /**
+   * The ids of the segments `flight` marks deferred (a prefetch skipped
+   * them; the fill request renders them), in payload order. Empty when
+   * nothing was deferred, undefined when no Flight was rendered.
+   */
+  readDeferred(): Promise<string[] | undefined>;
 }
 
 type ShellHandler = ReturnType<typeof createRSCHandler>;
@@ -269,6 +289,17 @@ async function decodePayloadHandles(
     late.push(await resolveDeferredHandleValues(data));
   }
   return { hydration: await resolveDeferredHandleValues(hydration), late };
+}
+
+/** The ids of the segments a payload marks deferred. */
+async function decodeDeferredIds(flight: string): Promise<string[]> {
+  const { deserializeResult } = await import("../cache/segment-codec.js");
+  const { metadata } = await deserializeResult<{
+    metadata?: { segments?: Array<{ id: string; deferred?: boolean }> };
+  }>(flight);
+  return (metadata?.segments ?? [])
+    .filter((segment) => segment.deferred === true)
+    .map((segment) => segment.id);
 }
 
 /**
@@ -407,10 +438,21 @@ function buildRequest(url: URL, options: ServeShellRequestOptions): Request {
     if (!headers.has("accept")) headers.set("accept", "text/html");
     return new Request(url, { headers });
   }
-  const { from = "/", segments = [] } = partial === true ? {} : partial;
+  const {
+    from = "/",
+    segments = [],
+    prefetch = false,
+    fill = false,
+  } = partial === true ? {} : partial;
   const target = new URL(url);
   target.searchParams.set("_rsc_partial", "true");
   target.searchParams.set("_rsc_segments", segments.join(","));
+  // As the browser sends them: browser/navigation-client.ts (fill) and
+  // browser/prefetch/fetch.ts (prefetch).
+  if (fill) target.searchParams.set("_rsc_fill", "1");
+  if (prefetch && !headers.has("X-Rango-Prefetch")) {
+    headers.set("X-Rango-Prefetch", "1");
+  }
   if (!headers.has("X-RSC-Router-Client-Path")) {
     headers.set("X-RSC-Router-Client-Path", new URL(from, url).href);
   }
@@ -545,6 +587,9 @@ export async function serveShellRequest<TEnv = any>(
     },
     async readHandles() {
       return flight ? decodePayloadHandles(flight) : undefined;
+    },
+    async readDeferred() {
+      return flight ? decodeDeferredIds(flight) : undefined;
     },
   };
 }
