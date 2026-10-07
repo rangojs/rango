@@ -22,6 +22,19 @@ export { createDeployFixture, readBuiltVersions } from "./deploy-fixture.js";
 export type { DeployFixture, DeployFixtureOptions } from "./deploy-fixture.js";
 export { runCacheVersionScenario } from "./cache-version-scenario.js";
 export type { CacheVersionScenarioOptions } from "./cache-version-scenario.js";
+export {
+  expectBackAndForwardKeepTheFilledPage,
+  expectDocumentAwaitsLoaderThatPrefetchSkips,
+  expectEveryAdoptionSendsItsOwnFill,
+  expectLeavingBeforeTheFillAbortsItAndBackRefetches,
+  expectNoBoundaryHoldsThePageLeftUntilTheFillReturns,
+  expectPrefetchSkipsFlaggedWorkAndClickFillsIt,
+  expectUnflaggedRouteIsPrefetchedWhole,
+} from "./prefetch-false.js";
+export type {
+  PrefetchFalseCase,
+  PrefetchFalseFixture,
+} from "./prefetch-false.js";
 
 /**
  * Shared end-to-end test utilities for HMR-driven tests across apps.
