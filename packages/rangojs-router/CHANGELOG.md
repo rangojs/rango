@@ -35,9 +35,12 @@ What to know before you use it:
   `cache()` is skipped even on a hit.
 - A loader a handler awaits with `ctx.use()`, `clientUrls()` routes and
   `intercept()` ignore the flag.
-- The document cache now keys a prefetch separately from a navigation, so a
-  prefetch and a navigation of an unflagged route no longer share a
-  document-cache slot.
+- **Double runs.** A flagged loader that a handler under `loading()`, or
+  another loader, reads with `ctx.use()` after an `await` runs in the
+  prefetch for its reader and again in the fill.
+- The document cache stores the prefetch body of a flagged route in its own
+  slot, which only prefetches read. Routes without the flag keep one slot for
+  a prefetch and a navigation, as before.
 
 `@rangojs/router/testing` gets `serveShellRequest(..., { partial: { prefetch,
 fill } })` and `result.readDeferred()` to test it. See `/loader`, `/route` and

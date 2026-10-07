@@ -389,8 +389,10 @@ server projection.
   `Prerender`) defer loaders only. Browser: `browser/partial-update.ts`
   (gates, `runFill`), the in-flight fill slot in `browser/pending-fill.ts`.
   `ctx.rendered()` is refused for a deferrable loader on every request kind
-  (`router/loader-resolution.ts`). Document-cache keys gain `:prefetch` for
-  prefetch partials and skip `_rsc_fill` (`cache/document-cache.ts`). Inert
+  (`router/loader-resolution.ts`). The document cache stores the prefetch
+  body of a flagged tree under a `:prefetch` key only prefetches read, keeps
+  one slot for trees with no flag, and skips `_rsc_fill`
+  (`cache/document-cache.ts`). Inert
   in `clientUrls()` groups and `intercept()`; `clientUrls()` `loader()`
   rejects the option in development. Design:
   [prefetch-false.md](../../../../docs/design/prefetch-false.md).

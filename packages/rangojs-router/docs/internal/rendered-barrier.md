@@ -129,7 +129,7 @@ adopts the prefetch. On a document or a navigation the same loader works; in
 development it logs one warning there, so the combination is seen before
 production.
 
-We looked at deferring that loader too, so it would run in the fill beside
+You might try deferring that loader too, so it would run in the fill beside
 the unit. It does not work: the fill skips every handler the prefetch already
 rendered, so the loader would see the unit's pushes and miss everyone else's.
 The same hole, on the other side.
