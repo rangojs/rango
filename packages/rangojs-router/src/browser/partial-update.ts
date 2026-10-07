@@ -125,6 +125,23 @@ export interface PartialUpdateConfig {
 const FILL_REDIRECT_NOT_FOLLOWED = "[rango] fill: redirect not followed";
 
 /**
+ * How long React keeps a fallback on screen before a Suspense retry may
+ * replace it (FALLBACK_THROTTLE_MS in react-reconciler's work loop). A plain
+ * click's fallback shows with the first chunk of its response, so that click
+ * reveals nothing sooner than this after the chunk. An adopted click's
+ * fallback shows with the click, a round trip earlier: left to React, its
+ * reveal comes that much sooner, before data the plain click's reveal
+ * includes, with a second fallback where the plain click shows one (measured
+ * with 100 ms to the first chunk: content 200 ms late). So a fill that is
+ * still streaming lands this long after its own first chunk.
+ *
+ * Not ours to tune. The latency cases of
+ * expectAdoptedClickIsNeverWorseThanAPlainClick (tests/shared-e2e) fail when
+ * React's value moves either way.
+ */
+const FALLBACK_THROTTLE_MS = 300;
+
+/**
  * A promise the browser created for a deferred segment's missing value. The
  * segment is always new to the page: a payload that defers is adopted only
  * on the page it was prefetched from, with the segments it was prefetched
@@ -144,6 +161,8 @@ interface Gate {
 interface Fill {
   /** Placeholder segment (the payload's object) -> its gate. */
   gates: Map<ResolvedSegment, Gate>;
+  /** The placeholders that are units: every one that is not a loader. */
+  units: ResolvedSegment[];
   /** The adopted payload's `matched`, which its handle stream still reads. */
   matched: string[];
   controller: AbortController;
@@ -152,8 +171,26 @@ interface Fill {
   cancelled: boolean;
   /** tx.commit() ran for the adoption: its placeholders are on screen. */
   committed: boolean;
-  /** The tree the adoption rendered. */
+  /** Resolves once React has committed the adoption's tree. */
+  shown: Promise<void>;
+  show(): void;
+  /** The tree on screen: the adoption's, or the one a waiting fill landed. */
   root?: ReactNode;
+  /** Whether the adoption rendered its tree with forceAwait. */
+  forceAwait?: boolean;
+  /**
+   * Set where the adoption commits nothing until its fill has responded: a
+   * deferred unit on a page a plain click commits in a transition. React
+   * renders such a page's content in the commit that shows its fallback, in
+   * a render that can wait. Once the fallback is up no commit can bring the
+   * content in that way: each either starts a view transition of its own
+   * (whenever a <ViewTransition> is mounted anywhere on the page, the
+   * router's included) or schedules a retry that commits while a read is
+   * still streaming, which starts one too, and the reveal waits behind it
+   * (measured: three transitions for two, content up to 280 ms late). So the
+   * adoption's update carries a promise of the tree, resolved here.
+   */
+  land?: (root: ReactNode) => void;
   /** Settles with `committed`, or false when the adoption is abandoned. */
   whenCommitted: Promise<boolean>;
   commit(): void;
@@ -268,23 +305,35 @@ export function createPartialUpdater(
    */
   function armGates(placeholders: ResolvedSegment[], matched: string[]): Fill {
     const gates = new Map<ResolvedSegment, Gate>();
+    const units: ResolvedSegment[] = [];
     for (const segment of placeholders) {
       let resolve!: Gate["resolve"];
       const promise = new Promise<unknown>((res) => {
         resolve = res;
       });
-      if (segment.type === "loader") segment.loaderData = promise;
-      else segment.component = promise as ReactNode;
+      if (segment.type === "loader") {
+        segment.loaderData = promise;
+      } else {
+        segment.component = promise as ReactNode;
+        units.push(segment);
+      }
       gates.set(segment, { promise, resolve });
     }
     let settleCommitted!: (committed: boolean) => void;
+    let show!: () => void;
+    const shown = new Promise<void>((res) => {
+      show = res;
+    });
     const fill: Fill = {
       gates,
+      units,
       matched,
       controller: new AbortController(),
       responded: false,
       cancelled: false,
       committed: false,
+      shown,
+      show,
       whenCommitted: new Promise<boolean>((res) => {
         settleCommitted = res;
       }),
@@ -319,8 +368,12 @@ export function createPartialUpdater(
    * that already rendered the missing segments is not.
    */
   function entryToFill(fill: Fill): ResolvedSegment[] | undefined {
-    const live = store.getCachedSegments(store.getHistoryKey())?.segments;
+    const live = entryOnScreen();
     return live?.some((s) => fill.gates.has(s)) ? live : undefined;
+  }
+
+  function entryOnScreen(): ResolvedSegment[] | undefined {
+    return store.getCachedSegments(store.getHistoryKey())?.segments;
   }
 
   /** A payload redirect's target, or null when the client refuses it. */
@@ -407,85 +460,6 @@ export function createPartialUpdater(
       if (!live) return;
 
       const matched = metadata.matched || [];
-      const reconciled = reconcileSegments({
-        actor: "stale-revalidation",
-        matched,
-        diff: metadata.diff || [],
-        serverSegments: metadata.segments || [],
-        cachedSegments: live.filter((s) => !s.deferred),
-        insertMissingDiff: true,
-      });
-      const present = new Set(reconciled.segments.map((s) => s.id));
-      const missing = matched.filter((id) => !present.has(id));
-      if (missing.length > 0) {
-        throw new Error(
-          `[rango] fill: missing segments [${missing.join(", ")}]`,
-        );
-      }
-
-      // A unit whose fallback is showing keeps reading its gate, which
-      // resolves once React has committed this tree: the unit is then
-      // revealed by a Suspense retry, as a segment a navigation is still
-      // streaming is. Rendered with its content already there, the fill's
-      // own transition would reveal it at once, past the throttle React puts
-      // between a fallback and what replaces it, and a boundary inside the
-      // unit would show its fallback for data a few milliseconds away.
-      // The unit is new to the page, so its fallback is what shows and React
-      // commits this tree. Not a loader: its read may have no boundary, and
-      // React never commits a tree that suspends where no fallback can show.
-      //
-      // Not under a view transition either. This transition waits there for
-      // the one the adoption started, which lasts about as long as the
-      // throttle, and every retry that suspends again under a
-      // <ViewTransition> starts a transition of its own the reveal then has
-      // to wait for: the gate's retry does when the unit reads a loader that
-      // is still streaming (measured: two more transitions, content 280 ms
-      // late).
-      const animated =
-        "ViewTransition" in React &&
-        typeof document !== "undefined" &&
-        "startViewTransition" in document &&
-        shouldStartViewTransition(reconciled.segments, gatedOff);
-      const filledById = new Map(reconciled.segments.map((s) => [s.id, s]));
-      const revealed = new Map<Gate, unknown>();
-      let hasUnit = false;
-      for (const [placeholder, gate] of fill.gates) {
-        if (placeholder.type === "loader") continue;
-        hasUnit = true;
-        const next = filledById.get(placeholder.id);
-        if (animated || !next?.loading) continue;
-        revealed.set(gate, next.component);
-        next.component = gate.promise as ReactNode;
-      }
-
-      // A fill of loaders alone changes no element of the tree the adoption
-      // rendered: that tree reads the gates, and they resolve below. A new
-      // tree would be one more commit, with nothing to show for it, and one
-      // more view transition under transition().
-      // No forceAwait: what the fill is still streaming keeps the fallback
-      // its placeholder is already showing.
-      const root = hasUnit
-        ? await renderSegments(reconciled.mainSegments, {
-            transitionGatedOff: gatedOff,
-            interceptSegments:
-              reconciled.interceptSegments.length > 0
-                ? reconciled.interceptSegments
-                : undefined,
-          })
-        : fill.root;
-      if (
-        fill.cancelled ||
-        store.getCachedSegments(store.getHistoryKey())?.segments !== live
-      ) {
-        return;
-      }
-
-      // The fill belongs to the visit that adopted: the entry is rewritten in
-      // place, not re-cached. cacheSegmentsForHistory would advance the
-      // store's nav instance and disown the adoption's handle stream, and
-      // would reset the entry's stale flag.
-      live.splice(0, live.length, ...reconciled.segments);
-      store.setSegmentIds(matched);
       // The adoption's handle stream (NavigationProvider processHandles)
       // reads its payload's `matched` on every yield and drops the buckets of
       // segments outside it. A deferred unit's `matched` stops at the unit:
@@ -494,36 +468,148 @@ export function createPartialUpdater(
       if (metadata.locationState) {
         config.fill?.locationState(metadata.locationState);
       }
-      landed.streamComplete = result.streamComplete;
-      // No `scroll`: a fill is not a navigation transaction. A decision
-      // here, even "do not scroll", would replace the adoption's pending one
-      // (NavigationProvider), and React may still be holding that commit.
-      commitInTransition(
-        onUpdate,
-        reconciled.mainSegments,
-        {
-          root,
-          metadata,
-          ...(revealed.size > 0 && {
-            onCommit: () => {
-              for (const [gate, component] of revealed) gate.resolve(component);
-            },
-          }),
-        },
-        [],
+
+      // By the entry, not by its placeholders: what the fill pushed is
+      // handed over after it has landed where React holds the adoption.
+      const gone = (): boolean => fill.cancelled || entryOnScreen() !== live;
+      // What the deferred handlers pushed, under the tree on screen. Every
+      // update of a fill is urgent and made once the adoption is on screen.
+      // In a transition of its own it would wait for the view transition
+      // that is running and start another, whenever a <ViewTransition> is
+      // mounted anywhere on the page, changed or not, and every reveal
+      // behind it would wait in turn (measured on a unit under transition():
+      // three transitions for two, content up to 280 ms late). Sooner, it
+      // would commit the page ahead of the transition the adoption is in.
+      // No `scroll`: a fill is not a navigation transaction. A decision here,
+      // even "do not scroll", would replace the adoption's pending one
+      // (NavigationProvider).
+      void fill.shown.then(() => {
+        if (!gone()) onUpdate({ root: fill.root, metadata });
+      });
+
+      if (!fill.land) {
+        // A plain click's fallback shows with its response and React keeps
+        // it up for FALLBACK_THROTTLE_MS. This one has been up since the
+        // click: released now, what the fill brought would be revealed a
+        // round trip sooner than a plain click reveals it, without what is
+        // still on its way.
+        await Promise.race([
+          result.streamComplete.catch(() => {}),
+          new Promise((resolve) => setTimeout(resolve, FALLBACK_THROTTLE_MS)),
+        ]);
+        if (gone()) return;
+      }
+
+      const kept = live.filter((s) => !s.deferred);
+      const reconciled = reconcileSegments({
+        actor: "stale-revalidation",
+        matched,
+        diff: metadata.diff || [],
+        serverSegments: metadata.segments || [],
+        cachedSegments: kept,
+        insertMissingDiff: true,
+      });
+      const missing = matched.filter(
+        (id) => !reconciled.segments.some((s) => s.id === id),
       );
-      // Last: release whatever else is still suspended on a gate. The value
-      // is the one the committed tree reads, so the order of the two cannot
-      // matter.
+      if (missing.length > 0) {
+        throw new Error(
+          `[rango] fill: missing segments [${missing.join(", ")}]`,
+        );
+      }
+
+      // A unit where the adoption is on screen gets a tree, in which it
+      // keeps reading its gate. The gate resolves once React has committed
+      // that tree, so the unit is revealed by a Suspense retry, throttled and
+      // animated as a plain click's is: with its content already there this
+      // commit would reveal it at once, and a boundary inside it would show
+      // its fallback for data a few milliseconds away. The gates of the
+      // loaders a unit owns resolve with it: a slot reads them above its
+      // content, and would otherwise show its fallback twice. Any other
+      // loader's gate resolves now (React may be holding the adoption for
+      // it: a read with no boundary), and its reader, which is on screen,
+      // keeps reading it in the tree.
+      const brought = reconciled.segments.filter(
+        (s) => !kept.some((held) => held.id === s.id),
+      );
+      const hasUnit = fill.units.length > 0;
+      const tree = !fill.land && hasUnit;
+      const revealed = new Map<Gate, unknown>();
+      const streams: Array<[ResolvedSegment, unknown]> = [];
       for (const [placeholder, gate] of fill.gates) {
-        const next = filledById.get(placeholder.id);
-        if (!next) releaseGate(placeholder, gate);
-        else if (!revealed.has(gate)) {
-          gate.resolve(
-            placeholder.type === "loader" ? next.loaderData : next.component,
-          );
+        const next = brought.find((s) => s.id === placeholder.id);
+        if (!next) {
+          releaseGate(placeholder, gate);
+          continue;
+        }
+        const unit = placeholder.type !== "loader";
+        const value: unknown = unit ? next.component : next.loaderData;
+        if (
+          tree &&
+          (unit
+            ? next.loading
+            : fill.units.some((u) => u.namespace === placeholder.namespace))
+        ) {
+          revealed.set(gate, value);
+        } else {
+          gate.resolve(value);
+        }
+        if (unit) {
+          if (revealed.has(gate)) next.component = gate.promise as ReactNode;
+        } else if (tree && !revealed.has(gate)) {
+          streams.push([next, value]);
+          next.loaderData = gate.promise;
         }
       }
+
+      // A fill of loaders alone renders nothing: the tree on screen reads
+      // the gates.
+      if (hasUnit) {
+        if (tree) {
+          await fill.shown;
+          // Rendered as the adoption's tree was, what the fill brought
+          // standing in it as still streaming: nothing of it is awaited, and
+          // nothing already on screen reaches React as a promise it has not
+          // read, which a render that cannot wait would suspend on.
+          for (const segment of brought) segment.deferred = true;
+        }
+        const root = await renderSegments(reconciled.mainSegments, {
+          forceAwait: tree && fill.forceAwait,
+          transitionGatedOff: gatedOff,
+          interceptSegments:
+            reconciled.interceptSegments.length > 0
+              ? reconciled.interceptSegments
+              : undefined,
+        });
+        for (const segment of brought) delete segment.deferred;
+        // The entry keeps the fill's own streams: the next render from
+        // this page builds on them, and a gate is a promise React has read
+        // only where a reader was on screen.
+        for (const [segment, stream] of streams) segment.loaderData = stream;
+        if (gone()) return;
+        if (fill.land) {
+          // The adoption's transition is waiting for this tree: the page
+          // commits once, as the plain click commits it.
+          fill.land((fill.root = root));
+        } else {
+          // The handle stream is being read already: not handed over twice.
+          onUpdate({
+            root,
+            metadata: { ...metadata, handles: undefined, matched: undefined },
+            onCommit: () => {
+              for (const [gate, value] of revealed) gate.resolve(value);
+            },
+          });
+        }
+      }
+
+      // The fill belongs to the visit that adopted: the entry is rewritten in
+      // place, not re-cached. cacheSegmentsForHistory would advance the
+      // store's nav instance and disown the adoption's handle stream, and
+      // would reset the entry's stale flag.
+      live.splice(0, live.length, ...reconciled.segments);
+      store.setSegmentIds(matched);
+      landed.streamComplete = result.streamComplete;
     } catch (thrown) {
       if (fill.cancelled) return;
       let error = thrown;
@@ -540,6 +626,9 @@ export function createPartialUpdater(
       // rejected. A rejected gate is an unhandled rejection of every
       // aggregate built over it (segment-loader-promise.ts).
       if (!(await fill.whenCommitted) || !entryToFill(fill)) return;
+      // What the fill pushed is not handed over once its error is on screen:
+      // that update carries the adoption's tree, whose gates stay pending.
+      fill.cancelled = true;
       emitNavigationError(
         onUpdate,
         toNetworkError(error, { url, operation: "navigation" }) ?? error,
@@ -1077,9 +1166,20 @@ export function createPartialUpdater(
         reconciled.segments,
         overrides,
       );
+      const hasTransition = shouldStartViewTransition(
+        reconciled.segments,
+        gatedOff,
+      );
       // After tx.commit(), which cancels the fill of the page being left.
+      let root: NavigationUpdate["root"] = newTree;
       if (fill) {
         fill.root = newTree;
+        fill.forceAwait = renderOptions.forceAwait;
+        if (hasTransition && fill.units.length > 0) {
+          root = new Promise((resolve) => {
+            fill!.land = resolve;
+          });
+        }
         fill.commit();
       }
 
@@ -1095,10 +1195,6 @@ export function createPartialUpdater(
 
       debugLog("[partial-update] updating document");
 
-      const hasTransition = shouldStartViewTransition(
-        reconciled.segments,
-        gatedOff,
-      );
       const optimisticPresented =
         mode.type === "navigate" && mode.optimisticPresented === true;
       // [VT-DIAG] Gated behind INTERNAL_RANGO_DEBUG. Reports which reconciled
@@ -1132,9 +1228,10 @@ export function createPartialUpdater(
         ? (next) => emitAdoption(() => onUpdate(next))
         : onUpdate;
       const update: NavigationUpdate = {
-        root: newTree,
+        root,
         metadata: payload.metadata!,
         ...(navScroll && { scroll: navScroll }),
+        onCommit: fill?.show,
       };
       if (
         !gatedOff &&

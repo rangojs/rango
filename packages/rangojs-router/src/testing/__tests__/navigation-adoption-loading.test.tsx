@@ -138,4 +138,63 @@ describe("useNavigation() while React holds an adoption that waits for a fill", 
     expect(nav()).toBe("idle/true");
     fill.end();
   });
+
+  // A deferred unit on a page that commits in a transition: the adoption's
+  // update carries a promise of the tree, which its fill resolves with the
+  // first chunk (browser/partial-update.ts Fill.land). The page commits
+  // once, as a plain click commits it with its response.
+  it("holds an update whose root is a promise of the tree, and commits it once", async () => {
+    const { emit, update, nav, shown } = await mount();
+    const tree = deferred<ReactNode>();
+    const commits: string[] = [];
+
+    let fill!: { end: () => void };
+    await act(async () => {
+      fill = clickAndCommit();
+      startTransition(() =>
+        emitAdoption(() =>
+          emit({
+            ...update(null),
+            root: tree.promise,
+            onCommit: () => commits.push("adoption"),
+          }),
+        ),
+      );
+    });
+    expect(shown(), "React holds the page being left").toBe("home");
+    expect(nav()).toBe("loading/true");
+    expect(commits).toEqual([]);
+
+    await act(async () =>
+      tree.resolve(update(<p data-testid="page">landed</p>).root as ReactNode),
+    );
+    expect(shown()).toBe("landed");
+    expect(nav(), "the fill is still streaming").toBe("idle/true");
+    expect(commits).toEqual(["adoption"]);
+    fill.end();
+  });
+
+  // The fill failed, or the visitor left: another update takes the page and
+  // the promise is never resolved. Nothing stays pinned to it.
+  it("lets go of a held promise root when another update takes the page", async () => {
+    const { emit, update, nav, shown } = await mount();
+    const tree = deferred<ReactNode>();
+
+    let fill!: { end: () => void };
+    await act(async () => {
+      fill = clickAndCommit();
+      startTransition(() =>
+        emitAdoption(() => emit({ ...update(null), root: tree.promise })),
+      );
+    });
+    expect(nav()).toBe("loading/true");
+
+    await act(async () => {
+      fill.end();
+      emit(update(<p data-testid="page">error</p>));
+      await tick();
+    });
+    expect(shown()).toBe("error");
+    expect(nav()).toBe("idle/false");
+  });
 });
