@@ -157,7 +157,9 @@ export function withCacheStore<TEnv>(
     // unit above the boundary did not read the record (withCacheLookup) and
     // could only write an incomplete one. A fill renders what the client is
     // missing and nothing else: a write would be partial, and the proactive
-    // re-render below would run the handlers the fill must not run.
+    // re-render below would run the handlers the fill must not run. The
+    // stale-hit refresh skips a fill for the same reason
+    // (withBackgroundRevalidation).
     if (
       !ctx.cacheScope?.enabled ||
       ctx.isAction ||

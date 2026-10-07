@@ -241,4 +241,35 @@ describe("withBackgroundRevalidation", () => {
       });
     });
   });
+
+  // prefetch: false (docs/design/prefetch-false.md, R5): a fill runs no
+  // handler of a segment the client holds, and the refresh re-renders every
+  // handler of the route.
+  describe("a fill that lands on a stale record", () => {
+    const plan = (mode: "fill" | "prefetch" | undefined) =>
+      ({
+        _prefetchDeferral: {
+          mode,
+          scope: { loaders: new Set(), loaderIds: new Set(), units: new Map() },
+          storedFrom: 0,
+        },
+      }) as any;
+
+    it("does not schedule the refresh", async () => {
+      const ctx = makeCtx({ handlerContext: plan("fill") });
+      await drain(withBackgroundRevalidation(ctx, makeState())(toAsyncGen([])));
+      expect(waitUntilFns).toHaveLength(0);
+    });
+
+    it.each([["prefetch"], [undefined]] as const)(
+      "control: mode %s still does",
+      async (mode) => {
+        const ctx = makeCtx({ handlerContext: plan(mode) });
+        await drain(
+          withBackgroundRevalidation(ctx, makeState())(toAsyncGen([])),
+        );
+        expect(waitUntilFns).toHaveLength(1);
+      },
+    );
+  });
 });
