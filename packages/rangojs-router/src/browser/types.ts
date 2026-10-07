@@ -316,6 +316,13 @@ export interface NavigationUpdate {
     /** Function to check if streaming is in progress */
     isStreaming?: () => boolean;
   };
+  /**
+   * Called once, after React has committed this update's tree, or a later
+   * update's when this one is never committed on its own (React batched or
+   * superseded it). Never before: an earlier update that commits meanwhile
+   * does not call it.
+   */
+  onCommit?: () => void;
 }
 
 /**

@@ -123,6 +123,13 @@ const FILL_REDIRECT_NOT_FOLLOWED = "[rango] fill: redirect not followed";
 interface Gate {
   promise: Promise<unknown>;
   resolve(value: unknown): void;
+  /**
+   * A unit the page being left has no copy of: its boundary is new, so its
+   * fallback shows. A unit the page holds (a prefetch from another page,
+   * adopted on the unit's own) has its content on screen instead, and React
+   * holds every commit that still reads the gate.
+   */
+  fresh: boolean;
 }
 
 /**
@@ -252,6 +259,7 @@ export function createPartialUpdater(
    */
   function armGates(placeholders: ResolvedSegment[], matched: string[]): Fill {
     const gates = new Map<ResolvedSegment, Gate>();
+    const onScreen = new Set(getCurrentCachedSegments().map((s) => s.id));
     for (const segment of placeholders) {
       let resolve!: Gate["resolve"];
       const promise = new Promise<unknown>((res) => {
@@ -259,7 +267,11 @@ export function createPartialUpdater(
       });
       if (segment.type === "loader") segment.loaderData = promise;
       else segment.component = promise as ReactNode;
-      gates.set(segment, { promise, resolve });
+      gates.set(segment, {
+        promise,
+        resolve,
+        fresh: segment.type !== "loader" && !onScreen.has(segment.id),
+      });
     }
     let settleCommitted!: (committed: boolean) => void;
     const fill: Fill = {
@@ -378,6 +390,24 @@ export function createPartialUpdater(
         );
       }
 
+      // A unit whose fallback is showing keeps reading its gate, which
+      // resolves once React has committed this tree: the unit is then
+      // revealed by a Suspense retry, as a segment a navigation is still
+      // streaming is. Rendered with its content already there, the fill's
+      // own transition would reveal it at once, past the throttle React puts
+      // between a fallback and what replaces it, and a boundary inside the
+      // unit would show its fallback for data a few milliseconds away.
+      // Only a `fresh` unit: React never commits a tree that still suspends
+      // where content is on screen, so that gate would never resolve.
+      const filledById = new Map(reconciled.segments.map((s) => [s.id, s]));
+      const revealed = new Map<Gate, unknown>();
+      for (const [placeholder, gate] of fill.gates) {
+        const next = filledById.get(placeholder.id);
+        if (!next?.loading || !gate.fresh) continue;
+        revealed.set(gate, next.component);
+        next.component = gate.promise as ReactNode;
+      }
+
       // No forceAwait: what the fill is still streaming keeps the fallback
       // its placeholder is already showing.
       const root = await renderSegments(reconciled.mainSegments, {
@@ -416,16 +446,24 @@ export function createPartialUpdater(
       commitInTransition(
         onUpdate,
         reconciled.mainSegments,
-        { root, metadata },
+        {
+          root,
+          metadata,
+          ...(revealed.size > 0 && {
+            onCommit: () => {
+              for (const [gate, component] of revealed) gate.resolve(component);
+            },
+          }),
+        },
         [],
       );
-      // Last: release whatever is still suspended on a gate. The value is the
-      // one the committed tree reads, so the order of the two cannot matter.
-      const filledById = new Map(reconciled.segments.map((s) => [s.id, s]));
+      // Last: release whatever else is still suspended on a gate. The value
+      // is the one the committed tree reads, so the order of the two cannot
+      // matter.
       for (const [placeholder, gate] of fill.gates) {
         const next = filledById.get(placeholder.id);
         if (!next) releaseGate(placeholder, gate);
-        else {
+        else if (!revealed.has(gate)) {
           gate.resolve(
             placeholder.type === "loader" ? next.loaderData : next.component,
           );

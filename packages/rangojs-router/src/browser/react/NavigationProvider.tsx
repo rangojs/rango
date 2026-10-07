@@ -412,6 +412,24 @@ export function NavigationProvider({
   // The last navigation's scroll decision, until React commits its update.
   const pendingScrollRef = useRef<NavigationUpdate["scroll"]>(undefined);
 
+  // NavigationUpdate.onCommit. `order` numbers every payload handed to
+  // React. A commit calls back its own update and the earlier ones still
+  // waiting (React batched or superseded them: they will not commit on their
+  // own), never a later one.
+  const commitsRef = useRef({
+    count: 0,
+    order: new WeakMap<object, number>(),
+    waiting: [] as { at: number; onCommit: () => void }[],
+  });
+
+  useLayoutEffect(() => {
+    const { order, waiting } = commitsRef.current;
+    const at = order.get(payload) ?? 0;
+    while (waiting.length > 0 && waiting[0].at <= at) {
+      waiting.shift()!.onCommit();
+    }
+  });
+
   // Apply scroll after React commits the new content to the DOM
   useLayoutEffect(() => {
     const scrollAction = pendingScrollRef.current;
@@ -439,10 +457,14 @@ export function NavigationProvider({
       // stale is replayed: every update commits, and that commit consumes.
       if (update.scroll) pendingScrollRef.current = update.scroll;
 
-      setPayload({
-        root: update.root,
-        metadata: update.metadata,
-      });
+      const next = { root: update.root, metadata: update.metadata };
+      const commits = commitsRef.current;
+      const at = ++commits.count;
+      commits.order.set(next, at);
+      if (update.onCommit) {
+        commits.waiting.push({ at, onCommit: update.onCommit });
+      }
+      setPayload(next);
       // The state of the entry this payload renders, as its commit recorded
       // it: one update, so one lane, so one React commit with the tree.
       setLocationState(eventController.getLocationState());
