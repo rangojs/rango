@@ -113,10 +113,13 @@ export interface WritablePrerenderStore {
   delete?(key: PrerenderKey): Promise<void>;
 
   /**
-   * Mark entries carrying any of `tags` stale (they keep serving). Optional:
-   * without it, `router.prerender.markStale()` is a no-op for this store.
+   * Mark the entries of router `routerId` (`PrerenderKey.routerId`) carrying
+   * any of `tags` stale (they keep serving). Scope it to that router: routers
+   * behind a host router share one store, and a tag is only meaningful inside
+   * the router whose routes declared it. Optional: without it,
+   * `router.prerender().markStale()` is a no-op for this store.
    */
-  markStale?(tags: string[]): Promise<void>;
+  markStale?(routerId: string, tags: string[]): Promise<void>;
 }
 
 /**

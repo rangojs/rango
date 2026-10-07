@@ -257,9 +257,12 @@ The KV store writes no `expirationTtl` (entries never expire; `ttl` is soft)
 and keys entries by router id and the router's data version, so a deploy that
 changes server code starts from the build entries again.
 `router.prerender({ env, ctx }).markStale(tags)` writes per-tag markers under
-`__rango_pr_tag__/`, a namespace separate from `updateTag()`'s; a read checks
-one marker per tag on the entry, uncached, so keep tag counts small. Neither
-`updateTag()` nor `revalidateTag()` reaches this store.
+`__rango_pr_tag__/{encoded routerId}/`, a namespace separate from `updateTag()`'s and
+scoped to the router that marked (routers sharing one KV namespace do not mark
+each other's entries); a read checks one marker per tag on the entry,
+uncached, so keep tag counts small. Markers have no expiry (`/prerender` ->
+"KV tag markers"). Neither `updateTag()` nor `revalidateTag()` reaches this
+store.
 
 ## Warm routes on Workers
 

@@ -252,7 +252,7 @@ describe("createMemoryPrerenderStore", () => {
     const store = createMemoryPrerenderStore({ now: () => now });
     await store.set(key(), stored({ ttl: 3600, tags: ["product:42"] }));
     now = 2000;
-    await store.markStale(["product:42"]);
+    await store.markStale("r1", ["product:42"]);
     const got = await store.get(key());
     // Still served (mark-stale, not delete)...
     expect(got).not.toBeNull();
@@ -264,8 +264,19 @@ describe("createMemoryPrerenderStore", () => {
     let now = 5000;
     const store = createMemoryPrerenderStore({ now: () => now });
     await store.set(key(), stored({ ttl: 1, tags: ["t"] }, key(), 1000));
-    await store.markStale(["t"]);
+    await store.markStale("r1", ["t"]);
     expect((await store.get(key()))?.meta.staleAt).toBe(2000);
+  });
+
+  it("markStale only touches the named router's entries", async () => {
+    const store = createMemoryPrerenderStore();
+    const a = key({ routerId: "router-a" });
+    const b = key({ routerId: "router-b" });
+    await store.set(a, stored({ ttl: 3600, tags: ["t"] }, a, Date.now()));
+    await store.set(b, stored({ ttl: 3600, tags: ["t"] }, b, Date.now()));
+    await store.markStale("router-a", ["t"]);
+    expect(isStoredEntryStale((await store.get(a))!, Date.now())).toBe(true);
+    expect(isStoredEntryStale((await store.get(b))!, Date.now())).toBe(false);
   });
 
   it("markStale leaves non-matching entries fresh", async () => {
@@ -274,7 +285,7 @@ describe("createMemoryPrerenderStore", () => {
       key(),
       stored({ ttl: 3600, tags: ["other"] }, key(), Date.now()),
     );
-    await store.markStale(["product:42"]);
+    await store.markStale("r1", ["product:42"]);
     const got = await store.get(key());
     expect(isStoredEntryStale(got!, Date.now())).toBe(false);
   });
@@ -435,7 +446,7 @@ describe("the removed marker (tombstone)", () => {
     const store = createMemoryPrerenderStore({ now: () => 5000 });
     const tombstone = removeMarker();
     await store.set(key(), tombstone);
-    await store.markStale(["product:42"]);
+    await store.markStale("r1", ["product:42"]);
 
     expect(await store.get(key())).toBe(tombstone);
     expect(tombstone.meta.staleAt).toBeUndefined();
@@ -448,7 +459,7 @@ describe("the removed marker (tombstone)", () => {
     await store.set(key(), tombstone);
     expect(isStoredEntryStale(tombstone, 5000)).toBe(false);
 
-    await store.markStale(["product:42"]);
+    await store.markStale("r1", ["product:42"]);
 
     const got = await store.get(key());
     expect(got).toBe(tombstone);

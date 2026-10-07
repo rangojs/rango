@@ -709,7 +709,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
           "(for example a sweep with { onlyIfStale: true }).",
       );
     }
-    await config.store.markStale(tags);
+    await config.store.markStale(deps.routerId, tags);
   }
 
   // Binding does no work: the config factory, version and manifest resolve per

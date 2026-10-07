@@ -565,7 +565,7 @@ describe("createPrerenderTrigger", () => {
       const spy = vi.spyOn(store, "markStale");
       const { trigger } = harness({ config: { store } });
       await trigger.markStale(["product:42"]);
-      expect(spy).toHaveBeenCalledWith(["product:42"]);
+      expect(spy).toHaveBeenCalledWith("r1", ["product:42"]);
     });
 
     it("is a no-op with no tags or no store", async () => {

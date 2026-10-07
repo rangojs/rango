@@ -18,7 +18,11 @@
  * - Invalidation is mark-stale, not delete (deleting would re-expose the manifest
  *   entry as the result of an "invalidation").
  * - Tag markers use a prerender-specific prefix, separate from the runtime cache's
- *   `updateTag()`/`revalidateTag()` namespace.
+ *   `updateTag()`/`revalidateTag()` namespace, and are scoped by router id
+ *   (`{prefix}{encodeURIComponent(routerId)}/{tag}`): routers sharing one KV
+ *   namespace (an app behind a host router) must not mark each other's entries.
+ * - Markers carry no expiry: an entry without a `ttl` never goes stale by
+ *   itself, so an expired marker would silently drop an invalidation.
  */
 
 import type { KVNamespace } from "../cache/cf/cf-cache-types.js";
@@ -59,9 +63,16 @@ export function createKVPrerenderStore(
   options: KVPrerenderStoreOptions = {},
 ): WritablePrerenderStore {
   const now = options.now ?? (() => Date.now());
+  function markerKey(routerId: string, tag: string): string {
+    // An encoded id holds no "/", so the id/tag split is unambiguous.
+    return `${PRERENDER_TAG_MARKER_PREFIX}${encodeURIComponent(routerId)}/${tag}`;
+  }
 
-  async function readTagMarker(tag: string): Promise<number | null> {
-    const raw = await kv.get(PRERENDER_TAG_MARKER_PREFIX + tag);
+  async function readTagMarker(
+    routerId: string,
+    tag: string,
+  ): Promise<number | null> {
+    const raw = await kv.get(markerKey(routerId, tag));
     if (!raw) return null;
     const n = Number(raw);
     return Number.isFinite(n) ? n : null;
@@ -88,7 +99,9 @@ export function createKVPrerenderStore(
         meta?.tags?.length &&
         !(meta.staleAt != null && meta.staleAt <= now())
       ) {
-        const markers = await Promise.all(meta.tags.map(readTagMarker));
+        const markers = await Promise.all(
+          meta.tags.map((tag) => readTagMarker(key.routerId, tag)),
+        );
         if (markers.some((m) => m != null && m >= meta.storedAt)) {
           lowerStoredEntryStaleAt(stored, meta.storedAt);
         }
@@ -106,11 +119,11 @@ export function createKVPrerenderStore(
       await kv.delete(serializePrerenderKey(key));
     },
 
-    async markStale(tags: string[]): Promise<void> {
+    async markStale(routerId: string, tags: string[]): Promise<void> {
       if (tags.length === 0) return;
       const marker = String(now());
       await Promise.all(
-        tags.map((tag) => kv.put(PRERENDER_TAG_MARKER_PREFIX + tag, marker)),
+        tags.map((tag) => kv.put(markerKey(routerId, tag), marker)),
       );
     },
   };

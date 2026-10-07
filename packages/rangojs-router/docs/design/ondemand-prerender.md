@@ -546,7 +546,7 @@ interface WritablePrerenderStore {
   get(key: PrerenderKey): Promise<PrerenderStoredEntry | null>;
   set(key: PrerenderKey, stored: PrerenderStoredEntry): Promise<void>;
   delete?(key: PrerenderKey): Promise<void>;
-  markStale?(tags: string[]): Promise<void>;
+  markStale?(routerId: string, tags: string[]): Promise<void>;
 }
 ```
 
@@ -560,6 +560,13 @@ contract had the store compose and verify (`get(key, meta)`,
 had to reimplement the collision guard by hand, or skip it without anyone
 noticing. A store may still lower `meta.staleAt` on read from its own tag
 markers, which is how the KV store implements `markStale()`.
+
+`markStale` takes the router id because stores are shared: routers behind a
+host router point at one KV namespace, and an unscoped marker for
+`product:1` would mark every router's `product:1` entries stale. Both shipped
+stores scope by `routerId` (the memory store by the key's router id, KV by the
+marker key). Runtime-cache markers are a separate store and are not scoped
+here.
 
 ```ts
 interface StoredEnvelope {
@@ -651,6 +658,12 @@ extraction of `CFCacheStore`'s tag machinery: the same timestamp-marker
 algorithm, in a separate marker namespace (`__rango_pr_tag__/`), with lower
 regression risk for the runtime cache. Reusing `CFCacheStore`'s L1 marker memo
 is a follow-up if per-request marker reads show up in KV analytics.
+
+Markers are `__rango_pr_tag__/{encodeURIComponent(routerId)}/{tag}` (an
+encoded id holds no `/`, so the split is unambiguous) and have no expiry. An
+entry without a `ttl` never goes stale by itself, so an expired marker would
+silently drop an invalidation; the cost of keeping them is one tiny KV value
+per router and tag. Marker lifetime is left to entry lifecycle (#1060).
 
 ## Removing A Page
 

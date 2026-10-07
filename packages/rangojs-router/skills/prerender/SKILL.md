@@ -1034,9 +1034,14 @@ const store: WritablePrerenderStore = {
   async set(key, stored) {
     await blob.put(serializePrerenderKey(key), JSON.stringify(stored));
   },
-  // optional: delete(key), markStale(tags)
+  // optional: delete(key), markStale(routerId, tags)
 };
 ```
+
+`markStale(routerId, tags)` receives the id of the router whose runner was
+called (`key.routerId` on that router's entries). Mark only entries whose
+`key.routerId` equals it: routers behind a host router share one store, and a
+tag means something only inside the router whose routes declared it.
 
 Key everything off the `key` you are given (`serializePrerenderKey` includes
 `key.version`). Do not call `getCacheVersions()` in a prerender store: `set()`
@@ -1051,6 +1056,40 @@ page. That is how a `notFound()` marker is rechecked. A `remove()` marker has
 no tags and no `staleAt`. Never drop or rewrite a value you do not
 recognize: the router decides what it means. The router does not call
 `delete(key)`; removing a page is a `set()` of the marker.
+
+### Several routers (host router)
+
+A runner belongs to the router `router.prerender()` was called on, so an app
+with several routers behind a host router calls it on each router:
+
+- It matches only that router's routes. A URL only another router has is
+  `no-match`.
+- Entries are keyed by router id plus that router's data version, so two
+  routers can share one `prerender.store` (one KV namespace) without touching
+  each other's entries. A deploy that changes one router's server code leaves
+  the others' refreshed entries served when their code is separate (for
+  example lazy mounts); routers that share a statically imported module move
+  together.
+- `markStale(tags)` marks only that router's entries, in every shipped store:
+  `markStale(["product:1"])` on one router does not make another router's
+  `product:1` entry stale.
+- A warm of a non-on-demand route goes through that router's own handler, and
+  its cache keys carry the host: pass the host the visitors use as `origin`
+  (`router.prerender({ env, ctx, origin: "https://a.example" })`), or a path
+  target resolves against the calling request's origin. A multi-router app
+  passes `origin` or a full URL on every warm: a host router can forward one
+  host and path to either router (`hostOverride` from a cookie, `fallback()`
+  after a cookie error), and the PPR shell key (`{host}{path}:shell`) has no
+  router id, so two routers sharing a cache store on one host and path share a
+  shell. Do not give two routers the same `version`; with equal versions one
+  serves the other's page (#1065).
+
+### KV tag markers
+
+`createKVPrerenderStore(kv)` writes a marker per tag at
+`__rango_pr_tag__/{encodeURIComponent(routerId)}/{tag}` (the encoded router id)
+and markers have no expiry: an entry without a `ttl` never goes stale by
+itself, so an expired marker would silently drop an invalidation.
 
 ### Test it
 

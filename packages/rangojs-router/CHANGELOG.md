@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Added: prerender tags are per router
+
+`router.prerender({ env, ctx }).markStale(["product:1"])` marks only that
+router's entries. Routers behind a host router can share one prerender store
+(one KV namespace), and a mark on one router does not mark another router's
+entries for the same tag, in both shipped stores. `createKVPrerenderStore`
+writes markers at `__rango_pr_tag__/{encoded routerId}/{tag}`; they have no
+expiry.
+
+A custom `WritablePrerenderStore` implements `markStale(routerId, tags)` and
+marks only entries whose `key.routerId` equals `routerId`.
+
 ### Fixed: a render that started before `updateTag()` is no longer served as fresh after it ([#1068](https://github.com/rangojs/rango/issues/1068))
 
 `CFCacheStore` and `VercelCacheStore` stamped a cached entry with the time it
