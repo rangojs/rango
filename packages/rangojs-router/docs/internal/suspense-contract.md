@@ -91,9 +91,10 @@ the tree is built. A tree built while the loader data is pending, and rendered o
 the aggregate has settled, still hands the loader boundary a settled promise React has
 not read. On a refresh under load that is what happens: with 4x CPU throttling the shell
 layout's loader data fulfilled 13 ms after the build and its boundary rendered 94 ms
-after it, in 6 of 6 runs (0 of 64 unthrottled on a quiet machine). The refresh commits in
+after it, in 6 of 6 runs (0 of 64 unthrottled on a quiet machine); cloudflare-basic needs
+8x throttling for the same 6 of 6. The refresh commits in
 a transition, so nothing shows; on an urgent commit it would be the 300 ms fallback. The
-baseline carries it as an intermittent I2 entry with that reason.
+baseline carries it as an intermittent I2 entry in each app, with that reason.
 
 ### 3. No fallback while nothing is pending
 
@@ -262,8 +263,8 @@ run.
 
 What fails on main today and no test asks for is listed in
 `tools/e2e-console-baseline.json`, one entry per test and rule, each with a reason:
-messages no test declares (`Undeclared, cause: ...`), and the one intermittent I2
-report of rule 2's timing gap. `pnpm check:e2e-console-baseline` (CI lint job) fails on an
+messages no test declares (`Undeclared, cause: ...`), and the intermittent I2
+reports of rule 2's timing gap. `pnpm check:e2e-console-baseline` (CI lint job) fails on an
 entry without a reason or one whose test is gone; the guard itself fails a test whose
 entry no longer fires. A message that depends on timing goes into the baseline marked
 `intermittent`, not behind a retry. A test that provokes an error on purpose (an error

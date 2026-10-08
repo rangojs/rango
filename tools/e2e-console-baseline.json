@@ -8,6 +8,13 @@
       "intermittent": true
     },
     {
+      "app": "cloudflare-basic",
+      "test": "suspense-cases.test.ts > suspense cases (dev) > an action refetch, a refresh and a back/forward restore keep every wrapper chain",
+      "rule": "suspense-untracked",
+      "reason": "#1079, rule 2 after #1080: the same refresh as in the router test-app. renderSegments builds the tree while the shell layout's loader data is pending (src/segment-system.tsx:604), getMemoizedLoaderPromise hands the loader boundary the aggregate promise (src/segment-loader-promise.ts:134), and React renders the boundary only after the aggregate has settled (LoaderResolver, src/route-content-wrapper.tsx:330). Measured 6 of 6 with 8x CPU throttling, 0 of 6 with 4x. No fallback counted: the refresh commits in a transition. Timing-dependent.",
+      "intermittent": true
+    },
+    {
       "app": "rangojs-router",
       "test": "client-urls.test.ts > clientUrls vertical slice > middleware vars: a createVar token and a string key reach a group loader on the document and partial lanes",
       "rule": "react-use-not-called",
