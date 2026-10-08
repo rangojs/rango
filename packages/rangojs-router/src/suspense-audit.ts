@@ -604,12 +604,10 @@ export function finishTreeAudit(tree: TreeAudit | undefined): void {
   if (!tree) return;
   const prev = lastTree;
   lastTree = tree;
-  // What this tree drops or re-keys is leaving: its next mount is a new one.
-  for (const [slot, gone] of unmounted) {
-    const [, id, key] = slot.split("|");
-    if (tree.keys.get(id) !== key) unmounted.delete(slot);
-    else if (gone.size === 0) unmounted.delete(slot);
-  }
+  // What unmounted under the tree before this one left by something else:
+  // an error boundary took the page over, or a layout stopped rendering its
+  // outlet. Its next mount is a new one.
+  unmounted.clear();
   settledSinceTree.clear();
   trace("tree", {
     segments: tree.order.map((id) => ({
@@ -657,7 +655,7 @@ function keyOf(segmentId: string): string {
 }
 
 // A boundary unmounted while the last tree still holds its segment under the
-// same key, until it mounts again or a tree drops the segment. Not one
+// same key, until it mounts again or the next tree is built. Not one
 // commit's worth: a remounted boundary that suspends mounts its content
 // after its fallback.
 const unmounted = new Map<string, Set<BoundaryAudit>>();
