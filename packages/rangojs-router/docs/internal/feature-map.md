@@ -392,13 +392,15 @@ server projection.
   and writes handle data and location state to their stores
   (`PartialUpdateConfig.fill`, `consumeHandles`). Gates of a tree that is on
   screen resolve when the fill has streamed or 300 ms after its first chunk
-  (`FALLBACK_THROTTLE_MS`), at once where React has not committed the tree;
-  a tree with a layout placeholder waits for what the layout's own
-  `loading()` covers (`coveredBy`), so a flagged layout entered from outside
-  shows its skeleton with the click and the layout with that content (the
-  one place the page differs from a plain click's), and a nested
-  `loading()` or `<Suspense>` shows inside it. A click on a prefetch still in flight reuses it and sends the
-  fill after it (bounded in the shared suite).
+  (`FALLBACK_THROTTLE_MS`, which lines the first reveal up with a plain
+  click's), at once where React has not committed the tree; the gates in a
+  flagged layout's subtree wait for what the layout's own `loading()` covers
+  (`coveredBy`: the layout, its own loaders, the components below it with no
+  `loading()` of their own), so a flagged layout entered from outside shows
+  its skeleton with the click and the layout with that content (the one
+  place the page differs from a plain click's), and what is still pending
+  shows inside it. A click on a prefetch still in flight reuses it and
+  sends the fill after it (bounded in the shared suite).
   A deferred unit on a page that commits in a transition is a navigation
   that waits for its fill and commits once with the fill's first chunk, as a
   plain click commits with its response. A response that defers is for the page

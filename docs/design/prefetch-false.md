@@ -60,12 +60,14 @@ page: a flagged `loading()` on a layout, entered from a page without the
 layout, shows its skeleton with the click over the layout's whole area, and
 the layout once what its own `loading()` covers has arrived, at least React's
 300 ms after the skeleton, where a plain click shows the layout with its
-first chunk ("A layout unit shows with what its loading() covers"). A
-`loading()` of its own below the layout, or an app's `<Suspense>`, then
-shows its fallback inside the layout, as on a plain click, and React keeps
-it up 300 ms from the layout's reveal, so content behind it can come up to
-that much later. The second is a click that comes before its own prefetch has answered. The router reuses a
-prefetch that is still in flight, with or without the flag, and keeps doing
+first chunk ("A layout unit shows with what its loading() covers"). Whatever
+is still pending below it then shows its fallback inside the layout, as on a
+plain click: a `loading()` of its own, an app's `<Suspense>`, or, for a read
+with no boundary of its own, the layout's own fallback a second time. React
+keeps that fallback up 300 ms from the layout's reveal and holds every other
+reveal on the page as long, so content can come up to that much later. The
+second is a click that comes before its own prefetch has answered. The
+router reuses a prefetch that is still in flight, with or without the flag, and keeps doing
 so. When that answer has holes the click sends its fill after it, so the
 deferred part completes later than a plain click's, by up to what was left
 of the prefetch. The flag exists to keep expensive or slow work out of every
@@ -156,7 +158,11 @@ is stored.
 - _Stored or about to be stored_ (enabled `cache()` scope, `ppr` route,
   `Prerender`/`Static`): segments are looked up, served, rendered and written
   exactly as before, hit or miss. Only the loaders behind the fallback are
-  deferred, as in R1.
+  deferred, as in R1. For a layout that is every loader of the chain below
+  it, also where the layout's handler runs because its output is stored
+  (`defersLoader` in `router/segment-resolution/prefetch-deferral.ts`): the
+  flag is about the block, and keeps the block's work, its loaders included,
+  out of prefetches.
 - A parallel slot with its own flagged `loading()` is its own unit.
 
 **R3. `ssr: false` with `prefetch: false` on a loader.** Outside `ppr` both
@@ -884,11 +890,14 @@ Four things React 19.3 does decide everything in this section
 
 The rule the routine keeps is short:
 
-- **A tree that is on screen**: every gate resolves when the answer has
-  streamed, or 300 ms after its first chunk, whichever is first.
+- **A tree that is on screen**: a gate outside every flagged layout's
+  subtree resolves when the answer has streamed, or 300 ms after its first
+  chunk, whichever is first. The gates in a flagged layout's subtree resolve
+  when what the layout's own `loading()` covers has arrived.
 - **A tree React has not committed**: every gate resolves when the answer
   arrives.
-- **Always in one task.**
+- **Each group in one task.** A gate resolves with its own stream or node and
+  follows it; no gate waits for another stream.
 
 Each half was a measured parity violation first.
 
@@ -937,6 +946,18 @@ cannot be kept without the 200 ms loss in the rows above it: at 300 ms the
 client cannot know whether the value is 20 ms away or 200. Never worse comes
 first, so above the throttle the two clicks are now equal.
 
+The hold was taken out once more, in round 6, and measured: production, the
+server 100 ms away, `inner` and `nested` showed their late read at 603 to
+609 ms against the plain click's 405 to 446, each with its own fallback the
+plain click never shows, in both apps and both modes; with the hold
+(production, router app) at 361 and 364 ms. The maintainer kept it. It lines a deferred unit's first reveal up
+with the plain click's (first chunk plus 300 ms, or the stream's end), so a
+late nested read cannot add a second fallback and a second throttle. It never
+makes a reveal later than a plain click's, which comes no sooner than the
+same first chunk plus 300 ms or with all of its data. It is not a loader
+hoist: each gate still resolves with its own stream, and nothing waits for a
+stream it does not read.
+
 The 300 is React's number, not ours. If React changes it the latency cases
 of the parity matrix go red in one direction or the other, which is what you
 want: holding the adopted click longer than React holds a plain one is the
@@ -976,72 +997,110 @@ layout's handler stays out of the prefetch (running it there was rejected).
 
 What the click then must not do is cost the content time. Revealed with the
 300 ms rule, the layout showed its own fallback again inside, a boundary that
-React keeps up for 300 ms from then. The route's content then came 300 ms
-after a plain click's wherever it landed between the two reveals:
-production, router app, `hub to section` with a 400 ms loader, the content
-at 605 ms against the plain click's 406, and the layout's fallback mounted a
-second time. So the gates of a tree with a layout placeholder wait, with no
-deadline, for exactly what the layout's own `loading()` covers (`coveredBy`
-in `partial-update.ts`): the layout's component and every segment below it
-that no `loading()` of its own wraps, loaders by their owner. Then the layout
-shows with that content, in one reveal, at least React's 300 ms after the
-skeleton. A route below it with a `loading()` of its own, or an app's
-`<Suspense>` in its content, shows its own fallback inside the layout, as on
-a plain click: the layout does not wait for it.
+React keeps up for 300 ms from then: production, router app, `hub to section`
+with a 400 ms loader, the content at 605 ms against the plain click's 406. So
+the gates in a flagged layout's subtree wait, with no deadline, for what the
+layout's own `loading()` covers (`coveredBy` in `partial-update.ts`): the
+layout's component, its own loaders, and the components of the segments below
+it that no `loading()` of their own wraps. Then the layout shows with that, in
+one reveal, at least React's 300 ms after the skeleton.
 
-An earlier version waited for the whole fill (`dcadc727`). That removed the
-second fallback too, but kept the full-area skeleton up until every read
-behind any inner boundary had streamed: with a child route under its own
-`loading()` and a 1.5 s loader, the layout came at 1.5 s where a plain click
-shows it at once, with the child's skeleton inside.
+Not the loaders of those segments. On a plain click a loader of a segment with
+no `loading()` of its own streams to its read site (the `OutletProvider` lane
+of `segment-system.tsx`) and its reader suspends to the nearest boundary, and
+the maintainer's rule is that a `loading()` shows only for what it covers: no
+loader is hoisted onto, or awaited by, a parent's boundary or gate unless main
+does the same on the plain navigation. Two earlier versions did wait: one for
+the whole fill (`dcadc727`), which kept the full-area skeleton up until every
+read behind any inner boundary had streamed, and one that counted those
+loaders as covered (`da7836a3`).
+
+So what shows inside the layout depends on where the app reads:
+
+- A read in an app `<Suspense>` (fixture `section-read`): the layout shows
+  with the page and that fallback in it, as on a plain click.
+- A read with no boundary of its own (`section`, `outer`): React suspends it
+  to the layout's outlet, whose fallback is the layout's own `loading()`. The
+  skeleton shows a second time, inside the layout, as a plain click shows it
+  there with its first chunk. No router code decides this: it is React's
+  nearest boundary.
+- A `loading()` of its own below the layout (`section-own`), or an app
+  `<Suspense>` around a slow read (`section-suspense`): its own fallback,
+  inside the layout.
 
 Production, router app, plain against adopted:
 
-| click                                           | layout         | the covered content | the rest                        |
-| ----------------------------------------------- | -------------- | ------------------- | ------------------------------- |
-| `hub to section`, loaders 300 ms slower         | 11 and 411 ms  | 412 and 411 ms      |                                 |
-| `hub to section-suspense` (a 1.5 s read inside) | 11 and 304 ms  | 313 and 304 ms      | the read at 1509 and 1508 ms    |
-| `hub to section-own`, a 1.5 s loader of its own | 12 and 305 ms  | (the layout only)   | its content at 1510 and 1534 ms |
-| `hub to section-own`, a 600 ms layout handler   | 614 and 607 ms | (the layout only)   | its content at 915 and 909 ms   |
+| click                                           | layout         | the covered part | the rest                        |
+| ----------------------------------------------- | -------------- | ---------------- | ------------------------------- |
+| `hub to section-read`, a 400 ms loader          | 12 and 304 ms  | 12 and 304 ms    | the value at 408 and 607 ms     |
+| `hub to section-read`, a 1.5 s loader           | 17 and 305 ms  | 17 and 305 ms    | the value at 1511 and 1508 ms   |
+| `hub to section`, a 400 ms loader               | 13 and 303 ms  | (the layout)     | the content at 415 and 605 ms   |
+| `hub to section`, a 1.5 s loader                | 10 and 304 ms  | (the layout)     | the content at 1512 and 1507 ms |
+| `hub to section-suspense` (a 1.5 s read inside) | 11 and 304 ms  | 313 and 304 ms   | the read at 1509 and 1508 ms    |
+| `hub to section-own`, a 1.5 s loader of its own | 12 and 305 ms  | (the layout)     | its content at 1510 and 1534 ms |
+| `hub to section-own`, a 600 ms layout handler   | 614 and 607 ms | (the layout)     | its content at 915 and 909 ms   |
 
-One window is left, and it is asserted as a bounded exception: content
-behind a `loading()` of its own or an app's `<Suspense>` inside the layout,
-whose data lands between React's two reveals. The layout's reveal commits
-that inner fallback, and React keeps it up 300 ms from then, so the content
-shows no sooner than the layout plus 300 ms; a plain click, whose layout
-showed with its first chunk, shows it when it lands. Production, router app,
-medians of three pairs, plain against adopted:
+A gate outside every flagged layout's subtree does not wait for what the
+layout covers: no stream waits for another one on a plain click either. It
+resolves as any gate on screen does, 300 ms after the first chunk or with the
+stream's end ("Not sooner than a plain click would reveal"). Fixture `outer`
+is a flagged loader on a layout the hub does not hold, read in the app's own
+`<Suspense>`, above a flagged layout whose own loader takes 600 ms
+(`&hslow=1`). Production, both apps: when every gate waited for the layout
+(`da7836a3`), the outer read showed at 609 to 612 ms against the plain
+click's 309 to 322; now at 307 against 315.
 
-| click                                                         | layout         | its content    |
+One window is left, and it is asserted as a bounded exception. When the
+layout reveals with a fallback inside it, React keeps that fallback up 300 ms
+from then, and its throttle is page-wide: it holds every reveal on the page,
+inside the layout or not. So content whose data lands between the layout's
+reveal and 300 ms later shows no sooner than the layout plus 300 ms; a plain
+click, whose fallbacks all went up with its first chunk, shows it when it
+lands. Production, router app, medians of three pairs, plain against adopted:
+
+| click                                                         | layout         | the content    |
 | ------------------------------------------------------------- | -------------- | -------------- |
 | `hub to section-own`, a 400 ms loader                         | 8 and 303 ms   | 405 and 606 ms |
 | `hub to section-own`, a 250 ms loader, the server 100 ms away | 106 and 303 ms | 408 and 604 ms |
+| `hub to section`, a 400 ms loader (no boundary of its own)    | 13 and 303 ms  | 415 and 605 ms |
+| `hub to outer`, 400 ms loaders: the outer read, outside it    | 9 and 303 ms   | 409 and 605 ms |
 
 Waiting for that content as well is the whole-fill wait again, and a
-deadline only moves the window and the layout with it: revealed at D, the
-layout's inner content comes at the later of its data and D + 300 ms. So
-content that shows after the layout is compared with the plain click's, or
-with the layout plus React's 300 ms when that is later, with the margin, and
-so are the completed page, the last fallback gone and the time
+deadline only moves the window and the layout with it: revealed at D, what is
+still pending comes at the later of its data and D + 300 ms. So anything that
+shows after the layout, inside it or not, is compared with the plain click's
+time, or with the layout plus React's 300 ms when that is later, with the
+margin, and so are the completed page, the last fallback gone and the time
 `useNavigation()` is idle before the page completes. A probe that resolved
 the nested route's gate 900 ms late failed three of the four
 `hub to section-own, loaders` cells in both apps, the content at 906 to
 1010 ms against bounds of 602 to 605.
 
 The parity cases of these clicks (`layoutSkeleton` in the shared suite)
-assert the expectation instead of the plain click's layout time: the
-skeleton is the click's first change and shows within the parity margin of
-the click; the layout shows no sooner than 280 ms after the skeleton
-(React's 300, with sampling to spare), with the covered content in the same
-frame, and no later than the plain click shows the covered part, or React's
-300 ms after the skeleton when that is later, with the margin; a fallback
-inside the layout (`innerFallback`: the child's `loading()`, the app's
-`<Suspense>`) shows in the frame the layout shows and on the plain click too;
-content after the layout has the bound above. Every other rule is asserted
-as in any parity case, nothing mounted twice included. The skeleton, and a fallback inside the layout, are the fallbacks
-the adopted click may show that the plain click does not (a development
-server's plain click can still be on the layout's fallback when the adopted
-click shows the layout).
+assert the expectation instead of the plain click's layout time:
+
+- the skeleton is the click's first change and shows within the parity
+  margin of the click;
+- the layout shows no sooner than 280 ms after the skeleton (React's 300,
+  with sampling to spare), and no later than the plain click shows the
+  covered part, or React's 300 ms after the skeleton when that is later,
+  with the margin;
+- in the layout's frame it shows with the covered part, or with its own
+  fallback inside it, and only then may that fallback mount a second time
+  (`skeletonInsideLayout`);
+- a fallback inside the layout (`innerFallback`: the child's `loading()`,
+  the app's `<Suspense>`) shows on the plain click too, in the frame the
+  layout or its page shows;
+- what showed inside the layout in its frame is held by the layout's bound
+  (`watchPage` records which elements first showed inside the layout); what
+  shows later has the window bound above;
+- every other rule is asserted as in any parity case, nothing else mounted
+  twice and React's log included.
+
+The skeleton, and a fallback inside the layout, are the fallbacks the adopted
+click may show that the plain click does not (a development server's plain
+click can still be on the layout's fallback when the adopted click shows the
+layout).
 
 #### At once where nothing is on screen
 
@@ -1694,11 +1753,14 @@ segments. A fill refuses `rendered()` outright for the same reason R12 exists.
   chunk (#1080) and the fallback inside it; a development server shows the
   fallback alone first in both. A `loading()` of its own below the layout,
   or an app's `<Suspense>` in its content, shows inside the layout on both
-  clicks; content behind it whose data lands within React's 300 ms of the
-  layout's reveal shows up to that much later than on the plain click
-  (`section-own` with a 400 ms loader: 405 and 606 ms). The numbers are in
-  "A layout unit shows with what its loading() covers". The parity cases
-  assert this expectation (`layoutSkeleton`).
+  clicks, and a read with no boundary of its own shows the layout's own
+  fallback there, its second mount on the adopted click. Content whose data
+  lands within React's 300 ms of the layout's reveal, inside the layout or
+  anywhere else on the page, shows up to that much later than on the plain
+  click (`section-own` with a 400 ms loader: 405 and 606 ms; the `outer`
+  read: 409 and 605). The numbers are in "A layout unit shows with what its
+  loading() covers". The parity cases assert this expectation
+  (`layoutSkeleton`).
 - A deferred `loading()` entry on a page that commits in a transition (its
   own `transition()`, or one on anything its fallback covers) shows its
   fallback when its fill starts answering, not with the click ("A unit under

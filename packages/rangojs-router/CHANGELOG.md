@@ -65,10 +65,12 @@ What to know before you use it:
   with no prefetch, in a production build, shows the layout with its first
   chunk and the fallback inside it; the covered content is no later with the
   prefetch. This is the one place where the two clicks show different pages,
-  by design. A route below the layout with its own `loading()`, or a
-  `<Suspense>` in its content, shows its fallback inside the layout, as with
-  no prefetch; React keeps that fallback up at least 300 ms, so content
-  behind it can show up to 300 ms later than with no prefetch.
+  by design. A loader below the layout streams as with no prefetch, and what
+  is still pending shows its fallback inside the layout: a route's own
+  `loading()`, a `<Suspense>` in its content, or, for a read with no boundary
+  of its own, the layout's own fallback a second time. React keeps that
+  fallback up at least 300 ms and holds the page's other reveals as long, so
+  content can show up to 300 ms later than with no prefetch.
 - **A prefetch that deferred something is used only on the page that made
   it.** A page that already shows the segment makes its own prefetch, which
   defers nothing for it.

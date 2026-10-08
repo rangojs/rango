@@ -323,8 +323,10 @@ not affected: the page shows with the click.
 **Stored output is still served.** Under `cache()`, on a `ppr` route and for a
 `Prerender`/`Static` handler, the handler output is stored, so the prefetch
 looks it up, renders it and writes it exactly as before, hit or miss. Only the
-loaders behind the fallback are deferred. See `/caching`, `/ppr` and
-`/prerender`.
+loaders behind the fallback are deferred: for a flagged `layout()` that is
+every loader below it, although the stored layout is served. The flag keeps
+the block's work, its loaders included, out of prefetches. See `/caching`,
+`/ppr` and `/prerender`.
 
 **Limits.**
 
@@ -348,15 +350,17 @@ loaders behind the fallback are deferred. See `/caching`, `/ppr` and
   layout's own handler too. This is the one place where a prefetched click
   shows a different page from a click with no prefetch, by design: it shows
   the skeleton at once, over the layout's whole area, and the layout appears
-  once what its own `loading()` covers has arrived (the layout, its loaders,
-  and content below it with no `loading()` of its own), at least React's
-  300 ms after the skeleton. A click with no prefetch, in a production build,
-  shows the layout with its first chunk and the fallback inside it. The
-  covered content is no later with the prefetch. A route below the layout
-  with its own `loading()`, or a `<Suspense>` in its content, shows its
-  fallback inside the layout, as with no prefetch; React then keeps that
-  fallback up at least 300 ms, so content behind it that would have shown
-  sooner shows up to 300 ms later than with no prefetch.
+  once what its own `loading()` covers has arrived (the layout, its own
+  loaders, and the components below it with no `loading()` of their own), at
+  least React's 300 ms after the skeleton. A click with no prefetch, in a
+  production build, shows the layout with its first chunk and the fallback
+  inside it. The covered content is no later with the prefetch. A loader
+  below the layout streams as with no prefetch, and what is still pending
+  shows its fallback inside the layout: a route's own `loading()`, a
+  `<Suspense>` in its content, or, for a read with no boundary of its own,
+  the layout's own fallback a second time. React keeps that fallback up at
+  least 300 ms and holds the page's other reveals as long, so content that
+  would have shown sooner shows up to 300 ms later than with no prefetch.
 - An orphan layout's flagged `loading()` defers its loaders but not its
   handler: the route's handler has already run by then.
 - `clientUrls()` routes and `intercept()` ignore the flag.

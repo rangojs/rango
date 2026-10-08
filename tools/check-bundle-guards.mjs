@@ -120,7 +120,12 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // boundary its gate settled instead of a node. Only as far as needed: a
 // lazy split of the fill was measured and rejected (48532B + 1403B split,
 // against 49142B unsplit).
-const ROUTER_CHUNK_GZIP_MAX = 48 * 1024 + 256;
+//
+// Raised 48.25KB -> 48.375KB on 2026-10-08, measured 49353B -> 49510B
+// (+157B gzip): useLoader calls use() on a settled read too (+59B, a fix
+// main takes on its own), and a flagged layout's gates wait apart from the
+// gates outside it (+98B, browser/partial-update.ts settleHoles).
+const ROUTER_CHUNK_GZIP_MAX = 48 * 1024 + 384;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [
