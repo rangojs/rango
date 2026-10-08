@@ -55,6 +55,16 @@ export const ROUTER_SERVER_PATTERNS = [
   { name: "src/rsc/", re: /\/packages\/rangojs-router\/src\/rsc\// },
 ];
 
+// Dev-only router modules. Every call site is behind
+// `process.env.NODE_ENV !== "production"`, so a build must render none of
+// their bytes (packages/rangojs-router/docs/internal/suspense-contract.md).
+export const ROUTER_DEV_ONLY_PATTERNS = [
+  {
+    name: "src/suspense-audit*.ts (dev only)",
+    re: /\/packages\/rangojs-router\/src\/suspense-audit(?:-react)?\.tsx?$/,
+  },
+];
+
 // Heuristic only — file naming is a signal, not a guarantee. Hits warrant
 // review; misses don't prove cleanliness.
 export const APP_SERVER_PATTERNS = [
