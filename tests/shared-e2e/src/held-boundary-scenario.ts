@@ -156,6 +156,7 @@ export function runHeldBoundaryTests(
     const {
       events,
       shownWhilePending: _byDesign,
+      unattributedFallbacks: _unattributed,
       treeUpdates: _updates,
       handed: _handed,
       // I7 is the console guard's (tools/e2e-console-baseline.json).

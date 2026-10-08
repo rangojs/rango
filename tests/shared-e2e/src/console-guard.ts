@@ -19,6 +19,8 @@ import { fileURLToPath } from "node:url";
  *
  * Installed by each app's useFixture() for `mode: "dev"`, so no test opts in.
  * React's warnings and the router's suspense audit exist only in a dev build.
+ * HMR projects (`hmr*`) edit source under a running page: recorded, never
+ * enforced.
  */
 
 export interface ConsoleRule {
@@ -26,8 +28,6 @@ export interface ConsoleRule {
   pattern: RegExp;
   /** Deny only at this level. Default: warnings, errors and page errors. */
   level?: "error";
-  /** Test files the rule does not apply to. */
-  exceptFiles?: RegExp;
 }
 
 export const CONSOLE_DENY_RULES: readonly ConsoleRule[] = [
@@ -87,7 +87,6 @@ export const CONSOLE_DENY_RULES: readonly ConsoleRule[] = [
   {
     id: "rango-refetch-all",
     pattern: /Missing \d+ segments\. Refetching all/,
-    exceptFiles: /hmr/,
   },
   {
     id: "rango-error",
@@ -97,12 +96,11 @@ export const CONSOLE_DENY_RULES: readonly ConsoleRule[] = [
   },
 ];
 
-export type ConsoleGuardMode = "enforce" | "record" | "off";
+export type ConsoleGuardMode = "enforce" | "record";
 
-/** `RANGO_CONSOLE_GUARD`: enforce (default), record (never fails), off. */
+/** `RANGO_CONSOLE_GUARD`: enforce (default), or record (never fails). */
 export function consoleGuardMode(): ConsoleGuardMode {
-  const value = process.env.RANGO_CONSOLE_GUARD;
-  return value === "record" || value === "off" ? value : "enforce";
+  return process.env.RANGO_CONSOLE_GUARD === "record" ? "record" : "enforce";
 }
 
 export interface ConsoleBaselineEntry {
@@ -151,6 +149,8 @@ interface GuardState {
   app: string;
   enforce: boolean;
   messages: Recorded[];
+  /** RANGO_CONSOLE_GUARD_DEBUG: the router's own log lines, written at the end. */
+  debug: unknown[];
   allow: Array<{ pattern: RegExp; hits: number }>;
   contexts: WeakSet<BrowserContext>;
   finished: boolean;
@@ -169,20 +169,25 @@ function summaryDir(testInfo: TestInfo): string {
   );
 }
 
-function append(testInfo: TestInfo, file: string, line: unknown): void {
+const madeDirs = new Set<string>();
+
+// One write per file per call; the directory is made once per worker.
+function append(testInfo: TestInfo, file: string, lines: unknown[]): void {
+  if (lines.length === 0) return;
   const dir = summaryDir(testInfo);
-  mkdirSync(dir, { recursive: true });
-  appendFileSync(path.join(dir, file), JSON.stringify(line) + "\n");
+  if (!madeDirs.has(dir)) {
+    mkdirSync(dir, { recursive: true });
+    madeDirs.add(dir);
+  }
+  appendFileSync(
+    path.join(dir, file),
+    lines.map((line) => JSON.stringify(line) + "\n").join(""),
+  );
 }
 
-function ruleFor(
-  type: string,
-  text: string,
-  file: string,
-): ConsoleRule | undefined {
+function ruleFor(type: string, text: string): ConsoleRule | undefined {
   for (const rule of CONSOLE_DENY_RULES) {
     if (rule.level === "error" && type === "warning") continue;
-    if (rule.exceptFiles?.test(file)) continue;
     if (rule.pattern.test(text)) return rule;
   }
   return undefined;
@@ -198,7 +203,7 @@ function record(
   if (type !== "warning" && type !== "error" && type !== "pageerror") {
     // A debug run keeps the router's own log lines beside the warnings.
     if (process.env.RANGO_CONSOLE_GUARD_DEBUG) {
-      append(testInfo, "debug.jsonl", {
+      state.debug.push({
         test: testName(testInfo),
         project: testInfo.project.name,
         type,
@@ -207,7 +212,7 @@ function record(
     }
     return;
   }
-  const rule = ruleFor(type, text, testInfo.file);
+  const rule = ruleFor(type, text);
   const recorded: Recorded = { type, text, disposition: "unknown" };
   if (rule) {
     recorded.rule = rule.id;
@@ -261,21 +266,28 @@ function finish(testInfo: TestInfo, state: GuardState): void {
   const annotated = new Set<string>();
   // Every test, so a recorded run can tell a quiet test from one that did
   // not run (tools/check-e2e-console-baseline.mjs --from).
-  append(testInfo, "tests.jsonl", {
-    app: state.app,
-    project: testInfo.project.name,
-    test: name,
-    status: testInfo.status,
-  });
-  for (const message of state.messages) {
-    append(testInfo, "messages.jsonl", {
+  append(testInfo, "tests.jsonl", [
+    {
+      app: state.app,
+      project: testInfo.project.name,
+      test: name,
+      status: testInfo.status,
+    },
+  ]);
+  append(testInfo, "debug.jsonl", state.debug);
+  append(
+    testInfo,
+    "messages.jsonl",
+    state.messages.map((message) => ({
       app: state.app,
       project: testInfo.project.name,
       test: name,
       status: testInfo.status,
       ...message,
       text: message.text.slice(0, 2000),
-    });
+    })),
+  );
+  for (const message of state.messages) {
     if (message.rule) seenRules.add(message.rule);
     if (message.disposition === "denied") {
       problems.push(`[${message.rule}] ${message.text.slice(0, 500)}`);
@@ -305,12 +317,38 @@ function finish(testInfo: TestInfo, state: GuardState): void {
       }
     }
   }
-  if (state.enforce && problems.length > 0 && testInfo.status === "passed") {
+  const report = [...new Set(problems)];
+  const verdict = consoleGuardVerdict(report, state.enforce, testInfo);
+  if (verdict === "annotate") {
+    for (const problem of report) {
+      testInfo.annotations.push({
+        type: "console-guard",
+        description: problem,
+      });
+    }
+  } else if (verdict === "throw") {
     throw new Error(
-      `Console guard (${problems.length}):\n${[...new Set(problems)].join("\n")}\n` +
+      `Console guard (${report.length}):\n${report.join("\n")}\n` +
         `Declare a message the test provokes on purpose with expectConsole(page, { allow }).`,
     );
   }
+}
+
+/**
+ * What the guard does with its findings once a test is over. Only a passed
+ * body fails on them. An open case (test.fail()) whose body passed gets them
+ * as annotations: a throw would turn the flip into the expected failure and
+ * hide it, where Playwright reports "expected to fail, but passed".
+ */
+export function consoleGuardVerdict(
+  problems: readonly string[],
+  enforce: boolean,
+  result: Pick<TestInfo, "status" | "expectedStatus">,
+): "none" | "annotate" | "throw" {
+  if (!enforce || problems.length === 0 || result.status !== "passed") {
+    return "none";
+  }
+  return result.expectedStatus === "failed" ? "annotate" : "throw";
 }
 
 /**
@@ -319,14 +357,13 @@ function finish(testInfo: TestInfo, state: GuardState): void {
  */
 export function installConsoleGuard(options: { app: string }): void {
   const mode = consoleGuardMode();
-  if (mode === "off") return;
   test.beforeEach(async ({ context }, testInfo) => {
     if (states.has(testInfo)) return;
     states.set(testInfo, {
       app: options.app,
-      // HMR suites edit source under a running page: recorded, not enforced.
       enforce: mode === "enforce" && !testInfo.project.name.startsWith("hmr"),
       messages: [],
+      debug: [],
       allow: [],
       contexts: new WeakSet(),
       finished: false,
@@ -348,6 +385,8 @@ export interface SuspenseAuditCounters {
   drifts: number;
   uncaused: number;
   mutations: number;
+  /** Not a violation: fallbacks no value the router handed explains. */
+  unattributedFallbacks: number;
   /** Not a violation: tree updates React was handed, by cause. */
   treeUpdates: Record<string, number>;
   /** Not a violation: distinct thenables each boundary or read was handed. */
@@ -378,6 +417,7 @@ export async function readSuspenseAudit(
       drifts: audit.drifts,
       uncaused: audit.uncaused,
       mutations: audit.mutations,
+      unattributedFallbacks: audit.unattributedFallbacks,
       treeUpdates: { ...audit.treeUpdates },
       handed: { ...audit.handed },
       shownWhilePending: audit.shownWhilePending,

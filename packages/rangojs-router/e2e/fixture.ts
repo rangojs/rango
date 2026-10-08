@@ -24,7 +24,13 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
       // orphaned. Files that spawn many isolatedServer instances (cache.test.ts
       // spawns 21) then accumulate orphaned dev servers until the runner OOMs.
       detached: true,
-      env: { ...process.env, CI: "true", ...options.env },
+      // The repo-only suspense audit (src/internal-suspense-audit.ts).
+      env: {
+        ...process.env,
+        CI: "true",
+        INTERNAL_RANGO_SUSPENSE_AUDIT: "1",
+        ...options.env,
+      },
     },
   }).process!;
   const label = `[${options.label ?? "cli"}]`;

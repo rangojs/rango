@@ -15,7 +15,12 @@ function sanitizeNodeOptions(value?: string): string | undefined {
 
 function runCli(options: { command: string; label?: string } & SpawnOptions) {
   const [name, ...args] = options.command.split(" ");
-  const env = { ...process.env, ...options.env };
+  // The repo-only suspense audit (src/internal-suspense-audit.ts).
+  const env = {
+    ...process.env,
+    INTERNAL_RANGO_SUSPENSE_AUDIT: "1",
+    ...options.env,
+  };
   const sanitizedNodeOptions = sanitizeNodeOptions(env.NODE_OPTIONS);
   if (sanitizedNodeOptions) {
     env.NODE_OPTIONS = sanitizedNodeOptions;

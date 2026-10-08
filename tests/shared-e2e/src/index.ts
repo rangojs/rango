@@ -27,7 +27,12 @@ export { runUseLoaderSettledReadTests } from "./use-loader-settled-read-scenario
 export type { UseLoaderSettledReadScenarioOptions } from "./use-loader-settled-read-scenario.js";
 export { readFlash, readProbe, watchFlash } from "./flash-probe.js";
 export type { CacheVersionScenarioOptions } from "./cache-version-scenario.js";
-export { runSuspenseCases } from "./suspense-cases.js";
+export {
+  describeSuspenseCases,
+  runSuspenseCases,
+  SUSPENSE_CASES_OPEN_DEV,
+  SUSPENSE_CASES_OPEN_PRODUCTION,
+} from "./suspense-cases.js";
 export type { SuspenseCasesOptions } from "./suspense-cases.js";
 export {
   CONSOLE_BASELINE_PATH,
