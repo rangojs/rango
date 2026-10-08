@@ -28,6 +28,10 @@ import { initRangoState } from "./rango-state.js";
 import { registerNavigationStore } from "./navigation-store-handle.js";
 import { initPrefetchCache } from "./prefetch/cache.js";
 import {
+  auditTreeCause,
+  setSuspenseAuditStreamProbe,
+} from "../suspense-audit.js";
+import {
   setPrefetchConcurrency,
   setPrefetchDecoder,
 } from "./prefetch/loader.js";
@@ -255,6 +259,9 @@ export async function initBrowserApp(
   const eventController = createEventController({
     initialLocation: new URL(window.location.href),
   });
+  if (process.env.NODE_ENV !== "production") {
+    setSuspenseAuditStreamProbe(() => eventController.getState().isStreaming);
+  }
 
   // The document's entry, after the clearOnReload pass and under the version
   // set above: what readers get once they have hydrated.
@@ -588,6 +595,7 @@ export async function initBrowserApp(
             );
 
             const { main, intercept } = splitInterceptSegments(segments);
+            if (process.env.NODE_ENV !== "production") auditTreeCause("hmr");
             store.emitUpdate({
               root: renderSegments(main, {
                 interceptSegments: intercept.length > 0 ? intercept : undefined,

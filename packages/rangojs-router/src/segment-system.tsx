@@ -24,6 +24,11 @@ import {
   buildLoaderPromise,
   getMemoizedLoaderPromise,
 } from "./segment-loader-promise.js";
+import {
+  auditSegmentElement,
+  finishTreeAudit,
+  startTreeAudit,
+} from "./suspense-audit.js";
 
 /**
  * Debug log for the segment tree build, gated on the baked flag. Runs on BOTH
@@ -376,6 +381,10 @@ export async function renderSegments(
   }
   // Separate segments by type, passing intercept segments for explicit injection
   const tree = segmentTreeWalk(normalizedSegments, normalizedInterceptSegments);
+  // Dev only: the wrapper chain per segment, compared with the previous
+  // tree's (suspense-audit.ts, I5).
+  const treeAudit =
+    process.env.NODE_ENV !== "production" ? startTreeAudit() : undefined;
 
   // A route is "in a transition scope" when its own segment OR any layout in
   // its matched chain declares transition(). Both transition() forms land here:
@@ -797,6 +806,21 @@ export async function renderSegments(
       });
     }
 
+    if (process.env.NODE_ENV !== "production") {
+      auditSegmentElement(
+        treeAudit,
+        id,
+        node.segment.type,
+        key,
+        content,
+        node.segment.type === "layout" &&
+          !!ReactViewTransition &&
+          !!transition &&
+          transition.viewTransition !== false,
+        node.parallel.map((p) => p.id),
+      );
+    }
+
     if (segDebug) {
       segDebugLog(`segment ${id} built`, {
         type: node.segment.type,
@@ -807,6 +831,8 @@ export async function renderSegments(
       });
     }
   }
+
+  if (process.env.NODE_ENV !== "production") finishTreeAudit(treeAudit);
 
   const errorBoundaryWrapped = createElement(RootErrorBoundary, {
     children: content,

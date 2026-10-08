@@ -10,6 +10,12 @@ import {
   LOADER_REDIRECT,
 } from "./decode-loader-results.js";
 import { LoaderRedirect } from "./loader-redirect.js";
+import type { BoundaryAudit } from "./suspense-audit.js";
+import {
+  AuditedFallback,
+  useBoundaryAudit,
+  useRevealAudit,
+} from "./suspense-audit-react.js";
 
 /**
  * Router-owned error boundary for read-site loader errors. segment-system
@@ -92,17 +98,19 @@ export class StreamedLoaderErrorBoundary extends Component<
  *
  * @param segmentId - Stable ID from segment, used for consistent keys across renders
  */
-export function RouteContentWrapper({
-  content,
-  fallback,
-  segmentId,
-}: {
+interface RouteContentProps {
   // A pending promise suspends (use()) and shows the fallback; a node renders
   // without suspending (see getBoundaryContent).
   content: Promise<ReactNode> | ReactNode;
   fallback?: ReactNode;
   segmentId?: string;
-}): ReactNode {
+}
+
+function RouteContentBoundary({
+  content,
+  fallback,
+  segmentId,
+}: RouteContentProps): ReactNode {
   return (
     <Suspense
       fallback={fallback ?? null}
@@ -112,6 +120,52 @@ export function RouteContentWrapper({
     </Suspense>
   );
 }
+
+// Dev only (suspense-audit.ts): the same Suspense, keys and content, with the
+// audit's hooks in components of their own.
+function AuditedRouteContent({
+  content,
+  fallback,
+  segmentId,
+}: RouteContentProps): ReactNode {
+  const audit = useBoundaryAudit(
+    `content:${segmentId}`,
+    segmentId ?? "",
+    content,
+  );
+  return (
+    <Suspense
+      fallback={
+        <AuditedFallback audit={audit}>{fallback ?? null}</AuditedFallback>
+      }
+      key={segmentId ? "route-content-suspense-" + segmentId : undefined}
+    >
+      <AuditedSuspender content={content} audit={audit} key={segmentId} />
+    </Suspense>
+  );
+}
+
+function AuditedSuspender({
+  content,
+  audit,
+}: {
+  content: Promise<ReactNode> | ReactNode;
+  audit: BoundaryAudit;
+}): ReactNode {
+  useRevealAudit(audit);
+  return Suspender({ content });
+}
+
+/**
+ * Chosen once per module, not by a branch inside the component: React
+ * Compiler runs before NODE_ENV is folded, and a dev branch in a compiled
+ * component leaves its memo slots in the production chunk (measured +76 B
+ * gzip across the three boundary components in cloudflare-basic).
+ */
+export const RouteContentWrapper: (props: RouteContentProps) => ReactNode =
+  process.env.NODE_ENV !== "production"
+    ? AuditedRouteContent
+    : RouteContentBoundary;
 
 const Suspender = ({
   content,
@@ -157,7 +211,7 @@ export interface LoaderBoundaryProps {
   children: ReactNode;
 }
 
-export function LoaderBoundary({
+function LoaderSuspenseBoundary({
   loaderDataPromise,
   loaderIds,
   loaderStreams,
@@ -186,6 +240,49 @@ export function LoaderBoundary({
     </Suspense>
   );
 }
+
+// Dev only (suspense-audit.ts), as AuditedRouteContent.
+function AuditedLoaderBoundary({
+  fallback,
+  children,
+  ...resolver
+}: LoaderBoundaryProps): ReactNode {
+  const audit = useBoundaryAudit(
+    `loaders:${resolver.outletKey}`,
+    resolver.segment.id,
+    resolver.loaderDataPromise,
+    resolver.loaderStreams,
+    [children, resolver.outletContent],
+  );
+  return (
+    <Suspense
+      fallback={
+        <AuditedFallback audit={audit}>{fallback ?? null}</AuditedFallback>
+      }
+      key={`loader-boundary-${resolver.outletKey}`}
+    >
+      <AuditedLoaderResolver audit={audit} {...resolver}>
+        {children}
+      </AuditedLoaderResolver>
+    </Suspense>
+  );
+}
+
+function AuditedLoaderResolver({
+  audit,
+  ...props
+}: Omit<LoaderBoundaryProps, "fallback"> & {
+  audit: BoundaryAudit;
+}): ReactNode {
+  useRevealAudit(audit);
+  return LoaderResolver(props);
+}
+
+// Chosen per module: see RouteContentWrapper.
+export const LoaderBoundary: (props: LoaderBoundaryProps) => ReactNode =
+  process.env.NODE_ENV !== "production"
+    ? AuditedLoaderBoundary
+    : LoaderSuspenseBoundary;
 
 /**
  * Internal component that resolves loader promises and renders OutletProvider

@@ -113,6 +113,7 @@ import { setupNavigationBridgeDelegatedPrefetch } from "../browser/navigation-br
 import { resetAdaptiveStrategyForTesting } from "../browser/prefetch/default-strategy.js";
 import { resetPrefetchObserverForTesting } from "../browser/prefetch/observer.js";
 import type { PrefetchStrategy } from "../router/prefetch-default.js";
+import { auditTreeCause } from "../suspense-audit.js";
 
 const TEST_ORIGIN = "http://localhost";
 let activePrefetchRegistrations = 0;
@@ -866,6 +867,8 @@ export async function renderRoute(
     }
     const emit: UpdateSubscriber = (update) => store.emitUpdate(update);
     await act(async () => {
+      // As production's emitters name their cause (suspense-audit.ts I6).
+      auditTreeCause("navigation");
       // Production's transition() lane (browser/partial-update.ts). Its
       // same-structure / fully-prefetched / optimistic hold lanes are not
       // modeled: without transition() the commit stays urgent.

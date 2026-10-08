@@ -46,6 +46,7 @@ import {
   type TransitionWhenActionInput,
 } from "./transition-when.js";
 import { CLIENT_REVALIDATION_HEADER } from "../client-urls/revalidation-protocol.js";
+import { auditTreeCause } from "../suspense-audit.js";
 
 // Polyfill Symbol.dispose/asyncDispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -659,6 +660,7 @@ export function createServerActionBridge(
         // Update UI with error boundary: urgent when transition({ when })
         // gated it off, like every gated-off commit.
         const errorUpdate = { root: errorTree, metadata: metadata! };
+        if (process.env.NODE_ENV !== "production") auditTreeCause("action");
         if (errorGatedOff) onUpdate(errorUpdate);
         else startTransition(() => onUpdate(errorUpdate));
 
@@ -923,6 +925,7 @@ export function createServerActionBridge(
           store.rememberDisplayedEntry(metadata?.routeName);
 
           const actionUpdate = { root: newTree, metadata: metadata! };
+          if (process.env.NODE_ENV !== "production") auditTreeCause("action");
           if (gatedOff) onUpdate(actionUpdate);
           else startTransition(() => onUpdate(actionUpdate));
           // Invalidation deferred to finalizeAction() (runs after this caches

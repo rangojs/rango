@@ -2,6 +2,7 @@ import { NetworkError, isNetworkError } from "../errors.js";
 import { RenderErrorThrower } from "../render-error-thrower.js";
 import type { UpdateSubscriber } from "./types.js";
 import { createElement, startTransition } from "react";
+import { auditTreeCause } from "../suspense-audit.js";
 
 /**
  * Convert an unknown error to a NetworkError, or return null if not network-related.
@@ -33,6 +34,7 @@ function emitErrorToBoundary(
   error: unknown,
   pathname: string,
 ): void {
+  if (process.env.NODE_ENV !== "production") auditTreeCause("error");
   startTransition(() => {
     onUpdate({
       root: createElement(RenderErrorThrower, { error }),
