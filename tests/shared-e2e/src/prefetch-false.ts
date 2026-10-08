@@ -2050,12 +2050,20 @@ export interface PrefetchFalseParityCase extends PrefetchFalseFlags {
    * A flagged layout entered from a page that does not hold it. The
    * maintainer's expectation replaces the plain click's time for the layout:
    * its skeleton (`fallback`) is the click's first change and shows with the
-   * click; the layout (`layout`) shows with the route's content, in one
-   * reveal, at least React's 300 ms after the skeleton. The content and the
-   * completed page are compared with the plain click as in any case. The
+   * click; the layout (`layout`) shows once what the layout's loading()
+   * covers has arrived, with `content` (the covered route's) in the same
+   * frame, at least React's 300 ms after the skeleton, and no later than the
+   * plain click shows the covered part, or React's 300 ms, with the margin.
+   * Everything else is compared with the plain click as in any case. The
    * skeleton is the one fallback the plain click need not show.
    */
-  skeleton?: { fallback: string; layout: string };
+  skeleton?: { fallback: string; layout: string; content?: string };
+  /**
+   * A fallback below the layout that a loading() of its own or an app's
+   * <Suspense> places: it shows inside the layout, in the frame the layout
+   * shows, as on the plain click.
+   */
+  innerFallback?: string;
   /**
    * A gap that is known and not fixed. The case runs all the same: every
    * comparison the gap does not break has to hold, and one it breaks has to
@@ -2129,8 +2137,20 @@ function layoutSkeleton(
   if (!SECTION_PAGES.includes(spec.name) || spec.from === "section") {
     return undefined;
   }
-  return { fallback: "pf-section-fallback", layout: "pf-section-layout" };
+  return {
+    fallback: "pf-section-fallback",
+    layout: "pf-section-layout",
+    // `section-own` has a loading() of its own: the layout covers nothing
+    // of it.
+    ...(spec.name !== "section-own" && { content: `pf-${spec.name}-value` }),
+  };
 }
+
+/** A child route's loader this much slower takes 1.5 s. */
+const SLOW_CHILD_DELAY_MS = 1400;
+
+/** The app's own fallback around `section-suspense`'s slow read. */
+const SUSPENSE_FALLBACK = "pf-section-suspense-slow-fallback";
 
 const IN_SECTION = { from: "section", held: ["pf-section-layout"] };
 const BESIDE_SLOT = { held: ["pf-slot-layout", "pf-slot-side"] };
@@ -2142,6 +2162,8 @@ const PARITY_CLICKS: PrefetchFalseParityCase[] = [
   { name: "section-plain" },
   { name: "section-own" },
   { name: "section-cached" },
+  // An app <Suspense> around a 1.5 s read in the page below the layout.
+  { name: "section-suspense", innerFallback: SUSPENSE_FALLBACK },
   { name: "slot" },
   { name: "slot-b" },
   { name: "bare" },
@@ -2225,6 +2247,7 @@ const SECTION_PAGES = [
   "section-plain",
   "section-own",
   "section-cached",
+  "section-suspense",
 ];
 
 /**
@@ -2308,8 +2331,19 @@ export const PREFETCH_FALSE_PARITY_CASES: PrefetchFalseParityCase[] = [
     hslow: true,
   })),
   ...OUTSIDE_SECTION.flatMap((source) =>
-    SECTION_PAGES.map((name) => ({ name, ...source, hslow: true })),
+    SECTION_PAGES.map((name) => ({
+      name,
+      ...source,
+      hslow: true,
+      ...(name === "section-suspense" && { innerFallback: SUSPENSE_FALLBACK }),
+    })),
   ),
+  ...[{}, { from: "control" }].map((source) => ({
+    name: "section-own",
+    ...source,
+    delay: SLOW_CHILD_DELAY_MS,
+    innerFallback: "pf-section-own-fallback",
+  })),
   ...PARITY_CLICKS.filter(
     (spec) => !spec.from && LATENCY_CLICKS.includes(spec.name),
   ).flatMap((spec) => [
@@ -2413,11 +2447,14 @@ export interface PrefetchFalsePair {
  *   than in the plain click (`URL_LEAD_MARGIN_MS`).
  * - A case with `skeleton` (a flagged layout entered from outside) shows the
  *   layout's skeleton first, within `PARITY_MARGIN_MS` of the click, and the
- *   layout in the same frame as the route's content (`SAME_FRAME_MS`), no
- *   sooner than
- *   `SKELETON_MIN_MS` after the skeleton. The layout's own time is not
- *   compared with the plain click's, and the skeleton may be a fallback the
- *   plain click does not show; everything else is.
+ *   layout in the same frame as the content its loading() covers
+ *   (`SAME_FRAME_MS`), no sooner than `SKELETON_MIN_MS` after the skeleton.
+ *   The layout's own time is compared with the plain click's covered content,
+ *   or React's 300 ms after the skeleton when that is later, and the skeleton
+ *   may be a fallback the plain click does not show. Content that shows
+ *   after the layout, behind a fallback inside it, is compared with the
+ *   plain click's, or React's 300 ms after the layout when that is later;
+ *   everything else is compared as in any case.
  *
  * Times are compared with `PARITY_MARGIN_MS` to spare. A pair that is later
  * than that is recorded again, up to `PARITY_PAIRS` pairs: the case fails
@@ -2455,11 +2492,19 @@ export async function expectAdoptedClickIsNeverWorseThanAPlainClick(
     if (!ok) wrong.push({ rule, what });
   };
 
+  // Below a flagged layout entered from outside, a loading() of the route's
+  // own (or an app's <Suspense>) shows inside the layout, by design, where a
+  // development server's plain click can still be on the layout's fallback.
+  const inside = spec.skeleton && [
+    spec.innerFallback,
+    `pf-${spec.name}-fallback`,
+  ];
   const added = adopted.fallbacks.filter(
     (id) =>
       !plain.fallbacks.includes(id) &&
       id !== spec.ownFallback &&
-      id !== spec.skeleton?.fallback,
+      id !== spec.skeleton?.fallback &&
+      !inside?.includes(id),
   );
   check(
     "fallback",
@@ -2534,7 +2579,8 @@ export async function expectAdoptedClickIsNeverWorseThanAPlainClick(
     };
     const skeletonAt = at(fallback);
     const layoutAt = at(layout);
-    const contentAt = at(`pf-${spec.stem ?? spec.name}-value`);
+    const { content } = spec.skeleton;
+    const contentAt = content === undefined ? layoutAt : at(content);
     check(
       "skeleton",
       skeletonAt !== undefined &&
@@ -2555,6 +2601,21 @@ export async function expectAdoptedClickIsNeverWorseThanAPlainClick(
         skeletonAt !== undefined &&
         layoutAt - skeletonAt >= SKELETON_MIN_MS,
       `the layout showed ${layoutAt! - skeletonAt!} ms after the skeleton, sooner than React's 300`,
+    );
+  }
+  if (spec.innerFallback) {
+    const index = adopted.order.indexOf(spec.innerFallback);
+    const layoutIndex = spec.skeleton
+      ? adopted.order.indexOf(spec.skeleton.layout)
+      : -1;
+    check(
+      "skeleton",
+      plain.fallbacks.includes(spec.innerFallback) &&
+        index >= 0 &&
+        layoutIndex >= 0 &&
+        Math.abs(adopted.seenAt[index]! - adopted.seenAt[layoutIndex]!) <=
+          SAME_FRAME_MS,
+      `${spec.innerFallback} did not show inside the layout as on the plain click`,
     );
   }
 
@@ -2640,6 +2701,9 @@ const IDLE_WINDOW_MS = 100;
  */
 const SKELETON_MIN_MS = 280;
 
+/** FALLBACK_THROTTLE_MS in react-reconciler. */
+const REACT_THROTTLE_MS = 300;
+
 /**
  * Two elements of one commit, as the page's sampler times them: one sample
  * reads the clock per element, so they can differ by a millisecond or two.
@@ -2655,6 +2719,18 @@ function laterThanPlain(
   spec: PrefetchFalseParityCase,
 ): Broken[] {
   const late: Broken[] = [];
+  const at = (click: PrefetchFalseClick, id: string): number =>
+    click.seenAt[click.order.indexOf(id)] ?? Number.NaN;
+  // Content that shows after the layout was behind a fallback inside it (a
+  // loading() of its own, an app's <Suspense>) that React committed with the
+  // layout, so it shows no sooner than REACT_THROTTLE_MS after the layout,
+  // wherever its data landed (production, `section-own` with a 400 ms
+  // loader: the layout at 303 ms, the content at 604, the plain click's at
+  // 406).
+  const shownAt = spec.skeleton ? at(adopted, spec.skeleton.layout) : NaN;
+  const after = adopted.completeAt > shownAt + SAME_FRAME_MS;
+  const held = (was: number): number =>
+    after ? Math.max(was, shownAt + REACT_THROTTLE_MS) : was;
   const never = (
     what: string,
     was: number,
@@ -2687,27 +2763,48 @@ function laterThanPlain(
     plain.firstChangeAt,
     adopted.firstChangeAt,
   );
-  never("the completed page (ms)", plain.completeAt, adopted.completeAt);
+  never("the completed page (ms)", held(plain.completeAt), adopted.completeAt);
   // A plain click that shows no fallback keeps the page it is on instead.
   never(
     "the last fallback gone (ms)",
-    plain.fallbacks.length > 0 ? plain.fallbackGoneAt : plain.completeAt,
+    held(plain.fallbacks.length > 0 ? plain.fallbackGoneAt : plain.completeAt),
     adopted.fallbackGoneAt,
   );
+  // The response has streamed when React's throttle holds the reveal back.
   never(
     "useNavigation() idle, the page incomplete (ms)",
-    plain.quietMs,
+    plain.quietMs + held(plain.completeAt) - plain.completeAt,
     adopted.quietMs,
   );
   // Each element on its own: a unit's content held back until a read inside
   // it arrives completes the page on time, with its last fallback gone on
   // time.
+  if (spec.skeleton) {
+    // The layout shows with the fill, by design: no later than the plain
+    // click shows what the layout covers, or React's 300 ms after the
+    // skeleton when that is later.
+    const { fallback, layout, content } = spec.skeleton;
+    never(
+      "the layout (ms)",
+      Math.max(
+        at(plain, content ?? layout),
+        at(adopted, fallback) + REACT_THROTTLE_MS,
+      ),
+      shownAt,
+    );
+  }
   adopted.order.forEach((id, index) => {
     const was = plain.order.indexOf(id);
     // A flagged layout entered from outside shows with the fill by design.
     if (was < 0 || adopted.fallbacks.includes(id)) return;
     if (id === spec.skeleton?.layout) return;
-    never(`${id} visible at (ms)`, plain.seenAt[was]!, adopted.seenAt[index]!);
+    const is = adopted.seenAt[index]!;
+    const inside = is > shownAt + SAME_FRAME_MS;
+    never(
+      `${id} visible at (ms)`,
+      inside ? held(plain.seenAt[was]!) : plain.seenAt[was]!,
+      is,
+    );
   });
   return late;
 }
@@ -2899,7 +2996,10 @@ function shownInPageBox(page: Page): Promise<string[]> {
  * where the prefetch's skeleton has a route and its loader. The page is then
  * not the one the click's tree was built for, and this is the one answer for
  * which a fill hands React a tree. It ends where the plain click ends: the
- * same elements on screen, no fallback left, nothing streaming.
+ * same elements on screen, no fallback left, nothing streaming. React logs no
+ * error for it: the boundary that suspended on its gate is handed that gate
+ * again, where a node in its place was "called use() to suspend in a
+ * previous render but did not call use() when it finished" in development.
  */
 export async function expectDeferredHandlerFailureReplacesItsSegment(
   page: Page,
@@ -2931,6 +3031,10 @@ export async function expectDeferredHandlerFailureReplacesItsSegment(
     "section.layout": 0,
   });
 
+  const errors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(message.text());
+  });
   const fills = await holdFills(page);
   await clickWithoutHover(page, name);
   await expect(page).toHaveURL(hub.pageUrl(name));
@@ -2951,6 +3055,10 @@ export async function expectDeferredHandlerFailureReplacesItsSegment(
     [`${name}.handler`]: 1,
     "section.layout": 1,
   });
+  expect(
+    errors.filter((text) => text.includes("conditional-use-of-use")),
+    "React reported a conditional use()",
+  ).toEqual([]);
 }
 
 /**
@@ -3165,6 +3273,7 @@ export function definePrefetchFalseTests(
     "vt-inner",
     "vt-below",
     "own",
+    "section-suspense",
   ]) {
     it(`a click that adopts a prefetch builds the page once: ${name}`, (page, fixture) =>
       expectAdoptedClickBuildsThePageOnce(page, fixture, name));

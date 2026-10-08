@@ -217,6 +217,9 @@ export const PfSectionThrowsLoader = createLoader((ctx) =>
 export const PfSectionMissingLoader = createLoader((ctx) =>
   work(ctx, "section-missing.data", 100),
 );
+export const PfSectionSuspenseLoader = createLoader((ctx) =>
+  work(ctx, "section-suspense.data", 100),
+);
 
 const CASES = [
   ["loader", "one flagged loader beside an unflagged one, own Suspense"],
@@ -255,6 +258,10 @@ const CASES = [
   ["own", "flagged loader read in its own Suspense, no loading()"],
   ["section-throws", "inside the flagged layout, a handler that throws"],
   ["section-missing", "inside the flagged layout, a handler that is not found"],
+  [
+    "section-suspense",
+    "inside the flagged layout, a Suspense around a slow read",
+  ],
 ] as const;
 
 const box = {
@@ -433,6 +440,30 @@ function SectionThrowsPage(ctx: any): never {
 function SectionMissingPage(ctx: any) {
   countRun(runOf(ctx), "section-missing.handler");
   return notFound("pf-section-missing");
+}
+
+// An app's own <Suspense> around a read that takes 1.5 s on the server: the
+// page shows with its loader, and that fallback in it until the read lands.
+function SectionSuspensePage(ctx: any) {
+  countRun(runOf(ctx), "section-suspense.handler");
+  return (
+    <div data-testid="pf-section-suspense-page">
+      <PrefetchFalseValue
+        loader={PfSectionSuspenseLoader}
+        testId="pf-section-suspense-value"
+      />
+      <Suspense
+        fallback={<span data-testid="pf-section-suspense-slow-fallback" />}
+      >
+        <SlowRead ctx={ctx} />
+      </Suspense>
+    </div>
+  );
+}
+
+async function SlowRead({ ctx }: { ctx: any }) {
+  const { name, n } = await work(ctx, "section-suspense.slow", 1500);
+  return <span data-testid="pf-section-suspense-slow">{`${name}:${n}`}</span>;
 }
 
 // A page that counts its handler and reads one loader.
@@ -755,6 +786,12 @@ export const prefetchFalsePatterns = urls(
               </div>
             )),
           ],
+        ),
+        path(
+          "/section-suspense",
+          SectionSuspensePage,
+          { name: "sectionSuspense" },
+          () => [loader(PfSectionSuspenseLoader)],
         ),
       ]),
 

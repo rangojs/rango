@@ -368,10 +368,10 @@ describe("a click that adopts a prefetch, and its fill", () => {
   });
 
   // The maintainer's choice for a flagged layout entered from outside: its
-  // skeleton with the click, and the layout with everything it holds once
-  // the fill has streamed. Revealed sooner, the layout would show its own
-  // fallback inside, which React keeps up 300 ms more.
-  it("keeps a layout unit's skeleton until its fill has streamed, then shows the layout with its content", async () => {
+  // skeleton with the click, and the layout once what its own loading()
+  // covers has arrived. Revealed sooner, the layout would show that fallback
+  // again inside, which React keeps up 300 ms more.
+  it("keeps a layout unit's skeleton until what its loading() covers has arrived, however long the fill stays open", async () => {
     function Section({ find }: { find: (id: string) => ResolvedSegment }) {
       return (
         <section>
@@ -380,7 +380,7 @@ describe("a click that adopts a prefetch, and its fill", () => {
         </section>
       );
     }
-    const stream = deferred<void>();
+    const route = deferred<ReactNode>();
     const { shown, fill, updates } = await adopt({
       adopted: [
         segment(UNIT, "layout", { loading: "skeleton", deferred: true }),
@@ -388,9 +388,9 @@ describe("a click that adopts a prefetch, and its fill", () => {
       ],
       filled: [
         segment(UNIT, "layout", { loading: "skeleton", component: "layout " }),
-        segment(ROUTE, "route", { component: "content" }),
+        segment(ROUTE, "route", { component: route.promise as ReactNode }),
       ],
-      stream: stream.promise,
+      stream: new Promise(() => {}),
       render: (find) => (
         <Suspense fallback={<Fallback />}>
           <Section find={find} />
@@ -400,15 +400,74 @@ describe("a click that adopts a prefetch, and its fill", () => {
     expect(shown()).toBe("skeleton");
 
     await fill(500);
-    expect(shown(), "the fill is still streaming").toBe("skeleton");
+    expect(shown(), "the route under the layout's loading() is pending").toBe(
+      "skeleton",
+    );
 
     await act(async () => {
-      stream.resolve();
+      route.resolve("content");
       await new Promise((resolve) => setTimeout(resolve, 50));
     });
     expect(shown()).toBe("content");
     expect(updates()).toBe(1);
     expect(mounts.fallback).toBe(1);
+  });
+
+  // A route below the layout with a loading() of its own shows that fallback
+  // inside the layout, as on a plain click: the layout does not wait for it.
+  it("shows a loading() of its own inside the layout while its content is pending", async () => {
+    let inner = 0;
+    function Inner(): ReactNode {
+      useEffect(() => {
+        inner++;
+      }, []);
+      return <p data-testid="page">inner skeleton</p>;
+    }
+    function Section({ find }: { find: (id: string) => ResolvedSegment }) {
+      return (
+        <section>
+          {read(find(UNIT).component)}
+          <Suspense fallback={<Inner />}>
+            <Unit content={find(ROUTE).component} />
+          </Suspense>
+        </section>
+      );
+    }
+    const route = deferred<ReactNode>();
+    const { shown, fill, updates } = await adopt({
+      adopted: [
+        segment(UNIT, "layout", { loading: "skeleton", deferred: true }),
+        segment(ROUTE, "route", { loading: "inner", deferred: true }),
+      ],
+      filled: [
+        segment(UNIT, "layout", { loading: "skeleton", component: "layout " }),
+        segment(ROUTE, "route", {
+          loading: "inner",
+          component: route.promise as ReactNode,
+        }),
+      ],
+      stream: new Promise(() => {}),
+      render: (find) => (
+        <Suspense fallback={<Fallback />}>
+          <Section find={find} />
+        </Suspense>
+      ),
+    });
+    expect(shown()).toBe("skeleton");
+
+    await fill(500);
+    expect(shown(), "the layout, with the route's own fallback").toBe(
+      "inner skeleton",
+    );
+
+    await act(async () => {
+      route.resolve("content");
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+    expect(shown()).toBe("content");
+    expect(updates()).toBe(1);
+    expect(mounts.fallback).toBe(1);
+    expect(inner).toBe(1);
   });
 
   // A layout above the unit reads the route's loader, with no boundary: the

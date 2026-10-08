@@ -60,13 +60,15 @@ What to know before you use it:
 - **A flagged `loading()` on a layout shows its skeleton over the whole
   layout.** Entered from a page without the layout, the prefetch skips the
   layout's handler too, so the click shows the skeleton at once, in place of
-  the whole layout, and the layout appears with its content when the fill
-  has streamed, at least React's 300 ms after the skeleton. A click with no
-  prefetch, in a production build, shows the layout with its first chunk and
-  the fallback inside it; the content is no later with the prefetch. This is
-  the one place where the two clicks show different pages, by design. A slow
-  read behind an inner `<Suspense>` in such a layout keeps the skeleton up
-  until it has streamed.
+  the whole layout, and the layout appears once what its own `loading()`
+  covers has arrived, at least React's 300 ms after the skeleton. A click
+  with no prefetch, in a production build, shows the layout with its first
+  chunk and the fallback inside it; the covered content is no later with the
+  prefetch. This is the one place where the two clicks show different pages,
+  by design. A route below the layout with its own `loading()`, or a
+  `<Suspense>` in its content, shows its fallback inside the layout, as with
+  no prefetch; React keeps that fallback up at least 300 ms, so content
+  behind it can show up to 300 ms later than with no prefetch.
 - **A prefetch that deferred something is used only on the page that made
   it.** A page that already shows the segment makes its own prefetch, which
   defers nothing for it.

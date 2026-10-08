@@ -177,6 +177,7 @@ export const NamedRoutes = {
   "prefetchFalse.sectionMissing": "/prefetch-false/section-missing",
   "prefetchFalse.sectionOwn": "/prefetch-false/section-own",
   "prefetchFalse.sectionPlain": "/prefetch-false/section-plain",
+  "prefetchFalse.sectionSuspense": "/prefetch-false/section-suspense",
   "prefetchFalse.sectionThrows": "/prefetch-false/section-throws",
   "prefetchFalse.slot": "/prefetch-false/slot",
   "prefetchFalse.slotB": "/prefetch-false/slot-b",

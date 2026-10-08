@@ -112,7 +112,15 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // once one arrives. None of it can load lazily: the gates are armed
 // synchronously before the adoption renders, and partial-update.ts is on the
 // rejected-splits list (AGENTS.md, Bundle hygiene).
-const ROUTER_CHUNK_GZIP_MAX = 48 * 1024;
+//
+// Raised 48KB -> 48.25KB on 2026-10-08 for the one-tree click of
+// `prefetch: false`, measured 49146B -> 49353B (+207B gzip): a layout
+// placeholder's gates wait for what its own loading() covers (coveredBy in
+// browser/partial-update.ts), and a fill whose segments differ hands each
+// boundary its gate settled instead of a node. Only as far as needed: a
+// lazy split of the fill was measured and rejected (48532B + 1403B split,
+// against 49142B unsplit).
+const ROUTER_CHUNK_GZIP_MAX = 48 * 1024 + 256;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

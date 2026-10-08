@@ -58,10 +58,13 @@ Two exceptions, both the maintainer's call, both asserted rather than left
 open. The first is the one place where the adopted click shows a different
 page: a flagged `loading()` on a layout, entered from a page without the
 layout, shows its skeleton with the click over the layout's whole area, and
-the layout with its content once the fill has streamed, at least React's
+the layout once what its own `loading()` covers has arrived, at least React's
 300 ms after the skeleton, where a plain click shows the layout with its
-first chunk ("A layout unit shows with everything it holds"). The second is
-a click that comes before its own prefetch has answered. The router reuses a
+first chunk ("A layout unit shows with what its loading() covers"). A
+`loading()` of its own below the layout, or an app's `<Suspense>`, then
+shows its fallback inside the layout, as on a plain click, and React keeps
+it up 300 ms from the layout's reveal, so content behind it can come up to
+that much later. The second is a click that comes before its own prefetch has answered. The router reuses a
 prefetch that is still in flight, with or without the flag, and keeps doing
 so. When that answer has holes the click sends its fill after it, so the
 deferred part completes later than a plain click's, by up to what was left
@@ -922,10 +925,10 @@ streamed resolves them at once: all of it is there, so one reveal shows all of
 it, and that reveal is never later than the plain click's. Waiting for the end
 of the stream with no deadline is not an option for a route unit: one with a
 slow read behind an inner `<Suspense>` would keep its outer fallback up long
-after a plain click had revealed it. A layout unit is the exception ("A
-layout unit shows with everything it holds" below), and the table's
-`section` rows are the measurement that introduced the 300 ms rule, before
-that exception.
+after a plain click had revealed it. A layout unit waits instead, with no
+deadline, for what its own `loading()` covers and no more ("A layout unit
+shows with what its loading() covers" below). The table's `section` rows are
+the measurement that introduced the 300 ms rule, before that exception.
 
 Look at the last row: the rule costs something. Before it, a loader slower
 than the throttle made the adopted click 100 ms _earlier_ than the plain one,
@@ -958,7 +961,7 @@ takes from a lone reader is small: React keeps its fallback up for 300 ms
 from the click anyway, so the value is later by at most the fill's time to
 its first chunk.
 
-#### A layout unit shows with everything it holds
+#### A layout unit shows with what its loading() covers
 
 A flagged `loading()` on a layout, entered from a page that does not hold the
 layout, defers the layout's handler with everything below it (R2), so the
@@ -972,45 +975,73 @@ left until the fill's first chunk (holding the click was rejected), and the
 layout's handler stays out of the prefetch (running it there was rejected).
 
 What the click then must not do is cost the content time. Revealed with the
-300 ms rule, the layout shows its own fallback inside, a boundary that React
-keeps up for 300 ms from then. The route's content then came 300 ms after a
-plain click's wherever it landed between the two reveals: production, router
-app, `hub to section` with a 400 ms loader, the content at 605 ms against the
-plain click's 406, and the layout's fallback mounted a second time. So the
-gates of a tree with a layout placeholder wait for the whole answer, with no
-deadline (`settleHoles` in `partial-update.ts`): the layout shows with its
-content, in one reveal, at least React's 300 ms after the skeleton.
-Production, the completed page, plain against adopted, before and after
-that change:
+300 ms rule, the layout showed its own fallback again inside, a boundary that
+React keeps up for 300 ms from then. The route's content then came 300 ms
+after a plain click's wherever it landed between the two reveals:
+production, router app, `hub to section` with a 400 ms loader, the content
+at 605 ms against the plain click's 406, and the layout's fallback mounted a
+second time. So the gates of a tree with a layout placeholder wait, with no
+deadline, for exactly what the layout's own `loading()` covers (`coveredBy`
+in `partial-update.ts`): the layout's component and every segment below it
+that no `loading()` of its own wraps, loaders by their owner. Then the layout
+shows with that content, in one reveal, at least React's 300 ms after the
+skeleton. A route below it with a `loading()` of its own, or an app's
+`<Suspense>` in its content, shows its own fallback inside the layout, as on
+a plain click: the layout does not wait for it.
 
-| click                                         | router app: before | after          | Cloudflare app: after |
-| --------------------------------------------- | ------------------ | -------------- | --------------------- |
-| `hub to section`                              | 308 and 303 ms     | 312 and 304 ms | 317 and 303 ms        |
-| loaders 300 ms slower                         | 406 and 605 ms     | 407 and 405 ms | 412 and 408 ms        |
-| slow loaders                                  | 708 and 705 ms     | 706 and 705 ms | 707 and 714 ms        |
-| a 600 ms layout handler                       | 919 and 714 ms     | 909 and 706 ms | 908 and 710 ms        |
-| loaders 300 ms slower, the server 100 ms away | 509 and 709 ms     | 511 and 507 ms | 512 and 514 ms        |
+An earlier version waited for the whole fill (`dcadc727`). That removed the
+second fallback too, but kept the full-area skeleton up until every read
+behind any inner boundary had streamed: with a child route under its own
+`loading()` and a 1.5 s loader, the layout came at 1.5 s where a plain click
+shows it at once, with the child's skeleton inside.
 
-Without the change 12 of the 42 cells failed in the router app's
-production build (the content late, the layout's fallback mounted twice);
-with it all 42 pass in both apps and both modes.
+Production, router app, plain against adopted:
 
-The price is the shape the 300 ms deadline exists for: a layout unit with a
-slow read behind an inner `<Suspense>` keeps its skeleton until that read has
-streamed, where a plain click shows the layout and the rest of its content
-with the first chunk. Read from the code, not measured: no fixture has that
-shape.
+| click                                           | layout         | the covered content | the rest                        |
+| ----------------------------------------------- | -------------- | ------------------- | ------------------------------- |
+| `hub to section`, loaders 300 ms slower         | 11 and 411 ms  | 412 and 411 ms      |                                 |
+| `hub to section-suspense` (a 1.5 s read inside) | 11 and 304 ms  | 313 and 304 ms      | the read at 1509 and 1508 ms    |
+| `hub to section-own`, a 1.5 s loader of its own | 12 and 305 ms  | (the layout only)   | its content at 1510 and 1534 ms |
+| `hub to section-own`, a 600 ms layout handler   | 614 and 607 ms | (the layout only)   | its content at 915 and 909 ms   |
 
-The parity cases of these clicks (`layoutSkeleton` in the shared suite, 42
-cells per app in each mode) assert the expectation instead of the plain
-click's layout time: the skeleton is the click's first change and shows
-within the parity margin of the click; the layout and the route's content
-show in the same frame, no sooner than 280 ms after the skeleton (React's
-300, with sampling to spare); the content and the completed page are no
-later than the plain click's, with the margin. Every other rule is asserted
-as in any parity case, nothing mounted twice included. The skeleton is the
-one fallback the adopted click may show that the plain click does not (on
-`section-own` the plain click shows the route's own).
+One window is left, and it is asserted as a bounded exception: content
+behind a `loading()` of its own or an app's `<Suspense>` inside the layout,
+whose data lands between React's two reveals. The layout's reveal commits
+that inner fallback, and React keeps it up 300 ms from then, so the content
+shows no sooner than the layout plus 300 ms; a plain click, whose layout
+showed with its first chunk, shows it when it lands. Production, router app,
+medians of three pairs, plain against adopted:
+
+| click                                                         | layout         | its content    |
+| ------------------------------------------------------------- | -------------- | -------------- |
+| `hub to section-own`, a 400 ms loader                         | 8 and 303 ms   | 405 and 606 ms |
+| `hub to section-own`, a 250 ms loader, the server 100 ms away | 106 and 303 ms | 408 and 604 ms |
+
+Waiting for that content as well is the whole-fill wait again, and a
+deadline only moves the window and the layout with it: revealed at D, the
+layout's inner content comes at the later of its data and D + 300 ms. So
+content that shows after the layout is compared with the plain click's, or
+with the layout plus React's 300 ms when that is later, with the margin, and
+so are the completed page, the last fallback gone and the time
+`useNavigation()` is idle before the page completes. A probe that resolved
+the nested route's gate 900 ms late failed three of the four
+`hub to section-own, loaders` cells in both apps, the content at 906 to
+1010 ms against bounds of 602 to 605.
+
+The parity cases of these clicks (`layoutSkeleton` in the shared suite)
+assert the expectation instead of the plain click's layout time: the
+skeleton is the click's first change and shows within the parity margin of
+the click; the layout shows no sooner than 280 ms after the skeleton
+(React's 300, with sampling to spare), with the covered content in the same
+frame, and no later than the plain click shows the covered part, or React's
+300 ms after the skeleton when that is later, with the margin; a fallback
+inside the layout (`innerFallback`: the child's `loading()`, the app's
+`<Suspense>`) shows in the frame the layout shows and on the plain click too;
+content after the layout has the bound above. Every other rule is asserted
+as in any parity case, nothing mounted twice included. The skeleton, and a fallback inside the layout, are the fallbacks
+the adopted click may show that the plain click does not (a development
+server's plain click can still be on the layout's fallback when the adopted
+click shows the layout).
 
 #### At once where nothing is on screen
 
@@ -1095,8 +1126,8 @@ pseudo-elements (`&vtms=600`), before and now:
 
 "Before" is `bfacee1f`, "now" the medians of three production runs of the
 router app. `vt` to `section` is at parity on these columns; its layout shows
-with the fill by design ("A layout unit shows with everything it holds"). The `loader`
-rows once failed the animated-changes count (plain 1, adopted 2) in 3 of 12
+with what its `loading()` covers, by design ("A layout unit shows with what
+its loading() covers"). The `loader` rows once failed the animated-changes count (plain 1, adopted 2) in 3 of 12
 runs: both clicks start a view transition for the handle push right after
 their first commit, and the adopted click's commit and that call landed in
 the same millisecond, which the count read as an animated change. It now
@@ -1452,8 +1483,16 @@ per match except the ways deferred work can fail:
 `settleHoles` sees the first two as a placeholder with no segment of its id
 and type in the answer, or a `matched` that differs. It then renders the
 answer's segments as a navigation would and hands React that tree, once, with
-the answer's metadata (so the provider reads its handle stream). The gates
-are released, never resolved: the tree that read them is gone. The tree's
+the answer's metadata (so the provider reads its handle stream). A boundary
+that suspended on its gate while it mounted is handed that gate again, its
+`status` set to `fulfilled` with what the answer put in its place (the
+`error` or `notFound` segment's node), so React reads it at once. Handed the
+node itself, it was a component that called `use()` and then finished
+without it at the same place, and React logged in development: "This
+library called use() to suspend in a previous render but did not call use()
+when it finished". The other gates, loaders' and those with no segment of
+their id in the answer, are released: the tree that read them is gone. The
+tree's
 `matched` array is rewritten in place first, because the click payload's
 handle stream reads it on every yield. `section-throws` and `section-missing`
 in the fixture are routes below the flagged layout whose handler fails that
@@ -1649,27 +1688,17 @@ segments. A fill refuses `rendered()` outright for the same reason R12 exists.
 - A flagged `loading()` on a layout, entered from a page that does not hold
   the layout, is where the adopted click shows a different page from the
   plain click's, by the maintainer's choice: its skeleton with the click over
-  the layout's whole area, and the layout with its content once the fill has
-  streamed, at least React's 300 ms after the skeleton. A plain click in a
-  production build shows the layout with its response's first chunk (#1080)
-  and the fallback inside it; a development server shows the fallback alone
-  first in both. Production, router app, plain against adopted, when the
-  layout shows: `hub to section` 12 and 304 ms, from `vt` 3 and 303; with a
-  600 ms layout handler 608 and 706, the content at 909 and 706. A layout
-  unit with a slow read behind an inner `<Suspense>` keeps its skeleton
-  until that read has streamed ("A layout unit shows with everything it
-  holds"; not measured). The parity cases assert this expectation
-  (`layoutSkeleton`).
-- A fill whose segments are not the ones the tree was built for ("Failure")
-  makes React log once, in development: "This library called use() to
-  suspend in a previous render but did not call use() when it finished". The
-  unit's boundary suspended on its gate while it mounted, and the tree that
-  replaces the page hands the same boundary its node. Measured on
-  `section-throws` and `section-missing` in both apps; not on the merge
-  commit before the fill stopped rendering a tree. Handing the boundary the
-  gate, resolved with that node, would keep the `use()`; not built (the
-  router chunk has 14 bytes left under its ratchet). Nothing on screen
-  differs.
+  the layout's whole area, and the layout once what its own `loading()`
+  covers has arrived, at least React's 300 ms after the skeleton. A plain
+  click in a production build shows the layout with its response's first
+  chunk (#1080) and the fallback inside it; a development server shows the
+  fallback alone first in both. A `loading()` of its own below the layout,
+  or an app's `<Suspense>` in its content, shows inside the layout on both
+  clicks; content behind it whose data lands within React's 300 ms of the
+  layout's reveal shows up to that much later than on the plain click
+  (`section-own` with a 400 ms loader: 405 and 606 ms). The numbers are in
+  "A layout unit shows with what its loading() covers". The parity cases
+  assert this expectation (`layoutSkeleton`).
 - A deferred `loading()` entry on a page that commits in a transition (its
   own `transition()`, or one on anything its fallback covers) shows its
   fallback when its fill starts answering, not with the click ("A unit under
@@ -1801,7 +1830,7 @@ click show a flagged layout with its first chunk); they were red on the
 merge commit, with the fill still rendering its own tree, in both apps. The
 maintainer chose the skeleton at the click over both ways to close them, and
 the cells now assert that expectation in both modes ("A layout unit shows
-with everything it holds").
+with what its loading() covers").
 
 Two more exceptions to the plain click are asserted, not open: a click
 before its prefetch has answered ("A click before its prefetch has

@@ -693,33 +693,63 @@ describe("the fill landing", () => {
     });
 
     // A layout's placeholder covers the layout. Revealed 300 ms after the
-    // first chunk with its route still streaming, the layout shows its own
-    // fallback inside, and React keeps that up 300 ms more: content at 605 ms
-    // where a plain click shows it at 406 (a 400 ms loader). So a layout unit
-    // shows when its answer has streamed. A unit's content renders the holes
-    // below it: resolved in one task, a hole read in that render costs it a
-    // microtask, not a fallback.
-    it("resolves a layout unit's gate and every gate below it when the answer has streamed", async () => {
+    // first chunk with its route's loader still on its way, the layout shows
+    // its own fallback again inside, and React keeps that up 300 ms more:
+    // content at 605 ms where a plain click shows it at 406 (a 400 ms
+    // loader). So a layout unit's gates wait, with no deadline, for what its
+    // own loading() covers: here the route below it and the route's loader.
+    // A unit's content renders the holes below it: resolved in one task, a
+    // hole read in that render costs it a microtask, not a fallback.
+    const unsettled = (store: ReturnType<typeof createStore>): boolean =>
+      store.cache.get("/product")!.segments.some((s) => s.deferred);
+    it("resolves a layout unit's gates when what its loading() covers has arrived", async () => {
       vi.useFakeTimers();
       const adoption = sectionAdoption();
-      const { navigate, fill, onUpdate } = setup(adoption);
+      const { navigate, fill, store, onUpdate } = setup(adoption);
       await navigate();
       showAdoption(onUpdate);
-      let resolved = 0;
-      for (const placeholder of adoption.placeholders) {
-        void gateOf(placeholder).then(() => resolved++);
-      }
-
-      const { stream, response } = streaming(
-        fillPayload(adoption.filled, adoption.matched),
+      const page = deferred<unknown>();
+      const filled = adoption.filled.map((s) =>
+        s.id === "L0L1R0D0.page" ? { ...s, loaderData: page.promise } : s,
       );
+
+      const { response } = streaming(fillPayload(filled, adoption.matched));
       fill.resolve(response);
       await tick(1000);
-      expect(resolved).toBe(0);
+      expect(
+        unsettled(store),
+        "the route's loader is under the layout's loading()",
+      ).toBe(true);
 
-      stream.resolve();
+      page.resolve({ page: 1 });
       await tick(0);
-      expect(resolved).toBe(adoption.placeholders.length);
+      expect(unsettled(store)).toBe(false);
+    });
+
+    // A loading() of its own below the layout shows its fallback inside the
+    // layout, as on a plain click: the layout does not wait for it, nor for
+    // the rest of the stream.
+    it("does not wait for a loading() of its own below the layout", async () => {
+      vi.useFakeTimers();
+      const adoption = sectionAdoption();
+      for (const s of [...adoption.placeholders, ...adoption.filled]) {
+        if (s.id === "L0L1R0") s.loading = "route-skeleton";
+      }
+      const { navigate, fill, store, onUpdate } = setup(adoption);
+      await navigate();
+      showAdoption(onUpdate);
+      const filled = adoption.filled.map((s) =>
+        s.id === "L0L1R0"
+          ? { ...s, component: deferred<unknown>().promise as never }
+          : s.id === "L0L1R0D0.page"
+            ? { ...s, loaderData: deferred<unknown>().promise }
+            : s,
+      );
+
+      const { response } = streaming(fillPayload(filled, adoption.matched));
+      fill.resolve(response);
+      await tick(0);
+      expect(unsettled(store)).toBe(false);
     });
 
     it("resolves a route unit's gate 300 ms after the first chunk", async () => {
@@ -1129,7 +1159,11 @@ describe("a fill whose segments are not the ones the tree was built for", () => 
     };
   }
 
-  it("replaces the page with the fill's segments in one update, and resolves no gate", async () => {
+  // A boundary that suspended on its gate while it mounted, rendered again
+  // with a node in its place, is a component that called use() and then did
+  // not: React reports it in development. So the new tree hands such a
+  // boundary its gate, settled with the answer's node.
+  it("replaces the page with the fill's segments in one update, handing each boundary its gate settled", async () => {
     const adoption = sectionAdoption();
     const hooks = bridge();
     const { navigate, fill, store, onUpdate, renderSegments } = setup(
@@ -1156,7 +1190,20 @@ describe("a fill whose segments are not the ones the tree was built for", () => 
     expect(update.metadata).toBe(response.payload.metadata);
     expect(hooks.handles).not.toHaveBeenCalled();
 
-    for (const gate of gates) expect(await settled(gate)).toBe(false);
+    expect(await settled(gates[0]!)).toBe(false);
+    expect(await settled(gates[3]!)).toBe(false);
+    const rendered = renderSegments.mock.calls[1]![0] as ResolvedSegment[];
+    for (const [index, value] of [
+      [1, "content-L0L1"],
+      [2, "content-L0L1.@side"],
+      [4, "boundary"],
+    ] as const) {
+      const gate = gates[index]!;
+      expect(gate).toMatchObject({ status: "fulfilled", value });
+      expect(await gate).toBe(value);
+      const id = adoption.placeholders[index]!.id;
+      expect(rendered.find((s) => s.id === id)!.component).toBe(gate);
+    }
     expect(loaderStore.isStreamPending("page")).toBe(false);
     expect(store.cache.get("/product")!.segments.map((s) => s.id)).toEqual(
       matched,

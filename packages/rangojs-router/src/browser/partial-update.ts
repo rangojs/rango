@@ -192,6 +192,34 @@ interface Gate<T = unknown> {
   resolve(value: T): void;
 }
 
+/**
+ * What a layout's own loading() covers among `segments`: the layout's
+ * component and the values of every segment below it, loaders by their owner
+ * (`<owner>D<n>.<name>`), that no loading() of its own wraps. A segment id
+ * continues its parent's with a letter or a dot (`L0L1R0`, `L0L1.@side`).
+ */
+function coveredBy(
+  layout: ResolvedSegment,
+  segments: ResolvedSegment[],
+): unknown[] {
+  const below = (id: string, parent: ResolvedSegment): boolean =>
+    id.startsWith(parent.id) && /^\D/.test(id.slice(parent.id.length));
+  const nested = segments.filter(
+    (s) =>
+      s.type !== "loader" &&
+      below(s.id, layout) &&
+      s.loading != null &&
+      s.loading !== false,
+  );
+  return segments
+    .filter(
+      (s) =>
+        (s === layout || below(s.id, layout)) &&
+        !nested.some((n) => s === n || below(s.id, n)),
+    )
+    .map((s) => (s.type === "loader" ? s.loaderData : s.component));
+}
+
 function newGate<T>(): Gate<T> {
   let resolve!: Gate<T>["resolve"];
   const promise = new Promise<T>((res) => {
@@ -565,7 +593,35 @@ export function createPartialUpdater(
         // this array on every yield and drops the buckets of segments
         // outside it.
         replace(holes.matched, matched);
-        const root = await renderSegments(reconciled.mainSegments, {
+        // A boundary that suspended on its gate while it mounted is handed
+        // that gate again, settled with what the answer put in its place.
+        // Handed the node, it is a component that called use() and then
+        // finished without it at the same place, which React reports in
+        // development ("This library called use() to suspend in a previous
+        // render but did not call use() when it finished").
+        const settled = new Map<ResolvedSegment, ResolvedSegment>();
+        for (const [placeholder, gate] of holes.gates) {
+          const next = reconciled.mainSegments.find(
+            (s) => s.id === placeholder.id && s.type !== "loader",
+          );
+          if (
+            placeholder.type !== "loader" &&
+            next &&
+            !(next.component instanceof Promise)
+          ) {
+            Object.assign(gate.promise, {
+              status: "fulfilled",
+              value: next.component,
+            });
+            gate.resolve(next.component);
+            settled.set(next, {
+              ...next,
+              component: gate.promise as ReactNode,
+            });
+          }
+        }
+        const main = reconciled.mainSegments.map((s) => settled.get(s) ?? s);
+        const root = await renderSegments(main, {
           transitionGatedOff: gatedOff,
           interceptSegments:
             reconciled.interceptSegments.length > 0
@@ -589,20 +645,25 @@ export function createPartialUpdater(
         // shows (measured on two reads in nested boundaries, 150 ms apart).
         // Where React has not committed the tree there is no fallback to
         // keep up, and it may be one of these gates that React is waiting
-        // for. A layout's placeholder covers the layout: revealed before the
-        // answer has streamed, the layout shows its own fallback inside, and
-        // React keeps that up FALLBACK_THROTTLE_MS more (measured: content at
-        // 605 ms against a plain click's 406). It shows with what it holds.
+        // for. A layout's placeholder covers the layout: revealed before what
+        // its own loading() covers has arrived, the layout shows that fallback
+        // again inside, and React keeps it up FALLBACK_THROTTLE_MS more
+        // (measured: content at 605 ms against a plain click's 406). So it
+        // waits for exactly that (coveredBy), and a nested loading() or an
+        // app's <Suspense> shows its own fallback inside, as on a plain click.
         if (holes.shown) {
-          const wait = [result.streamComplete.catch(() => {})];
-          if (!placeholders.some((p) => p.type === "layout")) {
-            wait.push(
-              new Promise((resolve) =>
-                setTimeout(resolve, FALLBACK_THROTTLE_MS),
-              ),
-            );
-          }
-          await Promise.race(wait);
+          const segments = answers as ResolvedSegment[];
+          const layouts = segments.filter((s) => s.type === "layout");
+          await Promise.race([
+            result.streamComplete.catch(() => {}),
+            layouts.length > 0
+              ? Promise.all(
+                  layouts.flatMap((layout) => coveredBy(layout, segments)),
+                ).catch(() => {})
+              : new Promise((resolve) =>
+                  setTimeout(resolve, FALLBACK_THROTTLE_MS),
+                ),
+          ]);
           if (gone()) return;
         }
         // All in one task: a hole below another one is read in the render
