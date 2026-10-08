@@ -20,13 +20,6 @@
     },
     {
       "app": "cloudflare-basic",
-      "test": "client-urls-vars.test.ts > clientUrls middleware vars > a createVar token and a string key reach a group loader on the document and partial lanes",
-      "rule": "react-use-not-called",
-      "reason": "Undeclared, cause: a clientUrls() navigation renders the destination first with a never-settling gate per loader (PENDING_FOREVER, src/client-urls/client-root.tsx:30, :152-178) and the reader mounts suspended on it. When the server's answer has settled before the canonical tree renders, useLoader finds a settled value in loaderStreams (src/use-loader.tsx:54-65) and calls no use() at the same key path, which React reports as a conditional use(). Timing-dependent. The gate-then-value hand-over of the clientUrls one-commit cases (#1079). Reproduced on origin/main.",
-      "intermittent": true
-    },
-    {
-      "app": "cloudflare-basic",
       "test": "held-boundary.test.ts > held boundary (dev) > parallel slot with a loader and loading(): after a document load, a plain click to an un-prefetched sibling keeps what is on screen",
       "rule": "suspense-mutated",
       "reason": "I7, rule 6: renderSegments rebuilds the @zlbsSlot parallel slot and writes loaderDataPromise and loaderIds in place on its segment object (src/segment-system.tsx:769, :787-803). That object came from the segment cache and is the one the previous tree handed to React; ParallelOutlet reads those fields during render (renderSlotContent, src/client.tsx:40). Fired in 2 of 2 record runs."
@@ -61,12 +54,6 @@
       "rule": "suspense-untracked",
       "reason": "#1079, rule 2 after #1080: the same refresh as in the router test-app. renderSegments builds the tree while the shell layout's loader data is pending (src/segment-system.tsx:604), getMemoizedLoaderPromise hands the loader boundary the aggregate promise (src/segment-loader-promise.ts:134), and React renders the boundary only after the aggregate has settled (LoaderResolver, src/route-content-wrapper.tsx:330). Measured 6 of 6 with 8x CPU throttling, 0 of 6 with 4x. No fallback counted: the refresh commits in a transition. Timing-dependent.",
       "intermittent": true
-    },
-    {
-      "app": "rangojs-router",
-      "test": "client-urls.test.ts > clientUrls vertical slice > middleware vars: a createVar token and a string key reach a group loader on the document and partial lanes",
-      "rule": "react-use-not-called",
-      "reason": "Undeclared, cause: a clientUrls() navigation renders the destination first with a never-settling gate per loader (PENDING_FOREVER, src/client-urls/client-root.tsx:30, :152-178) and the reader mounts suspended on it. When the server's answer has settled before the canonical tree renders, useLoader finds a settled value in loaderStreams (src/use-loader.tsx:54-65) and calls no use() at the same key path, which React reports as a conditional use(). Timing-dependent. The gate-then-value hand-over of the clientUrls one-commit cases (#1079). Reproduced on origin/main."
     },
     {
       "app": "rangojs-router",
