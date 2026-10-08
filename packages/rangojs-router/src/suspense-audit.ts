@@ -21,7 +21,8 @@ export type SuspenseAuditKind =
   | "resuspended"
   | "remount"
   | "drift"
-  | "uncaused";
+  | "uncaused"
+  | "mutated";
 
 /** What may hand React a tree (I6). */
 export type TreeUpdateCause =
@@ -33,9 +34,9 @@ export type TreeUpdateCause =
   | "hmr";
 
 export interface SuspenseAuditEvent {
-  /** I1 swap, I2 untracked, I3 idle-fallback and resuspended, I4 remount, I5 drift, I6 uncaused. */
+  /** I1 swap, I2 untracked, I3 idle-fallback and resuspended, I4 remount, I5 drift, I6 uncaused, I7 mutated. */
   kind: SuspenseAuditKind;
-  /** `content:<segment id>`, `loaders:<outlet key>`, `outlet:<segment id>`, `read:<loader id>`. */
+  /** `content:<segment id>`, `loaders:<outlet key>`, `outlet:<segment id>`, `read:<loader id>`, `segment:<segment id>`. */
   boundary: string;
   detail: string;
   url: string;
@@ -50,6 +51,7 @@ export interface SuspenseAuditReport {
   remounts: number;
   drifts: number;
   uncaused: number;
+  mutations: number;
   /** Not a violation: tree updates React was handed, by cause ("none" without one). */
   treeUpdates: Record<string, number>;
   /**
@@ -212,6 +214,7 @@ function getReport(): SuspenseAuditReport {
     remounts: 0,
     drifts: 0,
     uncaused: 0,
+    mutations: 0,
     treeUpdates: {},
     handed: {},
     shownWhilePending: 0,
@@ -225,6 +228,7 @@ function getReport(): SuspenseAuditReport {
       created.remounts = 0;
       created.drifts = 0;
       created.uncaused = 0;
+      created.mutations = 0;
       created.treeUpdates = {};
       created.handed = {};
       handedSeen = new Map();
@@ -248,7 +252,8 @@ type Counter =
   | "resuspended"
   | "remounts"
   | "drifts"
-  | "uncaused";
+  | "uncaused"
+  | "mutations";
 
 const RULES: Record<SuspenseAuditKind, [invariant: string, counter: Counter]> =
   {
@@ -259,6 +264,7 @@ const RULES: Record<SuspenseAuditKind, [invariant: string, counter: Counter]> =
     remount: ["I4", "remounts"],
     drift: ["I5", "drifts"],
     uncaused: ["I6", "uncaused"],
+    mutated: ["I7", "mutations"],
   };
 
 function violate(
@@ -503,9 +509,46 @@ export interface TreeAudit {
   chains: Map<string, string[]>;
   /** Segments this tree remounts by the documented rules. */
   replaced: Set<string>;
+  /** The segment objects the tree was built from (I7). */
+  segments: object[];
 }
 
 let lastTree: TreeAudit | undefined;
+
+// I7: what a render reads does not change once React holds it. A segment
+// object's own properties become accessors that report a write after the
+// tree holding the object was handed over; the write still happens.
+const watchedSegments = new WeakSet<object>();
+const handedSegments = new WeakSet<object>();
+let pendingSegments: object[] | undefined;
+
+function watchSegment(segment: object): void {
+  if (watchedSegments.has(segment) || !Object.isExtensible(segment)) return;
+  watchedSegments.add(segment);
+  const id = String((segment as { id?: unknown }).id ?? "?");
+  for (const key of Object.keys(segment)) {
+    const own = Object.getOwnPropertyDescriptor(segment, key);
+    if (!own || !("value" in own) || !own.writable || !own.configurable) {
+      continue;
+    }
+    let value: unknown = own.value;
+    Object.defineProperty(segment, key, {
+      configurable: true,
+      enumerable: own.enumerable,
+      get: () => value,
+      set: (next: unknown) => {
+        if (next !== value && handedSegments.has(segment)) {
+          violate(
+            "mutated",
+            `segment:${id}`,
+            `${key} was written after the tree holding this segment was handed to React; build a new segment object instead`,
+          );
+        }
+        value = next;
+      },
+    });
+  }
+}
 
 // The router's wrapper components, by function name. A boundary component
 // and its dev variant (route-content-wrapper.tsx, outlet-provider.tsx) are
@@ -569,6 +612,7 @@ export function startTreeAudit(): TreeAudit | undefined {
     types: new Map(),
     chains: new Map(),
     replaced: new Set(),
+    segments: [],
   };
 }
 
@@ -581,6 +625,7 @@ export function auditSegmentElement(
   element: unknown,
   outletTransition: boolean,
   slots: readonly string[],
+  segments: readonly object[],
 ): void {
   if (!tree) return;
   tree.order.unshift(id);
@@ -588,6 +633,7 @@ export function auditSegmentElement(
   tree.types.set(id, type);
   // A slot has no key of its own: it stays while its id is in the tree.
   for (const slot of slots) tree.keys.set(slot, slot);
+  tree.segments.push(...segments);
   const chain = wrapperChain(element);
   if (outletTransition) chain.push("outlet:ViewTransition");
   tree.chains.set(id, chain);
@@ -612,6 +658,11 @@ export function finishTreeAudit(tree: TreeAudit | undefined): void {
   // outlet. Its next mount is a new one.
   unmounted.clear();
   settledSinceTree.clear();
+  for (const segment of tree.segments) watchSegment(segment);
+  // The document's tree goes to React at hydration; every later one through
+  // the store's subscriber (auditTreeUpdate).
+  if (prev) pendingSegments = tree.segments;
+  else for (const segment of tree.segments) handedSegments.add(segment);
   trace("tree", {
     segments: tree.order.map((id) => ({
       id,
@@ -789,6 +840,10 @@ export function auditTreeUpdate(): void {
   const r = getReport();
   const name = cause ?? "none";
   r.treeUpdates[name] = (r.treeUpdates[name] ?? 0) + 1;
+  if (pendingSegments) {
+    for (const segment of pendingSegments) handedSegments.add(segment);
+    pendingSegments = undefined;
+  }
   trace("tree-update", { cause: name });
   if (cause === undefined) {
     violate(
@@ -804,6 +859,7 @@ export function auditTreeUpdate(): void {
 /** Forget every tree and mount seen so far. For tests of the audit itself. */
 export function forgetSuspenseAudit(): void {
   lastTree = undefined;
+  pendingSegments = undefined;
   treeCause = undefined;
   handedSeen = new Map();
   unmounted.clear();

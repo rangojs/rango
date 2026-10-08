@@ -204,11 +204,15 @@ and the settled value in a later tree is fine: a different input at a different 
 A switch within one render, or one that shows a fallback, is not.
 
 The known violation on main: `renderSegments` writes `loaderIds`, `loaderDataPromise`,
-`loaderStreams` and `awaitedLoaderIds` on a parallel slot's segment object in place (the
-parallel slot loop in `src/segment-system.tsx`), and when the slot is reused from the
-cache that object is the one the previous tree handed to React. `ParallelOutlet` reads
-those fields during render (`renderSlotContent`, `src/client.tsx`). The audit does not
-check this rule yet.
+`loaderStreams` and `awaitedLoaderIds` on a parallel slot's segment object in place
+(`src/segment-system.tsx:769`, `:787-803`), and when the slot is reused from the cache
+that object is the one the previous tree handed to React. `ParallelOutlet` reads those
+fields during render (`renderSlotContent`, `src/client.tsx:40`). The audit reports a
+write to a segment object after its tree was handed to React as I7. Measured with the
+guard recording, twice: it fires in 15 dev tests, 7 in the router's suites and 8 in
+cloudflare-basic, all on a parallel slot with a loader (`@zlbsSlot` in the held-boundary
+fixture, `@cart` in mini, `@sidebar` in the blog), and only on `loaderIds` and
+`loaderDataPromise`. Every one is in the baseline.
 
 ## How it is enforced
 
@@ -233,6 +237,7 @@ Counters are on `window.__rangoSuspenseAudit`.
 | I4        | `I4 remount`       | `remounts`      | a segment is unmounted and mounted again under the same key                                         |
 | I5        | `I5 drift`         | `drifts`        | a segment keeps its key and changes its wrapper chain, or its key changes shape                     |
 | I6        | `I6 uncaused`      | `uncaused`      | a tree update reaches React from an emitter that named no cause, or a cause outside the six         |
+| I7        | `I7 mutated`       | `mutations`     | a property of a segment object is written after the tree holding it was handed to React (rule 6)    |
 
 Three more fields are counts, not violations: `treeUpdates` (per cause), `handed` (the
 distinct thenables each boundary or read was handed) and `shownWhilePending` (rule 3's
@@ -269,8 +274,8 @@ run.
 
 What fails on main today and no test asks for is listed in
 `tools/e2e-console-baseline.json`, one entry per test and rule, each with a reason:
-messages no test declares (`Undeclared, cause: ...`), and the intermittent I2
-reports of rule 2's timing gap. `pnpm check:e2e-console-baseline` (CI lint job) fails on an
+messages no test declares (`Undeclared, cause: ...`), the intermittent I2 reports of
+rule 2's timing gap, and the I7 reports of the slot writes under rule 6. `pnpm check:e2e-console-baseline` (CI lint job) fails on an
 entry without a reason or one whose test is gone; the guard itself fails a test whose
 entry no longer fires. A message that depends on timing goes into the baseline marked
 `intermittent`, not behind a retry. A test that provokes an error on purpose (an error
@@ -352,6 +357,9 @@ in `src/suspense-audit.ts`, to the table above, and to `EMITTERS` in the check.
   content wrapper) remounts the content under it and is reported by I5 alone.
 - **`I6 uncaused`**: something called the emitter without `auditTreeCause`. If it is one
   of the six causes, name it. If it is not, it should not be a tree update.
+- **`I7 mutated at segment:<id>: <key> was written after ...`**: code wrote a field of a
+  segment object that a tree React holds was built from. Build a new segment object
+  with the new value instead, so the tree on screen keeps the one it rendered with.
 
 ## Running the suites
 

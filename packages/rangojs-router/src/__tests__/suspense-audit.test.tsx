@@ -19,10 +19,13 @@ import { AuditedRouteContent } from "../route-content-wrapper.js";
 import { renderSegments } from "../segment-system.js";
 import type { SuspenseAuditReport } from "../suspense-audit.js";
 import {
+  auditSegmentElement,
   auditTreeCause,
   auditTreeUpdate,
+  finishTreeAudit,
   forgetSuspenseAudit,
   setSuspenseAuditStreamProbe,
+  startTreeAudit,
   type TreeUpdateCause,
 } from "../suspense-audit.js";
 import { renderRoute } from "../testing/render-route.js";
@@ -137,6 +140,77 @@ afterEach(async () => {
   await settle();
   forgetSuspenseAudit();
   errors.mockRestore();
+});
+
+describe("suspense audit, segments after hand-over (I7)", () => {
+  function build(segments: object[]) {
+    const tree = startTreeAudit();
+    auditSegmentElement(tree, "L0", "layout", "L0", null, false, [], segments);
+    finishTreeAudit(tree);
+  }
+
+  it("reports a write to a segment of the tree React holds, and the write still happens", () => {
+    const segment: Record<string, unknown> = { id: "L0", loading: null };
+    build([segment]);
+    segment.loading = "skeleton";
+    expect(segment.loading).toBe("skeleton");
+    expect(audit().mutations).toBe(1);
+    expect(audited()).toEqual([
+      expect.stringContaining(
+        "I7 mutated at segment:L0: loading was written after the tree holding this segment was handed to React",
+      ),
+    ]);
+  });
+
+  it("stays silent while the tree is still being built, and until the store hands it over", () => {
+    build([{ id: "L0" }]);
+    const next: Record<string, unknown> = { id: "L0", loading: null };
+    next.loading = "set while building";
+    build([next]);
+    next.loading = "set before the update reached React";
+    expect(audit().mutations).toBe(0);
+    auditTreeCause("navigation");
+    auditTreeUpdate();
+    next.loading = "set after";
+    expect(audit().mutations).toBe(1);
+  });
+
+  it("renderSegments rewrites a parallel slot's loader fields in place when it re-renders the slot (main)", async () => {
+    const slot = seg({
+      id: "L0.@side",
+      namespace: "parallel.side",
+      type: "parallel",
+      slot: "@side",
+      loading: <Fallback />,
+    });
+    const segments = (): ResolvedSegment[] => [
+      seg({ id: "L0", type: "layout", component: <Layout /> }),
+      slot,
+      seg({
+        id: "L0D0.side-data",
+        namespace: "parallel.side",
+        type: "loader",
+        loaderId: "side-loader",
+        loaderData: { side: true },
+      }),
+      seg({ id: "L0R0", type: "route" }),
+    ];
+    const first = await renderSegments(segments());
+    await act(async () => {
+      render(<Harness initial={first} />);
+    });
+    expect(audit().mutations).toBe(0);
+    const tree = await renderSegments(segments(), { isAction: true });
+    await act(async () => startTransition(() => setTree(tree)));
+    expect(audited()).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("I7 mutated at segment:L0.@side: loaderIds"),
+        expect.stringContaining(
+          "I7 mutated at segment:L0.@side: loaderDataPromise",
+        ),
+      ]),
+    );
+  });
 });
 
 describe("suspense audit, tree updates (I6)", () => {

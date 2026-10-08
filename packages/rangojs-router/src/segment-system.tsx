@@ -853,6 +853,7 @@ export async function renderSegments(
           !!transition &&
           transition.viewTransition !== false,
         node.parallel.map((p) => p.id),
+        [node.segment, ...node.parallel, ...node.loaders],
       );
     }
 

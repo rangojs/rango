@@ -77,6 +77,10 @@ export const CONSOLE_DENY_RULES: readonly ConsoleRule[] = [
     pattern: /\[rango\]\[suspense\] I6 /,
   },
   {
+    id: "suspense-mutated",
+    pattern: /\[rango\]\[suspense\] I7 /,
+  },
+  {
     id: "rango-tree-structure",
     pattern: /\[Rango\] (Tree structure|MountContextProvider) mismatch/,
   },
@@ -343,6 +347,7 @@ export interface SuspenseAuditCounters {
   remounts: number;
   drifts: number;
   uncaused: number;
+  mutations: number;
   /** Not a violation: tree updates React was handed, by cause. */
   treeUpdates: Record<string, number>;
   /** Not a violation: distinct thenables each boundary or read was handed. */
@@ -372,6 +377,7 @@ export async function readSuspenseAudit(
       remounts: audit.remounts,
       drifts: audit.drifts,
       uncaused: audit.uncaused,
+      mutations: audit.mutations,
       treeUpdates: { ...audit.treeUpdates },
       handed: { ...audit.handed },
       shownWhilePending: audit.shownWhilePending,

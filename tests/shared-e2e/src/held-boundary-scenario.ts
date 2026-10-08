@@ -158,6 +158,8 @@ export function runHeldBoundaryTests(
       shownWhilePending: _byDesign,
       treeUpdates: _updates,
       handed: _handed,
+      // I7 is the console guard's (tools/e2e-console-baseline.json).
+      mutations: _mutations,
       ...counters
     } = audit!;
     expect(counters, JSON.stringify(events)).toEqual({

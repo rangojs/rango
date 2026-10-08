@@ -9,8 +9,10 @@
 // Default (CI lint, no e2e run needed): every entry has an app, a test, a
 // rule on the deny list and a non-empty reason; no entry is listed twice; the
 // test still exists (its file, and its title in that file or in a shared
-// body under tests/shared-e2e/src). An entry whose test runs and no longer
-// prints the message is caught by the guard itself, which fails that test.
+// body under tests/shared-e2e/src, literally or as the literal parts of a
+// template-literal title, which cannot check the placeholders' values). An
+// entry whose test runs and no longer prints the message is caught by the
+// guard itself, which fails that test.
 //
 // --from <dir> (repeatable): compare with a recorded run
 // (RANGO_CONSOLE_GUARD=record RANGO_CONSOLE_GUARD_DIR=<dir> playwright test
@@ -87,6 +89,31 @@ function denyRuleIds() {
 
 const keyOf = (entry) => `${entry.app}|${entry.test}|${entry.rule}`;
 
+// A title built in a template literal (`${scenario}: after ${entry}, ...`)
+// matches when its literal parts appear in order around the placeholders.
+function templateMatchers(source) {
+  const matchers = [];
+  for (const [, body] of source.matchAll(
+    /`((?:[^`\\]|\\.)*\$\{(?:[^`\\]|\\.)*)`/g,
+  )) {
+    const parts = body.split(/\$\{[^}]*\}/);
+    if (parts.join("").trim().length < 20) continue;
+    const escaped = parts.map((part) =>
+      part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+    );
+    matchers.push(new RegExp(`^${escaped.join(".+")}$`));
+  }
+  return matchers;
+}
+
+function titleIn(sources, title) {
+  return sources.some(
+    (source) =>
+      source.includes(title) ||
+      templateMatchers(source).some((matcher) => matcher.test(title)),
+  );
+}
+
 function checkStatic(entries) {
   const problems = [];
   const rules = denyRuleIds();
@@ -130,7 +157,7 @@ function checkStatic(entries) {
     }
     const title = segments[segments.length - 1];
     const sources = [readFileSync(file, "utf8"), ...shared];
-    if (!sources.some((source) => source.includes(title))) {
+    if (!titleIn(sources, title)) {
       problems.push(
         `no test with this title any more, remove or rename the entry: ${label}`,
       );
