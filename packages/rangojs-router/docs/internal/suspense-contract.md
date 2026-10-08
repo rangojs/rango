@@ -221,27 +221,57 @@ Four layers, cheapest first.
 **A static tripwire.** `pnpm check:suspense-contract`
 (`tools/check-suspense-contract.mjs`, CI lint job) fails when a file outside two short
 lists calls the tree update emitter, or builds a router boundary or a value one waits
-for. It also fails when an emitter stops naming its cause. It pins the place, not the
+for, and when a file outside a third references an `Audited*` variant. It also fails
+when an emit call is not preceded by its cause. It reads the TypeScript AST, so an
+import alias, a destructured binding (`const { emitUpdate: send } = store`), a function
+that forwards its argument to the emitter, and a shorthand write
+(`Object.assign(segment, { loaderDataPromise })`) all count. It pins the place, not the
 behaviour: a new entry means "read this document and add a case first".
 
 **The dev audit.** `src/suspense-audit.ts` (hooks in `src/suspense-audit-react.tsx`) watches
 every boundary in a dev build and reports on `console.error` under `[rango][suspense]`.
-Counters are on `window.__rangoSuspenseAudit`.
+Counters are on `window.__rangoSuspenseAudit`. It runs only where
+`INTERNAL_RANGO_SUSPENSE_AUDIT` is set, which is this repo alone: the e2e webServers and
+fixtures of the router test-app and cloudflare-basic, and the router's vitest config. A
+consumer's dev server never sets it, so it builds the product boundaries and the audit
+prints nothing. There is no public option. The variable reaches the client the way
+`INTERNAL_RANGO_DEBUG` does: the discovery plugin bakes it into
+`src/internal-suspense-audit.ts` (`src/vite/inject-client-debug.ts`). Set it on the
+server process itself, not on the caller: turbo's strict env strips variables it does
+not know.
 
-| Invariant | Message            | Counter         | Fires when                                                                                          |
-| --------- | ------------------ | --------------- | --------------------------------------------------------------------------------------------------- |
-| I1        | `I1 swap`          | `swaps`         | a boundary on screen, waiting on a pending thenable, is handed another pending one for the same URL |
-| I2        | `I2 untracked`     | `untracked`     | content that has been on screen is handed a settled native promise React has not read               |
-| I3        | `I3 idle-fallback` | `idleFallbacks` | a boundary new to the page shows its fallback with nothing pending                                  |
-| I3        | `I3 resuspended`   | `resuspended`   | a fallback replaces content on screen with nothing pending                                          |
-| I4        | `I4 remount`       | `remounts`      | a segment is unmounted and mounted again under the same key                                         |
-| I5        | `I5 drift`         | `drifts`        | a segment keeps its key and changes its wrapper chain, or its key changes shape                     |
-| I6        | `I6 uncaused`      | `uncaused`      | a tree update reaches React from an emitter that named no cause, or a cause outside the six         |
-| I7        | `I7 mutated`       | `mutations`     | a property of a segment object is written after the tree holding it was handed to React (rule 6)    |
+| Invariant | Message            | Counter         | Fires when                                                                                                |
+| --------- | ------------------ | --------------- | --------------------------------------------------------------------------------------------------------- |
+| I1        | `I1 swap`          | `swaps`         | a boundary on screen, waiting on a pending thenable, is handed another pending one for the same URL       |
+| I2        | `I2 untracked`     | `untracked`     | content that has been on screen is handed a native promise React has not read, and React finds it settled |
+| I3        | `I3 idle-fallback` | `idleFallbacks` | a boundary new to the page shows its fallback with nothing pending, over a promise the router handed it   |
+| I3        | `I3 resuspended`   | `resuspended`   | a fallback replaces content on screen with nothing pending, over a promise the router handed it           |
+| I4        | `I4 remount`       | `remounts`      | a segment is unmounted and mounted again under the same key                                               |
+| I5        | `I5 drift`         | `drifts`        | a segment keeps its key and changes its wrapper chain, or its key changes shape                           |
+| I6        | `I6 uncaused`      | `uncaused`      | a tree update reaches React from an emitter that named no cause, or a cause outside the six               |
+| I7        | `I7 mutated`       | `mutations`     | a property of a segment object is written after the tree holding it was handed to React (rule 6)          |
 
-Three more fields are counts, not violations: `treeUpdates` (per cause), `handed` (the
-distinct thenables each boundary or read was handed) and `shownWhilePending` (rule 3's
-by-design fallbacks).
+Four more fields are counts, not violations: `treeUpdates` (per cause), `handed` (the
+distinct thenables each boundary or read was handed), `shownWhilePending` (rule 3's
+by-design fallbacks) and `unattributedFallbacks` (below).
+
+The audit must not change what the page does, so it never attaches a reaction to a
+promise it is handed: a `.then` marks a rejected promise handled, and dev would stop
+raising the unhandled rejection a build raises. It reads the `status` and `value` that
+React's `use()` and the Flight client leave on a thenable instead. That is also how I2
+is judged: a native promise React has not read is handed over, and two microtasks
+later its status says React read it and found it settled.
+
+I3 reports only a fallback the router can own: one over a promise it handed the
+boundary that React has read. When the boundary was handed values alone, its content
+suspended on something of its own (an app's `use()`, a `React.lazy`), and the fallback
+is counted in `unattributedFallbacks`, not reported.
+
+I4, I5 and I7 compare with the tree React holds. A tree `renderSegments` builds is
+held when an emit hands its root to React (`auditTreeUpdate(update.root)` in
+`NavigationProvider`), and an HMR root, emitted as a promise, once React's `use()` has
+read it. A tree that never reaches React, an aborted navigation's, is never compared
+with. The boundary maps are keyed by names that carry params, so they keep the newest 500.
 
 The audit is dev only, and a build does not change: `RouteContentWrapper`,
 `LoaderBoundary` and `OutletProvider` are the product components, untouched. Their
@@ -276,7 +306,8 @@ What fails on main today and no test asks for is listed in
 `tools/e2e-console-baseline.json`, one entry per test and rule, each with a reason:
 messages no test declares (`Undeclared, cause: ...`), the intermittent I2 reports of
 rule 2's timing gap, and the I7 reports of the slot writes under rule 6. `pnpm check:e2e-console-baseline` (CI lint job) fails on an
-entry without a reason or one whose test is gone; the guard itself fails a test whose
+entry without a reason, or one whose full title path is not a test in that app's dev
+project as `playwright test --list` enumerates it; the guard itself fails a test whose
 entry no longer fires. A message that depends on timing goes into the baseline marked
 `intermittent`, not behind a retry. A test that provokes an error on purpose (an error
 boundary, a failed action, a redirect loop) declares it with `expectConsole` instead.
@@ -294,7 +325,10 @@ rule 2 is a different shape (a loader boundary, and only under load).
 in both apps, in a dev and a `(production)` describe. Each case asserts the flash probe
 (DOM), the mounted instance of what is held, the audit at zero, and the tree updates each
 step handed React. Cases that are red on main are expected failures listed by title with
-`#1079`; they fail the run the day they pass, so the entry gets removed. Two remain: the
+`#1079`; they fail the run the day they pass, so the entry gets removed. The guard
+does not mask that: when an expected failure's body passes, it puts its findings in the
+test's annotations instead of throwing, and Playwright reports "expected to fail, but
+passed". Two remain: the
 `clientUrls()` one-commit cases (rule 5), and in a build a client component at the top of
 a route's content whose module the click uses for the first time in the document: the
 Flight client waits for that module's `import()` although its chunk is already fetched,
@@ -376,7 +410,9 @@ chooses where `messages.jsonl` and `tests.jsonl` go, and
 baseline (`--write` rewrites it and leaves new reasons empty for you to fill).
 `RANGO_SUSPENSE_MEASURE=1` prints the tree updates and commit counts of each case step
 instead of asserting them. `INTERNAL_RANGO_DEBUG=1` makes the audit trace every
-hand-over, mount and fallback.
+hand-over, mount and fallback. The webServers and fixtures set
+`INTERNAL_RANGO_SUSPENSE_AUDIT=1` themselves; a dev server you start by hand needs it
+too, or the audit is off.
 
 ## What the audit does not see
 
@@ -398,6 +434,9 @@ hand-over, mount and fallback.
   transition, and the content lands about 250 ms after its data (#1078, #1084). No
   router hand-over is involved, so none of the invariants sees it.
 
+- A fallback the content puts up itself: an app's `use()` or a `React.lazy` directly in a
+  route's content shows the route's fallback, and the router handed the boundary nothing
+  pending. Counted (`unattributedFallbacks`), not reported.
 - A remount below a segment's outlet has no mount record of its own (see I4 above). The
   cases use an instance marker in the fixture for that.
 - Boundaries an app creates itself (`<Suspense>` in a page) are the app's. The audit

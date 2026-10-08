@@ -27,10 +27,7 @@ import { expandPayloadFragments } from "../segment-fragments.js";
 import { initRangoState } from "./rango-state.js";
 import { registerNavigationStore } from "./navigation-store-handle.js";
 import { initPrefetchCache } from "./prefetch/cache.js";
-import {
-  auditTreeCause,
-  setSuspenseAuditStreamProbe,
-} from "../suspense-audit.js";
+import { auditTreeCause } from "../suspense-audit.js";
 import {
   setPrefetchConcurrency,
   setPrefetchDecoder,
@@ -259,9 +256,6 @@ export async function initBrowserApp(
   const eventController = createEventController({
     initialLocation: new URL(window.location.href),
   });
-  if (process.env.NODE_ENV !== "production") {
-    setSuspenseAuditStreamProbe(() => eventController.getState().isStreaming);
-  }
 
   // The document's entry, after the clearOnReload pass and under the version
   // set above: what readers get once they have hydrated.

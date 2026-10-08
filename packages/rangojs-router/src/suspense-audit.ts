@@ -2,17 +2,26 @@
  * Dev-only audit of what the router hands its Suspense boundaries and of the
  * tree those boundaries sit in (docs/internal/suspense-contract.md). Every
  * call site is behind `process.env.NODE_ENV !== "production"`, so a build
- * carries none of this module (tools/check-bundle-guards.mjs).
+ * carries none of this module (tools/check-bundle-guards.mjs), and the audit
+ * runs only where INTERNAL_RANGO_SUSPENSE_AUDIT is set: this repo's e2e apps
+ * and the router's own tests, never a consumer's dev server.
  *
  * React warns about none of this: its uncached-promise warning covers a
  * promise created during render (a different thenable on a replay of one
  * render attempt), never a boundary handed a different promise by a later
  * render.
  *
+ * The audit never attaches a reaction to a promise it is handed: that marks a
+ * rejected promise handled, and dev would stop raising the unhandled
+ * rejection a build raises. It reads the `status` React's use() and the
+ * Flight client leave on a thenable instead.
+ *
  * No React import: segment-system.tsx is evaluated outside the browser too.
  * The hooks are in suspense-audit-react.tsx.
  */
+import { isThenable } from "./handles/is-thenable.js";
 import { INTERNAL_RANGO_DEBUG } from "./internal-debug.js";
+import { INTERNAL_RANGO_SUSPENSE_AUDIT } from "./internal-suspense-audit.js";
 
 export type SuspenseAuditKind =
   | "swap"
@@ -52,6 +61,12 @@ export interface SuspenseAuditReport {
   drifts: number;
   uncaused: number;
   mutations: number;
+  /**
+   * Not a violation: fallbacks the router cannot attribute. Nothing it handed
+   * the boundary was a promise React read, so the content's own suspension
+   * put the fallback up: an app's use(), a React.lazy, a client reference.
+   */
+  unattributedFallbacks: number;
   /** Not a violation: tree updates React was handed, by cause ("none" without one). */
   treeUpdates: Record<string, number>;
   /**
@@ -59,14 +74,14 @@ export interface SuspenseAuditReport {
    * One per value it waited for; two for one navigation is a gate replaced
    * by the real promise.
    */
-  handed: Record<string, number>;
+  readonly handed: Record<string, number>;
   /**
    * Not a violation: fallbacks shown over content on screen while what the
    * boundary waits for was pending. An urgent commit does that by design.
    */
   shownWhilePending: number;
   /** Mounts per boundary since the document loaded. */
-  mounts: Record<string, number>;
+  readonly mounts: Record<string, number>;
   /** The last events, oldest first. */
   events: SuspenseAuditEvent[];
   reset(): void;
@@ -98,62 +113,40 @@ export interface BoundaryAudit {
 }
 
 const PREFIX = "[rango][suspense]";
+// What a failing test prints; older events repeat what the counters say.
 const MAX_EVENTS = 50;
+// Boundary names carry params: a long dev session must not grow without bound.
+const MAX_BOUNDARIES = 500;
+// One fallback check's client-reference scan; types are visited first.
+const MAX_SCAN = 400;
 
-type Thenable = { then: unknown; status?: string; value?: unknown };
-
-function isThenable(value: unknown): value is Thenable {
-  return (
-    value !== null &&
-    typeof value === "object" &&
-    typeof (value as { then?: unknown }).then === "function"
-  );
-}
+type Tracked = PromiseLike<unknown> & { status?: string; value?: unknown };
 
 // A Flight chunk extends Promise.prototype with its own `then` and always
-// carries a status. Its `then` initializes a resolved chunk, so the audit
-// never calls it.
-function isNative(value: Thenable): boolean {
+// carries a status.
+function isNative(value: PromiseLike<unknown>): boolean {
   return value.then === Promise.prototype.then;
 }
 
-// A native promise React has not read carries no status: the audit observes
-// its settlement itself.
-const settled = new WeakMap<object, unknown>();
-const observed = new WeakSet<object>();
-
-function observe(value: unknown): void {
-  if (!isThenable(value) || value.status !== undefined) return;
-  if (!isNative(value) || observed.has(value)) return;
-  observed.add(value);
-  (value as unknown as Promise<unknown>).then(
-    (result) => settled.set(value, result),
-    () => settled.set(value, undefined),
-  );
+// Set by React's use() on a thenable it has read, and by the Flight client
+// on every chunk. Undefined on a native promise React has not read.
+function statusOf(value: unknown): string | undefined {
+  return isThenable(value) ? (value as Tracked).status : undefined;
 }
 
 function isPending(value: unknown): boolean {
-  if (!isThenable(value)) return false;
-  const status = value.status;
-  if (status === undefined) return !settled.has(value);
+  const status = statusOf(value);
   return status === "pending" || status === "blocked" || status === "halted";
-}
-
-function anyPending(streams: Record<string, unknown> | undefined): boolean {
-  if (!streams) return false;
-  for (const id in streams) if (isPending(streams[id])) return true;
-  return false;
 }
 
 // What a settled thenable holds, where the audit can know it.
 function settledValue(value: unknown): unknown {
   if (!isThenable(value)) return value;
-  if (value.status === "fulfilled") return value.value;
-  return settled.get(value);
+  const tracked = value as Tracked;
+  return tracked.status === "fulfilled" ? tracked.value : undefined;
 }
 
 const LAZY = Symbol.for("react.lazy");
-const MAX_SCAN = 400;
 
 /**
  * A node that names a client reference whose module is still loading. In dev
@@ -169,7 +162,7 @@ function hasBlockedReference(root: unknown): boolean {
     const node = stack.pop();
     if (node === null || typeof node !== "object") continue;
     if (Array.isArray(node)) {
-      for (const child of node) stack.push(child);
+      for (let i = node.length - 1; i >= 0; i--) stack.push(node[i]);
       continue;
     }
     const lazy = node as { $$typeof?: unknown; _payload?: { status?: string } };
@@ -180,16 +173,16 @@ function hasBlockedReference(root: unknown): boolean {
     }
     const element = node as { type?: unknown; props?: Record<string, unknown> };
     if (element.props === null || typeof element.props !== "object") continue;
-    stack.push(element.type);
     for (const name in element.props) stack.push(element.props[name]);
+    // Popped first: a large list prop must not use the scan up before it.
+    stack.push(element.type);
   }
   return false;
 }
 
 function describe(value: unknown): string {
   if (isThenable(value)) {
-    const status = value.status ?? (settled.has(value) ? "settled" : "unread");
-    return `${isNative(value) ? "promise" : "Flight chunk"} (${status})`;
+    return `${isNative(value) ? "promise" : "Flight chunk"} (${statusOf(value) ?? "unread"})`;
   }
   if (Array.isArray(value)) return `array(${value.length})`;
   if (value === null || value === undefined) return String(value);
@@ -201,6 +194,19 @@ function href(): string {
     ? ""
     : location.pathname + location.search;
 }
+
+// The newest MAX_BOUNDARIES keys, oldest dropped first.
+function setBounded<V>(map: Map<string, V>, key: string, value: V): void {
+  map.delete(key);
+  map.set(key, value);
+  if (map.size > MAX_BOUNDARIES) map.delete(map.keys().next().value!);
+}
+
+const handedCounts = new Map<string, number>();
+const mountCounts = new Map<string, number>();
+// By boundary, not by record: a reader that suspends while mounting keeps
+// no record between its attempts.
+const handedSeen = new Map<string, WeakSet<object>>();
 
 let report: SuspenseAuditReport | undefined;
 
@@ -215,10 +221,15 @@ function getReport(): SuspenseAuditReport {
     drifts: 0,
     uncaused: 0,
     mutations: 0,
+    unattributedFallbacks: 0,
     treeUpdates: {},
-    handed: {},
+    get handed() {
+      return Object.fromEntries(handedCounts);
+    },
     shownWhilePending: 0,
-    mounts: {},
+    get mounts() {
+      return Object.fromEntries(mountCounts);
+    },
     events: [],
     reset() {
       created.swaps = 0;
@@ -229,9 +240,10 @@ function getReport(): SuspenseAuditReport {
       created.drifts = 0;
       created.uncaused = 0;
       created.mutations = 0;
+      created.unattributedFallbacks = 0;
       created.treeUpdates = {};
-      created.handed = {};
-      handedSeen = new Map();
+      handedCounts.clear();
+      handedSeen.clear();
       created.shownWhilePending = 0;
       created.events = [];
     },
@@ -280,26 +292,30 @@ function violate(
   console.error(`${PREFIX} ${invariant} ${kind} at ${boundary}: ${detail}`);
 }
 
-// Every hand-over, mount and fallback, for a debug run to read back.
+// Every hand-over, mount and fallback, for a debug run to read back. Call
+// sites test INTERNAL_RANGO_DEBUG first, so the data is not built otherwise.
 function trace(type: string, data: Record<string, unknown>): void {
-  if (!INTERNAL_RANGO_DEBUG) return;
   console.log(
     `${PREFIX}[trace] ${JSON.stringify({ type, ...data, url: href(), at: Math.round(performance.now()) })}`,
   );
 }
 
-let streamProbe: (() => boolean) | undefined;
+// One microtask for every job the audit defers in a task.
+const jobs: Array<() => void> = [];
 
-/** How the audit learns that a payload is still streaming (the event controller). */
-export function setSuspenseAuditStreamProbe(probe: () => boolean): void {
-  streamProbe = probe;
+function later(job: () => void): void {
+  jobs.push(job);
+  if (jobs.length === 1) queueMicrotask(runJobs);
 }
 
-function streamOpen(): boolean {
-  if (typeof document !== "undefined" && document.readyState === "loading") {
-    return true;
-  }
-  return streamProbe?.() === true;
+function runJobs(): void {
+  for (const job of jobs.splice(0)) job();
+}
+
+// After React's own reaction to a thenable it read in this task: the first
+// job runs before it, the second after.
+function afterMicrotasks(run: () => void): void {
+  later(() => later(run));
 }
 
 export function createBoundaryAudit(
@@ -323,24 +339,14 @@ export function createBoundaryAudit(
   };
 }
 
-// The settlement of a promise first seen in this task is observed a
-// microtask after it.
-function afterMicrotasks(run: () => void): void {
-  queueMicrotask(() => queueMicrotask(run));
-}
-
-// By boundary, not by record: a reader that suspends while mounting keeps
-// no record between its attempts.
-let handedSeen = new Map<string, WeakSet<object>>();
-
 function countHanded(boundary: string, value: unknown): void {
   if (!isThenable(value)) return;
   let seen = handedSeen.get(boundary);
-  if (!seen) handedSeen.set(boundary, (seen = new WeakSet()));
+  if (!seen) setBounded(handedSeen, boundary, (seen = new WeakSet()));
   if (seen.has(value)) return;
   seen.add(value);
-  const r = getReport();
-  r.handed[boundary] = (r.handed[boundary] ?? 0) + 1;
+  getReport();
+  setBounded(handedCounts, boundary, (handedCounts.get(boundary) ?? 0) + 1);
 }
 
 /**
@@ -350,9 +356,11 @@ function countHanded(boundary: string, value: unknown): void {
  * is handed another one that is not already settled, for the same URL. React
  * starts waiting again. A settled replacement is read at once, and another
  * URL is another navigation: both are exempt.
- * I2: a boundary whose content has been on screen is handed a settled native
- * promise React has not read. A render that cannot wait suspends on it and
- * commits the fallback over the content, which React keeps up for 300 ms.
+ * I2: a boundary whose content has been on screen is handed a native promise
+ * React has not read, and React finds it settled when it reads it. A render
+ * that cannot wait suspends on it and commits the fallback over the content,
+ * which React keeps up for 300 ms. Judged from the status React leaves on
+ * the promise when it reads it in the same task.
  */
 export function auditHandover(rec: BoundaryAudit, value: unknown): void {
   if (typeof window === "undefined") return;
@@ -366,27 +374,25 @@ export function auditHandover(rec: BoundaryAudit, value: unknown): void {
   rec.seen = value;
   rec.hasSeen = true;
   rec.seenUrl = url;
-  const untracked =
-    isThenable(value) && isNative(value) && value.status === undefined;
-  const wasSettled = untracked && settled.has(value);
-  observe(value);
-  trace("handover", {
-    boundary: rec.boundary,
-    mountId: rec.mountId,
-    revealed: rec.revealed,
-    handed: describe(value),
-    previous: hadPrevious ? describe(previous) : "none",
-    previousPending: hadPrevious && isPending(previous),
-    sameUrl,
-  });
+  const unread =
+    isThenable(value) && isNative(value) && statusOf(value) === undefined;
+  if (INTERNAL_RANGO_DEBUG) {
+    trace("handover", {
+      boundary: rec.boundary,
+      mountId: rec.mountId,
+      revealed: rec.revealed,
+      handed: describe(value),
+      previous: hadPrevious ? describe(previous) : "none",
+      previousPending: hadPrevious && isPending(previous),
+      sameUrl,
+    });
+  }
   if (
     rec.mountId > 0 &&
     hadPrevious &&
     sameUrl &&
     isPending(previous) &&
-    isThenable(value) &&
-    isPending(value) &&
-    !wasSettled
+    isThenable(value)
   ) {
     const swapped = (): void => {
       // Settled by now: React reads it without waiting again.
@@ -397,20 +403,18 @@ export function auditHandover(rec: BoundaryAudit, value: unknown): void {
         `handed ${describe(value)} while ${describe(previous)} was still pending`,
       );
     };
-    if (untracked) afterMicrotasks(swapped);
+    if (unread) afterMicrotasks(swapped);
     else swapped();
   }
-  if (rec.revealed && untracked) {
-    const unread = (): void => {
-      if (!settled.has(value as object)) return;
+  if (rec.revealed && unread) {
+    afterMicrotasks(() => {
+      if (statusOf(value) !== "fulfilled") return;
       violate(
         "untracked",
         rec.boundary,
         "content on screen was handed a settled promise React has not read; hand the value itself",
       );
-    };
-    if (wasSettled) unread();
-    else afterMicrotasks(unread);
+    });
   }
 }
 
@@ -428,10 +432,24 @@ export function auditCommit(
 }
 
 export function auditReveal(rec: BoundaryAudit): void {
-  if (!rec.revealed) {
+  if (!rec.revealed && INTERNAL_RANGO_DEBUG) {
     trace("reveal", { boundary: rec.boundary, mountId: rec.mountId });
   }
   rec.revealed = true;
+}
+
+/** One `useLoader` read on screen: it has a mount and reveals with it. */
+export function auditRead(rec: BoundaryAudit, stream: unknown): void {
+  rec.mountId = 1;
+  auditCommit(rec, stream);
+  auditReveal(rec);
+}
+
+function streamOpen(isStreaming: () => boolean): boolean {
+  if (typeof document !== "undefined" && document.readyState === "loading") {
+    return true;
+  }
+  return isStreaming();
 }
 
 /**
@@ -440,12 +458,20 @@ export function auditReveal(rec: BoundaryAudit): void {
  * client reference is loading. `idle-fallback` on a boundary new to the page,
  * `resuspended` when the fallback replaced content that had been on screen.
  *
+ * Reported only when the router can own the fallback: it handed the boundary
+ * a native promise React has read. A boundary handed values alone suspended
+ * on something inside its content (an app's use(), a React.lazy), which is
+ * counted as `unattributedFallbacks` and not reported.
+ *
  * A fallback over content on screen while something is pending is counted
  * (`shownWhilePending`) and not reported: an urgent commit does that by
  * design (transition({ when }) gated off, #995), and so does dev while a
  * client reference loads.
  */
-export function auditFallback(rec: BoundaryAudit): () => void {
+export function auditFallback(
+  rec: BoundaryAudit,
+  isStreaming: () => boolean,
+): () => void {
   const shownAt = performance.now();
   const revealed = rec.revealed;
   // StrictMode runs this effect, its cleanup and the effect again in one
@@ -454,22 +480,40 @@ export function auditFallback(rec: BoundaryAudit): () => void {
   if (!rec.fallbackGone) {
     afterMicrotasks(() => {
       const handed = rec.hasCommitted ? rec.committed : rec.seen;
-      const waiting = isPending(handed) || anyPending(rec.streams);
-      const streaming = streamOpen();
+      const values = rec.streams
+        ? [handed, ...Object.values(rec.streams)]
+        : [handed];
+      const waiting = values.some(isPending);
+      const streaming = !waiting && streamOpen(isStreaming);
+      const owned = values.some(
+        (value) =>
+          isThenable(value) && isNative(value) && statusOf(value) !== undefined,
+      );
       const loading =
-        hasBlockedReference(settledValue(handed)) ||
-        hasBlockedReference(rec.nodes);
-      trace("fallback", {
-        boundary: rec.boundary,
-        mountId: rec.mountId,
-        revealed,
-        waiting,
-        streaming,
-        loading,
-        handed: describe(handed),
-      });
+        !waiting &&
+        !streaming &&
+        owned &&
+        (hasBlockedReference(settledValue(handed)) ||
+          hasBlockedReference(rec.nodes));
+      if (INTERNAL_RANGO_DEBUG) {
+        trace("fallback", {
+          boundary: rec.boundary,
+          mountId: rec.mountId,
+          revealed,
+          waiting,
+          streaming,
+          owned,
+          loading,
+          handed: describe(handed),
+        });
+      }
+      const r = getReport();
       if (waiting || streaming || loading) {
-        if (revealed) getReport().shownWhilePending += 1;
+        if (revealed) r.shownWhilePending += 1;
+        return;
+      }
+      if (!owned) {
+        r.unattributedFallbacks += 1;
         return;
       }
       if (revealed) {
@@ -489,65 +533,59 @@ export function auditFallback(rec: BoundaryAudit): () => void {
   }
   return () => {
     rec.fallbackGone = true;
-    queueMicrotask(() => {
+    later(() => {
       rec.fallbackGone = false;
     });
-    trace("fallback-gone", {
-      boundary: rec.boundary,
-      mountId: rec.mountId,
-      ms: Math.round(performance.now() - shownAt),
-    });
+    if (INTERNAL_RANGO_DEBUG) {
+      trace("fallback-gone", {
+        boundary: rec.boundary,
+        mountId: rec.mountId,
+        ms: Math.round(performance.now() - shownAt),
+      });
+    }
   };
 }
 
 /** One renderSegments call, collected while it builds. */
 export interface TreeAudit {
-  /** Segment ids, root first. */
+  /** Segment ids, leaf first while building, root first once finished. */
   order: string[];
   keys: Map<string, string>;
   types: Map<string, string>;
   chains: Map<string, string[]>;
   /** Segments this tree remounts by the documented rules. */
   replaced: Set<string>;
-  /** The segment objects the tree was built from (I7). */
+  /** The segment objects the tree is built from (I7), until it is held. */
   segments: object[];
 }
 
-let lastTree: TreeAudit | undefined;
+/** The tree React holds: what I4, I5 and I7 compare with. */
+let held: TreeAudit | undefined;
+// Every finished tree by the root renderSegments returned, until an emit
+// hands that root to React. A tree that is never emitted (an aborted
+// navigation's) is never held.
+const builtTrees = new WeakMap<object, TreeAudit>();
+// A root emitted as a promise (HMR): held once React's use() has read it.
+let pendingRoot: PromiseLike<unknown> | undefined;
+// I7: the fields of each segment object of the held tree, at hand-over.
+const handedFields = new WeakMap<object, Record<string, unknown>>();
 
-// I7: what a render reads does not change once React holds it. A segment
-// object's own properties become accessors that report a write after the
-// tree holding the object was handed over; the write still happens.
-const watchedSegments = new WeakSet<object>();
-const handedSegments = new WeakSet<object>();
-let pendingSegments: object[] | undefined;
-
-function watchSegment(segment: object): void {
-  if (watchedSegments.has(segment) || !Object.isExtensible(segment)) return;
-  watchedSegments.add(segment);
-  const id = String((segment as { id?: unknown }).id ?? "?");
-  for (const key of Object.keys(segment)) {
-    const own = Object.getOwnPropertyDescriptor(segment, key);
-    if (!own || !("value" in own) || !own.writable || !own.configurable) {
-      continue;
+function heldTree(): TreeAudit | undefined {
+  if (pendingRoot) {
+    const status = statusOf(pendingRoot);
+    if (status === "fulfilled") {
+      const root = (pendingRoot as Tracked).value;
+      pendingRoot = undefined;
+      const tree =
+        root !== null && typeof root === "object"
+          ? builtTrees.get(root)
+          : undefined;
+      if (tree) hold(tree);
+    } else if (status === "rejected") {
+      pendingRoot = undefined;
     }
-    let value: unknown = own.value;
-    Object.defineProperty(segment, key, {
-      configurable: true,
-      enumerable: own.enumerable,
-      get: () => value,
-      set: (next: unknown) => {
-        if (next !== value && handedSegments.has(segment)) {
-          violate(
-            "mutated",
-            `segment:${id}`,
-            `${key} was written after the tree holding this segment was handed to React; build a new segment object instead`,
-          );
-        }
-        value = next;
-      },
-    });
   }
+  return held;
 }
 
 // The router's wrapper components, by function name. A boundary component
@@ -605,7 +643,12 @@ function wrapperChain(node: unknown): string[] {
 }
 
 export function startTreeAudit(): TreeAudit | undefined {
-  if (typeof window === "undefined") return undefined;
+  if (!INTERNAL_RANGO_SUSPENSE_AUDIT || typeof window === "undefined") {
+    return undefined;
+  }
+  getReport();
+  // A root emitted as a promise is held before this tree reads its segments.
+  heldTree();
   return {
     order: [],
     keys: new Map(),
@@ -614,6 +657,27 @@ export function startTreeAudit(): TreeAudit | undefined {
     replaced: new Set(),
     segments: [],
   };
+}
+
+/**
+ * I7: a segment object of the tree React holds was written since it was
+ * handed over. Judged when the next tree is built from it, where
+ * renderSegments' own rewrites happen.
+ */
+function auditHandedSegment(segment: object): void {
+  const before = handedFields.get(segment);
+  if (!before) return;
+  const now = segment as Record<string, unknown>;
+  for (const key in before) {
+    if (Object.is(before[key], now[key])) continue;
+    violate(
+      "mutated",
+      `segment:${String(now.id ?? "?")}`,
+      `${key} was written after the tree holding this segment was handed to React; build a new segment object instead`,
+    );
+  }
+  // One report per write: the next build compares with what this one read.
+  handedFields.set(segment, { ...now });
 }
 
 /** The element renderSegments built for one segment, leaf first. */
@@ -628,20 +692,40 @@ export function auditSegmentElement(
   segments: readonly object[],
 ): void {
   if (!tree) return;
-  tree.order.unshift(id);
+  tree.order.push(id);
   tree.keys.set(id, key);
   tree.types.set(id, type);
   // A slot has no key of its own: it stays while its id is in the tree.
   for (const slot of slots) tree.keys.set(slot, slot);
-  tree.segments.push(...segments);
+  for (const segment of segments) {
+    auditHandedSegment(segment);
+    tree.segments.push(segment);
+  }
   const chain = wrapperChain(element);
   if (outletTransition) chain.push("outlet:ViewTransition");
   tree.chains.set(id, chain);
 }
 
 /**
- * I5: a segment that keeps its React key between two trees must keep its
- * wrapper chain, or React remounts it (docs/tree-structure.md). The
+ * A finished tree. The first is the document's, which React holds from
+ * hydration; any later one is held when an emit hands its root to React
+ * (auditTreeUpdate).
+ */
+export function finishTreeAudit(
+  tree: TreeAudit | undefined,
+  root: unknown,
+): void {
+  if (!tree) return;
+  tree.order.reverse();
+  if (heldTree() === undefined) hold(tree);
+  else if (root !== null && typeof root === "object") {
+    builtTrees.set(root, tree);
+  }
+}
+
+/**
+ * I5: a segment that keeps its React key between two held trees must keep
+ * its wrapper chain, or React remounts it (docs/tree-structure.md). The
  * documented remounts are exempt, with everything below them: a key that
  * changes (a param change outside a transition scope), and a segment
  * replaced by another type under the same id (an error or notFound segment
@@ -649,31 +733,31 @@ export function auditSegmentElement(
  * shape alone changes, `id` against `id-params`, is not one of them: it means
  * `inTransitionScope` differed between the two renders.
  */
-export function finishTreeAudit(tree: TreeAudit | undefined): void {
-  if (!tree) return;
-  const prev = lastTree;
-  lastTree = tree;
+function hold(tree: TreeAudit): void {
+  const prev = held;
+  held = tree;
   // What unmounted under the tree before this one left by something else:
   // an error boundary took the page over, or a layout stopped rendering its
   // outlet. Its next mount is a new one.
   unmounted.clear();
   settledSinceTree.clear();
-  for (const segment of tree.segments) watchSegment(segment);
-  // The document's tree goes to React at hydration; every later one through
-  // the store's subscriber (auditTreeUpdate).
-  if (prev) pendingSegments = tree.segments;
-  else for (const segment of tree.segments) handedSegments.add(segment);
-  trace("tree", {
-    segments: tree.order.map((id) => ({
-      id,
-      type: tree.types.get(id),
-      key: tree.keys.get(id),
-      chain: tree.chains.get(id),
-    })),
-  });
+  for (const segment of tree.segments) {
+    handedFields.set(segment, { ...(segment as Record<string, unknown>) });
+  }
+  tree.segments = [];
+  if (INTERNAL_RANGO_DEBUG) {
+    trace("tree", {
+      segments: tree.order.map((id) => ({
+        id,
+        type: tree.types.get(id),
+        key: tree.keys.get(id),
+        chain: tree.chains.get(id),
+      })),
+    });
+  }
   if (!prev) return;
   for (let at = 0; at < tree.order.length; at++) {
-    const id = tree.order[at];
+    const id = tree.order[at]!;
     const prevKey = prev.keys.get(id);
     if (prevKey === undefined) continue;
     const key = tree.keys.get(id)!;
@@ -686,7 +770,9 @@ export function finishTreeAudit(tree: TreeAudit | undefined): void {
           `key shape changed from "${prevKey}" to "${key}"`,
         );
       }
-      for (const below of tree.order.slice(at)) tree.replaced.add(below);
+      for (let below = at; below < tree.order.length; below++) {
+        tree.replaced.add(tree.order[below]!);
+      }
       break;
     }
     const before = prev.chains.get(id)!;
@@ -705,11 +791,11 @@ export function finishTreeAudit(tree: TreeAudit | undefined): void {
 }
 
 function keyOf(segmentId: string): string {
-  return lastTree?.keys.get(segmentId) ?? segmentId;
+  return heldTree()?.keys.get(segmentId) ?? segmentId;
 }
 
-// A boundary unmounted while the last tree still holds its segment under the
-// same key, until it mounts again or the next tree is built. Not one
+// A boundary unmounted while the held tree still holds its segment under the
+// same key, until it mounts again or the next tree is held. Not one
 // commit's worth: a remounted boundary that suspends mounts its content
 // after its fallback.
 const unmounted = new Map<string, Set<BoundaryAudit>>();
@@ -722,37 +808,38 @@ function slotOf(rec: BoundaryAudit): string {
   return `${rec.boundary}|${rec.segmentId}|${rec.key}`;
 }
 
-function scheduleFlush(): void {
-  if (flushScheduled) return;
-  flushScheduled = true;
-  queueMicrotask(() => {
-    flushScheduled = false;
-    const order = lastTree?.order ?? [];
-    const reported = new Set<string>();
-    for (const rec of remounted) {
-      if (reported.has(rec.segmentId)) continue;
-      // A slot (`<parent>.@name`) hangs off its parent segment.
-      const parent = rec.segmentId.split(".")[0];
-      const slot = parent !== rec.segmentId;
-      const depth = order.indexOf(parent);
-      // Not in the last tree renderSegments built: its place is unknown.
-      if (depth === -1) continue;
-      // Replaced by the documented rules (finishTreeAudit).
-      if (lastTree!.replaced.has(parent)) continue;
-      const above = order.slice(0, slot ? depth + 1 : depth);
-      // Below a segment that is new to the page or was itself remounted, a
-      // remount is that segment's.
-      if (above.some((id) => settledSinceTree.has(id))) continue;
-      reported.add(rec.segmentId);
-      violate(
-        "remount",
-        rec.boundary,
-        `unmounted and mounted again under the same key "${rec.key}"`,
-      );
+function flushRemounts(): void {
+  flushScheduled = false;
+  const tree = heldTree();
+  const order = tree?.order ?? [];
+  const reported = new Set<string>();
+  for (const rec of remounted) {
+    if (reported.has(rec.segmentId)) continue;
+    // A slot (`<parent>.@name`) hangs off its parent segment.
+    const parent = rec.segmentId.split(".")[0]!;
+    const slot = parent !== rec.segmentId;
+    const depth = order.indexOf(parent);
+    // Not in the tree React holds: its place is unknown.
+    if (depth === -1) continue;
+    // Replaced by the documented rules (hold).
+    if (tree!.replaced.has(parent)) continue;
+    // Below a segment that is new to the page or was itself remounted, a
+    // remount is that segment's.
+    const end = slot ? depth + 1 : depth;
+    let below = false;
+    for (let i = 0; i < end && !below; i++) {
+      below = settledSinceTree.has(order[i]!);
     }
-    for (const rec of remounted) settledSinceTree.add(rec.segmentId);
-    remounted.length = 0;
-  });
+    if (below) continue;
+    reported.add(rec.segmentId);
+    violate(
+      "remount",
+      rec.boundary,
+      `unmounted and mounted again under the same key "${rec.key}"`,
+    );
+  }
+  for (const rec of remounted) settledSinceTree.add(rec.segmentId);
+  remounted.length = 0;
 }
 
 /**
@@ -760,41 +847,48 @@ function scheduleFlush(): void {
  * unmounted and mounted again. A different key is the documented remount.
  */
 export function auditMount(rec: BoundaryAudit): void {
-  const r = getReport();
+  getReport();
   rec.key = keyOf(rec.segmentId);
   const gone = unmounted.get(slotOf(rec));
   // StrictMode runs the effects of one instance twice: mount, unmount, mount.
   if (gone?.delete(rec)) return;
   const remount = gone !== undefined && gone.size > 0;
   gone?.clear();
-  rec.mountId = (r.mounts[rec.boundary] ?? 0) + 1;
-  r.mounts[rec.boundary] = rec.mountId;
-  trace("mount", {
-    boundary: rec.boundary,
-    key: rec.key,
-    mountId: rec.mountId,
-    remount,
-  });
+  rec.mountId = (mountCounts.get(rec.boundary) ?? 0) + 1;
+  setBounded(mountCounts, rec.boundary, rec.mountId);
+  if (INTERNAL_RANGO_DEBUG) {
+    trace("mount", {
+      boundary: rec.boundary,
+      key: rec.key,
+      mountId: rec.mountId,
+      remount,
+    });
+  }
   if (remount) remounted.push(rec);
   else settledSinceTree.add(rec.segmentId);
-  scheduleFlush();
+  if (!flushScheduled) {
+    flushScheduled = true;
+    later(flushRemounts);
+  }
 }
 
 export function auditUnmount(rec: BoundaryAudit): void {
-  trace("unmount", {
-    boundary: rec.boundary,
-    key: rec.key,
-    mountId: rec.mountId,
-  });
+  if (INTERNAL_RANGO_DEBUG) {
+    trace("unmount", {
+      boundary: rec.boundary,
+      key: rec.key,
+      mountId: rec.mountId,
+    });
+  }
   const slot = slotOf(rec);
   const gone = unmounted.get(slot);
   if (gone) gone.add(rec);
   else unmounted.set(slot, new Set([rec]));
   // Judged once the commit is over: StrictMode mounts this instance again
-  // at once, and a segment the last tree dropped or re-keyed is leaving.
-  queueMicrotask(() => {
+  // at once, and a segment the held tree dropped or re-keyed is leaving.
+  later(() => {
     const now = unmounted.get(slot);
-    if (now?.has(rec) && lastTree?.keys.get(rec.segmentId) !== rec.key) {
+    if (now?.has(rec) && heldTree()?.keys.get(rec.segmentId) !== rec.key) {
       now.delete(rec);
     }
   });
@@ -818,33 +912,38 @@ let treeCauseTurn = 0;
  * or a cause left behind would cover an emitter that names none.
  */
 export function auditTreeCause(cause: TreeUpdateCause): void {
-  if (typeof window === "undefined") return;
+  if (!INTERNAL_RANGO_SUSPENSE_AUDIT || typeof window === "undefined") return;
   treeCause = cause;
   const turn = ++treeCauseTurn;
-  queueMicrotask(() => {
+  later(() => {
     if (treeCauseTurn === turn) treeCause = undefined;
   });
 }
 
 /**
  * I6: a tree update reached React (the store.onUpdate subscriber in
- * browser/react/NavigationProvider.tsx). Only a navigation, a back/forward,
- * its stale revalidation, an action, an error and HMR hand React a tree;
- * anything else updates in place through a store its readers subscribe to,
- * or through a pending promise read with use().
+ * browser/react/NavigationProvider.tsx), with the root it hands React. Only a
+ * navigation, a back/forward, its stale revalidation, an action, an error and
+ * HMR hand React a tree; anything else updates in place through a store its
+ * readers subscribe to, or through a pending promise read with use().
  */
-export function auditTreeUpdate(): void {
-  if (typeof window === "undefined") return;
+export function auditTreeUpdate(root?: unknown): void {
+  if (!INTERNAL_RANGO_SUSPENSE_AUDIT || typeof window === "undefined") return;
   const cause = treeCause;
   treeCause = undefined;
   const r = getReport();
   const name = cause ?? "none";
   r.treeUpdates[name] = (r.treeUpdates[name] ?? 0) + 1;
-  if (pendingSegments) {
-    for (const segment of pendingSegments) handedSegments.add(segment);
-    pendingSegments = undefined;
+  if (isThenable(root)) {
+    pendingRoot = root;
+  } else if (root !== null && typeof root === "object") {
+    const tree = builtTrees.get(root);
+    if (tree) {
+      pendingRoot = undefined;
+      hold(tree);
+    }
   }
-  trace("tree-update", { cause: name });
+  if (INTERNAL_RANGO_DEBUG) trace("tree-update", { cause: name });
   if (cause === undefined) {
     violate(
       "uncaused",
@@ -858,14 +957,12 @@ export function auditTreeUpdate(): void {
 
 /** Forget every tree and mount seen so far. For tests of the audit itself. */
 export function forgetSuspenseAudit(): void {
-  lastTree = undefined;
-  pendingSegments = undefined;
+  held = undefined;
+  pendingRoot = undefined;
   treeCause = undefined;
-  handedSeen = new Map();
   unmounted.clear();
   remounted.length = 0;
   settledSinceTree.clear();
-  const r = getReport();
-  r.reset();
-  r.mounts = {};
+  mountCounts.clear();
+  getReport().reset();
 }

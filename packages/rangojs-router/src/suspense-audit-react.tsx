@@ -1,21 +1,25 @@
-import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
+import {
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  type ReactNode,
+} from "react";
+import { NavigationStoreContext } from "./browser/react/context.js";
 import {
   auditCommit,
   auditFallback,
   auditHandover,
   auditMount,
+  auditRead,
   auditReveal,
   auditUnmount,
   createBoundaryAudit,
   type BoundaryAudit,
 } from "./suspense-audit.js";
 
-/**
- * The hooks of the dev-only suspense audit (suspense-audit.ts). The boundary
- * hooks are called by dev-only components: a hook behind a NODE_ENV test
- * inside a product component makes React Compiler skip that component in
- * every mode.
- */
+// Hooks of the suspense audit (docs/internal/suspense-contract.md), called by
+// dev-only components: React Compiler skips a component with a gated hook.
 
 function useRecord(boundary: string, segmentId: string): BoundaryAudit {
   const ref = useRef<BoundaryAudit | null>(null);
@@ -51,7 +55,7 @@ export function useBoundaryAudit(
   auditHandover(rec, value);
   useLayoutEffect(() => {
     auditCommit(rec, value, streams, nodes);
-  });
+  }, [rec, value, streams, nodes]);
   useMount(rec);
   return rec;
 }
@@ -72,10 +76,8 @@ export function useReadAudit(loaderId: string, stream: unknown): void {
   const rec = useRecord(`read:${loaderId}`, loaderId);
   auditHandover(rec, stream);
   useLayoutEffect(() => {
-    rec.mountId = 1;
-    auditCommit(rec, stream);
-    auditReveal(rec);
-  });
+    auditRead(rec, stream);
+  }, [rec, stream]);
 }
 
 /** Wraps a boundary's fallback: mounted means the fallback is on screen. */
@@ -86,7 +88,15 @@ export function AuditedFallback({
   audit: BoundaryAudit;
   children: ReactNode;
 }): ReactNode {
-  useLayoutEffect(() => auditFallback(audit), [audit]);
+  const store = useContext(NavigationStoreContext);
+  useLayoutEffect(
+    () =>
+      auditFallback(
+        audit,
+        () => store?.eventController.getState().isStreaming === true,
+      ),
+    [audit, store],
+  );
   return children;
 }
 

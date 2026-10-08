@@ -10,21 +10,25 @@ import {
   createElement,
   startTransition,
   StrictMode,
+  use,
   useLayoutEffect,
   useState,
+  type ContextType,
   type ReactNode,
 } from "react";
 import { Outlet } from "../client.js";
 import { AuditedRouteContent } from "../route-content-wrapper.js";
 import { renderSegments } from "../segment-system.js";
+import { NavigationStoreContext } from "../browser/react/context.js";
 import type { SuspenseAuditReport } from "../suspense-audit.js";
 import {
+  auditHandover,
   auditSegmentElement,
   auditTreeCause,
   auditTreeUpdate,
+  createBoundaryAudit,
   finishTreeAudit,
   forgetSuspenseAudit,
-  setSuspenseAuditStreamProbe,
   startTreeAudit,
   type TreeUpdateCause,
 } from "../suspense-audit.js";
@@ -82,11 +86,26 @@ function Fallback(): ReactNode {
   return <p data-testid="fallback">fallback</p>;
 }
 
-let setTree!: (tree: ReactNode) => void;
+// Hands React a tree the way the store's subscriber does: the emitter names
+// its cause, the subscriber counts the update, then React renders it.
+let setState!: (tree: ReactNode) => void;
+function setTree(tree: ReactNode): void {
+  auditTreeCause("navigation");
+  auditTreeUpdate(tree);
+  setState(tree);
+}
+let streaming = false;
+const storeContext = {
+  eventController: { getState: () => ({ isStreaming: streaming }) },
+} as unknown as NonNullable<ContextType<typeof NavigationStoreContext>>;
 function Harness({ initial }: { initial: ReactNode }) {
   const [tree, set] = useState(initial);
-  setTree = set;
-  return tree;
+  setState = set;
+  return (
+    <NavigationStoreContext.Provider value={storeContext}>
+      {tree}
+    </NavigationStoreContext.Provider>
+  );
 }
 
 // The route boundary as segment-system creates it outside a build.
@@ -131,7 +150,7 @@ const audited = (): string[] =>
 beforeEach(() => {
   fallbacks = 0;
   errors = vi.spyOn(console, "error").mockImplementation(() => {});
-  setSuspenseAuditStreamProbe(() => false);
+  streaming = false;
   window.history.replaceState(null, "", "/audit");
 });
 
@@ -143,16 +162,27 @@ afterEach(async () => {
 });
 
 describe("suspense audit, segments after hand-over (I7)", () => {
-  function build(segments: object[]) {
+  // One renderSegments call, by hand: the segment objects it is built from,
+  // and the root it returns. `emit` hands that root to React.
+  function build(segments: object[], emit = false): object {
     const tree = startTreeAudit();
     auditSegmentElement(tree, "L0", "layout", "L0", null, false, [], segments);
-    finishTreeAudit(tree);
+    const root = {};
+    finishTreeAudit(tree, root);
+    if (emit) {
+      auditTreeCause("navigation");
+      auditTreeUpdate(root);
+    }
+    return root;
   }
 
-  it("reports a write to a segment of the tree React holds, and the write still happens", () => {
+  it("reports a field of a handed segment written before the next tree is built, and the write still happens", () => {
     const segment: Record<string, unknown> = { id: "L0", loading: null };
+    // The first tree is the document's: React holds it from hydration.
     build([segment]);
     segment.loading = "skeleton";
+    expect(audit().mutations).toBe(0);
+    build([segment]);
     expect(segment.loading).toBe("skeleton");
     expect(audit().mutations).toBe(1);
     expect(audited()).toEqual([
@@ -162,16 +192,17 @@ describe("suspense audit, segments after hand-over (I7)", () => {
     ]);
   });
 
-  it("stays silent while the tree is still being built, and until the store hands it over", () => {
+  it("stays silent for a segment of a tree React was never handed", () => {
     build([{ id: "L0" }]);
     const next: Record<string, unknown> = { id: "L0", loading: null };
-    next.loading = "set while building";
     build([next]);
     next.loading = "set before the update reached React";
+    const root = build([next]);
     expect(audit().mutations).toBe(0);
     auditTreeCause("navigation");
-    auditTreeUpdate();
+    auditTreeUpdate(root);
     next.loading = "set after";
+    build([next]);
     expect(audit().mutations).toBe(1);
   });
 
@@ -210,6 +241,87 @@ describe("suspense audit, segments after hand-over (I7)", () => {
         ),
       ]),
     );
+  });
+});
+
+describe("suspense audit, the tree React holds (I4, I5, I7)", () => {
+  const layout = (loading?: ReactNode) =>
+    seg({ id: "L0", type: "layout", component: <Layout />, loading });
+  const route = seg({ id: "R0", type: "route" });
+
+  it("a tree that never reaches React, an aborted navigation's, is not the one the next tree is compared with", async () => {
+    await renderSegments([layout(), route]);
+    // Built, then dropped: its navigation was superseded before the commit.
+    await renderSegments([layout(<Fallback />), route], { forceAwait: true });
+    const next = await renderSegments([layout(), route]);
+    auditTreeCause("navigation");
+    auditTreeUpdate(next);
+    expect(counters()).toEqual(ZERO);
+    expect(audited()).toEqual([]);
+  });
+
+  it("a tree handed as a promise, as HMR does, is held once React has read it", async () => {
+    await renderSegments([layout(), route]);
+    const slot = (): ResolvedSegment =>
+      seg({
+        id: "L0.@side",
+        namespace: "parallel.side",
+        type: "parallel",
+        slot: "@side",
+        loading: <Fallback />,
+      });
+    const hmrSlot = slot();
+    const segments = (): ResolvedSegment[] => [
+      layout(),
+      hmrSlot,
+      seg({
+        id: "L0D0.side-data",
+        namespace: "parallel.side",
+        type: "loader",
+        loaderId: "side-loader",
+        loaderData: { side: true },
+      }),
+      seg({ id: "L0R0", type: "route" }),
+    ];
+    // Still building when it is emitted: forceAwait awaits each content.
+    const pending = renderSegments(segments(), { forceAwait: true });
+    auditTreeCause("hmr");
+    auditTreeUpdate(pending);
+    const tree = await pending;
+    // What React's use() leaves on a promise it has read.
+    Object.assign(pending, { status: "fulfilled", value: tree });
+    await renderSegments(segments(), { isAction: true });
+    expect(audited()).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("I7 mutated at segment:L0.@side: loaderIds"),
+      ]),
+    );
+  });
+});
+
+describe("suspense audit, what it must not do", () => {
+  it("leaves a rejected promise it is handed unhandled, as a build does", async () => {
+    // Vitest's own listener fails the run on an unhandled rejection.
+    const saved = process.listeners("unhandledRejection");
+    process.removeAllListeners("unhandledRejection");
+    const unhandled: unknown[] = [];
+    const listener = (_reason: unknown, promise: unknown): void => {
+      unhandled.push(promise);
+    };
+    process.on("unhandledRejection", listener);
+    const handed = Promise.reject(new Error("loader failed"));
+    try {
+      const rec = createBoundaryAudit("content:X", "X");
+      rec.mountId = 1;
+      rec.revealed = true;
+      auditHandover(rec, deferred<ReactNode>().promise);
+      auditHandover(rec, handed);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(unhandled).toContain(handed);
+    } finally {
+      process.off("unhandledRejection", listener);
+      for (const restore of saved) process.on("unhandledRejection", restore);
+    }
   });
 });
 
@@ -387,6 +499,48 @@ for (const strict of [false, true]) {
       ]);
     });
 
+    it("I3 is silent, and counts the fallback unattributed, when the app's own content suspends inside the route's boundary", async () => {
+      const app = deferred<string>();
+      function AppSuspends(): ReactNode {
+        return <p data-testid="content">{use(app.promise)}</p>;
+      }
+      await mount(null);
+      await act(async () => setTree(boundary(<AppSuspends />)));
+      await settle();
+      expect(fallbacks).toBeGreaterThan(0);
+      expect(counters()).toEqual(ZERO);
+      expect(audited()).toEqual([]);
+      expect(audit().unattributedFallbacks).toBeGreaterThan(0);
+      await act(async () => app.resolve("app"));
+      await settle();
+    });
+
+    it("I3 is silent when a client reference is still loading under a large list prop", async () => {
+      const never = new Promise<never>(() => {});
+      // A Flight client reference whose module is still loading.
+      const reference = {
+        $$typeof: Symbol.for("react.lazy"),
+        _payload: { status: "blocked" },
+        _init: () => {
+          throw never;
+        },
+      };
+      const element = createElement(reference as never, {
+        items: Array.from({ length: 500 }, (_, i) => i),
+      });
+      // A fulfilled Flight chunk: React reads it without waiting.
+      const chunk = Object.assign(Promise.resolve(element), {
+        status: "fulfilled",
+        value: element,
+      });
+      await mount(null);
+      await act(async () => setTree(boundary(chunk)));
+      await settle();
+      expect(fallbacks).toBeGreaterThan(0);
+      expect(counters()).toEqual(ZERO);
+      expect(audited()).toEqual([]);
+    });
+
     it("I3 is silent while the payload streams, and counts a fallback over content on screen whose data is pending", async () => {
       const view = await mount(boundary(<p data-testid="content">a</p>));
       const next = deferred<ReactNode>();
@@ -398,7 +552,7 @@ for (const strict of [false, true]) {
       expect(audit().shownWhilePending).toBe(1);
       expect(audited()).toEqual([]);
 
-      setSuspenseAuditStreamProbe(() => true);
+      streaming = true;
       const unread = Promise.resolve(<p data-testid="content">b</p>);
       await unread;
       window.history.pushState(null, "", "/audit/next");

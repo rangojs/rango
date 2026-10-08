@@ -27,6 +27,7 @@ import {
   LoaderBoundary,
 } from "./route-content-wrapper.js";
 import { AuditedOutletProvider, OutletProvider } from "./outlet-provider.js";
+import { INTERNAL_RANGO_SUSPENSE_AUDIT } from "./internal-suspense-audit.js";
 import { MountContextProvider } from "./browser/react/mount-context.js";
 import { getBoundaryContent } from "./segment-boundary-content.js";
 
@@ -87,7 +88,9 @@ function renderSlotContent(segment: ResolvedSegment | null): ReactNode {
     result = content;
   }
 
-  if (process.env.NODE_ENV !== "production") result = auditedSlot(result);
+  if (process.env.NODE_ENV !== "production" && INTERNAL_RANGO_SUSPENSE_AUDIT) {
+    result = auditedSlot(result);
+  }
 
   if (segment.mountPath) {
     return (

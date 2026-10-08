@@ -431,7 +431,7 @@ export function NavigationProvider({
   // Subscribe to UI updates (for re-rendering the tree)
   useEffect(() => {
     const unsubscribe = store.onUpdate((update) => {
-      if (process.env.NODE_ENV !== "production") auditTreeUpdate();
+      if (process.env.NODE_ENV !== "production") auditTreeUpdate(update.root);
       // Capture scroll intent — it will be applied in useLayoutEffect
       // after React commits this state update to the DOM.
       // Always assign (even undefined) to clear stale scroll from prior navigations,

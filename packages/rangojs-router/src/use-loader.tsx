@@ -19,6 +19,7 @@ import { decodeLoaderEntry } from "./decode-loader-results.js";
 import { warnAwaitedSsrSuspension } from "./ssr-suspension-warning.js";
 import { SETTLED_THENABLE } from "./thenable-status.js";
 import { useReadAudit } from "./suspense-audit-react.js";
+import { INTERNAL_RANGO_SUSPENSE_AUDIT } from "./internal-suspense-audit.js";
 import type { LoaderDefinition, LoadOptions } from "./types.js";
 
 function isShareableGet(options: LoadOptions | undefined): boolean {
@@ -213,7 +214,7 @@ function useLoaderInternal<T>(
   let contextData = walk.contextData;
   // Dev only (suspense-audit.ts): the stream this reader is handed. The test
   // is a build-time constant, so the hook is called on every render or never.
-  if (process.env.NODE_ENV !== "production") {
+  if (process.env.NODE_ENV !== "production" && INTERNAL_RANGO_SUSPENSE_AUDIT) {
     useReadAudit(loader.$$id, walk.pendingStream);
   }
   if (walk.pendingStream) {

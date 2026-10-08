@@ -1,6 +1,6 @@
 "use client";
 import type { ComponentProps, ReactElement, ReactNode } from "react";
-import { Component, Suspense, use } from "react";
+import { Component, Suspense, use, useMemo } from "react";
 import { AuditedOutletProvider, OutletProvider } from "./outlet-provider.js";
 import type { ResolvedSegment } from "./types.js";
 import {
@@ -246,12 +246,16 @@ export function AuditedLoaderBoundary({
   children,
   ...resolver
 }: LoaderBoundaryProps): ReactNode {
+  const nodes = useMemo(
+    () => [children, resolver.outletContent],
+    [children, resolver.outletContent],
+  );
   const audit = useBoundaryAudit(
     `loaders:${resolver.outletKey}`,
     resolver.segment.id,
     resolver.loaderDataPromise,
     resolver.loaderStreams,
-    [children, resolver.outletContent],
+    nodes,
   );
   return (
     <Suspense

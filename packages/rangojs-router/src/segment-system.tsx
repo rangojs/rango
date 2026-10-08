@@ -21,6 +21,7 @@ import {
 } from "./route-content-wrapper.js";
 import { RootErrorBoundary } from "./root-error-boundary.js";
 import { INTERNAL_RANGO_DEBUG } from "./internal-debug.js";
+import { INTERNAL_RANGO_SUSPENSE_AUDIT } from "./internal-suspense-audit.js";
 import { getBoundaryContent } from "./segment-boundary-content.js";
 import {
   buildLoaderPromise,
@@ -221,7 +222,7 @@ function wrapDefaultOutletContent(
 
   if (
     content.type ===
-      (process.env.NODE_ENV !== "production"
+      (process.env.NODE_ENV !== "production" && INTERNAL_RANGO_SUSPENSE_AUDIT
         ? AuditedOutletProvider
         : OutletProvider) &&
     props.segment?.type === "layout"
@@ -233,7 +234,7 @@ function wrapDefaultOutletContent(
 
   if (
     content.type ===
-      (process.env.NODE_ENV !== "production"
+      (process.env.NODE_ENV !== "production" && INTERNAL_RANGO_SUSPENSE_AUDIT
         ? AuditedLoaderBoundary
         : LoaderBoundary) &&
     props.segment?.type === "layout"
@@ -513,7 +514,7 @@ export async function renderSegments(
         }
       }
       nodeContent = createElement(
-        process.env.NODE_ENV !== "production"
+        process.env.NODE_ENV !== "production" && INTERNAL_RANGO_SUSPENSE_AUDIT
           ? AuditedRouteContent
           : RouteContentWrapper,
         {
@@ -647,7 +648,7 @@ export async function renderSegments(
         }
       }
       content = createElement(
-        process.env.NODE_ENV !== "production"
+        process.env.NODE_ENV !== "production" && INTERNAL_RANGO_SUSPENSE_AUDIT
           ? AuditedLoaderBoundary
           : LoaderBoundary,
         {
@@ -666,7 +667,7 @@ export async function renderSegments(
       );
     } else if (loaderEntries.length === 0) {
       content = createElement(
-        process.env.NODE_ENV !== "production"
+        process.env.NODE_ENV !== "production" && INTERNAL_RANGO_SUSPENSE_AUDIT
           ? AuditedOutletProvider
           : OutletProvider,
         {
@@ -812,7 +813,7 @@ export async function renderSegments(
       }
 
       content = createElement(
-        process.env.NODE_ENV !== "production"
+        process.env.NODE_ENV !== "production" && INTERNAL_RANGO_SUSPENSE_AUDIT
           ? AuditedOutletProvider
           : OutletProvider,
         {
@@ -868,8 +869,6 @@ export async function renderSegments(
     }
   }
 
-  if (process.env.NODE_ENV !== "production") finishTreeAudit(treeAudit);
-
   const errorBoundaryWrapped = createElement(RootErrorBoundary, {
     children: content,
   });
@@ -907,6 +906,8 @@ export async function renderSegments(
       ms: Math.round(performance.now() - segDebugStart),
     });
   }
+
+  if (process.env.NODE_ENV !== "production") finishTreeAudit(treeAudit, result);
 
   return result;
 }
