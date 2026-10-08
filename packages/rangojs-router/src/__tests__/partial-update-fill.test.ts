@@ -7,6 +7,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ResolvedSegment } from "../browser/types";
+import type { RenderSegmentsOptions } from "../segment-system";
 import { NetworkError, ServerRedirect } from "../errors";
 
 const transitionState = vi.hoisted(() => ({ inTransition: false }));
@@ -198,7 +199,10 @@ function setup(
       redirect: ReturnType<typeof vi.fn>;
       locationState: ReturnType<typeof vi.fn>;
     };
-    renderSegments?: (segments: ResolvedSegment[]) => Promise<unknown>;
+    renderSegments?: (
+      segments: ResolvedSegment[],
+      options?: RenderSegmentsOptions,
+    ) => Promise<unknown>;
   },
 ) {
   const store = createStore(adoption.layout ? [adoption.layout] : []);
@@ -545,16 +549,13 @@ describe("the fill landing", () => {
       streaming: Array<[string, boolean | undefined]>;
     }> = [];
     const { navigate, fill, store, onUpdate } = setup(adoption, {
-      renderSegments: (async (
-        segments: ResolvedSegment[],
-        options?: { forceAwait?: boolean },
-      ) => {
+      renderSegments: async (segments, options) => {
         renders.push({
           forceAwait: options?.forceAwait,
           streaming: segments.map((s) => [s.id, s.deferred]),
         });
         return "tree";
-      }) as any,
+      },
     });
     await navigate();
     showAdoption(onUpdate);
@@ -580,6 +581,47 @@ describe("the fill landing", () => {
     expect(store.cache.get("/product")!.segments.some((s) => s.deferred)).toBe(
       false,
     );
+  });
+
+  // React can be holding the adoption on a loader its unit owns: a layout
+  // above the unit reads the route's loader, with no boundary. That gate
+  // used to wait for the fill's tree, which waits for the adoption's commit,
+  // which was waiting for the gate: the page being left stayed for good,
+  // useNavigation() read `loading`, and nothing was thrown.
+  it("resolves every loader gate at once where React has not committed the adoption, a unit's own included", async () => {
+    const adoption = unitAdoption({ namespace: "unit" });
+    const owned = { ...loaderSeg("L0R0D0.data", "data"), namespace: "unit" };
+    adoption.payload.metadata.segments.push(owned);
+    adoption.matched.push(owned.id);
+    const { navigate, fill, onUpdate } = setup(adoption);
+    await navigate();
+    const gates = {
+      unit: adoption.unit.component as unknown as Promise<unknown>,
+      data: owned.loaderData as Promise<unknown>,
+    };
+
+    fill.resolve(
+      fillPayload(
+        [
+          adoption.filled,
+          { ...loaderSeg("L0R0D0.data", "data", { n: 1 }), namespace: "unit" },
+        ],
+        adoption.matched,
+      ),
+    );
+    await flush();
+
+    expect(await settled(gates.data), "the loader's gate").toBe(true);
+    await expect(gates.data).resolves.toEqual({ n: 1 });
+    // The unit still waits for its tree, and the tree for the adoption.
+    expect(await settled(gates.unit)).toBe(false);
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+
+    showAdoption(onUpdate);
+    await flush();
+    expect(onUpdate).toHaveBeenCalledTimes(3);
+    onUpdate.mock.calls.at(-1)![0].onCommit();
+    await expect(gates.unit).resolves.toBe("unit-content");
   });
 
   // A slot reads its loaders above its content: resolved before the unit,
@@ -674,14 +716,14 @@ describe("the fill landing", () => {
     adoption.matched.push(owned.id, other.id);
     const rendered: unknown[][] = [];
     const { navigate, fill, store, onUpdate } = setup(adoption, {
-      renderSegments: (async (segments: ResolvedSegment[]) => {
+      renderSegments: async (segments) => {
         rendered.push(
           [owned.id, other.id].map(
             (id) => segments.find((s) => s.id === id)?.loaderData,
           ),
         );
         return "tree";
-      }) as any,
+      },
     });
     await navigate();
     showAdoption(onUpdate);
@@ -787,6 +829,36 @@ describe("the fill landing", () => {
       ).toBe(false);
     });
 
+    // The wait is for a fallback that is on screen. Where React still holds
+    // the adoption (a read with no boundary) there is none, and the page
+    // being left stayed 300 ms for nothing: a plain click shows the page as
+    // the value arrives (measured: 311 ms after it, against 12).
+    it("does not wait where React has not committed the adoption", async () => {
+      vi.useFakeTimers();
+      const adoption = loaderAdoption();
+      const { navigate, fill, store } = setup(adoption);
+      await navigate();
+      const gate = adoption.reviews.loaderData as Promise<unknown>;
+      let resolved = false;
+      void gate.then(() => {
+        resolved = true;
+      });
+
+      const { response } = streaming(
+        fillPayload(
+          [loaderSeg("L0R0D1.reviews", "reviews", { reviews: 5 })],
+          adoption.matched,
+        ),
+      );
+      fill.resolve(response);
+      await tick(0);
+
+      expect(resolved).toBe(true);
+      expect(
+        store.cache.get("/product")!.segments.some((s) => s.deferred),
+      ).toBe(false);
+    });
+
     it("lands as soon as the stream is complete", async () => {
       vi.useFakeTimers();
       const adoption = loaderAdoption();
@@ -863,7 +935,7 @@ describe("the fill landing", () => {
   describe("for a unit on a page that commits in a transition", () => {
     const transition = {};
 
-    it("holds the adoption: its update carries a promise of the tree", async () => {
+    it("holds the adoption: its update carries a promise nobody resolves", async () => {
       const adoption = unitAdoption({ transition });
       const { navigate, onUpdate } = setup(adoption);
       let lane: boolean | undefined;
@@ -879,37 +951,54 @@ describe("the fill landing", () => {
       expect(await settled(adopted.root)).toBe(false);
     });
 
-    it("lands with the fill's first chunk and resolves that promise with the tree, the unit's content in it", async () => {
+    // One update, in a transition: React commits it with the adoption's
+    // (two transition updates of one state), so the tree, what the fill
+    // pushed and the location state the server set arrive in one commit, as
+    // a plain click's do. Handed over after that commit, the state was one
+    // commit behind the content.
+    it("lands with the fill's first chunk: one update in a transition carries the tree, the unit's content in it, and what the fill pushed", async () => {
       const adoption = unitAdoption({ transition });
-      const { navigate, fill, store, onUpdate, renderSegments } =
-        setup(adoption);
+      const hooks = { redirect: vi.fn(), locationState: vi.fn() };
+      const { navigate, fill, store, onUpdate, renderSegments } = setup(
+        adoption,
+        { fill: hooks },
+      );
       await navigate();
-      const adopted = onUpdate.mock.calls[0][0];
       const gate = adoption.unit.component as unknown as Promise<unknown>;
+      const order: string[] = [];
+      hooks.locationState.mockImplementation(() => order.push("state"));
+      onUpdate.mockImplementation(() =>
+        order.push(transitionState.inTransition ? "transition" : "urgent"),
+      );
 
       // Still streaming: a plain click commits with its first chunk too.
-      fill.resolve({
+      const response = {
         ...fillPayload([adoption.filled], adoption.matched),
         streamComplete: new Promise<void>(() => {}),
-      });
+      };
+      (response.payload.metadata as any).locationState = { flash: "saved" };
+      fill.resolve(response);
       await flush();
 
-      await expect(adopted.root).resolves.toBe("tree-2");
+      // The state is the entry's before React is handed the update that
+      // reads it.
+      expect(order).toEqual(["state", "transition"]);
+      expect(onUpdate).toHaveBeenCalledTimes(2);
+      const landed = onUpdate.mock.calls[1][0];
+      expect(Object.keys(landed).sort()).toEqual(["metadata", "root"]);
+      expect(landed.root).toBe("tree-2");
+      expect(landed.metadata).toBe(response.payload.metadata);
       expect(store.cache.get("/product")!.segments[1]).toBe(adoption.filled);
       expect(adoption.filled.component).toBe("unit-content");
       await expect(gate).resolves.toBe("unit-content");
       // The tree is the page's first: nothing in it is on screen yet.
       const options = (renderSegments.mock.calls[1] as unknown[])[1];
       expect((options as { forceAwait?: boolean }).forceAwait).toBe(false);
-      expect(onUpdate).toHaveBeenCalledTimes(1);
 
-      // What the fill pushed, once React has committed that tree.
+      // Nothing is left to hand over once React has committed.
       showAdoption(onUpdate);
       await flush();
       expect(onUpdate).toHaveBeenCalledTimes(2);
-      const pushed = onUpdate.mock.calls[1][0];
-      expect(Object.keys(pushed).sort()).toEqual(["metadata", "root"]);
-      expect(pushed.root).toBe("tree-2");
     });
 
     it("does not hold a page whose deferred segments are loaders", async () => {
@@ -1097,6 +1186,32 @@ describe("a fill that does not land", () => {
     );
     expect(await settled(gate)).toBe(false);
     expect(loaderStore.isStreamPending("reviews")).toBe(false);
+  });
+
+  // Checked before anything is handed over: the adoption's `matched`, the
+  // location state and the handle data of a response the client then
+  // refuses would stay behind under the error.
+  it("hands nothing over from a response it cannot use", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const adoption = loaderAdoption();
+    const hooks = { redirect: vi.fn(), locationState: vi.fn() };
+    const { navigate, fill, onUpdate } = setup(adoption, { fill: hooks });
+    await navigate();
+    showAdoption(onUpdate);
+    const matched = [...adoption.matched];
+
+    const response = fillPayload([], [...matched, "L0R0D2.extra"]);
+    (response.payload.metadata as any).locationState = { flash: "saved" };
+    fill.resolve(response);
+    await flush();
+
+    expect(errorOf(onUpdate)).toBe(
+      "[rango] fill: missing segments [L0R0D1.reviews, L0R0D2.extra]",
+    );
+    expect(adoption.matched).toEqual(matched);
+    expect(hooks.locationState).not.toHaveBeenCalled();
+    // The adoption and the error.
+    expect(onUpdate).toHaveBeenCalledTimes(2);
   });
 
   // The error's commit is also the commit the adoption's update was

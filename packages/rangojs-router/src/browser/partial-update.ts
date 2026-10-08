@@ -124,6 +124,20 @@ export interface PartialUpdateConfig {
 
 const FILL_REDIRECT_NOT_FOLLOWED = "[rango] fill: redirect not followed";
 
+/** Rewrite `into` in place: its holders keep the array. */
+function replace<T>(into: T[], items: readonly T[]): void {
+  into.splice(0, into.length, ...items);
+}
+
+/** The ids of `matched` that `segments` lacks. */
+function missingIds(
+  matched: readonly string[],
+  segments: readonly ResolvedSegment[],
+): string[] {
+  const ids = new Set(segments.map((s) => s.id));
+  return matched.filter((id) => !ids.has(id));
+}
+
 /**
  * How long React keeps a fallback on screen before a Suspense retry may
  * replace it (FALLBACK_THROTTLE_MS in react-reconciler's work loop). A plain
@@ -134,6 +148,11 @@ const FILL_REDIRECT_NOT_FOLLOWED = "[rango] fill: redirect not followed";
  * includes, with a second fallback where the plain click shows one (measured
  * with 100 ms to the first chunk: content 200 ms late). So a fill that is
  * still streaming lands this long after its own first chunk.
+ *
+ * The rule is for a fallback that is on screen. Where React has not committed
+ * the adoption when the fill answers, nothing is up to be revealed early, and
+ * the fill does not wait: a page React holds for a read with no boundary
+ * would stay this long after its value arrived, for nothing.
  *
  * Not ours to tune. The latency cases of
  * expectAdoptedClickIsNeverWorseThanAPlainClick (tests/shared-e2e) fail when
@@ -148,9 +167,17 @@ const FALLBACK_THROTTLE_MS = 300;
  * with (rsc/rsc-rendering.ts sourceScoped, prefetch/cache.ts buildSourceKey),
  * and the server defers nothing that request listed as held.
  */
-interface Gate {
-  promise: Promise<unknown>;
-  resolve(value: unknown): void;
+interface Gate<T = unknown> {
+  promise: Promise<T>;
+  resolve(value: T): void;
+}
+
+function newGate<T>(): Gate<T> {
+  let resolve!: Gate<T>["resolve"];
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
 }
 
 /**
@@ -167,31 +194,40 @@ interface Fill {
   matched: string[];
   controller: AbortController;
   /** The response arrived: from here it is dropped, never aborted mid-read. */
-  responded: boolean;
-  cancelled: boolean;
-  /** tx.commit() ran for the adoption: its placeholders are on screen. */
-  committed: boolean;
-  /** Resolves once React has committed the adoption's tree. */
-  shown: Promise<void>;
+  responded?: boolean;
+  cancelled?: boolean;
+  /**
+   * React has committed the adoption's tree: its fallbacks are on screen.
+   * Until then React may be holding the adoption on one of these gates (a
+   * read with no boundary), so nothing a gate waits for may wait for this.
+   */
+  shown?: boolean;
+  /** Resolves when `shown` turns true. */
+  whenShown: Promise<void>;
   show(): void;
-  /** The tree on screen: the adoption's, or the one a waiting fill landed. */
+  /** The adoption's tree, or the one a fill landed for a held adoption. */
   root?: ReactNode;
   /** Whether the adoption rendered its tree with forceAwait. */
   forceAwait?: boolean;
   /**
-   * Set where the adoption commits nothing until its fill has responded: a
-   * deferred unit on a page a plain click commits in a transition. React
-   * renders such a page's content in the commit that shows its fallback, in
-   * a render that can wait. Once the fallback is up no commit can bring the
-   * content in that way: each either starts a view transition of its own
-   * (whenever a <ViewTransition> is mounted anywhere on the page, the
-   * router's included) or schedules a retry that commits while a read is
-   * still streaming, which starts one too, and the reveal waits behind it
-   * (measured: three transitions for two, content up to 280 ms late). So the
-   * adoption's update carries a promise of the tree, resolved here.
+   * The adoption commits nothing until its fill has responded: a deferred
+   * unit on a page a plain click commits in a transition. React renders such
+   * a page's content in the commit that shows its fallback, in a render that
+   * can wait. Once the fallback is up no commit can bring the content in
+   * that way: each either starts a view transition of its own (whenever a
+   * <ViewTransition> is mounted anywhere on the page, the router's included)
+   * or schedules a retry that commits while a read is still streaming, which
+   * starts one too, and the reveal waits behind it (measured: three
+   * transitions for two, content up to 280 ms late). So the adoption's
+   * update carries a promise nobody resolves, and the fill hands its tree
+   * over in a transition of its own: two transition updates of one state,
+   * which React commits as one.
    */
-  land?: (root: ReactNode) => void;
-  /** Settles with `committed`, or false when the adoption is abandoned. */
+  held?: boolean;
+  /**
+   * Settles with true once tx.commit() has run for the adoption (its
+   * placeholders are on screen), or with false when it is abandoned.
+   */
   whenCommitted: Promise<boolean>;
   commit(): void;
   cancel(): void;
@@ -199,6 +235,7 @@ interface Fill {
 
 /** What one fetchPartialUpdate call adopted, if its payload deferred. */
 interface Adoption {
+  /** The fill, until tx.commit() has put its placeholders on screen. */
   fill?: Fill;
   /** Resolves once the fill has landed and streamed, or was abandoned. */
   filled?: Promise<void>;
@@ -291,11 +328,7 @@ export function createPartialUpdater(
    * leaves it out of the store's ids).
    */
   function getCurrentCachedSegments(): ResolvedSegment[] {
-    const currentKey = store.getHistoryKey();
-    const segments = store.getCachedSegments(currentKey)?.segments || [];
-    return segments.some((s) => s.deferred)
-      ? segments.filter((s) => !s.deferred)
-      : segments;
+    return (entryOnScreen() || []).filter((s) => !s.deferred);
   }
 
   /**
@@ -307,45 +340,36 @@ export function createPartialUpdater(
     const gates = new Map<ResolvedSegment, Gate>();
     const units: ResolvedSegment[] = [];
     for (const segment of placeholders) {
-      let resolve!: Gate["resolve"];
-      const promise = new Promise<unknown>((res) => {
-        resolve = res;
-      });
+      const gate = newGate();
       if (segment.type === "loader") {
-        segment.loaderData = promise;
+        segment.loaderData = gate.promise;
       } else {
-        segment.component = promise as ReactNode;
+        segment.component = gate.promise as ReactNode;
         units.push(segment);
       }
-      gates.set(segment, { promise, resolve });
+      gates.set(segment, gate);
     }
-    let settleCommitted!: (committed: boolean) => void;
-    let show!: () => void;
-    const shown = new Promise<void>((res) => {
-      show = res;
-    });
+    const committed = newGate<boolean>();
+    const shown = newGate<void>();
     const fill: Fill = {
       gates,
       units,
       matched,
       controller: new AbortController(),
-      responded: false,
-      cancelled: false,
-      committed: false,
-      shown,
-      show,
-      whenCommitted: new Promise<boolean>((res) => {
-        settleCommitted = res;
-      }),
+      whenShown: shown.promise,
+      show() {
+        fill.shown = true;
+        shown.resolve();
+      },
+      whenCommitted: committed.promise,
       commit() {
-        fill.committed = true;
-        settleCommitted(true);
+        committed.resolve(true);
         setPendingFill(fill.cancel);
       },
       cancel() {
         if (fill.cancelled) return;
         fill.cancelled = true;
-        settleCommitted(false);
+        committed.resolve(false);
         // Aborting a Flight stream mid-read makes the decoder throw
         // asynchronously: abort only while waiting for the response.
         if (!fill.responded) fill.controller.abort();
@@ -460,46 +484,6 @@ export function createPartialUpdater(
       if (!live) return;
 
       const matched = metadata.matched || [];
-      // The adoption's handle stream (NavigationProvider processHandles)
-      // reads its payload's `matched` on every yield and drops the buckets of
-      // segments outside it. A deferred unit's `matched` stops at the unit:
-      // a late yield would delete what the fill pushed below it.
-      fill.matched.splice(0, fill.matched.length, ...matched);
-      if (metadata.locationState) {
-        config.fill?.locationState(metadata.locationState);
-      }
-
-      // By the entry, not by its placeholders: what the fill pushed is
-      // handed over after it has landed where React holds the adoption.
-      const gone = (): boolean => fill.cancelled || entryOnScreen() !== live;
-      // What the deferred handlers pushed, under the tree on screen. Every
-      // update of a fill is urgent and made once the adoption is on screen.
-      // In a transition of its own it would wait for the view transition
-      // that is running and start another, whenever a <ViewTransition> is
-      // mounted anywhere on the page, changed or not, and every reveal
-      // behind it would wait in turn (measured on a unit under transition():
-      // three transitions for two, content up to 280 ms late). Sooner, it
-      // would commit the page ahead of the transition the adoption is in.
-      // No `scroll`: a fill is not a navigation transaction. A decision here,
-      // even "do not scroll", would replace the adoption's pending one
-      // (NavigationProvider).
-      void fill.shown.then(() => {
-        if (!gone()) onUpdate({ root: fill.root, metadata });
-      });
-
-      if (!fill.land) {
-        // A plain click's fallback shows with its response and React keeps
-        // it up for FALLBACK_THROTTLE_MS. This one has been up since the
-        // click: released now, what the fill brought would be revealed a
-        // round trip sooner than a plain click reveals it, without what is
-        // still on its way.
-        await Promise.race([
-          result.streamComplete.catch(() => {}),
-          new Promise((resolve) => setTimeout(resolve, FALLBACK_THROTTLE_MS)),
-        ]);
-        if (gone()) return;
-      }
-
       const kept = live.filter((s) => !s.deferred);
       const reconciled = reconcileSegments({
         actor: "stale-revalidation",
@@ -509,31 +493,78 @@ export function createPartialUpdater(
         cachedSegments: kept,
         insertMissingDiff: true,
       });
-      const missing = matched.filter(
-        (id) => !reconciled.segments.some((s) => s.id === id),
-      );
+      const missing = missingIds(matched, reconciled.segments);
       if (missing.length > 0) {
         throw new Error(
           `[rango] fill: missing segments [${missing.join(", ")}]`,
         );
       }
 
-      // A unit where the adoption is on screen gets a tree, in which it
+      // Nothing of the response is handed over before this point: what a
+      // response the client then refuses had set would stay under the error.
+      //
+      // The adoption's handle stream (NavigationProvider processHandles)
+      // reads its payload's `matched` on every yield and drops the buckets of
+      // segments outside it. A deferred unit's `matched` stops at the unit:
+      // a late yield would delete what the fill pushed below it.
+      replace(fill.matched, matched);
+      if (metadata.locationState) {
+        config.fill?.locationState(metadata.locationState);
+      }
+
+      // By the entry, not by its placeholders: what the fill pushed is
+      // handed over after it has landed where React holds the adoption.
+      const gone = (): boolean => fill.cancelled || entryOnScreen() !== live;
+      // What the deferred handlers pushed, under the tree on screen. Every
+      // update a fill makes on a page that is on screen is urgent, and made
+      // once the adoption is on screen. In a transition of its own it would
+      // wait for the view transition that is running and start another,
+      // whenever a <ViewTransition> is mounted anywhere on the page, changed
+      // or not, and every reveal behind it would wait in turn (measured on a
+      // unit under transition(): three transitions for two, content up to
+      // 280 ms late). Sooner, it would commit the page ahead of the
+      // transition the adoption is in.
+      // No `scroll`: a fill is not a navigation transaction. A decision here,
+      // even "do not scroll", would replace the adoption's pending one
+      // (NavigationProvider).
+      const push = (): void => {
+        if (!gone()) onUpdate({ root: fill.root, metadata });
+      };
+      if (!fill.held) void fill.whenShown.then(push);
+
+      // The adoption's fallbacks are on screen, where a plain click's show
+      // with its response and React keeps them up for FALLBACK_THROTTLE_MS.
+      // These have been up since the click: released now, what the fill
+      // brought would be revealed a round trip sooner than a plain click
+      // reveals it, without what is still on its way. Where React has not
+      // committed the adoption there is no fallback to keep up, and it may
+      // be one of these gates that React is waiting for.
+      const shown = fill.shown;
+      if (shown) {
+        await Promise.race([
+          result.streamComplete.catch(() => {}),
+          new Promise((resolve) => setTimeout(resolve, FALLBACK_THROTTLE_MS)),
+        ]);
+        if (gone()) return;
+      }
+
+      // A unit whose adoption commits its own tree gets a tree, in which it
       // keeps reading its gate. The gate resolves once React has committed
       // that tree, so the unit is revealed by a Suspense retry, throttled and
       // animated as a plain click's is: with its content already there this
       // commit would reveal it at once, and a boundary inside it would show
-      // its fallback for data a few milliseconds away. The gates of the
-      // loaders a unit owns resolve with it: a slot reads them above its
-      // content, and would otherwise show its fallback twice. Any other
-      // loader's gate resolves now (React may be holding the adoption for
-      // it: a read with no boundary), and its reader, which is on screen,
-      // keeps reading it in the tree.
+      // its fallback for data a few milliseconds away. Where the fallbacks
+      // are on screen the gates of the loaders a unit owns resolve with it: a
+      // slot reads them above its content, and would otherwise show its
+      // fallback twice. Every other loader gate resolves now. React may be
+      // holding the adoption for it (a read with no boundary, which can be a
+      // layout's read of a loader its unit owns), and its reader keeps
+      // reading it in the tree.
       const brought = reconciled.segments.filter(
         (s) => !kept.some((held) => held.id === s.id),
       );
       const hasUnit = fill.units.length > 0;
-      const tree = !fill.land && hasUnit;
+      const tree = hasUnit && !fill.held;
       const revealed = new Map<Gate, unknown>();
       const streams: Array<[ResolvedSegment, unknown]> = [];
       for (const [placeholder, gate] of fill.gates) {
@@ -544,19 +575,16 @@ export function createPartialUpdater(
         }
         const unit = placeholder.type !== "loader";
         const value: unknown = unit ? next.component : next.loaderData;
-        if (
-          tree &&
-          (unit
-            ? next.loading
-            : fill.units.some((u) => u.namespace === placeholder.namespace))
-        ) {
-          revealed.set(gate, value);
-        } else {
-          gate.resolve(value);
-        }
+        const owned = fill.units.some(
+          (u) => u.namespace === placeholder.namespace,
+        );
+        // With the tree's commit, or now.
+        const reveal = tree && (unit ? next.loading : owned && shown);
+        if (reveal) revealed.set(gate, value);
+        else gate.resolve(value);
         if (unit) {
-          if (revealed.has(gate)) next.component = gate.promise as ReactNode;
-        } else if (tree && !revealed.has(gate)) {
+          if (reveal) next.component = gate.promise as ReactNode;
+        } else if (tree && !owned) {
           streams.push([next, value]);
           next.loaderData = gate.promise;
         }
@@ -566,31 +594,37 @@ export function createPartialUpdater(
       // the gates.
       if (hasUnit) {
         if (tree) {
-          await fill.shown;
+          await fill.whenShown;
           // Rendered as the adoption's tree was, what the fill brought
           // standing in it as still streaming: nothing of it is awaited, and
           // nothing already on screen reaches React as a promise it has not
           // read, which a render that cannot wait would suspend on.
           for (const segment of brought) segment.deferred = true;
         }
-        const root = await renderSegments(reconciled.mainSegments, {
-          forceAwait: tree && fill.forceAwait,
-          transitionGatedOff: gatedOff,
-          interceptSegments:
-            reconciled.interceptSegments.length > 0
-              ? reconciled.interceptSegments
-              : undefined,
-        });
-        for (const segment of brought) delete segment.deferred;
+        let root: ReactNode;
+        try {
+          root = await renderSegments(reconciled.mainSegments, {
+            forceAwait: tree && fill.forceAwait,
+            transitionGatedOff: gatedOff,
+            interceptSegments:
+              reconciled.interceptSegments.length > 0
+                ? reconciled.interceptSegments
+                : undefined,
+          });
+        } finally {
+          for (const segment of brought) delete segment.deferred;
+        }
         // The entry keeps the fill's own streams: the next render from
         // this page builds on them, and a gate is a promise React has read
         // only where a reader was on screen.
         for (const [segment, stream] of streams) segment.loaderData = stream;
         if (gone()) return;
-        if (fill.land) {
-          // The adoption's transition is waiting for this tree: the page
-          // commits once, as the plain click commits it.
-          fill.land((fill.root = root));
+        if (fill.held) {
+          // The adoption's transition is waiting: this update joins it, so
+          // the page commits once, as the plain click commits it, with what
+          // the fill pushed and the location state the server set.
+          fill.root = root;
+          startTransition(push);
         } else {
           // The handle stream is being read already: not handed over twice.
           onUpdate({
@@ -607,7 +641,7 @@ export function createPartialUpdater(
       // place, not re-cached. cacheSegmentsForHistory would advance the
       // store's nav instance and disown the adoption's handle stream, and
       // would reset the entry's stale flag.
-      live.splice(0, live.length, ...reconciled.segments);
+      replace(live, reconciled.segments);
       store.setSegmentIds(matched);
       landed.streamComplete = result.streamComplete;
     } catch (thrown) {
@@ -666,7 +700,7 @@ export function createPartialUpdater(
     } finally {
       // An adoption that never committed (aborted, failed) has no tree to
       // fill: stop its request.
-      if (adoption.fill && !adoption.fill.committed) adoption.fill.cancel();
+      adoption.fill?.cancel();
     }
   }
 
@@ -1018,18 +1052,15 @@ export function createPartialUpdater(
         insertMissingDiff: true,
       });
 
-      const reconciledIdSet = new Set(reconciled.segments.map((s) => s.id));
-      const missingIds = matchedIds.filter(
-        (id: string) => !reconciledIdSet.has(id),
-      );
+      const missing = missingIds(matchedIds, reconciled.segments);
 
-      if (missingIds.length > 0) {
-        const missingCount = missingIds.length;
+      if (missing.length > 0) {
+        const missingCount = missing.length;
 
         if (isRetry) {
-          console.warn("Missing ids", { missingIds });
+          console.warn("Missing ids", { missingIds: missing });
           throw new Error(
-            `[Browser] Failed to fetch segments after retry. Missing: [${missingIds.join(", ")}]`,
+            `[Browser] Failed to fetch segments after retry. Missing: [${missing.join(", ")}]`,
           );
         }
         if (signal?.aborted) {
@@ -1176,11 +1207,11 @@ export function createPartialUpdater(
         fill.root = newTree;
         fill.forceAwait = renderOptions.forceAwait;
         if (hasTransition && fill.units.length > 0) {
-          root = new Promise((resolve) => {
-            fill!.land = resolve;
-          });
+          fill.held = true;
+          root = new Promise(() => {});
         }
         fill.commit();
+        adoption.fill = undefined;
       }
 
       if (mode.type === "stale-revalidation") {
