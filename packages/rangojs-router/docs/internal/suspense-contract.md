@@ -193,13 +193,25 @@ Three more fields are counts, not violations: `treeUpdates` (per cause), `handed
 distinct thenables each boundary or read was handed) and `shownWhilePending` (rule 3's
 by-design fallbacks).
 
-The audit is dev only. The boundary components pick their audited variant once per
-module (`RouteContentWrapper`, `LoaderBoundary`, `OutletProvider`), and every other call
-sits behind `process.env.NODE_ENV !== "production"`. No audit code reaches a build:
-cloudflare-basic's client router chunk is 47,515 B gzip against 47,488 B on main, and the
-27 B are three one-line aliases. The switch is per module and not a branch inside the
-component because React Compiler runs before `NODE_ENV` is folded: a dev branch in a
-compiled component leaves its memo slots behind (measured: 76 B).
+The audit is dev only, and a build does not change: `RouteContentWrapper`,
+`LoaderBoundary` and `OutletProvider` are the product components, untouched. Their
+audited variants (`AuditedRouteContent`, `AuditedLoaderBoundary`,
+`AuditedOutletProvider`) are exports of their own, and `segment-system.tsx` picks one
+where it creates an element, inside a `process.env.NODE_ENV !== "production"` test the
+minifier folds away; a slot's boundaries (`client.tsx`) and the resolver's provider are
+swapped for their audited variants after the fact, behind the same test. Every other
+audit call sits behind it too.
+
+You might wonder why not the obvious ways. Both were measured in cloudflare-basic's
+client router chunk and both leave bytes behind. A dev branch inside the product
+component costs 76 B gzip: React Compiler runs before `NODE_ENV` is folded and keeps the
+branch's memo slots. One `export const X = dev ? Audited : Product` per module costs
+27 B: the alias statements survive minification. And the server bundles are not
+minified at all: they keep JSDoc blocks, so the dev-only declarations carry line
+comments. With the current layout, cloudflare-basic, cloudflare-stress-demo and the
+test-app build byte for byte as on main, server bundles included, apart from the cache
+version table, which hashes the sources. `check:bundle-guards` fails if an audit module
+reaches a client build.
 
 **The console guard.** `tests/shared-e2e/src/console-guard.ts` is installed by
 `useFixture` in both apps, so every dev e2e test runs under it with no opt-in. A deny
@@ -210,11 +222,29 @@ with `expectConsole(page, { allow: [/.../] })`, and fails if the message does no
 Messages on neither list go to the test's annotations and to one `messages.jsonl` per
 run.
 
-What fails on main today is listed in `tools/e2e-console-baseline.json`, one entry per
-test and rule, each with a reason. `pnpm check:e2e-console-baseline` (CI lint job) fails
-on an entry without a reason or one whose test is gone; the guard itself fails a test
-whose entry no longer fires. A message that depends on timing goes into the baseline
-marked `intermittent`, not behind a retry.
+What fails on main today and no test asks for is listed in
+`tools/e2e-console-baseline.json`, one entry per test and rule, each with a reason:
+the I2 reports (`#1079`, with the lane below), and messages no test declares
+(`Undeclared, cause: ...`). `pnpm check:e2e-console-baseline` (CI lint job) fails on an
+entry without a reason or one whose test is gone; the guard itself fails a test whose
+entry no longer fires. A message that depends on timing goes into the baseline marked
+`intermittent`, not behind a retry. A test that provokes an error on purpose (an error
+boundary, a failed action, a redirect loop) declares it with `expectConsole` instead.
+
+The 36 I2 entries fall into four lanes, measured with the audit's traces: the commit
+that handed the settled, unread promise, and whether a fallback then covered the
+content.
+
+| Lane                                                      | Tests | Fallback over the content             | Example                                                                      |
+| --------------------------------------------------------- | ----- | ------------------------------------- | ---------------------------------------------------------------------------- |
+| Action commit inside a transition                         | 13    | none: the transition holds            | `inline-bound-action.test.ts`, document MISS streams a bound action          |
+| Same-route navigation inside a transition scope           | 10    | none: the transition holds            | `conditional-transition.test.ts`, holds the same-route nav                   |
+| Same-route navigation gated off by `transition({ when })` | 12    | 300 ms, the skeleton the test expects | `conditional-transition.test.ts`, re-streams the skeleton on same-route nav  |
+| Action commit gated off by `transition({ when })`         | 1     | 300 ms                                | `transition-when-browser.test.ts`, an action commit decides with kind action |
+
+No entry is a slot boundary or a plain streaming navigation: every one is a route's
+content boundary (`content:<segment id>`) handed a promise of a component the client
+already holds.
 
 **The cases.** `tests/shared-e2e/src/suspense-cases.ts` and
 `held-boundary-scenario.ts`, run by `suspense-cases.test.ts` and `held-boundary.test.ts`
