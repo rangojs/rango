@@ -255,6 +255,14 @@ function finish(testInfo: TestInfo, state: GuardState): void {
   const problems: string[] = [];
   const seenRules = new Set<string>();
   const annotated = new Set<string>();
+  // Every test, so a recorded run can tell a quiet test from one that did
+  // not run (tools/check-e2e-console-baseline.mjs --from).
+  append(testInfo, "tests.jsonl", {
+    app: state.app,
+    project: testInfo.project.name,
+    test: name,
+    status: testInfo.status,
+  });
   for (const message of state.messages) {
     append(testInfo, "messages.jsonl", {
       app: state.app,

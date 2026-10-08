@@ -1,0 +1,400 @@
+{
+  "entries": [
+    {
+      "app": "cloudflare-basic",
+      "test": "ppr-header-guard.test.ts > ppr-header-guard (dev) > basket continuity: action POST -> GET(HIT) still sees the session cookie",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "cloudflare-basic",
+      "test": "ppr-push-ownership.test.ts > ppr push ownership (dev) > a document HIT of an entry without loader pins shows the run's push next to the run's data",
+      "rule": "react-hydration-mismatch",
+      "reason": "Found by the guard on main, not declared by the test, cause not established: React reports a hydration mismatch."
+    },
+    {
+      "app": "cloudflare-basic",
+      "test": "ppr-shell.test.ts > ppr-shell caching (dev) > document HIT streams a bound action while a page hole is pending",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "cloudflare-basic",
+      "test": "ppr-shell.test.ts > ppr-shell caching (dev) > document MISS streams a bound action while a page hole is pending",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "cloudflare-basic",
+      "test": "ppr-shell.test.ts > ppr-shell caching (dev) > partial PPR replay streams a bound action while a page hole is pending",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "cloudflare-basic",
+      "test": "redirect-loop.test.ts > redirect-loop > a redirect loop stops at the hop limit and renders the error boundary",
+      "rule": "rango-error",
+      "reason": "On purpose: the test drives a redirect loop to its hop limit."
+    },
+    {
+      "app": "cloudflare-basic",
+      "test": "tx-when-transition.test.ts > tx-when transition (dev) > <Link transition={false}> gates its navigation off without calling when",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "cloudflare-basic",
+      "test": "tx-when-transition.test.ts > tx-when transition (dev) > Def.read(ctx.to): a Link pushing { animate: false } gates its navigation off",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "cloudflare-basic",
+      "test": "tx-when-transition.test.ts > tx-when transition (dev) > an inline when holds the same-route nav (no skeleton) when the destination's :hold is 1",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "cloudflare-basic",
+      "test": "tx-when-transition.test.ts > tx-when transition (dev) > an inline when re-streams the skeleton on same-route nav when the destination's :hold is 0",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "cloudflare-basic",
+      "test": "tx-when-transition.test.ts > tx-when transition (dev) > back/forward decides with kind pop against the entry left",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "cloudflare-basic",
+      "test": "tx-when-transition.test.ts > tx-when transition (dev) > when gates on the navigation source: re-streams when navigating away from n=b",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "cloudflare-basic",
+      "test": "tx-when-transition.test.ts > tx-when transition (dev) > when runs in the browser with the navigation source, never on the document load, and holds away from n=a",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "cloudflare-basic",
+      "test": "unprocessable-nav-boundary.test.ts > unprocessable navigation response (dev) > an unprocessable response triggers the error boundary",
+      "rule": "rango-error",
+      "reason": "On purpose: the test serves a response the browser cannot process."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "action-route-mw.test.ts > action error boundary under route middleware (dev) > route-middleware header is present on BOTH success and error-boundary action responses",
+      "rule": "rango-error",
+      "reason": "On purpose: the test's action throws, and the browser logs the failed action."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "client-urls.test.ts > clientUrls vertical slice > hook probe: a plain React ErrorBoundary is the in-group error affordance",
+      "rule": "rango-error",
+      "reason": "On purpose: the test throws to reach an error boundary, and the boundary logs what it caught."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "client-urls.test.ts > clientUrls vertical slice > middleware vars: a createVar token and a string key reach a group loader on the document and partial lanes",
+      "rule": "react-use-not-called",
+      "reason": "Found by the guard on main, not declared by the test, cause not established: React reports that use() suspended in an earlier render and was not called when the render finished."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "conditional-transition.test.ts > conditional-transition (dev) > transition({ when }) gates on the navigation source: holds when navigating away from n=a",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "conditional-transition.test.ts > conditional-transition (dev) > transition({ when }) gates on the navigation source: re-streams when navigating away from n=b",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "conditional-transition.test.ts > conditional-transition (dev) > transition({ when }) holds the same-route nav (no skeleton) when the predicate returns true",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "conditional-transition.test.ts > conditional-transition (dev) > transition({ when }) re-streams the skeleton on same-route nav when the predicate returns false",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "error-boundary.test.ts > error-boundary > client-component-errors > client error replaces segment tree with error fallback",
+      "rule": "rango-error",
+      "reason": "On purpose: the test throws to reach an error boundary, and the root boundary logs what it caught."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "error-boundary.test.ts > error-boundary > client-component-errors > should show error boundary when client component throws on interaction",
+      "rule": "rango-error",
+      "reason": "On purpose: the test throws to reach an error boundary, and the root boundary logs what it caught."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "error-boundary.test.ts > error-boundary > navigation-after-error > server error preserves layout, client error replaces it",
+      "rule": "rango-error",
+      "reason": "On purpose: the test throws to reach an error boundary, and the root boundary logs what it caught."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "error-boundary.test.ts > error-boundary > streaming-errors > SPA navigation to streaming error replaces layout",
+      "rule": "rango-error",
+      "reason": "On purpose: the test throws to reach an error boundary, and the root boundary logs what it caught."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "error-boundary.test.ts > error-boundary > streaming-errors > should show loading then error boundary for streaming error",
+      "rule": "rango-error",
+      "reason": "On purpose: the test throws to reach an error boundary, and the root boundary logs what it caught."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "handle-meta.test.ts > handle-meta > async handle passthrough (late push error) > should not render the async child content once the late push errors",
+      "rule": "rango-error",
+      "reason": "On purpose: the test throws to reach an error boundary, and the root boundary logs what it caught."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "handle-meta.test.ts > handle-meta > async handle passthrough (late push error) > should show error boundary when async child pushes meta too late",
+      "rule": "rango-error",
+      "reason": "On purpose: the test throws to reach an error boundary, and the root boundary logs what it caught."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "hydration-detection.test.ts > hydration-error-detection > waitForHydration should catch hydration mismatch errors",
+      "rule": "react-hydration-mismatch",
+      "reason": "On purpose: the fixture mismatches so waitForHydration can be shown to detect it."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "inline-bound-action.test.ts > inline bound action (dev) > document HIT streams a bound action while a page hole is pending",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "inline-bound-action.test.ts > inline bound action (dev) > document MISS streams a bound action while a page hole is pending",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "inline-bound-action.test.ts > inline bound action (dev) > partial PPR replay streams a bound action while a page hole is pending",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "loader-behavior.test.ts > loader-behavior > loader-revalidation > action on skipSSR route after SPA navigation should trigger loader revalidation",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "loader-behavior.test.ts > loader-behavior > loader-revalidation > action on streaming route should trigger loader revalidation",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "location-state.test.ts > stateful-navigation-failure > failed stateful navigation shows error UI at source URL",
+      "rule": "rango-error",
+      "reason": "On purpose: the test fails the navigation request."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "mini.test.ts > mini > transition(): same-route nav holds the subtree (state survives)",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "navigation.test.ts > stale-revalidation > should update quantity on intercept after action on detail page and back navigation",
+      "rule": "rango-error",
+      "reason": "Found by the guard on main, not declared by the test, cause not established: the browser logs a loader segment missing from its cache while an intercept revalidates after an action."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "on-error.test.ts > onError > action error reports phase='action'",
+      "rule": "rango-error",
+      "reason": "On purpose: the test's action throws, and the browser logs the failed action."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "params-after-action.test.ts > useParams survives action revalidation (dev) > JS action error: useParams populated in error boundary",
+      "rule": "rango-error",
+      "reason": "On purpose: the test's action throws, and the browser logs the failed action."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "pending-actions.test.ts > pending-actions-navigation > action on intercept, navigate to detail, action completes - should not corrupt intercept cache",
+      "rule": "rango-error",
+      "reason": "Found by the guard on main, not declared by the test, cause not established: the browser logs a loader segment missing from its cache while an intercept revalidates after an action."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "prefetch-intercept-source.test.ts > prefetch-intercept-source (dev) > control: a route no intercept targets serves clicks from two pages with one prefetch",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "progressive-enhancement.test.ts > progressive-enhancement > with JavaScript enabled > form submission should work with JS enhancement",
+      "rule": "react-hydration-mismatch",
+      "reason": "Found by the guard on main, not declared by the test, cause not established: React reports a hydration mismatch."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "redirect-loop.test.ts > redirect-loop > a redirect loop stops at the hop limit and renders the error boundary",
+      "rule": "rango-error",
+      "reason": "On purpose: the test drives a redirect loop to its hop limit."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "ref-serialization.test.ts > ref-serialization > loader-ref-as-prop > revalidation: should reload loader data via prop-passed ref",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "rendered-barrier.test.ts > rendered-barrier (dev) > streaming deadlock: handler awaiting a rendered() loader errors, does not hang",
+      "rule": "rango-error",
+      "reason": "On purpose: the test throws to reach an error boundary, and the root boundary logs what it caught."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "shell-cache-action.test.ts > shell-cache action correctness (dev) > JS action mutates SHELL material + updateTag: hard GET MISSes then recaptures the new shell",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "shell-cache-action.test.ts > shell-cache action correctness (dev) > JS action mutates the HOLE; a later hard GET stays HIT with the mutated value",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "shell-push-ownership.test.ts > shell push ownership (dev) > a document HIT of an entry without loader pins shows the run's push next to the run's data",
+      "rule": "react-hydration-mismatch",
+      "reason": "Found by the guard on main, not declared by the test, cause not established: React reports a hydration mismatch."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "timeout.test.ts > timeout > slow action triggers onError with action phase",
+      "rule": "rango-error",
+      "reason": "On purpose: the test throws to reach an error boundary, and the root boundary logs what it caught."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "transition-when-browser.test.ts > transition-when browser decision (dev) > <Link transition={false}> gates its navigation off without calling when",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "transition-when-browser.test.ts > transition-when browser decision (dev) > Def.read(ctx.to): a Link pushing { animate: false } gates its navigation off",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "transition-when-browser.test.ts > transition-when browser decision (dev) > a failed action's error-boundary commit decides with action.error",
+      "rule": "rango-error",
+      "reason": "On purpose: the test's action throws, and the browser logs the failed action."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "transition-when-browser.test.ts > transition-when browser decision (dev) > a server-route when runs in the browser with the real source, never on the document load",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "transition-when-browser.test.ts > transition-when browser decision (dev) > an action commit decides with kind action, to === from, and the action's formData and result",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "transition-when-browser.test.ts > transition-when browser decision (dev) > an inline when in urls() is hoisted into a client module and decides in the browser",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "transition-when-browser.test.ts > transition-when browser decision (dev) > back/forward decides with kind pop against the entry left",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "transition-when-browser.test.ts > transition-when browser decision (dev) > router.refresh() decides with kind revalidate",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "transition-when-browser.test.ts > transition-when browser decision (dev) > router.refresh() gated off commits urgently: the skeleton streams",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "transition-when-regressions.test.ts > transition-when regressions (dev) > #995: state survives when true -> false -> true, and false still streams the skeleton",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "transition-when-regressions.test.ts > transition-when regressions (dev) > prefetch source: a prefetch reused from another page is decided against the page left",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "unprocessable-nav-boundary.test.ts > unprocessable navigation response (dev) > a fresh unprocessable response triggers the error boundary",
+      "rule": "rango-error",
+      "reason": "On purpose: the test serves a response the browser cannot process."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "unprocessable-nav-boundary.test.ts > unprocessable navigation response (dev) > a prefetched unprocessable response triggers the error boundary",
+      "rule": "rango-error",
+      "reason": "On purpose: the test serves a response the browser cannot process."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "unprocessable-nav-boundary.test.ts > unprocessable navigation response (dev) > an unprocessable router.refresh() response triggers the error boundary",
+      "rule": "rango-error",
+      "reason": "On purpose: the test serves a response the browser cannot process."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "use-cache-inline-action.test.ts > use cache embedded inline action (dev) > frozen capture + live body + live request scope",
+      "rule": "suspense-untracked",
+      "reason": "#1079: content on screen is handed a settled promise React has not read (audit I2). Inside a transition nothing flashes; on an urgent commit it is the 300 ms skeleton."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "use-loader-hooks.test.ts > Error handling - throwOnError: true (default) > should propagate error to ErrorBoundary when throwOnError is true",
+      "rule": "rango-error",
+      "reason": "On purpose: the test throws to reach an error boundary, and the boundary logs what it caught."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "use-loader-hooks.test.ts > useLoader throws when data missing > useLoader throws error when loader is NOT registered on route",
+      "rule": "rango-error",
+      "reason": "On purpose: the test throws to reach an error boundary, and the boundary logs what it caught."
+    }
+  ]
+}
