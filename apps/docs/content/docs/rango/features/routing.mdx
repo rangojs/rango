@@ -149,6 +149,20 @@ path("/product/:slug", async (ctx) => {
 
 `notFound()` falls back through the nearest `notFoundBoundary()` in the tree, then `defaultNotFoundBoundary` from `createRouter()`, then the `notFound` option, then a built-in `<h1>Not Found</h1>`. No-match and handler-thrown 404s always set HTTP 404. A loader can call `notFound()` too; on a document load its 404 status is only guaranteed when the loader is registered with `{ ssr: false }` ([reference](/docs/rango/reference/create-router#fallback-chain-for-notfound)).
 
+### Errors and `notFound()` in a streamed handler
+
+A handler on a route that declares `loading()` streams: it settles after the response has started. If it rejects, the nearest `errorBoundary()` renders in place of that segment (a parallel slot finds its layout's boundary); if it calls `notFound()`, the nearest `notFoundBoundary()` does. Layouts and navigation stay, on the document load and on a client navigation.
+
+```tsx
+path("/product/:slug", ProductPage, { name: "product" }, () => [
+  loading(<ProductSkeleton />),
+  errorBoundary(({ error }) => <ProductError message={error.message} />),
+  notFoundBoundary(() => <ProductNotFound />),
+]);
+```
+
+The HTTP status does not change: it was sent with the first flush, so a streamed failure keeps the status the stream already carried (200). `onError` still reports each failure once. With no declared `errorBoundary()`, the rejection reaches the client and the root error page replaces the whole page. `notFound()` in a streamed handler renders the `notFoundBoundary()` with status 200, where the same call before the flush (no `loading()`, or `loading(fallback, { ssr: false })` on a document load) sets 404. A loader's 404 is the same kind of best effort: the status is set only when the rejection settles before the response is built. A failed render is never cached: `cache()` skips the write for the scope that holds the failed segment, and a `ppr` shell or the document cache refuses the whole document. A `redirect()` thrown from a streamed handler is not turned into a fallback; issue redirects from middleware, a loader, or a synchronous handler return.
+
 ## Dev and production agree
 
 Dev and production resolve every request through the same route trie, built by the same builder. A route cannot match in dev and 404 in production — a parity test stands guard.

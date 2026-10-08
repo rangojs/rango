@@ -171,6 +171,8 @@ export async function rerenderAndCacheRoute<TEnv>(
     {
       _handleStore: handleStore,
       _metricsStore: undefined,
+      _renderErrors: [],
+      _recoveredHandlerErrors: undefined,
       _onResponseCallbacks: [],
       header: sink.header,
       setCookie: sink.setCookie,

@@ -1,4 +1,5 @@
-import type { Handler } from "@rangojs/router";
+import type { ReactNode } from "react";
+import { notFound, type Handler } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { ClientErrorThrower } from "../components/ClientErrorThrower.js";
 
@@ -25,6 +26,35 @@ export const ErrorsIndexHandler: Handler<"errors.index"> = () => (
       <li>
         <Link to="/errors/streaming-error" data-testid="streaming-error-link">
           Streaming Error
+        </Link>
+      </li>
+      <li>
+        <Link
+          to="/errors/streaming-declared"
+          data-testid="streaming-declared-link"
+        >
+          Streaming Error (declared boundary)
+        </Link>
+      </li>
+      <li>
+        <Link
+          to="/errors/streaming-declared-no-ssr"
+          data-testid="streaming-declared-no-ssr-link"
+        >
+          Streaming Error (declared boundary, ssr: false)
+        </Link>
+      </li>
+      <li>
+        <Link to="/errors/slot-ancestor" data-testid="slot-ancestor-link">
+          Slot failure (ancestor boundary)
+        </Link>
+      </li>
+      <li>
+        <Link
+          to="/errors/streaming-not-found"
+          data-testid="streaming-not-found-link"
+        >
+          Streaming notFound (declared boundary)
         </Link>
       </li>
     </ul>
@@ -82,3 +112,51 @@ export function ErrorsRenderingErrorHandler() {
     </div>
   );
 }
+
+export const ErrorsStreamingDeclaredHandler: Handler<
+  "errors.streamingDeclared"
+> = async () => {
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  throw new Error("Streaming declared: thrown after the response started");
+};
+
+export const ErrorsStreamingDeclaredNoSsrHandler: Handler<
+  "errors.streamingDeclaredNoSsr"
+> = async () => {
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  throw new Error("Streaming declared ssr false: thrown after the shell");
+};
+
+export const ErrorsStreamingNotFoundHandler: Handler<
+  "errors.streamingNotFound"
+> = async () => {
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  notFound("Streaming notFound: thrown after the response started");
+};
+
+let flakyFailing = true;
+
+/** Every flaky run fails until healed (a capture or re-render fails too). */
+export const ErrorsFlakyResetHandler = (): { ok: true } => {
+  flakyFailing = true;
+  return { ok: true };
+};
+
+export const ErrorsFlakyHealHandler = (): { ok: true } => {
+  flakyFailing = false;
+  return { ok: true };
+};
+
+const flaky = () => async (): Promise<ReactNode> => {
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  if (flakyFailing) throw new Error("Flaky: failing until healed");
+  return <div data-testid="flaky-healthy">healthy</div>;
+};
+
+export const ErrorsFlakyCacheHandler = flaky();
+export const ErrorsFlakyPprHandler = flaky();
+
+export const ErrorsSlotFailingHandler = async (): Promise<ReactNode> => {
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  throw new Error("Slot failed after the response started");
+};

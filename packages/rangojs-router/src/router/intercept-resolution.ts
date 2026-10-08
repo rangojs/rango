@@ -27,6 +27,7 @@ import {
   buildLoaderErrorContext,
 } from "./segment-resolution.js";
 import { catchSegmentError } from "./segment-resolution/helpers.js";
+import { trackStreamedHandler } from "./segment-resolution/streamed-handler-boundary.js";
 import { findInOrphans } from "./error-handling.js";
 import { resolveLoaderData } from "./segment-resolution/loader-cache.js";
 import type { SegmentResolutionDeps } from "./types.js";
@@ -390,14 +391,20 @@ export async function resolveInterceptEntry<TEnv>(
 
   let component: ReactNode;
   let loaderDataPromise: Promise<any[]> | any[] | undefined;
-  // A streamed (loading()) handler resolves after the 200 has started, so its
-  // rejection stays with the client; track it like route handlers do
-  // (onError report, handle-store completion).
-  const trackStreamedHandler = (promise: Promise<unknown>): ReactNode =>
-    deps.trackHandler(promise, {
+  // A streamed (loading()) handler resolves after the 200 has started: tracked
+  // like route handlers (onError report, handle-store completion) and
+  // recovered into the declared boundary, except on the skipMiddleware
+  // background re-render, which must reject so a failure is never cached.
+  const streamedComponent = (promise: Promise<unknown>): ReactNode =>
+    trackStreamedHandler(deps, promise, {
+      boundaryEntry: parentEntry,
       segmentId: `${parentEntry.shortCode}.${interceptEntry.slotName}`,
       segmentType: "parallel",
-    }) as ReactNode;
+      context,
+      routeKey: interceptEntry.routeName,
+      params,
+      recover: !options?.skipMiddleware,
+    });
 
   if (interceptEntry.loading && loaderPromises.length > 0) {
     if (handlerResult instanceof Promise) {
@@ -408,11 +415,11 @@ export async function resolveInterceptEntry<TEnv>(
     }
     component =
       handlerResult instanceof Promise
-        ? trackStreamedHandler(handlerResult)
+        ? streamedComponent(handlerResult)
         : (Promise.resolve(handlerResult) as ReactNode);
     loaderDataPromise = Promise.all(loaderPromises);
   } else if (interceptEntry.loading && handlerResult instanceof Promise) {
-    component = trackStreamedHandler(handlerResult);
+    component = streamedComponent(handlerResult);
   } else {
     if (loaderPromises.length > 0) {
       loaderDataPromise = await Promise.all(loaderPromises);

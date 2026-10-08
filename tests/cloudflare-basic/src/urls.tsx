@@ -210,6 +210,20 @@ import {
 } from "./pages/use-cache-non-cacheable.js";
 import { TaggedDocumentPage } from "./pages/tagged-document.js";
 import { StreamedDocumentPage } from "./pages/streamed-document.js";
+import {
+  StreamedHandlerBoundaryError,
+  StreamedHandlerBoundaryFails,
+  StreamedHandlerBoundaryFlakyCache,
+  StreamedHandlerBoundaryFlakyPpr,
+  StreamedHandlerBoundaryHeal,
+  StreamedHandlerBoundaryIndex,
+  StreamedHandlerBoundaryLoading,
+  StreamedHandlerBoundaryMissing,
+  StreamedHandlerBoundaryNotFound,
+  StreamedHandlerBoundaryReset,
+  StreamedHandlerBoundarySlotFails,
+} from "./pages/streamed-handler-boundary.js";
+import { SlotAncestorLayout } from "./components/SlotAncestorLayout.js";
 import { DslTaggedDocumentPage } from "./pages/dsl-tagged-document.js";
 import { CachedHandlesPage } from "./pages/cached-handles.js";
 import { LoaderCacheDepPage } from "./pages/loader-cache-dep.js";
@@ -622,6 +636,7 @@ export const urlpatterns = urls(
     transition,
     revalidate,
     errorBoundary,
+    notFoundBoundary,
   }) => [
     // API routes (response routes - skip RSC pipeline)
     include("/api", apiPatterns, { name: "api" }),
@@ -2477,6 +2492,101 @@ export const urlpatterns = urls(
           UcmPlainPage,
           { name: "useCacheMemoPlain" },
           () => [errorBoundary(UcmError)],
+        ),
+
+        // A loading() handler that rejects (or calls notFound()) after the
+        // response started renders the declared boundary in place; the
+        // "undeclared" route pins the RootErrorBoundary fallback.
+        path("/streamed-handler-boundary", StreamedHandlerBoundaryIndex, {
+          name: "streamedHandlerBoundary",
+        }),
+        path(
+          "/streamed-handler-boundary/fails",
+          StreamedHandlerBoundaryFails,
+          { name: "streamedHandlerBoundaryFails" },
+          () => [
+            loading(<StreamedHandlerBoundaryLoading id="shb-fails" />),
+            errorBoundary(() => (
+              <StreamedHandlerBoundaryError id="shb-fails" />
+            )),
+          ],
+        ),
+        path(
+          "/streamed-handler-boundary/fails-no-ssr",
+          StreamedHandlerBoundaryFails,
+          { name: "streamedHandlerBoundaryFailsNoSsr" },
+          () => [
+            loading(<StreamedHandlerBoundaryLoading id="shb-no-ssr" />, {
+              ssr: false,
+            }),
+            errorBoundary(() => (
+              <StreamedHandlerBoundaryError id="shb-no-ssr" />
+            )),
+          ],
+        ),
+        path(
+          "/streamed-handler-boundary/missing",
+          StreamedHandlerBoundaryMissing,
+          { name: "streamedHandlerBoundaryMissing" },
+          () => [
+            loading(<StreamedHandlerBoundaryLoading id="shb-missing" />),
+            notFoundBoundary(() => <StreamedHandlerBoundaryNotFound />),
+          ],
+        ),
+        path.json(
+          "/streamed-handler-boundary/heal",
+          StreamedHandlerBoundaryHeal,
+          { name: "streamedHandlerBoundaryHeal" },
+        ),
+        path.json(
+          "/streamed-handler-boundary/reset",
+          StreamedHandlerBoundaryReset,
+          { name: "streamedHandlerBoundaryReset" },
+        ),
+        // A failed streamed render is never stored: the next request is healthy.
+        cache({ ttl: 300 }, () => [
+          path(
+            "/streamed-handler-boundary/flaky-cache",
+            StreamedHandlerBoundaryFlakyCache,
+            { name: "streamedHandlerBoundaryFlakyCache" },
+            () => [
+              loading(<StreamedHandlerBoundaryLoading id="shb-flaky" />),
+              errorBoundary(() => (
+                <StreamedHandlerBoundaryError id="shb-flaky" />
+              )),
+            ],
+          ),
+        ]),
+        path(
+          "/streamed-handler-boundary/flaky-ppr",
+          StreamedHandlerBoundaryFlakyPpr,
+          { name: "streamedHandlerBoundaryFlakyPpr", ppr: true },
+          () => [
+            loading(<StreamedHandlerBoundaryLoading id="shb-flaky" />),
+            errorBoundary(() => (
+              <StreamedHandlerBoundaryError id="shb-flaky" />
+            )),
+          ],
+        ),
+        // A slot with loading() finds the boundary declared on its layout.
+        layout(<SlotAncestorLayout />, () => [
+          errorBoundary(() => <StreamedHandlerBoundaryError id="shb-slot" />),
+          parallel({ "@side": StreamedHandlerBoundarySlotFails }, () => [
+            loading(<StreamedHandlerBoundaryLoading id="shb-slot" />),
+          ]),
+          path(
+            "/streamed-handler-boundary/slot-ancestor",
+            () => <p data-testid="shb-slot-page">page</p>,
+            { name: "streamedHandlerBoundarySlotAncestor" },
+          ),
+        ]),
+        path(
+          "/streamed-handler-boundary/undeclared",
+          StreamedHandlerBoundaryFails,
+          { name: "streamedHandlerBoundaryUndeclared" },
+          () => [
+            loading(<StreamedHandlerBoundaryLoading id="shb-undeclared" />),
+          ],
         ),
 
         // Cookie overlay test route

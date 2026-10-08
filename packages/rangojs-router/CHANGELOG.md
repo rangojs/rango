@@ -14,6 +14,44 @@ and production never logged it. Tests that render a `useLoader` reader inside
 route context and drive state with `act()` should await `act()`, which
 `renderRoute` already does. A read outside route context is unchanged.
 
+### Fixed: a streamed handler that fails renders your errorBoundary() instead of the root error page
+
+Before: a route handler on a route with `loading()` that rejected, or called
+`notFound()`, after the response started replaced the whole page with the
+router's root error page, even with an `errorBoundary()` or `notFoundBoundary()`
+declared for it.
+
+```tsx
+path("/product/:slug", ProductPage, { name: "product" }, () => [
+  loading(<ProductSkeleton />),
+  errorBoundary(() => <ProductError />), // before: ignored when the handler rejects late
+  notFoundBoundary(() => <ProductNotFound />),
+]);
+```
+
+Now: the nearest `errorBoundary()` renders in place of the failing segment, and
+`notFound()` renders the nearest `notFoundBoundary()`. Layouts and navigation
+stay, on the document load and on a client navigation. It applies to route
+handlers and parallel slots (a slot finds its layout's boundary) under
+`loading()`, and to intercept slots.
+
+What does not change:
+
+- The HTTP status stays what the stream already carried (200).
+- `onError` is called once per failure. An intercept slot under `loading()` now
+  also emits the `handler.error` telemetry event, as route handlers and
+  parallel slots do.
+- A failed render is never cached, so the next request runs the handler again.
+  `cache()` skips the write only for the cache scope that holds the failed
+  segment; a `ppr` shell and the document cache refuse the whole document. A
+  Prerender route still fails the build.
+- A `notFound()` from a streamed handler keeps status 200: the status was sent
+  with the first flush. The same call before the flush still sets 404.
+- With no declared `errorBoundary()` the root error page still replaces the
+  whole page, and a `redirect()` thrown from a streamed handler is still not an
+  HTTP redirect (issue redirects from middleware, a loader, or a synchronous
+  handler return).
+
 ### Fixed: a `loading()` boundary on screen is no longer replaced by its fallback when nothing in it is pending
 
 A `loading()` boundary showed its fallback for about 300 ms although nothing

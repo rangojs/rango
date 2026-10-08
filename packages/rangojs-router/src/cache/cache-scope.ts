@@ -1105,6 +1105,13 @@ export class CacheScope {
         // the tree) or a rejected handle value as an error row and completes
         // normally; stored, every HIT would render that error until expiry.
         if (flightErrors.length > 0) throw flightErrors[0];
+        // A streamed handler recovered into its boundary fallback resolves, so
+        // Flight reports nothing; refuse like a Flight error row.
+        const recovered = requestCtx._recoveredHandlerErrors;
+        if (recovered?.size) {
+          const failed = nonLoaderSegments.find((s) => recovered.has(s.id));
+          if (failed) throw recovered.get(failed.id);
+        }
 
         const recordTags = collectRecordTags(requestCtx, tags, [
           ...nonLoaderSegments.map((s) => s.id),

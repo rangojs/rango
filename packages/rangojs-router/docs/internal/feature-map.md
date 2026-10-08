@@ -528,6 +528,19 @@ Route-local schema definitions (`search` option), typed route param types (`Rout
   `docs/internal/security-checklist.md`.
 - Typed error model: `RouteNotFoundError`, `DataNotFoundError`, etc.
 - Not-found and error boundary propagation across the route tree
+- Streamed-handler error recovery: a route handler or parallel/intercept slot
+  under `loading()` that rejects or calls `notFound()` after the flush resolves
+  to the nearest `errorBoundary()` / `notFoundBoundary()` in place of its
+  segment (`trackStreamedHandler`, `router/segment-resolution/streamed-handler-boundary.ts`,
+  called from the fresh, revalidation and intercept paths). Boundaries are
+  looked up from the matched chain entry (`ResolveSegmentOptions.boundaryEntry`),
+  as the sync path catches. The status stays committed (200, `notFound()`
+  included, unlike a loader's opportunistic 404 above) and `onError` fires once.
+  The failure is recorded on the render so writers refuse it:
+  `RequestContext._recoveredHandlerErrors` (per segment, read by `cacheRoute`)
+  and `_renderErrors` (document cache, prerender warm; a PPR capture is refused
+  through the doc record `cacheRoute` declines). No recovery for a thrown
+  `Response`, a Skip, `throwOnError` or the intercept background re-render.
 - Loader-thrown authority signals: `throw notFound()` / `throw redirect(...)`
   from any loader (streamed useLoader consumption included). The envelope
   (`wrapLoaderWithErrorHandling`) carries the server-rendered not-found UI or
