@@ -6,9 +6,13 @@ import {
   isValidElement,
 } from "react";
 import { OutletProvider } from "./outlet-provider.js";
-import { withOptimisticCommitNone } from "./browser/optimistic-commit.js";
+import {
+  OPTIMISTIC_COMMIT_TRANSITION_TYPE,
+  withOptimisticCommitNone,
+} from "./browser/optimistic-commit.js";
 import { MountContextProvider } from "./browser/react/mount-context.js";
 import type { ResolvedSegment, RootLayoutProps } from "./types.js";
+import type { ViewTransitionClass } from "./types/segments.js";
 import { decodeLoaderResults } from "./decode-loader-results.js";
 import { LoaderRedirect } from "./loader-redirect.js";
 import { invariant } from "./errors.js";
@@ -20,6 +24,8 @@ import {
 import { RootErrorBoundary } from "./root-error-boundary.js";
 import { INTERNAL_RANGO_DEBUG } from "./internal-debug.js";
 import { getMemoizedContentPromise } from "./segment-content-promise.js";
+import { vtExperiment } from "./vt-experiment.js";
+import { settleClientReferences } from "./browser/settle-client-references.js";
 import {
   buildLoaderPromise,
   getMemoizedLoaderPromise,
@@ -165,6 +171,28 @@ const GATED_OFF_CLASSES = {
   default: "none",
 } as const;
 
+/**
+ * #1078 candidate "b1" (vt-experiment.ts). Not for merge.
+ *
+ * The `update` class a router boundary animates with only on commits the
+ * router typed (partial-update.ts adds "navigation" or "action"). A commit
+ * without a type resolves to "none": React's own Suspense retries carry no
+ * type, so a retry that leaves the fallback in place starts no view
+ * transition, and neither does the retry that reveals the content.
+ */
+function typedCommitsOnly(
+  value: ViewTransitionClass | undefined,
+): ViewTransitionClass {
+  const typed = typeof value === "string" ? value : (value?.default ?? "auto");
+  return {
+    navigation: typed,
+    action: typed,
+    ...(typeof value === "object" ? value : undefined),
+    default: "none",
+    [OPTIMISTIC_COMMIT_TRANSITION_TYPE]: "none",
+  };
+}
+
 function createViewTransitionBoundary(
   transition: NonNullable<ResolvedSegment["transition"]>,
   children: ReactNode,
@@ -192,8 +220,72 @@ function createViewTransitionBoundary(
       update: withOptimisticCommitNone(vtProps.update),
     }),
     default: withOptimisticCommitNone(vtProps.default),
+    ...(vtExperiment() === "b1" && {
+      update: typedCommitsOnly(vtProps.update ?? vtProps.default),
+    }),
     children,
   });
+}
+
+/**
+ * #1078 candidate "b2" (vt-experiment.ts). Not for merge.
+ *
+ * A loading() fallback that renders inside a router <ViewTransition> becomes
+ * its own nested boundary with update "none". React stops at a nested
+ * boundary when it names an outer boundary's host nodes for an update, so a
+ * commit that leaves the fallback in place (a Suspense retry that suspends
+ * again) finds nothing to name and starts no view transition. The reveal
+ * still animates: the fallback boundary exits and the outer boundary names
+ * the new content. Class props only: the outer boundary keeps the name and
+ * the event callbacks.
+ */
+function createFallbackBoundary(
+  transition: NonNullable<ResolvedSegment["transition"]>,
+  fallback: ReactNode,
+): ReactNode {
+  return createElement(ReactViewTransition, {
+    ...(transition.enter !== undefined && {
+      enter: withOptimisticCommitNone(transition.enter),
+    }),
+    ...(transition.exit !== undefined && {
+      exit: withOptimisticCommitNone(transition.exit),
+    }),
+    default: withOptimisticCommitNone(transition.default),
+    update: "none",
+    children: fallback,
+  });
+}
+
+type EnclosingBoundary = NonNullable<ResolvedSegment["transition"]> | undefined;
+
+/**
+ * The router boundary each content segment's fallbacks render inside, by
+ * segment id (segments are root to leaf). `content` is for the
+ * RouteContentWrapper fallback: a route's own boundary wraps it, a layout's
+ * own boundary wraps only its outlet content. `loader` is for the
+ * LoaderBoundary fallback, which only an ancestor layout's boundary wraps.
+ */
+function enclosingBoundaries(
+  segments: readonly ResolvedSegment[],
+): Map<string, { content: EnclosingBoundary; loader: EnclosingBoundary }> {
+  const out = new Map<
+    string,
+    { content: EnclosingBoundary; loader: EnclosingBoundary }
+  >();
+  let ancestor: EnclosingBoundary;
+  for (const s of segments) {
+    if (s.type === "parallel" || s.type === "loader") continue;
+    const own =
+      s.transition && s.transition.viewTransition !== false
+        ? s.transition
+        : undefined;
+    out.set(s.id, {
+      content: s.type === "layout" ? ancestor : (own ?? ancestor),
+      loader: ancestor,
+    });
+    if (s.type === "layout" && own) ancestor = own;
+  }
+  return out;
 }
 
 function wrapDefaultOutletContent(
@@ -398,6 +490,21 @@ export async function renderSegments(
         s.type === "error" ||
         s.type === "notFound"),
   );
+  // #1078 candidate "b2": fallbacks inside a router boundary get their own.
+  const fallbackBoundaries =
+    ReactViewTransition && vtExperiment() === "b2"
+      ? enclosingBoundaries(normalizedSegments)
+      : null;
+  const withFallbackBoundary = (
+    fallback: ReactNode,
+    boundary: EnclosingBoundary,
+  ): ReactNode =>
+    boundary
+      ? createFallbackBoundary(
+          transitionGatedOff ? { ...boundary, ...GATED_OFF_CLASSES } : boundary,
+          fallback,
+        )
+      : fallback;
   // Render content segments as siblings
   let content: ReactNode = null;
   for (const node of tree) {
@@ -495,10 +602,17 @@ export async function renderSegments(
           });
         }
       }
+      // #1078 candidate "a": awaited with temporalLazyRefs before the commit.
+      if (!forceAwait && typeof window === "object" && vtExperiment() === "a") {
+        temporalLazyRefs.push(settleClientReferences(contentPromise));
+      }
       nodeContent = createElement(RouteContentWrapper, {
         key: `suspense-loading-${id}`,
         content: loadingContent,
-        fallback: loading,
+        fallback: withFallbackBoundary(
+          loading,
+          fallbackBoundaries?.get(id)?.content,
+        ),
         segmentId: id,
       });
     } else {
@@ -627,7 +741,9 @@ export async function renderSegments(
         loaderIds,
         loaderStreams: boundaryLoaderStreams,
         awaitedLoaderIds: boundaryAwaitedLoaderIds,
-        fallback: loading,
+        fallback: isRenderableLoading(loading)
+          ? withFallbackBoundary(loading, fallbackBoundaries?.get(id)?.loader)
+          : loading,
         outletKey: key,
         outletContent,
         segment: node.segment,

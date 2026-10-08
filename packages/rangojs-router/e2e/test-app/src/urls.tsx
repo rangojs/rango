@@ -1,6 +1,13 @@
 import { urls, cookies, Meta, Breadcrumbs, notFound } from "@rangojs/router";
 import { Link, Outlet } from "@rangojs/router/client";
 import { RootLayout } from "./components/layouts/index.js";
+import { baseCostPatterns } from "./urls/base-cost.js";
+import { bc3APatterns, bc3QPatterns } from "./urls/base-cost3.js";
+import {
+  baseCostAPatterns,
+  baseCostPPatterns,
+  baseCostQPatterns,
+} from "./urls/base-cost2.js";
 import { blogPatterns } from "./urls/blog.js";
 import { createFactoryHmrPatterns } from "./urls/factory-hmr.js";
 import { slowPatternsWithoutDetail } from "./urls/slow.js";
@@ -1227,6 +1234,12 @@ export const urlpatterns = urls(
       }),
 
       // "use cache" directive test patterns (file-level, function-level, named profiles)
+      include("/base-cost", baseCostPatterns, { name: "baseCost" }),
+      include("/base-cost-a", baseCostAPatterns, { name: "baseCostA" }),
+      include("/base-cost-p", baseCostPPatterns, { name: "baseCostP" }),
+      include("/base-cost-q", baseCostQPatterns, { name: "baseCostQ" }),
+      include("/bc3-q", bc3QPatterns, { name: "bc3Q" }),
+      include("/bc3-a", bc3APatterns, { name: "bc3A" }),
       include("/use-cache-test", useCachePatterns, { name: "useCacheTest" }),
 
       // Loader reverse test patterns (ctx.reverse inside loaders)
