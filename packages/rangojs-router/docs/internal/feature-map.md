@@ -386,10 +386,13 @@ server projection.
   prefetch. The click that adopts the payload
   commits it, shows the fallback and sends one fill request (`_rsc_fill=1`)
   that runs only the deferred work. A deferred unit on a page that commits in
-  a transition commits with the fill's first chunk instead (`Fill.land`), as
-  a plain click commits with its response. A fill's updates are urgent, wait
-  for the adoption's commit, and a fill still streaming lands 300 ms after
-  its first chunk (`FALLBACK_THROTTLE_MS`). A response that defers is for the page
+  a transition commits with the fill's first chunk instead (`Fill.held`), as
+  a plain click commits with its response; a placeholder says so for a
+  `transition()` the prefetch skipped (`placeholderTransition`). On a page
+  that is on screen a fill's updates are urgent and wait for the adoption's
+  commit, and a fill still streaming lands 300 ms after its first chunk
+  (`FALLBACK_THROTTLE_MS`); where React has not committed the adoption the
+  fill does not wait and every loader gate resolves at once. A response that defers is for the page
   that prefetched it (`x-rsc-prefetch-scope: source`), is never reused by
   the document cache or a shared cache (`cache-control: private, no-cache`)
   and never answers a navigation (`Vary` names `X-Rango-Prefetch`); a copy

@@ -34,14 +34,30 @@ What to know before you use it:
   `loading()` shows when that is the nearest boundary, and with no boundary
   React holds the page being left until the fill returns
   (`useNavigation()` reads `loading` meanwhile).
-- **Under `transition()` a deferred `loading()` commits with its fill.** The
-  click shows the page, fallback included, when the fill starts answering,
-  which is when the same click with no prefetch shows it. React holds the
-  page being left until then and `useNavigation()` reads `loading`.
-  Committed with the click, the content could only arrive in a second
-  commit, which under a `<ViewTransition>` is a view transition of its own
-  that the reveal then waits for. A flagged `loader()` under `transition()`
-  commits with the click.
+- **Under `transition()` a deferred `loading()` commits with its fill.** Its
+  fallback shows with the fill's first chunk, as a plain click's shows with
+  its response, not at the click. That is also the case when the
+  `transition()` is on something the fallback covers (a route under a
+  flagged layout). React holds the page being left until then and
+  `useNavigation()` reads `loading`. Committed with the click, the content
+  could only arrive in a second commit, which under a `<ViewTransition>` is
+  a view transition of its own that the reveal then waits for. A flagged
+  `loader()` under `transition()` commits with the click. A
+  `transition({ when })` on an entry the prefetch skipped is not asked for
+  that click: it commits as under a plain `transition()`.
+- **While React holds the page being left, the URL has already changed.**
+  The address bar and the URL hooks move with the click, and the page moves
+  when the fill answers (a deferred `loading()` under `transition()`) or
+  when the value arrives (a deferred loader read with no boundary). A click
+  with no prefetch moves the hooks with the page. Known, not fixed.
+- **A `<ViewTransition>` on the page being left.** A click that commits from
+  a prefetch commits in a transition, with or without the flag, so React
+  runs a view transition there that a click with no prefetch does not, and
+  the deferred part is revealed after it. Measured against a click with no
+  prefetch, at the browser's default duration: 0 to 40 ms later, and 290 ms
+  for a flagged loader that lands while that view transition runs. With
+  `animation-duration: 600ms` on the view-transition pseudo-elements: 320
+  to 350 ms later, 650 ms for that loader. Known, not fixed.
 - **A prefetch that deferred something is used only on the page that made
   it.** A page that already shows the segment makes its own prefetch, which
   defers nothing for it.
