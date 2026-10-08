@@ -63,6 +63,10 @@ export const ROUTER_DEV_ONLY_PATTERNS = [
     name: "src/suspense-audit*.ts (dev only)",
     re: /\/packages\/rangojs-router\/src\/suspense-audit(?:-react)?\.tsx?$/,
   },
+  {
+    name: "src/internal-suspense-audit.ts (dev only)",
+    re: /\/packages\/rangojs-router\/src\/internal-suspense-audit\.ts$/,
+  },
 ];
 
 // Heuristic only — file naming is a signal, not a guarantee. Hits warrant

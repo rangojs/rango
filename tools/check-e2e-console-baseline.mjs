@@ -8,11 +8,11 @@
 //
 // Default (CI lint, no e2e run needed): every entry has an app, a test, a
 // rule on the deny list and a non-empty reason; no entry is listed twice; the
-// test still exists (its file, and its title in that file or in a shared
-// body under tests/shared-e2e/src, literally or as the literal parts of a
-// template-literal title, which cannot check the placeholders' values). An
-// entry whose test runs and no longer prints the message is caught by the
-// guard itself, which fails that test.
+// test exists in that app's dev project under its full title path, as
+// `playwright test --list` enumerates it (shared bodies and template-literal
+// titles resolved by Playwright itself). An entry whose test runs and no
+// longer prints the message is caught by the guard itself, which fails that
+// test.
 //
 // --from <dir> (repeatable): compare with a recorded run
 // (RANGO_CONSOLE_GUARD=record RANGO_CONSOLE_GUARD_DIR=<dir> playwright test
@@ -27,25 +27,21 @@
 // Run: node tools/check-e2e-console-baseline.mjs
 //      node tools/check-e2e-console-baseline.mjs --from <dir> [--from <dir>] [--write]
 
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { REPO_ROOT } from "./lib/e2e-bucketing-scan.mjs";
 
-const REPO_ROOT = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "..",
-);
 const BASELINE_PATH = path.join(REPO_ROOT, "tools/e2e-console-baseline.json");
 const GUARD_PATH = path.join(
   REPO_ROOT,
   "tests/shared-e2e/src/console-guard.ts",
 );
-const SHARED_DIR = path.join(REPO_ROOT, "tests/shared-e2e/src");
 
-/** The e2e directory of each app the guard is installed in. */
-const APP_DIRS = {
-  "rangojs-router": "packages/rangojs-router/e2e",
-  "cloudflare-basic": "tests/cloudflare-basic/e2e",
+/** The Playwright project root of each app the guard is installed in. */
+const APP_ROOTS = {
+  "rangojs-router": "packages/rangojs-router",
+  "cloudflare-basic": "tests/cloudflare-basic",
 };
 
 /**
@@ -89,37 +85,50 @@ function denyRuleIds() {
 
 const keyOf = (entry) => `${entry.app}|${entry.test}|${entry.rule}`;
 
-// A title built in a template literal (`${scenario}: after ${entry}, ...`)
-// matches when its literal parts appear in order around the placeholders.
-function templateMatchers(source) {
-  const matchers = [];
-  for (const [, body] of source.matchAll(
-    /`((?:[^`\\]|\\.)*\$\{(?:[^`\\]|\\.)*)`/g,
-  )) {
-    const parts = body.split(/\$\{[^}]*\}/);
-    if (parts.join("").trim().length < 20) continue;
-    const escaped = parts.map((part) =>
-      part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+/**
+ * Every dev-project test of an app, by the title path the guard records
+ * (testInfo.titlePath joined with " > "). CI=true keeps the config from
+ * probing for running servers.
+ */
+function devTitles(app) {
+  const root = path.join(REPO_ROOT, APP_ROOTS[app]);
+  let output;
+  try {
+    output = execFileSync(
+      path.join(root, "node_modules/.bin/playwright"),
+      ["test", "--list", "--reporter=json", "--project=dev"],
+      {
+        cwd: root,
+        env: { ...process.env, CI: "true" },
+        encoding: "utf8",
+        maxBuffer: 256 * 1024 * 1024,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
     );
-    matchers.push(new RegExp(`^${escaped.join(".+")}$`));
+  } catch (error) {
+    fail([
+      `could not list ${app}'s dev tests: ${String(error.stderr || error.message).slice(0, 2000)}`,
+    ]);
   }
-  return matchers;
-}
-
-function titleIn(sources, title) {
-  return sources.some(
-    (source) =>
-      source.includes(title) ||
-      templateMatchers(source).some((matcher) => matcher.test(title)),
-  );
+  const report = JSON.parse(output.slice(output.indexOf("{")));
+  const titles = new Set();
+  const visit = (suite, parents) => {
+    const titlePath = [...parents, suite.title];
+    for (const spec of suite.specs ?? []) {
+      if (spec.tests.some((t) => t.projectName === "dev")) {
+        titles.add([...titlePath, spec.title].join(" > "));
+      }
+    }
+    for (const child of suite.suites ?? []) visit(child, titlePath);
+  };
+  for (const suite of report.suites ?? []) visit(suite, []);
+  return titles;
 }
 
 function checkStatic(entries) {
   const problems = [];
   const rules = denyRuleIds();
-  const shared = readdirSync(SHARED_DIR)
-    .filter((name) => name.endsWith(".ts"))
-    .map((name) => readFileSync(path.join(SHARED_DIR, name), "utf8"));
+  const titles = new Map();
   const seen = new Set();
   for (const entry of entries) {
     const label = `[${entry?.rule}] ${entry?.app} > ${entry?.test}`;
@@ -144,22 +153,14 @@ function checkStatic(entries) {
         `rule is not on the deny list (console-guard.ts): ${label}`,
       );
     }
-    const appDir = APP_DIRS[entry.app];
-    if (!appDir) {
+    if (!APP_ROOTS[entry.app]) {
       problems.push(`unknown app "${entry.app}": ${label}`);
       continue;
     }
-    const segments = entry.test.split(" > ");
-    const file = path.join(REPO_ROOT, appDir, segments[0]);
-    if (!existsSync(file)) {
-      problems.push(`the test file is gone, remove the entry: ${label}`);
-      continue;
-    }
-    const title = segments[segments.length - 1];
-    const sources = [readFileSync(file, "utf8"), ...shared];
-    if (!titleIn(sources, title)) {
+    if (!titles.has(entry.app)) titles.set(entry.app, devTitles(entry.app));
+    if (!titles.get(entry.app).has(entry.test)) {
       problems.push(
-        `no test with this title any more, remove or rename the entry: ${label}`,
+        `no dev test with this full title, remove or rename the entry: ${label}`,
       );
     }
   }
