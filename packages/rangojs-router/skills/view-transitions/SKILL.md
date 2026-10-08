@@ -359,10 +359,15 @@ interface TransitionWhenContext {
   the route or loses its state
   ([#995](https://github.com/rangojs/rango/issues/995)).
 - That holds for every kind, actions and revalidations included: a gated-off
-  action or revalidation commit is urgent too, so a segment it re-renders
-  streams its `loading()`. The router commits an action's result after the
-  response arrives, outside the transition React opens for a form action or
-  `useActionState` call, so React does not hold it either.
+  action or revalidation commit is urgent and unanimated too, and a segment it
+  re-renders shows its `loading()` only while something in it is still pending
+  (a gated-off navigation whose data is still streaming shows it; an action
+  whose response already carries the data does not in a production build,
+  while the dev server still shows it briefly because it resolves each
+  response's client components asynchronously). The router commits an
+  action's result after the response arrives, outside the transition React
+  opens for a form action or `useActionState` call, so React does not hold it
+  either.
 - A predicate that throws counts as `false` and is logged with
   `console.error` (the conservative default: no hold).
 - Intercept (modal) commits skip the evaluation, including a back/forward
