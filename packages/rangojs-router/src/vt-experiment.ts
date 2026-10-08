@@ -13,6 +13,7 @@
  *   with update "none".
  * - "c0" | "c30" | "c100": a cold navigation waits that long for the response
  *   to complete before its first commit.
+ * - "d": a view transition in which React cancelled every group is skipped.
  */
 declare const __RANGO_VT_EXP_DEFAULT__: string | undefined;
 

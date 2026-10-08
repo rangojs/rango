@@ -33,6 +33,7 @@ import type { NavigationUpdate } from "./types.js";
 import { OPTIMISTIC_COMMIT_TRANSITION_TYPE } from "./optimistic-commit.js";
 import { loaderStore } from "../loader-store.js";
 import { vtExperiment } from "../vt-experiment.js";
+import { skipCancelledViewTransitions } from "./skip-cancelled-view-transition.js";
 import {
   collectClientRevalidationDecisions,
   setActiveInterceptTargets,
@@ -91,6 +92,8 @@ export function commitInTransition(
   update: NavigationUpdate,
   transitionTypes: readonly string[],
 ): void {
+  // #1078 candidate "d", not for merge.
+  if (vtExperiment() === "d") skipCancelledViewTransitions();
   startTransition(() => {
     loaderStore.announcePendingStreams(segments);
     if (addTransitionType) {
