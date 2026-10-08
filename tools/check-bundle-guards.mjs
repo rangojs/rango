@@ -123,8 +123,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 //
 // Raised 48.25KB -> 48.375KB on 2026-10-08: a flagged layout's gates wait
 // apart from the gates outside it (+98B gzip, browser/partial-update.ts
-// settleHoles). Measured on main b661d2f8 (#1085, #1083): 49473B, against
-// main's own 47498B.
+// settleHoles). Measured on main 8c10cc9b (#1085, #1083, #1086): 49479B,
+// against main's own 47501B.
 const ROUTER_CHUNK_GZIP_MAX = 48 * 1024 + 384;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
