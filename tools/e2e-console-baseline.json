@@ -114,13 +114,15 @@
       "app": "rangojs-router",
       "test": "navigation.test.ts > stale-revalidation > should update quantity on intercept after action on detail page and back navigation",
       "rule": "rango-error",
-      "reason": "Undeclared, cause: an action started on the intercepted /product/product-a completes after a navigation to the same URL without the intercept (View full details). The action bridge reconciles the response's matched ids, computed for the intercept page (the home route M0L0L0R0 and its ProductsLoader under the modal), against the detail page's cache (src/browser/server-action-bridge.ts:709, segment-reconciler.ts:184) before classifyActionOutcome (server-action-bridge.ts:726) sees the history key change and discards the result; pathname checks cannot tell the two pages apart. Reproduced on origin/main."
+      "reason": "Undeclared, cause: an action started on the intercepted /product/product-a completes after a navigation to the same URL without the intercept (View full details). The action bridge reconciles the response's matched ids, computed for the intercept page (the home route M0L0L0R0 and its ProductsLoader under the modal), against the detail page's cache (src/browser/server-action-bridge.ts:709, segment-reconciler.ts:184) before classifyActionOutcome (server-action-bridge.ts:726) sees the history key change and discards the result; pathname checks cannot tell the two pages apart. Reproduced on origin/main.",
+      "intermittent": true
     },
     {
       "app": "rangojs-router",
       "test": "pending-actions.test.ts > pending-actions-navigation > action on intercept, navigate to detail, action completes - should not corrupt intercept cache",
       "rule": "rango-error",
-      "reason": "Undeclared, cause: an action started on the intercepted /product/product-a completes after a navigation to the same URL without the intercept (View full details). The action bridge reconciles the response's matched ids, computed for the intercept page (the home route M0L0L0R0 and its ProductsLoader under the modal), against the detail page's cache (src/browser/server-action-bridge.ts:709, segment-reconciler.ts:184) before classifyActionOutcome (server-action-bridge.ts:726) sees the history key change and discards the result; pathname checks cannot tell the two pages apart. Reproduced on origin/main."
+      "reason": "Undeclared, cause: an action started on the intercepted /product/product-a completes after a navigation to the same URL without the intercept (View full details). The action bridge reconciles the response's matched ids, computed for the intercept page (the home route M0L0L0R0 and its ProductsLoader under the modal), against the detail page's cache (src/browser/server-action-bridge.ts:709, segment-reconciler.ts:184) before classifyActionOutcome (server-action-bridge.ts:726) sees the history key change and discards the result; pathname checks cannot tell the two pages apart. Reproduced on origin/main.",
+      "intermittent": true
     },
     {
       "app": "rangojs-router",
