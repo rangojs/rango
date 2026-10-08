@@ -20,6 +20,7 @@ import type {
   NavigationUpdate,
   NavigateOptionsInternal,
   NavigationBridge,
+  RscMetadata,
 } from "../types.js";
 import type { EventController } from "../event-controller.js";
 import { RootErrorBoundary } from "../../root-error-boundary.js";
@@ -206,6 +207,30 @@ async function processHandles(
     const finalHandleData = eventController.getHandleState().data;
     store.updateCacheHandleData(historyKey, finalHandleData);
   }
+}
+
+/**
+ * Read the handle stream of `metadata` into the event controller and the
+ * entry on screen. The provider's own call for every payload it is handed,
+ * and the one write for a response that hands React nothing (a fill,
+ * browser/partial-update.ts settleHoles).
+ */
+export function consumeHandles(
+  metadata: RscMetadata,
+  eventController: EventController,
+  store: NavigationStore,
+): void {
+  processHandles(metadata.handles!, {
+    eventController,
+    store,
+    matched: metadata.matched,
+    isPartial: metadata.isPartial,
+    resolvedIds: metadata.resolvedIds,
+    // Now: by the time the stream ends the user may be elsewhere.
+    historyKey: store.getHistoryKey(),
+  }).catch((err) =>
+    console.error("[NavigationProvider] Error consuming handles:", err),
+  );
 }
 
 /**
@@ -479,20 +504,7 @@ export function NavigationProvider({
 
       // Update handle data progressively as it streams in
       if (update.metadata.handles) {
-        // Capture historyKey now - by the time async processing completes,
-        // the user might have navigated elsewhere
-        const historyKey = store.getHistoryKey();
-
-        processHandles(update.metadata.handles, {
-          eventController,
-          store,
-          matched: update.metadata.matched,
-          isPartial: update.metadata.isPartial,
-          resolvedIds: update.metadata.resolvedIds,
-          historyKey,
-        }).catch((err) =>
-          console.error("[NavigationProvider] Error consuming handles:", err),
-        );
+        consumeHandles(update.metadata, eventController, store);
       } else if (update.metadata.matched) {
         // cachedHandleData present -> full restore (back/forward); absent ->
         // partial cleanup of segments no longer matched.

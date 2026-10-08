@@ -36,8 +36,15 @@ import { getBoundaryContent } from "./segment-boundary-content.js";
 function renderSlotContent(segment: ResolvedSegment | null): ReactNode {
   if (!segment) return null;
 
+  // A slot that streams with no loading() gets a boundary with no fallback
+  // around its promise. Not a deferred slot (`prefetch: false`): its promise
+  // is the gate its fill resolves, and the slot it stands for was awaited, so
+  // every later render of the page has the content here with no boundary
+  // around it. The gate takes that place: another element here and the slot
+  // is mounted again when the page is next rendered.
   const content: ReactNode =
-    segment.loading || segment.component instanceof Promise ? (
+    segment.loading ||
+    (segment.component instanceof Promise && !segment.deferred) ? (
       <RouteContentWrapper
         content={getBoundaryContent(segment.component)}
         fallback={segment.loading}

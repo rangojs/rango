@@ -29,33 +29,3 @@ export function cancelPendingFill(): void {
 export function clearPendingFill(cancel: () => void): void {
   if (cancelPending === cancel) cancelPending = null;
 }
-
-let adopting = false;
-
-/**
- * Hand React the update of an adoption that waits for a fill. While `emit`
- * runs, useNavigation() pins `loading` as optimistic state of the update's
- * transition: where nothing can show a fallback React holds that transition
- * until the fill returns, and the state reads `loading` for as long, then
- * what the commit set.
- *
- * Scar tissue: the adoption commits in the task of the click, before
- * `loading` was ever rendered, and the state after the commit reaches React
- * inside the held transition. useNavigation() read idle for the whole wait.
- * Not pinned from outside the transition: the release would be a transition
- * of its own, one more commit, and under transition() one more view
- * transition, which the reveal then waits for.
- */
-export function emitAdoption(emit: () => void): void {
-  adopting = true;
-  try {
-    emit();
-  } finally {
-    adopting = false;
-  }
-}
-
-/** Inside `emitAdoption`. */
-export function isAdopting(): boolean {
-  return adopting;
-}

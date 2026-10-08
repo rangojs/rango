@@ -68,6 +68,7 @@ function seg(
 interface TreeNode {
   type: string | Function;
   typeName: string;
+  key: string | null;
   props: Record<string, any>;
   children: TreeNode[];
 }
@@ -100,7 +101,13 @@ function toTreeNode(node: ReactNode): TreeNode | null {
     }
   }
 
-  return { type: el.type, typeName, props: el.props || {}, children };
+  return {
+    type: el.type,
+    typeName,
+    key: el.key,
+    props: el.props || {},
+    children,
+  };
 }
 
 // Find all nodes matching a component type in the tree
@@ -2045,54 +2052,128 @@ describe("segment-system", () => {
         );
       });
 
-      it("builds the same tree shape for the placeholder and for the filled segments", async () => {
-        // The wrapper chain, down to the boundary's content: a settled
-        // component is handed over as the node, a gate as its promise.
-        const shape = (node: TreeNode | null): unknown =>
-          node && [
-            node.typeName,
-            ...(node.typeName === "MockRouteContentWrapper"
-              ? []
-              : node.children.map(shape)),
+      // The click builds the page's tree once, from the prefetched segments
+      // and one placeholder per segment whose work did not run, and the
+      // fill only resolves what that tree reads (browser/partial-update.ts
+      // settleHoles). So the tree has to be the one a plain click's payload
+      // builds: the same router elements, with the same keys, around every
+      // segment. What differs is what the boundaries are handed.
+      it("builds a plain click's wrapper chain from the skeleton: the same elements and keys around every segment", async () => {
+        // A flagged layout with a loader, a slot with no loading() and one
+        // with its own and a loader, a route with loading(), transition()
+        // and a loader, and an orphan layout of the route.
+        const page = (filled: boolean): ResolvedSegment[] => {
+          const value = <T,>(known: T): T =>
+            filled ? known : (gate() as unknown as T);
+          const hole = filled ? {} : { deferred: true as const };
+          const loader = (id: string, loaderId: string, namespace: string) =>
+            seg({
+              id,
+              type: "loader",
+              namespace,
+              loaderId,
+              component: null,
+              loaderData: value(Promise.resolve({ ok: true, data: loaderId })),
+              ...hole,
+            });
+          const node = (id: string) =>
+            value(createElement("div", null, id) as ReactNode);
+          return [
+            seg({ id: "L0", type: "layout" }),
+            loader("L0L1D0.section", "section", "section"),
+            seg({
+              id: "L0L1",
+              type: "layout",
+              namespace: "section",
+              loading: fallback,
+              component: node("L0L1"),
+              ...hole,
+            }),
+            seg({
+              id: "L0L1.@side",
+              type: "parallel",
+              slot: "@side",
+              namespace: "side",
+              component: node("side"),
+              ...hole,
+            }),
+            seg({
+              id: "L0L1.@panel",
+              type: "parallel",
+              slot: "@panel",
+              namespace: "panel",
+              loading: fallback,
+              component: node("panel"),
+              ...hole,
+            }),
+            loader("L0L1D0.panel", "panel", "panel"),
+            loader("L0L1R0D0.page", "page", "page"),
+            seg({
+              id: "L0L1R0L0",
+              type: "layout",
+              namespace: "orphan",
+              belongsToRoute: true,
+              component: node("orphan"),
+              ...hole,
+            }),
+            seg({
+              id: "L0L1R0",
+              type: "route",
+              namespace: "page",
+              loading: fallback,
+              transition: {},
+              params: { id: "1" },
+              component: node("page"),
+              ...hole,
+            }),
           ];
-        const placeholder: ResolvedSegment[] = [
-          seg({ id: "L0", type: "layout" }),
-          seg({
-            id: "L0R0",
-            type: "route",
-            component: gate() as unknown as ReactNode,
-            loading: fallback,
-            deferred: true,
-          }),
-          seg({
-            id: "L0R0D0.data",
-            type: "loader",
-            loaderId: "data",
-            loaderData: gate(),
-            deferred: true,
-          }),
-        ];
-        const filled: ResolvedSegment[] = [
-          seg({ id: "L0", type: "layout" }),
-          seg({ id: "L0R0", type: "route", loading: fallback }),
-          seg({
-            id: "L0R0D0.data",
-            type: "loader",
-            loaderId: "data",
-            loaderData: Promise.resolve({ value: 1 }),
-          }),
-        ];
+        };
 
-        // The adoption commits on the forceAwait lane, the fill on the
-        // streams lane: the fill must replace props, never elements.
-        const before = toTreeNode(
-          await built(renderSegments(placeholder, { forceAwait: true })),
+        // Every element the router places, in tree order: its type, its key,
+        // the segment it is for and the slots it carries. A segment's own
+        // content (host elements here) is not part of the chain, and a
+        // boundary's content is what the fill resolves.
+        const chain = (node: TreeNode | null): unknown[] => {
+          if (!node) return [];
+          const below =
+            node.typeName === "MockRouteContentWrapper"
+              ? []
+              : node.children.flatMap(chain);
+          if (typeof node.type === "string") return below;
+          return [
+            [
+              node.typeName,
+              node.key,
+              node.props.segment?.id ?? node.props.segmentId ?? null,
+              (node.props.parallel ?? []).map((p: ResolvedSegment) => [
+                p.id,
+                p.loaderIds ?? null,
+              ]),
+            ],
+            ...below,
+          ];
+        };
+
+        // The click commits on the forceAwait lane (its payload was
+        // prefetched), a plain click on the streams lane.
+        const click = chain(
+          toTreeNode(
+            await built(renderSegments(page(false), { forceAwait: true })),
+          ),
         );
-        const after = toTreeNode(await renderSegments(filled));
-        expect(shape(before)).toEqual(shape(after));
-        const keys = (tree: TreeNode | null) =>
-          collectByType(tree, MockLoaderBoundary).map((b) => b.props.outletKey);
-        expect(keys(before)).toEqual(keys(after));
+        const plain = chain(toTreeNode(await renderSegments(page(true))));
+        expect(click).toEqual(plain);
+        // The fixture reaches every wrapper the chain is made of.
+        const types = new Set(click.map((entry) => (entry as unknown[])[0]));
+        for (const wrapper of [
+          "MockRootErrorBoundary",
+          "MockOutletProvider",
+          "MockLoaderBoundary",
+          "MockRouteContentWrapper",
+          "MockStreamedLoaderErrorBoundary",
+        ]) {
+          expect(types, wrapper).toContain(wrapper);
+        }
       });
     });
   });

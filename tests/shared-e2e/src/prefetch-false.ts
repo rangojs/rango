@@ -41,6 +41,8 @@ import { randomUUID } from "node:crypto";
 export interface PrefetchFalseFixture {
   /** Absolute URL of a path in the app under test. */
   url: (path: string) => string;
+  /** The app is a production build. Default: a development server. */
+  production?: boolean;
 }
 
 export interface PrefetchFalseCase {
@@ -383,11 +385,13 @@ export async function expectNoBoundaryHoldsThePageLeftUntilTheFillReturns(
 /**
  * A deferred unit on a route with `transition()`. A plain click there keeps
  * the page it is on until its response starts, then commits the page with
- * its fallback in one transition. The adopted click does the same with its
- * fill: the URL changes with the click, React holds the page being left, and
- * the page commits with the fill's first chunk. Committed with the click, the
- * unit's content could only arrive in a commit of its own, which starts a
- * view transition the plain click does not start, and the reveal waits for it
+ * its fallback in one transition: URL, hooks and page together. The adopted
+ * click does the same with its fill. Nothing commits with the click: the URL
+ * stays, the page being left stays, `useNavigation()` reads `loading`. With
+ * the fill's first chunk the page commits once, from the prefetched segments
+ * and the fill's. Committed with the click, the URL moved a round trip
+ * before the page, and the unit's content could only arrive in a commit of
+ * its own, which starts a view transition the plain click does not start
  * (measured: three transitions for two, content up to 280 ms late).
  */
 export async function expectUnitUnderTransitionCommitsWithItsFill(
@@ -405,16 +409,21 @@ export async function expectUnitUnderTransitionCommitsWithItsFill(
 
   const fills = await holdFills(page);
   await byId(page, "pf-link-vt-unit").click();
-  await expect(page).toHaveURL(hub.pageUrl("vt-unit"));
   await expect
     .poll(() => requests.filter((r) => isFill(r.url())).length)
     .toBe(1);
+  await expect(byId(page, "pf-nav")).toHaveAttribute("data-state", "loading");
+  await expect(page, "the URL moves with the page").toHaveURL(hub.home);
+  await expect(byId(page, "pf-nav")).toHaveAttribute(
+    "data-path",
+    new URL(hub.home).pathname,
+  );
   await expect(byId(page, "pf-hub")).toBeVisible();
   await expect(byId(page, "pf-vt-unit-fallback")).toHaveCount(0);
-  await expect(byId(page, "pf-nav")).toHaveAttribute("data-state", "loading");
 
   await fills.release();
   await expect(byId(page, "pf-vt-unit-value")).toHaveText("vt-unit.data:1");
+  await expect(page).toHaveURL(hub.pageUrl("vt-unit"));
   await expect(byId(page, "pf-hub")).toHaveCount(0);
   await complete(page);
   expect(pick(await hub.counts(), work)).toEqual({
@@ -425,9 +434,10 @@ export async function expectUnitUnderTransitionCommitsWithItsFill(
 }
 
 /**
- * Leaving while React still holds such a click (`vt-unit`, its fill not yet
- * answered) aborts the fill and shows the next page; going back fetches the
- * page that never showed.
+ * Leaving while such a click (`vt-unit`) still waits for its fill aborts the
+ * fill and shows the next page. The click never committed: it left no
+ * history entry, so going back lands on the page it was made on, and the
+ * deferred work never ran.
  */
 export async function expectLeavingAHeldAdoptionAbortsItsFill(
   page: Page,
@@ -435,6 +445,7 @@ export async function expectLeavingAHeldAdoptionAbortsItsFill(
 ): Promise<void> {
   const work = ["vt-unit.handler", "vt-unit.data"];
   const hub = await openHub(page, fixture);
+  const requests = recordPartials(page, hub.pathname("vt-unit"));
   await prefetchCase(page, hub, "vt-unit");
 
   const aborted: string[] = [];
@@ -443,7 +454,10 @@ export async function expectLeavingAHeldAdoptionAbortsItsFill(
   });
   const fills = await holdFills(page);
   await byId(page, "pf-link-vt-unit").click();
-  await expect(page).toHaveURL(hub.pageUrl("vt-unit"));
+  await expect
+    .poll(() => requests.filter((r) => isFill(r.url())).length)
+    .toBe(1);
+  await expect(page).toHaveURL(hub.home);
   await expect(byId(page, "pf-hub")).toBeVisible();
 
   await byId(page, "pf-link-control").click();
@@ -453,19 +467,15 @@ export async function expectLeavingAHeldAdoptionAbortsItsFill(
   await fills.release();
   await complete(page);
   await expect(byId(page, "pf-vt-unit-page")).toHaveCount(0);
+
+  await page.goBack();
+  await expect(page, "the click left no entry").toHaveURL(hub.home);
+  await expect(byId(page, "pf-hub")).toBeVisible();
+  await complete(page);
   expect(
     pick(await hub.counts(), work),
     "the aborted fill ran nothing",
   ).toEqual({ "vt-unit.handler": 0, "vt-unit.data": 0 });
-
-  await page.goBack();
-  await expect(page).toHaveURL(hub.pageUrl("vt-unit"));
-  await expect(byId(page, "pf-vt-unit-value")).toHaveText("vt-unit.data:1");
-  await complete(page);
-  expect(pick(await hub.counts(), work)).toEqual({
-    "vt-unit.handler": 1,
-    "vt-unit.data": 1,
-  });
 }
 
 export interface PrefetchFalseOutcome {
@@ -1582,6 +1592,39 @@ export async function expectPrefetchThatDeferredStaysWithItsPage(
 }
 
 /**
+ * The click that adopts builds the page's tree once: the fill resolves what
+ * that tree is waiting for and hands React no tree of its own. So nothing on
+ * the page exists twice from the click to the completed page: not the
+ * fallback, not a layout the prefetch rendered, not the content the fill
+ * brings, and the hub layout the page keeps stays the node it was.
+ *
+ * Scar tissue: the fill used to render a second tree and commit it. Where
+ * that tree's wrappers or promises differed from the first one's, a fallback
+ * was mounted a second time.
+ */
+export async function expectAdoptedClickBuildsThePageOnce(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+  name: string,
+): Promise<void> {
+  const hub = await openHub(page, fixture);
+  const requests = recordPartials(page, hub.pathname(name));
+  await prefetchCase(page, hub, name);
+
+  const watch = await watchPage(page, ["pf-layout"]);
+  await clickWithoutHover(page, name);
+  await expect(byId(page, `pf-${name}-value`)).toBeVisible();
+  await expect(page).toHaveURL(hub.pageUrl(name));
+  await complete(page);
+  const seen = await watch.stop();
+
+  expect(kindsOf(requests)).toEqual(["prefetch", "fill"]);
+  expect(seen.remounted, "an element was mounted a second time").toEqual([]);
+  expect(seen.hidden, "the layout the page keeps stayed").toEqual([]);
+  expect(seen.blank, "the page was never blank").toBe(false);
+}
+
+/**
  * A `cache()` route under a flagged layout uses its record. With the layout
  * held nothing above the record is skipped, so the prefetch reads and writes
  * it like any request: the same prefetch three times runs the handler once.
@@ -1747,11 +1790,12 @@ export interface PrefetchFalseParityCase extends PrefetchFalseFlags {
   /** How many view transitions the plain click starts, where a case pins it. */
   viewTransitions?: number;
   /**
-   * React holds the click until its fill answers. A deferred unit on a page
-   * that commits in a transition: the click commits with its fill's first
-   * chunk, as the plain click commits with its response
-   * (`expectUnitUnderTransitionCommitsWithItsFill`). Or a read with no
-   * boundary. Default: the adopted click shows its fallback with the click.
+   * The page shows when the fill answers, not with the click. A deferred
+   * unit on a page that commits in a transition: the click waits for its
+   * fill and commits with the fill's first chunk, as the plain click commits
+   * with its response (`expectUnitUnderTransitionCommitsWithItsFill`). Or a
+   * read with no boundary, where React holds the committed tree. Default:
+   * the adopted click shows its fallback with the click.
    */
   commitsWithFill?: boolean;
   /**
@@ -1792,79 +1836,98 @@ export interface PrefetchFalseOpenGap {
   reason: string;
   /** The comparisons the gap breaks. Every other one still has to hold. */
   breaks: PrefetchFalseParityRule[];
+  /** Open in a production build only: a development server is at parity. */
+  production?: true;
+  /**
+   * The comparisons the gap breaks land on either side of their margin from
+   * run to run. They are reported and not asserted, and the case is not an
+   * expected failure: an expected failure that passes one run in four would
+   * fail the suite as an unexpected pass. Such a case does not report the day
+   * the gap is fixed; its comment lists the cells to check by hand.
+   */
+  atMargin?: true;
 }
 
 /**
- * OPEN, not fixed: where React holds an adopted click, the address bar and
- * the URL hooks move with the click and the page moves when the hold ends.
- * The adoption's transaction commits in the task of the click, and React
- * holds only the tree. Two holds exist: a deferred unit on a page that
- * commits in a transition, until its fill answers, and a read with no
- * boundary, until its value arrives. A plain click moves the hooks with the
- * page (and, on a read with no boundary, the address bar with its response).
+ * OPEN, not fixed: where React holds an adopted click for a read with no
+ * boundary, the address bar moves with the click and the page when the value
+ * arrives. The page's transaction commits before its tree is handed to
+ * React, and whether the tree can show is React's to find out. A plain click
+ * moves the address bar with its response, so its bar is ahead of the page
+ * by the loader's time, and the adopted click's by the fill's round trip
+ * more. That is inside the margin with the server near and outside it with
+ * the server far. The URL hooks move with the page in both clicks.
  *
- * Measured in production, plain against adopted, how far ahead of the page:
- * `bare` the URL hook 1 against 106 ms, 0 against 709 with a slow loader;
- * `above` the hook 0 against 103; `vt-unit` with the server 100 ms away the
- * address bar 6 against 113 and the hook 5 against 113; with the fill's
- * head held 1 s, `vt-unit` 12 against 1011 and 11 against 1011, `bare` the
- * hook 0 against 1108.
+ * Measured in production on `bare`, plain against adopted, how far the
+ * address bar is ahead of the page: 101 against 104 ms with the server near,
+ * 103 against 1108 with the fill's head held 1 s. The URL hook: 1 against 1
+ * and 0 against 0.
  */
 const OPEN_HELD: PrefetchFalseOpenGap = {
   reason:
-    "the adoption's transaction commits at the click while React holds the page",
+    "a click React holds for a read with no boundary moves the address bar with the click, a round trip before the plain click moves it",
   breaks: ["url"],
 };
 
 /**
- * OPEN, not fixed: `above`, a unit whose loader the layout above it reads
- * with no boundary. `OPEN_HELD` applies, and one thing more. React holds the
- * adoption on the loader's gate. The unit's own gate resolves with the
- * commit of the fill's tree, and that tree waits for the adoption to be on
- * screen, so the commit that ends the hold shows the unit's fallback, and
- * React keeps a fallback up for 300 ms. A plain click has the route's
- * content in the same response as the value: the commit that ends its hold
- * shows the page complete, or that same fallback for 300 ms, depending on
- * whether the content is ready in it. Which of the two was not pinned down;
- * it differs by app and by how long the loader takes.
+ * OPEN, not fixed, production only: a click into the section layout, whose
+ * `loading()` is flagged, from a page that does not hold it. Since the
+ * held-boundary fix (#1080) a production build hands a layout handler that
+ * has returned to its boundary as the node: a plain click shows the layout
+ * with its response's first chunk, and the layout's fallback inside the
+ * layout's outlet. The prefetch skipped the layout's handler (R2), so the
+ * adopted click's placeholder shows that fallback in place of the whole
+ * layout until the fill, and then mounts it a second time inside the layout.
+ * A development server does not have the layout in the plain response's
+ * first chunk (the plain click shows the fallback alone for 300 ms), and the
+ * two clicks are equal there.
  *
- * Measured in production, plain against adopted, the page complete.
- * Cloudflare app: 411 against 410 ms with a 100 ms loader (both show the
- * fallback), 408 against 711 with a 400 ms loader and 711 against 1012 with
- * a 700 ms loader (`pf-above-fallback` in every adopted click, in no plain
- * one). Node app: 410/405, 707/712 and 1012/1012, the fallback in both
- * clicks.
+ * Measured in production (router app), plain against adopted, when the
+ * layout shows: `hub to section` 10 against 303 ms, with the server 100 ms
+ * away 116 against 305, `vt to section` 5 against 303. Before #1080 the
+ * plain click showed it at 311.
+ *
+ * Two ways to close it are the maintainer's to choose: the click to a
+ * flagged layout waits for its fill, as a unit under `transition()` does; or
+ * the layout's own handler runs in the prefetch and only its outlet is
+ * deferred.
  */
-const OPEN_ABOVE: PrefetchFalseOpenGap = {
+const OPEN_LAYOUT_CHROME: PrefetchFalseOpenGap = {
   reason:
-    "the adoption's transaction commits at the click while React holds the page; a hold that ends on a unit's own loader shows the unit's fallback for React's 300 ms",
-  breaks: ["url", "fallback", "late"],
+    "a flagged layout's chrome shows with a plain click's first chunk (#1080); the adopted click covers it with the fallback until the fill",
+  // "kept": the layout's fallback mounts again inside the layout.
+  breaks: ["late", "fallback", "kept"],
+  production: true,
 };
 
 /**
- * OPEN, not fixed: a click that commits from a prefetch commits in a
- * transition, flagged or not, where the plain click to a route with no
- * `transition()` commits urgently. With a `<ViewTransition>` mounted on the
- * page being left (the router's own on a `transition()` page, or one of the
- * app's) React starts a view transition for that commit which the plain
- * click does not start, and the reveal of what was deferred waits for it to
- * finish. That is free while a view transition is shorter than the 300 ms
- * React keeps a fallback up, and late by the rest of it otherwise.
- *
- * Measured in production, plain against adopted: view transitions, then the
- * time the page is complete at the default duration and at 600 ms. From
- * `vt` to `unit` 0 against 1, 309 against 308 ms and 307 against 641; to
- * `section` 0 against 1, 309/314 and 306/655; to `loader` 0 against 1,
- * 307/311 and 308/625. From the hub with a boundary of the app's: `unit` 1
- * against 2, 311/349 and 319/664; `loader` 2 against 3, 328/614 and
- * 666/1313.
+ * `OPEN_LAYOUT_CHROME` with a slow layout handler (`hslow`). The plain click
+ * holds the page being left until the handler returns and shows the layout
+ * then (about 607 ms); the adopted click shows it when its fill is complete,
+ * the route's 100 ms loader later (about 709 ms). That is the parity margin
+ * to within a few milliseconds, so the lateness lands on either side of it:
+ * in four production runs of the router app these cells failed 0 to 4 times
+ * each. `section-own` is not here: its fallback rule breaks every time.
  */
-const OPEN_QUEUED: PrefetchFalseOpenGap = {
+const OPEN_LAYOUT_CHROME_AT_MARGIN: PrefetchFalseOpenGap = {
   reason:
-    "a prefetched click commits in a transition; the deferred reveal queues behind its view transition",
-  // "url": the commit's DOM change waits for the view transition's capture.
-  breaks: ["transitions", "late", "url"],
+    "a flagged layout's chrome shows with a plain click's first chunk (#1080); with a slow layout the adopted click shows it about the margin later",
+  breaks: ["late"],
+  production: true,
+  atMargin: true,
 };
+
+/** The gap of a click into the section layout from a page without it. */
+function layoutGap(
+  spec: PrefetchFalseParityCase,
+): PrefetchFalseOpenGap | undefined {
+  if (!SECTION_PAGES.includes(spec.name) || spec.from === "section") {
+    return undefined;
+  }
+  return spec.hslow && spec.name !== "section-own"
+    ? OPEN_LAYOUT_CHROME_AT_MARGIN
+    : OPEN_LAYOUT_CHROME;
+}
 
 const IN_SECTION = { from: "section", held: ["pf-section-layout"] };
 const BESIDE_SLOT = { held: ["pf-slot-layout", "pf-slot-side"] };
@@ -1878,7 +1941,7 @@ const PARITY_CLICKS: PrefetchFalseParityCase[] = [
   { name: "section-cached" },
   { name: "slot" },
   { name: "slot-b" },
-  { name: "bare", open: OPEN_HELD },
+  { name: "bare" },
   { name: "handle" },
   { name: "cached" },
   { name: "prerendered" },
@@ -1895,11 +1958,13 @@ const PARITY_CLICKS: PrefetchFalseParityCase[] = [
   { name: "vt-inner", commitsWithFill: true },
   { name: "nested", ownFallback: "pf-nested-outer-fallback" },
   // The unit's loader is read above its fallback, with no boundary.
-  { name: "above", open: OPEN_ABOVE },
+  { name: "above" },
   // A read with no boundary in a response that stays open behind it.
-  { name: "bare-inner", open: OPEN_HELD },
+  { name: "bare-inner" },
   // A flagged layout whose route has transition().
   { name: "vt-below", commitsWithFill: true },
+  // A read behind its own boundary, on a route with no loading().
+  { name: "own" },
   { name: "control" },
   { name: "section-plain", ...IN_SECTION },
   { name: "section-own", ...IN_SECTION },
@@ -2004,7 +2069,7 @@ const BOUNDARY_CLICKS: PrefetchFalseParityCase[] = [
   { name: "loader", from: "vt", ownFallback: "pf-loader-fallback" },
   { name: "unit", boundary: true },
   { name: "loader", boundary: true, ownFallback: "pf-loader-fallback" },
-].map((spec) => ({ ...spec, open: OPEN_QUEUED }));
+];
 
 /** The fill's head held about a second: far above every margin. */
 const HEAD_HELD_MS = 1000;
@@ -2012,21 +2077,13 @@ const HEAD_HELD_MS = 1000;
 /** Clicks React holds until the fill answers, with the fill a second away. */
 const HEAD_HELD_CLICKS: PrefetchFalseParityCase[] = [
   { name: "vt-unit", commitsWithFill: true, latency: HEAD_HELD_MS },
-  { name: "bare", commitsWithFill: true, latency: HEAD_HELD_MS },
-].map((spec) => ({ ...spec, open: OPEN_HELD }));
-
-/**
- * The gap a case has by what the matrix made of it, beside the one its click
- * names: a held click with the server away (`OPEN_HELD`: without latency the
- * hold is the fill's round trip, a few milliseconds).
- */
-function openGap(
-  spec: PrefetchFalseParityCase,
-): PrefetchFalseOpenGap | undefined {
-  if (spec.open) return spec.open;
-  if (spec.commitsWithFill && spec.latency) return OPEN_HELD;
-  return undefined;
-}
+  {
+    name: "bare",
+    commitsWithFill: true,
+    latency: HEAD_HELD_MS,
+    open: OPEN_HELD,
+  },
+];
 
 /**
  * The fixture's cases, as `expectAdoptedClickIsNeverWorseThanAPlainClick`
@@ -2065,8 +2122,8 @@ export const PREFETCH_FALSE_PARITY_CASES: PrefetchFalseParityCase[] = [
     { ...spec, vtms: LONG_TRANSITION_MS },
   ]),
   ...HEAD_HELD_CLICKS,
-].map((spec) => {
-  const open = openGap(spec);
+].map((spec: PrefetchFalseParityCase) => {
+  const open = spec.open ?? layoutGap(spec);
   return open ? { ...spec, open } : spec;
 });
 
@@ -2083,7 +2140,7 @@ export function prefetchFalseParityTitle(
     spec.boundary && "an app boundary on screen",
     spec.vtms && `view transitions of ${spec.vtms} ms`,
     spec.latency && `the server ${spec.latency} ms away`,
-    spec.open && "open",
+    spec.open && (spec.open.production ? "open in production" : "open"),
   ]
     .filter(Boolean)
     .join(", ");
@@ -2161,7 +2218,8 @@ export interface PrefetchFalsePair {
  *
  * A case with `open` reports its gap: what the gap does not break is
  * asserted first, as for any case. Then `onOpen` is called (the suite marks
- * the test as an expected failure there) and what the gap breaks is asserted.
+ * the test as an expected failure there) and what the gap breaks is asserted,
+ * unless the gap is `atMargin`.
  *
  * Returns the first pair, for a case that pins more.
  */
@@ -2171,7 +2229,7 @@ export async function expectAdoptedClickIsNeverWorseThanAPlainClick(
   spec: PrefetchFalseParityCase,
   hooks: {
     onRepeat?: (late: string) => void;
-    onOpen?: (reason: string) => void;
+    onOpen?: (gap: PrefetchFalseOpenGap) => void;
   } = {},
 ): Promise<PrefetchFalsePair> {
   const first = await recordPlainAndAdoptedClick(page, fixture, spec);
@@ -2286,8 +2344,10 @@ export async function expectAdoptedClickIsNeverWorseThanAPlainClick(
     .join("\n")}`;
   expect(list(wrong.filter((broken) => !known(broken))), report).toEqual([]);
   if (spec.open) {
-    hooks.onOpen?.(spec.open.reason);
-    expect(list(wrong), `open: ${spec.open.reason}\n${report}`).toEqual([]);
+    hooks.onOpen?.(spec.open);
+    if (!spec.open.atMargin) {
+      expect(list(wrong), `open: ${spec.open.reason}\n${report}`).toEqual([]);
+    }
   }
   return first;
 }
@@ -2467,8 +2527,11 @@ export async function recordPlainAndAdoptedClick(
  * A deferred loader never blocks the navigation: it behaves like a loader
  * that is still streaming. Its read has a `<Suspense>` of its own, so the
  * click shows the page, the value of the loader the prefetch ran and that
- * fallback at once, then the value. The plain click shows the route's
- * coarser `loading()` first; the adopted one never does.
+ * fallback at once, then the value. The adopted click never shows the
+ * route's coarser `loading()`. The plain click shows it where its response's
+ * first chunk does not carry the handler's output (development); a
+ * production build hands a handler that has returned to its boundary as the
+ * node (#1080), and shows the page with the response.
  */
 export async function expectDeferredLoaderShowsItsOwnFallbackAtOnce(
   page: Page,
@@ -2479,9 +2542,6 @@ export async function expectDeferredLoaderShowsItsOwnFallbackAtOnce(
       name: "loader",
       ownFallback: "pf-loader-fallback",
     });
-  expect(plain.fallbacks, "the plain click: the route's fallback").toContain(
-    "pf-loader-loading",
-  );
   expect(adopted.fallbacks, "the adopted click: only the read's own").toEqual([
     "pf-loader-fallback",
   ]);
@@ -2499,6 +2559,129 @@ export async function expectDeferredLoaderShowsItsOwnFallbackAtOnce(
   const last = adopted.timeline[adopted.timeline.length - 1] ?? "";
   expect(last, "then the value").toContain("pf-loader-value=loader.data:1");
   expect(last, "and no fallback").not.toContain("pf-loader-fallback");
+}
+
+/**
+ * A deferred read with a `<Suspense>` of its own, on a route with no
+ * `loading()` (`own`). Nothing holds this click: with its fill held back, the
+ * page, the read's fallback, the address bar and the URL hook are all there,
+ * and `useNavigation()` reads `idle` and streaming.
+ *
+ * It guards what a read with no boundary needs (`bare`). There React holds
+ * the click, and the navigation state is delivered ahead of the commit so
+ * that `loading` shows for the wait. That must not keep a click React does
+ * not hold on the page being left.
+ */
+export async function expectOwnBoundaryWithNoLoadingShowsWithTheClick(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+): Promise<void> {
+  const hub = await openHub(page, fixture);
+  const requests = recordPartials(page, hub.pathname("own"));
+  await prefetchCase(page, hub, "own");
+  expect(
+    pick(await hub.counts(), ["own.handler", "own.data"]),
+    "the prefetch ran the handler and skipped the loader",
+  ).toEqual({ "own.handler": 1, "own.data": 0 });
+
+  const fills = await holdFills(page);
+  await clickWithoutHover(page, "own");
+  await expect(byId(page, "pf-own-page")).toBeVisible();
+  await expect(byId(page, "pf-own-fallback")).toBeVisible();
+  await expect(byId(page, "pf-hub")).toHaveCount(0);
+  await expect(page).toHaveURL(hub.pageUrl("own"));
+  const nav = byId(page, "pf-nav");
+  await expect(nav).toHaveAttribute("data-path", hub.pathname("own"));
+  await expect(nav).toHaveAttribute("data-state", "idle");
+  await expect(nav).toHaveAttribute("data-streaming", "true");
+  expect(pick(await hub.counts(), ["own.data"])).toEqual({ "own.data": 0 });
+
+  await fills.release();
+  await expect(byId(page, "pf-own-value")).toHaveText("own.data:1");
+  await expect(byId(page, "pf-own-fallback")).toHaveCount(0);
+  await complete(page);
+  expect(kindsOf(requests)).toEqual(["prefetch", "fill"]);
+  expect(pick(await hub.counts(), ["own.handler", "own.data"])).toEqual({
+    "own.handler": 1,
+    "own.data": 1,
+  });
+}
+
+export interface PrefetchFalseHandlerFailure {
+  /** A case below the section layout: the page is `/prefetch-false/<name>`. */
+  name: string;
+  /** Test id of the boundary the handler's failure ends in. */
+  shows: string;
+}
+
+/** The `pf-*` test ids visible in the page box, in document order. */
+function shownInPageBox(page: Page): Promise<string[]> {
+  return byId(page, "pf-outlet").evaluate((box) =>
+    [...box.querySelectorAll('[data-testid^="pf-"]')]
+      .filter((el) => el.getClientRects().length > 0)
+      .map((el) => el.getAttribute("data-testid")!),
+  );
+}
+
+/**
+ * A handler below a deferred layout that fails in the fill. It has no
+ * `loading()` of its own, so the server awaits it and its failure is the
+ * route's segment: the fill answers with an error (or a not-found) segment
+ * where the prefetch's skeleton has a route and its loader. The page is then
+ * not the one the click's tree was built for, and this is the one answer for
+ * which a fill hands React a tree. It ends where the plain click ends: the
+ * same elements on screen, no fallback left, nothing streaming.
+ */
+export async function expectDeferredHandlerFailureReplacesItsSegment(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+  spec: PrefetchFalseHandlerFailure,
+): Promise<void> {
+  const { name } = spec;
+  const work = [`${name}.handler`, "section.layout"];
+
+  // The plain click: what the page ends as.
+  const plainHub = await openHub(page, fixture);
+  await clickWithoutHover(page, name);
+  await expect(byId(page, spec.shows)).toBeVisible();
+  await complete(page);
+  const plain = await shownInPageBox(page);
+  expect(plain, "the boundary is inside the layout").toEqual(
+    expect.arrayContaining(["pf-section-layout", spec.shows]),
+  );
+  expect(pick(await plainHub.counts(), work)).toEqual({
+    [`${name}.handler`]: 1,
+    "section.layout": 1,
+  });
+
+  const hub = await openHub(page, fixture);
+  const requests = recordPartials(page, hub.pathname(name));
+  await prefetchCase(page, hub, name);
+  expect(pick(await hub.counts(), work), "the prefetch ran neither").toEqual({
+    [`${name}.handler`]: 0,
+    "section.layout": 0,
+  });
+
+  const fills = await holdFills(page);
+  await clickWithoutHover(page, name);
+  await expect(page).toHaveURL(hub.pageUrl(name));
+  await expect(byId(page, "pf-section-fallback")).toBeVisible();
+  await expect(byId(page, spec.shows)).toHaveCount(0);
+
+  await fills.release();
+  await expect(byId(page, spec.shows)).toBeVisible();
+  await expect(byId(page, "pf-section-fallback")).toHaveCount(0);
+  await expect(page).toHaveURL(hub.pageUrl(name));
+  await complete(page);
+  expect(
+    await shownInPageBox(page),
+    "the page the plain click ends on",
+  ).toEqual(plain);
+  expect(kindsOf(requests)).toEqual(["prefetch", "fill"]);
+  expect(pick(await hub.counts(), work), "the fill ran each once").toEqual({
+    [`${name}.handler`]: 1,
+    "section.layout": 1,
+  });
 }
 
 /**
@@ -2673,10 +2856,12 @@ export function definePrefetchFalseTests(
   // same click with no prefetch at all.
   for (const spec of PREFETCH_FALSE_PARITY_CASES) {
     it(`a click that adopts a prefetch is never worse than a plain click: ${prefetchFalseParityTitle(spec)}`, async (page, fixture) => {
+      const open =
+        spec.open?.production && !fixture.production ? undefined : spec.open;
       const pair = await expectAdoptedClickIsNeverWorseThanAPlainClick(
         page,
         fixture,
-        spec,
+        { ...spec, open },
         {
           // In the report: how often one pair of clicks was not enough.
           onRepeat: (late) =>
@@ -2685,8 +2870,14 @@ export function definePrefetchFalseTests(
               description: late,
             }),
           // An expected failure from here on, and an unexpected pass once
-          // the gap is closed.
-          onOpen: (reason) => test.fail(true, reason),
+          // the gap is closed. A gap at the margin is reported only.
+          onOpen: ({ reason, atMargin }) =>
+            atMargin
+              ? test.info().annotations.push({
+                  type: "open at the margin",
+                  description: reason,
+                })
+              : test.fail(true, reason),
         },
       );
       // In the report: the numbers of a case that passed. A case that
@@ -2698,8 +2889,31 @@ export function definePrefetchFalseTests(
     });
   }
 
+  for (const name of [
+    "loader",
+    "unit",
+    "section",
+    "section-own",
+    "slot",
+    "inner",
+    "nested",
+    "above",
+    "bare",
+    "vt",
+    "vt-unit",
+    "vt-inner",
+    "vt-below",
+    "own",
+  ]) {
+    it(`a click that adopts a prefetch builds the page once: ${name}`, (page, fixture) =>
+      expectAdoptedClickBuildsThePageOnce(page, fixture, name));
+  }
+
   it("a deferred loader shows its own fallback at once, beside what the prefetch ran", (page, fixture) =>
     expectDeferredLoaderShowsItsOwnFallbackAtOnce(page, fixture));
+
+  it("a deferred read with its own boundary on a route with no loading() shows with the click", (page, fixture) =>
+    expectOwnBoundaryWithNoLoadingShowsWithTheClick(page, fixture));
 
   for (const name of ["unit", "bare"] as const) {
     it(`useNavigation() reads a pending fill like a navigation that is still streaming: ${name}`, (page, fixture) =>
@@ -2747,6 +2961,18 @@ export function definePrefetchFalseTests(
       name: "redirects",
       shows: "pf-control-page",
       landsOn: "control",
+    }));
+
+  it("a deferred handler that throws replaces its segment when the fill returns, as on a plain click", (page, fixture) =>
+    expectDeferredHandlerFailureReplacesItsSegment(page, fixture, {
+      name: "section-throws",
+      shows: "pf-section-throws-error",
+    }));
+
+  it("a deferred handler that calls notFound() replaces its segment when the fill returns, as on a plain click", (page, fixture) =>
+    expectDeferredHandlerFailureReplacesItsSegment(page, fixture, {
+      name: "section-missing",
+      shows: "pf-section-missing-not-found",
     }));
 
   it("a deferred handler's handle push arrives with the fill", (page, fixture) =>
