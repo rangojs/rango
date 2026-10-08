@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { expectNoPageError, testId, waitForHydration } from "./helper";
 import {
@@ -21,6 +21,26 @@ import {
  * prerender.tsx (/docs/:slug) and urls/client-urls-transition.tsx; the
  * predicates log to window.__txWhenLog / __ctWhenLog.
  */
+
+// Counts document.startViewTransition calls: a gated-off commit starts none.
+async function countViewTransitions(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const w = window as unknown as { __vtCount?: number };
+    w.__vtCount = 0;
+    const original = document.startViewTransition?.bind(document);
+    if (!original) return;
+    document.startViewTransition = ((arg: unknown) => {
+      w.__vtCount = (w.__vtCount ?? 0) + 1;
+      return original(arg as never);
+    }) as typeof document.startViewTransition;
+  });
+}
+
+async function viewTransitions(page: Page): Promise<number> {
+  return page.evaluate(
+    () => (window as unknown as { __vtCount?: number }).__vtCount ?? 0,
+  );
+}
 
 function browserDecisionTests(mode: "dev" | "build") {
   const label = mode === "build" ? "production" : mode;
@@ -170,6 +190,7 @@ function browserDecisionTests(mode: "dev" | "build") {
       page,
     }) => {
       using _ = expectNoPageError(page);
+      await countViewTransitions(page);
       await page.goto(f.url("/tx-src/b"));
       await waitForHydration(page);
       await expect(testId(page, "tx-src-n").last()).toHaveText("b", {
@@ -177,19 +198,34 @@ function browserDecisionTests(mode: "dev" | "build") {
       });
       await bump(page, 2);
       const m0 = await mounts(page);
+      const vt0 = await viewTransitions(page);
 
       // A form action (useActionState): React opens a transition for the
       // call, but the router's commit runs after the response, outside it.
-      // Gated off, that commit is urgent and the re-rendered route segment
-      // streams its loading() skeleton.
+      // Gated off, that commit is unanimated: no view transition starts (that
+      // it is also urgent is pinned by the unit tests,
+      // server-action-bridge-transition-when.test.ts and
+      // partial-update.test.ts). The segment it re-renders has nothing
+      // pending (the action response carries its data), so a build shows no
+      // loading() skeleton either. The dev server still shows it: the client
+      // references of the action payload are still importing in that first
+      // render (cause in @shared/e2e held-boundary-scenario.ts).
       await watchFlash(page, "tx-src-loading");
       await testId(page, "tx-action-run").click();
       await expect(testId(page, "tx-action-run")).toHaveText("actions:1", {
         timeout: 8000,
       });
-      expect(await readFlash(page), "gated-off action commit is urgent").toBe(
-        true,
-      );
+      await page.waitForTimeout(500);
+      const actionFlash = await readFlash(page);
+      if (mode === "build") {
+        expect(actionFlash, "gated-off action commit shows no skeleton").toBe(
+          false,
+        );
+      }
+      expect(
+        await viewTransitions(page),
+        "gated-off action commit is unanimated: no view transition",
+      ).toBe(vt0);
       await testId(page, "tx-action-run").click();
       await expect(testId(page, "tx-action-run")).toHaveText("actions:2", {
         timeout: 8000,
@@ -214,6 +250,32 @@ function browserDecisionTests(mode: "dev" | "build") {
       });
       expect(await mounts(page)).toBe(m0);
       expect(await clicks(page)).toBe("clicks:2");
+    });
+
+    test("an action commit whose when holds starts a view transition", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await countViewTransitions(page);
+      await page.goto(f.url("/tx-src/a"));
+      await waitForHydration(page);
+      await expect(testId(page, "tx-src-n").last()).toHaveText("a", {
+        timeout: 8000,
+      });
+
+      // Leaving a holds: the action commit is a transition, the counterpart of
+      // the gated-off action on b.
+      const vt0 = await viewTransitions(page);
+      await testId(page, "tx-action-run").click();
+      await expect(testId(page, "tx-action-run")).toHaveText("actions:1", {
+        timeout: 8000,
+      });
+      await expect
+        .poll(() => viewTransitions(page), { timeout: 4000 })
+        .toBeGreaterThan(vt0);
+      expect(await whenLog(page)).toEqual([
+        expect.objectContaining({ kind: "action", result: true }),
+      ]);
     });
 
     test("a failed action's error-boundary commit decides with action.error", async ({

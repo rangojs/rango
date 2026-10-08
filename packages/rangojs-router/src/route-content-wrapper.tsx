@@ -97,8 +97,8 @@ export function RouteContentWrapper({
   fallback,
   segmentId,
 }: {
-  // Normally a pending promise (use() suspends -> fallback). forceAwait paths
-  // pass an already-resolved node so Suspender renders it without suspending.
+  // A pending promise suspends (use()) and shows the fallback; a node renders
+  // without suspending (see getBoundaryContent).
   content: Promise<ReactNode> | ReactNode;
   fallback?: ReactNode;
   segmentId?: string;
@@ -118,14 +118,10 @@ const Suspender = ({
 }: {
   content: Promise<ReactNode> | ReactNode;
 }): ReactNode => {
-  // Normally content is a pending promise -> use() suspends and the wrapping
-  // Suspense shows the loading() fallback. forceAwait paths (popstate,
-  // stale-revalidation, fully-prefetched nav) instead pass the ALREADY-RESOLVED
-  // node so first render does not suspend for a microtask and flash the loading()
-  // fallback on a NORMAL (non-transition) commit. The wrapper tree
-  // (RouteContentWrapper > Suspense > Suspender) is identical either way, so this
-  // preserves tree structure (see docs/tree-structure.md) — only whether use()
-  // suspends differs, exactly like LoaderResolver's resolved-data branch.
+  // A pending promise suspends here and the wrapping Suspense shows the
+  // loading() fallback; a node renders without suspending. The wrapper tree
+  // (RouteContentWrapper > Suspense > Suspender) is identical either way (see
+  // docs/tree-structure.md), like LoaderResolver's resolved-data branch.
   return content instanceof Promise ? use(content) : content;
 };
 

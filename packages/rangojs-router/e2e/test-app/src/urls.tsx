@@ -6,6 +6,7 @@ import { createFactoryHmrPatterns } from "./urls/factory-hmr.js";
 import { slowPatternsWithoutDetail } from "./urls/slow.js";
 import { suspenseStreamPatterns } from "./urls/suspense-stream.js";
 import { clientSuspensePatterns } from "./urls/client-suspense.js";
+import { heldBoundaryPatterns } from "./urls/held-boundary.js";
 import { deferredHandleNavPatterns } from "./urls/deferred-handle-nav.js";
 import { conditionalTransitionPatterns } from "./urls/conditional-transition.js";
 
@@ -997,6 +998,7 @@ export const urlpatterns = urls(
 
       // #622 follow-up (HIGH): shared layout + client-mount-suspense children
       include("/", clientSuspensePatterns, { name: "" }),
+      include("/", heldBoundaryPatterns, { name: "" }),
 
       // Deferred-handle navigation contract + history-cache fixes (#622 follow-ups)
       include("/", deferredHandleNavPatterns, { name: "" }),

@@ -88,6 +88,32 @@ What to know before you use it:
 fill } })` and `result.readDeferred()` to test it. See `/loader`, `/route` and
 the design note `docs/design/prefetch-false.md`.
 
+### Fixed: a `loading()` boundary on screen is no longer replaced by its fallback when nothing in it is pending
+
+A `loading()` boundary showed its fallback for about 300 ms although nothing
+in it was pending. Three cases, all in the browser:
+
+- A layout or parallel slot with `loading()` that was already on screen was
+  replaced by its fallback when the visitor clicked a link that was not
+  prefetched, after entering the page through a prefetched link (or back and
+  forward). It showed for a layout with no loaders, for a layout with
+  `loading()` and a loader read by `useLoader`, and for a slot with its own
+  loader and `loading()`. After a plain click or a document load it never did.
+  It no longer shows.
+- A layout with `loading()` and no loaders that is new to the page, reached by
+  a plain click, showed its fallback for about 300 ms in production. It no
+  longer does. In dev it still shows: a client component the layout renders is
+  still importing its module in that first render.
+- A form action whose commit `transition({ when })` gated off re-rendered the
+  route behind its `loading()` skeleton although the action response carried
+  the data. The commit is still urgent and unanimated, and in production the
+  skeleton no longer shows. In dev it still shows, for the same reason as
+  above.
+
+What does not change: a boundary with pending work (a loader still streaming,
+a gated-off navigation or `router.refresh()` whose data is still arriving)
+shows its fallback as before, and the server render is unchanged.
+
 ### Fixed: a prerender refresh that started before `markStale()` is stored stale ([#1072](https://github.com/rangojs/rango/issues/1072))
 
 `router.prerender()` stamped an entry with the time of the store write. A

@@ -37,11 +37,11 @@ import { resolveLoaderData } from "./loader-cache.js";
 import { entryLoadingMasksLoaders } from "./loader-mask.js";
 import {
   defersLoader,
+  belowDeferredUnit,
   defersUnit,
   getPrefetchDeferral,
   isFillRequest,
   markUnitDeferred,
-  placeholderTransition,
 } from "./prefetch-deferral.js";
 import {
   handleHandlerResult,
@@ -142,54 +142,6 @@ function deliverStartedLoaders<TEnv>(
     delete segment.deferred;
     segment.loaderData = run();
   }
-}
-
-/**
- * The loaders of a deferred unit's parallel slots, without the slots: the
- * browser groups them under the unit's segment (segment-system.tsx
- * loaderParentId), so the placeholder's tree has the loader-bearing shape
- * the filled one will have. All of them are behind the unit's fallback, so a
- * prefetch defers each one the client does not hold.
- */
-async function resolveDeferredUnitSlotLoaders<TEnv>(
-  entry: EntryData,
-  context: HandlerContext<any, TEnv>,
-  belongsToRoute: boolean,
-  clientSegmentIds: Set<string>,
-  prevParams: Record<string, string>,
-  request: Request,
-  prevUrl: URL,
-  nextUrl: URL,
-  routeKey: string,
-  deps: SegmentResolutionDeps<TEnv>,
-  actionContext?: ActionContext,
-  stale?: boolean,
-): Promise<SegmentRevalidationResult> {
-  const segments: ResolvedSegment[] = [];
-  const matchedIds: string[] = [];
-  const seen = new Set<string>();
-  for (const parallelEntry of getParallelEntries(entry.parallel)) {
-    if (seen.has(parallelEntry.id)) continue;
-    seen.add(parallelEntry.id);
-    const result = await resolveLoadersWithRevalidation(
-      parallelEntry,
-      context,
-      belongsToRoute,
-      clientSegmentIds,
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      routeKey,
-      deps,
-      actionContext,
-      entry.shortCode,
-      stale,
-    );
-    segments.push(...result.segments);
-    matchedIds.push(...result.matchedIds);
-  }
-  return { segments, matchedIds };
 }
 
 // ---------------------------------------------------------------------------
@@ -729,6 +681,8 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
     if (isFillRequest(context)) {
       // Fill: only what the client does not hold renders, no predicate runs.
       shouldResolve = !clientSegmentIds.has(parallelId);
+    } else if (belowDeferredUnit(context, parallelId)) {
+      shouldResolve = true;
     } else if (isFullRefetch) {
       // Client has nothing cached — slot MUST render. User revalidate fns are
       // bypassed here because returning false would leave the segment blank
@@ -803,8 +757,9 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
       shouldResolve,
     );
 
-    // A slot with its own flagged loading() is its own unit: a prefetch
-    // sends its fallback instead of running the slot handler.
+    // A slot with its own flagged loading() is its own unit, and a slot
+    // below a deferred unit goes with it: a prefetch sends what the slot
+    // declares instead of running its handler.
     const deferSlot = shouldResolve && defersUnit(context, parallelId);
     if (deferSlot) markUnitDeferred(context, parallelId);
     const { component, handlerRan } = deferSlot
@@ -955,7 +910,7 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
       // have run, and a prefetch sends the entry's fallback in its place.
       if (defersUnit(context, entry.shortCode)) {
         deferred = true;
-        markUnitDeferred(context, entry.shortCode);
+        markUnitDeferred(context, entry.shortCode, true);
         return null;
       }
       handlerRan = true;
@@ -1050,11 +1005,10 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
     index: 0,
     component: resolvedComponent,
     loading: entry.loading === false ? null : entry.loading,
-    transition:
-      applyViewTransitionDefault(
-        entry.transition,
-        deps.viewTransitionDefault,
-      ) ?? (deferred ? placeholderTransition(context, entry) : undefined),
+    transition: applyViewTransitionDefault(
+      entry.transition,
+      deps.viewTransitionDefault,
+    ),
     params,
     belongsToRoute,
     ...(entry.clientGroup ? { clientGroup: entry.clientGroup } : {}),
@@ -1134,10 +1088,7 @@ export async function resolveSegmentWithRevalidation<TEnv>(
       stale,
     );
 
-    // A deferred unit takes its orphan layouts with it.
-    for (const orphan of routeHandlerResult.segment.deferred
-      ? []
-      : entry.layout) {
+    for (const orphan of entry.layout) {
       const orphanResult = await resolveOrphanLayoutWithRevalidation(
         orphan,
         params,
@@ -1159,46 +1110,27 @@ export async function resolveSegmentWithRevalidation<TEnv>(
     }
   }
 
-  // The entry's slots. A deferred unit's do not run; their loaders ride as
-  // deferred segments (resolveDeferredUnitSlotLoaders).
-  const resolveSlots = (deferred: boolean | undefined) =>
-    deferred
-      ? resolveDeferredUnitSlotLoaders(
-          entry,
-          context,
-          belongsToRoute,
-          clientSegmentIds,
-          prevParams,
-          request,
-          prevUrl,
-          nextUrl,
-          routeKey,
-          deps,
-          actionContext,
-          stale,
-        )
-      : resolveParallelSegmentsWithRevalidation(
-          entry,
-          params,
-          context,
-          belongsToRoute,
-          clientSegmentIds,
-          prevParams,
-          request,
-          prevUrl,
-          nextUrl,
-          routeKey,
-          deps,
-          actionContext,
-          stale,
-        );
+  const resolveSlots = () =>
+    resolveParallelSegmentsWithRevalidation(
+      entry,
+      params,
+      context,
+      belongsToRoute,
+      clientSegmentIds,
+      prevParams,
+      request,
+      prevUrl,
+      nextUrl,
+      routeKey,
+      deps,
+      actionContext,
+      stale,
+    );
 
   if (routeHandlerResult) {
     // Route entry: handler already executed above; resolve parallels
     // (handler data visible) then push handler segment last for tree order.
-    const parallelResult = await resolveSlots(
-      routeHandlerResult.segment.deferred,
-    );
+    const parallelResult = await resolveSlots();
     segments.push(...parallelResult.segments);
     matchedIds.push(...parallelResult.matchedIds);
 
@@ -1225,12 +1157,9 @@ export async function resolveSegmentWithRevalidation<TEnv>(
     segments.push(handlerResult.segment);
     matchedIds.push(handlerResult.matchedId);
 
-    const parallelResult = await resolveSlots(handlerResult.segment.deferred);
+    const parallelResult = await resolveSlots();
     segments.push(...parallelResult.segments);
     matchedIds.push(...parallelResult.matchedIds);
-    // Everything the layout's fallback covers is deferred with it:
-    // resolveAllSegmentsWithRevalidation stops the chain walk here.
-    if (handlerResult.segment.deferred) return { segments, matchedIds };
 
     for (const orphan of entry.layout) {
       if (chain?.includes(orphan)) continue;
@@ -1338,6 +1267,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
   // so ctx.set() values are visible to parallel children.
   matchedIds.push(orphan.shortCode);
 
+  let deferred = false;
   const component = await revalidate(
     async () => {
       if (!clientSegmentIds.has(orphan.shortCode)) {
@@ -1394,7 +1324,14 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
       );
       return shouldRevalidate;
     },
-    async () => resolveLayoutComponent(orphan, context),
+    async () => {
+      // Below a unit a prefetch skipped: the orphan goes with it.
+      if (defersUnit(context, orphan.shortCode)) {
+        deferred = true;
+        return null;
+      }
+      return resolveLayoutComponent(orphan, context);
+    },
     () => null,
   );
 
@@ -1413,6 +1350,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
       deps.viewTransitionDefault,
     ),
     ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
+    ...(deferred ? { deferred: true as const } : {}),
   });
 
   // Resolve the orphan layout's parallel slots through the shared main-path
@@ -1564,11 +1502,6 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
         seenMatchIds.add(id);
         matchedIds.push(id);
       }
-    }
-    // A prefetch deferred this entry as a unit: no deeper entry of the chain
-    // runs, and none is in `matched` (the fill renders them).
-    if (resolved.segments.some((s) => s.deferred && s.id === entry.shortCode)) {
-      break;
     }
   }
 

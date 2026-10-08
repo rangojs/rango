@@ -140,11 +140,17 @@ export async function expectNoReload(page: Page) {
  * visibility check can race past a skeleton that appears-and-disappears within
  * a frame (on experimental React the view-transition snapshot also masks the
  * timing); the observer cannot miss it.
+ *
+ * The document's own skeleton must be gone first: a streamed fallback stays
+ * attached until React reveals the content, while the hidden content already
+ * satisfies a text assertion (see the helper in
+ * packages/rangojs-router/e2e/same-route-nav.test.ts).
  */
 export async function installSkeletonSentinel(
   page: Page,
   skeletonTestId: string,
 ) {
+  await expect(testId(page, skeletonTestId)).toHaveCount(0);
   await page.evaluate((id) => {
     const w = window as unknown as { __swrSkeletonSeen?: boolean };
     w.__swrSkeletonSeen = false;

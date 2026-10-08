@@ -15,11 +15,7 @@ const addTransitionType: ((type: string) => void) | undefined =
 import type { RenderSegmentsOptions } from "../segment-system.js";
 import { reconcileSegments } from "./segment-reconciler.js";
 import type { ReconcileActor } from "./segment-reconciler.js";
-import {
-  clearPendingFill,
-  emitAdoption,
-  setPendingFill,
-} from "./pending-fill.js";
+import { clearPendingFill, setPendingFill } from "./pending-fill.js";
 import {
   emitNavigationError,
   toNetworkError,
@@ -39,7 +35,7 @@ import {
   validateRedirectOrigin,
   validateExternalRedirect,
 } from "./validate-redirect-origin.js";
-import type { NavigationUpdate } from "./types.js";
+import type { NavigationUpdate, RscMetadata } from "./types.js";
 import { OPTIMISTIC_COMMIT_TRANSITION_TYPE } from "./optimistic-commit.js";
 import { loaderStore } from "../loader-store.js";
 import {
@@ -112,13 +108,27 @@ export interface PartialUpdateConfig {
   getVersion?: () => string | undefined;
   /**
    * A fill (`prefetch: false`) is not a navigation: it has no transaction to
-   * carry a redirect, or the location state the server set, to their owner.
-   * The bridge that owns navigation supplies both. Without them a redirect
-   * is a document navigation and the state is dropped.
+   * carry a redirect to its owner, and it hands React no update that would
+   * carry what its response holds to the stores. The bridge that owns
+   * navigation supplies the writes. Without them a redirect is a document
+   * navigation and the rest is dropped.
    */
   fill?: {
     redirect(url: string, state?: Record<string, unknown>): void;
+    /** The location state the server set, to the entry and its readers. */
     locationState(state: Record<string, unknown>): void;
+    /** What the response's handlers pushed, to the handle store. */
+    handles(metadata: RscMetadata): void;
+    /**
+     * Deliver the navigation state to its readers now. A page built with
+     * holes commits in the task of its click, before the notification of the
+     * click has gone out (event-controller.ts makeDebouncedNotifier), and
+     * React holds that commit where a hole is read with no boundary: without
+     * this useNavigation() reads idle, on the page being left, for the whole
+     * wait. Delivered first, `loading` is on screen when the commit is
+     * handed over, and stays while React holds it, as for a plain click.
+     */
+    flush(): void;
   };
 }
 
@@ -142,16 +152,17 @@ function missingIds(
  * How long React keeps a fallback on screen before a Suspense retry may
  * replace it (FALLBACK_THROTTLE_MS in react-reconciler's work loop). A plain
  * click's fallback shows with the first chunk of its response, so that click
- * reveals nothing sooner than this after the chunk. An adopted click's
- * fallback shows with the click, a round trip earlier: left to React, its
- * reveal comes that much sooner, before data the plain click's reveal
+ * reveals nothing sooner than this after the chunk. A tree built with holes
+ * shows its fallbacks with the click, a round trip earlier: left to React,
+ * its reveal comes that much sooner, before data the plain click's reveal
  * includes, with a second fallback where the plain click shows one (measured
- * with 100 ms to the first chunk: content 200 ms late). So a fill that is
- * still streaming lands this long after its own first chunk.
+ * with 100 ms to the first chunk: content 200 ms late). So the gates of a
+ * tree that is on screen resolve this long after the answer's first chunk,
+ * or when the answer has streamed, whichever is first.
  *
  * The rule is for a fallback that is on screen. Where React has not committed
- * the adoption when the fill answers, nothing is up to be revealed early, and
- * the fill does not wait: a page React holds for a read with no boundary
+ * the tree when the answer starts, nothing is up to be revealed early, and
+ * the gates resolve at once: a page React holds for a read with no boundary
  * would stay this long after its value arrived, for nothing.
  *
  * Not ours to tune. The latency cases of
@@ -161,11 +172,12 @@ function missingIds(
 const FALLBACK_THROTTLE_MS = 300;
 
 /**
- * A promise the browser created for a deferred segment's missing value. The
- * segment is always new to the page: a payload that defers is adopted only
- * on the page it was prefetched from, with the segments it was prefetched
- * with (rsc/rsc-rendering.ts sourceScoped, prefetch/cache.ts buildSourceKey),
- * and the server defers nothing that request listed as held.
+ * A promise the browser created for a hole in a tree it built: the value a
+ * placeholder segment stands for. The segment is always new to the page: a
+ * payload that defers is adopted only on the page it was prefetched from,
+ * with the segments it was prefetched with (rsc/rsc-rendering.ts
+ * sourceScoped, prefetch/cache.ts buildSourceKey), and the server defers
+ * nothing that request listed as held.
  */
 interface Gate<T = unknown> {
   promise: Promise<T>;
@@ -181,52 +193,31 @@ function newGate<T>(): Gate<T> {
 }
 
 /**
- * One adoption of a payload that carries deferred segments (`prefetch:
- * false`), from the moment its gates are armed to the moment its fill lands
- * or is abandoned. See docs/design/prefetch-false.md, "The browser".
+ * A tree built with holes, one gate per placeholder segment, from the moment
+ * the gates are armed to the moment an answer settles them or the tree is
+ * replaced. The tree is built once. What answers it resolves gates and writes
+ * stores (settleHoles): it hands React no tree. `prefetch: false` is one
+ * source of such a tree and its fill request one answer
+ * (docs/design/prefetch-false.md, "The browser").
  */
-interface Fill {
+interface Holes {
   /** Placeholder segment (the payload's object) -> its gate. */
   gates: Map<ResolvedSegment, Gate>;
-  /** The placeholders that are units: every one that is not a loader. */
-  units: ResolvedSegment[];
-  /** The adopted payload's `matched`, which its handle stream still reads. */
+  /** The `matched` the tree was built for. */
   matched: string[];
-  controller: AbortController;
-  /** The response arrived: from here it is dropped, never aborted mid-read. */
-  responded?: boolean;
+  /** Stops the request behind the answer, until it has answered. */
+  abort?: () => void;
   cancelled?: boolean;
   /**
-   * React has committed the adoption's tree: its fallbacks are on screen.
-   * Until then React may be holding the adoption on one of these gates (a
-   * read with no boundary), so nothing a gate waits for may wait for this.
+   * React has committed the tree: its fallbacks are on screen. Until then
+   * React may be holding the tree on one of these gates (a read with no
+   * boundary).
    */
   shown?: boolean;
-  /** Resolves when `shown` turns true. */
-  whenShown: Promise<void>;
   show(): void;
-  /** The adoption's tree, or the one a fill landed for a held adoption. */
-  root?: ReactNode;
-  /** Whether the adoption rendered its tree with forceAwait. */
-  forceAwait?: boolean;
   /**
-   * The adoption commits nothing until its fill has responded: a deferred
-   * unit on a page a plain click commits in a transition. React renders such
-   * a page's content in the commit that shows its fallback, in a render that
-   * can wait. Once the fallback is up no commit can bring the content in
-   * that way: each either starts a view transition of its own (whenever a
-   * <ViewTransition> is mounted anywhere on the page, the router's included)
-   * or schedules a retry that commits while a read is still streaming, which
-   * starts one too, and the reveal waits behind it (measured: three
-   * transitions for two, content up to 280 ms late). So the adoption's
-   * update carries a promise nobody resolves, and the fill hands its tree
-   * over in a transition of its own: two transition updates of one state,
-   * which React commits as one.
-   */
-  held?: boolean;
-  /**
-   * Settles with true once tx.commit() has run for the adoption (its
-   * placeholders are on screen), or with false when it is abandoned.
+   * Settles with true once tx.commit() has run for the tree, or with false
+   * when it is abandoned.
    */
   whenCommitted: Promise<boolean>;
   commit(): void;
@@ -235,10 +226,10 @@ interface Fill {
 
 /** What one fetchPartialUpdate call adopted, if its payload deferred. */
 interface Adoption {
-  /** The fill, until tx.commit() has put its placeholders on screen. */
-  fill?: Fill;
-  /** Resolves once the fill has landed and streamed, or was abandoned. */
-  filled?: Promise<void>;
+  /** The tree's holes, until tx.commit() has put the tree in the store. */
+  fill?: Holes;
+  /** Resolves once the fill has streamed, or was abandoned. */
+  filled?: Promise<unknown>;
 }
 
 /**
@@ -332,68 +323,58 @@ export function createPartialUpdater(
   }
 
   /**
-   * Arm a gate on every deferred segment of an adopted payload: a deferred
-   * loader's gate is its `loaderData`, a deferred unit's is its `component`.
-   * To the rest of the client a gate is a stream that has not arrived yet.
+   * Arm a gate on every placeholder: a loader's gate is its `loaderData`, any
+   * other segment's is its `component`. To the rest of the client a gate is
+   * a stream that has not arrived yet.
    */
-  function armGates(placeholders: ResolvedSegment[], matched: string[]): Fill {
+  function armGates(placeholders: ResolvedSegment[], matched: string[]): Holes {
     const gates = new Map<ResolvedSegment, Gate>();
-    const units: ResolvedSegment[] = [];
     for (const segment of placeholders) {
       const gate = newGate();
-      if (segment.type === "loader") {
-        segment.loaderData = gate.promise;
-      } else {
-        segment.component = gate.promise as ReactNode;
-        units.push(segment);
-      }
+      if (segment.type === "loader") segment.loaderData = gate.promise;
+      else segment.component = gate.promise as ReactNode;
       gates.set(segment, gate);
     }
     const committed = newGate<boolean>();
-    const shown = newGate<void>();
-    const fill: Fill = {
+    const holes: Holes = {
       gates,
-      units,
       matched,
-      controller: new AbortController(),
-      whenShown: shown.promise,
       show() {
-        fill.shown = true;
-        shown.resolve();
+        holes.shown = true;
       },
       whenCommitted: committed.promise,
       commit() {
         committed.resolve(true);
-        setPendingFill(fill.cancel);
+        setPendingFill(holes.cancel);
       },
       cancel() {
-        if (fill.cancelled) return;
-        fill.cancelled = true;
+        if (holes.cancelled) return;
+        holes.cancelled = true;
         committed.resolve(false);
-        // Aborting a Flight stream mid-read makes the decoder throw
-        // asynchronously: abort only while waiting for the response.
-        if (!fill.responded) fill.controller.abort();
+        holes.abort?.();
       },
     };
-    return fill;
+    return holes;
   }
 
   /** A gate that will not be resolved must not stay a pending stream. */
-  function releaseGate(placeholder: ResolvedSegment, gate: Gate): void {
-    if (placeholder.type === "loader") {
-      loaderStore.releasePendingStream(placeholder.loaderId!, gate.promise);
+  function releaseGates(holes: Holes): void {
+    for (const [placeholder, gate] of holes.gates) {
+      if (placeholder.type === "loader") {
+        loaderStore.releasePendingStream(placeholder.loaderId!, gate.promise);
+      }
     }
   }
 
   /**
-   * The entry on screen, while it still holds this adoption's placeholders.
-   * By object, not by history key: a shallow navigation that copied the entry
-   * to a new key is still the page the fill is for, and an action refetch
-   * that already rendered the missing segments is not.
+   * The entry on screen, while it still holds these placeholders. By object,
+   * not by history key: a shallow navigation that copied the entry to a new
+   * key is still the page the answer is for, and an action refetch that
+   * already rendered the missing segments is not.
    */
-  function entryToFill(fill: Fill): ResolvedSegment[] | undefined {
+  function entryToFill(holes: Holes): ResolvedSegment[] | undefined {
     const live = entryOnScreen();
-    return live?.some((s) => fill.gates.has(s)) ? live : undefined;
+    return live?.some((s) => holes.gates.has(s)) ? live : undefined;
   }
 
   function entryOnScreen(): ResolvedSegment[] | undefined {
@@ -408,6 +389,38 @@ export function createPartialUpdater(
     return redirect.external
       ? validateExternalRedirect(redirect.url, window.location.origin)
       : validateRedirectOrigin(redirect.url, window.location.origin);
+  }
+
+  /**
+   * Act on the redirect a navigation was answered with. True when `metadata`
+   * carried one: the navigation is done here. A target in the app is thrown
+   * for the bridge to follow. An explicit off-host one
+   * (redirect(url, { external: true })) is a hard navigation, still
+   * scheme-validated (http/https only): `external` waives the same-origin
+   * check the app opted out of, not scheme safety, so a forged payload
+   * carrying a javascript: or data: URL cannot script via location.assign. A
+   * target the client refuses is dropped.
+   */
+  function redirected(
+    metadata: RscMetadata | undefined,
+    signal: AbortSignal | undefined,
+  ): boolean {
+    const redirect = metadata?.redirect;
+    if (!redirect) return false;
+    if (signal?.aborted) {
+      debugLog("[Browser] Ignoring stale redirect (aborted)");
+      return true;
+    }
+    const target = redirectTarget(redirect);
+    if (!target) {
+      debugLog("[Browser] Ignoring blocked redirect payload");
+    } else if (redirect.external) {
+      debugLog("[Browser] External redirect (hard navigation)");
+      window.location.assign(target);
+    } else {
+      throw new ServerRedirect(target, metadata.locationState);
+    }
+    return true;
   }
 
   /**
@@ -427,47 +440,71 @@ export function createPartialUpdater(
   }
 
   /**
-   * The fill request of one adoption: fetch what the prefetch deferred, merge
-   * it into the entry on screen and resolve the gates. `gatedOff` is the
-   * adoption's transition({ when }) decision, which the fill reuses.
-   * Resolves once the fill has landed and streamed, or was abandoned. Never
-   * rejects.
+   * The fill request of one adoption: fetch what the prefetch deferred and
+   * settle the tree's holes with it. Resolves once the fill has streamed, or
+   * was abandoned. Never rejects.
    */
   function runFill(
-    fill: Fill,
+    holes: Holes,
     url: string,
     heldIds: string[],
     gatedOff: boolean,
-  ): Promise<void> {
-    // The stream is awaited out here: landFill's frame holds the payload,
-    // the reconciled segments and the tree, and is gone once it returns.
-    const landed: { streamComplete?: Promise<void> } = {};
-    return landFill(fill, url, heldIds, gatedOff, landed).then(() =>
-      landed.streamComplete?.catch(() => {}),
-    );
-  }
-
-  async function landFill(
-    fill: Fill,
-    url: string,
-    heldIds: string[],
-    gatedOff: boolean,
-    landed: { streamComplete?: Promise<void> },
-  ): Promise<void> {
-    try {
-      const result = await client.fetchPartial({
+  ): Promise<unknown> {
+    const controller = new AbortController();
+    holes.abort = () => controller.abort();
+    return settleHoles(
+      holes,
+      client.fetchPartial({
         targetUrl: url,
         segmentIds: heldIds,
         // The page the fill completes is the page it is on.
         previousUrl: url,
         fill: true,
-        signal: fill.controller.signal,
+        signal: controller.signal,
         version: getVersion(),
         routerId: store.getRouterId?.(),
-      });
-      fill.responded = true;
-      // The fill can beat the adoption's own commit (its render awaits).
-      if (!(await fill.whenCommitted)) return;
+      }),
+      url,
+      gatedOff,
+      // The stream is awaited out here: settleHoles's frame holds the
+      // payload and the reconciled segments, and is gone once it returns.
+    ).then((streamComplete) => streamComplete?.catch(() => {}));
+  }
+
+  /**
+   * Settle the holes of the tree on screen with `answer`: a partial payload
+   * that carries the segment each placeholder stands for. The gates resolve
+   * with those segments' values, the stored entry is rewritten with the
+   * segments themselves, and what the answer's handlers pushed goes to the
+   * stores its readers subscribe to. React is handed nothing: the tree that
+   * reads the gates is the page, and what resolves reaches it as a stream
+   * that arrived.
+   *
+   * One answer does replace the page: one whose segments are not the ones the
+   * tree was built for. A handler that was awaited threw or called
+   * notFound(), and its entry's segments are one error segment instead
+   * (router/segment-resolution/helpers.ts catchSegmentError). That is the
+   * outcome of the navigation, and the segments are rendered as a
+   * navigation's are. `gatedOff` is the tree's transition({ when }) decision,
+   * for that render.
+   *
+   * Returns the end of the answer's stream once the holes are settled,
+   * nothing when the answer was dropped or refused. Never rejects.
+   */
+  async function settleHoles(
+    holes: Holes,
+    answer: ReturnType<NavigationClient["fetchPartial"]>,
+    url: string,
+    gatedOff: boolean,
+  ): Promise<Promise<void> | undefined> {
+    let settled: Promise<void> | undefined;
+    try {
+      const result = await answer;
+      // Aborting a Flight stream mid-read makes the decoder throw
+      // asynchronously: from here the answer is dropped, never aborted.
+      holes.abort = undefined;
+      // The answer can beat the tree's own commit (its render awaits).
+      if (!(await holes.whenCommitted)) return;
 
       const metadata = result.payload.metadata;
       if (metadata?.redirect) {
@@ -480,17 +517,16 @@ export function createPartialUpdater(
         throw new Error("[rango] fill: not a partial payload");
       }
 
-      const live = entryToFill(fill);
+      const live = entryToFill(holes);
       if (!live) return;
 
       const matched = metadata.matched || [];
-      const kept = live.filter((s) => !s.deferred);
       const reconciled = reconcileSegments({
         actor: "stale-revalidation",
         matched,
         diff: metadata.diff || [],
         serverSegments: metadata.segments || [],
-        cachedSegments: kept,
+        cachedSegments: live.filter((s) => !s.deferred),
         insertMissingDiff: true,
       });
       const missing = missingIds(matched, reconciled.segments);
@@ -500,152 +536,84 @@ export function createPartialUpdater(
         );
       }
 
-      // Nothing of the response is handed over before this point: what a
-      // response the client then refuses had set would stay under the error.
-      //
-      // The adoption's handle stream (NavigationProvider processHandles)
-      // reads its payload's `matched` on every yield and drops the buckets of
-      // segments outside it. A deferred unit's `matched` stops at the unit:
-      // a late yield would delete what the fill pushed below it.
-      replace(fill.matched, matched);
+      // Nothing of the answer is handed over before this point: what an
+      // answer the client then refuses had set would stay under the error.
       if (metadata.locationState) {
         config.fill?.locationState(metadata.locationState);
       }
 
-      // By the entry, not by its placeholders: what the fill pushed is
-      // handed over after it has landed where React holds the adoption.
-      const gone = (): boolean => fill.cancelled || entryOnScreen() !== live;
-      // What the deferred handlers pushed, under the tree on screen. Every
-      // update a fill makes on a page that is on screen is urgent, and made
-      // once the adoption is on screen. In a transition of its own it would
-      // wait for the view transition that is running and start another,
-      // whenever a <ViewTransition> is mounted anywhere on the page, changed
-      // or not, and every reveal behind it would wait in turn (measured on a
-      // unit under transition(): three transitions for two, content up to
-      // 280 ms late). Sooner, it would commit the page ahead of the
-      // transition the adoption is in.
-      // No `scroll`: a fill is not a navigation transaction. A decision here,
-      // even "do not scroll", would replace the adoption's pending one
-      // (NavigationProvider).
-      const push = (): void => {
-        if (!gone()) onUpdate({ root: fill.root, metadata });
-      };
-      if (!fill.held) void fill.whenShown.then(push);
-
-      // The adoption's fallbacks are on screen, where a plain click's show
-      // with its response and React keeps them up for FALLBACK_THROTTLE_MS.
-      // These have been up since the click: released now, what the fill
-      // brought would be revealed a round trip sooner than a plain click
-      // reveals it, without what is still on its way. Where React has not
-      // committed the adoption there is no fallback to keep up, and it may
-      // be one of these gates that React is waiting for.
-      const shown = fill.shown;
-      if (shown) {
-        await Promise.race([
-          result.streamComplete.catch(() => {}),
-          new Promise((resolve) => setTimeout(resolve, FALLBACK_THROTTLE_MS)),
-        ]);
-        if (gone()) return;
-      }
-
-      // A unit whose adoption commits its own tree gets a tree, in which it
-      // keeps reading its gate. The gate resolves once React has committed
-      // that tree, so the unit is revealed by a Suspense retry, throttled and
-      // animated as a plain click's is: with its content already there this
-      // commit would reveal it at once, and a boundary inside it would show
-      // its fallback for data a few milliseconds away. Where the fallbacks
-      // are on screen the gates of the loaders a unit owns resolve with it: a
-      // slot reads them above its content, and would otherwise show its
-      // fallback twice. Every other loader gate resolves now. React may be
-      // holding the adoption for it (a read with no boundary, which can be a
-      // layout's read of a loader its unit owns), and its reader keeps
-      // reading it in the tree.
-      const brought = reconciled.segments.filter(
-        (s) => !kept.some((held) => held.id === s.id),
+      const gone = (): boolean => holes.cancelled || entryOnScreen() !== live;
+      const placeholders = [...holes.gates.keys()];
+      const answers = placeholders.map((placeholder) =>
+        reconciled.segments.find(
+          (s) => s.id === placeholder.id && s.type === placeholder.type,
+        ),
       );
-      const hasUnit = fill.units.length > 0;
-      const tree = hasUnit && !fill.held;
-      const revealed = new Map<Gate, unknown>();
-      const streams: Array<[ResolvedSegment, unknown]> = [];
-      for (const [placeholder, gate] of fill.gates) {
-        const next = brought.find((s) => s.id === placeholder.id);
-        if (!next) {
-          releaseGate(placeholder, gate);
-          continue;
-        }
-        const unit = placeholder.type !== "loader";
-        const value: unknown = unit ? next.component : next.loaderData;
-        const owned = fill.units.some(
-          (u) => u.namespace === placeholder.namespace,
-        );
-        // With the tree's commit, or now.
-        const reveal = tree && (unit ? next.loading : owned && shown);
-        if (reveal) revealed.set(gate, value);
-        else gate.resolve(value);
-        if (unit) {
-          if (reveal) next.component = gate.promise as ReactNode;
-        } else if (tree && !owned) {
-          streams.push([next, value]);
-          next.loaderData = gate.promise;
-        }
-      }
-
-      // A fill of loaders alone renders nothing: the tree on screen reads
-      // the gates.
-      if (hasUnit) {
-        if (tree) {
-          await fill.whenShown;
-          // Rendered as the adoption's tree was, what the fill brought
-          // standing in it as still streaming: nothing of it is awaited, and
-          // nothing already on screen reaches React as a promise it has not
-          // read, which a render that cannot wait would suspend on.
-          for (const segment of brought) segment.deferred = true;
-        }
-        let root: ReactNode;
-        try {
-          root = await renderSegments(reconciled.mainSegments, {
-            forceAwait: tree && fill.forceAwait,
-            transitionGatedOff: gatedOff,
-            interceptSegments:
-              reconciled.interceptSegments.length > 0
-                ? reconciled.interceptSegments
-                : undefined,
-          });
-        } finally {
-          for (const segment of brought) delete segment.deferred;
-        }
-        // The entry keeps the fill's own streams: the next render from
-        // this page builds on them, and a gate is a promise React has read
-        // only where a reader was on screen.
-        for (const [segment, stream] of streams) segment.loaderData = stream;
+      if (
+        answers.includes(undefined) ||
+        matched.join() !== holes.matched.join()
+      ) {
+        // The tree's handle stream (NavigationProvider processHandles) reads
+        // this array on every yield and drops the buckets of segments
+        // outside it.
+        replace(holes.matched, matched);
+        const root = await renderSegments(reconciled.mainSegments, {
+          transitionGatedOff: gatedOff,
+          interceptSegments:
+            reconciled.interceptSegments.length > 0
+              ? reconciled.interceptSegments
+              : undefined,
+        });
         if (gone()) return;
-        if (fill.held) {
-          // The adoption's transition is waiting: this update joins it, so
-          // the page commits once, as the plain click commits it, with what
-          // the fill pushed and the location state the server set.
-          fill.root = root;
-          startTransition(push);
-        } else {
-          // The handle stream is being read already: not handed over twice.
-          onUpdate({
-            root,
-            metadata: { ...metadata, handles: undefined, matched: undefined },
-            onCommit: () => {
-              for (const [gate, value] of revealed) gate.resolve(value);
-            },
-          });
+        releaseGates(holes);
+        // No `scroll`: this is not a navigation transaction. A decision
+        // here, even "do not scroll", would replace the tree's pending one
+        // (NavigationProvider).
+        onUpdate({ root, metadata });
+      } else {
+        config.fill?.handles(metadata);
+        // The tree's fallbacks are on screen, where a plain click's show
+        // with its response and React keeps them up for
+        // FALLBACK_THROTTLE_MS. These have been up since the click: resolved
+        // now, a gate would reveal its boundary a round trip sooner than a
+        // plain click reveals it, without what is still on its way, and a
+        // boundary inside it would show a fallback the plain click never
+        // shows (measured on two reads in nested boundaries, 150 ms apart).
+        // Where React has not committed the tree there is no fallback to
+        // keep up, and it may be one of these gates that React is waiting
+        // for.
+        if (holes.shown) {
+          await Promise.race([
+            result.streamComplete.catch(() => {}),
+            new Promise((resolve) => setTimeout(resolve, FALLBACK_THROTTLE_MS)),
+          ]);
+          if (gone()) return;
         }
+        // All in one task: a hole below another one is read in the render
+        // the outer gate's resolution starts, and a gate that is resolved by
+        // then costs that render one microtask, not a fallback.
+        placeholders.forEach((placeholder, index) => {
+          const next = answers[index]!;
+          holes.gates
+            .get(placeholder)!
+            .resolve(
+              placeholder.type === "loader" ? next.loaderData : next.component,
+            );
+        });
       }
 
-      // The fill belongs to the visit that adopted: the entry is rewritten in
-      // place, not re-cached. cacheSegmentsForHistory would advance the
-      // store's nav instance and disown the adoption's handle stream, and
-      // would reset the entry's stale flag.
+      // The entry keeps the answer's own streams and nodes, not the gates:
+      // the next render from this page builds on it, and a gate is a promise
+      // React has read only where a reader was on screen. The answer belongs
+      // to the visit that built the tree: the entry is rewritten in place,
+      // not re-cached. cacheSegmentsForHistory would advance the store's nav
+      // instance and disown the tree's handle stream, and would reset the
+      // entry's stale flag.
       replace(live, reconciled.segments);
       store.setSegmentIds(matched);
-      landed.streamComplete = result.streamComplete;
+      settled = result.streamComplete;
     } catch (thrown) {
-      if (fill.cancelled) return;
+      if (holes.cancelled) return;
       let error = thrown;
       if (error instanceof ServerRedirect) {
         if (followFillRedirect({ url: error.url }, error.state)) return;
@@ -655,27 +623,21 @@ export function createPartialUpdater(
       // Shown the way a navigation the client cannot process is
       // (navigation-bridge.ts): the error replaces the page, so an error
       // boundary takes over and no fallback is left waiting. Only on a page
-      // that still waits for this fill, and not before the adoption has
-      // committed: its commit would replace the error. The gates are never
+      // that still waits for this answer, and not before its tree has
+      // committed: that commit would replace the error. The gates are never
       // rejected. A rejected gate is an unhandled rejection of every
       // aggregate built over it (segment-loader-promise.ts).
-      if (!(await fill.whenCommitted) || !entryToFill(fill)) return;
-      // What the fill pushed is not handed over once its error is on screen:
-      // that update carries the adoption's tree, whose gates stay pending.
-      fill.cancelled = true;
+      if (!(await holes.whenCommitted) || !entryToFill(holes)) return;
       emitNavigationError(
         onUpdate,
         toNetworkError(error, { url, operation: "navigation" }) ?? error,
         url,
       );
     } finally {
-      clearPendingFill(fill.cancel);
-      if (!landed.streamComplete) {
-        for (const [placeholder, gate] of fill.gates) {
-          releaseGate(placeholder, gate);
-        }
-      }
+      clearPendingFill(holes.cancel);
+      if (!settled) releaseGates(holes);
     }
+    return settled;
   }
 
   async function fetchPartialUpdate(
@@ -888,36 +850,12 @@ export function createPartialUpdater(
       return;
     }
 
-    if (payload.metadata?.redirect) {
-      if (signal?.aborted) {
-        debugLog("[Browser] Ignoring stale redirect (aborted)");
-        return;
-      }
-      // Explicit off-host redirect (redirect(url, { external: true })):
-      // hard-navigate, but still scheme-validate (http/https only). external
-      // waives the same-origin check the app opted out of, NOT scheme safety, so
-      // a forged payload carrying a javascript:/data: URL cannot script via
-      // location.assign.
-      const { redirect } = payload.metadata;
-      const redirectUrl = redirectTarget(redirect);
-      if (!redirectUrl) {
-        debugLog(
-          redirect.external
-            ? "[Browser] Ignoring blocked external redirect payload"
-            : "[Browser] Ignoring blocked redirect payload",
-        );
-        return;
-      }
-      if (redirect.external) {
-        debugLog("[Browser] External redirect (hard navigation)");
-        window.location.assign(redirectUrl);
-        return;
-      }
-      throw new ServerRedirect(redirectUrl, payload.metadata.locationState);
-    }
+    if (redirected(payload.metadata, signal)) return;
 
     if (payload.metadata?.isPartial) {
       const { segments: newSegments, matched, diff } = payload.metadata;
+      let serverSegments = newSegments || [];
+      let sent = diff || [];
 
       // Check if this navigation is stale (a newer one started)
       if (signal?.aborted) {
@@ -1023,34 +961,38 @@ export function createPartialUpdater(
         return;
       }
 
-      const matchedIds = matched || [];
+      let matchedIds = matched || [];
       const actor: ReconcileActor =
         mode.type === "stale-revalidation" || mode.type === "action"
           ? "stale-revalidation"
           : "navigation";
 
       // prefetch: false. A payload that carries deferred segments (an adopted
-      // prefetch, whatever answered it) commits at once with a gate in place
-      // of each missing value, and one fill request fetches them.
-      let fill: Fill | undefined;
+      // prefetch, whatever answered it) is the page with holes in it: one
+      // placeholder per segment whose work did not run, each with what its
+      // wrapper chain is built from. The tree is built once, with a gate in
+      // place of each missing value, and one fill request settles the gates.
+      let holes: Holes | undefined;
       let heldIds = matchedIds;
-      if (newSegments?.some((s) => s.deferred)) {
-        const placeholders = newSegments.filter((s) => s.deferred);
-        fill = armGates(placeholders, matchedIds);
+      const placeholders = serverSegments.filter((s) => s.deferred);
+      if (placeholders.length > 0) {
+        holes = armGates(placeholders, matchedIds);
         // A placeholder is not held: every later request from this page
         // leaves its id out, so the server renders it.
         const deferredIds = new Set(placeholders.map((s) => s.id));
         heldIds = matchedIds.filter((id) => !deferredIds.has(id));
       }
 
-      const reconciled = reconcileSegments({
-        actor,
-        matched: matchedIds,
-        diff: diff || [],
-        serverSegments: newSegments || [],
-        cachedSegments: cachedSegs,
-        insertMissingDiff: true,
-      });
+      const reconcile = () =>
+        reconcileSegments({
+          actor,
+          matched: matchedIds,
+          diff: sent,
+          serverSegments,
+          cachedSegments: cachedSegs,
+          insertMissingDiff: true,
+        });
+      let reconciled = reconcile();
 
       const missing = missingIds(matchedIds, reconciled.segments);
 
@@ -1097,11 +1039,68 @@ export function createPartialUpdater(
       // prefetch is decided against the real source.
       const gatedOff = decideGatedOff(reconciled.segments, payload.metadata);
 
-      // The fill starts now, beside the render and the commit, not after
-      // them. It lists what the client holds once this payload commits.
-      if (fill) {
-        adoption.fill = fill;
-        adoption.filled = runFill(fill, url, heldIds, gatedOff);
+      // What a fill brought for a page that waited for it (below).
+      let filled: RscMetadata | undefined;
+      if (
+        holes &&
+        placeholders.some((s) => s.type !== "loader") &&
+        shouldStartViewTransition(reconciled.segments, gatedOff)
+      ) {
+        // A deferred handler on a page that commits in a transition. React
+        // renders such a page's content in the commit that shows its
+        // fallback, in a render that can wait: a plain click commits it with
+        // its response, URL, hooks and page together. Committed with the
+        // click and filled afterwards, the URL moved a round trip before the
+        // page, and no later commit could bring the content in without a
+        // view transition the plain click does not start (measured: three
+        // for two, the content up to 280 ms late). So this click is a
+        // navigation that waits for its fill: nothing commits until the
+        // fill's first chunk, and then the page commits once, from the
+        // prefetched segments and the fill's, with no hole in it.
+        holes = undefined;
+        const answer = client.fetchPartial({
+          targetUrl: url,
+          segmentIds: heldIds,
+          previousUrl: url,
+          fill: true,
+          signal,
+          version: getVersion(),
+          routerId: store.getRouterId?.(),
+        });
+        adoption.filled = answer.then((a) => a.streamComplete).catch(() => {});
+        filled = (await answer).payload.metadata;
+        if (signal?.aborted || redirected(filled, signal)) return;
+        if (filled?.isPartial) {
+          matchedIds = heldIds = filled.matched || [];
+          serverSegments = [
+            ...serverSegments.filter((s) => !s.deferred),
+            ...(filled.segments || []),
+          ];
+          sent = [...sent, ...(filled.diff || [])];
+          reconciled = reconcile();
+          if (filled.locationState) {
+            payload.metadata.locationState = {
+              ...payload.metadata.locationState,
+              ...filled.locationState,
+            };
+          }
+        }
+        // The two answers do not make the page (the routes changed between
+        // the prefetch and the click): start over with nothing held, as a
+        // navigation whose own response misses segments does above. That
+        // request is never answered from a prefetch, so it defers nothing.
+        if (
+          !filled?.isPartial ||
+          missingIds(matchedIds, reconciled.segments).length > 0
+        ) {
+          return fetchPartialUpdate(url, [], true, signal, tx, mode);
+        }
+      } else if (holes) {
+        // The fill starts now, beside the render and the commit, not after
+        // them. It lists what the client holds once this payload commits.
+        adoption.fill = holes;
+        adoption.filled = runFill(holes, url, heldIds, gatedOff);
+        config.fill?.flush();
       }
       const renderOptions = {
         transitionGatedOff: gatedOff,
@@ -1110,8 +1109,10 @@ export function createPartialUpdater(
         // land without a loading()/fallback frame. A fully-prefetched nav has
         // its router data already resolved (the prefetch stream drained), so
         // awaiting it here is free; the commit below then runs in a transition
-        // (fullyPrefetched branch) so nothing router-owned can flash.
-        forceAwait: mode.type === "stale-revalidation" || fullyPrefetched,
+        // (fullyPrefetched branch) so nothing router-owned can flash. A page
+        // that waited for its fill is still streaming it.
+        forceAwait:
+          mode.type === "stale-revalidation" || (fullyPrefetched && !filled),
         interceptSegments:
           reconciled.interceptSegments.length > 0
             ? reconciled.interceptSegments
@@ -1202,17 +1203,12 @@ export function createPartialUpdater(
         gatedOff,
       );
       // After tx.commit(), which cancels the fill of the page being left.
-      let root: NavigationUpdate["root"] = newTree;
-      if (fill) {
-        fill.root = newTree;
-        fill.forceAwait = renderOptions.forceAwait;
-        if (hasTransition && fill.units.length > 0) {
-          fill.held = true;
-          root = new Promise(() => {});
-        }
-        fill.commit();
+      if (holes) {
+        holes.commit();
         adoption.fill = undefined;
       }
+      // After tx.commit(): the handle stream belongs to the entry it made.
+      if (filled) config.fill?.handles(filled);
 
       if (mode.type === "stale-revalidation") {
         const historyKeyNow = store.getHistoryKey();
@@ -1253,30 +1249,25 @@ export function createPartialUpdater(
 
       // No scroll for a commit that is not a navigation (an action refetch):
       // navigation-transaction.ts CommitResult.
-      // An adoption that waits for a fill reads `loading` until React
-      // commits it (pending-fill.ts emitAdoption).
-      const emit: UpdateSubscriber = fill
-        ? (next) => emitAdoption(() => onUpdate(next))
-        : onUpdate;
       const update: NavigationUpdate = {
-        root,
+        root: newTree,
         metadata: payload.metadata!,
         ...(navScroll && { scroll: navScroll }),
-        onCommit: fill?.show,
+        onCommit: holes?.show,
       };
       if (
         !gatedOff &&
         (mode.type === "action" || mode.type === "stale-revalidation")
       ) {
         commitInTransition(
-          emit,
+          onUpdate,
           reconciled.mainSegments,
           update,
           hasTransition ? ["action"] : [],
         );
       } else if (hasTransition) {
         commitInTransition(
-          emit,
+          onUpdate,
           reconciled.mainSegments,
           update,
           optimisticPresented
@@ -1285,11 +1276,19 @@ export function createPartialUpdater(
         );
       } else if (
         !gatedOff &&
-        (fullyPrefetched || isSameStructureNav || optimisticPresented)
+        ((fullyPrefetched && !holes) ||
+          isSameStructureNav ||
+          optimisticPresented)
       ) {
         // Content-hold commit, two triggers. Fully-prefetched nav: the payload
         // is fully resolved (forceAwait above), so the transition commits
-        // synchronously — no fallback flash. Same-structure nav: the re-run
+        // synchronously — no fallback flash. Not a payload with holes: its
+        // page is not whole, and a plain click to it commits urgently. In a
+        // transition React starts a view transition for the commit wherever
+        // a <ViewTransition> is mounted on the page being left, which the
+        // plain click does not start, and what fills the holes is revealed
+        // behind it (measured with a 600 ms view transition: the page
+        // complete at 641 ms against 307). Same-structure nav: the re-run
         // loaders are still streaming, and an urgent commit would re-suspend
         // the ALREADY-REVEALED boundaries — replacing visible content with its
         // own fallback for the loader's full duration (the PLP filter-change
@@ -1310,7 +1309,7 @@ export function createPartialUpdater(
         // segment reconciles in place (clientGroup key), so a read that still
         // suspends must hold the presented content, not flash a fallback.
         commitInTransition(
-          emit,
+          onUpdate,
           reconciled.mainSegments,
           update,
           optimisticPresented ? [OPTIMISTIC_COMMIT_TRANSITION_TYPE] : [],
@@ -1318,13 +1317,14 @@ export function createPartialUpdater(
       } else {
         // Cold/partially-prefetched nav that mounts NEW segments, or any
         // commit transition({ when }) gated off (navigation, action refetch,
-        // stale revalidation): normal commit so fallbacks stream
-        // like a first load and the click has visible feedback. A gated-off
-        // segment keeps its key, so its loading() fallback comes from its
-        // boundary re-suspending on this urgent commit, not from a remount
-        // (#995). Explicit transition() routes keep the content-hold via the
-        // hasTransition branch above (the opt-in).
-        emit(update);
+        // stale revalidation): normal, unanimated commit. A segment with work
+        // still pending shows its loading() fallback like a first load; one
+        // whose data is already in hand shows none. A gated-off segment keeps
+        // its key, so a fallback comes from its boundary suspending on pending
+        // work in this urgent commit, not from a remount (#995). Explicit
+        // transition() routes keep the content-hold via the hasTransition
+        // branch above (the opt-in).
+        onUpdate(update);
       }
 
       debugLog("[Browser] Navigation complete");

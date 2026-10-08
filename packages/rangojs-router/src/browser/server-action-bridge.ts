@@ -862,9 +862,13 @@ export function createServerActionBridge(
 
         case "normal": {
           // transition({ when }) for the action commit (kind "action"): the
-          // page does not move, so `to` is `from`. False commits urgently (a
-          // re-suspending segment streams its loading()) and switches every
-          // <ViewTransition> class to "none"; true keeps the startTransition.
+          // page does not move, so `to` is `from`. False commits urgently and
+          // switches every <ViewTransition> class to "none"; the tree below
+          // is built with isAction, which awaits segment content and loader
+          // data, so a boundary on screen is handed settled values. A build
+          // then shows no loading(); the dev server still does, because the
+          // client references of a fresh payload are still importing in that
+          // first render. True keeps the startTransition.
           // This commit runs after awaits, outside the transition React opens
           // for a form action / useActionState call, so React does not force
           // a transition on it. The tree shape never changes, so

@@ -20,6 +20,7 @@ import {
   pushHistoryWithIdx,
 } from "./history-state.js";
 import { cancelPendingFill } from "./pending-fill.js";
+import { consumeHandles } from "./react/NavigationProvider.js";
 import {
   handleNavigationStart,
   handleNavigationEnd,
@@ -174,8 +175,15 @@ export function createNavigationBridge(
       // A fill follows a redirect as a navigation (`bridge` is below).
       redirect: (url, state) =>
         void bridge.navigate(url, { state, replace: true, _skipCache: true }),
-      locationState: (state) =>
-        eventController.commitLocationState(mergeLocationState(state)),
+      // No payload follows (`treeless`): the entry's readers are told now.
+      locationState: (state) => {
+        eventController.commitLocationState(mergeLocationState(state), true);
+        eventController.flushRouteState();
+      },
+      handles: (metadata) => {
+        if (metadata.handles) consumeHandles(metadata, eventController, store);
+      },
+      flush: eventController.flushRouteState,
     },
   });
 

@@ -39,11 +39,20 @@ import {
  * the given test id is attached anywhere in the document. A point-in-time
  * visibility check can race past a skeleton that appears-and-disappears within
  * a frame (the exact regression); the observer cannot miss it.
+ *
+ * The document's own skeleton must be gone first. When the route's content
+ * finishes after the shell is flushed (a dev server's first render of a
+ * route), the HTML carries the loading() fallback, and React reveals the
+ * content no sooner than 300 ms after the shell's first frame. Until then the
+ * content is in the DOM but hidden, so a text assertion passes while the
+ * skeleton is still attached, and the install-time check below would blame
+ * the navigation for it.
  */
 async function installSkeletonSentinel(
   page: import("@playwright/test").Page,
   skeletonTestId: string,
 ) {
+  await expect(testId(page, skeletonTestId)).toHaveCount(0);
   await page.evaluate((id) => {
     const w = window as unknown as { __swrSkeletonSeen?: boolean };
     w.__swrSkeletonSeen = false;

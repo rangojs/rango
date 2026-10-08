@@ -821,11 +821,9 @@ describe("segment-reconciler", () => {
   });
 
   describe("server-provided loader promises", () => {
-    // Memoization used to live on the segment itself and required explicit
-    // preservation through reconcile. Now the memo cache is a module-level
-    // WeakMap keyed on component/loaderData refs (see segment-content-promise
-    // and segment-loader-promise), so reconcile is free to produce fresh
-    // merged objects — the cache survives independently.
+    // The loader memo is a module-level cache keyed on loaderData refs (see
+    // segment-loader-promise), not on the segment, so reconcile is free to
+    // produce fresh merged objects.
     it("does not overwrite a server-provided loaderDataPromise with the cached one (parallel intercept)", () => {
       const cachedPromise = Promise.resolve([{ stale: true }]);
       const freshPromise = Promise.resolve([{ fresh: true }]);

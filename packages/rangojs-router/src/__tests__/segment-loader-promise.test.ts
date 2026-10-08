@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import type { ResolvedSegment } from "../types";
 import { getMemoizedLoaderPromise } from "../segment-loader-promise";
 
@@ -16,9 +16,7 @@ function loaderSeg(id: string, loaderData: any): ResolvedSegment {
 }
 
 describe("getMemoizedLoaderPromise", () => {
-  // Not a promise: React knows a resolved promise as fulfilled only once it
-  // has read it, and a boundary on screen that is handed one it has not read,
-  // in a render that cannot wait, shows its fallback again.
+  // Why an array and not a promise: see the header of segment-loader-promise.ts.
   it("returns one shared empty array for zero loaders in the browser", () => {
     const result = getMemoizedLoaderPromise([]);
 
@@ -174,5 +172,108 @@ describe("getMemoizedLoaderPromise", () => {
     const recentPromise = promiseFor(tails[tails.length - 1]!);
     const recentAgain = promiseFor(tails[tails.length - 1]!);
     expect(recentAgain).toBe(recentPromise);
+  });
+
+  describe("settled aggregates", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      vi.resetModules();
+    });
+
+    it("returns the promise until the aggregate settles, then the same array", async () => {
+      const loaders = [
+        loaderSeg("D0.a", Promise.resolve({ a: 1 })),
+        loaderSeg("D0.b", { b: 2 }),
+      ];
+
+      const first = getMemoizedLoaderPromise(loaders);
+      expect(first).toBeInstanceOf(Promise);
+      expect(await first).toEqual([{ a: 1 }, { b: 2 }]);
+
+      const second = getMemoizedLoaderPromise(loaders);
+      expect(second).toBe(await first);
+      expect(getMemoizedLoaderPromise(loaders)).toBe(second);
+      // Fresh segment objects over the same refs hit the same entry.
+      expect(getMemoizedLoaderPromise(loaders.map((l) => ({ ...l })))).toBe(
+        second,
+      );
+    });
+
+    // The entry of a page is rewritten with streams no tree has read yet
+    // (a `prefetch: false` fill, browser/partial-update.ts settleHoles): the
+    // first render from it is the first call for these sources. A promise
+    // built over them would be one more promise React has not read, and a
+    // slot's boundary handed it in a render that cannot wait shows its
+    // fallback over content that is on screen.
+    it("returns the array at once when every source is a stream that has fulfilled", () => {
+      const fulfilled = (value: unknown) =>
+        Object.assign(Promise.resolve(value), { status: "fulfilled", value });
+      const loaders = [
+        loaderSeg("D0.a", fulfilled({ a: 1 })),
+        loaderSeg("D0.b", fulfilled({ b: 2 })),
+      ];
+
+      const first = getMemoizedLoaderPromise(loaders);
+      expect(first).toEqual([{ a: 1 }, { b: 2 }]);
+      expect(getMemoizedLoaderPromise(loaders)).toBe(first);
+    });
+
+    it("returns the promise while one source is a stream that has not", () => {
+      const fulfilled = Object.assign(Promise.resolve(1), {
+        status: "fulfilled",
+        value: 1,
+      });
+      const pending = Object.assign(new Promise(() => {}), {
+        status: "pending",
+      });
+
+      expect(
+        getMemoizedLoaderPromise([
+          loaderSeg("D0.a", fulfilled),
+          loaderSeg("D0.b", pending),
+        ]),
+      ).toBeInstanceOf(Promise);
+    });
+
+    it("keeps returning the promise for a rejected aggregate, and reading it rejects", async () => {
+      const loaders = [
+        loaderSeg("D0.a", Promise.reject(new Error("loader failed"))),
+      ];
+
+      const first = getMemoizedLoaderPromise(loaders) as Promise<unknown>;
+      await expect(first).rejects.toThrow("loader failed");
+
+      expect(getMemoizedLoaderPromise(loaders)).toBe(first);
+    });
+
+    it("builds a new entry when a loaderData ref changes after a settle", async () => {
+      const dataA = Promise.resolve({ a: 1 });
+      await getMemoizedLoaderPromise([loaderSeg("D0.a", dataA)]);
+      expect(
+        Array.isArray(getMemoizedLoaderPromise([loaderSeg("D0.a", dataA)])),
+      ).toBe(true);
+
+      const next = getMemoizedLoaderPromise([
+        loaderSeg("D0.a", Promise.resolve({ a: 2 })),
+      ]);
+
+      expect(next).toBeInstanceOf(Promise);
+    });
+
+    it("hands the server a fresh promise on every call", async () => {
+      vi.resetModules();
+      vi.stubGlobal("window", undefined);
+      const server = await import("../segment-loader-promise");
+      const loaders = [loaderSeg("D0.a", Promise.resolve({ a: 1 }))];
+
+      const first = server.getMemoizedLoaderPromise(loaders);
+      await first;
+      const second = server.getMemoizedLoaderPromise(loaders);
+
+      expect(first).toBeInstanceOf(Promise);
+      expect(second).toBeInstanceOf(Promise);
+      expect(second).not.toBe(first);
+      expect(server.getMemoizedLoaderPromise([])).toBeInstanceOf(Promise);
+    });
   });
 });
