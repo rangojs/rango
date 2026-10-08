@@ -6,9 +6,13 @@ import {
   isValidElement,
 } from "react";
 import { OutletProvider } from "./outlet-provider.js";
-import { withOptimisticCommitNone } from "./browser/optimistic-commit.js";
+import {
+  OPTIMISTIC_COMMIT_TRANSITION_TYPE,
+  withOptimisticCommitNone,
+} from "./browser/optimistic-commit.js";
 import { MountContextProvider } from "./browser/react/mount-context.js";
 import type { ResolvedSegment, RootLayoutProps } from "./types.js";
+import type { ViewTransitionClass } from "./types/segments.js";
 import { decodeLoaderResults } from "./decode-loader-results.js";
 import { LoaderRedirect } from "./loader-redirect.js";
 import { invariant } from "./errors.js";
@@ -167,6 +171,28 @@ const GATED_OFF_CLASSES = {
   default: "none",
 } as const;
 
+/**
+ * #1078 candidate "b1" (vt-experiment.ts). Not for merge.
+ *
+ * The `update` class a router boundary animates with only on commits the
+ * router typed (partial-update.ts adds "navigation" or "action"). A commit
+ * without a type resolves to "none": React's own Suspense retries carry no
+ * type, so a retry that leaves the fallback in place starts no view
+ * transition, and neither does the retry that reveals the content.
+ */
+function typedCommitsOnly(
+  value: ViewTransitionClass | undefined,
+): ViewTransitionClass {
+  const typed = typeof value === "string" ? value : (value?.default ?? "auto");
+  return {
+    navigation: typed,
+    action: typed,
+    ...(typeof value === "object" ? value : undefined),
+    default: "none",
+    [OPTIMISTIC_COMMIT_TRANSITION_TYPE]: "none",
+  };
+}
+
 function createViewTransitionBoundary(
   transition: NonNullable<ResolvedSegment["transition"]>,
   children: ReactNode,
@@ -194,6 +220,9 @@ function createViewTransitionBoundary(
       update: withOptimisticCommitNone(vtProps.update),
     }),
     default: withOptimisticCommitNone(vtProps.default),
+    ...(vtExperiment() === "b1" && {
+      update: typedCommitsOnly(vtProps.update ?? vtProps.default),
+    }),
     children,
   });
 }
