@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { waitForHydration, testId } from "./helper";
+import { expectConsole } from "@shared/e2e";
 
 /**
  * Hardening on the Cloudflare (workerd) runtime: a soft navigation that receives
@@ -23,6 +24,8 @@ function describeUnprocessableNav(mode: "dev" | "build") {
     test("an unprocessable response triggers the error boundary", async ({
       page,
     }) => {
+      // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+      expectConsole(page, { allow: [/Connection closed/] });
       // Install BEFORE navigating so any default prefetch of /about also gets the
       // garbage body -- the navigation then hits an unprocessable response whether
       // it fetches fresh or consumes a warm (failed) prefetch.

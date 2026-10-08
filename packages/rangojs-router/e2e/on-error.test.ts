@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { waitForHydration } from "./helper";
+import { expectConsole } from "@shared/e2e";
 
 test.describe.configure({ mode: "serial" });
 
@@ -61,6 +62,12 @@ async function waitForOnError(
  */
 function onErrorTests(f: ReturnType<typeof useFixture>) {
   test("action error reports phase='action'", async ({ page }) => {
+    // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+    expectConsole(page, {
+      allow: [
+        /\[Browser\] Action failed: Error: Action error for onError test/,
+      ],
+    });
     await page.goto(f.url("/location-state"));
     await waitForHydration(page);
 

@@ -43,6 +43,7 @@ export {
   readSuspenseAudit,
   resetSuspenseAudit,
 } from "./console-guard.js";
+import { expectConsole } from "./console-guard.js";
 export type {
   ConsoleBaselineEntry,
   ConsoleGuardMode,
@@ -2316,6 +2317,10 @@ export async function expectPinlessHitKeepsRunPushWithRunData(
   page: Page,
   fixture: PushOwnershipFixture,
 ): Promise<void> {
+  // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+  expectConsole(page, {
+    allow: [/Hydration failed because the server rendered text/],
+  });
   const probe = pushProbe("capped");
   const url = `${fixture.cappedUrl}?probe=${probe}`;
   await warmShellToHit(page, url);
@@ -2617,6 +2622,10 @@ export async function expectRedirectLoopEndsInErrorBoundary(
   page: Page,
   fixture: RedirectLoopFixture,
 ): Promise<void> {
+  // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+  expectConsole(page, {
+    allow: [/Server redirect loop: stopped after following/],
+  });
   const loopLogs: string[] = [];
   page.on("console", (msg: ConsoleMessage) => {
     // React and the root boundary log the thrown error too; count the router's own line.

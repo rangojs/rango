@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { waitForHydration, testId } from "./helper";
+import { expectConsole } from "@shared/e2e";
 
 /**
  * Action error-boundary render runs under route middleware (C3).
@@ -22,6 +23,10 @@ function defineSpec(label: string, mode: "dev" | "build") {
     test("route-middleware header is present on BOTH success and error-boundary action responses", async ({
       page,
     }) => {
+      // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+      expectConsole(page, {
+        allow: [/\[Browser\] Action failed: Error: action-route-mw boom/],
+      });
       await page.goto(f.url("/action-route-mw"));
       await waitForHydration(page);
       await expect(testId(page, "action-route-mw-page")).toBeVisible();

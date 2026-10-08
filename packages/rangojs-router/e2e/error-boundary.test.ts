@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { waitForHydration, testId, goBack } from "./helper";
+import { expectConsole } from "@shared/e2e";
 
 /**
  * Shared error boundary tests run against both dev and production.
@@ -17,6 +18,12 @@ function errorBoundaryTests(f: ReturnType<typeof useFixture>, isDev: boolean) {
     test("should show error boundary when client component throws on interaction", async ({
       page,
     }) => {
+      // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+      expectConsole(page, {
+        allow: [
+          /\[RootErrorBoundary\] Unhandled error caught: Error: Client-side error/,
+        ],
+      });
       await page.goto(f.url("/errors/client-error"));
       await waitForHydration(page);
 
@@ -41,6 +48,12 @@ function errorBoundaryTests(f: ReturnType<typeof useFixture>, isDev: boolean) {
     test("client error replaces segment tree with error fallback", async ({
       page,
     }) => {
+      // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+      expectConsole(page, {
+        allow: [
+          /\[RootErrorBoundary\] Unhandled error caught: Error: Client-side error/,
+        ],
+      });
       await page.goto(f.url("/errors/client-error"));
       await waitForHydration(page);
 
@@ -106,6 +119,12 @@ function errorBoundaryTests(f: ReturnType<typeof useFixture>, isDev: boolean) {
     test("should show loading then error boundary for streaming error", async ({
       page,
     }) => {
+      // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+      expectConsole(page, {
+        allow: [
+          /\[RootErrorBoundary\] Unhandled error caught: Error: Streaming error/,
+        ],
+      });
       // The "loading first" pin lives on the RAW STREAM, not the live DOM.
       // The DOM fallback is transient: with head-executing module scripts
       // (headScripts "preinit") hydration can process the streamed error
@@ -147,6 +166,12 @@ function errorBoundaryTests(f: ReturnType<typeof useFixture>, isDev: boolean) {
     test("SPA navigation to streaming error replaces layout", async ({
       page,
     }) => {
+      // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+      expectConsole(page, {
+        allow: [
+          /\[RootErrorBoundary\] Unhandled error caught: Error: Streaming error/,
+        ],
+      });
       await page.goto(f.url("/errors"));
       await waitForHydration(page);
 
@@ -209,6 +234,12 @@ function errorBoundaryTests(f: ReturnType<typeof useFixture>, isDev: boolean) {
     test("server error preserves layout, client error replaces it", async ({
       page,
     }) => {
+      // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+      expectConsole(page, {
+        allow: [
+          /\[RootErrorBoundary\] Unhandled error caught: Error: Client-side error/,
+        ],
+      });
       // Server error: layout (nav) is preserved because the error is
       // caught per-segment during RSC render, not by the client-side
       // RootErrorBoundary which would replace the whole tree.

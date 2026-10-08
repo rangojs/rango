@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { waitForHydration } from "./helper";
+import { expectConsole } from "@shared/e2e";
 
 /**
  * Hardening: when a soft navigation receives a response it CANNOT process (an
@@ -42,6 +43,8 @@ function describeUnprocessableNav(mode: "dev" | "build") {
     test("a fresh unprocessable response triggers the error boundary", async ({
       page,
     }) => {
+      // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+      expectConsole(page, { allow: [/Connection closed/] });
       // link-prefetch-none -> /blog/post-2 never prefetches, so this is a
       // genuinely fresh fetch.
       const g = fulfillGarbage("/blog/post-2");
@@ -60,6 +63,8 @@ function describeUnprocessableNav(mode: "dev" | "build") {
     test("a prefetched unprocessable response triggers the error boundary", async ({
       page,
     }) => {
+      // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+      expectConsole(page, { allow: [/Connection closed/] });
       // Install the garbage fulfillment BEFORE navigating so the prefetch="render"
       // for /blog/post-1 (fired after hydration) warms a FAILED prefetch entry.
       const g = fulfillGarbage("/blog/post-1");
@@ -80,6 +85,8 @@ function describeUnprocessableNav(mode: "dev" | "build") {
     test("an unprocessable router.refresh() response triggers the error boundary", async ({
       page,
     }) => {
+      // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+      expectConsole(page, { allow: [/Connection closed/] });
       await page.goto(f.url("/hook-tests/use-router"));
       await waitForHydration(page);
 
