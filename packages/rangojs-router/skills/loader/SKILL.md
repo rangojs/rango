@@ -1141,8 +1141,8 @@ What happens:
     arrives.
 
   Meanwhile the browser sends one second request, the fill, that runs only
-  the deferred loader. Its value merges into the page that is already on
-  screen; nothing remounts.
+  the deferred loader. Its value arrives in the page that is already on
+  screen, as a streamed loader's does; nothing remounts.
 
 - A **document request** (hard load), a **navigation with no prefetch to
   adopt**, an action, back/forward and a no-JS form post run the loader as
@@ -1167,12 +1167,13 @@ The limits:
 
 - **A boundary is required for a fallback.** With no `loading()` on the entry
   and no `<Suspense>` around the read, nothing can show a fallback, so React
-  holds the page being left on screen until the fill returns. The URL and
-  the URL hooks (`useNavigation().location`) have already changed, where a
-  click with no prefetch changes the hooks with the page, and
+  holds the page being left on screen until the fill returns.
   `useNavigation()` reads `state: "loading"` for that time, as on any
-  navigation that is still streaming, so a progress bar shows. There is no
-  definition-time error.
+  navigation that is still streaming, so a progress bar shows, and the URL
+  hooks (`useNavigation().location`) change with the page. The address bar
+  has already changed: it moves with the click, where a click with no
+  prefetch moves it when its response starts. There is no definition-time
+  error.
 - **`ctx.rendered()` is refused.** A loader that can be deferred throws on
   every request kind (a document load included, so you see it the first time
   you open the page in development) if it calls `await ctx.rendered()`. The

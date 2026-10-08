@@ -251,7 +251,8 @@ The public DOM seam is
   in-flight fill request). The decisions sit in the grouped
   `router/segment-resolution/*` row (`revalidation.ts`), the cache-skip rules
   in [cache/document-cache.ts](../../src/cache/document-cache.ts), the adoption
-  and merge in [browser/partial-update.ts](../../src/browser/partial-update.ts),
+  and the routine that settles its holes in
+  [browser/partial-update.ts](../../src/browser/partial-update.ts),
   and the user-facing options in
   [route-definition/dsl-helpers.ts](../../src/route-definition/dsl-helpers.ts)
   (`loader()`, `loading()`). Design: [prefetch-false.md](../../../../docs/design/prefetch-false.md).

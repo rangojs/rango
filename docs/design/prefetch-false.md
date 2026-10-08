@@ -36,12 +36,13 @@ options sit beside the existing `{ ssr?: boolean }` on the same two helpers.
 A prefetch of a flagged route skips the flagged work and says so in the
 payload: each skipped piece is a segment marked `deferred`. When a click adopts
 that payload the browser commits it at once, shows the `loading()` fallback
-(or holds the transition) where the deferred pieces are, and sends one second
+(or React holds the click) where the deferred pieces are, and sends one second
 request for the same URL, the **fill**, which runs only what the client does
-not hold yet. The fill's response merges into the committed tree like any
-partial update. Nothing else changes: a hard load, a navigation with no
-prefetch to adopt, an action, a back/forward and a no-JS form post never see a
-deferred segment.
+not hold yet. The fill's response resolves what the committed tree is waiting
+for: the click builds the page once, and the fill hands React no tree of its own
+(one failure ending aside, "Failure").
+Nothing else changes: a hard load, a navigation with no prefetch to adopt, an
+action, a back/forward and a no-JS form post never see a deferred segment.
 
 The flag applies only to a segment the client does not have yet. This router
 keeps what is on screen wherever it can, and the flag must never cost you
@@ -128,8 +129,9 @@ is stored.
 - _Not stored_ (no enabled `cache()` boundary covers it, the route is not
   `ppr`, it is not a `Prerender`/`Static` handler): the handler does not run.
   Neither do the entry's loaders, its orphan layouts or its parallel slots,
-  and for a layout no deeper entry of the chain runs. The fallback is sent and
-  the entry's segment is marked deferred.
+  and for a layout no deeper entry of the chain runs. The fallback is sent,
+  and every segment that did not run is in the payload as a placeholder
+  marked deferred: the page's whole skeleton ("Wire format").
 - _Stored or about to be stored_ (enabled `cache()` scope, `ppr` route,
   `Prerender`/`Static`): segments are looked up, served, rendered and written
   exactly as before, hit or miss. Only the loaders behind the fallback are
@@ -155,10 +157,13 @@ no `X-Rango-Prefetch`, so nothing is deferred in it. Ids absent from the list
 render. Held segments are skipped outright: no `revalidate()` predicate runs,
 no handler runs, nothing is emitted for them.
 
-**R6. Merge.** The fill's response merges into the committed tree without
-remounting it. Errors, `notFound()`, `redirect()` and handle pushes from
-deferred work behave as they do for work that streams behind `loading()`, only
-later.
+**R6. Merge.** The fill settles the tree the click committed: it resolves
+what that tree is waiting for and writes the stores, and hands React no tree
+of its own, so nothing on the page is mounted twice. Errors, `notFound()`,
+`redirect()` and handle pushes from deferred work behave as they do for work
+that streams behind `loading()`, only later. One ending replaces the page: a
+handler the fill awaited failed, so the page is not the one the tree was built
+for ("Failure").
 
 **R7. Deferral belongs to one response, never to stored data.** A deferred
 marker is never written to a segment cache entry, a `ppr` shell record, the
@@ -191,7 +196,7 @@ deferred work. This is the rule a revalidation that skips the producer already
 has (execution-model.md, "Revalidation Contract", semantic matrix row `[R1]`).
 
 **R11. No boundary.** A flagged loader whose read site has no boundary makes
-React hold the transition until the fill returns. No definition-time error.
+React hold the click until the fill returns. No definition-time error.
 `useNavigation()` reads `loading` for that time, as it does on a plain
 navigation that is still streaming, so a progress bar shows.
 
@@ -331,6 +336,10 @@ the request is a fill:
   there should skip what a production prefetch skips.
 - `deferredUnit`: the id of the handler unit this prefetch skipped, set during
   resolution.
+- `below`: a latch, set during resolution when the walk skips a chain unit.
+  Resolution is in chain order, so everything it reaches afterwards is behind
+  that unit's fallback: `defersUnit()` answers yes for every segment below
+  the latch that is new to the client (`belowDeferredUnit()`).
 
 Why is the mode on the handler context when the request kind is on the
 request context? The kind is a fact about the request. The mode is a decision
@@ -349,16 +358,32 @@ path. The document path (`fresh.ts`) never defers.
   loader off. A loader `defersLoader()` says yes to (R14) is emitted as
   `{ type: "loader", deferred: true }` with no `loaderData`, and
   `resolveLoaderData` is never called, so its `cache()` is not read (R1).
-- `resolveEntryHandlerWithRevalidation` skips a unit's handler and emits the
-  segment with `component: null`, the fallback and `deferred: true`.
-  `resolveSegmentWithRevalidation` then skips the unit's orphan layouts and
-  slot handlers, and `resolveAllSegmentsWithRevalidation` stops walking the
-  chain. Skipped entries are absent from `segments` and from `matched`.
-- `resolveParallelSegmentsWithRevalidation` does the same for a slot unit.
-- A unit's own loaders, and its slots' loaders, are still emitted as deferred
-  loader segments. That is for the browser: the segment tree it builds for the
-  placeholder then has the same shape it will have after the fill (see "No
-  remount" below).
+- `resolveEntryHandlerWithRevalidation` skips a unit's handler, emits the
+  segment with `component: null`, the fallback and `deferred: true`, and sets
+  the latch (`markUnitDeferred`). The walk goes on.
+- Everything the walk reaches below a chain unit is emitted the same way, as
+  a placeholder of its own: each deeper chain entry
+  (`resolveAllSegmentsWithRevalidation` no longer stops), each orphan layout
+  and each parallel slot (`resolveParallelSegmentsWithRevalidation`), with
+  its own `loading`, its own `transition` and its slot name. No handler runs.
+  A slot below the latch is not asked its `revalidate()` predicates: it is
+  new, so there is nothing to revalidate against.
+- A slot with its own flagged `loading()` is a unit by itself and sets no
+  latch: the route beside it renders.
+- The loaders of every skipped entry are emitted as deferred loader segments.
+- So a prefetch that defers a unit sends the `segments` and the `matched` of
+  a plain navigation to the same page, minus the values. The browser builds
+  the page's tree from that once and never needs a second one ("The browser").
+  Pinned by `src/testing/__tests__/prefetch-false.rsc-test.tsx` ("the
+  skeleton of a deferred unit"), which compares the wrapper fields of every
+  segment and `matched` with a plain navigation's, on a flagged layout with a
+  slot, a route with `loading()`, `transition()` and a slot of its own, and
+  an orphan layout with a loader and a slot.
+
+  It used to stop at the unit. Skipped entries were absent from `segments`
+  and from `matched`, and everything below the unit reached the browser only
+  in the fill, which is why the fill had to render a tree.
+
 - `buildMatchResult` (`src/router/match-result.ts`) needs no special case: a
   deferred segment is never one the client holds, so the ordinary "send what
   the client lacks" filter keeps it. Both sides read the ids the request
@@ -431,28 +456,38 @@ they do not run.
 The marker is one field on the segment, `ResolvedSegment.deferred?: true`
 (`src/types/segments.ts`):
 
-| Deferred unit | `type`                              | `component` | `loading`    | `loaderData` |
-| ------------- | ----------------------------------- | ----------- | ------------ | ------------ |
-| Loader        | `"loader"`                          | `null`      | (none)       | absent       |
-| Handler unit  | `"layout"`, `"route"`, `"parallel"` | `null`      | the fallback | (none)       |
+| Placeholder                    | `type`                              | `component` | `loading`              | `loaderData` |
+| ------------------------------ | ----------------------------------- | ----------- | ---------------------- | ------------ |
+| A deferred loader              | `"loader"`                          | `null`      | (none)                 | absent       |
+| A handler unit                 | `"layout"`, `"route"`, `"parallel"` | `null`      | the fallback           | (none)       |
+| An entry or slot a unit covers | `"layout"`, `"route"`, `"parallel"` | `null`      | its own, if it has one | (none)       |
 
 There is no list in `metadata` beside it. The segments are part of the
 payload's root model, so the marker is readable the moment the payload root
 resolves, which is before the browser builds anything, also when it adopts a
 prefetch that is still streaming.
 
-One more field can ride on a handler unit's placeholder. The browser decides
-how a click commits from the segments it has: a page with a `transition()`
-commits in a transition. A unit's placeholder carries its own entry's
-`transition` as any segment does. When the entry declares none and
-something the unit covers does (a deeper chain entry of a flagged layout, a
-slot, an orphan layout), the entries that say so are the ones the prefetch
-skipped, so the placeholder carries `transition: { viewTransition: false }`
-in their place (`placeholderTransition` in `prefetch-deferral.ts`, from
-`DeferralUnit.transition` of the plan): a transition, and no boundary of
-its own to place. A slot's unit covers the slot alone and never carries it.
-"A unit under `transition()` waits for its fill" has what the browser does
-with it and what it cost before.
+Every placeholder carries what the browser builds its wrapper chain from, as
+the segment itself would: `id`, `type`, `namespace`, `loading`, `transition`,
+a slot's `slot`, a loader's `loaderId`, `belongsToRoute`, the mount path. A
+payload that defers a unit carries one per segment the unit covers and a
+complete `matched`. What is not in it is anything a handler or a loader
+returns.
+
+That costs bytes where a unit covers more than itself. Router test app,
+production, the prefetch response's body and its gzip, before the skeleton
+and with it:
+
+| Prefetch of                                          | before         | with the skeleton |
+| ---------------------------------------------------- | -------------- | ----------------- |
+| `section` (a flagged layout, a route and its loader) | 1102 B / 612 B | 1821 B / 707 B    |
+| `vt-below` (the same, `transition()` on the route)   | 1117 B / 626 B | 1814 B / 716 B    |
+| `unit` (a flagged route and its loader)              | 1409 B / 659 B | 1409 B / 659 B    |
+| `vt-unit`                                            | 1428 B / 667 B | 1428 B / 667 B    |
+
+The fills are unchanged (`section` 2236 B / 856 B, `unit` 1693 B / 771 B).
+A route unit already sent both of its segments; a layout unit now sends the
+route below it and that route's loader as well.
 
 The fill marker is a query param, `_rsc_fill=1`. A param rather than a header
 because the document cache middleware (`src/cache/document-cache.ts`) decides
@@ -584,28 +619,65 @@ navigation share one slot") and, through a real router, by
 
 ## The browser
 
+One sentence carries this whole section: **the click builds the page's tree
+once and commits it, and the fill is a routine that waits for its response
+and resolves what that tree is waiting for.** The fill hands React no tree.
+
+That follows a rule the client already kept everywhere else. An update that
+hands React a tree (`onUpdate`) belongs to a navigation or an action. Anything
+else that changes on a page goes through a store its readers subscribe to
+(loader refreshes through `loaderStore`, handle data through the event
+controller), or resolves a promise a boundary is already reading. The fill
+used to be the one exception: it rendered a second tree and committed it, and
+most of the parity gaps this document used to list came from the differences
+between that tree and the first.
+
+How many trees a click hands React, counted in the tests named at the end of
+this section:
+
+| Click                                                    | by the click                | by the fill |
+| -------------------------------------------------------- | --------------------------- | ----------- |
+| Plain click                                              | 1                           | (no fill)   |
+| Adopted, with holes (loader, unit, layout, slot, `bare`) | 1                           | 0           |
+| Adopted, a unit on a page that commits in a transition   | 1, with the fill's response | 0           |
+| A fill answered with a redirect                          | 1                           | 0           |
+| A fill whose segments are not the tree's ("Failure")     | 1                           | 1           |
+| A fill the client refuses, or that fails                 | 1                           | 1           |
+
 ### Adoption
 
 `fetchPartialUpdate` (`src/browser/partial-update.ts`) is where every partial
-payload is reconciled and committed. When the payload it is about to commit
-carries deferred segments, two things happen before the tree is built:
+payload is reconciled and committed. A payload that carries deferred segments
+is the page with holes in it. The prefetch sent one placeholder per segment
+whose work did not run ("Wire format"), each with what its wrapper chain is
+built from, so the tree built from them is the tree a plain click's payload
+builds: the same router elements with the same keys around every segment
+("No remount"). What is missing is what the boundaries are handed.
 
-1. `armGates()` gives each deferred segment a **gate**: a promise the browser
-   created. A deferred loader's gate becomes its `loaderData`; a deferred
-   unit's gate becomes its `component`. To the rest of the client a gate is a
-   loader stream that has not arrived yet, which is something it already
-   knows how to show. This happens before the reconcile, on the payload's own
-   segment objects. That is safe because every adoption decodes its own
-   payload (see "Reuse" below).
-2. `runFill()` starts the fill request (`client.fetchPartial({ fill: true })`)
-   with its own `AbortController`, and the commit proceeds on the lane it
-   would have taken anyway. A fully prefetched payload still renders with
-   `forceAwait`; `renderSegments` (`src/segment-system.tsx`) skips the awaits
-   that would wait on a gate. One adoption does not commit right away: a
-   deferred unit on a page that commits in a transition waits for its fill
-   ("A unit under `transition()` waits for its fill" below). Its fallback
-   shows with the fill's first chunk, as a plain click's shows with its
-   response, not at the click.
+`armGates()` fills that in. Each placeholder gets a **gate**: a promise the
+browser created. A deferred loader's gate becomes its `loaderData`; any other
+placeholder's gate becomes its `component`. To the rest of the client a gate
+is a stream that has not arrived yet, which is something it already knows how
+to show. This happens before the reconcile, on the payload's own segment
+objects. That is safe because every adoption decodes its own payload (see
+"Reuse" below). The result is a `Holes` record: the gates, the `matched` the
+tree was built for, and whether React has committed the tree.
+
+From there the click goes one of two ways.
+
+1. **It commits with the click.** `runFill()` starts the fill request
+   (`client.fetchPartial({ fill: true })`) with its own `AbortController`,
+   `renderSegments` builds the tree, `tx.commit()` records the navigation, and
+   the tree is handed to React. A fully prefetched payload still renders with
+   `forceAwait`, so everything the prefetch did bring is handed to its
+   boundary as a value; `renderSegments` (`src/segment-system.tsx`) skips the
+   awaits that would wait on a gate. The commit is urgent ("The click commits
+   on the plain click's lane").
+2. **It waits for its fill.** A placeholder that is not a loader, on a page
+   that commits in a transition, is the one case where the client knows
+   before it renders that committing now would be wrong. That click is a
+   navigation whose response is the prefetch plus the fill ("A unit under
+   `transition()` waits for its fill"). It arms no gate that anything reads.
 
 The reconcile needs no special case. A payload that defers is adopted only on
 the page that prefetched it, with the segments that page held when it did
@@ -634,65 +706,134 @@ out and the server renders them. `getCurrentCachedSegments()` filters
 placeholders out of the reconcile cache for the same reason: a placeholder is
 never a copy of the segment.
 
-### The fill and the merge
+### The fill settles the holes
 
-The fill request and the adoption's render run side by side, and the request
-can win: the adoption may still be awaiting its own tree when the response
-arrives. So `runFill()` first waits for `whenCommitted`, which settles when
-`tx.commit()` has put the placeholders on screen, or with `false` when the
-adoption is abandoned.
+`settleHoles(holes, answer, url, gatedOff)` is the routine. It takes the
+holes and an answer: the promise of a partial payload plus the end of its
+stream, which is what `client.fetchPartial` returns. `runFill()` is one
+caller, and the only place that knows the answer is a `_rsc_fill` request for
+a tree that came from the prefetch cache: it owns the `AbortController` and
+puts its `abort` on the holes. Nothing inside `settleHoles` asks where the
+tree or the answer came from. That seam is deliberate. `clientUrls()`
+navigations build an optimistic tree with a promise per loader today and
+then commit a second, canonical tree; the same routine can settle that tree
+instead.
 
-Then it checks that the entry on screen still holds this adoption's
-placeholders. By object identity, not by history key: a shallow navigation
+The fill request and the click's render run side by side, and the request can
+win: the click may still be awaiting its own tree when the response arrives.
+So `settleHoles` first waits for `whenCommitted`, which settles when
+`tx.commit()` has run for the tree, or with `false` when the click is
+abandoned.
+
+Then it checks that the entry on screen still holds this tree's placeholders
+(`entryToFill`). By object identity, not by history key: a shallow navigation
 that copied the entry to a new key is still filled, and an action refetch
 that already rendered the missing segments (its request listed them as not
 held) is not overwritten.
 
-From there the fill does four things, in this order. "Revealing a unit"
-below has the reason for each, and the measurement behind it:
+From there, in this order:
 
-1. It reconciles the response against the entry with the
-   `"stale-revalidation"` actor and checks that nothing its `matched` names
-   is missing. Nothing is handed over before that. A response the client
-   then refuses used to leave its `matched`, its location state and its
-   handle data behind, under the error that replaced the page.
-2. It hands over what the deferred handlers pushed (the response's handle
-   stream): an urgent update under the tree that is on screen, made once
-   React has committed the adoption.
-3. Where the adoption is on screen when the fill answers, fallbacks
-   included, it waits until its response is complete, or until 300 ms have
-   passed since its first chunk, whichever comes first. Where React has not
-   committed the adoption yet, it does not wait.
-4. It resolves the gates. A deferred loader's gate resolves right then,
-   which releases anything still suspended on it. A fill that brings a unit
-   also renders a tree, commits it urgently, and resolves the unit's gate
-   once React has committed that tree.
+1. It reconciles the answer against the entry with the `"stale-revalidation"`
+   actor and checks that nothing its `matched` names is missing. Nothing is
+   handed over before that. An answer the client then refuses used to leave
+   its `matched`, its location state and its handle data behind, under the
+   error that replaced the page.
+2. It writes the location state the answer's handlers set ("What a fill
+   writes" below).
+3. It finds, for every placeholder, the answer's segment with the same id and
+   type, and checks that `matched` is the one the tree was built for. If not,
+   the answer is not for this tree: see "Failure".
+4. It hands the answer's handle stream to the handle store.
+5. Where React has committed the tree (`Holes.shown`, set from the click
+   update's `onCommit`), it waits until the answer has streamed or 300 ms
+   have passed since its first chunk, whichever comes first. Where React has
+   not, it does not wait ("When the gates resolve").
+6. It resolves every gate, in one task, with the value of its segment: a
+   loader's `loaderData`, any other segment's `component`.
+7. It rewrites the entry and the store's segment ids.
 
-Steps 2 to 4 are for an adoption that commits its own tree. One that waits
-for its fill (a unit on a page that commits in a transition) gets everything
-in one update: "A unit under `transition()` waits for its fill".
+The entry is rewritten **in place**: the answer's segments are spliced into
+the array the history cache already holds for the entry, and
+`store.setSegmentIds()` is called. It does not go through
+`cacheSegmentsForHistory`. The fill belongs to the visit that built the tree,
+and re-caching would do two wrong things: advance the store's navigation
+instance, which disowns the tree's still-open handle stream, and reset the
+entry's stale flag.
 
-The entry is rewritten **in place**: the fill splices the filled segments
-into the array the history cache already holds for the entry, and calls
-`store.setSegmentIds()`. It does not go through `cacheSegmentsForHistory`.
-The fill belongs to the visit that adopted, and re-caching would do two wrong
-things: advance the store's navigation instance, which disowns the adoption's
-still-open handle stream, and reset the entry's stale flag.
+What goes into the entry is what the answer sent, loader streams included,
+not the gates. A gate is for the tree that is on screen. The next render from
+this page (a click that keeps the layout, an action) builds on the entry, and
+a gate left there is a promise React has read only where some reader happened
+to be mounted: handed to a boundary on screen in a render that cannot wait,
+it shows that boundary's fallback over content (the held-boundary bug, #1080).
 
-What goes into the entry is what the fill sent, loader streams included. A
-gate is for the tree that is on screen. The next render from this page (a
-click that keeps the layout, an action) builds on the entry, and a gate left
-there is a promise React has read only where some reader happened to be
-mounted.
+That rule reaches one line outside the fill, and it is scar tissue of this
+design. The first render from a filled entry is the first time anything
+aggregates the answer's loader streams, because the tree on screen read the
+gates. A slot reads its loaders through one aggregate promise
+(`getMemoizedLoaderPromise` in `src/segment-loader-promise.ts`), and a fresh
+aggregate over streams that have all arrived is still a promise React has not
+read. Moving between two pages that keep the slot then replaced the slot,
+which was on screen, with its fallback: seven browser cases failed with
+`content on screen was detached or hidden: pf-slot-side`. So an aggregate
+whose sources have all fulfilled (React's `status` on the thenable, which
+Flight sets itself) is known on its first call and is returned as the array,
+never as a promise. `src/__tests__/segment-loader-promise.test.ts` pins it
+("returns the array at once when every source is a stream that has
+fulfilled").
 
-For the same reason the fill updates the adoption payload's `matched` array
-in place. `processHandles` in `NavigationProvider` reads `matched` on every
-yield of that payload's handle stream and deletes the handle buckets of
-segments outside it. A deferred unit's `matched` stops at the unit, so a late
-yield from the adoption would delete what the fill had pushed below it
-(breadcrumbs from a deferred route, say).
+When is that decided? Only while a tree is built. `getMemoizedLoaderPromise`
+is called from `renderSegments` (`src/segment-system.tsx`, a segment's own
+loaders and a slot's), which the browser runs before it hands the tree to
+React, never from a component's render. A slot's boundary is handed the
+result through the slot segment's `loaderDataPromise`, which
+`renderSegments` writes and `renderSlotContent` (`src/client.tsx`) reads.
+The fill writes no field of a segment the tree on screen reads: it resolves
+gates and rewrites the entry's array. One write predates this feature and
+is left alone: a navigation that keeps a slot reuses the slot's segment
+object from the entry (the reconciler returns a segment the server did not
+re-send as it is), so its `renderSegments` writes `loaderDataPromise` on an
+object the tree on screen reads, until React commits the new tree. One
+boundary can be handed the promise in one tree and the array in a later one
+for the same streams: that is the held-boundary rule (#1080), a value that
+has become known is handed over as the value.
 
-### Revealing a unit
+#### What a fill writes
+
+Everything a fill brings beside the segments has a store, so none of it needs
+a tree update to reach its readers. The writes come from the navigation
+bridge (`PartialUpdateConfig.fill`, supplied in
+`src/browser/navigation-bridge.ts`), because a fill has no navigation
+transaction to carry them:
+
+| What the answer carries       | Where it goes                                                                                                       | Who reads it                                                                     |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `handles` (the handle stream) | `fill.handles(metadata)`: `consumeHandles` in `NavigationProvider.tsx`, the function the provider's own updates use | `useHandle` (`eventController.subscribeToHandles`)                               |
+| `locationState`               | `fill.locationState(state)`: `eventController.commitLocationState(merged, true)`, then `flushRouteState()`          | `useLocationState` (the provider takes the snapshot with the state notification) |
+| `matched`                     | `store.setSegmentIds()`, and the tree's own `matched` array when it changes ("Failure")                             | later requests' `_rsc_segments`                                                  |
+| `segments`                    | the gates, and the entry in the history cache                                                                       | the tree on screen; the next render                                              |
+| `redirect`                    | `fill.redirect(url, state)`: a replace navigation                                                                   | the bridge                                                                       |
+
+`consumeHandles` reads the stream with the `matched`, `isPartial` and
+`resolvedIds` of the answer and the history key at the time of the call,
+exactly as an update's metadata is read. The fill's `matched` is the tree's
+(step 3 checked it), so a late yield from the tree's own handle stream cannot
+drop the buckets the fill pushed below a unit: both streams name the same
+segments. That used to need the fill to rewrite the click payload's `matched`
+array in place, because a deferred unit's `matched` stopped at the unit. The
+skeleton made it complete.
+
+The remaining fields of a payload's metadata have nothing new in a fill. The
+provider's subscriber reads `params`, `handles`, `matched`, `isPartial`,
+`resolvedIds` and `cachedHandleData` off an update
+(`NavigationProvider.tsx`), and a fill is for the URL the click committed:
+its `params` and `routeName` are the click's. So there is no field that
+reaches its readers only as a prop of a tree update.
+
+Without the bridge's writes (a client built with no `fill` config) a redirect
+is a document navigation and the rest is dropped.
+
+### When the gates resolve
 
 A plain navigation to a route with `loading()` shows the fallback and then
 reveals the content through a Suspense retry, and React keeps a fallback up
@@ -700,30 +841,7 @@ for 300 ms before it lets a retry replace it. That throttle is why a loader
 that needs another 100 ms does not flash a second, inner fallback: by the time
 the outer one may go, the inner data is there.
 
-The fill has to reveal a unit the same way, and at first it did not. Its tree
-carried the unit's content, so the fill's own transition revealed it, and a
-transition is not throttled. Measured in production from the hub, on a layout
-unit whose route has its own `loading()`: fallback at 4 ms, the layout with
-the route's fallback inside it at 10 ms, the value at 311 ms. The same click
-with no prefetch shows the fallback at 11 ms and everything at 314 ms. One
-loading state more than the plain navigation, for the same finish.
-
-So a unit's segment keeps reading its gate in the tree the fill commits, and
-the gate is resolved once React has committed that tree
-(`NavigationUpdate.onCommit`, called from a layout effect of
-`NavigationProvider`). React then retries the boundary, throttled like any
-other, and the sequence is the plain navigation's.
-
-`onCommit` also fires when a _later_ update commits. React commits only the
-last of the updates it batches, and an urgent update can supersede a
-transition it is holding. An update that is skipped that way would otherwise
-leave its gate pending for good. An _earlier_ update that commits meanwhile
-does not fire it. `src/testing/__tests__/navigation-update-on-commit.test.tsx`
-pins the order through the real provider.
-
-That is the mechanism. Around it sit seven rules about _when_ and _how_ the
-fill commits. Every one of them was a measured parity violation first, so
-each comes with what broke. They all follow from four things React 19.3 does
+Four things React 19.3 does decide everything in this section
 (`react-dom-client`, read in the production build):
 
 - **R-wait.** A commit in a transition, retry or idle lane waits for the view
@@ -743,109 +861,17 @@ each comes with what broke. They all follow from four things React 19.3 does
   even when the promise is already resolved. A transition or a retry gives it
   one microtask.
 
-#### The fill never commits in a transition
+The rule the routine keeps is short:
 
-It used to: the fill's tree went through `commitInTransition`, like the
-adoption. On a unit under `transition()` that is a third view transition
-between the two a plain click makes (the commit and the reveal). It changes
-nothing on screen, runs its full length (R-start), and the reveal waits for
-it (R-wait). Whether you saw it depended on when the loader landed, which is
-why a suite with 100 and 700 ms loaders never did. Hub to `vt-unit`,
-production, completed content, medians of three clicks each:
+- **A tree that is on screen**: every gate resolves when the answer has
+  streamed, or 300 ms after its first chunk, whichever is first.
+- **A tree React has not committed**: every gate resolves when the answer
+  arrives.
+- **Always in one task.**
 
-| loader | before: plain | before: adopted | transitions | now: plain | now: adopted | transitions |
-| ------ | ------------- | --------------- | ----------- | ---------- | ------------ | ----------- |
-| 100 ms | 334 ms        | 294 ms          | 2 and 2     | 335 ms     | 331 ms       | 2 and 2     |
-| 200 ms | 332 ms        | 306 ms          | 2 and 2     | 339 ms     | 328 ms       | 2 and 2     |
-| 300 ms | 333 ms        | 611 ms          | 2 and 3     | 338 ms     | 314 ms       | 2 and 2     |
-| 400 ms | 417 ms        | 602 ms          | 2 and 3     | 409 ms     | 414 ms       | 2 and 2     |
-| 500 ms | 521 ms        | 578 ms          | 2 and 3     | 521 ms     | 513 ms       | 2 and 2     |
-| 600 ms | 620 ms        | 613 ms          | 2 and 3     | 623 ms     | 614 ms       | 2 and 2     |
-| 700 ms | 718 ms        | 711 ms          | 2 and 3     | 718 ms     | 714 ms       | 2 and 2     |
+Each half was a measured parity violation first.
 
-It is not about `transition()`. R-start asks only for a `<ViewTransition>`
-somewhere on the page. With one of the app's own in the layout
-(`&boundary=1` in the fixture) a route with no `transition()` at all did the
-same: `unit` with a 100 ms loader completed at 586 ms against the plain
-click's 317, with three view transitions against one. Now: 335 ms against
-322, 2 against 1. The one that is left is the adoption's own
-commit, which is a transition as every prefetched click's is ("Limits").
-
-So every update a fill makes on a page that is on screen is urgent. An
-urgent commit starts no view transition and waits for none. Nothing is lost
-by it: what a fill brings is read behind a fallback that is already on
-screen, so there is nothing for a transition to hold.
-
-Two updates of a fill are transitions, and neither is made on a page the
-adoption has put on screen. The update that lands an adoption React is
-holding joins that adoption's own transition ("A unit under `transition()`
-waits for its fill"). And a fill that fails hands its error to
-`emitNavigationError` (`src/browser/network-error-handler.ts`), which wraps
-the update in `startTransition` as it does for a navigation that failed: the
-error replaces the page.
-
-Urgent has a price, and the next two rules pay it.
-
-#### Not before the adoption is on screen
-
-An urgent update that reaches React while it is still holding the adoption's
-transition commits the page ahead of that transition. So a fill's updates
-wait for `Fill.whenShown`, which resolves from the adoption update's
-`onCommit`.
-
-React may be holding the adoption for the fill itself: a deferred loader
-read with no boundary (R11) suspends the transition on that loader's gate.
-So nothing a gate waits for may wait for the adoption's commit. When a fill
-answers and React has not committed the adoption (`Fill.shown` is still
-unset), every loader gate resolves at once. The adoption commits, and the
-fill's updates follow it.
-
-"Every" is scar tissue. A unit's own loaders used to resolve with the unit,
-in the commit of the fill's tree ("The loaders a unit owns resolve with the
-unit" below), whatever the adoption was doing. And a unit's loader can be
-read above the unit's fallback: a layout that calls `useLoader()` on its
-route's loader reads the route's stream through its outlet. That gate waited
-for the fill's tree, the tree waited for the adoption's commit, and the
-commit was waiting for the gate. The page being left stayed for good,
-`useNavigation()` read `loading`, and nothing was thrown. `above` in the
-fixture is that page; `expectNoBoundaryHoldsThePageLeftUntilTheFillReturns`
-pins it in a browser, and
-`src/testing/__tests__/navigation-adoption-loading.test.tsx` through the
-real provider and updater.
-
-The unit's own gate still resolves with the commit of the fill's tree, and
-the tree still waits for the adoption. So the commit that ends such a hold
-shows the unit's fallback, for React's 300 ms. That is not always what a
-plain click does there ("Limits").
-
-#### The fill's tree is built the way the adoption's was
-
-R-sync is the reason. The adoption of a fully prefetched payload renders with
-`forceAwait`, so the boundaries on screen were handed values. A tree built
-without it hands the same boundaries promises, and an urgent render suspends
-on every one React has not read. Measured in production on `section-own`
-from the hub: the layout's boundary showed its fallback a second time (the
-skeleton unmounted and mounted again, which restarts its animation),
-R-throttle started over, and the content was 100 to 303 ms late.
-
-So the fill renders with the adoption's `forceAwait` (`Fill.forceAwait`), and
-marks what it brought as `deferred` for the length of the render, so that
-none of it is awaited: to the tree it is still streaming.
-
-The same rule reaches one line outside the fill. A boundary with no loaders
-used to get one shared, already resolved promise in the browser
-(`src/segment-loader-promise.ts`). Resolved is not the same as read: React
-knows a promise as fulfilled only after its first `use()`. After a
-prefetched click and its fill, every tree had been awaited and that promise
-had never been read. The next plain click inside the section handed it to
-the layout's boundary, which was on screen, in a render that cannot wait:
-the layout was replaced by its own fallback for 300 ms (21 browser tests
-caught it). A boundary with no loaders has nothing to wait for, so in the
-browser it now gets an empty array, which `LoaderResolver` renders without a
-`use()`. On the server nothing changes: every render still builds a fresh
-promise, which is what makes Suspense emit the fallback.
-
-#### The fill lands when a plain click would reveal
+#### Not sooner than a plain click would reveal
 
 Take a server 100 ms away. A plain click shows its fallback when its response
 starts, at 100 ms, and R-throttle lets it reveal at 400. An adopted click
@@ -859,34 +885,26 @@ at 600 ms where the plain click has everything at 400.
 The window is as wide as the round trip, so on localhost it is a few
 milliseconds and no suite had seen it. Production, the server 100 ms away,
 `section` (a deferred layout with the route's own boundary below it),
-completed content, medians of three clicks:
+completed content, medians of three clicks, before the rule and with it:
 
-| loader | before: plain | before: adopted | now: plain | now: adopted |
-| ------ | ------------- | --------------- | ---------- | ------------ |
-| 100 ms | 406 ms        | 303 ms          | 408 ms     | 304 ms       |
-| 200 ms | 408 ms        | 605 ms          | 411 ms     | 310 ms       |
-| 250 ms | 408 ms        | 606 ms          | 408 ms     | 360 ms       |
-| 400 ms | 708 ms        | 604 ms          | 710 ms     | 712 ms       |
+| loader | before: plain | before: adopted | with it: plain | with it: adopted |
+| ------ | ------------- | --------------- | -------------- | ---------------- |
+| 100 ms | 406 ms        | 303 ms          | 408 ms         | 304 ms           |
+| 200 ms | 408 ms        | 605 ms          | 411 ms         | 310 ms           |
+| 250 ms | 408 ms        | 606 ms          | 408 ms         | 360 ms           |
+| 400 ms | 708 ms        | 604 ms          | 710 ms         | 712 ms           |
 
 `section-own` had the same numbers and showed `pf-section-own-fallback`,
 which the plain click never shows, in every late click.
 
-So a fill that is still streaming does not land before the plain click would
-reveal: 300 ms after the fill's own first chunk (`FALLBACK_THROTTLE_MS`, named
-for React's constant). A fill whose response is complete lands at once: all
-of it is there, so one reveal shows all of it, and that reveal is never later
-than the plain click's. Waiting for the end of the stream with no deadline is
-not an option: a unit with a slow read behind an inner `<Suspense>` would
-keep its outer fallback up long after a plain click had revealed it.
-
-The rule is for a fallback that is on screen. Where React has not committed
-the adoption when the fill answers, nothing is up that could be revealed
-early, and the fill does not wait. It used to wait there too. A page React
-held for a read with no boundary then stayed 300 ms after the value it was
-waiting for, whenever the response stayed open behind that value (a slower
-flagged loader behind its own `<Suspense>`: `bare-inner` in the fixture).
-Production, a 100 ms loader: the page at 307 ms against the plain click's
-108, now at 106.
+So the gates of a tree whose fallbacks are up do not resolve before the plain
+click would reveal: 300 ms after the answer's own first chunk
+(`FALLBACK_THROTTLE_MS`, named for React's constant). An answer that has
+streamed resolves them at once: all of it is there, so one reveal shows all of
+it, and that reveal is never later than the plain click's. Waiting for the end
+of the stream with no deadline is not an option: a unit with a slow read
+behind an inner `<Suspense>` would keep its outer fallback up long after a
+plain click had revealed it.
 
 Look at the last row: the rule costs something. Before it, a loader slower
 than the throttle made the adopted click 100 ms _earlier_ than the plain one,
@@ -903,35 +921,122 @@ same violation mirrored.
 The same rule covers a slow handler. A plain click to a section whose layout
 handler takes 600 ms keeps the page it is on for about 610 ms and then shows
 the fallback for 300 more. The adopted click shows the fallback with the
-click. It used to reveal the layout the moment the fill started answering,
-with the route below it still pending: the fallback mounted a second time
-inside the layout, or `pf-section-own-fallback` showed where the plain click
-shows none (from the hub, from another page and after back/forward alike).
-Now the fill lands when it is complete, which here is the route's 100 ms
-loader after the handler, and lands whole: the page is there at 715 ms
-against the plain click's 910, with one fallback and one reveal.
+click, and its gates resolve when the fill has streamed, which here is the
+route's 100 ms loader after the handler: the page is there at 715 ms against
+the plain click's 910, with one fallback and one reveal.
 
-#### The loaders a unit owns resolve with the unit
+You might expect a loader that has its own reader on screen to be exempt: its
+value could show the moment it arrives. It is not, and the reason is the same
+window. On a route with two flagged loaders read in nested boundaries
+(`nested`), resolving the first gate with the fill's first chunk reveals the
+outer boundary a round trip before the plain click reveals it, and the second
+value then shows behind a fallback the plain click never shows. One rule for
+every gate keeps the sequence the plain click's; the `nested` cases of the
+parity matrix with the server 100 ms away are there for it. What the rule
+takes from a lone reader is small: React keeps its fallback up for 300 ms
+from the click anyway, so the value is later by at most the fill's time to
+its first chunk.
 
-A parallel slot reads its loaders above its content: its `LoaderBoundary`
-suspends on their aggregate, and the content's own boundary sits inside it
-with the same fallback element. Resolve the loader gates when the fill
-lands and the unit's gate one commit later, and the outer boundary reveals
-onto the inner one: the same skeleton, mounted a second time, and R-throttle
-starts over (measured on `slot`: content 99 to 250 ms late). So where the
-adoption's fallbacks are on screen, the gates of the loaders a unit owns
-(same `namespace`) resolve in the same `onCommit` as the unit's. In the
-fill's tree those loaders are read from the fill's own streams, the way the
-entry will have them afterwards, so the aggregate React reads there is the
-one the next render builds. A loader that belongs to no unit has a reader on
-screen: its gate resolves when the fill lands, and that reader keeps reading
-the gate in the fill's tree.
+#### At once where nothing is on screen
 
-Where React has not committed the adoption, no fallback is up that could
-mount twice, and the rule does not apply: a unit's loaders resolve at once
-with every other loader ("Not before the adoption is on screen").
+The wait is for a fallback that is on screen. Where React has not committed
+the tree when the fill answers, nothing is up that could be revealed early,
+and it may be one of these gates that React is waiting for: a deferred loader
+read with no boundary (R11) holds the click's commit on that loader's gate.
+So nothing a gate waits for may wait for the commit. `Holes.shown` is set from
+the click update's `onCommit` (a layout effect of `NavigationProvider`), and
+while it is unset every gate resolves the moment the answer arrives.
 
-#### A unit under `transition()` waits for its fill
+Two pages are why "every" includes a unit's own gate:
+
+- `bare-inner`: a read with no boundary, in a response that stays open behind
+  it (a slower flagged loader behind its own `<Suspense>`). Waiting there kept
+  the page being left for 300 ms after the value it was waiting for.
+  Production, a 100 ms loader: the page at 307 ms against the plain click's
+  108, now at 106.
+- `above`: a unit whose loader is read above the unit's fallback, by a layout
+  that calls `useLoader()` on its route's loader. React holds the click on
+  the loader's gate. When the unit's own gate resolved one commit later (it
+  used to resolve with the commit of the fill's tree), the commit that ended
+  the hold showed the unit's fallback for React's 300 ms, where a plain click
+  showed the page. Before that fix the page did not show at all: the loader's
+  gate waited for the fill's tree, the tree waited for the click's commit,
+  and the commit was waiting for the gate.
+
+  Production, plain against adopted, the page complete, on `bfacee1f` (the
+  fill rendered a tree) and now. The plain click moved too: since #1080 it
+  shows the page with the value.
+
+  | loader | Cloudflare app: before | now            | node app: before | now            |
+  | ------ | ---------------------- | -------------- | ---------------- | -------------- |
+  | 100 ms | 411 and 410 ms         | 108 and 106 ms | 410 and 405 ms   | 108 and 105 ms |
+  | 400 ms | 408 and 711 ms         | 411 and 407 ms | 707 and 712 ms   | 408 and 406 ms |
+  | 700 ms | 711 and 1012 ms        | 711 and 705 ms | 1012 and 1012 ms | 709 and 706 ms |
+
+`expectNoBoundaryHoldsThePageLeftUntilTheFillReturns` pins both pages in a
+browser, and `src/testing/__tests__/navigation-adoption-loading.test.tsx`
+through the real provider and updater.
+
+#### In one task
+
+A unit's content renders the holes below it: a layout's outlet, a slot, a
+loader the route reads. When the unit's gate resolves, React retries its
+boundary and reads those holes in that render. A hole whose gate is resolved
+by then costs the retry one microtask (R-sync, second half). A hole that
+resolves a task later is a second suspension: the inner boundary shows its
+fallback, or, where the inner fallback is the same element as the outer one
+(a parallel slot reads its loaders above its content, behind the same
+skeleton), the skeleton mounts a second time and R-throttle starts over
+(measured on `slot`: content 99 to 250 ms late). The old design needed a rule
+per ownership for this ("the loaders a unit owns resolve with the unit"). One
+`forEach` over the gates replaces it.
+
+### The click commits on the plain click's lane
+
+A click that commits from a prefetch whose payload is whole commits in a
+transition (`commitInTransition`, the content-hold branch): everything is
+there, so React can hold the old page for the instant the new one needs. A
+page with holes is not whole, and a plain click to it commits urgently and
+shows fallbacks. So a click with holes commits urgently too.
+
+It did not at first, and that was a parity gap of its own (`OPEN_QUEUED`, ten
+cells). R-start: with a `<ViewTransition>` mounted on the page being left
+(the router's own on a `transition()` page, or one of the app's) React
+started a view transition for the adopted click's commit that the plain click
+does not start. R-wait: the reveal of what was deferred then queued behind
+it. That is free while a view transition is shorter than the 300 ms React
+keeps a fallback up, and late by the rest of it otherwise. Production, plain
+against adopted, view transitions and the page complete, at the browser's
+default duration and with `animation-duration: 600ms` on the view-transition
+pseudo-elements (`&vtms=600`), before and now:
+
+| click                           | before: transitions | default        | 600 ms          | now: transitions | default        | 600 ms         |
+| ------------------------------- | ------------------- | -------------- | --------------- | ---------------- | -------------- | -------------- |
+| `vt` to `unit`                  | 0 and 1             | 309 and 308 ms | 307 and 641 ms  | 0 and 0          | 306 and 303 ms | 305 and 303 ms |
+| `vt` to `section`               | 0 and 1             | 309 and 314 ms | 306 and 655 ms  | 0 and 0          | 307 and 303 ms | 306 and 303 ms |
+| `vt` to `loader`                | 0 and 1             | 307 and 311 ms | 308 and 625 ms  | 0 and 0          | 306 and 303 ms | 305 and 303 ms |
+| hub with a boundary to `unit`   | 1 and 2             | 311 and 349 ms | 319 and 664 ms  | 1 and 1          | 320 and 313 ms | 320 and 312 ms |
+| hub with a boundary to `loader` | 2 and 3             | 328 and 614 ms | 666 and 1313 ms | 2 and 2          | 322 and 312 ms | 655 and 674 ms |
+
+"Before" is `bfacee1f`, "now" the medians of three production runs of the
+router app. `vt` to `section` is at parity on these columns and still open in
+production for another reason, the layout's chrome ("Limits"). The `loader`
+rows once failed the animated-changes count (plain 1, adopted 2) in 3 of 12
+runs: both clicks start a view transition for the handle push right after
+their first commit, and the adopted click's commit and that call landed in
+the same millisecond, which the count read as an animated change. It now
+counts only changes after the call (`animatedChanges` in the shared suite):
+`startViewTransition` updates the page a frame later at the earliest. Green
+three runs of three in both apps since.
+
+An urgent commit has R-sync's price: a boundary handed a promise React has
+not read shows its fallback. Two things pay it. `forceAwait` stays on for a
+prefetched payload, so what the prefetch brought is handed over as values and
+only the gates are promises, each behind the fallback a plain click shows
+there. And a value that is known is never handed to a boundary as a promise
+(#1080, `getBoundaryContent` and the aggregate rule above).
+
+### A unit under `transition()` waits for its fill
 
 A plain click to a route with `transition()` commits once, in a transition,
 when its response starts. React renders the unit's content in that same
@@ -949,161 +1054,157 @@ content against the plain click:
 | Behind the unit's gate, resolved once the fill's tree has committed | 4                      | +280 ms                                       |
 | In the fill's tree, committed in a transition                       | 3                      | +278 ms (loader 300), +185 (400), +57 (500)   |
 | In the fill's tree, committed urgently                              | 3                      | +295 ms (loader 300, development), +192 (400) |
-| The adoption commits with the fill's first chunk, content included  | 2                      | -25 to +3 ms (loaders 100 to 700)             |
+| The page commits with the fill's first chunk, content included      | 2                      | -25 to +3 ms (loaders 100 to 700)             |
 
 The first is R-throttle's second half: the gate's retry suspends again on
 the loader that is still streaming, React commits it when the throttle is
 up, and under a `<ViewTransition>` that commit is a view transition (R-start)
 which the real reveal then waits for (R-wait). The second is R-start and
-R-wait on the fill's own commit. The third has no commit of the fill's in a
-transition lane and still ends with three: the urgent tree brings the
-content, the boundary retries, and the retry does what the first row's did
-(`startViewTransition` at 7, 310 and 601 ms in one such click).
+R-wait on a commit of the fill's own. The third has no commit of the fill's
+in a transition lane and still ends with three: the urgent tree brings the
+content, the boundary retries, and the retry does what the first row's did.
 
-So the adopted click does what the plain click does. Where a payload defers a
-unit and the page commits in a transition (`shouldStartViewTransition`), the
-adoption's update carries a promise nobody resolves in place of the tree
-(`Fill.held`). React holds the page being left, exactly as it holds it for a
-plain click whose response has not started. With its first chunk the fill
-hands over one update, in a transition of its own: the tree, with the unit's
-content in it, and the fill's metadata. Two transition updates of one state
-are one commit to React (it entangles the lanes of updates to one queue), so
-the page commits once, with what the deferred handlers pushed and the
-location state the server set, as a plain click's one update brings them. No
-300 ms wait here: there is no fallback on screen to run ahead of anything.
+So the adopted click does what the plain click does, and here the client can
+know it before it renders anything. Where a placeholder that is not a loader
+sits on a page that commits in a transition (`shouldStartViewTransition` over
+the reconciled segments), the click is a navigation that waits for its fill:
+
+- The fill is fetched with the navigation's own signal. Leaving aborts it as
+  it aborts any navigation's request.
+- Nothing commits with the click. No transaction, no history entry, no tree:
+  the address bar, the URL hooks and the page being left all stay, and
+  `useNavigation()` reads `loading`, as during a plain click whose response
+  has not started.
+- With the fill's first chunk the prefetched segments (minus the
+  placeholders) and the fill's are reconciled together, and the result goes
+  down the ordinary commit path: one `tx.commit`, one tree, one transition.
+  No gate is read by anything. The fill's location state rides on the
+  commit's `serverState`, and its handle stream is read right after the
+  commit, under the entry it made.
+- A fill that fails, or answers with a redirect, is the navigation failing or
+  being redirected: the error is thrown to the navigation's caller, and a
+  redirect goes through the routine a navigation's own answer goes through
+  (`redirected()`: a `ServerRedirect` for a target in the app). Nothing of
+  the click was committed, so there is nothing to take back.
+- An answer that does not make the page with the prefetch (it is not a
+  partial payload, or `matched` names a segment neither answer carries: the
+  routes changed between the prefetch and the click) starts the navigation
+  over with nothing held, as a navigation whose own response misses segments
+  does. That request is never answered from a prefetch
+  (`src/browser/navigation-client.ts`), so it defers nothing and cannot wait
+  again.
+
+The address bar and the hooks used to move with the click here and the page
+with the fill, a round trip apart (with the fill's head held a second:
+`vt-unit` 12 against 1011 ms). The old mechanism kept the transaction's
+commit at the click and handed React a promise nobody resolved in place of
+the tree (`Fill.held`). Now the three move together:
+`expectUnitUnderTransitionCommitsWithItsFill` holds the fill and reads the
+hub's URL, the hub's content and `loading`, and
+`expectLeavingAHeldAdoptionAbortsItsFill` checks that a click that is left
+while it waits leaves no history entry and runs no deferred work.
 
 Said plainly, because it is the one place the click is not ahead: under
 `transition()` a deferred unit's fallback shows with the fill's first chunk,
 as a plain click's shows with its response, not at the click.
 
-The promise used to be resolved with the tree, and the rest was handed over
-after that commit, in an urgent update. Location state a deferred handler
-set was then one commit behind the content it belongs to.
-`src/testing/__tests__/navigation-adoption-loading.test.tsx` pins the single
-commit through the real provider.
-
 Whether the page commits in a transition is a fact about the page, and the
-adoption used to learn it from the segments it had. A prefetch that defers a
-layout stops the chain there, so a `transition()` on the route below it was
-not in the payload: the adoption committed with the click after all, and the
-content came in a commit of its own. Production, a flagged `loading()` on a
-layout whose route has `transition()` (`vt-below` in the fixture), plain
-click against adopted click:
-
-| loader | before: the layout | before: the page | transitions | now: the layout | now: the page | transitions |
-| ------ | ------------------ | ---------------- | ----------- | --------------- | ------------- | ----------- |
-| 100 ms | 6 and 304 ms       | 317 and 304 ms   | 1 and 0     | 10 and 4 ms     | 328 and 314   | 1 and 1     |
-| 400 ms | 6 and 306 ms       | 418 and 619 ms   | 1 and 1     | 9 and 4 ms      | 435 and 414   | 1 and 1     |
-| 700 ms | 6 and 306 ms       | 717 and 715 ms   | 1 and 1     | 6 and 4 ms      | 712 and 716   | 1 and 1     |
-
-The plain click's first commit is a transition and has the layout in it,
-with the route's fallback below. The adopted click showed the layout's
-fallback alone for 300 ms, then the layout with that fallback mounted a
-second time, and with a 400 ms loader the page 200 ms late; with a 100 ms
-loader the reveal lost its view transition. (In development the plain click
-shows the layout's fallback alone for 300 ms as well, because the layout is
-not in the response's first chunk there: fallback at 13 ms, layout at 315.
-So the gap only shows in a production build.)
-
-The server knows what a unit covers, so the placeholder says it. When the
-deferred entry declares no `transition()` and something its fallback covers
-does (a deeper chain entry, a slot, an orphan layout), the placeholder
-carries `transition: { viewTransition: false }` (`placeholderTransition` in
-`prefetch-deferral.ts`). To the browser that is a segment with a transition
-and no boundary to place, which is true of the layout, and the adoption
-waits for its fill. A `transition({ when })` on an entry the prefetch
-skipped is not asked for that click: the predicate travels with a segment
-the adoption does not have ("Limits").
+click learns it from the segments it has. That used to need help: a prefetch
+that deferred a layout stopped the chain there, so a `transition()` on the
+route below it was not in the payload, and the server put a stand-in on the
+unit's placeholder (`placeholderTransition`). With the whole skeleton in the
+payload every placeholder carries its own entry's `transition`, `when`
+predicate included, and the stand-in is gone. `vt-below` in the fixture is
+that shape (a flagged `loading()` on a layout whose route has
+`transition()`).
 
 `transition({ viewTransition: false })` takes the same road. It places no
 `<ViewTransition>`, so there is nothing to animate, but the plain click still
 commits in a transition, and the app may have a boundary of its own
-(`vt-unit-off` and `vt-unit-own` in the fixture). Both were measured at
-parity this way, so one rule serves all three.
+(`vt-unit-off` and `vt-unit-own` in the fixture).
 
 What it costs is the head start. With the server 100 ms away the click shows
-its fallback when the fill starts answering, about 100 ms in, where it used
-to show it with the click; the plain click shows it about 100 ms in too.
-Without latency the table above has the same thing in its first two rows:
-26 to 40 ms earlier than the plain click before, equal now. It was not a
-head start worth having: in exchange for it the content was up to 278 ms
-late. `useNavigation()` reads `loading` for that time, as it does on the
-plain click.
+its fallback when the fill starts answering, about 100 ms in, where it could
+show it with the click; the plain click shows it about 100 ms in too. It was
+not a head start worth having: in exchange for it the content was up to
+278 ms late.
 
 A flagged `loader()` under `transition()` is not a unit and is not affected:
-its page commits with the click, and its fill, like any fill of loaders
-alone, renders nothing.
+its page commits with the click, with the loader's gate behind whatever
+boundary reads it.
 
 Why not the simpler fix, running such a unit in the prefetch after all? It
 would be instant on click, and it would spend, on every prefetch, exactly
 the work the flag was written to keep out. Waiting for the fill costs
 nothing a plain click does not cost.
 
-#### A fill that carries loaders only renders no tree
+### A read with no boundary
 
-The tree the adoption rendered reads the gates, and they resolve when the
-fill lands. The one update such a fill makes is the handle data, with the
-tree that is already on screen (`Fill.root`). A new tree there would be one
-more commit with nothing to show.
+The other click React holds is one the client cannot see coming. A deferred
+loader whose read has no `<Suspense>` and no `loading()` above it suspends
+the click's render with nothing to fall back to, and React keeps the page
+being left until the gate resolves (R11). Whether a tree does that is not in
+the segments: it depends on where the app's components call `useLoader()`.
+`bare`, `bare-inner` and `above` in the fixture are such pages.
 
-#### A fill says nothing about scroll
+A plain click to the same page is held the same way, for the same value. What
+has to match is what the page being left can observe while it waits:
 
-The fill's update says nothing about scroll. Scroll belongs to the
-navigation transaction: `tx.commit()` decides it, the adoption's update
-carries the decision, and `NavigationProvider` holds that one pending action
-(`pendingScrollRef`) until the React commit that follows, where
-`handleNavigationEnd` applies it. A fill is not a transaction, so it has no
-decision to carry.
+- **The page**: held until the value arrives, then shown, in both clicks.
+- **`useNavigation()`**: `loading` for all of that time, in both. This needs
+  one line. The click commits in its own task, before the event controller's
+  notification of the click has gone out (its notifier is debounced), so the
+  state after the commit used to reach React in the batch React was holding,
+  and `useNavigation()` read `idle` on the page being left for the whole
+  wait. `PartialUpdateConfig.fill.flush()` (`eventController.flushRouteState`)
+  now delivers the state before the render's awaits: React commits `loading`
+  in the next microtask, and the tree's update arrives after it. While React
+  holds that update, the state it carries (`idle`, the new location) is held
+  with it.
+- **The URL hooks**: `useNavigation().location` moves with the page, in both
+  (the `hook` column in "Limits"). Same mechanism: the location it reads is
+  controller state, and it arrives in the batch React holds. `usePathname`
+  and `useSearchParams` were not measured here.
+- **The address bar**: moves with the click in the adopted click and with the
+  response in the plain one. This is the one difference left ("Limits").
 
-This is scar tissue, in two parts. The fill used to send
-`scroll: { enabled: false }`, and the provider used to assign the pending
-action on every update, `undefined` included. So a fill that reached the
-provider before React had committed the adoption replaced the adoption's
-pending scroll, and the visitor stayed at the old scroll position on a new
-page. That happened more often than you would guess. The fill's update was
-emitted when the first chunk of its response arrived, a few milliseconds
-after the click. The adoption's commit is a transition, which React renders
-in a later task, so the two raced: on a fresh page the fill won 7 clicks out
-of 8 (measured from the hub, 100 ms loaders, dev and production). A fill's
-updates now wait for the adoption's commit, so that race is gone. The rule
-below stands on its own all the same: a fill is not the only update with no
-decision.
+A page whose every deferred read has a boundary is not held and shows with
+the click: a reader behind its own `<Suspense>` on a route with no
+`loading()` shows that fallback at once, exactly as the first row of the
+table in "The model in one paragraph" says. `loading` is delivered there too,
+one commit before the page, and the page follows at once (measured in
+development on `unit`: the fallback, the address bar and the hook 7 ms after
+the click). `own` in the fixture is that route, and
+`expectOwnBoundaryWithNoLoadingShowsWithTheClick` holds its fill back and
+finds the page, the read's fallback, the address bar and the hook all moved,
+with `useNavigation()` on `idle` and streaming.
 
-The rule now, for every update and not only the fill: an update that carries
-a transaction's decision sets the pending action, the commit that follows
-consumes it once, and an update with no decision (a server action, an error
-update, a fill) neither sets nor clears it.
+Why not move the address bar with the page as well? Three ways were looked
+at and none was built, because each breaks something a page with a boundary
+relies on (reasoned from the code, not measured):
 
-The transaction draws the same line. `commit()` returns its decision in the
-shape the update carries it (`CommitResult` in
-`src/browser/navigation-transaction.ts`). A navigation always decides, and "do
-not scroll" is a decision that replaces a pending one: `<Link scroll={false}>`,
-an intercept, the explicit `scroll: false` commits of the bridge. A commit that
-is not a navigation returns none: an action's store-only refetch into the entry
-on screen, and a cache-only commit. Those two used to answer `scroll: false`,
-which reached the provider as "do not scroll", so an action refetch that
-landed before React had committed a navigation cost the navigation its scroll,
-the fill's bug by another road.
+- _Commit the transaction when React commits the tree._ The first render of
+  the new page would then run before the URL, the history entry and the
+  hooks' state had moved: components that read `window.location` or a URL
+  hook while rendering, or in a layout effect, would read the old page. That
+  is every adopted click, to fix the ones React holds.
+- _Push the entry at the click and put the old URL back while React holds._
+  `history.replaceState` during the hold leaves the wrong URL in the forward
+  entry when the visitor goes back while waiting, and a navigation started
+  during the hold reads `window.location.href` as the page it is leaving.
+- _Render the tree once to find out, then decide._ A probe render that
+  suspends is not something React exposes; it would be the router guessing at
+  React's work loop.
 
-You might worry that with nothing
-clearing the slot an old scroll could be replayed by a later action. It
-cannot: every update re-renders the provider, and the commit that follows
-consumes whatever is pending. `src/testing/__tests__/navigation-scroll-slot.test.tsx`
-pins all four sides through the real provider: an update with no decision
-does not cost a pending navigation its scroll, a later one does not replay
-it, the second of two navigations wins, and a traversal's restore survives.
-The same file drives the action refetch through the real updater and a real
-transaction, the call `refetchRoute()` makes in
-`src/browser/server-action-bridge.ts`.
-The browser suites force both orders (the fill before the adoption's commit,
-the fallback before the fill) and never leave it to timing.
+So the hold is detected by the only thing that knows, React, and what the
+client can move with React's commit (the hooks) moves with it.
 
-A fill has no navigation transaction, so two things a transaction normally
-carries need another way to their owner. `PartialUpdateConfig.fill` is that
-way, supplied by the navigation bridge: `redirect(url, state)` performs a
-replace navigation, and `locationState(state)` merges location state the
-deferred work set into the current history entry. Without the hooks a
-redirect is a document navigation and the state is dropped.
+`src/testing/__tests__/navigation-adoption-loading.test.tsx` pins the state
+through the real provider: `loading` until React commits the tree, no longer
+than the commit where a fallback can show, and the control where the state is
+not delivered first reads `idle` all the while.
+`expectPendingFillReadsLikeAStreamingNavigation` pins it in the browser, on a
+unit and on a read with no boundary.
 
 ### What the page reads while a fill is pending
 
@@ -1111,70 +1212,93 @@ What a page can observe, each checked against a plain navigation whose
 loader is still streaming:
 
 - **`useNavigation()`** reads what it reads on a plain navigation that is
-  still streaming: `state: "loading"` until React commits the adopted
-  payload, then `"idle"` with `isStreaming: true` until the fill has landed
-  and streamed (the adoption's streaming token stays open until then). Where
-  a fallback can show, that commit is immediate and `"loading"` lasts a few
-  milliseconds, as on a plain click. Where nothing can show one (R11) React
-  holds the commit until the fill returns, and `"loading"` is what an app's
-  progress bar has to see for all of that time. A deferred unit under
-  `transition()` is held the same way until its fill starts answering.
-
-  It used not to. The adoption commits in the task of the click, so the
-  controller goes to `loading` and back before React has rendered either, and
-  the state after the commit reaches React inside the payload update's
-  transition (`flushRouteState`), which React was holding. Hub to `bare` with
-  slow loaders, production: the plain click read `loading` from 5 to 712 ms,
-  the adopted one read `idle` until 709 ms. Now the adoption's update is
-  handed over through `emitAdoption()` (`browser/pending-fill.ts`), and while
-  that runs `useNavigation()` sets its optimistic value to `loading` inside
-  the same transition. An optimistic value shows at once and gives way to the
-  real state when its transition commits, so the pin lasts exactly as long as
-  React holds the commit.
-
-  Releasing the pin from outside was tried first (a flag on the controller,
-  cleared in `onCommit`) and is wrong. The release is then a transition of
-  its own, which under `transition()` waits for the entering view transition
-  and starts another: three view transitions for two, and the content 280 ms
-  late. `src/testing/__tests__/navigation-adoption-loading.test.tsx` pins the
-  behaviour through the real provider, and
-  `expectPendingFillReadsLikeAStreamingNavigation` in the browser, on a unit
-  and on a read with no boundary.
-
-- **The URL and the URL hooks** are the one thing here that is not at
-  parity. The address bar and `useNavigation().location` move with the
-  click, also where React holds the page; on a plain click
-  the hooks move with the page. The parity check measures it (how far the
-  address bar and a URL hook on the page being left are ahead of the page,
-  against the same for the plain click, with a 50 ms margin) and the cells
-  that break it are open ("Limits").
-
-- **View transitions.** A fill starts none on a page that is on screen: its
-  updates there are urgent ("Revealing a unit"). It reuses the adoption's
-  `transition({ when })` decision (passed to `runFill`) for the tree it
-  renders. On a route with `transition()` the browser gets two
-  `document.startViewTransition` calls,
-  the commit and the reveal, with or without the prefetch, for a flagged
-  loader and for a flagged `loading()`, whatever the loader takes. The parity
-  check allows the adopted click no call the plain click does not make.
+  still streaming: `state: "loading"` until React commits the click's tree,
+  then `"idle"` with `isStreaming: true` until the fill has streamed (the
+  click's streaming token stays open until then). Where a fallback can show,
+  that commit is immediate. Where nothing can show one, React holds the
+  commit until the fill answers ("A read with no boundary"). A deferred unit
+  under `transition()` reads `loading` until its fill starts answering,
+  because the navigation has not committed.
+- **The URL and the URL hooks** move with the page. The address bar does too,
+  except where React holds a click for a read with no boundary: there it
+  moves with the click. The parity check measures it (how far the address bar
+  and a URL hook on the page being left are ahead of the page, against the
+  same for the plain click, with a 50 ms margin).
+- **View transitions.** A fill starts none: it hands React nothing, and a
+  gate that resolves is a Suspense retry, which is what reveals a plain
+  click's content too. On a route with `transition()` the browser gets two
+  `document.startViewTransition` calls, the commit and the reveal, with or
+  without the prefetch, for a flagged loader and for a flagged `loading()`,
+  whatever the loader takes. The parity check allows the adopted click no
+  call the plain click does not make.
 - **Handle data.** A push from a handler the prefetch ran travels in the
   prefetched payload's handle stream, so it is on screen with the click's
   commit: breadcrumbs and titles from the part that was not deferred do not
-  wait for the fill. A deferred handler's push arrives with the fill.
+  wait for the fill. A deferred handler's push arrives with the fill, through
+  the handle store.
+- **Scroll.** Scroll belongs to the navigation transaction: `tx.commit()`
+  decides it, the click's update carries the decision, and
+  `NavigationProvider` holds that one pending action (`pendingScrollRef`)
+  until the React commit that follows. A fill hands React no update, so it
+  cannot touch it. (The one update a fill can make, for an answer that is not
+  the tree's, carries no scroll decision: "Failure".)
+
+  The provider's rule stands on its own, because a fill was never the only
+  update with no decision: an update that carries a transaction's decision
+  sets the pending action, the commit that follows consumes it once, and an
+  update with no decision (a server action, an error update) neither sets nor
+  clears it. Scar tissue: the fill used to send `scroll: { enabled: false }`
+  and the provider used to assign on every update, so a fill that reached the
+  provider before React had committed the click cost the navigation its
+  scroll (7 clicks out of 8 on a fresh page). `commit()` returns its decision
+  in the shape the update carries it (`CommitResult` in
+  `src/browser/navigation-transaction.ts`): a navigation always decides, and
+  a commit that is not a navigation (an action's store-only refetch, a
+  cache-only commit) returns none.
+  `src/testing/__tests__/navigation-scroll-slot.test.tsx` pins all four sides
+  through the real provider.
 
 ### No remount (R6)
 
-The fill replaces props, not elements. For that the placeholder's tree has to
-have the shape the filled tree will have, and that is why a unit's own loaders
-travel as deferred loader segments: `renderSegments` wraps a segment's content
-in `StreamedLoaderErrorBoundary` only when the segment has loaders, and takes
-the per-loader streams lane only then. With the loader ids present from the
-start, the `LoaderBoundary`, the `RouteContentWrapper` and their keys are the
-same before and after.
+The fill replaces nothing. For that the tree the click builds has to be the
+tree the filled page would build, element for element, and three things make
+it so:
+
+- **The skeleton.** The prefetch sends a placeholder for every segment the
+  deferred work covers, with the fields the wrapper chain is built from: id,
+  type, namespace, the `loading` fallback, `transition`, a slot's name, a
+  loader's id, `belongsToRoute`, the mount path. `renderSegments` wraps a
+  segment's content in `StreamedLoaderErrorBoundary` only when the segment
+  has loaders and takes the per-loader streams lane only then, so the loader
+  placeholders matter as much as the unit's.
+- **A slot with no `loading()`.** A slot's chain is built where the layout
+  renders it (`renderSlotContent` in `src/client.tsx`), and it wraps a slot
+  that streams with no `loading()` in a boundary of its own, by looking at
+  whether the slot's `component` is a promise. A deferred slot's gate is a
+  promise, but the slot it stands for was awaited: a navigation renders its
+  content with no boundary around it. So a deferred slot gets none, and its
+  gate stands where the content will. This is the one place the tree depends
+  on a value and not on the skeleton.
+  `src/__tests__/parallel-outlet-deferred.test.tsx` pins it.
+- **Values as values.** What the prefetch did bring is awaited before the
+  tree is built (`forceAwait`), and what is known is handed over as the value.
+
+`src/__tests__/segment-system.test.tsx` ("builds a plain click's wrapper
+chain from the skeleton") builds a page with a flagged layout, two slots, a
+route with `loading()` and `transition()`, an orphan layout and a loader at
+each level, once from placeholders with gates and once from a plain click's
+segments, and compares every router element in tree order: its type, its key,
+its segment and the slots it carries. In the browser,
+`expectAdoptedClickBuildsThePageOnce` watches fourteen clicks from the click
+to the completed page and fails if any `pf-*` test id showed as more than one
+DOM node (a fallback or a layout mounted a second time), if the layout the
+page keeps was detached or hidden, or if the page was blank.
+
+What can still make the filled page differ from the skeleton is in "Failure".
 
 ### History
 
-The adopted entry is stored with its placeholders, flagged `deferred`. The
+The click's entry is stored with its placeholders, flagged `deferred`. The
 fill rewrites it in place with the filled segments (above), and back/forward
 to it is then an ordinary cache restore.
 
@@ -1184,6 +1308,9 @@ placeholders. Both readers of the history cache treat such an entry as a miss:
 offer it as `targetCacheSegments` (`hasUsableCache` in
 `src/browser/navigation-bridge.ts`). So returning to the entry fetches what
 is missing; it never restores a tree suspended on a gate nobody will resolve.
+
+A click that waits for its fill ("A unit under `transition()`") has no entry
+until the fill answers. Left before that, it leaves nothing behind.
 
 A gate is resolved by its fill or never settled at all. Resolving an
 abandoned one with nothing would show up in a tree that may still be mounted
@@ -1200,11 +1327,12 @@ the page with fallbacks nobody fills. Instead `browser/pending-fill.ts` holds
 the one in-flight fill, and it is cancelled when the tree it belongs to is
 replaced: a navigation transaction that commits
 (`createNavigationTransaction().commit`), a back/forward (`handlePopstate`),
-or a newer adoption. An adoption that never commits (aborted or failed before
+or a newer adoption. A click that never commits (aborted or failed before
 `tx.commit()`) cancels its own fill. Cancelling aborts the request only while
 it is waiting for the response; aborting a Flight stream mid-read makes the
 decoder throw asynchronously, so a response that has arrived is simply
-dropped.
+dropped, also when the page is left during the 300 ms wait: no gate resolves
+and nothing is written.
 
 Two commits deliberately do not cancel: a cache-only commit, which touches no
 tree, and an action's store-only commit, which updates the page the fill is
@@ -1212,16 +1340,55 @@ for. After an action the identity check decides. If the action's refetch
 replaced the entry's segments the fill finds none of its placeholders and
 drops its response; if the entry is untouched the fill lands.
 
-While a fill is in flight the adoption's streaming token stays open, so
+While a fill is in flight the click's streaming token stays open, so
 `useNavigation().isStreaming` is true until the deferred work has streamed in,
 and idle-time prefetching waits for it.
 
 ### Failure
 
-A fill that fails ends the way a navigation that fails does. `runFill()`
-hands the error to `emitNavigationError` (`browser/network-error-handler.ts`),
-the emitter the navigation bridge uses: the error replaces the page, and the
-router's error boundary takes over. That covers:
+A fill hands React a tree in two cases, and both are the outcome of the
+navigation: the page the visitor gets is not the page the tree was built for.
+
+**The answer's segments are not the tree's.** The skeleton is exact for
+everything static, and everything that shapes the tree below a unit is static
+per match except the ways deferred work can fail:
+
+- A handler the fill awaits (one with no `loading()` of its own) throws: its
+  entry's segments are replaced by one `error` segment with the entry's id
+  (`catchSegmentError` in `src/router/segment-resolution/helpers.ts`), and
+  its loaders and slots are not in the answer.
+- The same handler calls `notFound()`: one `notFound` segment, the same way.
+- A handler returns or throws a `Response`: resolution rethrows it
+  (`resolveWithErrorBoundary`), so the request is answered with that
+  response and not with segments. The fill then ends as a redirect or as a
+  response the client cannot use, below. Read from the code: no fixture has
+  one.
+
+`settleHoles` sees the first two as a placeholder with no segment of its id
+and type in the answer, or a `matched` that differs. It then renders the
+answer's segments as a navigation would and hands React that tree, once, with
+the answer's metadata (so the provider reads its handle stream). The gates
+are released, never resolved: the tree that read them is gone. The tree's
+`matched` array is rewritten in place first, because the click payload's
+handle stream reads it on every yield. `section-throws` and `section-missing`
+in the fixture are routes below the flagged layout whose handler fails that
+way, and `expectDeferredHandlerFailureReplacesItsSegment` checks that the
+adopted click ends on the page the plain click ends on: the layout with the
+route's boundary inside it, no fallback left, nothing streaming.
+
+Failures that are _content_ do not get here. A handler under `loading()` is
+streamed, so its failure arrives inside its segment's `component` and lands
+in the boundary React finds for it. A loader's error, `notFound()` or
+`redirect()` rides in its `loaderData` and is decoded where the loader is
+read (`StreamedLoaderErrorBoundary`), exactly as for a loader that streams
+behind `loading()`. Both resolve their gate like any value:
+`expectDeferredOutcomeArrivesWithTheFill` covers a loader that throws, one
+that calls `notFound()` and one that redirects.
+
+**The fill itself fails.** `settleHoles` hands the error to
+`emitNavigationError` (`src/browser/network-error-handler.ts`), the emitter
+the navigation bridge uses: the error replaces the page, and the router's
+error boundary takes over. That covers:
 
 - a response the client cannot use: undecodable (a 500 with a text body, say),
   not partial, or missing segments;
@@ -1230,22 +1397,33 @@ router's error boundary takes over. That covers:
   whose scheme is not http. Returning quietly here left the fallback up for
   good.
 
-Two conditions hold the error back. It waits for the adoption's commit: a
-fill can fail while the adoption is still rendering, and an error shown then
-would be replaced a moment later by the adoption's own commit, whose fallback
-would wait for a fill that already failed. And it is shown only on a page
-that still holds this adoption's placeholders, the same identity check the
-merge makes: after an action refetch rendered the missing segments, a late
-failure of the fill is nobody's problem.
+Two conditions hold the error back. It waits for the click's commit: a fill
+can fail while the click is still rendering, and an error shown then would be
+replaced a moment later by the click's own commit, whose fallback would wait
+for a fill that already failed. And it is shown only on a page that still
+holds this tree's placeholders, the same identity check the routine makes
+first: after an action refetch rendered the missing segments, a late failure
+of the fill is nobody's problem.
 
-A response is checked before anything of it is handed over, so a failure
-that is in the response itself (missing segments) leaves nothing behind. A
-failure can still come later, while the tree is built. Once the error is
-shown the fill hands nothing more over. Its handle update waits for the
-adoption's commit, and where React was still holding the adoption (a read
-with no boundary) the error's commit is that commit: handed over then, the
-update would put the adoption's tree back over the error, with gates nobody
-resolves.
+A response is checked before anything of it is written, so a failure that is
+in the response itself (missing segments) leaves nothing behind.
+
+How many updates each ending hands React, beside the click's one:
+
+| How the fill ends                                         | Updates by the fill                           |
+| --------------------------------------------------------- | --------------------------------------------- |
+| It settles the holes                                      | 0                                             |
+| An awaited handler threw or called `notFound()`           | 1, the answer's segments                      |
+| Refused (undecodable, not partial, missing segments)      | 1, the error                                  |
+| Network failure                                           | 1, the network error page                     |
+| A redirect the client refuses                             | 1, the error                                  |
+| A redirect                                                | 0; the replace navigation it starts makes its |
+| The page was left, or an action refetch filled it already | 0                                             |
+
+For a click that waits for its fill, every one of these is the navigation's
+own ending: it throws to the navigation's caller or starts over, and the fill
+as such hands over nothing. A handler that failed in that fill is part of the
+one tree the click commits.
 
 The gates are never rejected, and this is scar tissue. The first version
 rejected them, so that React would throw at each reader into its nearest
@@ -1274,6 +1452,23 @@ back to a page the client still has in its history cache is a different
 request: it lists that page's segments, so the key does not match and the
 click is a plain navigation over the cached copy
 (`expectRevisitUsesWhatTheClientHolds`).
+
+### Where it is pinned
+
+- `src/__tests__/partial-update-fill.test.ts`: the updater with a mocked
+  client and store. One `onUpdate` and one `renderSegments` per adopted click
+  (a loader, a route unit, a layout unit with route, slot and loaders; tree
+  on screen and tree held), every gate resolved with the fill's value, the
+  entry holding the fill's own segments, the 300 ms rule from each side, the
+  click that waits for its fill, and each ending in "Failure".
+- `src/testing/__tests__/navigation-adoption-loading.test.tsx`: the real
+  provider, event controller, transaction and updater, with a counter on
+  every update that reaches the provider.
+- `src/__tests__/segment-system.test.tsx`,
+  `src/__tests__/parallel-outlet-deferred.test.tsx`,
+  `src/__tests__/segment-loader-promise.test.ts`: the tree.
+- `tests/shared-e2e/src/prefetch-false.ts`: the browser bodies, run by both
+  apps in a dev and a `(production)` describe.
 
 ## `ctx.rendered()`: R12 and R13
 
@@ -1311,18 +1506,74 @@ segments. A fill refuses `rendered()` outright for the same reason R12 exists.
 
 ## Limits
 
+- A flagged `loading()` on a layout covers the layout's chrome on the
+  adopted click and not on the plain one, in a production build. Since the
+  held-boundary fix (#1080) a layout handler that has returned is handed to
+  its boundary as the node, so a plain click shows the layout with its
+  response's first chunk and the layout's fallback inside the outlet. The
+  prefetch skipped the layout's handler (R2), so the adopted click shows the
+  fallback in place of the whole layout until the fill answers, and then
+  mounts it a second time inside the layout. Production, router app, plain
+  against adopted, when the layout shows, over four runs: `hub to section` 9
+  to 16 and 303 to 336 ms, with the server 100 ms away 115 to 137 and 305 to
+  350, from `vt` 4 to 6 and 303 to 313; with a 600 ms layout handler about
+  607 and 709. Before #1080 the plain click showed the layout
+  at 311 ms and the two clicks were equal. A development server does not put
+  the layout in the plain response's first chunk, and is at parity. Two ways
+  to close it, neither built: the click to a flagged layout waits for its
+  fill, as a unit under `transition()` does (equal to the plain click, no
+  head start); or the layout's own handler runs in the prefetch and only its
+  outlet is deferred (ahead of the plain click; a change to R2). The cells
+  run as expected failures in production (`OPEN_LAYOUT_CHROME`), the slow
+  layout ones as reports (`OPEN_LAYOUT_CHROME_AT_MARGIN`, "Open cases").
+- A fill whose segments are not the ones the tree was built for ("Failure")
+  makes React log once, in development: "This library called use() to
+  suspend in a previous render but did not call use() when it finished". The
+  unit's boundary suspended on its gate while it mounted, and the tree that
+  replaces the page hands the same boundary its node. Measured on
+  `section-throws` and `section-missing` in both apps; not on the merge
+  commit before the fill stopped rendering a tree. Handing the boundary the
+  gate, resolved with that node, would keep the `use()`; not built (the
+  router chunk has 14 bytes left under its ratchet). Nothing on screen
+  differs.
 - A deferred `loading()` entry on a page that commits in a transition (its
   own `transition()`, or one on anything its fallback covers) shows its
   fallback when its fill starts answering, not with the click ("A unit under
   `transition()` waits for its fill"). Equal to the plain click, never ahead
   of it.
-- A `transition({ when })` on an entry the prefetch skipped is not asked for
-  the adopted click. The decision is made once, over the segments the
-  adoption has (`decideGatedOff` in `partial-update.ts`), and the predicate
-  travels with a segment that arrives in the fill. The click then commits as
-  under a plain `transition()`: held until the fill answers, and animated,
-  where a predicate that returns false would have made the plain click
-  urgent. Read from the code, not measured: no fixture has that shape.
+- A `transition({ when })` below a deferred unit is asked for the adopted
+  click, because its entry's placeholder carries it. It is asked once, before
+  the fill is sent (`decideGatedOff` in `partial-update.ts`), with the
+  location state of the prefetched payload: state a deferred handler sets is
+  not in `to.state` for that predicate, where a plain click's has it. Read
+  from the code, not measured: no fixture has that shape.
+- Where React holds an adopted click for a read with no boundary, the address
+  bar moves with the click and the page when the value arrives ("A read with
+  no boundary"). A plain click's address bar moves with its response, so it
+  is ahead of the page by the loader's time, and the adopted click's by the
+  fill's round trip more. `useNavigation()` and the URL hooks move with the
+  page in both. Production, `bare`, plain against adopted, how far ahead of
+  the page:
+
+  | click                            | address bar     | `useNavigation().location` |
+  | -------------------------------- | --------------- | -------------------------- |
+  | `bare`                           | 100 and 104 ms  | 1 and 0 ms                 |
+  | `bare`, loaders 300 ms slower    | 402 and 406 ms  | 1 and 1 ms                 |
+  | `bare`, a slow loader            | 704 and 705 ms  | 0 and 0 ms                 |
+  | `bare`, the fill's head held 1 s | 103 and 1108 ms | 0 and 0 ms                 |
+
+  With the server near, the difference is inside the parity rule's 50 ms
+  margin. With the server far it is the round trip, and that one cell runs as
+  an expected failure (`OPEN_HELD`). Not fixed: the three ways to move the
+  address bar with the page each break a page that is not held ("A read with
+  no boundary").
+
+- A deferred value never shows sooner than a plain click could show it, also
+  where its reader has a boundary of its own and nothing else is pending: the
+  gates of a tree that is on screen resolve when the fill has streamed or
+  300 ms after its first chunk ("When the gates resolve"). React keeps the
+  reader's fallback up for 300 ms from the click anyway, so what the rule
+  takes is at most the fill's time to its first chunk.
 - Two flagged loaders read in boundaries of their own, on a route whose
   `loading()` covers both, used to cost one fallback and 100 ms against the
   plain click (`nested` with loaders of 400 and 550 ms: 706 ms against 612 in
@@ -1339,109 +1590,9 @@ segments. A fill refuses `rendered()` outright for the same reason R12 exists.
   chunk and the plain click's throttle from its fallback's commit, a few
   milliseconds later, so at exactly 300 ms the adopted click loses the flip
   a little more often (production, `section` routes: 3 clicks of 12 against
-  1 of 12; development: none of either). The parity matrix keeps its
-  mid-duration column at 400 ms for that reason.
-- With a `<ViewTransition>` mounted on the page being left, the adopted
-  click starts a view transition the plain click does not, and the reveal
-  of what was deferred waits behind it. Any boundary does it: one of the
-  app's own (`&boundary=1` in the fixture), or the router's on a page with
-  `transition()` (the fixture's `vt`). The cause is not the flag. A click
-  that commits from a prefetch commits in a transition, flagged or not,
-  where the plain click to a route with no `transition()` commits urgently,
-  and React animates a transition's commit (R-start). What the flag adds is
-  a reveal that has to queue behind that view transition (R-wait). The
-  queue is free while a view transition is shorter than the 300 ms React
-  keeps a fallback up, and late by the rest of it otherwise: at the
-  browser's default duration the three `vt` rows below are within 5 ms of
-  the plain click, and an app that sets a longer one pays the difference.
-  Production, plain against adopted, the page complete, at the default
-  duration and with `animation-duration: 600ms` on the view-transition
-  pseudo-elements (`&vtms=600`):
-
-  | click                           | transitions | default        | 600 ms          |
-  | ------------------------------- | ----------- | -------------- | --------------- |
-  | `vt` to `unit`                  | 0 and 1     | 309 and 308 ms | 307 and 641 ms  |
-  | `vt` to `section`               | 0 and 1     | 309 and 314 ms | 306 and 655 ms  |
-  | `vt` to `loader`                | 0 and 1     | 307 and 311 ms | 308 and 625 ms  |
-  | hub with a boundary to `unit`   | 1 and 2     | 311 and 349 ms | 319 and 664 ms  |
-  | hub with a boundary to `loader` | 2 and 3     | 328 and 614 ms | 666 and 1313 ms |
-
-  The last row is late at the default duration too: a flagged loader that
-  lands inside the adoption's own view transition is revealed one whole
-  transition late. A unit on a page that commits in a transition itself
-  (`vt-unit`) is not affected: the plain click commits in a transition
-  there too. Not fixed, and no mechanism was built for it: whether a click
-  that adopts a prefetch should commit urgently where the plain click does
-  is a decision about every prefetched click, not about this flag. The ten
-  cells run as expected failures (`OPEN_QUEUED`).
-
-- A unit whose loader is read above its fallback with no boundary (a layout
-  that calls `useLoader()` on its route's loader) can show the unit's
-  fallback for 300 ms where a plain click shows the page complete. React
-  holds the adoption on the loader's gate. The unit's own gate resolves with
-  the commit of the fill's tree, and that tree waits for the adoption to be
-  on screen, so the commit that ends the hold has the unit's fallback in it
-  and React keeps a fallback up for 300 ms. A plain click has the route's
-  content in the response that carries the value. The commit that ends its
-  hold shows the page complete, or the same fallback for 300 ms, depending
-  on whether the content is ready in it; which of the two was not pinned
-  down, and it differs by app and by how long the loader takes. Production,
-  plain against adopted, the page complete (`above` in the fixture):
-
-  | loader | Cloudflare app  | node app         |
-  | ------ | --------------- | ---------------- |
-  | 100 ms | 411 and 410 ms  | 410 and 405 ms   |
-  | 400 ms | 408 and 711 ms  | 707 and 712 ms   |
-  | 700 ms | 711 and 1012 ms | 1012 and 1012 ms |
-
-  This page used not to show at all ("Not before the adoption is on
-  screen"). Closing the rest needs the fill's tree in the commit that ends
-  the hold, which is what a unit under `transition()` gets (`Fill.held`).
-  Doing the same for every adoption React has not committed when its fill
-  answers has one case against it, by React's rules and not measured: an
-  adoption whose commit is under way behind a view transition would take
-  the fill's update as a transition of its own, which waits for that view
-  transition and starts another (R-wait, R-start). Telling a hold from a
-  commit under way needs a signal from React the client does not have. A
-  unit whose fill brings nothing but what its placeholders stand
-  for (a route and its loaders) could have its gate resolved at once
-  instead: its adoption's tree is complete without the fill's. Tried and
-  measured: on the Cloudflare app in development the adopted click then
-  completes at 111, 417 and 710 ms against the plain click's 421, 495 and
-  711, with no fallback of its own. It costs 14 bytes gzip, which puts the
-  router chunk at 49,163 against its ratchet of 49,152, and it leaves a
-  flagged layout with deeper entries, and a unit with slots or orphan
-  layouts, where they are. Not fixed; the cells run as expected failures
-  (`OPEN_ABOVE`).
-
-- Where React holds an adopted click, the address bar and the URL hooks
-  move with the click and the page moves when the hold ends. The adoption's
-  transaction commits in the task of the click (the history entry, the
-  event controller's location), and React holds only the tree. Two holds
-  exist: a deferred unit on a page that commits in a transition, until its
-  fill answers, and a deferred loader read with no boundary, until its
-  value arrives. A plain click moves the hooks with the page. Production,
-  plain against adopted, how far ahead of the page:
-
-  | click                               | address bar     | `useNavigation().location` |
-  | ----------------------------------- | --------------- | -------------------------- |
-  | `bare`                              | 101 and 106 ms  | 1 and 106 ms               |
-  | `bare`, a slow loader               | 700 and 709 ms  | 0 and 709 ms               |
-  | `above`                             | 100 and 103 ms  | 0 and 103 ms               |
-  | `vt-unit`, the server 100 ms away   | 6 and 113 ms    | 5 and 113 ms               |
-  | `vt-unit`, the fill's head held 1 s | 12 and 1011 ms  | 11 and 1011 ms             |
-  | `bare`, the fill's head held 1 s    | 101 and 1109 ms | 0 and 1108 ms              |
-
-  On a read with no boundary the plain click's address bar is ahead of the
-  page as well (it moves with the response, and React then holds the page
-  for the value); the hooks are what differs there. With no latency a held
-  unit's hold is the fill's round trip, a few milliseconds, inside the
-  rule's 50 ms margin. Not fixed: moving the transaction's commit to
-  React's commit is a change to how every navigation records itself. The
-  back/forward fix that made `usePathname` and `useSearchParams` change
-  with the page instead of at popstate (#1049) is the precedent. The cells
-  run as expected failures (`OPEN_HELD`).
-
+  1 of 12; development: none of either; measured before the fill stopped
+  rendering a tree, and the deadline is the same one). The parity matrix
+  keeps its mid-duration column at 400 ms for that reason.
 - A prefetch that is still unanswered when its link is clicked on _another_
   page is waited for and then dropped, because a response that defers is for
   its source page only (R15). That click is later than a plain one by what
@@ -1489,17 +1640,37 @@ still runs. Every rule the gap does not break is asserted first, so a
 regression in the same cell is a real failure. Then the test is marked with
 `test.fail` and the broken rules are asserted: the run reports an expected
 failure with the reason, and an unexpected pass, which fails the suite, the
-day the gap is fixed. 33 cells per mode and app:
+day the gap is fixed. A gap can be open in a production build only
+(`production`): the suite files tell the bodies which build they run against
+(`PrefetchFalseFixture.production`).
 
-| Gap           | Cells | Rules it breaks            |
-| ------------- | ----- | -------------------------- |
-| `OPEN_HELD`   | 20    | the URL rule               |
-| `OPEN_ABOVE`  | 3     | URL, fallbacks, lateness   |
-| `OPEN_QUEUED` | 10    | transitions, lateness, URL |
+| Gap                            | Cells per app  | Rules it breaks           |
+| ------------------------------ | -------------- | ------------------------- |
+| `OPEN_HELD`                    | 1, both modes  | the URL rule              |
+| `OPEN_LAYOUT_CHROME`           | 27, production | lateness, fallbacks, kept |
+| `OPEN_LAYOUT_CHROME_AT_MARGIN` | 15, production | lateness, at the margin   |
 
-A gap need not break every rule it names in every cell or app: `OPEN_ABOVE`
-breaks the URL rule everywhere, and the other two where the plain click
-shows the page complete.
+`OPEN_LAYOUT_CHROME_AT_MARGIN` is the one gap that is not an expected
+failure. Its cells (a click into the section with a slow layout handler) are
+late by the margin to within a few milliseconds, so they fail in some runs
+and pass in others; marked `test.fail`, a pass would fail the suite. The rule
+they break is reported as an annotation and not asserted, every other rule
+is. They do not announce the day the gap is fixed: check them with
+`OPEN_LAYOUT_CHROME`.
+
+Before the fill stopped rendering a tree (`f43a4a27`) there were 35 cells.
+`OPEN_NESTED` (2) closed with the held-boundary fix (#1080). 32 closed with
+the one-tree click:
+
+| Gap           | Cells | What closed it                                                                              |
+| ------------- | ----- | ------------------------------------------------------------------------------------------- |
+| `OPEN_QUEUED` | 10    | A click with holes commits urgently ("The click commits on the plain click's lane")         |
+| `OPEN_ABOVE`  | 3     | Every gate resolves at once where React has not committed the tree, a unit's own included   |
+| `OPEN_HELD`   | 19    | A unit under `transition()` commits nothing at the click; the hooks move with a held commit |
+
+The same #1080 merge opened `OPEN_LAYOUT_CHROME` (it made the plain click
+faster, see "Limits"); those cells were red on the merge commit, with the
+fill still rendering its own tree, in both apps.
 
 The retry of a late pair (three pairs, the case fails only if every one is
 late; structure is judged on the first pair alone) means a lateness that

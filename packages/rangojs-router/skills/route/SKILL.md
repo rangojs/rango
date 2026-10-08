@@ -260,8 +260,8 @@ then skips the entry's handler, its loaders, its orphan layouts and its
 parallel slots. On a `layout()` the fallback covers the whole outlet, so every
 deeper entry is skipped with it. A parallel slot with its own flagged
 `loading()` is a separate unit: the route beside it still renders in the
-prefetch. The prefetch payload marks each skipped piece deferred and carries
-the fallback.
+prefetch. The prefetch payload carries a placeholder for each skipped piece,
+marked deferred, with its fallback: the page's skeleton.
 
 **An entry the browser already holds is never deferred.** Inside a section
 whose `layout()` has a flagged `loading()`, the layout is on screen, so its
@@ -294,8 +294,9 @@ layout(AccountLayout, () => [
 **What the click looks like.** The click that adopts the prefetch commits at
 once: the URL changes, the prefetched content shows, and the fallback shows
 where the deferred part goes. The browser sends one second request (the fill)
-that runs only the deferred work, and the result merges into the page without
-remounting what is already there. The fill reads `cache()` and `"use cache"`
+that runs only the deferred work. The page is built once, from the skeleton:
+the fill resolves what it is waiting for, and nothing on it is mounted a
+second time. The fill reads `cache()` and `"use cache"`
 as any request does; the prefetch read neither for the work it skipped. A hard
 load, a navigation with nothing prefetched, an action and back/forward run
 everything as before.
@@ -307,9 +308,9 @@ fallback. A prefetched click to a flagged `loading()` on such a route does the
 same with its fill: the fallback shows with the fill's first chunk, as a plain
 click's shows with its response, not at the click. The same holds when the
 `transition()` is on something the fallback covers, such as a route under a
-flagged layout. The URL and the URL hooks change with the click,
-`useNavigation()` reads `loading`, and the page shows, fallback included,
-when the fill starts answering. So the click is the plain click's equal
+flagged layout. Nothing changes at the click: `useNavigation()` reads
+`loading`, and the URL, the URL hooks and the page change together, fallback
+included, when the fill starts answering. So the click is the plain click's equal
 there, not ahead of it; what the prefetch saves is the rest of the page,
 which is not fetched again.
 (Shown with the click, the content could only arrive in a second commit,
@@ -335,6 +336,11 @@ loaders behind the fallback are deferred. See `/caching`, `/ppr` and
 - A layout the client already holds is not deferred (its fallback would not
   show). To keep navigation inside it out of prefetches, flag the route's own
   `loading()`.
+- On a `layout()` the prefetch skips the layout's own handler too, so in a
+  production build the prefetched click shows the fallback in place of the
+  whole layout until the fill answers, where a click with no prefetch shows
+  the layout with its first chunk and the fallback inside it. Known, not
+  fixed.
 - An orphan layout's flagged `loading()` defers its loaders but not its
   handler: the route's handler has already run by then.
 - `clientUrls()` routes and `intercept()` ignore the flag.

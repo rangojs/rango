@@ -2373,9 +2373,17 @@ interface Broken {
  * what keeps "no more" from hiding a reveal that lost its animation.
  */
 function animatedChanges(click: PrefetchFalseClick): number {
+  // Strictly after: a change sampled in the millisecond of the call came
+  // before it. startViewTransition captures the old state at the next
+  // rendering opportunity and only then runs the update, a frame later at
+  // the earliest. Counted with `>=`, an urgent commit followed in the same
+  // millisecond by a transition of a handle push counted as animated in some
+  // runs and not in others (production, router app, `loader` with an app
+  // boundary: change and call in the same millisecond, 3 failures in 12
+  // runs of the two cells).
   return click.viewTransitionsAt.filter((at) =>
     click.times.some(
-      (changed) => changed >= at && changed <= at + IDLE_WINDOW_MS,
+      (changed) => changed > at && changed <= at + IDLE_WINDOW_MS,
     ),
   ).length;
 }

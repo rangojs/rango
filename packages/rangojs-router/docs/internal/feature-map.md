@@ -383,16 +383,19 @@ server projection.
   skipped piece `ResolvedSegment.deferred`. Only on a segment the client does
   not have yet (`defersLoader`, `defersUnit`): one it holds is never deferred,
   so a click that adopts a prefetch is never worse than the same click with no
-  prefetch. The click that adopts the payload
-  commits it, shows the fallback and sends one fill request (`_rsc_fill=1`)
-  that runs only the deferred work. A deferred unit on a page that commits in
-  a transition commits with the fill's first chunk instead (`Fill.held`), as
-  a plain click commits with its response; a placeholder says so for a
-  `transition()` the prefetch skipped (`placeholderTransition`). On a page
-  that is on screen a fill's updates are urgent and wait for the adoption's
-  commit, and a fill still streaming lands 300 ms after its first chunk
-  (`FALLBACK_THROTTLE_MS`); where React has not committed the adoption the
-  fill does not wait and every loader gate resolves at once. A response that defers is for the page
+  prefetch. The payload is the page's skeleton: one placeholder per skipped
+  segment, with what its wrapper chain is built from, and a complete
+  `matched`. The click that adopts it builds the page's tree once, with a
+  gate per placeholder (`armGates`), commits it urgently and sends one fill
+  request (`_rsc_fill=1`) that runs only the deferred work. The fill hands
+  React no tree: `settleHoles` resolves the gates, rewrites the stored entry
+  and writes handle data and location state to their stores
+  (`PartialUpdateConfig.fill`, `consumeHandles`). Gates of a tree that is on
+  screen resolve when the fill has streamed or 300 ms after its first chunk
+  (`FALLBACK_THROTTLE_MS`), at once where React has not committed the tree.
+  A deferred unit on a page that commits in a transition is a navigation
+  that waits for its fill and commits once with the fill's first chunk, as a
+  plain click commits with its response. A response that defers is for the page
   that prefetched it (`x-rsc-prefetch-scope: source`), is never reused by
   the document cache or a shared cache (`cache-control: private, no-cache`)
   and never answers a navigation (`Vary` names `X-Rango-Prefetch`); a copy
@@ -403,7 +406,8 @@ server projection.
   `PrefetchDeferral` on `InternalHandlerContext._prefetchDeferral`),
   `segment-resolution/revalidation.ts`; stored routes (`cache()`, `ppr`,
   `Prerender`) defer loaders only. Browser: `browser/partial-update.ts`
-  (gates, `runFill`), the in-flight fill slot in `browser/pending-fill.ts`.
+  (`armGates`, `runFill`, `settleHoles`), the in-flight fill slot in
+  `browser/pending-fill.ts`.
   `ctx.rendered()` is refused for a deferrable loader on every request kind
   (`router/loader-resolution.ts`). The document cache keeps one slot,
   refuses a payload that carries deferred units

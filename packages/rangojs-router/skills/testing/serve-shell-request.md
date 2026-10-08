@@ -260,7 +260,9 @@ const prefetch = await serveShellRequest(router, "/product/1", {
   cacheStore,
   partial: { from: "/", prefetch: true },
 });
-expect(await prefetch.readDeferred()).toHaveLength(1); // the flagged loader's segment
+// One id per skipped segment: here the flagged loader's. A flagged loading()
+// lists its entry, every entry and slot its fallback covers, and their loaders.
+expect(await prefetch.readDeferred()).toHaveLength(1);
 
 // The ids the prefetch delivered, minus the deferred ones: what the page holds.
 const held = deliveredIds.filter((id) => !deferredIds.includes(id));

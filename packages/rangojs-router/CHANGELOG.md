@@ -17,7 +17,8 @@ loading(<OrdersSkeleton />, { prefetch: false }); // everything behind this fall
 A prefetch of the route skips the flagged work and marks it deferred. When the
 visitor clicks, the page commits at once with the prefetched content, the
 fallback shows where the deferred part goes, and one second request (the fill)
-runs only that part and merges it in without remounting. A hard load, a
+runs only that part. The page is built once: the fill resolves what it is
+waiting for, and nothing is mounted twice. A hard load, a
 navigation with nothing prefetched, an action and back/forward behave as
 before. Without the options nothing changes.
 
@@ -34,30 +35,29 @@ What to know before you use it:
   `loading()` shows when that is the nearest boundary, and with no boundary
   React holds the page being left until the fill returns
   (`useNavigation()` reads `loading` meanwhile).
-- **Under `transition()` a deferred `loading()` commits with its fill.** Its
-  fallback shows with the fill's first chunk, as a plain click's shows with
-  its response, not at the click. That is also the case when the
-  `transition()` is on something the fallback covers (a route under a
-  flagged layout). React holds the page being left until then and
-  `useNavigation()` reads `loading`. Committed with the click, the content
-  could only arrive in a second commit, which under a `<ViewTransition>` is
-  a view transition of its own that the reveal then waits for. A flagged
-  `loader()` under `transition()` commits with the click. A
-  `transition({ when })` on an entry the prefetch skipped is not asked for
-  that click: it commits as under a plain `transition()`.
-- **While React holds the page being left, the URL has already changed.**
-  The address bar and the URL hooks move with the click, and the page moves
-  when the fill answers (a deferred `loading()` under `transition()`) or
-  when the value arrives (a deferred loader read with no boundary). A click
-  with no prefetch moves the hooks with the page. Known, not fixed.
-- **A `<ViewTransition>` on the page being left.** A click that commits from
-  a prefetch commits in a transition, with or without the flag, so React
-  runs a view transition there that a click with no prefetch does not, and
-  the deferred part is revealed after it. Measured against a click with no
-  prefetch, at the browser's default duration: 0 to 40 ms later, and 290 ms
-  for a flagged loader that lands while that view transition runs. With
-  `animation-duration: 600ms` on the view-transition pseudo-elements: 320
-  to 350 ms later, 650 ms for that loader. Known, not fixed.
+- **Under `transition()` a deferred `loading()` commits with its fill.**
+  Nothing changes at the click: the address bar, the URL hooks and the page
+  move together when the fill starts answering, as they do when a plain
+  click's response starts, and `useNavigation()` reads `loading` until then.
+  That is also the case when the `transition()` is on something the fallback
+  covers (a route under a flagged layout). Committed with the click, the
+  content could only arrive in a second commit, which under a
+  `<ViewTransition>` is a view transition of its own that the reveal then
+  waits for. A flagged `loader()` under `transition()` commits with the
+  click.
+- **A deferred loader read with no boundary moves the address bar early.**
+  React holds the page being left until the value arrives, as it does for a
+  click with no prefetch, and `useNavigation()` and the URL hooks move with
+  the page in both. The address bar moves with the click, where a click with
+  no prefetch moves it when its response starts: earlier by one round trip
+  to the server. Known, not fixed.
+- **A flagged `loading()` on a layout covers the layout in a production
+  build.** A click with no prefetch shows the layout with its response's
+  first chunk and the fallback inside it. The prefetch skipped the layout's
+  handler, so the prefetched click shows the fallback in place of the whole
+  layout until the fill answers (measured: the layout at 303 ms against
+  10). A development server shows the fallback alone in both. Known, not
+  fixed.
 - **A prefetch that deferred something is used only on the page that made
   it.** A page that already shows the segment makes its own prefetch, which
   defers nothing for it.
