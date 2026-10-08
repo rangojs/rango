@@ -27,6 +27,22 @@ export { runUseLoaderSettledReadTests } from "./use-loader-settled-read-scenario
 export type { UseLoaderSettledReadScenarioOptions } from "./use-loader-settled-read-scenario.js";
 export { readFlash, readProbe, watchFlash } from "./flash-probe.js";
 export type { CacheVersionScenarioOptions } from "./cache-version-scenario.js";
+export {
+  CONSOLE_BASELINE_PATH,
+  CONSOLE_DENY_RULES,
+  consoleGuardMode,
+  expectConsole,
+  guardContext,
+  installConsoleGuard,
+  readSuspenseAudit,
+  resetSuspenseAudit,
+} from "./console-guard.js";
+export type {
+  ConsoleBaselineEntry,
+  ConsoleGuardMode,
+  ConsoleRule,
+  SuspenseAuditCounters,
+} from "./console-guard.js";
 
 /**
  * Shared end-to-end test utilities for HMR-driven tests across apps.

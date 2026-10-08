@@ -3,6 +3,7 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import { stripVTControlCharacters, styleText } from "node:util";
 import test from "@playwright/test";
+import { consoleGuardMode, installConsoleGuard } from "@shared/e2e";
 import { x } from "tinyexec";
 
 function runCli(options: { command: string; label?: string } & SpawnOptions) {
@@ -197,6 +198,12 @@ export function useFixture(options: {
   const cwd = path.resolve(options.root);
   let proc!: ReturnType<typeof runCli>;
   let isolatedViteCacheDir: string | undefined;
+
+  // Every dev test runs under the console guard (@shared/e2e console-guard.ts).
+  // A record run also covers builds, to read the router's own messages there.
+  if (options.mode === "dev" || consoleGuardMode() === "record") {
+    installConsoleGuard({ app: "rangojs-router" });
+  }
 
   test.beforeAll(async ({}, testInfo) => {
     if (options.isolatedServer) {
