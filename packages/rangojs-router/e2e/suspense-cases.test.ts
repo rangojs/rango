@@ -27,7 +27,7 @@ const OPEN_DEV: Record<string, string> = {
 const OPEN_PRODUCTION: Record<string, string> = {
   ...OPEN_DEV,
   "a client component directly in a route's content does not show the route's loading() on a cold click":
-    "#1079: the click is the first use of the client component's module in the document; its chunk is already fetched, but the Flight client waits for the module's import() (3 to 6 ms) and the route's loading() is the nearest boundary: 300 ms",
+    "#1079: the click is the first use of the client component's module in the document; its chunk is already fetched, but the Flight client waits for the module's import() (3 to 6 ms) and the route's loading() is the nearest boundary: 300 ms. Likely fix, not built: #1084 candidate a (src/browser/settle-client-references.ts on experiment/vt-idle-transition), which settles a payload's client references before its first commit",
 };
 
 function describeSuspenseCases(mode: "dev" | "build") {

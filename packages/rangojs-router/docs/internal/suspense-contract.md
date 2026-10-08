@@ -92,9 +92,15 @@ the aggregate has settled, still hands the loader boundary a settled promise Rea
 not read. On a refresh under load that is what happens: with 4x CPU throttling the shell
 layout's loader data fulfilled 13 ms after the build and its boundary rendered 94 ms
 after it, in 6 of 6 runs (0 of 64 unthrottled on a quiet machine); cloudflare-basic needs
-8x throttling for the same 6 of 6. The refresh commits in
-a transition, so nothing shows; on an urgent commit it would be the 300 ms fallback. The
-baseline carries it as an intermittent I2 entry in each app, with that reason.
+8x throttling for the same 6 of 6. The refresh commits in a transition, so nothing shows;
+on an urgent commit it would be the 300 ms fallback. The baseline carries it as an
+intermittent I2 entry in each app, with that reason.
+
+The fix direction, for a PR of its own: in `getMemoizedLoaderPromise`, the same `.then`
+that sets `entry.value` also stamps `status: "fulfilled"` and `value` on the router's
+promise. That is how the Flight client marks its chunks and how React's
+`trackUsedThenable` marks a thenable it has read, so any later render, concurrent or
+not, reads it synchronously, and the promise keeps its identity.
 
 ### 3. No fallback while nothing is pending
 
@@ -374,7 +380,10 @@ hand-over, mount and fallback.
   "a client component directly in a route's content" (red: the click is the first use of
   the component's module in the document, so the Flight client's `requireAsyncModule`
   blocks the element on plugin-rsc's `import()` promise for 3 to 6 ms with no request,
-  and the route's boundary is the nearest one; 300 ms in both apps).
+  and the route's boundary is the nearest one; 300 ms in both apps). The likely fix,
+  not built, is candidate a of #1084 (`src/browser/settle-client-references.ts` on
+  `experiment/vt-idle-transition`): settle the client references a payload names
+  before its first commit.
 - What a view transition does with a fallback. On a route with `loading()` and
   `transition()` whose loaders take longer than about 320 ms, React's own retry of the
   route's boundary commits while the fallback is still up, that commit starts a view
