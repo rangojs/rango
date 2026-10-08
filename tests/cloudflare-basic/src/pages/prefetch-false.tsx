@@ -42,6 +42,10 @@ import { countRun, readRunCounts } from "../prefetch-false-counts.js";
 // is new to the client from one it holds: `section-plain` (no loading() of
 // its own), `section-own` (its own flagged loading()) and `section-cached`
 // (a cache() route). Each counts its handler and its loader.
+// `section-throws` and `section-missing` are routes there whose handler
+// throws and calls notFound(): with no loading() of their own the server
+// awaits them, so the failure replaces the route's segment
+// (pf-<c>-error, pf-<c>-not-found) inside the layout.
 //
 // `item/:id` is one route with a flagged loader, linked as `item/a` and
 // `item/b`: moving between them is a same-route navigation, whose segments
@@ -67,7 +71,9 @@ import { countRun, readRunCounts } from "../prefetch-false-counts.js";
 // with no boundary): the fill's response stays open after the value the page
 // waits for. `vt-below` is a flagged loading() on a layout
 // (pf-vt-below-layout, counter `vt-below.layout`) whose route has
-// transition(): the prefetch skips the route, transition() included.
+// transition(): the prefetch skips the route, transition() included. `own`
+// is `bare` with a <Suspense> around the read: the route has no loading(),
+// and the read's own boundary is all that can show a fallback.
 //
 // pf-nav mirrors useNavigation() as data-state / data-streaming / data-path
 // (its location's pathname), and pf-outlet is the box the page renders in.
@@ -203,6 +209,13 @@ export const PfBareInnerLoader = createLoader((ctx) =>
 export const PfVtBelowLoader = createLoader((ctx) =>
   work(ctx, "vt-below.data", 100),
 );
+export const PfOwnLoader = createLoader((ctx) => work(ctx, "own.data", 100));
+export const PfSectionThrowsLoader = createLoader((ctx) =>
+  work(ctx, "section-throws.data", 100),
+);
+export const PfSectionMissingLoader = createLoader((ctx) =>
+  work(ctx, "section-missing.data", 100),
+);
 
 const CASES = [
   ["loader", "one flagged loader beside an unflagged one, own Suspense"],
@@ -238,6 +251,9 @@ const CASES = [
   ["above", "flagged loading(), its loader also read by the layout above"],
   ["bare-inner", "bare, and a slower flagged loader behind a Suspense"],
   ["vt-below", "flagged loading() on a layout, transition() on its route"],
+  ["own", "flagged loader read in its own Suspense, no loading()"],
+  ["section-throws", "inside the flagged layout, a handler that throws"],
+  ["section-missing", "inside the flagged layout, a handler that is not found"],
 ] as const;
 
 const box = {
@@ -405,6 +421,18 @@ function SectionPage(ctx: any) {
   );
 }
 
+// Handlers that fail, with no loading() of their own: awaited, so the
+// failure is the route's segment.
+function SectionThrowsPage(ctx: any): never {
+  countRun(runOf(ctx), "section-throws.handler");
+  throw new Error("pf-section-throws");
+}
+
+function SectionMissingPage(ctx: any) {
+  countRun(runOf(ctx), "section-missing.handler");
+  return notFound("pf-section-missing");
+}
+
 // A page that counts its handler and reads one loader.
 const countedPage = (name: string, loader: any) => (ctx: any) => {
   countRun(runOf(ctx), `${name}.handler`);
@@ -552,6 +580,18 @@ function BarePage() {
   );
 }
 
+// No loading(): the read's own boundary is the only one.
+function OwnPage(ctx: any) {
+  countRun(runOf(ctx), "own.handler");
+  return (
+    <div data-testid="pf-own-page">
+      <Suspense fallback={fallback("own")}>
+        <PrefetchFalseValue loader={PfOwnLoader} testId="pf-own-value" />
+      </Suspense>
+    </div>
+  );
+}
+
 // Deferred work that does not end in a value: the read is all there is.
 const signalPage = (name: string, loader: any) => () => (
   <div data-testid={`pf-${name}-page`}>
@@ -685,6 +725,35 @@ export const prefetchFalsePatterns = urls(
             () => [loader(PfSectionCachedLoader)],
           ),
         ]),
+        // Deferred with the layout from outside the section. The fill awaits
+        // these handlers: its answer has an error (a not-found) segment where
+        // the prefetch's skeleton has a route and its loader.
+        path(
+          "/section-throws",
+          SectionThrowsPage,
+          { name: "sectionThrows" },
+          () => [
+            loader(PfSectionThrowsLoader),
+            errorBoundary((props) => (
+              <div data-testid="pf-section-throws-error">
+                {props.error.message}
+              </div>
+            )),
+          ],
+        ),
+        path(
+          "/section-missing",
+          SectionMissingPage,
+          { name: "sectionMissing" },
+          () => [
+            loader(PfSectionMissingLoader),
+            notFoundBoundary(({ notFound: info }) => (
+              <div data-testid="pf-section-missing-not-found">
+                {info.message}
+              </div>
+            )),
+          ],
+        ),
       ]),
 
       // A slot with its own flagged loading(): the slot and its loader are
@@ -900,6 +969,12 @@ export const prefetchFalsePatterns = urls(
           { name: "vtBelow" },
           () => [loader(PfVtBelowLoader), transition()],
         ),
+      ]),
+
+      // A flagged loader read behind a boundary of its own, on a route with
+      // no loading(): nothing holds the click.
+      path("/own", OwnPage, { name: "own" }, () => [
+        loader(PfOwnLoader, { prefetch: false }),
       ]),
 
       // No flag: a prefetch runs everything and the click sends nothing.

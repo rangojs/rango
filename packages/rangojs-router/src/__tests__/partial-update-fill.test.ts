@@ -1,9 +1,10 @@
 /**
  * `prefetch: false` in the browser (docs/design/prefetch-false.md, "The
- * browser"): a payload that carries deferred segments commits at once with a
- * gate in place of each missing value, and one fill request fetches them.
- * Pins browser/partial-update.ts (armGates, runFill) and its use of
- * browser/pending-fill.ts.
+ * browser"): a payload that carries deferred segments is the page with holes
+ * in it. Its tree is built and committed once, with a gate in place of each
+ * missing value, and one fill request settles the gates: it resolves them and
+ * writes the stores, and hands React nothing. Pins browser/partial-update.ts
+ * (armGates, runFill, settleHoles) and its use of browser/pending-fill.ts.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ResolvedSegment } from "../browser/types";
@@ -30,7 +31,7 @@ vi.mock("../browser/segment-structure-assert.js", () => ({
 }));
 
 import { createPartialUpdater } from "../browser/partial-update";
-import { cancelPendingFill, isAdopting } from "../browser/pending-fill";
+import { cancelPendingFill } from "../browser/pending-fill";
 import { loaderStore } from "../loader-store";
 
 const URL_PAGE = "http://localhost/product";
@@ -132,18 +133,21 @@ type FetchOptions = {
 
 /**
  * The first fetch answers with `adopted`; the fill is answered by the test
- * through `fill` (a real request would reject once its signal aborts).
+ * through `fill` (a real request would reject once its signal aborts). A
+ * request that lists nothing as held is the navigation starting over: the
+ * server answers it, with `whole`.
  */
-function createClient(adopted: unknown, fullyPrefetched = true) {
+function createClient(adopted: unknown, whole?: unknown) {
   const fill = deferred<{ payload: any; streamComplete: Promise<void> }>();
   const calls: FetchOptions[] = [];
   const fetchPartial = vi.fn(async (options: FetchOptions) => {
     calls.push(options);
     if (!options.fill) {
+      const again = whole !== undefined && options.segmentIds.length === 0;
       return {
-        payload: adopted,
+        payload: again ? whole : adopted,
         streamComplete: Promise.resolve(),
-        fullyPrefetched,
+        fullyPrefetched: !again,
       };
     }
     options.signal?.addEventListener("abort", () =>
@@ -192,13 +196,20 @@ function fillPayload(segments: ResolvedSegment[], matched: string[]) {
   };
 }
 
+/** The writes the navigation bridge supplies (PartialUpdateConfig.fill). */
+const bridge = () => ({
+  redirect: vi.fn(),
+  locationState: vi.fn(),
+  handles: vi.fn(),
+  flush: vi.fn(),
+});
+
 function setup(
   adoption: { payload: unknown; layout?: ResolvedSegment },
   options?: {
-    fill?: {
-      redirect: ReturnType<typeof vi.fn>;
-      locationState: ReturnType<typeof vi.fn>;
-    };
+    fill?: ReturnType<typeof bridge>;
+    /** The payload a request with nothing held is answered with. */
+    whole?: unknown;
     renderSegments?: (
       segments: ResolvedSegment[],
       options?: RenderSegmentsOptions,
@@ -206,7 +217,10 @@ function setup(
   },
 ) {
   const store = createStore(adoption.layout ? [adoption.layout] : []);
-  const { client, fill, calls } = createClient(adoption.payload);
+  const { client, fill, calls } = createClient(
+    adoption.payload,
+    options?.whole,
+  );
   const { tx, end } = createTx(store);
   const onUpdate = vi.fn();
   const renderSegments = vi.fn(
@@ -221,8 +235,8 @@ function setup(
     renderSegments: renderSegments as any,
     fill: options?.fill as any,
   });
-  const navigate = () =>
-    updater(URL_PAGE, undefined, false, undefined, tx as any);
+  const navigate = (signal?: AbortSignal) =>
+    updater(URL_PAGE, undefined, false, signal, tx as any);
   return {
     store,
     client,
@@ -311,32 +325,53 @@ describe("adopting a payload with deferred segments", () => {
     expect(tx.commit.mock.calls[0][0]).toEqual(["L0"]);
   });
 
-  // useNavigation() pins `loading` for the update's transition while this
-  // is set (pending-fill.ts emitAdoption): only an adoption that waits for a
-  // fill asks for it.
-  it("hands its update to React as an adoption, and a payload with nothing deferred as usual", async () => {
-    const seen: boolean[] = [];
-    const adoption = loaderAdoption();
-    const waiting = setup(adoption);
-    waiting.onUpdate.mockImplementation(() => seen.push(isAdopting()));
-    await waiting.navigate();
-    expect(seen).toEqual([true]);
-    expect(isAdopting(), "only while the update is handed over").toBe(false);
+  // React may hold the commit (a hole read with no boundary), and the
+  // click's own notification has not gone out yet: useNavigation() has to
+  // read `loading` before the commit is handed over. And a plain click to a
+  // page that is not whole commits urgently, so this one does. In a
+  // transition React starts a view transition for the commit wherever a
+  // <ViewTransition> is mounted, and what fills the holes is revealed behind
+  // it.
+  it("delivers the navigation state, then commits urgently; a whole prefetched payload commits in a transition", async () => {
+    const recorded = (run: ReturnType<typeof setup>, hooks = bridge()) => {
+      const order: string[] = [];
+      const commit = run.tx.commit.getMockImplementation()!;
+      run.tx.commit.mockImplementation((...args) => {
+        order.push("commit");
+        return commit(...args);
+      });
+      run.onUpdate.mockImplementation(() =>
+        order.push(transitionState.inTransition ? "transition" : "urgent"),
+      );
+      hooks.flush.mockImplementation(() => order.push("flush"));
+      return order;
+    };
 
-    const whole = setup({
-      layout: adoption.layout,
-      payload: {
-        metadata: {
-          isPartial: true,
-          segments: [seg("L0R0", { component: "route" })],
-          matched: ["L0", "L0R0"],
-          diff: ["L0R0"],
+    const adoption = loaderAdoption();
+    const hooks = bridge();
+    const waiting = setup(adoption, { fill: hooks });
+    const withHoles = recorded(waiting, hooks);
+    await waiting.navigate();
+    expect(withHoles).toEqual(["flush", "commit", "urgent"]);
+
+    const wholeHooks = bridge();
+    const whole = setup(
+      {
+        layout: adoption.layout,
+        payload: {
+          metadata: {
+            isPartial: true,
+            segments: [seg("L0R0", { component: "route" })],
+            matched: ["L0", "L0R0"],
+            diff: ["L0R0"],
+          },
         },
       },
-    });
-    whole.onUpdate.mockImplementation(() => seen.push(isAdopting()));
+      { fill: wholeHooks },
+    );
+    const noHoles = recorded(whole, wholeHooks);
     await whole.navigate();
-    expect(seen).toEqual([true, false]);
+    expect(noHoles).toEqual(["commit", "transition"]);
   });
 
   it("sends exactly one fill, before the render returns, listing what the client holds", async () => {
@@ -374,6 +409,64 @@ describe("adopting a payload with deferred segments", () => {
     expect(tx.commit.mock.calls[0][0]).toEqual(adoption.matched);
   });
 });
+
+/**
+ * A prefetched page below a flagged layout: the layout unit, a slot of it
+ * with no loading(), the route below it, and a loader each. Every one is a
+ * placeholder; `filled` is what the fill sends for them, in the same order.
+ */
+function sectionAdoption() {
+  const layout = seg("L0", { type: "layout", component: "layout" });
+  const hole = (id: string, overrides: Partial<ResolvedSegment>) =>
+    seg(id, { component: null, deferred: true, ...overrides });
+  const loader = (id: string, loaderId: string, namespace: string) => ({
+    ...loaderSeg(id, loaderId),
+    namespace,
+  });
+  const placeholders = [
+    loader("L0L1D0.section", "section", "section"),
+    hole("L0L1", { type: "layout", namespace: "section", loading: "skeleton" }),
+    hole("L0L1.@side", { type: "parallel", namespace: "side" }),
+    loader("L0L1R0D0.page", "page", "page"),
+    hole("L0L1R0", { namespace: "page" }),
+  ];
+  const matched = ["L0", ...placeholders.map((s) => s.id)];
+  const filled = placeholders.map((placeholder) =>
+    placeholder.type === "loader"
+      ? {
+          ...loaderSeg(placeholder.id, placeholder.loaderId!, {
+            from: placeholder.id,
+          }),
+          namespace: placeholder.namespace,
+        }
+      : seg(placeholder.id, {
+          type: placeholder.type,
+          namespace: placeholder.namespace,
+          loading: placeholder.loading,
+          component: `content-${placeholder.id}`,
+        }),
+  );
+  return {
+    layout,
+    placeholders,
+    matched,
+    filled,
+    payload: {
+      metadata: {
+        isPartial: true,
+        segments: placeholders,
+        matched,
+        diff: placeholders.map((s) => s.id),
+      },
+    },
+  };
+}
+
+/** The gate armGates left on a placeholder, and the value a segment carries. */
+const valueOf = (segment: ResolvedSegment): unknown =>
+  segment.type === "loader" ? segment.loaderData : segment.component;
+const gateOf = (placeholder: ResolvedSegment) =>
+  valueOf(placeholder) as Promise<unknown>;
 
 /** A prefetched page whose route is one deferred unit, below a held layout. */
 function unitAdoption(overrides?: Partial<ResolvedSegment>) {
@@ -434,326 +527,95 @@ describe("the fill landing", () => {
     expect(filled.loaderData).toEqual({ reviews: 5 });
   });
 
-  // In a transition of its own the update would start a view transition
-  // wherever a <ViewTransition> is mounted, and every reveal would wait for
-  // it. Before the adoption is on screen it would commit the page ahead of
-  // the transition React holds the adoption in.
-  it("hands over what the fill pushed urgently, under the adoption's tree, once React has committed the adoption", async () => {
-    const adoption = loaderAdoption();
-    const { navigate, fill, onUpdate, renderSegments } = setup(adoption);
-    await navigate();
-    const adopted = onUpdate.mock.calls[0][0];
-    let lane: boolean | undefined;
-    onUpdate.mockImplementation(() => {
-      lane = transitionState.inTransition;
-    });
-
-    const response = fillPayload(
-      [loaderSeg("L0R0D1.reviews", "reviews", { reviews: 5 })],
-      adoption.matched,
-    );
-    fill.resolve(response);
-    await flush();
-    expect(
-      onUpdate,
-      "not before the adoption is on screen",
-    ).toHaveBeenCalledTimes(1);
-
-    showAdoption(onUpdate);
-    await flush();
-    expect(onUpdate).toHaveBeenCalledTimes(2);
-    expect(lane).toBe(false);
-    const filled = onUpdate.mock.calls[1][0];
-    // A fill is not a navigation transaction and says nothing about scroll.
-    // An explicit `scroll` here, even a disabled one, would replace the
-    // adoption's pending decision while React still holds that commit
-    // (testing/__tests__/navigation-scroll-slot.test.tsx).
-    expect(Object.keys(filled).sort()).toEqual(["metadata", "root"]);
-    expect(filled.root).toBe(adopted.root);
-    expect(filled.metadata).toBe(response.payload.metadata);
-    // Loaders only: the tree on screen reads the gates, none is rendered.
-    expect(renderSegments).toHaveBeenCalledTimes(1);
-  });
-
-  // Where React holds the adoption (a read with no boundary) the fill has
-  // landed by the time the adoption is on screen, or the page was left.
-  it("hands nothing over on a page that was left before React committed the adoption", async () => {
-    const adoption = loaderAdoption();
-    const { navigate, fill, store, onUpdate } = setup(adoption);
-    await navigate();
-    fill.resolve(
-      fillPayload(
-        [loaderSeg("L0R0D1.reviews", "reviews", { reviews: 5 })],
-        adoption.matched,
-      ),
-    );
-    await flush();
-
-    store.setHistoryKey("/");
-    showAdoption(onUpdate);
-    await flush();
-    expect(onUpdate).toHaveBeenCalledTimes(1);
-  });
-
-  // A unit is revealed like a segment a navigation is still streaming: by
-  // a Suspense retry, after React has committed the fill's tree. With its
-  // content in that tree the commit would reveal it at once, past React's
-  // reveal throttle (docs/design/prefetch-false.md, "The browser").
-  it("resolves a unit's gate with the component once React has committed the fill's tree, and adds the segments below it", async () => {
-    const adoption = unitAdoption({ type: "layout" });
-    const { navigate, fill, store, onUpdate } = setup(adoption);
-    await navigate();
-    showAdoption(onUpdate);
-    const gate = adoption.unit.component as unknown as Promise<unknown>;
-    let resolved = false;
-    void gate.then(() => {
-      resolved = true;
-    });
-
-    const below = seg("L0R0R0", { component: "leaf" });
-    fill.resolve(
-      fillPayload([adoption.filled, below], ["L0", "L0R0", "L0R0R0"]),
-    );
-    await flush();
-
-    const segments = store.cache.get("/product")!.segments;
-    expect(segments.map((s) => s.id)).toEqual(["L0", "L0R0", "L0R0R0"]);
-    // The tree the fill committed still reads the gate.
-    expect(segments[1].component).toBe(gate);
-    expect(segments[1].deferred).toBeUndefined();
-    expect(resolved, "not before React has committed the fill").toBe(false);
-
-    // The adoption, what the fill pushed, the fill's tree.
-    expect(onUpdate).toHaveBeenCalledTimes(3);
-    const tree = onUpdate.mock.calls[2][0];
-    expect(tree.root).toBe("tree-3");
-    // The handle stream is being read from the update before.
-    expect(tree.metadata.handles).toBeUndefined();
-    expect(tree.metadata.matched).toBeUndefined();
-    tree.onCommit();
-    await expect(gate).resolves.toBe("unit-content");
-    // The adoption's handle stream reads this array on every yield: it must
-    // name the segments the fill added, or their handle data is dropped.
-    expect(adoption.matched).toEqual(["L0", "L0R0", "L0R0R0"]);
-  });
-
-  // The fill's update is urgent: React renders it without waiting, and
-  // suspends on any promise it has not read yet, settled or not. Built with
-  // other options than the adoption's tree, a boundary that is on screen
-  // would get such a promise and show its fallback again (measured: the
-  // fallback remounted and the content 300 ms late).
-  it("renders the fill's tree as the adoption's was, with what the fill brought as still streaming", async () => {
-    const adoption = unitAdoption();
-    const renders: Array<{
-      forceAwait: unknown;
-      streaming: Array<[string, boolean | undefined]>;
-    }> = [];
-    const { navigate, fill, store, onUpdate } = setup(adoption, {
-      renderSegments: async (segments, options) => {
-        renders.push({
-          forceAwait: options?.forceAwait,
-          streaming: segments.map((s) => [s.id, s.deferred]),
-        });
-        return "tree";
+  // The model: the click builds the page's tree and commits it, and the fill
+  // is a routine that waits for the response and resolves what the tree is
+  // waiting for. Updates that hand React a tree belong to navigations and
+  // actions. The same counts as a plain click's: one update, one tree
+  // ("sends no fill for a payload with nothing deferred" above reads 1).
+  interface Adopted {
+    layout?: ResolvedSegment;
+    payload: { metadata: { segments: ResolvedSegment[] } };
+    matched: string[];
+    /** What the fill sends for the placeholders. */
+    filled: ResolvedSegment[];
+  }
+  const adoptions: Array<[string, () => Adopted]> = [
+    [
+      "a loader",
+      () => {
+        const adoption = loaderAdoption();
+        return {
+          ...adoption,
+          filled: [loaderSeg("L0R0D1.reviews", "reviews", { reviews: 5 })],
+        };
       },
-    });
-    await navigate();
-    showAdoption(onUpdate);
-    fill.resolve(fillPayload([adoption.filled], adoption.matched));
-    await flush();
-
-    expect(renders).toEqual([
-      {
-        forceAwait: true,
-        streaming: [
-          ["L0", undefined],
-          ["L0R0", true],
-        ],
+    ],
+    [
+      "a route unit",
+      () => {
+        const adoption = unitAdoption();
+        return { ...adoption, filled: [adoption.filled] };
       },
-      {
-        forceAwait: true,
-        streaming: [
-          ["L0", undefined],
-          ["L0R0", true],
-        ],
-      },
-    ]);
-    expect(store.cache.get("/product")!.segments.some((s) => s.deferred)).toBe(
-      false,
-    );
-  });
-
-  // React can be holding the adoption on a loader its unit owns: a layout
-  // above the unit reads the route's loader, with no boundary. That gate
-  // used to wait for the fill's tree, which waits for the adoption's commit,
-  // which was waiting for the gate: the page being left stayed for good,
-  // useNavigation() read `loading`, and nothing was thrown.
-  it("resolves every loader gate at once where React has not committed the adoption, a unit's own included", async () => {
-    const adoption = unitAdoption({ namespace: "unit" });
-    const owned = { ...loaderSeg("L0R0D0.data", "data"), namespace: "unit" };
-    adoption.payload.metadata.segments.push(owned);
-    adoption.matched.push(owned.id);
-    const { navigate, fill, onUpdate } = setup(adoption);
-    await navigate();
-    const gates = {
-      unit: adoption.unit.component as unknown as Promise<unknown>,
-      data: owned.loaderData as Promise<unknown>,
-    };
-
-    fill.resolve(
-      fillPayload(
-        [
-          adoption.filled,
-          { ...loaderSeg("L0R0D0.data", "data", { n: 1 }), namespace: "unit" },
-        ],
-        adoption.matched,
-      ),
-    );
-    await flush();
-
-    expect(await settled(gates.data), "the loader's gate").toBe(true);
-    await expect(gates.data).resolves.toEqual({ n: 1 });
-    // The unit still waits for its tree, and the tree for the adoption.
-    expect(await settled(gates.unit)).toBe(false);
-    expect(onUpdate).toHaveBeenCalledTimes(1);
-
-    showAdoption(onUpdate);
-    await flush();
-    expect(onUpdate).toHaveBeenCalledTimes(3);
-    onUpdate.mock.calls.at(-1)![0].onCommit();
-    await expect(gates.unit).resolves.toBe("unit-content");
-  });
-
-  // A slot reads its loaders above its content: resolved before the unit,
-  // they would reveal that boundary onto the unit's own fallback, the same
-  // skeleton mounted a second time.
-  it("resolves the loaders a unit owns with the unit, and any other loader at once", async () => {
-    const layout = seg("L0", { type: "layout", component: "layout" });
-    const route = seg("L0R0", { namespace: "route", component: "route" });
-    const reviews = {
-      ...loaderSeg("L0R0D0.reviews", "reviews"),
-      namespace: "route",
-    };
-    const slot = seg("L0R0.@side", {
-      namespace: "slot",
-      type: "parallel",
-      component: null,
-      loading: "skeleton",
-      deferred: true,
-    });
-    const side = { ...loaderSeg("L0R0D0.side", "side"), namespace: "slot" };
-    const matched = [
-      "L0",
-      "L0R0",
-      "L0R0D0.reviews",
-      "L0R0.@side",
-      "L0R0D0.side",
-    ];
-    const { navigate, fill, onUpdate } = setup({
-      layout,
-      payload: {
-        metadata: {
-          isPartial: true,
-          segments: [route, reviews, slot, side],
-          matched,
-          diff: matched.slice(1),
-        },
-      },
-    });
-    await navigate();
-    showAdoption(onUpdate);
-    const gates = {
-      reviews: reviews.loaderData as Promise<unknown>,
-      slot: slot.component as unknown as Promise<unknown>,
-      side: side.loaderData as Promise<unknown>,
-    };
-
-    fill.resolve(
-      fillPayload(
-        [
-          {
-            ...loaderSeg("L0R0D0.reviews", "reviews", { reviews: 5 }),
-            namespace: "route",
-          },
-          seg("L0R0.@side", {
-            namespace: "slot",
-            type: "parallel",
-            component: "side-content",
-            loading: "skeleton",
-          }),
-          {
-            ...loaderSeg("L0R0D0.side", "side", { side: 1 }),
-            namespace: "slot",
-          },
-        ],
-        matched,
-      ),
-    );
-    await flush();
-
-    await expect(gates.reviews).resolves.toEqual({ reviews: 5 });
-    expect(await settled(gates.slot)).toBe(false);
-    expect(await settled(gates.side)).toBe(false);
-
-    onUpdate.mock.calls.at(-1)![0].onCommit();
-    await expect(gates.slot).resolves.toBe("side-content");
-    await expect(gates.side).resolves.toEqual({ side: 1 });
-  });
-
-  // What the next render from this page builds on is the entry. A slot
-  // reads the aggregate of its loaders: built over gates in the fill's tree
-  // and over the streams afterwards, it is a promise React has not read,
-  // and a render that cannot wait suspends on it (measured: a plain click
-  // beside the slot showed the slot's fallback again for 300 ms). So a
-  // unit's loaders are in the fill's tree as the fill sent them. A loader
-  // outside a unit has a reader on screen, which keeps its gate in that
-  // tree; the entry gets the stream back.
-  it("renders a unit's loaders from the fill's streams, another loader from its gate, and leaves the streams in the entry", async () => {
-    const adoption = unitAdoption({ namespace: "unit" });
-    const owned = { ...loaderSeg("L0R0D0.data", "data"), namespace: "unit" };
-    const other = { ...loaderSeg("L0D0.badge", "badge"), namespace: "layout" };
-    adoption.payload.metadata.segments.push(owned, other);
-    adoption.matched.push(owned.id, other.id);
-    const rendered: unknown[][] = [];
-    const { navigate, fill, store, onUpdate } = setup(adoption, {
-      renderSegments: async (segments) => {
-        rendered.push(
-          [owned.id, other.id].map(
-            (id) => segments.find((s) => s.id === id)?.loaderData,
-          ),
+    ],
+    [
+      "a layout unit with the route, the slot and the loaders below it",
+      sectionAdoption,
+    ],
+  ];
+  describe.each(adoptions)("the click that adopts %s", (_label, build) => {
+    it.each([
+      ["on screen", true],
+      ["held by React", false],
+    ])(
+      "hands React one tree and one update, with the tree %s when the fill answers",
+      async (_state, shown) => {
+        const adoption = build();
+        const hooks = bridge();
+        const { navigate, fill, store, onUpdate, renderSegments } = setup(
+          adoption,
+          { fill: hooks },
         );
-        return "tree";
+        await navigate();
+        const placeholders = (
+          adoption.payload.metadata.segments as ResolvedSegment[]
+        ).filter((s) => s.deferred);
+        const gates = placeholders.map(gateOf);
+        if (shown) showAdoption(onUpdate);
+
+        const response = fillPayload(adoption.filled, adoption.matched);
+        fill.resolve(response);
+        await flush();
+
+        expect(onUpdate).toHaveBeenCalledTimes(1);
+        expect(renderSegments).toHaveBeenCalledTimes(1);
+        // What the fill's handlers pushed goes to the handle store.
+        expect(hooks.handles).toHaveBeenCalledTimes(1);
+        expect(hooks.handles).toHaveBeenCalledWith(response.payload.metadata);
+        // Every hole of the tree got the fill's value for its segment.
+        for (const [index, placeholder] of placeholders.entries()) {
+          const brought = adoption.filled.find((s) => s.id === placeholder.id)!;
+          await expect(gates[index], placeholder.id).resolves.toEqual(
+            valueOf(brought),
+          );
+        }
+        // The entry holds the fill's own segments, not the placeholders: the
+        // next render from this page builds on streams and nodes, and a gate
+        // is a promise React has read only where a reader was on screen.
+        const entry = store.cache.get("/product")!.segments;
+        expect(entry.some((s) => s.deferred)).toBe(false);
+        for (const brought of adoption.filled) expect(entry).toContain(brought);
+        for (const segment of entry) {
+          expect(gates, segment.id).not.toContain(valueOf(segment));
+        }
       },
-    });
-    await navigate();
-    showAdoption(onUpdate);
-    const gates = [owned.loaderData, other.loaderData];
-
-    const data = {
-      ...loaderSeg("L0R0D0.data", "data", { n: 1 }),
-      namespace: "unit",
-    };
-    const badge = {
-      ...loaderSeg("L0D0.badge", "badge", { n: 2 }),
-      namespace: "layout",
-    };
-    fill.resolve(fillPayload([adoption.filled, data, badge], adoption.matched));
-    await flush();
-
-    expect(rendered).toEqual([gates, [{ n: 1 }, gates[1]]]);
-    const entry = store.cache.get("/product")!.segments;
-    expect(entry).toContain(data);
-    expect(entry).toContain(badge);
-    expect([data.loaderData, badge.loaderData]).toEqual([{ n: 1 }, { n: 2 }]);
+    );
   });
 
   it("waits for the adoption's commit when the fill answers first", async () => {
     const adoption = loaderAdoption();
     const rendering = deferred<string>();
-    let renders = 0;
     const { navigate, fill, store, onUpdate } = setup(adoption, {
-      renderSegments: () =>
-        renders++ === 0 ? rendering.promise : Promise.resolve("filled"),
+      renderSegments: () => rendering.promise,
     });
     const navigation = navigate();
     await flush();
@@ -773,9 +635,7 @@ describe("the fill landing", () => {
     expect(store.cache.get("/product")!.segments.some((s) => s.deferred)).toBe(
       false,
     );
-    showAdoption(onUpdate);
-    await flush();
-    expect(onUpdate).toHaveBeenCalledTimes(2);
+    expect(onUpdate).toHaveBeenCalledTimes(1);
   });
 
   // React keeps a fallback up for 300 ms. A plain click's shows with its
@@ -793,10 +653,13 @@ describe("the fill landing", () => {
     };
     const tick = (ms: number) => vi.advanceTimersByTimeAsync(ms);
 
-    it("lands 300 ms after its first chunk, and hands over what was pushed at once", async () => {
+    it("resolves the gates 300 ms after its first chunk, and hands over what was pushed at once", async () => {
       vi.useFakeTimers();
       const adoption = loaderAdoption();
-      const { navigate, fill, store, onUpdate } = setup(adoption);
+      const hooks = bridge();
+      const { navigate, fill, store, onUpdate } = setup(adoption, {
+        fill: hooks,
+      });
       await navigate();
       showAdoption(onUpdate);
       const gate = adoption.reviews.loaderData as Promise<unknown>;
@@ -811,12 +674,11 @@ describe("the fill landing", () => {
           adoption.matched,
         ),
       );
+      (response.payload.metadata as any).locationState = { flash: "saved" };
       fill.resolve(response);
       await tick(0);
-      expect(onUpdate).toHaveBeenCalledTimes(2);
-      expect(onUpdate.mock.calls[1][0].metadata).toBe(
-        response.payload.metadata,
-      );
+      expect(hooks.handles).toHaveBeenCalledWith(response.payload.metadata);
+      expect(hooks.locationState).toHaveBeenCalledWith({ flash: "saved" });
 
       await tick(299);
       expect(resolved).toBe(false);
@@ -827,39 +689,62 @@ describe("the fill landing", () => {
       expect(
         store.cache.get("/product")!.segments.some((s) => s.deferred),
       ).toBe(false);
+      expect(onUpdate).toHaveBeenCalledTimes(1);
+    });
+
+    // A unit's content renders the holes below it. Resolved in one task, a
+    // hole that is read in that render costs it a microtask, not a fallback.
+    it("resolves a unit's gate and every gate below it after the same wait", async () => {
+      vi.useFakeTimers();
+      const adoption = sectionAdoption();
+      const { navigate, fill, onUpdate } = setup(adoption);
+      await navigate();
+      showAdoption(onUpdate);
+      let resolved = 0;
+      for (const placeholder of adoption.placeholders) {
+        void gateOf(placeholder).then(() => resolved++);
+      }
+
+      const { response } = streaming(
+        fillPayload(adoption.filled, adoption.matched),
+      );
+      fill.resolve(response);
+      await tick(299);
+      expect(resolved).toBe(0);
+
+      await tick(1);
+      expect(resolved).toBe(adoption.placeholders.length);
     });
 
     // The wait is for a fallback that is on screen. Where React still holds
-    // the adoption (a read with no boundary) there is none, and the page
-    // being left stayed 300 ms for nothing: a plain click shows the page as
-    // the value arrives (measured: 311 ms after it, against 12).
-    it("does not wait where React has not committed the adoption", async () => {
+    // the tree (a read with no boundary) there is none, and the page being
+    // left stayed 300 ms for nothing: a plain click shows the page as the
+    // value arrives (measured: 311 ms after it, against 12). It can be a
+    // unit's own gate React waits for: a layout above the unit reads the
+    // route's loader with no boundary.
+    it("does not wait where React has not committed the tree, for a unit's gate either", async () => {
       vi.useFakeTimers();
-      const adoption = loaderAdoption();
+      const adoption = sectionAdoption();
       const { navigate, fill, store } = setup(adoption);
       await navigate();
-      const gate = adoption.reviews.loaderData as Promise<unknown>;
-      let resolved = false;
-      void gate.then(() => {
-        resolved = true;
-      });
+      let resolved = 0;
+      for (const placeholder of adoption.placeholders) {
+        void gateOf(placeholder).then(() => resolved++);
+      }
 
       const { response } = streaming(
-        fillPayload(
-          [loaderSeg("L0R0D1.reviews", "reviews", { reviews: 5 })],
-          adoption.matched,
-        ),
+        fillPayload(adoption.filled, adoption.matched),
       );
       fill.resolve(response);
       await tick(0);
 
-      expect(resolved).toBe(true);
+      expect(resolved).toBe(adoption.placeholders.length);
       expect(
         store.cache.get("/product")!.segments.some((s) => s.deferred),
       ).toBe(false);
     });
 
-    it("lands as soon as the stream is complete", async () => {
+    it("resolves the gates as soon as the stream is complete", async () => {
       vi.useFakeTimers();
       const adoption = loaderAdoption();
       const { navigate, fill, store, onUpdate } = setup(adoption);
@@ -883,7 +768,7 @@ describe("the fill landing", () => {
       ).toBe(false);
     });
 
-    it("lands when the stream fails: what arrived is shown, the rest is the stream's error", async () => {
+    it("resolves the gates when the stream fails: what arrived is shown, the rest is the stream's error", async () => {
       vi.useFakeTimers();
       const adoption = loaderAdoption();
       const { navigate, fill, store, onUpdate } = setup(adoption);
@@ -905,12 +790,17 @@ describe("the fill landing", () => {
       ).toBe(false);
     });
 
-    it("is dropped when the page is left during the wait", async () => {
+    it("is dropped when the page is left during the wait: no gate resolves, and the response is not aborted", async () => {
       vi.useFakeTimers();
       const adoption = loaderAdoption();
-      const { navigate, fill, store, onUpdate } = setup(adoption);
+      const { navigate, fill, store, calls, onUpdate } = setup(adoption);
       await navigate();
       showAdoption(onUpdate);
+      const gate = adoption.reviews.loaderData as Promise<unknown>;
+      let resolved = false;
+      void gate.then(() => {
+        resolved = true;
+      });
 
       const { response } = streaming(
         fillPayload(
@@ -923,53 +813,66 @@ describe("the fill landing", () => {
       cancelPendingFill();
       await tick(300);
 
+      expect(resolved).toBe(false);
+      expect(calls[1].signal?.aborted).toBe(false);
       expect(store.cache.get("/product")!.segments).toContain(adoption.reviews);
       expect(store.setSegmentIds).toHaveBeenCalledTimes(1);
+      expect(onUpdate).toHaveBeenCalledTimes(1);
     });
   });
 
-  // React renders such a page's content in the commit that shows its
-  // fallback. Once the fallback is up, no commit can bring the content in
-  // without a view transition a plain click does not start (measured: three
-  // for two, the content up to 280 ms late).
+  // A plain click to such a page keeps the page it is on until its response
+  // starts, then commits the page in one transition: URL, hooks and page
+  // together. Committed with the click, the URL moved a round trip before
+  // the page, and no later commit could bring the content in without a view
+  // transition the plain click does not start (measured: three for two, the
+  // content up to 280 ms late).
   describe("for a unit on a page that commits in a transition", () => {
     const transition = {};
 
-    it("holds the adoption: its update carries a promise nobody resolves", async () => {
+    it("commits nothing with the click: the navigation waits for its fill", async () => {
       const adoption = unitAdoption({ transition });
-      const { navigate, onUpdate } = setup(adoption);
-      let lane: boolean | undefined;
-      onUpdate.mockImplementation(() => {
-        lane = transitionState.inTransition;
+      const hooks = bridge();
+      const { navigate, calls, tx, onUpdate } = setup(adoption, {
+        fill: hooks,
       });
-      await navigate();
+      const signal = new AbortController().signal;
+      const navigation = navigate(signal);
+      await flush();
 
-      expect(onUpdate).toHaveBeenCalledTimes(1);
-      expect(lane).toBe(true);
-      const adopted = onUpdate.mock.calls[0][0];
-      expect(adopted.root).toBeInstanceOf(Promise);
-      expect(await settled(adopted.root)).toBe(false);
+      expect(calls[1]).toMatchObject({
+        fill: true,
+        targetUrl: URL_PAGE,
+        previousUrl: URL_PAGE,
+        segmentIds: ["L0"],
+      });
+      // The navigation's own request: it ends with the navigation.
+      expect(calls[1].signal).toBe(signal);
+      expect(tx.commit).not.toHaveBeenCalled();
+      expect(onUpdate).not.toHaveBeenCalled();
+      expect(hooks.flush).not.toHaveBeenCalled();
+      expect(await settled(navigation)).toBe(false);
     });
 
-    // One update, in a transition: React commits it with the adoption's
-    // (two transition updates of one state), so the tree, what the fill
-    // pushed and the location state the server set arrive in one commit, as
-    // a plain click's do. Handed over after that commit, the state was one
-    // commit behind the content.
-    it("lands with the fill's first chunk: one update in a transition carries the tree, the unit's content in it, and what the fill pushed", async () => {
+    it("commits once with the fill's first chunk, in a transition, from the prefetched segments and the fill's", async () => {
       const adoption = unitAdoption({ transition });
-      const hooks = { redirect: vi.fn(), locationState: vi.fn() };
-      const { navigate, fill, store, onUpdate, renderSegments } = setup(
+      const hooks = bridge();
+      const { navigate, fill, store, tx, onUpdate, renderSegments } = setup(
         adoption,
         { fill: hooks },
       );
-      await navigate();
-      const gate = adoption.unit.component as unknown as Promise<unknown>;
       const order: string[] = [];
-      hooks.locationState.mockImplementation(() => order.push("state"));
+      const commit = tx.commit.getMockImplementation()!;
+      tx.commit.mockImplementation((...args) => {
+        order.push("commit");
+        return commit(...args);
+      });
+      hooks.handles.mockImplementation(() => order.push("handles"));
       onUpdate.mockImplementation(() =>
         order.push(transitionState.inTransition ? "transition" : "urgent"),
       );
+      const navigation = navigate();
+      await flush();
 
       // Still streaming: a plain click commits with its first chunk too.
       const response = {
@@ -978,50 +881,165 @@ describe("the fill landing", () => {
       };
       (response.payload.metadata as any).locationState = { flash: "saved" };
       fill.resolve(response);
-      await flush();
+      await navigation;
 
-      // The state is the entry's before React is handed the update that
-      // reads it.
-      expect(order).toEqual(["state", "transition"]);
-      expect(onUpdate).toHaveBeenCalledTimes(2);
-      const landed = onUpdate.mock.calls[1][0];
-      expect(Object.keys(landed).sort()).toEqual(["metadata", "root"]);
-      expect(landed.root).toBe("tree-2");
-      expect(landed.metadata).toBe(response.payload.metadata);
-      expect(store.cache.get("/product")!.segments[1]).toBe(adoption.filled);
-      expect(adoption.filled.component).toBe("unit-content");
-      await expect(gate).resolves.toBe("unit-content");
-      // The tree is the page's first: nothing in it is on screen yet.
-      const options = (renderSegments.mock.calls[1] as unknown[])[1];
-      expect((options as { forceAwait?: boolean }).forceAwait).toBe(false);
+      // The fill's handle stream belongs to the entry the commit made.
+      expect(order).toEqual(["commit", "handles", "transition"]);
+      expect(hooks.handles).toHaveBeenCalledWith(response.payload.metadata);
+      const [ids, segments, overrides] = tx.commit.mock.calls[0] as unknown as [
+        string[],
+        ResolvedSegment[],
+        { serverState?: unknown },
+      ];
+      expect(ids).toEqual(adoption.matched);
+      expect(segments).toEqual([adoption.layout, adoption.filled]);
+      // The state the fill's handlers set is the entry's from its commit.
+      expect(overrides.serverState).toEqual({ flash: "saved" });
+      expect(hooks.locationState).not.toHaveBeenCalled();
 
-      // Nothing is left to hand over once React has committed.
-      showAdoption(onUpdate);
+      expect(onUpdate).toHaveBeenCalledTimes(1);
+      const update = onUpdate.mock.calls[0][0];
+      expect(update.root).toBe("tree-2");
+      expect(update.onCommit).toBeUndefined();
+      expect(renderSegments).toHaveBeenCalledTimes(1);
+      const [rendered, options] = renderSegments.mock.calls[0] as unknown as [
+        ResolvedSegment[],
+        { forceAwait?: boolean },
+      ];
+      expect(rendered).toEqual([adoption.layout, adoption.filled]);
+      // The fill is still streaming: nothing of it is awaited.
+      expect(options.forceAwait).toBe(false);
+      expect(store.cache.get("/product")!.segments).toEqual([
+        adoption.layout,
+        adoption.filled,
+      ]);
+
+      // No fill is pending afterwards: nothing more reaches React.
       await flush();
-      expect(onUpdate).toHaveBeenCalledTimes(2);
+      expect(onUpdate).toHaveBeenCalledTimes(1);
     });
 
-    it("does not hold a page whose deferred segments are loaders", async () => {
+    it("keeps the streaming token open until that fill has streamed", async () => {
+      const adoption = unitAdoption({ transition });
+      const { navigate, fill, end } = setup(adoption);
+      const navigation = navigate();
+      await flush();
+      expect(end).not.toHaveBeenCalled();
+
+      const stream = deferred<void>();
+      fill.resolve({
+        ...fillPayload([adoption.filled], adoption.matched),
+        streamComplete: stream.promise,
+      });
+      await navigation;
+      await flush();
+      expect(end).not.toHaveBeenCalled();
+
+      stream.resolve();
+      await flush();
+      expect(end).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not wait on a page whose deferred segments are loaders", async () => {
       const adoption = loaderAdoption();
       adoption.route.transition = transition as ResolvedSegment["transition"];
-      const { navigate, onUpdate } = setup(adoption);
+      const { navigate, onUpdate, tx } = setup(adoption);
       await navigate();
 
+      expect(tx.commit).toHaveBeenCalledTimes(1);
       expect(onUpdate.mock.calls[0][0].root).toBe("tree-4");
     });
 
-    it("shows a fill that fails in place of the held page", async () => {
-      vi.spyOn(console, "error").mockImplementation(() => {});
+    it("fails as a navigation when its fill fails: nothing commits", async () => {
       const adoption = unitAdoption({ transition });
-      const { navigate, fill, onUpdate } = setup(adoption);
-      await navigate();
-
-      fill.reject(new Error("undecodable"));
+      const { navigate, fill, tx, onUpdate, end } = setup(adoption);
+      const navigation = navigate();
       await flush();
 
-      expect(onUpdate).toHaveBeenCalledTimes(2);
-      expect(errorOf(onUpdate)).toBe("undecodable");
+      fill.reject(new Error("undecodable"));
+      await expect(navigation).rejects.toThrow("undecodable");
+      await flush();
+
+      expect(tx.commit).not.toHaveBeenCalled();
+      expect(onUpdate).not.toHaveBeenCalled();
+      expect(end).toHaveBeenCalledTimes(1);
     });
+
+    it("is redirected as a navigation when its fill answers with a redirect", async () => {
+      stubLocation();
+      const adoption = unitAdoption({ transition });
+      const hooks = bridge();
+      const { navigate, fill, tx, onUpdate } = setup(adoption, { fill: hooks });
+      const navigation = navigate();
+      await flush();
+
+      fill.resolve({
+        payload: {
+          metadata: { redirect: { url: "/login" }, locationState: { a: 1 } },
+        },
+        streamComplete: Promise.resolve(),
+      });
+      const thrown = await navigation.then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+
+      expect(thrown).toBeInstanceOf(ServerRedirect);
+      expect((thrown as ServerRedirect).url).toBe("http://localhost/login");
+      expect((thrown as ServerRedirect).state).toEqual({ a: 1 });
+      // The navigation's own redirect path follows it, not the fill's.
+      expect(hooks.redirect).not.toHaveBeenCalled();
+      expect(tx.commit).not.toHaveBeenCalled();
+      expect(onUpdate).not.toHaveBeenCalled();
+    });
+
+    // The routes changed between the prefetch and the click (HMR, say): the
+    // two answers do not make the page. A navigation whose own response
+    // misses segments starts over with nothing held, and nothing of this
+    // click has committed, so it does the same. Committed, the store would
+    // list a segment as held that no tree has.
+    it.each([
+      [
+        "names a segment neither answer carries",
+        (adoption: ReturnType<typeof unitAdoption>) =>
+          fillPayload([adoption.filled], [...adoption.matched, "L0R0D0.new"]),
+      ],
+      [
+        "is not a partial payload",
+        () => ({
+          payload: { metadata: { isPartial: false } },
+          streamComplete: Promise.resolve(),
+        }),
+      ],
+    ])(
+      "starts over as a plain navigation when its fill %s",
+      async (_label, answer) => {
+        const adoption = unitAdoption({ transition });
+        const { navigate, fill, calls, tx, onUpdate } = setup(adoption, {
+          whole: {
+            metadata: {
+              isPartial: true,
+              segments: [adoption.layout, adoption.filled],
+              matched: adoption.matched,
+              diff: adoption.matched,
+            },
+          },
+        });
+        const navigation = navigate();
+        await flush();
+        expect(calls).toHaveLength(2);
+
+        fill.resolve(answer(adoption));
+        await navigation;
+
+        expect(calls).toHaveLength(3);
+        expect(calls[2]).toMatchObject({ targetUrl: URL_PAGE, segmentIds: [] });
+        expect(calls[2].fill).toBeUndefined();
+        expect(tx.commit).toHaveBeenCalledTimes(1);
+        expect(tx.commit.mock.calls[0][0]).toEqual(adoption.matched);
+        expect(onUpdate).toHaveBeenCalledTimes(1);
+      },
+    );
   });
 
   it("keeps the streaming token open until the fill has streamed", async () => {
@@ -1049,7 +1067,7 @@ describe("the fill landing", () => {
 
   it("hands the location state the server set to the bridge", async () => {
     const adoption = loaderAdoption();
-    const hooks = { redirect: vi.fn(), locationState: vi.fn() };
+    const hooks = bridge();
     const { navigate, fill } = setup(adoption, { fill: hooks });
     await navigate();
     const response = fillPayload(
@@ -1061,6 +1079,86 @@ describe("the fill landing", () => {
     await flush();
 
     expect(hooks.locationState).toHaveBeenCalledWith({ flash: "saved" });
+  });
+});
+
+// The one answer that hands React a tree. A handler the fill awaited threw
+// or called notFound(): its entry's segments are one error segment
+// (router/segment-resolution/helpers.ts catchSegmentError), so the page is
+// not the one the tree was built for. That is the outcome of the navigation.
+describe("a fill whose segments are not the ones the tree was built for", () => {
+  /** The route's handler threw: an error segment, and its loader is gone. */
+  function failedRoute(adoption: ReturnType<typeof sectionAdoption>) {
+    const failed = seg("L0L1R0", {
+      type: "error",
+      namespace: "page",
+      component: "boundary",
+    });
+    const matched = ["L0", "L0L1D0.section", "L0L1", "L0L1.@side", "L0L1R0"];
+    return {
+      matched,
+      response: fillPayload([...adoption.filled.slice(0, 3), failed], matched),
+    };
+  }
+
+  it("replaces the page with the fill's segments in one update, and resolves no gate", async () => {
+    const adoption = sectionAdoption();
+    const hooks = bridge();
+    const { navigate, fill, store, onUpdate, renderSegments } = setup(
+      adoption,
+      { fill: hooks },
+    );
+    await navigate();
+    showAdoption(onUpdate);
+    const gates = adoption.placeholders.map(gateOf);
+    loaderStore.trackPendingStream("page", gates[3]);
+
+    const { matched, response } = failedRoute(adoption);
+    fill.resolve(response);
+    await flush();
+
+    // The click's update and this one.
+    expect(onUpdate).toHaveBeenCalledTimes(2);
+    expect(renderSegments).toHaveBeenCalledTimes(2);
+    const update = onUpdate.mock.calls[1][0];
+    // No `scroll`: a fill is not a navigation transaction.
+    expect(Object.keys(update).sort()).toEqual(["metadata", "root"]);
+    expect(update.root).toBe("tree-5");
+    // The update carries the handle stream: not read a second time.
+    expect(update.metadata).toBe(response.payload.metadata);
+    expect(hooks.handles).not.toHaveBeenCalled();
+
+    for (const gate of gates) expect(await settled(gate)).toBe(false);
+    expect(loaderStore.isStreamPending("page")).toBe(false);
+    expect(store.cache.get("/product")!.segments.map((s) => s.id)).toEqual(
+      matched,
+    );
+    expect(store.getSegmentIds()).toEqual(matched);
+    // The tree's handle stream reads this array on every yield.
+    expect(adoption.matched).toEqual(matched);
+  });
+
+  it("hands nothing over on a page that was left while its tree was built", async () => {
+    const adoption = sectionAdoption();
+    const rendering = deferred<string>();
+    let renders = 0;
+    const { navigate, fill, store, onUpdate } = setup(adoption, {
+      renderSegments: () =>
+        renders++ === 0 ? Promise.resolve("tree") : rendering.promise,
+    });
+    await navigate();
+    showAdoption(onUpdate);
+
+    fill.resolve(failedRoute(adoption).response);
+    await flush();
+    cancelPendingFill();
+    rendering.resolve("failed");
+    await flush();
+
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+    expect(
+      store.cache.get("/product")!.segments.filter((s) => s.deferred),
+    ).toHaveLength(adoption.placeholders.length);
   });
 });
 
@@ -1109,51 +1207,6 @@ describe("a fill that does not land", () => {
     expect(adoption.reviews.deferred).toBe(true);
   });
 
-  it("is not aborted once the response arrived, only dropped", async () => {
-    const layout = seg("L0", { type: "layout", component: "layout" });
-    const unit = seg("L0R0", {
-      component: null,
-      loading: "skeleton",
-      deferred: true,
-    });
-    const rendering = deferred<string>();
-    let renders = 0;
-    const { navigate, fill, calls, onUpdate, store } = setup(
-      {
-        layout,
-        payload: {
-          metadata: {
-            isPartial: true,
-            segments: [unit],
-            matched: ["L0", "L0R0"],
-            diff: ["L0R0"],
-          },
-        },
-      },
-      {
-        renderSegments: () =>
-          renders++ === 0 ? Promise.resolve("tree") : rendering.promise,
-      },
-    );
-    await navigate();
-    fill.resolve(
-      fillPayload(
-        [seg("L0R0", { component: "unit-content", loading: "skeleton" })],
-        ["L0", "L0R0"],
-      ),
-    );
-    await flush();
-
-    // Left while the fill's tree is being built.
-    cancelPendingFill();
-    rendering.resolve("filled");
-    await flush();
-
-    expect(calls[1].signal?.aborted).toBe(false);
-    expect(onUpdate).toHaveBeenCalledTimes(1);
-    expect(store.cache.get("/product")!.segments[1].deferred).toBe(true);
-  });
-
   it("is cancelled when the adoption never commits", async () => {
     const adoption = loaderAdoption();
     const { navigate, calls, tx } = setup(adoption, {
@@ -1194,7 +1247,7 @@ describe("a fill that does not land", () => {
   it("hands nothing over from a response it cannot use", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const adoption = loaderAdoption();
-    const hooks = { redirect: vi.fn(), locationState: vi.fn() };
+    const hooks = bridge();
     const { navigate, fill, onUpdate } = setup(adoption, { fill: hooks });
     await navigate();
     showAdoption(onUpdate);
@@ -1210,30 +1263,8 @@ describe("a fill that does not land", () => {
     );
     expect(adoption.matched).toEqual(matched);
     expect(hooks.locationState).not.toHaveBeenCalled();
+    expect(hooks.handles).not.toHaveBeenCalled();
     // The adoption and the error.
-    expect(onUpdate).toHaveBeenCalledTimes(2);
-  });
-
-  // The error's commit is also the commit the adoption's update was
-  // waiting for, where React had not committed the adoption yet. Handed over
-  // then, what the fill pushed would put the adoption's tree back over the
-  // error, with gates nobody resolves: a fallback for good.
-  it("hands nothing over after a failure, whenever React commits the adoption", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    const adoption = unitAdoption({ transition: {} });
-    const { navigate, fill, onUpdate } = setup(adoption);
-    await navigate();
-
-    // Usable up to its first chunk, then not: a segment is missing.
-    fill.resolve(fillPayload([], [...adoption.matched, "L0R0D0.extra"]));
-    await flush();
-    expect(errorOf(onUpdate)).toBe(
-      "[rango] fill: missing segments [L0R0, L0R0D0.extra]",
-    );
-    expect(onUpdate).toHaveBeenCalledTimes(2);
-
-    showAdoption(onUpdate);
-    await flush();
     expect(onUpdate).toHaveBeenCalledTimes(2);
   });
 
@@ -1318,7 +1349,7 @@ describe("a fill that does not land", () => {
   it("follows a redirect of the whole response through the bridge", async () => {
     stubLocation();
     const adoption = loaderAdoption();
-    const hooks = { redirect: vi.fn(), locationState: vi.fn() };
+    const hooks = bridge();
     const { navigate, fill, onUpdate } = setup(adoption, { fill: hooks });
     await navigate();
 
@@ -1334,7 +1365,7 @@ describe("a fill that does not land", () => {
   it("follows a redirect carried in the payload", async () => {
     stubLocation();
     const adoption = loaderAdoption();
-    const hooks = { redirect: vi.fn(), locationState: vi.fn() };
+    const hooks = bridge();
     const { navigate, fill } = setup(adoption, { fill: hooks });
     await navigate();
 
@@ -1399,7 +1430,7 @@ describe("a fill that does not land", () => {
       vi.spyOn(console, "error").mockImplementation(() => {});
       const assign = stubLocation();
       const adoption = loaderAdoption();
-      const hooks = { redirect: vi.fn(), locationState: vi.fn() };
+      const hooks = bridge();
       const { navigate, fill, onUpdate } = setup(adoption, { fill: hooks });
       await navigate();
 
