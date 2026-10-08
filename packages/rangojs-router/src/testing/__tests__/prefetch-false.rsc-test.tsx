@@ -201,6 +201,7 @@ function makeRouter() {
           parallel,
           intercept,
           revalidate,
+          transition,
         }) => [
           layout(page("shell"), () => [
             path("/", page("home"), { name: "home" }),
@@ -253,6 +254,9 @@ function makeRouter() {
               path("/section/cached", page("section-cached"), () => [
                 cache({ ttl: 60 }),
                 loader(SectionCachedLoader),
+              ]),
+              path("/section/animated", page("section-animated"), () => [
+                transition(),
               ]),
             ]),
             // A flagged layout that re-renders on every navigation, and a
@@ -435,6 +439,7 @@ type Wire = {
   component?: unknown;
   loading?: unknown;
   loaderData?: unknown;
+  transition?: unknown;
 };
 
 const present = (value: unknown): boolean =>
@@ -639,6 +644,24 @@ describe("R2: a flagged loading() entry in a prefetch", () => {
     expect(payload.matched).not.toContain(routeId);
     expect(payload.find(SectionPageLoader.$$id)).toBeUndefined();
     expect(payload.find(SectionLoader.$$id)).toMatchObject({ deferred: true });
+  });
+
+  // The browser decides how the click commits from the segments it has,
+  // before the fill brings the route: a plain click to a route with
+  // transition() commits in a transition. `viewTransition: false`: the
+  // layout itself has no boundary to place.
+  it("a flagged layout's placeholder carries a transition when a route it skips declares transition()", async () => {
+    const { prefetch } = setup();
+    const unit = async (path: string) =>
+      payloadOf(await prefetch(path)).segments.find(
+        (s) => s.type === "layout" && s.deferred === true,
+      )!;
+
+    expect((await unit("/section/animated")).transition).toEqual({
+      viewTransition: false,
+    });
+    expect(count("section-animated"), "the route did not run").toBe(0);
+    expect(present((await unit("/section/a")).transition)).toBe(false);
   });
 
   it("defers a parallel slot with its own flagged loading() as its own unit", async () => {
