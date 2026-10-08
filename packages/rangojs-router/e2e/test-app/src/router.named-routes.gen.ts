@@ -412,6 +412,8 @@ export const NamedRoutes = {
   reverseFallbackTest: "/reverse-fallback-test",
   "search.detail": { path: "/search/:category", search: { q: "string?", active: "boolean?" } },
   "search.index": { path: "/search", search: { q: "string", page: "number?", sort: "string?" } },
+  settledReadHub: "/settled-read",
+  settledReadPage: "/settled-read/page",
   sharedRefetch: "/shared-refetch",
   sharedRefetchError: "/shared-refetch-error",
   sharedRefetchErrorMixed: "/shared-refetch-error-mixed",

@@ -1,11 +1,13 @@
 import { urls, loader, loading, type Handler } from "@rangojs/router";
 import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 import {
+  SettledReadLoader,
   ZlbLayoutLoader,
   ZlbRouteLoader,
   ZlbSlotLoader,
 } from "./held-boundary.loaders.js";
 import {
+  SettledReadValue,
   ZlbLayoutValue,
   ZlbRouteValue,
   ZlbSlotValue,
@@ -112,9 +114,52 @@ const routePage =
     </div>
   );
 
+// settled-read: useLoader reader that mounts on a streaming loader, then
+// renders settled (why: use-loader.tsx).
+const SettledReadHub: Handler = () => (
+  <div data-testid="settled-read-hub">
+    <Link
+      to="/settled-read/page"
+      data-testid="settled-read-hub-link"
+      prefetch="none"
+    >
+      settled-read page
+    </Link>
+  </div>
+);
+
+const SettledReadPage: Handler = () => (
+  <div data-testid="settled-read-page">
+    <SettledReadValue />
+    <Link
+      to="/settled-read/page"
+      data-testid="settled-read-self-link"
+      prefetch="none"
+    >
+      self
+    </Link>
+    <Link to="/settled-read" data-testid="settled-read-to-hub" prefetch="none">
+      hub
+    </Link>
+  </div>
+);
+
 export const heldBoundaryPatterns = urls(
   ({ layout, path, loading, parallel }) => [
     path("/zlb", ZlbHub, { name: "zlbHub" }),
+
+    path("/settled-read", SettledReadHub, { name: "settledReadHub" }),
+    path(
+      "/settled-read/page",
+      SettledReadPage,
+      { name: "settledReadPage" },
+      () => [
+        loader(SettledReadLoader),
+        loading(
+          <div data-testid="settled-read-fallback">settled-read-loading</div>,
+        ),
+      ],
+    ),
 
     layout(ZlbLayout, () => [
       loading(<div data-testid="zlb-fallback">zlb-loading</div>),

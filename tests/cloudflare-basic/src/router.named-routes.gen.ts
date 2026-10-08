@@ -173,6 +173,8 @@ export const NamedRoutes = {
   ryowAction: "/ryow-action/:probe",
   scriptsDemo: "/scripts-demo",
   search: { path: "/search", search: { q: "string", page: "number?", sort: "string?" } },
+  settledReadHub: "/settled-read",
+  settledReadPage: "/settled-read/page",
   shopArchive: "/shop/:slug.archive.html",
   shopCategory: "/shop/:categoryId",
   shopProduct: "/shop/:productId.html",

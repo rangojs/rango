@@ -17,6 +17,7 @@ import { OutletContext, type OutletContextValue } from "./outlet-context.js";
 import { loaderStore, type LoaderEntry } from "./loader-store.js";
 import { decodeLoaderEntry } from "./decode-loader-results.js";
 import { warnAwaitedSsrSuspension } from "./ssr-suspension-warning.js";
+import { SETTLED_THENABLE } from "./thenable-status.js";
 import type { LoaderDefinition, LoadOptions } from "./types.js";
 
 function isShareableGet(options: LoadOptions | undefined): boolean {
@@ -202,10 +203,8 @@ function useLoaderInternal<T>(
     }
     return { contextData: undefined, hasContextData: false };
   }, [context, loader.$$id]);
-
   // SPIKE (streaming useLoader): a pending per-loader stream suspends HERE —
-  // the implicit-suspense read. use() is exempt from hook-order rules, so the
-  // conditional call is legal; on replay after resolution it returns
+  // the implicit-suspense read. On replay after resolution use() returns
   // synchronously and the decoded value takes the contextData slot. Hooks
   // below never run in a suspended render, so their order is stable across
   // every COMPLETED render.
@@ -218,6 +217,10 @@ function useLoaderInternal<T>(
       walk.pendingStream,
     );
     contextData = decodeLoaderEntry(use(walk.pendingStream)) as T;
+  } else if (hasContextData) {
+    // React logs a render that finishes without use() at a place whose reader
+    // suspended in use() on mount, so every read with route context calls it.
+    use(SETTLED_THENABLE);
   }
 
   const loaderId = loader.$$id;

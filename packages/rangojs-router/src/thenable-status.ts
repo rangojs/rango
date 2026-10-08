@@ -14,3 +14,13 @@ export function unwrapsSynchronously(stream: Promise<unknown>): boolean {
     status === "resolved_module"
   );
 }
+
+/**
+ * A resolved thenable for a use() whose result is ignored: React reads the
+ * "fulfilled" stamp and returns at once. `_debugInfo` keeps React DevTools from
+ * listing a 0 ms promise on every reader that calls it.
+ */
+export const SETTLED_THENABLE: Promise<undefined> = Object.assign(
+  Promise.resolve(undefined),
+  { status: "fulfilled", value: undefined, _debugInfo: [] },
+);
