@@ -121,10 +121,10 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // lazy split of the fill was measured and rejected (48532B + 1403B split,
 // against 49142B unsplit).
 //
-// Raised 48.25KB -> 48.375KB on 2026-10-08, measured 49353B -> 49510B
-// (+157B gzip): useLoader calls use() on a settled read too (+59B, a fix
-// main takes on its own), and a flagged layout's gates wait apart from the
-// gates outside it (+98B, browser/partial-update.ts settleHoles).
+// Raised 48.25KB -> 48.375KB on 2026-10-08: a flagged layout's gates wait
+// apart from the gates outside it (+98B gzip, browser/partial-update.ts
+// settleHoles). Measured on main b661d2f8 (#1085, #1083): 49473B, against
+// main's own 47498B.
 const ROUTER_CHUNK_GZIP_MAX = 48 * 1024 + 384;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
