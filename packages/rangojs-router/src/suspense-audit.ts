@@ -164,10 +164,11 @@ function settledValue(value: unknown): unknown {
 const LAZY = Symbol.for("react.lazy");
 
 /**
- * A node that names a client reference whose module is still loading. In dev
- * @vitejs/plugin-rsc tags client reference ids per render, so the first
- * render of every fresh payload meets them blocked for a few milliseconds
- * and a boundary with nothing pending from the router shows its fallback.
+ * A node that names a lazy still loading: a client reference (Flight's
+ * `_payload.status`) or a React.lazy (its numeric `_payload._status`, -1
+ * uninitialized and 0 pending). In dev @vitejs/plugin-rsc tags client
+ * reference ids per render, so the first render of every fresh payload meets
+ * them blocked for a few milliseconds and the boundary shows its fallback.
  * That is the bundler's doing, not a value the router handed over.
  */
 function hasBlockedReference(root: unknown): boolean {
@@ -180,10 +181,16 @@ function hasBlockedReference(root: unknown): boolean {
       for (let i = node.length - 1; i >= 0; i--) stack.push(node[i]);
       continue;
     }
-    const lazy = node as { $$typeof?: unknown; _payload?: { status?: string } };
+    const lazy = node as {
+      $$typeof?: unknown;
+      _payload?: { status?: string; _status?: number };
+    };
     if (lazy.$$typeof === LAZY) {
-      const status = lazy._payload?.status;
-      if (status === "pending" || status === "blocked") return true;
+      const payload = lazy._payload;
+      if (payload?.status === "pending" || payload?.status === "blocked") {
+        return true;
+      }
+      if (payload?._status === -1 || payload?._status === 0) return true;
       continue;
     }
     const element = node as { type?: unknown; props?: Record<string, unknown> };
@@ -222,6 +229,11 @@ const mountCounts = new Map<string, number>();
 // By boundary, not by record: a reader that suspends while mounting keeps
 // no record between its attempts.
 const handedSeen = new Map<string, WeakSet<object>>();
+
+// Thenables the router handed unread that React found already settled when
+// it read them: it suspended on a value that was there. The one cause of a
+// fallback the router owns (I3); consumed by the fallback it caused.
+const needless = new WeakSet<object>();
 
 let report: SuspenseAuditReport | undefined;
 
@@ -421,9 +433,12 @@ export function auditHandover(rec: BoundaryAudit, value: unknown): void {
     if (unread) afterMicrotasks(swapped);
     else swapped();
   }
-  if (rec.revealed && unread) {
+  if (unread) {
+    const revealed = rec.revealed;
     afterMicrotasks(() => {
       if (statusOf(value) !== "fulfilled") return;
+      needless.add(value);
+      if (!revealed) return;
       violate(
         "untracked",
         rec.boundary,
@@ -451,6 +466,16 @@ export function auditReveal(rec: BoundaryAudit): void {
     trace("reveal", { boundary: rec.boundary, mountId: rec.mountId });
   }
   rec.revealed = true;
+  // On screen: whatever React suspended on is read, and owns no later fallback.
+  for (const value of handedValues(rec)) {
+    if (isThenable(value)) needless.delete(value);
+  }
+}
+
+// What a boundary waits for: what it was handed, and its loader streams.
+function handedValues(rec: BoundaryAudit): unknown[] {
+  const handed = rec.hasCommitted ? rec.committed : rec.seen;
+  return rec.streams ? [handed, ...Object.values(rec.streams)] : [handed];
 }
 
 /** One `useLoader` read on screen: it has a mount and reveals with it. */
@@ -484,10 +509,11 @@ function streamOpen(): boolean {
  * client reference is loading. `idle-fallback` on a boundary new to the page,
  * `resuspended` when the fallback replaced content that had been on screen.
  *
- * Reported only when the router can own the fallback: it handed the boundary
- * a native promise React has read. A boundary handed values alone suspended
- * on something inside its content (an app's use(), a React.lazy), which is
- * counted as `unattributedFallbacks` and not reported.
+ * Reported only when the router owns the fallback: React suspended on a
+ * promise the router handed unread that was already settled (`needless`).
+ * Any other fallback is the content's own (an app's use(), a React.lazy, a
+ * client reference) and is counted as `unattributedFallbacks`, not reported,
+ * also when the boundary holds a promise React has read.
  *
  * A fallback over content on screen while something is pending is counted
  * (`shownWhilePending`) and not reported: an urgent commit does that by
@@ -503,15 +529,13 @@ export function auditFallback(rec: BoundaryAudit): () => void {
   if (!rec.fallbackGone) {
     afterMicrotasks(() => {
       const handed = rec.hasCommitted ? rec.committed : rec.seen;
-      const values = rec.streams
-        ? [handed, ...Object.values(rec.streams)]
-        : [handed];
+      const values = handedValues(rec);
       const waiting = values.some(isPending);
       const streaming = !waiting && streamOpen();
-      const owned = values.some(
-        (value) =>
-          isThenable(value) && isNative(value) && statusOf(value) !== undefined,
-      );
+      let owned = false;
+      for (const value of values) {
+        if (isThenable(value) && needless.delete(value)) owned = true;
+      }
       const loading =
         !waiting &&
         !streaming &&
@@ -590,8 +614,12 @@ let held: TreeAudit | undefined;
 const builtTrees = new WeakMap<object, TreeAudit>();
 // A root emitted as a promise (HMR): held once React's use() has read it.
 let pendingRoot: PromiseLike<unknown> | undefined;
-// I7: the fields of each segment object of the held tree, at hand-over.
+// I7: the fields of each segment object handed to React, at hand-over, and
+// the segments themselves, weakly: the history cache keeps a tree's segments
+// after the next tree drops them, and a write there is still a write.
 const handedFields = new WeakMap<object, Record<string, unknown>>();
+const handedSegments = new Set<WeakRef<object>>();
+const trackedSegments = new WeakSet<object>();
 
 function heldTree(): TreeAudit | undefined {
   if (pendingRoot) {
@@ -672,6 +700,11 @@ export function startTreeAudit(): TreeAudit | undefined {
   getReport();
   // A root emitted as a promise is held before this tree reads its segments.
   heldTree();
+  for (const ref of handedSegments) {
+    const segment = ref.deref();
+    if (segment) auditHandedSegment(segment);
+    else handedSegments.delete(ref);
+  }
   return {
     order: [],
     keys: new Map(),
@@ -683,8 +716,9 @@ export function startTreeAudit(): TreeAudit | undefined {
 }
 
 /**
- * I7: a segment object of the tree React holds was written since it was
- * handed over. Judged when the next tree is built from it, where
+ * I7: a segment object handed to React was written since. Judged when the
+ * next tree starts, for every handed segment still alive (in the history
+ * cache or the tree on screen), and again as the tree reuses one, where
  * renderSegments' own rewrites happen.
  */
 function auditHandedSegment(segment: object): void {
@@ -766,6 +800,10 @@ function hold(tree: TreeAudit): void {
   settledSinceTree.clear();
   for (const segment of tree.segments) {
     handedFields.set(segment, { ...(segment as Record<string, unknown>) });
+    if (!trackedSegments.has(segment)) {
+      trackedSegments.add(segment);
+      handedSegments.add(new WeakRef(segment));
+    }
   }
   tree.segments = [];
   if (INTERNAL_RANGO_DEBUG) {
@@ -981,6 +1019,7 @@ export function auditTreeUpdate(root?: unknown): void {
 /** Forget every tree and mount seen so far. For tests of the audit itself. */
 export function forgetSuspenseAudit(): void {
   held = undefined;
+  handedSegments.clear();
   pendingRoot = undefined;
   treeCause = undefined;
   unmounted.clear();

@@ -222,12 +222,17 @@ Four layers, cheapest first.
 (`tools/check-suspense-contract.mjs`, CI lint job) fails when a file outside two short
 lists calls the tree update emitter, or builds a router boundary or a value one waits
 for, and when a file outside a third references an `Audited*` variant. It also fails
-when an emit call is not preceded by its cause. It reads the TypeScript AST, so an
-import alias, a destructured binding (`const { emitUpdate: send } = store`), a function
-that forwards its argument to the emitter, and a shorthand write
-(`Object.assign(segment, { loaderDataPromise })`) all count. It also fails when an audit
-module gains an import (see "a build does not change" below). It pins the place, not the
-behaviour: a new entry means "read this document and add a case first".
+when an emit call is not preceded by its cause in the same synchronous stretch: a cause
+named before an `await` is gone by the time the emit runs, so I6 would fire. It resolves
+calls with the TypeScript checker, so an import or namespace alias
+(`rcw.RouteContentWrapper`), a destructured binding (`const { emitUpdate: send } =
+store`), an element access (`store["emitUpdate"](u)`), a function that forwards its
+argument to the emitter, and a shorthand or computed-key write
+(`Object.assign(segment, { loaderDataPromise })`) all count, while an app component's
+own `onUpdate` prop does not. `Reflect.apply` and `.call`/`.apply` are out of its reach,
+as its header says. It also fails when an audit module gains an import (see "a build
+does not change" below). It pins the place, not the behaviour: a new entry means "read
+this document and add a case first".
 
 **The dev audit.** `src/suspense-audit.ts` (hooks in `src/suspense-audit-react.tsx`) watches
 every boundary in a dev build and reports on `console.error` under `[rango][suspense]`.
@@ -245,8 +250,8 @@ not know.
 | --------- | ------------------ | --------------- | --------------------------------------------------------------------------------------------------------- |
 | I1        | `I1 swap`          | `swaps`         | a boundary on screen, waiting on a pending thenable, is handed another pending one for the same URL       |
 | I2        | `I2 untracked`     | `untracked`     | content that has been on screen is handed a native promise React has not read, and React finds it settled |
-| I3        | `I3 idle-fallback` | `idleFallbacks` | a boundary new to the page shows its fallback with nothing pending, over a promise the router handed it   |
-| I3        | `I3 resuspended`   | `resuspended`   | a fallback replaces content on screen with nothing pending, over a promise the router handed it           |
+| I3        | `I3 idle-fallback` | `idleFallbacks` | a boundary new to the page shows its fallback because React suspended on a router promise already settled |
+| I3        | `I3 resuspended`   | `resuspended`   | a fallback replaces content on screen because React suspended on a router promise already settled         |
 | I4        | `I4 remount`       | `remounts`      | a segment is unmounted and mounted again under the same key                                               |
 | I5        | `I5 drift`         | `drifts`        | a segment keeps its key and changes its wrapper chain, or its key changes shape                           |
 | I6        | `I6 uncaused`      | `uncaused`      | a tree update reaches React from an emitter that named no cause, or a cause outside the six               |
@@ -263,16 +268,24 @@ React's `use()` and the Flight client leave on a thenable instead. That is also 
 is judged: a native promise React has not read is handed over, and two microtasks
 later its status says React read it and found it settled.
 
-I3 reports only a fallback the router can own: one over a promise it handed the
-boundary that React has read. When the boundary was handed values alone, its content
-suspended on something of its own (an app's `use()`, a `React.lazy`), and the fallback
-is counted in `unattributedFallbacks`, not reported.
+I3 reports only a fallback the router owns: React suspended on a promise the router
+handed unread, and found it already settled (the same detection as I2, at any boundary,
+on screen or not). Every other fallback is the content's own: an app's `use()`, a
+`React.lazy`, a client reference. That holds when the boundary also holds a promise
+React has read, which every loader boundary does. Those fallbacks are counted in
+`unattributedFallbacks`, not reported. A needless suspension is consumed by the fallback
+it caused and forgotten once the content is on screen, so a later fallback of the app's
+own is not blamed on it.
 
-I4, I5 and I7 compare with the tree React holds. A tree `renderSegments` builds is
-held when an emit hands its root to React (`auditTreeUpdate(update.root)` in
+I4 and I5 compare with the tree React holds. A tree `renderSegments` builds is held
+when an emit hands its root to React (`auditTreeUpdate(update.root)` in
 `NavigationProvider`), and an HMR root, emitted as a promise, once React's `use()` has
 read it. A tree that never reaches React, an aborted navigation's, is never compared
-with. The boundary maps are keyed by names that carry params, so they keep the newest 500.
+with. I7 snapshots every segment of a held tree and keeps the segment itself weakly:
+when the next tree starts, every handed segment still alive (the history cache keeps
+them after the tree on screen drops them) is compared with its snapshot, and again as
+the tree reuses one, where `renderSegments`' own rewrites happen. The boundary maps are
+keyed by names that carry params, so they keep the newest 500.
 
 The audit is dev only, and a build does not change: `RouteContentWrapper`,
 `LoaderBoundary` and `OutletProvider` are the product components, untouched. Their
@@ -445,9 +458,9 @@ too, or the audit is off.
   transition, and the content lands about 250 ms after its data (#1078, #1084). No
   router hand-over is involved, so none of the invariants sees it.
 
-- A fallback the content puts up itself: an app's `use()` or a `React.lazy` directly in a
-  route's content shows the route's fallback, and the router handed the boundary nothing
-  pending. Counted (`unattributedFallbacks`), not reported.
+- A fallback the content puts up itself: an app's `use()` or a `React.lazy` in a route's
+  content shows the route's (or the loader boundary's) fallback without the router
+  suspending React on anything. Counted (`unattributedFallbacks`), not reported.
 - A remount below a segment's outlet has no mount record of its own (see I4 above). The
   cases use an instance marker in the fixture for that.
 - Boundaries an app creates itself (`<Suspense>` in a page) are the app's. The audit

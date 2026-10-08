@@ -8,6 +8,7 @@ import {
 } from "@testing-library/react";
 import {
   createElement,
+  lazy,
   startTransition,
   StrictMode,
   use,
@@ -16,7 +17,10 @@ import {
   type ReactNode,
 } from "react";
 import { Outlet } from "../client.js";
-import { AuditedRouteContent } from "../route-content-wrapper.js";
+import {
+  AuditedLoaderBoundary,
+  AuditedRouteContent,
+} from "../route-content-wrapper.js";
 import { renderSegments } from "../segment-system.js";
 import type { SuspenseAuditReport } from "../suspense-audit.js";
 import {
@@ -112,6 +116,49 @@ function boundary(content: Promise<ReactNode> | ReactNode): ReactNode {
   );
 }
 
+// What React's use() leaves on a native promise it has read.
+function read<T>(value: T): Promise<T> {
+  return Object.assign(Promise.resolve(value), { status: "fulfilled", value });
+}
+
+// The loader boundary as segment-system creates it outside a build, handed a
+// loader aggregate React has already read.
+function loaderBoundary(children: ReactNode): ReactNode {
+  return (
+    <AuditedLoaderBoundary
+      loaderDataPromise={read([{ value: 1 }])}
+      loaderIds={["data"]}
+      outletKey="L"
+      outletContent={null}
+      segment={seg({ id: "L", type: "layout" })}
+      fallback={<Fallback />}
+    >
+      {children}
+    </AuditedLoaderBoundary>
+  );
+}
+
+// Content that suspends on the app's own promise when told to, outside a
+// transition: the boundary above it shows its fallback over it.
+function appSuspension(): {
+  App: () => ReactNode;
+  suspend: () => void;
+  resolve: () => void;
+} {
+  const app = deferred<string>();
+  let setWaiting!: (waiting: boolean) => void;
+  function App(): ReactNode {
+    const [waiting, set] = useState(false);
+    setWaiting = set;
+    return <p data-testid="content">{waiting ? use(app.promise) : "ready"}</p>;
+  }
+  return {
+    App,
+    suspend: () => setWaiting(true),
+    resolve: () => app.resolve("app"),
+  };
+}
+
 function seg(
   overrides: Partial<ResolvedSegment> & {
     id: string;
@@ -177,6 +224,20 @@ describe("suspense audit, segments after hand-over (I7)", () => {
     expect(audit().mutations).toBe(0);
     build([segment]);
     expect(segment.loading).toBe("skeleton");
+    expect(audit().mutations).toBe(1);
+    expect(audited()).toEqual([
+      expect.stringContaining(
+        "I7 mutated at segment:L0: loading was written after the tree holding this segment was handed to React",
+      ),
+    ]);
+  });
+
+  it("reports a write to a handed segment the next tree does not reuse", () => {
+    // Held by the history cache after the next tree drops it.
+    const dropped: Record<string, unknown> = { id: "L0", loading: null };
+    build([dropped]);
+    dropped.loading = "skeleton";
+    build([{ id: "L1" }]);
     expect(audit().mutations).toBe(1);
     expect(audited()).toEqual([
       expect.stringContaining(
@@ -505,6 +566,48 @@ for (const strict of [false, true]) {
       expect(audited()).toEqual([]);
       expect(audit().unattributedFallbacks).toBeGreaterThan(0);
       await act(async () => app.resolve("app"));
+      await settle();
+    });
+
+    it("I3 is silent when the app's content suspends on its own promise inside a route boundary holding a promise React has read", async () => {
+      const app = appSuspension();
+      const view = await mount(boundary(read(<app.App />)));
+      expect(view.getByTestId("content").textContent).toBe("ready");
+      await act(async () => app.suspend());
+      await settle();
+      expect(fallbacks).toBeGreaterThan(0);
+      expect(counters()).toEqual(ZERO);
+      expect(audited()).toEqual([]);
+      expect(audit().unattributedFallbacks).toBeGreaterThan(0);
+      await act(async () => app.resolve());
+      await settle();
+    });
+
+    it("I3 is silent when the app's content suspends on its own promise inside a loader boundary", async () => {
+      const app = appSuspension();
+      const view = await mount(loaderBoundary(<app.App />));
+      expect(view.getByTestId("content").textContent).toBe("ready");
+      await act(async () => app.suspend());
+      await settle();
+      expect(fallbacks).toBeGreaterThan(0);
+      expect(counters()).toEqual(ZERO);
+      expect(audited()).toEqual([]);
+      expect(audit().unattributedFallbacks).toBeGreaterThan(0);
+      await act(async () => app.resolve());
+      await settle();
+    });
+
+    it("I3 is silent when the app's own React.lazy loads under a loader boundary", async () => {
+      const module = deferred<{ default: () => ReactNode }>();
+      const Lazy = lazy(() => module.promise);
+      await mount(loaderBoundary(<Lazy />));
+      expect(fallbacks).toBeGreaterThan(0);
+      expect(counters()).toEqual(ZERO);
+      expect(audited()).toEqual([]);
+      expect(audit().unattributedFallbacks).toBeGreaterThan(0);
+      await act(async () =>
+        module.resolve({ default: () => <p data-testid="content">lazy</p> }),
+      );
       await settle();
     });
 
