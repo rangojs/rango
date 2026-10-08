@@ -199,6 +199,42 @@ describe("getMemoizedLoaderPromise", () => {
       );
     });
 
+    // The entry of a page is rewritten with streams no tree has read yet
+    // (a `prefetch: false` fill, browser/partial-update.ts settleHoles): the
+    // first render from it is the first call for these sources. A promise
+    // built over them would be one more promise React has not read, and a
+    // slot's boundary handed it in a render that cannot wait shows its
+    // fallback over content that is on screen.
+    it("returns the array at once when every source is a stream that has fulfilled", () => {
+      const fulfilled = (value: unknown) =>
+        Object.assign(Promise.resolve(value), { status: "fulfilled", value });
+      const loaders = [
+        loaderSeg("D0.a", fulfilled({ a: 1 })),
+        loaderSeg("D0.b", fulfilled({ b: 2 })),
+      ];
+
+      const first = getMemoizedLoaderPromise(loaders);
+      expect(first).toEqual([{ a: 1 }, { b: 2 }]);
+      expect(getMemoizedLoaderPromise(loaders)).toBe(first);
+    });
+
+    it("returns the promise while one source is a stream that has not", () => {
+      const fulfilled = Object.assign(Promise.resolve(1), {
+        status: "fulfilled",
+        value: 1,
+      });
+      const pending = Object.assign(new Promise(() => {}), {
+        status: "pending",
+      });
+
+      expect(
+        getMemoizedLoaderPromise([
+          loaderSeg("D0.a", fulfilled),
+          loaderSeg("D0.b", pending),
+        ]),
+      ).toBeInstanceOf(Promise);
+    });
+
     it("keeps returning the promise for a rejected aggregate, and reading it rejects", async () => {
       const loaders = [
         loaderSeg("D0.a", Promise.reject(new Error("loader failed"))),
