@@ -3,7 +3,8 @@
  * CI bundle guards (issue #761). Supersedes check-client-leaks.mjs.
  *
  * Builds each app with RANGO_ANALYZE=1 and asserts:
- *  1. LEAKS (every app): no server-only module contributes bytes to the
+ *  1. LEAKS (every app): no server-only module, and no dev-only router
+ *     module (the suspense audit), contributes bytes to the
  *     CLIENT metafile — same Sections 2/2b classification as
  *     tools/bundle-report.mjs, shared via tools/lib/bundle-stats.mjs.
  *     0-byte pattern hits are tree-shaken stubs and pass; ALLOWLIST entries
@@ -34,6 +35,7 @@ import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import {
   APP_SERVER_PATTERNS,
+  ROUTER_DEV_ONLY_PATTERNS,
   ROUTER_SERVER_PATTERNS,
   appOwnedFilter,
   extractRows,
@@ -155,6 +157,7 @@ function readRows(appDir, env) {
 function checkLeaks(app, rows, failures) {
   const found = [
     ...matchLeakPatterns(rows, ROUTER_SERVER_PATTERNS),
+    ...matchLeakPatterns(rows, ROUTER_DEV_ONLY_PATTERNS),
     ...matchLeakPatterns(rows, APP_SERVER_PATTERNS, appOwnedFilter),
   ];
   const seen = new Set();

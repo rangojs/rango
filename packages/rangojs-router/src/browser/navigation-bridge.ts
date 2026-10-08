@@ -54,6 +54,7 @@ import {
 } from "./prefetch/loader.js";
 import type { PrefetchStrategy } from "../router/prefetch-default.js";
 import { beginClientUrlNavigation } from "../client-urls/navigation.js";
+import { auditTreeCause } from "../suspense-audit.js";
 
 // Polyfill Symbol.dispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -708,6 +709,7 @@ export function createNavigationBridge(
             !isIntercept &&
             !isLeavingIntercept &&
             shouldStartViewTransition(cachedSegments, gatedOff);
+          if (process.env.NODE_ENV !== "production") auditTreeCause("popstate");
           if (hasTransition) {
             startTransition(() => {
               if (addTransitionType) {

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { readSuspenseAudit, resetSuspenseAudit } from "./console-guard.js";
 import { readProbe, watchFlash } from "./flash-probe.js";
 
 /**
@@ -146,6 +147,33 @@ export function runHeldBoundaryTests(
   const { url, waitForHydration, production } = options;
   const ctx: Ctx = { url, waitForHydration };
 
+  // Dev only: a build carries no suspense audit (src/suspense-audit.ts).
+  async function expectAuditSilent(page: Page): Promise<void> {
+    if (production) return;
+    await page.evaluate(() => new Promise((r) => setTimeout(r, 0)));
+    const audit = await readSuspenseAudit(page);
+    expect(audit, "a dev build exposes the suspense audit").not.toBeNull();
+    const {
+      events,
+      shownWhilePending: _byDesign,
+      unattributedFallbacks: _unattributed,
+      treeUpdates: _updates,
+      handed: _handed,
+      // I7 is the console guard's (tools/e2e-console-baseline.json).
+      mutations: _mutations,
+      ...counters
+    } = audit!;
+    expect(counters, JSON.stringify(events)).toEqual({
+      uncaused: 0,
+      swaps: 0,
+      untracked: 0,
+      idleFallbacks: 0,
+      resuspended: 0,
+      remounts: 0,
+      drifts: 0,
+    });
+  }
+
   for (const sc of SCENARIOS) {
     for (const entry of ENTRIES) {
       test(`${sc.name}: after ${entry.name}, a plain click to an un-prefetched sibling keeps what is on screen`, async ({
@@ -157,7 +185,10 @@ export function runHeldBoundaryTests(
         expect(bRequests, `/${sc.s}/b must not have been requested`).toEqual(
           [],
         );
+        // The entry is held to the contract too.
+        await expectAuditSilent(page);
 
+        await resetSuspenseAudit(page);
         await watchFlash(page, `${sc.s}-fallback`, sc.held);
         await testId(page, `${sc.s}-to-b`).click();
         await expect(testId(page, `${sc.s}-b`)).toBeVisible();
@@ -177,9 +208,44 @@ export function runHeldBoundaryTests(
         expect(seen.detached, "a boundary on screen must not be detached").toBe(
           false,
         );
+        await expectAuditSilent(page);
       });
     }
   }
+
+  // The start page shares an outer layout with the layout clicked into, so
+  // the plain click mounts only the inner layout. Before #1080 the click to
+  // the sibling then flashed the inner layout's fallback (301 ms in a build);
+  // with the hub outside every layout (the scenarios above) it did not.
+  test("layout with loading() inside an outer layout: after a plain click from a page in the outer layout, a plain click to an un-prefetched sibling keeps what is on screen", async ({
+    page,
+  }) => {
+    const held = ["zlbo-outer", "zlbo-layout"];
+    const bRequests = trackRequestsFor(page, "/zlbo/b");
+    await page.goto(url("/zlbo"));
+    await waitForHydration(page);
+    await expect(testId(page, "zlbo-start")).toBeVisible();
+    await testId(page, "zlbo-start-plain").click();
+    await expect(testId(page, "zlbo-a")).toBeVisible();
+    await expectHeldVisible(page, held);
+    expect(bRequests, "/zlbo/b must not have been requested").toEqual([]);
+    await expectAuditSilent(page);
+
+    await resetSuspenseAudit(page);
+    await watchFlash(page, "zlbo-fallback", held);
+    await testId(page, "zlbo-to-b").click();
+    await expect(testId(page, "zlbo-b")).toBeVisible();
+    await expectHeldVisible(page, held);
+    const seen = await readProbe(page);
+    expect(seen.installed, PROBE_LOST).toBe(true);
+    expect(seen.flash, "the zlbo loading() fallback must not appear").toBe(
+      false,
+    );
+    expect(seen.detached, "a boundary on screen must not be detached").toBe(
+      false,
+    );
+    await expectAuditSilent(page);
+  });
 
   test("a loading() boundary new to the page with nothing pending renders, with no fallback in a build", async ({
     page,

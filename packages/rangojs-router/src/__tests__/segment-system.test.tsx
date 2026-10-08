@@ -24,8 +24,11 @@ function MockRootErrorBoundary(props: any) {
   return props.children;
 }
 
+// segment-system creates the audited variants outside a build
+// (suspense-audit.ts): the same sentinel stands for both.
 vi.mock("../outlet-provider.js", () => ({
   OutletProvider: MockOutletProvider,
+  AuditedOutletProvider: MockOutletProvider,
 }));
 
 vi.mock("../browser/react/mount-context.js", () => ({
@@ -34,7 +37,9 @@ vi.mock("../browser/react/mount-context.js", () => ({
 
 vi.mock("../route-content-wrapper.js", () => ({
   RouteContentWrapper: MockRouteContentWrapper,
+  AuditedRouteContent: MockRouteContentWrapper,
   LoaderBoundary: MockLoaderBoundary,
+  AuditedLoaderBoundary: MockLoaderBoundary,
   StreamedLoaderErrorBoundary: MockStreamedLoaderErrorBoundary,
 }));
 

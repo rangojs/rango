@@ -27,6 +27,30 @@ export { runUseLoaderSettledReadTests } from "./use-loader-settled-read-scenario
 export type { UseLoaderSettledReadScenarioOptions } from "./use-loader-settled-read-scenario.js";
 export { readFlash, readProbe, watchFlash } from "./flash-probe.js";
 export type { CacheVersionScenarioOptions } from "./cache-version-scenario.js";
+export {
+  describeSuspenseCases,
+  runSuspenseCases,
+  SUSPENSE_CASES_OPEN_DEV,
+  SUSPENSE_CASES_OPEN_PRODUCTION,
+} from "./suspense-cases.js";
+export type { SuspenseCasesOptions } from "./suspense-cases.js";
+export {
+  CONSOLE_BASELINE_PATH,
+  CONSOLE_DENY_RULES,
+  consoleGuardMode,
+  expectConsole,
+  guardContext,
+  installConsoleGuard,
+  readSuspenseAudit,
+  resetSuspenseAudit,
+} from "./console-guard.js";
+import { expectConsole } from "./console-guard.js";
+export type {
+  ConsoleBaselineEntry,
+  ConsoleGuardMode,
+  ConsoleRule,
+  SuspenseAuditCounters,
+} from "./console-guard.js";
 
 /**
  * Shared end-to-end test utilities for HMR-driven tests across apps.
@@ -2294,6 +2318,10 @@ export async function expectPinlessHitKeepsRunPushWithRunData(
   page: Page,
   fixture: PushOwnershipFixture,
 ): Promise<void> {
+  // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+  expectConsole(page, {
+    allow: [/Hydration failed because the server rendered text/],
+  });
   const probe = pushProbe("capped");
   const url = `${fixture.cappedUrl}?probe=${probe}`;
   await warmShellToHit(page, url);
@@ -2595,6 +2623,10 @@ export async function expectRedirectLoopEndsInErrorBoundary(
   page: Page,
   fixture: RedirectLoopFixture,
 ): Promise<void> {
+  // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+  expectConsole(page, {
+    allow: [/Server redirect loop: stopped after following/],
+  });
   const loopLogs: string[] = [];
   page.on("console", (msg: ConsoleMessage) => {
     // React and the root boundary log the thrown error too; count the router's own line.

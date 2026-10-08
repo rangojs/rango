@@ -1,7 +1,7 @@
 "use client";
-import type { ReactNode } from "react";
-import { Component, Suspense, use } from "react";
-import { OutletProvider } from "./outlet-provider.js";
+import type { ComponentProps, ReactElement, ReactNode } from "react";
+import { Component, Suspense, use, useMemo } from "react";
+import { AuditedOutletProvider, OutletProvider } from "./outlet-provider.js";
 import type { ResolvedSegment } from "./types.js";
 import {
   decodeLoaderResults,
@@ -10,6 +10,12 @@ import {
   LOADER_REDIRECT,
 } from "./decode-loader-results.js";
 import { LoaderRedirect } from "./loader-redirect.js";
+import type { BoundaryAudit } from "./suspense-audit.js";
+import {
+  AuditedFallback,
+  useBoundaryAudit,
+  useRevealAudit,
+} from "./suspense-audit-react.js";
 
 /**
  * Router-owned error boundary for read-site loader errors. segment-system
@@ -113,6 +119,53 @@ export function RouteContentWrapper({
   );
 }
 
+// Dev only (suspense-audit.ts): RouteContentWrapper's Suspense, keys and
+// content, with the audit's hooks in components of their own.
+//
+// Chosen where the element is created, inside a NODE_ENV test, so a build
+// folds to the product component and nothing else. Two other ways leave
+// bytes in cloudflare-basic's router chunk, both measured: a dev branch
+// inside the product component (React Compiler runs before NODE_ENV is
+// folded and keeps the branch's memo slots, +76 B gzip), and one
+// `export const X = dev ? Audited : Product` per module (the alias statement
+// survives minification, +27 B gzip for three).
+//
+// Line comments on purpose, here and on the other dev-only declarations: the
+// server bundles are not minified and keep a JSDoc block even when the
+// declaration under it is removed.
+export function AuditedRouteContent({
+  content,
+  fallback,
+  segmentId,
+}: ComponentProps<typeof RouteContentWrapper>): ReactNode {
+  const audit = useBoundaryAudit(
+    `content:${segmentId}`,
+    segmentId ?? "",
+    content,
+  );
+  return (
+    <Suspense
+      fallback={
+        <AuditedFallback audit={audit}>{fallback ?? null}</AuditedFallback>
+      }
+      key={segmentId ? "route-content-suspense-" + segmentId : undefined}
+    >
+      <AuditedSuspender content={content} audit={audit} key={segmentId} />
+    </Suspense>
+  );
+}
+
+function AuditedSuspender({
+  content,
+  audit,
+}: {
+  content: Promise<ReactNode> | ReactNode;
+  audit: BoundaryAudit;
+}): ReactNode {
+  useRevealAudit(audit);
+  return Suspender({ content });
+}
+
 const Suspender = ({
   content,
 }: {
@@ -185,6 +238,51 @@ export function LoaderBoundary({
       </LoaderResolver>
     </Suspense>
   );
+}
+
+// Dev only (suspense-audit.ts): LoaderBoundary, as AuditedRouteContent.
+export function AuditedLoaderBoundary({
+  fallback,
+  children,
+  ...resolver
+}: LoaderBoundaryProps): ReactNode {
+  const nodes = useMemo(
+    () => [children, resolver.outletContent],
+    [children, resolver.outletContent],
+  );
+  const audit = useBoundaryAudit(
+    `loaders:${resolver.outletKey}`,
+    resolver.segment.id,
+    resolver.loaderDataPromise,
+    resolver.loaderStreams,
+    nodes,
+  );
+  return (
+    <Suspense
+      fallback={
+        <AuditedFallback audit={audit}>{fallback ?? null}</AuditedFallback>
+      }
+      key={`loader-boundary-${resolver.outletKey}`}
+    >
+      <AuditedLoaderResolver audit={audit} {...resolver}>
+        {children}
+      </AuditedLoaderResolver>
+    </Suspense>
+  );
+}
+
+function AuditedLoaderResolver({
+  audit,
+  ...props
+}: Omit<LoaderBoundaryProps, "fallback"> & {
+  audit: BoundaryAudit;
+}): ReactNode {
+  useRevealAudit(audit);
+  // The resolver's OutletProvider, as its audited component.
+  const outlet = LoaderResolver(props) as ReactElement<
+    ComponentProps<typeof OutletProvider>
+  >;
+  return <AuditedOutletProvider {...outlet.props} key={outlet.key} />;
 }
 
 /**

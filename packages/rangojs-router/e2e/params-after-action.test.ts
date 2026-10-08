@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError, testId } from "./helper";
+import { expectConsole } from "@shared/e2e";
 
 /**
  * Regression: useParams() should remain populated after a server action
@@ -57,6 +58,10 @@ test.describe("useParams survives action revalidation (dev)", () => {
   test("JS action error: useParams populated in error boundary", async ({
     page,
   }) => {
+    // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+    expectConsole(page, {
+      allow: [/\[Browser\] Action failed: Error: params-after-action boom/],
+    });
     await page.goto(f.url(ERROR_TARGET));
     await waitForHydration(page);
 

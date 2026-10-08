@@ -37,6 +37,7 @@ import {
   deferredHandleNames,
   resolveDeferredHandleValues,
 } from "../../handles/deferred-resolution.js";
+import { auditTreeUpdate } from "../../suspense-audit.js";
 
 /**
  * Process handles from an async generator, updating the event controller
@@ -430,6 +431,7 @@ export function NavigationProvider({
   // Subscribe to UI updates (for re-rendering the tree)
   useEffect(() => {
     const unsubscribe = store.onUpdate((update) => {
+      if (process.env.NODE_ENV !== "production") auditTreeUpdate(update.root);
       // Capture scroll intent — it will be applied in useLayoutEffect
       // after React commits this state update to the DOM.
       // Always assign (even undefined) to clear stale scroll from prior navigations,

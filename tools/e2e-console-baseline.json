@@ -1,0 +1,121 @@
+{
+  "entries": [
+    {
+      "app": "cloudflare-basic",
+      "test": "blog-cache.test.ts > blog with CF cache (dev) > should navigate to blog post detail page",
+      "rule": "suspense-mutated",
+      "reason": "I7, rule 6: renderSegments rebuilds the @sidebar parallel slot and writes loaderDataPromise and loaderIds in place on its segment object (src/segment-system.tsx:769, :787-803). That object came from the segment cache and is the one the previous tree handed to React; ParallelOutlet reads those fields during render (renderSlotContent, src/client.tsx:40). Fired in 2 of 2 record runs."
+    },
+    {
+      "app": "cloudflare-basic",
+      "test": "blog-cache.test.ts > blog with CF cache (dev) > should preserve sidebar during navigation to post",
+      "rule": "suspense-mutated",
+      "reason": "I7, rule 6: renderSegments rebuilds the @sidebar parallel slot and writes loaderDataPromise and loaderIds in place on its segment object (src/segment-system.tsx:769, :787-803). That object came from the segment cache and is the one the previous tree handed to React; ParallelOutlet reads those fields during render (renderSlotContent, src/client.tsx:40). Fired in 2 of 2 record runs."
+    },
+    {
+      "app": "cloudflare-basic",
+      "test": "blog-cache.test.ts > blog with CF cache (dev) > sidebar links should navigate to posts",
+      "rule": "suspense-mutated",
+      "reason": "I7, rule 6: renderSegments rebuilds the @sidebar parallel slot and writes loaderDataPromise and loaderIds in place on its segment object (src/segment-system.tsx:769, :787-803). That object came from the segment cache and is the one the previous tree handed to React; ParallelOutlet reads those fields during render (renderSlotContent, src/client.tsx:40). Fired in 2 of 2 record runs."
+    },
+    {
+      "app": "cloudflare-basic",
+      "test": "held-boundary.test.ts > held boundary (dev) > parallel slot with a loader and loading(): after a document load, a plain click to an un-prefetched sibling keeps what is on screen",
+      "rule": "suspense-mutated",
+      "reason": "I7, rule 6: renderSegments rebuilds the @zlbsSlot parallel slot and writes loaderDataPromise and loaderIds in place on its segment object (src/segment-system.tsx:769, :787-803). That object came from the segment cache and is the one the previous tree handed to React; ParallelOutlet reads those fields during render (renderSlotContent, src/client.tsx:40). Fired in 2 of 2 record runs."
+    },
+    {
+      "app": "cloudflare-basic",
+      "test": "held-boundary.test.ts > held boundary (dev) > parallel slot with a loader and loading(): after a fully prefetched click, a plain click to an un-prefetched sibling keeps what is on screen",
+      "rule": "suspense-mutated",
+      "reason": "I7, rule 6: renderSegments rebuilds the @zlbsSlot parallel slot and writes loaderIds in place on its segment object (src/segment-system.tsx:769, :787-803). That object came from the segment cache and is the one the previous tree handed to React; ParallelOutlet reads those fields during render (renderSlotContent, src/client.tsx:40). Fired in 2 of 2 record runs."
+    },
+    {
+      "app": "cloudflare-basic",
+      "test": "held-boundary.test.ts > held boundary (dev) > parallel slot with a loader and loading(): after a fully prefetched click, back and forward, a plain click to an un-prefetched sibling keeps what is on screen",
+      "rule": "suspense-mutated",
+      "reason": "I7, rule 6: renderSegments rebuilds the @zlbsSlot parallel slot and writes loaderIds in place on its segment object (src/segment-system.tsx:769, :787-803). That object came from the segment cache and is the one the previous tree handed to React; ParallelOutlet reads those fields during render (renderSlotContent, src/client.tsx:40). Fired in 2 of 2 record runs."
+    },
+    {
+      "app": "cloudflare-basic",
+      "test": "held-boundary.test.ts > held boundary (dev) > parallel slot with a loader and loading(): after a plain click, a plain click to an un-prefetched sibling keeps what is on screen",
+      "rule": "suspense-mutated",
+      "reason": "I7, rule 6: renderSegments rebuilds the @zlbsSlot parallel slot and writes loaderDataPromise and loaderIds in place on its segment object (src/segment-system.tsx:769, :787-803). That object came from the segment cache and is the one the previous tree handed to React; ParallelOutlet reads those fields during render (renderSlotContent, src/client.tsx:40). Fired in 2 of 2 record runs."
+    },
+    {
+      "app": "cloudflare-basic",
+      "test": "inline-action.test.ts > embedded inline action (dev) > blog like button resolves on a runtime-cache hit (frozen slug, live body)",
+      "rule": "suspense-mutated",
+      "reason": "I7, rule 6: renderSegments rebuilds the @sidebar parallel slot and writes loaderDataPromise and loaderIds in place on its segment object (src/segment-system.tsx:769, :787-803). That object came from the segment cache and is the one the previous tree handed to React; ParallelOutlet reads those fields during render (renderSlotContent, src/client.tsx:40). Fired in 2 of 2 record runs."
+    },
+    {
+      "app": "cloudflare-basic",
+      "test": "ppr-shell.test.ts > ppr-shell caching (dev) > a cold partial request captures a PPR snapshot for a later prefetch",
+      "rule": "suspense-idle-fallback",
+      "reason": "#1079, rule 2, the timing gap on a slot: a parallel slot's loader boundary reads the loader aggregate itself (slots get no per-loader streams, src/segment-system.tsx:772-803; LoaderResolver's use(loaderDataPromise), src/route-content-wrapper.tsx:334). getMemoizedLoaderPromise hands the aggregate as a promise when the tree is built while it is pending (src/segment-loader-promise.ts:134); when it settles before React renders the slot, React suspends on a settled promise and the @badge slot mounts its loading() fallback. Seen once in a full dev run at load 20-49; 0 of 6 reruns, and 0 of 6 with 8x CPU throttling. Timing-dependent.",
+      "intermittent": true
+    },
+    {
+      "app": "rangojs-router",
+      "test": "held-boundary.test.ts > held boundary (dev) > parallel slot with a loader and loading(): after a document load, a plain click to an un-prefetched sibling keeps what is on screen",
+      "rule": "suspense-mutated",
+      "reason": "I7, rule 6: renderSegments rebuilds the @zlbsSlot parallel slot and writes loaderDataPromise and loaderIds in place on its segment object (src/segment-system.tsx:769, :787-803). That object came from the segment cache and is the one the previous tree handed to React; ParallelOutlet reads those fields during render (renderSlotContent, src/client.tsx:40). Fired in 2 of 2 record runs."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "held-boundary.test.ts > held boundary (dev) > parallel slot with a loader and loading(): after a fully prefetched click, a plain click to an un-prefetched sibling keeps what is on screen",
+      "rule": "suspense-mutated",
+      "reason": "I7, rule 6: renderSegments rebuilds the @zlbsSlot parallel slot and writes loaderIds in place on its segment object (src/segment-system.tsx:769, :787-803). That object came from the segment cache and is the one the previous tree handed to React; ParallelOutlet reads those fields during render (renderSlotContent, src/client.tsx:40). Fired in 2 of 2 record runs."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "held-boundary.test.ts > held boundary (dev) > parallel slot with a loader and loading(): after a fully prefetched click, back and forward, a plain click to an un-prefetched sibling keeps what is on screen",
+      "rule": "suspense-mutated",
+      "reason": "I7, rule 6: renderSegments rebuilds the @zlbsSlot parallel slot and writes loaderIds in place on its segment object (src/segment-system.tsx:769, :787-803). That object came from the segment cache and is the one the previous tree handed to React; ParallelOutlet reads those fields during render (renderSlotContent, src/client.tsx:40). Fired in 2 of 2 record runs."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "held-boundary.test.ts > held boundary (dev) > parallel slot with a loader and loading(): after a plain click, a plain click to an un-prefetched sibling keeps what is on screen",
+      "rule": "suspense-mutated",
+      "reason": "I7, rule 6: renderSegments rebuilds the @zlbsSlot parallel slot and writes loaderDataPromise and loaderIds in place on its segment object (src/segment-system.tsx:769, :787-803). That object came from the segment cache and is the one the previous tree handed to React; ParallelOutlet reads those fields during render (renderSlotContent, src/client.tsx:40). Fired in 2 of 2 record runs."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "mini.test.ts > mini > intercept: modal on soft nav from index",
+      "rule": "suspense-mutated",
+      "reason": "I7, rule 6: renderSegments rebuilds the @cart parallel slot and writes loaderDataPromise and loaderIds in place on its segment object (src/segment-system.tsx:769, :787-803). That object came from the segment cache and is the one the previous tree handed to React; ParallelOutlet reads those fields during render (renderSlotContent, src/client.tsx:40). Fired in 2 of 2 record runs."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "mini.test.ts > mini > parallel @cart slot: revalidates after addToCart action",
+      "rule": "suspense-mutated",
+      "reason": "I7, rule 6: renderSegments rebuilds the @cart parallel slot and writes loaderDataPromise and loaderIds in place on its segment object (src/segment-system.tsx:769, :787-803). That object came from the segment cache and is the one the previous tree handed to React; ParallelOutlet reads those fields during render (renderSlotContent, src/client.tsx:40). Fired in 2 of 2 record runs."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "mini.test.ts > mini > transition(): same-route nav holds the subtree (state survives)",
+      "rule": "suspense-mutated",
+      "reason": "I7, rule 6: renderSegments rebuilds the @cart parallel slot and writes loaderDataPromise and loaderIds in place on its segment object (src/segment-system.tsx:769, :787-803). That object came from the segment cache and is the one the previous tree handed to React; ParallelOutlet reads those fields during render (renderSlotContent, src/client.tsx:40). Fired in 2 of 2 record runs."
+    },
+    {
+      "app": "rangojs-router",
+      "test": "navigation.test.ts > stale-revalidation > should update quantity on intercept after action on detail page and back navigation",
+      "rule": "rango-error",
+      "reason": "Undeclared, cause: an action started on the intercepted /product/product-a completes after a navigation to the same URL without the intercept (View full details). The action bridge reconciles the response's matched ids, computed for the intercept page (the home route M0L0L0R0 and its ProductsLoader under the modal), against the detail page's cache (src/browser/server-action-bridge.ts:709, segment-reconciler.ts:184) before classifyActionOutcome (server-action-bridge.ts:726) sees the history key change and discards the result; pathname checks cannot tell the two pages apart. Reproduced on origin/main.",
+      "intermittent": true
+    },
+    {
+      "app": "rangojs-router",
+      "test": "pending-actions.test.ts > pending-actions-navigation > action on intercept, navigate to detail, action completes - should not corrupt intercept cache",
+      "rule": "rango-error",
+      "reason": "Undeclared, cause: an action started on the intercepted /product/product-a completes after a navigation to the same URL without the intercept (View full details). The action bridge reconciles the response's matched ids, computed for the intercept page (the home route M0L0L0R0 and its ProductsLoader under the modal), against the detail page's cache (src/browser/server-action-bridge.ts:709, segment-reconciler.ts:184) before classifyActionOutcome (server-action-bridge.ts:726) sees the history key change and discards the result; pathname checks cannot tell the two pages apart. Reproduced on origin/main.",
+      "intermittent": true
+    },
+    {
+      "app": "rangojs-router",
+      "test": "progressive-enhancement.test.ts > progressive-enhancement > with JavaScript enabled > form submission should work with JS enhancement",
+      "rule": "react-hydration-mismatch",
+      "reason": "Undeclared, cause: the fixture's form passes method=\"post\" next to a server function action (e2e/test-app/src/urls/hooks.handlers.tsx:390). React's server renderer writes the server reference's method (POST) and the client compares the prop (post); React also logs that method is overridden for a function action. A fixture issue, not the router. Reproduced on origin/main."
+    }
+  ]
+}

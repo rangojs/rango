@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { waitForHydration, testId, expectNoPageError } from "./helper";
+import { expectConsole } from "@shared/e2e";
 
 /**
  * Rendered barrier e2e tests.
@@ -293,6 +294,12 @@ function renderedBarrierTests(mode: "dev" | "build") {
     test("streaming deadlock: handler awaiting a rendered() loader errors, does not hang", async ({
       page,
     }) => {
+      // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+      expectConsole(page, {
+        allow: [
+          /Unhandled error caught: Error: Deadlock: handler is awaiting loader/,
+        ],
+      });
       // A loading() handler awaits a loader that calls rendered() — a cycle.
       // The deadlock guard must surface an error rather than hang, even though
       // rendered() keeps waiting on handleStore.settled AFTER the barrier

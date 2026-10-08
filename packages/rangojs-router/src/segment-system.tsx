@@ -5,7 +5,7 @@ import {
   type ComponentType,
   isValidElement,
 } from "react";
-import { OutletProvider } from "./outlet-provider.js";
+import { AuditedOutletProvider, OutletProvider } from "./outlet-provider.js";
 import { withOptimisticCommitNone } from "./browser/optimistic-commit.js";
 import { MountContextProvider } from "./browser/react/mount-context.js";
 import type { ResolvedSegment, RootLayoutProps } from "./types.js";
@@ -13,17 +13,25 @@ import { decodeLoaderResults } from "./decode-loader-results.js";
 import { LoaderRedirect } from "./loader-redirect.js";
 import { invariant } from "./errors.js";
 import {
+  AuditedLoaderBoundary,
+  AuditedRouteContent,
   RouteContentWrapper,
   LoaderBoundary,
   StreamedLoaderErrorBoundary,
 } from "./route-content-wrapper.js";
 import { RootErrorBoundary } from "./root-error-boundary.js";
 import { INTERNAL_RANGO_DEBUG } from "./internal-debug.js";
+import { INTERNAL_RANGO_SUSPENSE_AUDIT } from "./internal-suspense-audit.js";
 import { getBoundaryContent } from "./segment-boundary-content.js";
 import {
   buildLoaderPromise,
   getMemoizedLoaderPromise,
 } from "./segment-loader-promise.js";
+import {
+  auditSegmentElement,
+  finishTreeAudit,
+  startTreeAudit,
+} from "./suspense-audit.js";
 
 /**
  * Debug log for the segment tree build, gated on the baked flag. Runs on BOTH
@@ -212,13 +220,25 @@ function wrapDefaultOutletContent(
     } as any);
   }
 
-  if (content.type === OutletProvider && props.segment?.type === "layout") {
+  if (
+    content.type ===
+      (process.env.NODE_ENV !== "production" && INTERNAL_RANGO_SUSPENSE_AUDIT
+        ? AuditedOutletProvider
+        : OutletProvider) &&
+    props.segment?.type === "layout"
+  ) {
     return React.cloneElement(content, {
       content: wrapDefaultOutletContent(props.content, transition),
     } as any);
   }
 
-  if (content.type === LoaderBoundary && props.segment?.type === "layout") {
+  if (
+    content.type ===
+      (process.env.NODE_ENV !== "production" && INTERNAL_RANGO_SUSPENSE_AUDIT
+        ? AuditedLoaderBoundary
+        : LoaderBoundary) &&
+    props.segment?.type === "layout"
+  ) {
     return React.cloneElement(content, {
       outletContent: wrapDefaultOutletContent(props.outletContent, transition),
     } as any);
@@ -376,6 +396,10 @@ export async function renderSegments(
   }
   // Separate segments by type, passing intercept segments for explicit injection
   const tree = segmentTreeWalk(normalizedSegments, normalizedInterceptSegments);
+  // Dev only: the wrapper chain per segment, compared with the previous
+  // tree's (suspense-audit.ts, I5).
+  const treeAudit =
+    process.env.NODE_ENV !== "production" ? startTreeAudit() : undefined;
 
   // A route is "in a transition scope" when its own segment OR any layout in
   // its matched chain declares transition(). Both transition() forms land here:
@@ -489,12 +513,17 @@ export async function renderSegments(
           });
         }
       }
-      nodeContent = createElement(RouteContentWrapper, {
-        key: `suspense-loading-${id}`,
-        content: loadingContent,
-        fallback: loading,
-        segmentId: id,
-      });
+      nodeContent = createElement(
+        process.env.NODE_ENV !== "production" && INTERNAL_RANGO_SUSPENSE_AUDIT
+          ? AuditedRouteContent
+          : RouteContentWrapper,
+        {
+          key: `suspense-loading-${id}`,
+          content: loadingContent,
+          fallback: loading,
+          segmentId: id,
+        },
+      );
     } else {
       // [VT-DIAG] Gated behind INTERNAL_RANGO_DEBUG. A segment in the no-loading()
       // branch whose component decodes as a Promise/lazy gets registered into
@@ -618,28 +647,38 @@ export async function renderSegments(
           );
         }
       }
-      content = createElement(LoaderBoundary, {
-        key: `loader-boundary-${key}`,
-        loaderDataPromise: boundaryLoaderData,
-        loaderIds,
-        loaderStreams: boundaryLoaderStreams,
-        awaitedLoaderIds: boundaryAwaitedLoaderIds,
-        fallback: loading,
-        outletKey: key,
-        outletContent,
-        segment: node.segment,
-        parallel: node.parallel,
-        children: nodeContent,
-      });
+      content = createElement(
+        process.env.NODE_ENV !== "production" && INTERNAL_RANGO_SUSPENSE_AUDIT
+          ? AuditedLoaderBoundary
+          : LoaderBoundary,
+        {
+          key: `loader-boundary-${key}`,
+          loaderDataPromise: boundaryLoaderData,
+          loaderIds,
+          loaderStreams: boundaryLoaderStreams,
+          awaitedLoaderIds: boundaryAwaitedLoaderIds,
+          fallback: loading,
+          outletKey: key,
+          outletContent,
+          segment: node.segment,
+          parallel: node.parallel,
+          children: nodeContent,
+        },
+      );
     } else if (loaderEntries.length === 0) {
-      content = createElement(OutletProvider, {
-        key,
-        content: outletContent,
-        segment: node.segment,
-        parallel: node.parallel,
-        pending: outletPending,
-        children: nodeContent,
-      });
+      content = createElement(
+        process.env.NODE_ENV !== "production" && INTERNAL_RANGO_SUSPENSE_AUDIT
+          ? AuditedOutletProvider
+          : OutletProvider,
+        {
+          key,
+          content: outletContent,
+          segment: node.segment,
+          parallel: node.parallel,
+          pending: outletPending,
+          children: nodeContent,
+        },
+      );
     } else {
       const layoutLoaders = loaderEntries.filter((l) => !l.parallelLoading);
       const parallelOwnedLoaders = loaderEntries.filter(
@@ -773,17 +812,23 @@ export async function renderSegments(
         }
       }
 
-      content = createElement(OutletProvider, {
-        key,
-        content: outletContent,
-        segment: node.segment,
-        parallel: node.parallel,
-        loaderData: Object.keys(loaderData).length > 0 ? loaderData : undefined,
-        loaderStreams,
-        awaitedLoaderIds,
-        pending: outletPending,
-        children: errorFallback ?? nodeContent,
-      });
+      content = createElement(
+        process.env.NODE_ENV !== "production" && INTERNAL_RANGO_SUSPENSE_AUDIT
+          ? AuditedOutletProvider
+          : OutletProvider,
+        {
+          key,
+          content: outletContent,
+          segment: node.segment,
+          parallel: node.parallel,
+          loaderData:
+            Object.keys(loaderData).length > 0 ? loaderData : undefined,
+          loaderStreams,
+          awaitedLoaderIds,
+          pending: outletPending,
+          children: errorFallback ?? nodeContent,
+        },
+      );
     }
 
     // Wrap with MountContextProvider for include() scoped components.
@@ -795,6 +840,22 @@ export async function renderSegments(
         value: node.segment.mountPath,
         children: content,
       });
+    }
+
+    if (process.env.NODE_ENV !== "production") {
+      auditSegmentElement(
+        treeAudit,
+        id,
+        node.segment.type,
+        key,
+        content,
+        node.segment.type === "layout" &&
+          !!ReactViewTransition &&
+          !!transition &&
+          transition.viewTransition !== false,
+        node.parallel.map((p) => p.id),
+        [node.segment, ...node.parallel, ...node.loaders],
+      );
     }
 
     if (segDebug) {
@@ -845,6 +906,8 @@ export async function renderSegments(
       ms: Math.round(performance.now() - segDebugStart),
     });
   }
+
+  if (process.env.NODE_ENV !== "production") finishTreeAudit(treeAudit, result);
 
   return result;
 }

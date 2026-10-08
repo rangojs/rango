@@ -3,6 +3,7 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import { stripVTControlCharacters, styleText } from "node:util";
 import test from "@playwright/test";
+import { consoleGuardMode, installConsoleGuard } from "@shared/e2e";
 import { x } from "tinyexec";
 
 function runCli(options: { command: string; label?: string } & SpawnOptions) {
@@ -23,7 +24,13 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
       // orphaned. Files that spawn many isolatedServer instances (cache.test.ts
       // spawns 21) then accumulate orphaned dev servers until the runner OOMs.
       detached: true,
-      env: { ...process.env, CI: "true", ...options.env },
+      // The repo-only suspense audit (src/internal-suspense-audit.ts).
+      env: {
+        ...process.env,
+        CI: "true",
+        INTERNAL_RANGO_SUSPENSE_AUDIT: "1",
+        ...options.env,
+      },
     },
   }).process!;
   const label = `[${options.label ?? "cli"}]`;
@@ -197,6 +204,12 @@ export function useFixture(options: {
   const cwd = path.resolve(options.root);
   let proc!: ReturnType<typeof runCli>;
   let isolatedViteCacheDir: string | undefined;
+
+  // Every dev test runs under the console guard (@shared/e2e console-guard.ts).
+  // A record run also covers builds, to read the router's own messages there.
+  if (options.mode === "dev" || consoleGuardMode() === "record") {
+    installConsoleGuard({ app: "rangojs-router" });
+  }
 
   test.beforeAll(async ({}, testInfo) => {
     if (options.isolatedServer) {

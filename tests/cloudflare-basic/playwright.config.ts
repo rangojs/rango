@@ -72,7 +72,9 @@ export default defineConfig({
       // webServer runs the build, so the flag is baked into dist/ that the
       // production preview below serves — both dev and (production) describes of
       // render-timeout-stage.test.ts get the 15s deadline + onTimeout. It is off
-      // on every non-e2e build.
+      // on every non-e2e build. INTERNAL_RANGO_SUSPENSE_AUDIT=1 turns on the
+      // repo-only suspense audit in dev (src/internal-suspense-audit.ts);
+      // turbo's strict env would strip it if it came from the caller.
       //
       // vite directly, not `pnpm <script>`: pnpm's verifyDepsBeforeRun can run
       // `pnpm install` first, which aborts in a git worktree with symlinked
@@ -84,6 +86,7 @@ export default defineConfig({
         ...process.env,
         RANGO_MANIFEST_TEXT: "1",
         RANGO_E2E_RENDER_TIMEOUT: "1",
+        INTERNAL_RANGO_SUSPENSE_AUDIT: "1",
       },
     },
     {
@@ -94,7 +97,11 @@ export default defineConfig({
       command: `./node_modules/.bin/vite preview --port ${PREVIEW_PORT}`,
       port: PREVIEW_PORT,
       reuseExistingServer,
-      env: { ...process.env, RANGO_E2E_RENDER_TIMEOUT: "1" },
+      env: {
+        ...process.env,
+        RANGO_E2E_RENDER_TIMEOUT: "1",
+        INTERNAL_RANGO_SUSPENSE_AUDIT: "1",
+      },
     },
   ],
   // In UI mode, flatten projects to avoid the dependency chain that breaks

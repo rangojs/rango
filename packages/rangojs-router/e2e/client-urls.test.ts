@@ -9,6 +9,7 @@ import {
   testId,
   waitForHydration,
 } from "./helper";
+import { expectConsole } from "@shared/e2e";
 
 const INDEX_PATH = "/client-urls-e2e";
 const HARD_LOAD_PATH = "/client-urls-e2e/items/hard-load";
@@ -871,6 +872,12 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
   test("hook probe: a plain React ErrorBoundary is the in-group error affordance", async ({
     page,
   }) => {
+    // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+    expectConsole(page, {
+      allow: [
+        /\[ErrorBoundary\] Error caught: Error: client-urls hooks probe boom/,
+      ],
+    });
     await page.goto(f.url("/client-urls-e2e/hooks"));
     await waitForHydration(page);
 

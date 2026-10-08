@@ -44,6 +44,7 @@ import {
 import { buildHistoryState } from "./history-state.js";
 import { addLocationState } from "./react/location-state-shared.js";
 import type { TransitionWhenKind } from "../types/segments.js";
+import { auditTreeCause, type TreeUpdateCause } from "../suspense-audit.js";
 
 function toScrollPayload(
   scroll: boolean | undefined,
@@ -68,6 +69,13 @@ export function shouldStartViewTransition(
     else if (s.transition) hasTransition = true;
   }
   return !hasIntercept && hasTransition;
+}
+
+// Dev only (suspense-audit.ts I6): what this updater's commit is.
+function treeCause(mode: UpdateMode, traversal?: boolean): TreeUpdateCause {
+  if (mode.type === "action") return "action";
+  if (mode.type === "stale-revalidation") return "stale-revalidation";
+  return traversal ? "popstate" : "navigation";
 }
 
 /**
@@ -464,6 +472,9 @@ export function createPartialUpdater(
             scroll: toScrollPayload(commitScroll),
           };
 
+          if (process.env.NODE_ENV !== "production") {
+            auditTreeCause(treeCause(mode, tx.traversal));
+          }
           if (shouldStartViewTransition(existingSegments, cachedGatedOff)) {
             commitInTransition(onUpdate, existingSegments, cachedUpdate, [
               "navigation",
@@ -491,6 +502,9 @@ export function createPartialUpdater(
             { routeName: payload.metadata.routeName },
           );
 
+          if (process.env.NODE_ENV !== "production") {
+            auditTreeCause(treeCause(mode, tx.traversal));
+          }
           onUpdate({
             root: newTree,
             metadata: payload.metadata,
@@ -718,6 +732,9 @@ export function createPartialUpdater(
         metadata: payload.metadata!,
         scroll: scrollPayload,
       };
+      if (process.env.NODE_ENV !== "production") {
+        auditTreeCause(treeCause(mode, tx.traversal));
+      }
       if (
         !gatedOff &&
         (mode.type === "action" || mode.type === "stale-revalidation")
@@ -823,6 +840,9 @@ export function createPartialUpdater(
         scroll: fullScrollPayload,
       };
 
+      if (process.env.NODE_ENV !== "production") {
+        auditTreeCause(treeCause(mode, tx.traversal));
+      }
       if (mode.type === "stale-revalidation") {
         await rawStreamComplete;
         // Mirror the partial branch's history-key staleness guard (above): the
@@ -836,6 +856,9 @@ export function createPartialUpdater(
             `[Browser] Stale revalidation (full update): history key changed (${historyKeyAtStart} -> ${historyKeyNow}), skipping UI update`,
           );
           return;
+        }
+        if (process.env.NODE_ENV !== "production") {
+          auditTreeCause("stale-revalidation");
         }
         if (fullGatedOff) onUpdate(fullUpdate);
         else {

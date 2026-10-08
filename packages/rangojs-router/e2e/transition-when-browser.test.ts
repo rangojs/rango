@@ -10,6 +10,7 @@ import {
   watchFlash,
   whenLog,
 } from "./transition-when-helpers";
+import { expectConsole } from "@shared/e2e";
 
 /**
  * transition({ when }) is a browser predicate: it runs once per navigation,
@@ -281,6 +282,10 @@ function browserDecisionTests(mode: "dev" | "build") {
     test("a failed action's error-boundary commit decides with action.error", async ({
       page,
     }) => {
+      // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+      expectConsole(page, {
+        allow: [/\[Browser\] Action failed: Error: tx-action-failed/],
+      });
       using _ = expectNoPageError(page);
       await page.goto(f.url("/tx-act/x"));
       await waitForHydration(page);

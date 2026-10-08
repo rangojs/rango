@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { waitForHydration } from "./helper";
+import { expectConsole } from "@shared/e2e";
 
 /**
  * Poll __test/last-error until an error with the expected phase is recorded.
@@ -174,6 +175,12 @@ function timeoutTests(f: ReturnType<typeof useFixture>) {
   });
 
   test("slow action triggers onError with action phase", async ({ page }) => {
+    // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+    expectConsole(page, {
+      allow: [
+        /\[RootErrorBoundary\] Unhandled error caught: Error: Connection closed/,
+      ],
+    });
     // Retry navigation until we get a 200 — on CI the first page.goto can
     // still hit the 2s timeout if Vite hasn't fully warmed all dependencies.
     let loaded = false;
