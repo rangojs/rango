@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EntryData, LoaderEntry } from "../../../server/context";
 import {
+  belowDeferredUnit,
   defersAboveRecord,
   defersLoader,
   defersUnit,
@@ -115,51 +116,14 @@ describe("resolveDeferralScope", () => {
     ]);
   });
 
-  // The prefetch skips what a unit covers, and with it the one thing the
-  // browser has to know before the fill: that the page commits in a
-  // transition.
-  it("says a unit covers a transition() when an entry it covers declares one", () => {
-    const transition = {};
+  it("describes a unit by its chain index and its segment ids, nothing else", () => {
     const section = entry("layout", flagged);
-    const route = entry("route", { transition });
+    const route = entry("route", { transition: {} });
     expect(
       resolveDeferralScope([entry("layout"), section, route]).units.get(
         section,
       ),
-    ).toEqual({ index: 1, ids: [section.shortCode], transition: true });
-
-    // In a slot or an orphan layout of an entry it covers, too.
-    const slotted = entry("route", {
-      parallel: { "@side": entry("parallel", { transition }) },
-    });
-    const above = entry("layout", flagged);
-    expect(
-      resolveDeferralScope([above, slotted]).units.get(above)?.transition,
-    ).toBe(true);
-    const orphaned = entry("route", {
-      ...flagged,
-      layout: [entry("layout", { transition })],
-    });
-    expect(
-      resolveDeferralScope([entry("layout"), orphaned]).units.get(orphaned)
-        ?.transition,
-    ).toBe(true);
-  });
-
-  it("does not say so for a transition() above the unit, or beside a slot", () => {
-    const transition = {};
-    const route = entry("route", flagged);
-    const outer = entry("layout", { transition });
-    expect(
-      resolveDeferralScope([outer, route]).units.get(route)?.transition,
-    ).toBeUndefined();
-
-    const slot = entry("parallel", flagged);
-    const parent = entry("route", { transition, parallel: { "@side": slot } });
-    expect(
-      resolveDeferralScope([entry("layout"), parent]).units.get(slot)
-        ?.transition,
-    ).toBeUndefined();
+    ).toEqual({ index: 1, ids: [section.shortCode] });
   });
 
   it("a flagged route does not cover anything after it", () => {
@@ -646,6 +610,43 @@ describe("the decisions", () => {
     markUnitDeferred(ctx, "L0R1.@side");
     expect(active.deferredUnit).toBe("L0R1");
     expect(() => markUnitDeferred(ctxWith(undefined), "x")).not.toThrow();
+  });
+
+  // The walk is in chain order: what it reaches after a chain unit it
+  // skipped is below that unit.
+  it("below a chain unit a prefetch skipped, defer everything the client does not hold", () => {
+    const section = entry("layout", flagged);
+    const route = entry("route");
+    const slot = `${route.shortCode}.@side`;
+    const active = plan(
+      "prefetch",
+      () => ({ chain: [section, route] }),
+      holding("held"),
+    );
+    const ctx = ctxWith(active);
+
+    expect(defersUnit(ctx, route.shortCode)).toBe(false);
+    expect(belowDeferredUnit(ctx, route.shortCode)).toBe(false);
+
+    markUnitDeferred(ctx, section.shortCode, true);
+    expect(defersUnit(ctx, route.shortCode)).toBe(true);
+    expect(defersUnit(ctx, slot)).toBe(true);
+    expect(belowDeferredUnit(ctx, slot)).toBe(true);
+    expect(defersUnit(ctx, "held")).toBe(false);
+    expect(belowDeferredUnit(ctx, "held")).toBe(false);
+    expect(belowDeferredUnit(ctxWith(undefined), slot)).toBe(false);
+  });
+
+  it("a slot that is its own unit takes nothing with it", () => {
+    const slots = entry("parallel", flagged);
+    const layout = entry("layout", { parallel: { "@side": slots } });
+    const route = entry("route");
+    const active = plan("prefetch", () => ({ chain: [layout, route] }));
+    const ctx = ctxWith(active);
+
+    markUnitDeferred(ctx, `${layout.shortCode}.@side`);
+    expect(defersUnit(ctx, `${layout.shortCode}.@side`)).toBe(true);
+    expect(defersUnit(ctx, route.shortCode)).toBe(false);
   });
 
   it("read the plan off a handler context, or nothing", () => {

@@ -241,19 +241,28 @@ describe("a prefetch: deferral replaces execution", () => {
       deferred: true,
       _handlerRan: false,
     });
-    // The unit's own loaders and its slots' loaders ride as deferred loader
-    // segments under the unit's id; the slot and the orphan do not.
+    // Everything the unit covers is a placeholder: its loaders, its orphan
+    // layout with that layout's loader, its slot with the slot's.
     expect(
       segments
         .filter((s) => s.deferred && s.type === "loader")
-        .map((s) => s.id),
-    ).toEqual(["R1D0.own", "R1D0.slot"]);
-    expect(byId.has("R1.@side")).toBe(false);
-    expect(byId.has("R1L0")).toBe(false);
+        .map((s) => s.id)
+        .sort(),
+    ).toEqual(["R1D0.own", "R1D0.slot", "R1L0D0.orphan"]);
+    for (const [id, type] of [
+      ["R1.@side", "parallel"],
+      ["R1L0", "layout"],
+    ]) {
+      expect(byId.get(id), id).toMatchObject({
+        type,
+        component: null,
+        deferred: true,
+      });
+    }
     expect(plan!.deferredUnit).toBe("R1");
   });
 
-  it("stops the chain at a flagged layout", async () => {
+  it("runs nothing below a flagged layout, and sends a placeholder for each segment there", async () => {
     const outer = entry("layout", "L0");
     const section = entry("layout", "L0L1", {
       ...flagged,
@@ -274,8 +283,20 @@ describe("a prefetch: deferral replaces execution", () => {
       component: null,
       deferred: true,
     });
-    // Nothing below the unit is matched: the fill renders it.
-    expect(matchedIds).toEqual(["L0", "L0L1D0.section", "L0L1"]);
+    expect(byId.get("R2")).toMatchObject({
+      type: "route",
+      component: null,
+      deferred: true,
+    });
+    expect(byId.get("R2D0.page")).toMatchObject({ deferred: true });
+    // The page as a navigation lists it.
+    expect(matchedIds).toEqual([
+      "L0",
+      "L0L1D0.section",
+      "L0L1",
+      "R2D0.page",
+      "R2",
+    ]);
     expect(plan!.deferredUnit).toBe("L0L1");
   });
 

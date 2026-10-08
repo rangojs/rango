@@ -92,6 +92,11 @@ const HeldLoader = counted("held-loader");
 const UnderCacheLoader = counted("under-cache-loader");
 const StaticLoader = counted("static-loader");
 const GalleryLoader = counted("gallery-loader");
+const DeepLayoutLoader = counted("deep-layout-loader");
+const DeepPageLoader = counted("deep-page-loader");
+const DeepSideLoader = counted("deep-side-loader");
+const DeepOrphanLoader = counted("deep-orphan-loader");
+const WideLoader = counted("wide-loader");
 
 const tick = (): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, 5));
@@ -257,6 +262,37 @@ function makeRouter() {
               ]),
               path("/section/animated", page("section-animated"), () => [
                 transition(),
+              ]),
+            ]),
+            // A layout unit over everything a wrapper chain is built from: a
+            // slot with no loading() and one with its own, a route with its
+            // own loading() and transition(), an orphan layout whose slot
+            // repeats the route's loaders under it, loaders at every level.
+            layout(page("deep"), () => [
+              loading(<p>deep-loading</p>, { prefetch: false }),
+              loader(DeepLayoutLoader),
+              parallel({ "@bar": page("deep-bar") }),
+              path("/deep/:id", page("deep-page"), { name: "deep" }, () => [
+                loader(DeepPageLoader),
+                loading(<p>deep-page-loading</p>),
+                transition(),
+                parallel({ "@side": page("deep-side") }, () => [
+                  loader(DeepSideLoader),
+                  loading(<p>deep-side-loading</p>),
+                ]),
+                layout(page("deep-orphan"), () => [
+                  loader(DeepOrphanLoader),
+                  parallel({ "@note": page("deep-note") }),
+                ]),
+              ]),
+            ]),
+            // The same for a route unit.
+            path("/wide/:id", page("wide"), { name: "wide" }, () => [
+              loader(WideLoader),
+              loading(<p>wide-loading</p>, { prefetch: false }),
+              parallel({ "@aside": page("wide-aside") }),
+              layout(page("wide-orphan"), () => [
+                parallel({ "@note": page("wide-note") }),
               ]),
             ]),
             // A flagged layout that re-renders on every navigation, and a
@@ -440,7 +476,29 @@ type Wire = {
   loading?: unknown;
   loaderData?: unknown;
   transition?: unknown;
+  [field: string]: unknown;
 };
+
+/**
+ * What renderSegments (segment-system.tsx) builds a segment's wrapper chain
+ * from: everything but the two values a handler or a loader produces.
+ */
+function chainFields(segment: Wire): Record<string, unknown> {
+  return {
+    id: segment.id,
+    type: segment.type,
+    namespace: segment.namespace,
+    loaderId: segment.loaderId,
+    loading: present(segment.loading),
+    transition: present(segment.transition) ? segment.transition : null,
+    slot: segment.slot,
+    mountPath: segment.mountPath,
+    params: segment.params,
+    belongsToRoute: segment.belongsToRoute,
+    parallelName: segment.parallelName,
+    layoutName: segment.layoutName,
+  };
+}
 
 const present = (value: unknown): boolean =>
   value !== null && value !== undefined && value !== "$undefined";
@@ -617,7 +675,7 @@ describe("R2: a flagged loading() entry in a prefetch", () => {
     expect(payload.deferred).toHaveLength(2);
   });
 
-  it("skips every deeper entry of the chain for a flagged layout", async () => {
+  it("runs no deeper entry of the chain for a flagged layout, and sends a placeholder for each", async () => {
     const { prefetch, serve } = setup();
     const full = payloadOf(
       await serve("/section/a", { partial: { from: "/" } }),
@@ -635,33 +693,113 @@ describe("R2: a flagged loading() entry in a prefetch", () => {
     )!;
     expect(section.component).toBeNull();
     expect(present(section.loading)).toBe(true);
-    // Nothing deeper than the unit is in the payload or in `matched`.
-    const deeper = full.matched.filter(
-      (id) => id !== section.id && id.startsWith(section.id),
-    );
-    const routeId = deeper.find((id) => !id.includes("D"))!;
-    expect(routeId).toBeDefined();
-    expect(payload.matched).not.toContain(routeId);
-    expect(payload.find(SectionPageLoader.$$id)).toBeUndefined();
+    expect(payload.matched).toEqual(full.matched);
+    expect(payload.segments.find((s) => s.type === "route")).toMatchObject({
+      deferred: true,
+      component: null,
+    });
+    expect(payload.find(SectionPageLoader.$$id)).toMatchObject({
+      deferred: true,
+    });
     expect(payload.find(SectionLoader.$$id)).toMatchObject({ deferred: true });
   });
 
-  // The browser decides how the click commits from the segments it has,
-  // before the fill brings the route: a plain click to a route with
-  // transition() commits in a transition. `viewTransition: false`: the
-  // layout itself has no boundary to place.
-  it("a flagged layout's placeholder carries a transition when a route it skips declares transition()", async () => {
-    const { prefetch } = setup();
-    const unit = async (path: string) =>
-      payloadOf(await prefetch(path)).segments.find(
-        (s) => s.type === "layout" && s.deferred === true,
-      )!;
+  // The click builds its tree once, from the prefetched segments and these
+  // placeholders, and the fill only resolves what they stand for. So the
+  // placeholders have to describe the page a plain navigation would build:
+  // the same segments in the same order, each with what its wrapper chain is
+  // built from, and the same `matched`.
+  describe("the skeleton of a deferred unit", () => {
+    for (const [name, url, covered, kept] of [
+      [
+        "a layout unit",
+        "/deep/1",
+        [
+          "deep",
+          "deep-bar",
+          "deep-page",
+          "deep-side",
+          "deep-orphan",
+          "deep-note",
+          "deep-layout-loader",
+          "deep-page-loader",
+          "deep-side-loader",
+          "deep-orphan-loader",
+        ],
+        ["shell"],
+      ],
+      [
+        "a route unit",
+        "/wide/1",
+        ["wide", "wide-aside", "wide-orphan", "wide-note", "wide-loader"],
+        ["shell"],
+      ],
+    ] as const) {
+      it(`${name}: one placeholder per segment it covers, as a plain navigation lists them, and nothing below it runs`, async () => {
+        const { prefetch, serve, fill } = setup();
+        const full = payloadOf(await serve(url, { partial: { from: "/" } }));
+        for (const key of Object.keys(runs)) delete runs[key];
 
-    expect((await unit("/section/animated")).transition).toEqual({
-      viewTransition: false,
+        const result = await prefetch(url);
+        const payload = payloadOf(result);
+        expect(
+          Object.fromEntries(covered.map((work) => [work, count(work)])),
+          "nothing the unit covers ran",
+        ).toEqual(Object.fromEntries(covered.map((work) => [work, 0])));
+        for (const work of kept) expect(count(work), work).toBe(1);
+
+        expect(payload.matched).toEqual(full.matched);
+        expect(payload.segments.map(chainFields)).toEqual(
+          full.segments.map(chainFields),
+        );
+
+        // The unit and everything after it in the walk, and nothing before.
+        const unitAt = payload.segments.findIndex((s) => s.deferred === true);
+        const placeholders = payload.segments.filter((s) => s.deferred);
+        expect(placeholders.length).toBeGreaterThan(covered.length - 1);
+        for (const segment of payload.segments) {
+          if (segment.deferred) {
+            expect(segment.component, segment.id).toBeNull();
+            expect(present(segment.loaderData), segment.id).toBe(false);
+          } else {
+            expect(
+              payload.segments.indexOf(segment) < unitAt ||
+                !segment.id.startsWith(payload.segments[unitAt].id),
+              `${segment.id} is outside the unit`,
+            ).toBe(true);
+          }
+        }
+        expect(await result.readDeferred()).toEqual(
+          placeholders.map((s) => s.id),
+        );
+
+        const filled = payloadOf(await fill(url, payload));
+        expect(
+          Object.fromEntries(covered.map((work) => [work, count(work)])),
+          "the fill ran each once",
+        ).toEqual(Object.fromEntries(covered.map((work) => [work, 1])));
+        for (const work of kept) expect(count(work), work).toBe(1);
+        expect(filled.ids.sort()).toEqual([...payload.deferred].sort());
+        expect(filled.matched).toEqual(payload.matched);
+        expect(filled.deferred).toEqual([]);
+      });
+    }
+
+    it("carries each covered entry's own transition(), so the click knows the page commits in one", async () => {
+      const { prefetch } = setup();
+      const payload = payloadOf(await prefetch("/section/animated"));
+      const layout = payload.segments.find(
+        (s) => s.type === "layout" && s.deferred,
+      )!;
+      const route = payload.segments.find((s) => s.type === "route")!;
+
+      expect(present(layout.transition), "the layout declares none").toBe(
+        false,
+      );
+      expect(route).toMatchObject({ deferred: true, component: null });
+      expect(present(route.transition)).toBe(true);
+      expect(count("section-animated"), "the route did not run").toBe(0);
     });
-    expect(count("section-animated"), "the route did not run").toBe(0);
-    expect(present((await unit("/section/a")).transition)).toBe(false);
   });
 
   it("defers a parallel slot with its own flagged loading() as its own unit", async () => {
@@ -705,7 +843,15 @@ describe("R2: a flagged loading() entry in a prefetch", () => {
     const payload = payloadOf(await prefetch("/above-cache"));
     expect(count("above-cache")).toBe(0);
     expect(count("under-cache")).toBe(0);
-    expect(payload.segments.find((s) => s.type === "route")).toBeUndefined();
+    expect(count("under-cache-loader")).toBe(0);
+    // A placeholder, not the record's content.
+    expect(payload.segments.find((s) => s.type === "route")).toMatchObject({
+      deferred: true,
+      component: null,
+    });
+    expect(payload.find(UnderCacheLoader.$$id)).toMatchObject({
+      deferred: true,
+    });
 
     // Nothing was stored: the navigation renders the route for the first time.
     await serve("/above-cache", { partial: { from: "/" } });
@@ -1424,8 +1570,13 @@ describe("the flag applies only to a segment the client does not have yet", () =
     expect(
       prefetched.segments.filter((s) => s.type === "layout" && s.deferred),
     ).toEqual([expect.objectContaining({ component: null })]);
-    expect(prefetched.segments.some((s) => s.type === "route")).toBe(false);
-    expect(prefetched.find(SectionPlainLoader.$$id)).toBeUndefined();
+    expect(prefetched.segments.find((s) => s.type === "route")).toMatchObject({
+      deferred: true,
+      component: null,
+    });
+    expect(prefetched.find(SectionPlainLoader.$$id)).toMatchObject({
+      deferred: true,
+    });
 
     const filled = payloadOf(await fill("/section/plain", prefetched));
     expect({
@@ -1659,7 +1810,9 @@ describe("a cache() route under a flagged layout uses its record like its unflag
     for (let i = 0; i < 3; i++) {
       const prefetched = payloadOf(await prefetch("/section/cached"));
       // The layout is deferred, and the record below it with it.
-      expect(prefetched.segments.some((s) => s.type === "route")).toBe(false);
+      expect(prefetched.segments.find((s) => s.type === "route")).toMatchObject(
+        { deferred: true, component: null },
+      );
       await fill("/section/cached", prefetched);
     }
     for (let i = 0; i < 3; i++) {
