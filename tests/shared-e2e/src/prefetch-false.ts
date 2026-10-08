@@ -1,5 +1,6 @@
 import {
   expect,
+  type ConsoleMessage,
   type Locator,
   type Page,
   type Request,
@@ -1361,6 +1362,8 @@ export interface PrefetchFalseObservation {
   order: string[];
   /** When each `order` entry became visible. */
   seenAt: number[];
+  /** The `order` entries that first showed inside `container`. */
+  inside: string[];
   /** useNavigation() as `state/isStreaming`, one entry per change. */
   nav: string[];
   /** When each `nav` entry began. */
@@ -1391,200 +1394,213 @@ export interface PrefetchFalseObservation {
  *
  * `held`: test ids of elements on screen now that the next page keeps. Each
  * is watched by node identity: detached, replaced or hidden counts.
+ * `container`: a test id whose descendants are listed in `inside`.
  */
 async function watchPage(
   page: Page,
   held: string[],
+  container?: string,
 ): Promise<{ stop: () => Promise<PrefetchFalseObservation> }> {
-  await page.evaluate((heldIds) => {
-    const visible = (el: Element | null): boolean =>
-      el !== null && el.isConnected && el.getClientRects().length > 0;
-    const find = (id: string) =>
-      document.querySelector(`[data-testid="${id}"]`);
-    const heldNodes = heldIds.map((id) => [id, find(id)] as const);
-    const fallbacks = new Set<string>();
-    const hidden = new Set<string>();
-    const nodes = new Map<string, Set<Element>>();
-    const order: string[] = [];
-    const seenAt: number[] = [];
-    const timeline: string[] = [];
-    const times: number[] = [];
-    const nav: string[] = [];
-    const navAt: number[] = [];
-    let clickedAt = performance.now();
-    let clicked = false;
-    const now = (): number =>
-      clicked ? Math.round(performance.now() - clickedAt) : 0;
-    document.addEventListener(
-      "click",
-      () => {
-        clicked = true;
-        clickedAt = performance.now();
-      },
-      { capture: true, once: true },
-    );
-    let fallbackSince = -1;
-    let fallbackMs = 0;
-    let fallbackGoneAt = 0;
-    const shownSince = new Map<string, number>();
-    const shownMs: Record<string, number> = {};
-    let blank = false;
-    const viewTransitionsAt: number[] = [];
-    const hookOf = (): string | null | undefined =>
-      find("pf-nav")?.getAttribute("data-path");
-    const startPath = location.pathname;
-    const startHook = hookOf();
-    let urlAt: number | null = null;
-    let hookAt: number | null = null;
-    const readUrl = (): void => {
-      if (urlAt === null && location.pathname !== startPath) urlAt = now();
-    };
-    // A history write changes no DOM: read it where it is made.
-    const writes = (["pushState", "replaceState"] as const).map(
-      (name) => [name, history[name]] as const,
-    );
-    for (const [name, write] of writes) {
-      history[name] = function (...args: Parameters<typeof write>) {
-        write.apply(history, args);
+  await page.evaluate(
+    ([heldIds, within]) => {
+      const visible = (el: Element | null): boolean =>
+        el !== null && el.isConnected && el.getClientRects().length > 0;
+      const find = (id: string) =>
+        document.querySelector(`[data-testid="${id}"]`);
+      const heldNodes = heldIds.map((id) => [id, find(id)] as const);
+      const fallbacks = new Set<string>();
+      const hidden = new Set<string>();
+      const nodes = new Map<string, Set<Element>>();
+      const order: string[] = [];
+      const seenAt: number[] = [];
+      const inside: string[] = [];
+      const timeline: string[] = [];
+      const times: number[] = [];
+      const nav: string[] = [];
+      const navAt: number[] = [];
+      let clickedAt = performance.now();
+      let clicked = false;
+      const now = (): number =>
+        clicked ? Math.round(performance.now() - clickedAt) : 0;
+      document.addEventListener(
+        "click",
+        () => {
+          clicked = true;
+          clickedAt = performance.now();
+        },
+        { capture: true, once: true },
+      );
+      let fallbackSince = -1;
+      let fallbackMs = 0;
+      let fallbackGoneAt = 0;
+      const shownSince = new Map<string, number>();
+      const shownMs: Record<string, number> = {};
+      let blank = false;
+      const viewTransitionsAt: number[] = [];
+      const hookOf = (): string | null | undefined =>
+        find("pf-nav")?.getAttribute("data-path");
+      const startPath = location.pathname;
+      const startHook = hookOf();
+      let urlAt: number | null = null;
+      let hookAt: number | null = null;
+      const readUrl = (): void => {
+        if (urlAt === null && location.pathname !== startPath) urlAt = now();
+      };
+      // A history write changes no DOM: read it where it is made.
+      const writes = (["pushState", "replaceState"] as const).map(
+        (name) => [name, history[name]] as const,
+      );
+      for (const [name, write] of writes) {
+        history[name] = function (...args: Parameters<typeof write>) {
+          write.apply(history, args);
+          readUrl();
+        };
+      }
+
+      // Untyped on purpose: older DOM typings lack the method.
+      const doc = document as unknown as {
+        startViewTransition?: (...args: unknown[]) => unknown;
+      };
+      const startViewTransition = doc.startViewTransition;
+      if (startViewTransition) {
+        doc.startViewTransition = function (...args: unknown[]) {
+          viewTransitionsAt.push(now());
+          return startViewTransition.apply(document, args);
+        };
+      }
+
+      const sample = (): void => {
         readUrl();
-      };
-    }
-
-    // Untyped on purpose: older DOM typings lack the method.
-    const doc = document as unknown as {
-      startViewTransition?: (...args: unknown[]) => unknown;
-    };
-    const startViewTransition = doc.startViewTransition;
-    if (startViewTransition) {
-      doc.startViewTransition = function (...args: unknown[]) {
-        viewTransitionsAt.push(now());
-        return startViewTransition.apply(document, args);
-      };
-    }
-
-    const sample = (): void => {
-      readUrl();
-      if (hookAt === null && hookOf() !== startHook) hookAt = now();
-      let fallbackShowing = false;
-      const showing = new Set<string>();
-      for (const el of document.querySelectorAll('[data-testid^="pf-"]')) {
-        if (!visible(el)) continue;
-        const id = el.getAttribute("data-testid")!;
-        if (id.startsWith("pf-link-")) continue;
-        if (!nodes.has(id)) nodes.set(id, new Set());
-        nodes.get(id)!.add(el);
-        if (!order.includes(id)) {
-          order.push(id);
-          seenAt.push(now());
+        if (hookAt === null && hookOf() !== startHook) hookAt = now();
+        let fallbackShowing = false;
+        const showing = new Set<string>();
+        for (const el of document.querySelectorAll('[data-testid^="pf-"]')) {
+          if (!visible(el)) continue;
+          const id = el.getAttribute("data-testid")!;
+          if (id.startsWith("pf-link-")) continue;
+          if (!nodes.has(id)) nodes.set(id, new Set());
+          nodes.get(id)!.add(el);
+          if (!order.includes(id)) {
+            order.push(id);
+            seenAt.push(now());
+            if (
+              within &&
+              el.parentElement?.closest(`[data-testid="${within}"]`)
+            ) {
+              inside.push(id);
+            }
+          }
+          if (id.endsWith("-fallback") || id.endsWith("-loading")) {
+            fallbacks.add(id);
+            fallbackShowing = true;
+            showing.add(id);
+            if (!shownSince.has(id)) shownSince.set(id, now());
+          }
         }
-        if (id.endsWith("-fallback") || id.endsWith("-loading")) {
-          fallbacks.add(id);
-          fallbackShowing = true;
-          showing.add(id);
-          if (!shownSince.has(id)) shownSince.set(id, now());
+        for (const [id, since] of shownSince) {
+          if (showing.has(id)) continue;
+          shownMs[id] = (shownMs[id] ?? 0) + now() - since;
+          shownSince.delete(id);
         }
-      }
-      for (const [id, since] of shownSince) {
-        if (showing.has(id)) continue;
-        shownMs[id] = (shownMs[id] ?? 0) + now() - since;
-        shownSince.delete(id);
-      }
-      if (fallbackShowing && fallbackSince < 0) fallbackSince = now();
-      if (!fallbackShowing && fallbackSince >= 0) {
-        fallbackGoneAt = now();
-        fallbackMs += now() - fallbackSince;
-        fallbackSince = -1;
-      }
-      for (const [id, node] of heldNodes) {
-        if (!visible(node)) hidden.add(id);
-      }
-      const outlet = find("pf-outlet");
-      const shown = outlet
-        ? [...outlet.querySelectorAll('[data-testid^="pf-"]')]
-            .filter(visible)
-            .map((el) => {
-              const id = el.getAttribute("data-testid")!;
-              return el.childElementCount === 0
-                ? `${id}=${el.textContent}`
-                : id;
-            })
-        : [];
-      if (shown.length === 0) blank = true;
-      const snapshot = shown.join(" ");
-      if (timeline[timeline.length - 1] !== snapshot) {
-        timeline.push(snapshot);
-        times.push(now());
-      }
-      const state = find("pf-nav");
-      const reading = `${state?.getAttribute("data-state")}/${state?.getAttribute("data-streaming")}`;
-      if (nav[nav.length - 1] !== reading) {
-        nav.push(reading);
-        navAt.push(now());
-      }
-    };
+        if (fallbackShowing && fallbackSince < 0) fallbackSince = now();
+        if (!fallbackShowing && fallbackSince >= 0) {
+          fallbackGoneAt = now();
+          fallbackMs += now() - fallbackSince;
+          fallbackSince = -1;
+        }
+        for (const [id, node] of heldNodes) {
+          if (!visible(node)) hidden.add(id);
+        }
+        const outlet = find("pf-outlet");
+        const shown = outlet
+          ? [...outlet.querySelectorAll('[data-testid^="pf-"]')]
+              .filter(visible)
+              .map((el) => {
+                const id = el.getAttribute("data-testid")!;
+                return el.childElementCount === 0
+                  ? `${id}=${el.textContent}`
+                  : id;
+              })
+          : [];
+        if (shown.length === 0) blank = true;
+        const snapshot = shown.join(" ");
+        if (timeline[timeline.length - 1] !== snapshot) {
+          timeline.push(snapshot);
+          times.push(now());
+        }
+        const state = find("pf-nav");
+        const reading = `${state?.getAttribute("data-state")}/${state?.getAttribute("data-streaming")}`;
+        if (nav[nav.length - 1] !== reading) {
+          nav.push(reading);
+          navAt.push(now());
+        }
+      };
 
-    const observer = new MutationObserver(sample);
-    observer.observe(document.documentElement, {
-      subtree: true,
-      childList: true,
-      attributes: true,
-      characterData: true,
-    });
-    let frame = 0;
-    const poll = (): void => {
-      sample();
-      frame = requestAnimationFrame(poll);
-    };
-    poll();
-
-    (window as unknown as { __pfWatch: () => unknown }).__pfWatch = () => {
-      sample();
-      observer.disconnect();
-      cancelAnimationFrame(frame);
-      if (startViewTransition) doc.startViewTransition = startViewTransition;
-      for (const [name, write] of writes) history[name] = write;
-      if (fallbackSince >= 0) {
-        fallbackGoneAt = now();
-        fallbackMs += now() - fallbackSince;
-      }
-      for (const [id, since] of shownSince) {
-        shownMs[id] = (shownMs[id] ?? 0) + now() - since;
-      }
-      const completeAt = times[times.length - 1] ?? 0;
-      let quietMs = 0;
-      nav.forEach((reading, index) => {
-        if (reading !== "idle/false") return;
-        const from = Math.min(navAt[index]!, completeAt);
-        const to = Math.min(navAt[index + 1] ?? completeAt, completeAt);
-        quietMs += to - from;
+      const observer = new MutationObserver(sample);
+      observer.observe(document.documentElement, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        characterData: true,
       });
-      return {
-        fallbacks: [...fallbacks].sort(),
-        fallbackGoneAt,
-        fallbackMs,
-        shownMs,
-        hidden: [...hidden].sort(),
-        remounted: [...nodes]
-          .filter(([, seen]) => seen.size > 1)
-          .map(([id]) => id)
-          .sort(),
-        blank,
-        timeline,
-        times,
-        firstChangeAt: times[1] ?? 0,
-        completeAt,
-        order,
-        seenAt,
-        nav,
-        navAt,
-        quietMs,
-        viewTransitions: viewTransitionsAt.length,
-        viewTransitionsAt,
-        urlAt,
-        hookAt,
+      let frame = 0;
+      const poll = (): void => {
+        sample();
+        frame = requestAnimationFrame(poll);
       };
-    };
-  }, held);
+      poll();
+
+      (window as unknown as { __pfWatch: () => unknown }).__pfWatch = () => {
+        sample();
+        observer.disconnect();
+        cancelAnimationFrame(frame);
+        if (startViewTransition) doc.startViewTransition = startViewTransition;
+        for (const [name, write] of writes) history[name] = write;
+        if (fallbackSince >= 0) {
+          fallbackGoneAt = now();
+          fallbackMs += now() - fallbackSince;
+        }
+        for (const [id, since] of shownSince) {
+          shownMs[id] = (shownMs[id] ?? 0) + now() - since;
+        }
+        const completeAt = times[times.length - 1] ?? 0;
+        let quietMs = 0;
+        nav.forEach((reading, index) => {
+          if (reading !== "idle/false") return;
+          const from = Math.min(navAt[index]!, completeAt);
+          const to = Math.min(navAt[index + 1] ?? completeAt, completeAt);
+          quietMs += to - from;
+        });
+        return {
+          fallbacks: [...fallbacks].sort(),
+          fallbackGoneAt,
+          fallbackMs,
+          shownMs,
+          hidden: [...hidden].sort(),
+          remounted: [...nodes]
+            .filter(([, seen]) => seen.size > 1)
+            .map(([id]) => id)
+            .sort(),
+          blank,
+          timeline,
+          times,
+          firstChangeAt: times[1] ?? 0,
+          completeAt,
+          order,
+          seenAt,
+          inside,
+          nav,
+          navAt,
+          quietMs,
+          viewTransitions: viewTransitionsAt.length,
+          viewTransitionsAt,
+          urlAt,
+          hookAt,
+        };
+      };
+    },
+    [held, container] as const,
+  );
   return {
     stop: () =>
       page.evaluate(() =>
@@ -2090,7 +2106,9 @@ export type PrefetchFalseParityRule =
   /** The address bar or a URL hook further ahead of the page. */
   | "url"
   /** A flagged layout's skeleton and layout, against the expectation. */
-  | "skeleton";
+  | "skeleton"
+  /** An error React logged in development during either click. */
+  | "react";
 
 export interface PrefetchFalseOpenGap {
   /** Why the case is open, as the report prints it. */
@@ -2134,6 +2152,13 @@ const OPEN_HELD: PrefetchFalseOpenGap = {
 function layoutSkeleton(
   spec: PrefetchFalseParityCase,
 ): PrefetchFalseParityCase["skeleton"] {
+  if (spec.name === "outer") {
+    return {
+      fallback: "pf-outer-fallback",
+      layout: "pf-outer-inner-layout",
+      content: "pf-outer-page",
+    };
+  }
   if (!SECTION_PAGES.includes(spec.name) || spec.from === "section") {
     return undefined;
   }
@@ -2141,8 +2166,11 @@ function layoutSkeleton(
     fallback: "pf-section-fallback",
     layout: "pf-section-layout",
     // `section-own` has a loading() of its own: the layout covers nothing
-    // of it.
-    ...(spec.name !== "section-own" && { content: `pf-${spec.name}-value` }),
+    // of it. `section-read` reads its loader in an app <Suspense>: the
+    // layout covers the page, not the value.
+    ...(spec.name === "section-read"
+      ? { content: "pf-section-read-page" }
+      : spec.name !== "section-own" && { content: `pf-${spec.name}-value` }),
   };
 }
 
@@ -2151,6 +2179,9 @@ const SLOW_CHILD_DELAY_MS = 1400;
 
 /** The app's own fallback around `section-suspense`'s slow read. */
 const SUSPENSE_FALLBACK = "pf-section-suspense-slow-fallback";
+
+/** The app's own fallback around `section-read`'s loader read. */
+const READ_FALLBACK = "pf-section-read-fallback";
 
 const IN_SECTION = { from: "section", held: ["pf-section-layout"] };
 const BESIDE_SLOT = { held: ["pf-slot-layout", "pf-slot-side"] };
@@ -2164,6 +2195,11 @@ const PARITY_CLICKS: PrefetchFalseParityCase[] = [
   { name: "section-cached" },
   // An app <Suspense> around a 1.5 s read in the page below the layout.
   { name: "section-suspense", innerFallback: SUSPENSE_FALLBACK },
+  // The route's loader read in an app <Suspense>, no loading() of its own.
+  { name: "section-read" },
+  // A flagged loader above a flagged layout: a gate outside the layout's
+  // unit, read in the app's own <Suspense>.
+  { name: "outer", ownFallback: "pf-outer-early-fallback" },
   { name: "slot" },
   { name: "slot-b" },
   { name: "bare" },
@@ -2248,6 +2284,7 @@ const SECTION_PAGES = [
   "section-own",
   "section-cached",
   "section-suspense",
+  "section-read",
 ];
 
 /**
@@ -2338,12 +2375,25 @@ export const PREFETCH_FALSE_PARITY_CASES: PrefetchFalseParityCase[] = [
       ...(name === "section-suspense" && { innerFallback: SUSPENSE_FALLBACK }),
     })),
   ),
-  ...[{}, { from: "control" }].map((source) => ({
-    name: "section-own",
-    ...source,
-    delay: SLOW_CHILD_DELAY_MS,
-    innerFallback: "pf-section-own-fallback",
-  })),
+  ...[{}, { from: "control" }].flatMap((source) => [
+    {
+      name: "section-own",
+      ...source,
+      delay: SLOW_CHILD_DELAY_MS,
+      innerFallback: "pf-section-own-fallback",
+    },
+    {
+      name: "section-read",
+      ...source,
+      delay: SLOW_CHILD_DELAY_MS,
+      innerFallback: READ_FALLBACK,
+    },
+    // The read with no boundary of the app's own: React suspends it to the
+    // nearest one.
+    { name: "section", ...source, delay: SLOW_CHILD_DELAY_MS },
+  ]),
+  // The outer read lands long before the inner layout's own loader.
+  { name: "outer", ownFallback: "pf-outer-early-fallback", hslow: true },
   ...PARITY_CLICKS.filter(
     (spec) => !spec.from && LATENCY_CLICKS.includes(spec.name),
   ).flatMap((spec) => [
@@ -2451,10 +2501,11 @@ export interface PrefetchFalsePair {
  *   (`SAME_FRAME_MS`), no sooner than `SKELETON_MIN_MS` after the skeleton.
  *   The layout's own time is compared with the plain click's covered content,
  *   or React's 300 ms after the skeleton when that is later, and the skeleton
- *   may be a fallback the plain click does not show. Content that shows
- *   after the layout, behind a fallback inside it, is compared with the
- *   plain click's, or React's 300 ms after the layout when that is later;
- *   everything else is compared as in any case.
+ *   may be a fallback the plain click does not show. What shows after the
+ *   layout, inside it or not, is compared with the plain click's, or
+ *   React's 300 ms after the layout when that is later: the layout's reveal
+ *   can commit a fallback, and React's throttle is page-wide. Everything
+ *   else is compared as in any case.
  *
  * Times are compared with `PARITY_MARGIN_MS` to spare. A pair that is later
  * than that is recorded again, up to `PARITY_PAIRS` pairs: the case fails
@@ -2479,7 +2530,22 @@ export async function expectAdoptedClickIsNeverWorseThanAPlainClick(
     onOpen?: (gap: PrefetchFalseOpenGap) => void;
   } = {},
 ): Promise<PrefetchFalsePair> {
-  const first = await recordPlainAndAdoptedClick(page, fixture, spec);
+  // A reader whose use() went away at the same place: React logs it once
+  // per page, in development ("This library called use() to suspend in a
+  // previous render but did not call use() when it finished").
+  const conditionalUse: string[] = [];
+  const onConsole = (message: ConsoleMessage): void => {
+    if (
+      message.type() === "error" &&
+      message.text().includes("conditional-use-of-use")
+    ) {
+      conditionalUse.push(message.text());
+    }
+  };
+  page.on("console", onConsole);
+  const first = await recordPlainAndAdoptedClick(page, fixture, spec).finally(
+    () => page.off("console", onConsole),
+  );
   const { plain, adopted } = first;
   // One failure lists everything that is wrong: a click that is late is
   // usually late because of something else in the list.
@@ -2491,6 +2557,11 @@ export async function expectAdoptedClickIsNeverWorseThanAPlainClick(
   ): void => {
     if (!ok) wrong.push({ rule, what });
   };
+  check(
+    "react",
+    conditionalUse.length === 0,
+    `React reported a conditional use(): ${conditionalUse[0]}`,
+  );
 
   // Below a flagged layout entered from outside, a loading() of the route's
   // own (or an app's <Suspense>) shows inside the layout, by design, where a
@@ -2517,8 +2588,11 @@ export async function expectAdoptedClickIsNeverWorseThanAPlainClick(
     `content on screen was detached or hidden: ${adopted.hidden.join(", ")}`,
   );
   check("kept", !adopted.blank, "the page was blank");
+  const again = spec.skeleton && skeletonInsideLayout(adopted, spec.skeleton);
   const remounted = adopted.remounted.filter(
-    (id) => !plain.remounted.includes(id),
+    (id) =>
+      !plain.remounted.includes(id) &&
+      !(again && id === spec.skeleton?.fallback),
   );
   check(
     "kept",
@@ -2592,8 +2666,8 @@ export async function expectAdoptedClickIsNeverWorseThanAPlainClick(
       "skeleton",
       layoutAt !== undefined &&
         contentAt !== undefined &&
-        Math.abs(layoutAt - contentAt) <= SAME_FRAME_MS,
-      `the layout did not show with the content: the layout at ${layoutAt}, the content at ${contentAt}`,
+        (Math.abs(layoutAt - contentAt) <= SAME_FRAME_MS || again === true),
+      `the layout showed neither with the content nor with its fallback inside: the layout at ${layoutAt}, the content at ${contentAt}`,
     );
     check(
       "skeleton",
@@ -2608,13 +2682,15 @@ export async function expectAdoptedClickIsNeverWorseThanAPlainClick(
     const layoutIndex = spec.skeleton
       ? adopted.order.indexOf(spec.skeleton.layout)
       : -1;
+    const innerAt = adopted.seenAt[index]!;
+    const layoutShownAt = adopted.seenAt[layoutIndex]!;
     check(
       "skeleton",
       plain.fallbacks.includes(spec.innerFallback) &&
         index >= 0 &&
         layoutIndex >= 0 &&
-        Math.abs(adopted.seenAt[index]! - adopted.seenAt[layoutIndex]!) <=
-          SAME_FRAME_MS,
+        (Math.abs(innerAt - layoutShownAt) <= SAME_FRAME_MS ||
+          (again === true && innerAt > layoutShownAt)),
       `${spec.innerFallback} did not show inside the layout as on the plain click`,
     );
   }
@@ -2711,6 +2787,24 @@ const REACT_THROTTLE_MS = 300;
 const SAME_FRAME_MS = 16;
 
 /**
+ * The flagged layout showed with its own fallback inside it. A read with no
+ * boundary of its own below the layout whose data has not landed when the
+ * layout shows: React suspends it to the nearest boundary, the layout's
+ * outlet, whose fallback is the layout's own loading(). So the skeleton shows
+ * a second time, inside the layout, as a plain click shows it there with its
+ * first chunk, and the read's content follows at least React's 300 ms later.
+ */
+function skeletonInsideLayout(
+  click: PrefetchFalseClick,
+  { layout, fallback }: NonNullable<PrefetchFalseParityCase["skeleton"]>,
+): boolean {
+  const has = (snapshot: string, id: string): boolean =>
+    snapshot.split(" ").some((shown) => shown.split("=")[0] === id);
+  const shown = click.timeline.find((snapshot) => has(snapshot, layout));
+  return shown !== undefined && has(shown, fallback);
+}
+
+/**
  * Where the adopted click of a pair is later than the plain one, past the
  * margin, or has the URL further ahead of the page.
  */
@@ -2721,14 +2815,21 @@ function laterThanPlain(
   const late: Broken[] = [];
   const at = (click: PrefetchFalseClick, id: string): number =>
     click.seenAt[click.order.indexOf(id)] ?? Number.NaN;
-  // Content that shows after the layout was behind a fallback inside it (a
-  // loading() of its own, an app's <Suspense>) that React committed with the
-  // layout, so it shows no sooner than REACT_THROTTLE_MS after the layout,
-  // wherever its data landed (production, `section-own` with a 400 ms
-  // loader: the layout at 303 ms, the content at 604, the plain click's at
-  // 406).
+  // The layout's reveal commits a fallback inside it when anything there
+  // is still pending (a loading() of its own, an app's <Suspense>, a read
+  // with no boundary of its own: the layout's outlet), and React holds every
+  // reveal after a fallback commit REACT_THROTTLE_MS, page-wide. So a reveal
+  // after the layout's comes no sooner than that after the layout, wherever
+  // its data landed, inside the layout or not (production, `section-own`
+  // with a 400 ms loader: the layout at 303 ms, the content at 604, the plain
+  // click's at 406; `outer` with a 400 ms loader: the outer read, outside the
+  // layout, at 604 against 411).
   const shownAt = spec.skeleton ? at(adopted, spec.skeleton.layout) : NaN;
-  const after = adopted.completeAt > shownAt + SAME_FRAME_MS;
+  const afterLayout = (id: string): boolean =>
+    at(adopted, id) > shownAt + SAME_FRAME_MS;
+  const last =
+    adopted.order[adopted.seenAt.indexOf(Math.max(...adopted.seenAt))];
+  const after = last !== undefined && afterLayout(last);
   const held = (was: number): number =>
     after ? Math.max(was, shownAt + REACT_THROTTLE_MS) : was;
   const never = (
@@ -2795,14 +2896,19 @@ function laterThanPlain(
   }
   adopted.order.forEach((id, index) => {
     const was = plain.order.indexOf(id);
-    // A flagged layout entered from outside shows with the fill by design.
+    // A flagged layout entered from outside shows with the fill by design,
+    // and so does what shows with it: the layout's bound above holds them.
     if (was < 0 || adopted.fallbacks.includes(id)) return;
     if (id === spec.skeleton?.layout) return;
     const is = adopted.seenAt[index]!;
-    const inside = is > shownAt + SAME_FRAME_MS;
+    const withLayout =
+      adopted.inside.includes(id) && Math.abs(is - shownAt) <= SAME_FRAME_MS;
+    if (withLayout) return;
     never(
       `${id} visible at (ms)`,
-      inside ? held(plain.seenAt[was]!) : plain.seenAt[was]!,
+      afterLayout(id)
+        ? Math.max(plain.seenAt[was]!, shownAt + REACT_THROTTLE_MS)
+        : plain.seenAt[was]!,
       is,
     );
   });
@@ -2866,7 +2972,7 @@ export async function recordPlainAndAdoptedClick(
     const before = await hub.counts();
     const requests = recordPartials(page, hub.pathname(spec.name));
     const near = spec.latency ? await farAway(page, spec.latency) : undefined;
-    const watch = await watchPage(page, held);
+    const watch = await watchPage(page, held, spec.skeleton?.layout);
     await clickWithoutHover(page, spec.name);
     // A page's own link changes neither the URL nor what is on screen: the
     // waits below would pass before the click has started anything.
@@ -3274,6 +3380,8 @@ export function definePrefetchFalseTests(
     "vt-below",
     "own",
     "section-suspense",
+    "section-read",
+    "outer",
   ]) {
     it(`a click that adopts a prefetch builds the page once: ${name}`, (page, fixture) =>
       expectAdoptedClickBuildsThePageOnce(page, fixture, name));

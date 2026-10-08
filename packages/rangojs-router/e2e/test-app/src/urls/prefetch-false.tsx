@@ -220,6 +220,20 @@ export const PfSectionMissingLoader = createLoader((ctx) =>
 export const PfSectionSuspenseLoader = createLoader((ctx) =>
   work(ctx, "section-suspense.data", 100),
 );
+export const PfSectionReadLoader = createLoader((ctx) =>
+  work(ctx, "section-read.data", 100),
+);
+export const PfOuterEarlyLoader = createLoader((ctx) =>
+  work(ctx, "outer.early", 100),
+);
+export const PfOuterLoader = createLoader((ctx) =>
+  work(ctx, "outer.data", 100),
+);
+// &hslow=1 makes it take 600 ms: the inner layout's own work, while the
+// response it streams in has answered long before.
+export const PfOuterInnerLoader = createLoader((ctx) =>
+  work(ctx, "outer-inner.own", ctx.searchParams.get("hslow") === "1" ? 600 : 0),
+);
 
 const CASES = [
   ["loader", "one flagged loader beside an unflagged one, own Suspense"],
@@ -262,6 +276,8 @@ const CASES = [
     "section-suspense",
     "inside the flagged layout, a Suspense around a slow read",
   ],
+  ["section-read", "inside the flagged layout, its loader read in a Suspense"],
+  ["outer", "a flagged loader above a flagged layout, read in a Suspense"],
 ] as const;
 
 const box = {
@@ -464,6 +480,54 @@ function SectionSuspensePage(ctx: any) {
 async function SlowRead({ ctx }: { ctx: any }) {
   const { name, n } = await work(ctx, "section-suspense.slow", 1500);
   return <span data-testid="pf-section-suspense-slow">{`${name}:${n}`}</span>;
+}
+
+// The route's own loader, read inside an app <Suspense>: with no loading()
+// of its own the loader streams to that boundary, and the layout shows
+// without it.
+function SectionReadPage(ctx: any) {
+  countRun(runOf(ctx), "section-read.handler");
+  return (
+    <div data-testid="pf-section-read-page">
+      <Suspense fallback={<span data-testid="pf-section-read-fallback" />}>
+        <PrefetchFalseValue
+          loader={PfSectionReadLoader}
+          testId="pf-section-read-value"
+        />
+      </Suspense>
+    </div>
+  );
+}
+
+// A flagged loader on a layout above a flagged layout, read in the app's own
+// <Suspense>: a page without either defers both, and the outer read is not
+// part of the inner layout's unit.
+function OuterLayout(ctx: any) {
+  countRun(runOf(ctx), "outer.layout");
+  return (
+    <div data-testid="pf-outer-layout">
+      <Suspense fallback={<span data-testid="pf-outer-early-fallback" />}>
+        <PrefetchFalseValue
+          loader={PfOuterEarlyLoader}
+          testId="pf-outer-early"
+        />
+      </Suspense>
+      <Outlet />
+    </div>
+  );
+}
+
+function OuterInnerLayout(ctx: any) {
+  countRun(runOf(ctx), "outer-inner.layout");
+  return (
+    <section data-testid="pf-outer-inner-layout">
+      <PrefetchFalseValue
+        loader={PfOuterInnerLoader}
+        testId="pf-outer-inner-own"
+      />
+      <Outlet />
+    </section>
+  );
 }
 
 // A page that counts its handler and reads one loader.
@@ -793,6 +857,25 @@ export const prefetchFalsePatterns = urls(
           { name: "sectionSuspense" },
           () => [loader(PfSectionSuspenseLoader)],
         ),
+        path("/section-read", SectionReadPage, { name: "sectionRead" }, () => [
+          loader(PfSectionReadLoader),
+        ]),
+      ]),
+
+      // A flagged loader above a flagged layout: two units, one outside the
+      // other's subtree.
+      layout(OuterLayout, () => [
+        loader(PfOuterEarlyLoader, { prefetch: false }),
+        layout(OuterInnerLayout, () => [
+          loader(PfOuterInnerLoader),
+          loading(fallback("outer"), { prefetch: false }),
+          path(
+            "/outer",
+            countedPage("outer", PfOuterLoader),
+            { name: "outer" },
+            () => [loader(PfOuterLoader)],
+          ),
+        ]),
       ]),
 
       // A slot with its own flagged loading(): the slot and its loader are

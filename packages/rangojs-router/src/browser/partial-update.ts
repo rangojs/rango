@@ -158,20 +158,28 @@ function missingIds(
 
 /**
  * How long React keeps a fallback on screen before a Suspense retry may
- * replace it (FALLBACK_THROTTLE_MS in react-reconciler's work loop). A plain
- * click's fallback shows with the first chunk of its response, so that click
- * reveals nothing sooner than this after the chunk. A tree built with holes
- * shows its fallbacks with the click, a round trip earlier: left to React,
- * its reveal comes that much sooner, before data the plain click's reveal
- * includes, with a second fallback where the plain click shows one (measured
- * with 100 ms to the first chunk: content 200 ms late). So the gates of a
- * tree that is on screen resolve this long after the answer's first chunk,
- * or when the answer has streamed, whichever is first.
+ * replace it (FALLBACK_THROTTLE_MS in react-reconciler's work loop). The gates
+ * of a tree on screen resolve this long after the answer's first chunk, or
+ * when the answer has streamed, whichever is first.
  *
- * The rule is for a fallback that is on screen. Where React has not committed
- * the tree when the answer starts, nothing is up to be revealed early, and
- * the gates resolve at once: a page React holds for a read with no boundary
- * would stay this long after its value arrived, for nothing.
+ * It lines a deferred unit's first reveal up with the plain click's. A plain
+ * click's fallback shows with its response's first chunk, so React reveals
+ * nothing sooner than this after that chunk. A tree built with holes shows
+ * its fallbacks with the click, a round trip earlier, and React's throttle
+ * counts from each click's own fallback: left to React, the adopted click
+ * reveals that much sooner, before a late nested read the plain click's one
+ * reveal includes. React then shows that read's own fallback, which the plain
+ * click never shows, and a second throttle holds its content. Measured without
+ * it, production, `inner` and `nested` with the server 100 ms away: the
+ * nested read at 603 to 609 ms against the plain click's 405 to 446, its
+ * fallback added; with it, 361 and 364 ms.
+ *
+ * It never makes a reveal later than a plain click's: that one comes no
+ * sooner than the same first chunk plus this, or with all of its data. It is
+ * not a loader hoist: a gate still resolves with its own stream and follows
+ * it. Where React has not committed the tree there is no fallback up to be
+ * revealed early, and the gates resolve at once: a page React holds for a read
+ * with no boundary would stay this long after its value arrived, for nothing.
  *
  * Not ours to tune. The latency cases of
  * expectAdoptedClickIsNeverWorseThanAPlainClick (tests/shared-e2e) fail when
@@ -193,29 +201,39 @@ interface Gate<T = unknown> {
 }
 
 /**
+ * A segment id continues its parent's with a letter or a dot (`L0L1R0`,
+ * `L0L1.@side`), a loader's its owner's with `D<n>.` (`L0L1D0.<loader id>`).
+ */
+function isBelow(id: string, parent: ResolvedSegment): boolean {
+  return id.startsWith(parent.id) && /^\D/.test(id.slice(parent.id.length));
+}
+
+/**
  * What a layout's own loading() covers among `segments`: the layout's
- * component and the values of every segment below it, loaders by their owner
- * (`<owner>D<n>.<name>`), that no loading() of its own wraps. A segment id
- * continues its parent's with a letter or a dot (`L0L1R0`, `L0L1.@side`).
+ * component, its own loaders, and the components of the segments below it
+ * that no loading() of their own wraps. Their loaders are not: on a plain
+ * click a loader with no loading() of its own streams to its read site
+ * (segment-system.tsx, the OutletProvider lane), and its reader suspends to
+ * the nearest boundary the app or the router placed.
  */
 function coveredBy(
   layout: ResolvedSegment,
   segments: ResolvedSegment[],
 ): unknown[] {
-  const below = (id: string, parent: ResolvedSegment): boolean =>
-    id.startsWith(parent.id) && /^\D/.test(id.slice(parent.id.length));
   const nested = segments.filter(
     (s) =>
       s.type !== "loader" &&
-      below(s.id, layout) &&
+      isBelow(s.id, layout) &&
       s.loading != null &&
       s.loading !== false,
   );
   return segments
-    .filter(
-      (s) =>
-        (s === layout || below(s.id, layout)) &&
-        !nested.some((n) => s === n || below(s.id, n)),
+    .filter((s) =>
+      s.type === "loader"
+        ? s.id.startsWith(layout.id) &&
+          /^D\d+\./.test(s.id.slice(layout.id.length))
+        : (s === layout || isBelow(s.id, layout)) &&
+          !nested.some((n) => s === n || isBelow(s.id, n)),
     )
     .map((s) => (s.type === "loader" ? s.loaderData : s.component));
 }
@@ -636,47 +654,65 @@ export function createPartialUpdater(
         onUpdate({ root, metadata });
       } else {
         config.fill?.handles(metadata);
-        // The tree's fallbacks are on screen, where a plain click's show
-        // with its response and React keeps them up for
-        // FALLBACK_THROTTLE_MS. These have been up since the click: resolved
-        // now, a gate would reveal its boundary a round trip sooner than a
-        // plain click reveals it, without what is still on its way, and a
-        // boundary inside it would show a fallback the plain click never
-        // shows (measured on two reads in nested boundaries, 150 ms apart).
-        // Where React has not committed the tree there is no fallback to
-        // keep up, and it may be one of these gates that React is waiting
-        // for. A layout's placeholder covers the layout: revealed before what
-        // its own loading() covers has arrived, the layout shows that fallback
-        // again inside, and React keeps it up FALLBACK_THROTTLE_MS more
-        // (measured: content at 605 ms against a plain click's 406). So it
-        // waits for exactly that (coveredBy), and a nested loading() or an
-        // app's <Suspense> shows its own fallback inside, as on a plain click.
-        if (holes.shown) {
-          const segments = answers as ResolvedSegment[];
-          const layouts = segments.filter((s) => s.type === "layout");
-          await Promise.race([
-            result.streamComplete.catch(() => {}),
-            layouts.length > 0
-              ? Promise.all(
-                  layouts.flatMap((layout) => coveredBy(layout, segments)),
-                ).catch(() => {})
-              : new Promise((resolve) =>
-                  setTimeout(resolve, FALLBACK_THROTTLE_MS),
-                ),
-          ]);
-          if (gone()) return;
-        }
+        // A gate resolves with the answer's own stream or node and follows
+        // it. On screen, a gate outside every flagged layout's subtree waits
+        // FALLBACK_THROTTLE_MS from the first chunk, or for the stream's end:
+        // no other stream. A layout's placeholder on screen covers the
+        // layout: revealed before what its own loading() covers has arrived,
+        // the layout shows that fallback again inside, and React keeps it up
+        // FALLBACK_THROTTLE_MS more (measured: content at 605 ms against a
+        // plain click's 406). So the gates in its subtree wait for exactly
+        // that (coveredBy); they cannot render before the layout. Where React
+        // has not committed the tree there is no fallback up, and it may be
+        // one of these gates React is waiting for.
+        const segments = answers as ResolvedSegment[];
+        const layouts = holes.shown
+          ? segments.filter((s) => s.type === "layout")
+          : [];
+        const inLayout = (s: ResolvedSegment): boolean =>
+          layouts.some((layout) => s === layout || isBelow(s.id, layout));
+        const streamed = result.streamComplete.catch(() => {});
         // All in one task: a hole below another one is read in the render
         // the outer gate's resolution starts, and a gate that is resolved by
         // then costs that render one microtask, not a fallback.
-        placeholders.forEach((placeholder, index) => {
-          const next = answers[index]!;
-          holes.gates
-            .get(placeholder)!
-            .resolve(
-              placeholder.type === "loader" ? next.loaderData : next.component,
-            );
-        });
+        const settle = async (
+          inside: boolean,
+          wait?: Promise<unknown>,
+        ): Promise<void> => {
+          const group = placeholders.filter(
+            (_, index) => inLayout(segments[index]!) === inside,
+          );
+          if (group.length === 0) return;
+          if (wait) await Promise.race([streamed, wait]);
+          if (wait && gone()) return;
+          for (const placeholder of group) {
+            const next = segments[placeholders.indexOf(placeholder)]!;
+            holes.gates
+              .get(placeholder)!
+              .resolve(
+                placeholder.type === "loader"
+                  ? next.loaderData
+                  : next.component,
+              );
+          }
+        };
+        await Promise.all([
+          settle(
+            false,
+            holes.shown
+              ? new Promise((resolve) =>
+                  setTimeout(resolve, FALLBACK_THROTTLE_MS),
+                )
+              : undefined,
+          ),
+          settle(
+            true,
+            Promise.all(
+              layouts.flatMap((layout) => coveredBy(layout, segments)),
+            ).catch(() => {}),
+          ),
+        ]);
+        if (gone()) return;
       }
 
       // The entry keeps the answer's own streams and nodes, not the gates:

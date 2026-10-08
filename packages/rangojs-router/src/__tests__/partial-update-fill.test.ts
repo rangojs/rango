@@ -415,7 +415,7 @@ describe("adopting a payload with deferred segments", () => {
  * with no loading(), the route below it, and a loader each. Every one is a
  * placeholder; `filled` is what the fill sends for them, in the same order.
  */
-function sectionAdoption() {
+function sectionAdoption({ outer = false } = {}) {
   const layout = seg("L0", { type: "layout", component: "layout" });
   const hole = (id: string, overrides: Partial<ResolvedSegment>) =>
     seg(id, { component: null, deferred: true, ...overrides });
@@ -424,6 +424,8 @@ function sectionAdoption() {
     namespace,
   });
   const placeholders = [
+    // A flagged loader of the held layout above: outside the section's unit.
+    ...(outer ? [loader("L0D0.outer", "outer", "outer")] : []),
     loader("L0L1D0.section", "section", "section"),
     hole("L0L1", { type: "layout", namespace: "section", loading: "skeleton" }),
     hole("L0L1.@side", { type: "parallel", namespace: "side" }),
@@ -642,7 +644,8 @@ describe("the fill landing", () => {
   // response; an adopted click's has been up since the click, so React
   // would reveal what the fill brought a round trip sooner, without what is
   // still on its way: a second fallback and 300 ms more where the plain
-  // click shows everything at once.
+  // click shows everything at once. A flagged layout's unit waits for what
+  // its own loading() covers instead.
   describe("while its response is still streaming", () => {
     const streaming = (response: ReturnType<typeof fillPayload>) => {
       const stream = deferred<void>();
@@ -692,14 +695,14 @@ describe("the fill landing", () => {
       expect(onUpdate).toHaveBeenCalledTimes(1);
     });
 
-    // A layout's placeholder covers the layout. Revealed 300 ms after the
-    // first chunk with its route's loader still on its way, the layout shows
-    // its own fallback again inside, and React keeps that up 300 ms more:
-    // content at 605 ms where a plain click shows it at 406 (a 400 ms
-    // loader). So a layout unit's gates wait, with no deadline, for what its
-    // own loading() covers: here the route below it and the route's loader.
-    // A unit's content renders the holes below it: resolved in one task, a
-    // hole read in that render costs it a microtask, not a fallback.
+    // A layout's placeholder covers the layout. Revealed before what its own
+    // loading() covers has arrived, the layout shows that fallback again
+    // inside, and React keeps it up 300 ms more: content at 605 ms where a
+    // plain click shows it at 406. So a layout unit's gates wait, with no
+    // deadline, for the layout, its own loaders and the components below it
+    // with no loading() of their own. A unit's content renders the holes
+    // below it: resolved in one task, a hole read in that render costs it a
+    // microtask, not a fallback.
     const unsettled = (store: ReturnType<typeof createStore>): boolean =>
       store.cache.get("/product")!.segments.some((s) => s.deferred);
     it("resolves a layout unit's gates when what its loading() covers has arrived", async () => {
@@ -708,22 +711,70 @@ describe("the fill landing", () => {
       const { navigate, fill, store, onUpdate } = setup(adoption);
       await navigate();
       showAdoption(onUpdate);
-      const page = deferred<unknown>();
+      const own = deferred<unknown>();
       const filled = adoption.filled.map((s) =>
-        s.id === "L0L1R0D0.page" ? { ...s, loaderData: page.promise } : s,
+        s.id === "L0L1D0.section" ? { ...s, loaderData: own.promise } : s,
       );
 
       const { response } = streaming(fillPayload(filled, adoption.matched));
       fill.resolve(response);
       await tick(1000);
-      expect(
-        unsettled(store),
-        "the route's loader is under the layout's loading()",
-      ).toBe(true);
+      expect(unsettled(store), "the layout's own loader").toBe(true);
 
-      page.resolve({ page: 1 });
+      own.resolve({ section: 1 });
       await tick(0);
       expect(unsettled(store)).toBe(false);
+    });
+
+    // A loader of a segment below the layout with no loading() of its own
+    // streams to its read site, as on a plain click: its reader suspends to
+    // the nearest boundary, and the layout does not wait for it.
+    it("does not wait for a loader below the layout that streams to its read site", async () => {
+      vi.useFakeTimers();
+      const adoption = sectionAdoption();
+      const { navigate, fill, store, onUpdate } = setup(adoption);
+      await navigate();
+      showAdoption(onUpdate);
+      const filled = adoption.filled.map((s) =>
+        s.id === "L0L1R0D0.page"
+          ? { ...s, loaderData: deferred<unknown>().promise }
+          : s,
+      );
+
+      const { response } = streaming(fillPayload(filled, adoption.matched));
+      fill.resolve(response);
+      await tick(0);
+      expect(unsettled(store)).toBe(false);
+    });
+
+    // No stream waits for another one on a plain click: a gate outside the
+    // layout's subtree is not held for what the layout covers, only for the
+    // 300 ms every gate on screen outside a layout unit waits.
+    it("resolves a gate outside the layout's subtree on its own", async () => {
+      vi.useFakeTimers();
+      const adoption = sectionAdoption({ outer: true });
+      const { navigate, fill, onUpdate } = setup(adoption);
+      await navigate();
+      showAdoption(onUpdate);
+      const settledGates = new Set<string>();
+      for (const placeholder of adoption.placeholders) {
+        void gateOf(placeholder).then(() => settledGates.add(placeholder.id));
+      }
+      const own = deferred<unknown>();
+      const filled = adoption.filled.map((s) =>
+        s.id === "L0L1D0.section" ? { ...s, loaderData: own.promise } : s,
+      );
+
+      const { response } = streaming(fillPayload(filled, adoption.matched));
+      fill.resolve(response);
+      await tick(299);
+      expect([...settledGates]).toEqual([]);
+      await tick(1);
+      expect([...settledGates]).toEqual(["L0D0.outer"]);
+
+      own.resolve({ section: 1 });
+      await tick(0);
+      expect(settledGates.size).toBe(adoption.placeholders.length);
     });
 
     // A loading() of its own below the layout shows its fallback inside the
@@ -874,6 +925,37 @@ describe("the fill landing", () => {
       expect(resolved).toBe(false);
       expect(calls[1].signal?.aborted).toBe(false);
       expect(store.cache.get("/product")!.segments).toContain(adoption.reviews);
+      expect(store.setSegmentIds).toHaveBeenCalledTimes(1);
+      expect(onUpdate).toHaveBeenCalledTimes(1);
+    });
+
+    it("is dropped when the page is left during a layout unit's wait: no gate of it resolves, and the response is not aborted", async () => {
+      vi.useFakeTimers();
+      const adoption = sectionAdoption();
+      const { navigate, fill, store, calls, onUpdate } = setup(adoption);
+      await navigate();
+      showAdoption(onUpdate);
+      let resolved = 0;
+      for (const placeholder of adoption.placeholders) {
+        void gateOf(placeholder).then(() => resolved++);
+      }
+      const own = deferred<unknown>();
+      const filled = adoption.filled.map((s) =>
+        s.id === "L0L1D0.section" ? { ...s, loaderData: own.promise } : s,
+      );
+
+      const { response } = streaming(fillPayload(filled, adoption.matched));
+      fill.resolve(response);
+      await tick(100);
+      cancelPendingFill();
+      own.resolve({ section: 1 });
+      await tick(300);
+
+      expect(resolved).toBe(0);
+      expect(calls[1].signal?.aborted).toBe(false);
+      expect(
+        store.cache.get("/product")!.segments.some((s) => s.deferred),
+      ).toBe(true);
       expect(store.setSegmentIds).toHaveBeenCalledTimes(1);
       expect(onUpdate).toHaveBeenCalledTimes(1);
     });
