@@ -362,7 +362,9 @@ interface TransitionWhenContext {
   action or revalidation commit is urgent and unanimated too, and a segment it
   re-renders shows its `loading()` only while something in it is still pending
   (a gated-off navigation whose data is still streaming shows it; an action
-  whose response already carries the data does not). The router commits an
+  whose response already carries the data does not in a production build,
+  while the dev server still shows it briefly because it resolves each
+  response's client components asynchronously). The router commits an
   action's result after the response arrives, outside the transition React
   opens for a form action or `useActionState` call, so React does not hold it
   either.

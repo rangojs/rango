@@ -776,8 +776,9 @@ export function createPartialUpdater(
         // still pending shows its loading() fallback like a first load; one
         // whose data is already in hand shows none. A gated-off segment keeps
         // its key, so a fallback comes from its boundary suspending on pending
-        // work in this urgent commit, not from a remount (#995). Explicit transition() routes keep the content-hold via the
-        // hasTransition branch above (the opt-in).
+        // work in this urgent commit, not from a remount (#995). Explicit
+        // transition() routes keep the content-hold via the hasTransition
+        // branch above (the opt-in).
         onUpdate(update);
       }
 

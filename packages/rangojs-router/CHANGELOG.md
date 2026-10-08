@@ -2,10 +2,10 @@
 
 ## Unreleased
 
-### Fixed: a boundary with nothing pending no longer shows its `loading()` fallback
+### Fixed: a `loading()` boundary on screen is no longer replaced by its fallback when nothing in it is pending
 
-A `loading()` boundary showed its fallback for about 300 ms in cases where
-nothing in it was pending. Three consumer-visible changes, all in the browser:
+A `loading()` boundary showed its fallback for about 300 ms although nothing
+in it was pending. Three cases, all in the browser:
 
 - A layout or parallel slot with `loading()` that was already on screen was
   replaced by its fallback when the visitor clicked a link that was not
@@ -14,19 +14,19 @@ nothing in it was pending. Three consumer-visible changes, all in the browser:
   `loading()` and a loader read by `useLoader`, and for a slot with its own
   loader and `loading()`. After a plain click or a document load it never did.
   It no longer shows.
-- A `loading()` boundary that is new to the page and has nothing pending (a
-  layout with `loading()` and no loaders, reached by a plain click) showed its
-  fallback for about 300 ms in production. It no longer does. In dev the
-  fallback can still show on the first visit of a page in a session.
-- A commit that `transition({ when })` gated off (a form action or a
-  revalidation) re-rendered the route with its `loading()` skeleton although
-  the data was already in hand. It is still urgent and unanimated, and now a
-  segment it re-renders shows its `loading()` only while something in it is
-  still pending.
+- A layout with `loading()` and no loaders that is new to the page, reached by
+  a plain click, showed its fallback for about 300 ms in production. It no
+  longer does. In dev it still shows: a client component the layout renders is
+  still importing its module in that first render.
+- A form action whose commit `transition({ when })` gated off re-rendered the
+  route behind its `loading()` skeleton although the action response carried
+  the data. The commit is still urgent and unanimated, and in production the
+  skeleton no longer shows. In dev it still shows, for the same reason as
+  above.
 
 What does not change: a boundary with pending work (a loader still streaming,
-a navigation gated off whose data is still arriving) shows its fallback as
-before, and the server render is unchanged.
+a gated-off navigation or `router.refresh()` whose data is still arriving)
+shows its fallback as before, and the server render is unchanged.
 
 ### Fixed: a prerender refresh that started before `markStale()` is stored stale ([#1072](https://github.com/rangojs/rango/issues/1072))
 
