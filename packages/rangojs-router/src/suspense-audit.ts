@@ -507,14 +507,17 @@ export interface TreeAudit {
 
 let lastTree: TreeAudit | undefined;
 
-// The router's wrapper components, by function name. The boundary components
-// are their dev variants here (route-content-wrapper.tsx, outlet-provider.tsx):
-// a link is named after the export.
+// The router's wrapper components, by function name. A boundary component
+// and its dev variant (route-content-wrapper.tsx, outlet-provider.tsx) are
+// one link, named after the product component.
 const WRAPPERS = new Map([
   ["MountContextProvider", "MountContextProvider"],
+  ["LoaderBoundary", "LoaderBoundary"],
   ["AuditedLoaderBoundary", "LoaderBoundary"],
+  ["OutletProvider", "OutletProvider"],
   ["AuditedOutletProvider", "OutletProvider"],
   ["StreamedLoaderErrorBoundary", "StreamedLoaderErrorBoundary"],
+  ["RouteContentWrapper", "RouteContentWrapper"],
   ["AuditedRouteContent", "RouteContentWrapper"],
 ]);
 

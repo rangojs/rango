@@ -15,7 +15,7 @@ import {
   type ReactNode,
 } from "react";
 import { Outlet } from "../client.js";
-import { RouteContentWrapper } from "../route-content-wrapper.js";
+import { AuditedRouteContent } from "../route-content-wrapper.js";
 import { renderSegments } from "../segment-system.js";
 import type { SuspenseAuditReport } from "../suspense-audit.js";
 import {
@@ -86,9 +86,10 @@ function Harness({ initial }: { initial: ReactNode }) {
   return tree;
 }
 
+// The route boundary as segment-system creates it outside a build.
 function boundary(content: Promise<ReactNode> | ReactNode): ReactNode {
   return (
-    <RouteContentWrapper
+    <AuditedRouteContent
       content={content}
       fallback={<Fallback />}
       segmentId="S"

@@ -1,22 +1,19 @@
 "use client";
 
-import { useContext, useMemo, type ReactNode } from "react";
+import {
+  useContext,
+  useMemo,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 import { OutletContext, type OutletContextValue } from "./outlet-context.js";
 import type { ResolvedSegment } from "./types.js";
 import { AuditedOutlet } from "./suspense-audit-react.js";
 
-interface OutletProviderProps {
-  content: ReactNode;
-  parallel?: ResolvedSegment[];
-  segment?: ResolvedSegment;
-  loaderData?: Record<string, any>;
-  loaderStreams?: Record<string, unknown>;
-  awaitedLoaderIds?: readonly string[];
-  pending?: boolean;
-  children: ReactNode;
-}
-
-function OutletContextProvider({
+/**
+ * Outlet content provider — stores parent context for useLoader chain walking.
+ */
+export function OutletProvider({
   content,
   parallel,
   segment,
@@ -25,7 +22,16 @@ function OutletContextProvider({
   awaitedLoaderIds,
   pending = false,
   children,
-}: OutletProviderProps): ReactNode {
+}: {
+  content: ReactNode;
+  parallel?: ResolvedSegment[];
+  segment?: ResolvedSegment;
+  loaderData?: Record<string, any>;
+  loaderStreams?: Record<string, unknown>;
+  awaitedLoaderIds?: readonly string[];
+  pending?: boolean;
+  children: ReactNode;
+}): ReactNode {
   // Get parent context to enable walking up the chain for loader lookups
   const parentContext = useContext(OutletContext);
 
@@ -58,30 +64,20 @@ function OutletContextProvider({
   );
 }
 
-// Dev only (suspense-audit.ts): the segment's mount, tracked under its
-// provider.
-function AuditedOutletProvider({
+// Dev only (suspense-audit.ts): OutletProvider with the segment's mount
+// tracked under it. Chosen where the element is created, inside a NODE_ENV
+// test: see AuditedRouteContent (route-content-wrapper.tsx).
+export function AuditedOutletProvider({
   children,
   ...props
-}: OutletProviderProps): ReactNode {
+}: ComponentProps<typeof OutletProvider>): ReactNode {
   return (
-    <OutletContextProvider {...props}>
+    <OutletProvider {...props}>
       {props.segment ? (
         <AuditedOutlet segmentId={props.segment.id}>{children}</AuditedOutlet>
       ) : (
         children
       )}
-    </OutletContextProvider>
+    </OutletProvider>
   );
 }
-
-/**
- * Outlet content provider — stores parent context for useLoader chain walking.
- *
- * Chosen once per module, not by a branch inside the component: see
- * RouteContentWrapper (route-content-wrapper.tsx).
- */
-export const OutletProvider: (props: OutletProviderProps) => ReactNode =
-  process.env.NODE_ENV !== "production"
-    ? AuditedOutletProvider
-    : OutletContextProvider;

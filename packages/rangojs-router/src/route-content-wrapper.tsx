@@ -1,7 +1,7 @@
 "use client";
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactElement, ReactNode } from "react";
 import { Component, Suspense, use } from "react";
-import { OutletProvider } from "./outlet-provider.js";
+import { AuditedOutletProvider, OutletProvider } from "./outlet-provider.js";
 import type { ResolvedSegment } from "./types.js";
 import {
   decodeLoaderResults,
@@ -98,19 +98,17 @@ export class StreamedLoaderErrorBoundary extends Component<
  *
  * @param segmentId - Stable ID from segment, used for consistent keys across renders
  */
-interface RouteContentProps {
+export function RouteContentWrapper({
+  content,
+  fallback,
+  segmentId,
+}: {
   // A pending promise suspends (use()) and shows the fallback; a node renders
   // without suspending (see getBoundaryContent).
   content: Promise<ReactNode> | ReactNode;
   fallback?: ReactNode;
   segmentId?: string;
-}
-
-function RouteContentBoundary({
-  content,
-  fallback,
-  segmentId,
-}: RouteContentProps): ReactNode {
+}): ReactNode {
   return (
     <Suspense
       fallback={fallback ?? null}
@@ -121,13 +119,25 @@ function RouteContentBoundary({
   );
 }
 
-// Dev only (suspense-audit.ts): the same Suspense, keys and content, with the
-// audit's hooks in components of their own.
-function AuditedRouteContent({
+// Dev only (suspense-audit.ts): RouteContentWrapper's Suspense, keys and
+// content, with the audit's hooks in components of their own.
+//
+// Chosen where the element is created, inside a NODE_ENV test, so a build
+// folds to the product component and nothing else. Two other ways leave
+// bytes in cloudflare-basic's router chunk, both measured: a dev branch
+// inside the product component (React Compiler runs before NODE_ENV is
+// folded and keeps the branch's memo slots, +76 B gzip), and one
+// `export const X = dev ? Audited : Product` per module (the alias statement
+// survives minification, +27 B gzip for three).
+//
+// Line comments on purpose, here and on the other dev-only declarations: the
+// server bundles are not minified and keep a JSDoc block even when the
+// declaration under it is removed.
+export function AuditedRouteContent({
   content,
   fallback,
   segmentId,
-}: RouteContentProps): ReactNode {
+}: ComponentProps<typeof RouteContentWrapper>): ReactNode {
   const audit = useBoundaryAudit(
     `content:${segmentId}`,
     segmentId ?? "",
@@ -155,17 +165,6 @@ function AuditedSuspender({
   useRevealAudit(audit);
   return Suspender({ content });
 }
-
-/**
- * Chosen once per module, not by a branch inside the component: React
- * Compiler runs before NODE_ENV is folded, and a dev branch in a compiled
- * component leaves its memo slots in the production chunk (measured +76 B
- * gzip across the three boundary components in cloudflare-basic).
- */
-export const RouteContentWrapper: (props: RouteContentProps) => ReactNode =
-  process.env.NODE_ENV !== "production"
-    ? AuditedRouteContent
-    : RouteContentBoundary;
 
 const Suspender = ({
   content,
@@ -211,7 +210,7 @@ export interface LoaderBoundaryProps {
   children: ReactNode;
 }
 
-function LoaderSuspenseBoundary({
+export function LoaderBoundary({
   loaderDataPromise,
   loaderIds,
   loaderStreams,
@@ -241,8 +240,8 @@ function LoaderSuspenseBoundary({
   );
 }
 
-// Dev only (suspense-audit.ts), as AuditedRouteContent.
-function AuditedLoaderBoundary({
+// Dev only (suspense-audit.ts): LoaderBoundary, as AuditedRouteContent.
+export function AuditedLoaderBoundary({
   fallback,
   children,
   ...resolver
@@ -275,14 +274,12 @@ function AuditedLoaderResolver({
   audit: BoundaryAudit;
 }): ReactNode {
   useRevealAudit(audit);
-  return LoaderResolver(props);
+  // The resolver's OutletProvider, as its audited component.
+  const outlet = LoaderResolver(props) as ReactElement<
+    ComponentProps<typeof OutletProvider>
+  >;
+  return <AuditedOutletProvider {...outlet.props} key={outlet.key} />;
 }
-
-// Chosen per module: see RouteContentWrapper.
-export const LoaderBoundary: (props: LoaderBoundaryProps) => ReactNode =
-  process.env.NODE_ENV !== "production"
-    ? AuditedLoaderBoundary
-    : LoaderSuspenseBoundary;
 
 /**
  * Internal component that resolves loader promises and renders OutletProvider

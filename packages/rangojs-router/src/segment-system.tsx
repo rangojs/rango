@@ -5,7 +5,7 @@ import {
   type ComponentType,
   isValidElement,
 } from "react";
-import { OutletProvider } from "./outlet-provider.js";
+import { AuditedOutletProvider, OutletProvider } from "./outlet-provider.js";
 import { withOptimisticCommitNone } from "./browser/optimistic-commit.js";
 import { MountContextProvider } from "./browser/react/mount-context.js";
 import type { ResolvedSegment, RootLayoutProps } from "./types.js";
@@ -13,6 +13,8 @@ import { decodeLoaderResults } from "./decode-loader-results.js";
 import { LoaderRedirect } from "./loader-redirect.js";
 import { invariant } from "./errors.js";
 import {
+  AuditedLoaderBoundary,
+  AuditedRouteContent,
   RouteContentWrapper,
   LoaderBoundary,
   StreamedLoaderErrorBoundary,
@@ -217,13 +219,25 @@ function wrapDefaultOutletContent(
     } as any);
   }
 
-  if (content.type === OutletProvider && props.segment?.type === "layout") {
+  if (
+    content.type ===
+      (process.env.NODE_ENV !== "production"
+        ? AuditedOutletProvider
+        : OutletProvider) &&
+    props.segment?.type === "layout"
+  ) {
     return React.cloneElement(content, {
       content: wrapDefaultOutletContent(props.content, transition),
     } as any);
   }
 
-  if (content.type === LoaderBoundary && props.segment?.type === "layout") {
+  if (
+    content.type ===
+      (process.env.NODE_ENV !== "production"
+        ? AuditedLoaderBoundary
+        : LoaderBoundary) &&
+    props.segment?.type === "layout"
+  ) {
     return React.cloneElement(content, {
       outletContent: wrapDefaultOutletContent(props.outletContent, transition),
     } as any);
@@ -498,12 +512,17 @@ export async function renderSegments(
           });
         }
       }
-      nodeContent = createElement(RouteContentWrapper, {
-        key: `suspense-loading-${id}`,
-        content: loadingContent,
-        fallback: loading,
-        segmentId: id,
-      });
+      nodeContent = createElement(
+        process.env.NODE_ENV !== "production"
+          ? AuditedRouteContent
+          : RouteContentWrapper,
+        {
+          key: `suspense-loading-${id}`,
+          content: loadingContent,
+          fallback: loading,
+          segmentId: id,
+        },
+      );
     } else {
       // [VT-DIAG] Gated behind INTERNAL_RANGO_DEBUG. A segment in the no-loading()
       // branch whose component decodes as a Promise/lazy gets registered into
@@ -627,28 +646,38 @@ export async function renderSegments(
           );
         }
       }
-      content = createElement(LoaderBoundary, {
-        key: `loader-boundary-${key}`,
-        loaderDataPromise: boundaryLoaderData,
-        loaderIds,
-        loaderStreams: boundaryLoaderStreams,
-        awaitedLoaderIds: boundaryAwaitedLoaderIds,
-        fallback: loading,
-        outletKey: key,
-        outletContent,
-        segment: node.segment,
-        parallel: node.parallel,
-        children: nodeContent,
-      });
+      content = createElement(
+        process.env.NODE_ENV !== "production"
+          ? AuditedLoaderBoundary
+          : LoaderBoundary,
+        {
+          key: `loader-boundary-${key}`,
+          loaderDataPromise: boundaryLoaderData,
+          loaderIds,
+          loaderStreams: boundaryLoaderStreams,
+          awaitedLoaderIds: boundaryAwaitedLoaderIds,
+          fallback: loading,
+          outletKey: key,
+          outletContent,
+          segment: node.segment,
+          parallel: node.parallel,
+          children: nodeContent,
+        },
+      );
     } else if (loaderEntries.length === 0) {
-      content = createElement(OutletProvider, {
-        key,
-        content: outletContent,
-        segment: node.segment,
-        parallel: node.parallel,
-        pending: outletPending,
-        children: nodeContent,
-      });
+      content = createElement(
+        process.env.NODE_ENV !== "production"
+          ? AuditedOutletProvider
+          : OutletProvider,
+        {
+          key,
+          content: outletContent,
+          segment: node.segment,
+          parallel: node.parallel,
+          pending: outletPending,
+          children: nodeContent,
+        },
+      );
     } else {
       const layoutLoaders = loaderEntries.filter((l) => !l.parallelLoading);
       const parallelOwnedLoaders = loaderEntries.filter(
@@ -782,17 +811,23 @@ export async function renderSegments(
         }
       }
 
-      content = createElement(OutletProvider, {
-        key,
-        content: outletContent,
-        segment: node.segment,
-        parallel: node.parallel,
-        loaderData: Object.keys(loaderData).length > 0 ? loaderData : undefined,
-        loaderStreams,
-        awaitedLoaderIds,
-        pending: outletPending,
-        children: errorFallback ?? nodeContent,
-      });
+      content = createElement(
+        process.env.NODE_ENV !== "production"
+          ? AuditedOutletProvider
+          : OutletProvider,
+        {
+          key,
+          content: outletContent,
+          segment: node.segment,
+          parallel: node.parallel,
+          loaderData:
+            Object.keys(loaderData).length > 0 ? loaderData : undefined,
+          loaderStreams,
+          awaitedLoaderIds,
+          pending: outletPending,
+          children: errorFallback ?? nodeContent,
+        },
+      );
     }
 
     // Wrap with MountContextProvider for include() scoped components.
