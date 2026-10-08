@@ -1,0 +1,315 @@
+# The Suspense contract
+
+If you are about to create, memoize or hand a promise to one of the router's Suspense
+boundaries, or to touch `src/segment-system.tsx`, `src/route-content-wrapper.tsx`,
+`src/segment-loader-promise.ts`, `src/segment-content-promise.ts` or `src/use-loader.tsx`,
+start here. Same if you are adding anything that needs to update the page after it
+committed.
+
+The promise this subsystem keeps: **what is on screen stays on screen.** A page the user
+is looking at is never replaced by its own `loading()` skeleton while nothing in it is
+pending, and never thrown away and mounted again by a commit that should have reconciled
+it.
+
+That sounds like something React gives you for free. It does not, and the reason is the
+whole point of this document.
+
+## What broke
+
+Issue #1079. Click a prefetched link into a layout with `loading()`, then click a plain
+link to a sibling. The layout you are looking at disappears behind its skeleton for
+300 ms and comes back. Nothing was pending: the layout's content and loader data were in
+hand before the commit.
+
+The cause is one line of React semantics. `use(promise)` on a native promise React has
+never seen cannot return in that render, even when the promise settled long ago: React
+has to attach a `then` to learn the value, so it suspends for a microtask. Inside a
+transition nobody notices, because React holds the old screen. On an urgent commit the
+boundary shows its fallback, and React keeps a fallback it has shown for 300 ms.
+
+The router handed the layout `Promise.resolve(node)`, a promise that is settled and
+unread by construction (`getMemoizedContentPromise`, `src/segment-content-promise.ts:39`).
+Every lane that awaits the tree first (`forceAwait`: back/forward, stale revalidation,
+a fully prefetched click) hands the node itself, so the bug only shows on the plain lane
+right after an awaited one. It took a while to find for exactly that reason.
+
+## Why React will not tell you
+
+You would expect React's dev warning, "A component was suspended by an uncached promise",
+to catch this. It cannot. `trackUsedThenable`
+(`react-dom-client.development.js:6262-6276` in react-dom 19.3.0) compares the thenable
+at one `use()` call against the one it saw at that same call in a replay of the same
+render attempt. Its state is cleared when the render finishes or unwinds. A boundary
+that is handed a different promise through its props on the next render is, to React, a
+new render reading a new value.
+
+Measured on main with the guard recording: the router's dev suite printed that warning
+zero times across 1405 tests, while 25 of those tests handed content on screen a settled
+promise it had not read. The warning stays on the console guard's deny list, because
+the day it does fire something is badly wrong, but it is not what protects this
+contract. The audit below is.
+
+## The rules
+
+### 1. One stable thenable per pending value
+
+While a value is pending, every render hands the boundary the same thenable. A new
+promise for the same value makes React start waiting again, and a boundary that was
+about to reveal shows its fallback instead.
+
+Where this is kept today: `getMemoizedContentPromise`
+(`src/segment-content-promise.ts:39`, one promise per component reference),
+`getMemoizedLoaderPromise` (`src/segment-loader-promise.ts:129`, one aggregate per set of
+loader references) and the per-loader streams `buildLoaderStreams` passes through
+untouched (`src/segment-system.tsx`). The three places that read them are `Suspender`
+(`src/route-content-wrapper.tsx:183`), `LoaderResolver` (`:337`) and the `useLoader` read
+site (`src/use-loader.tsx:226`).
+
+A navigation to another URL hands new values, and that is not a violation: it is new
+data. So is a replacement that is already settled in a form React can read (rule 2).
+
+### 2. A settled value is handed in a form React reads synchronously
+
+If the value is in hand, hand the value: the node, the array, or a thenable that already
+carries `status: "fulfilled"` (a Flight chunk, or a promise React has read before). Do
+not wrap it in `Promise.resolve`, and do not build a fresh `Promise.all` over settled
+parts.
+
+This is the rule #1079 broke. It is also the one with the most debt on main: the action
+lane, a same-route navigation inside a transition scope and a commit `transition({ when })`
+gated off all hand content on screen a settled, unread promise. Inside a transition that
+is invisible. On an urgent commit it is the 300 ms skeleton.
+
+### 3. No fallback while nothing is pending
+
+A fallback on screen means the boundary is waiting for something the router handed it:
+its content, its loader aggregate, one of its loader streams, the payload still streaming,
+or (dev only) a client reference still loading. A fallback with none of those is the bug.
+
+A fallback over content that was on screen **while its data is pending** is not this bug.
+An urgent commit does that on purpose: `transition({ when })` gated off re-suspends its
+boundary so the click has visible feedback (#995). The audit counts those
+(`shownWhilePending`) and does not report them.
+
+### 4. The tree keeps its shape
+
+A segment that keeps its React key between two renders keeps its wrapper chain, or React
+unmounts and remounts it and every piece of state under it is gone. The chain and the
+key rules are in [tree-structure.md](../tree-structure.md): read it before you add a
+wrapper.
+
+Two remounts are documented and exempt: a key that changes (a param change outside a
+transition scope gives the route a new param-bearing key), and a segment replaced by
+another type under the same id (an error or notFound segment takes its route's place,
+with its own key rule and wrappers). A key whose shape alone changes, `id` in one render
+and `id-params` in the next, is neither: it means `inTransitionScope` differed between
+the two renders.
+
+### 5. Only a navigation or an action hands React a tree
+
+Anything that needs to update after the page committed goes through a store its readers
+subscribe to, or through a pending promise read with `use()`. Nothing else calls the tree
+update emitter. An inner update, like `useLoader().load()`, is an in-place update.
+
+The allowed causes, and where each one emits:
+
+| Cause                | What it is                                                     | Where it emits                                                                                          |
+| -------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `navigation`         | a link click, `router.push` / `replace` / `refresh`            | `src/browser/partial-update.ts:476` (cached), `:506` (leave intercept), `:736` (partial), `:843` (full) |
+| `popstate`           | back/forward restored from the history cache, or refetched     | `src/browser/navigation-bridge.ts:712`; a refetch goes through `partial-update.ts`                      |
+| `stale-revalidation` | the background refresh after a back/forward onto a stale entry | `src/browser/partial-update.ts:736`, `:860`                                                             |
+| `action`             | a server action's result, its error boundary, its refetch      | `src/browser/server-action-bridge.ts:663`, `:924`; `partial-update.ts` in `action` mode                 |
+| `error`              | a failed request rendered into the tree                        | `src/browser/network-error-handler.ts:37`                                                               |
+| `hmr`                | the refetch after a source edit (dev)                          | `src/browser/rsc-router.tsx:598`                                                                        |
+
+The one subscriber is in `src/browser/react/NavigationProvider.tsx:433`: `store.onUpdate`
+receives the update and calls `setPayload`.
+
+What a new feature that needs a late update uses instead:
+
+- **A store its readers subscribe to.** Loader refreshes go through `loaderStore.subscribe`
+  (`src/use-loader.tsx:308`), handle updates through `eventController.subscribeToHandles`
+  (`src/browser/react/use-handle.ts:110`). The reader re-renders where it sits.
+- **A pending promise read with `use()`.** Hand the reader one stable promise when the
+  page commits (rule 1); when it settles, React reveals the reader. That is how a
+  streamed loader reaches its reader with no second tree update.
+
+What the rule expects per user step, and what main does (measured in the router test-app
+and in cloudflare-basic, dev, `tests/shared-e2e/src/suspense-cases.ts`):
+
+| Flow                                                  | Expected by the rule                                                               | Main                                                     |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| A link click (plain, same route, inside a transition) | 1 `navigation`                                                                     | 1                                                        |
+| A click superseded by a second click                  | at most 1 per click                                                                | 2 (the first payload commits first)                      |
+| `router.refresh()`                                    | 1 `navigation`                                                                     | 1                                                        |
+| A server action                                       | 1 `action`                                                                         | 1                                                        |
+| Back/forward onto a stored page                       | 1 `popstate`                                                                       | 1                                                        |
+| Back/forward onto a page an action made stale         | 1 `popstate`, and 1 `stale-revalidation` only if the revalidation brings something | 1 `popstate` (the fixture's revalidation brings nothing) |
+| Back that closes an intercept                         | 1 `popstate`                                                                       | 1                                                        |
+| A document load and its hydration                     | 0                                                                                  | 0                                                        |
+| A prefetch                                            | 0                                                                                  | 0                                                        |
+| `useLoader().load()`                                  | 0                                                                                  | 0                                                        |
+| A handle pushed after the page committed              | 0                                                                                  | 0                                                        |
+| A `clientUrls()` navigation                           | 1 `navigation`, and one commit                                                     | 1 `navigation`, and 2 to 4 commits                       |
+
+The last row is where main does not meet the target. A cross-route navigation inside a
+`clientUrls()` group presents its destination at the click with a local state update
+(`beginClientUrlNavigation`, `src/client-urls/navigation.ts`; the intent lives in
+`ClientUrlsRoot`, `src/client-urls/client-root.tsx:126`), the router's tree update
+commits it again when the server answers, and clearing the intent commits it a third
+time. Its reader is handed a promise that never settles (`PENDING_FOREVER`,
+`client-root.tsx:30`) and then the real stream. Measured in both apps and both modes:
+3 commits of the destination and 2 of its reader behind an inline boundary, 2 behind
+`loading()`, 4 and 4 for a same-route navigation; 2 promises handed to the reader in
+each. Entering a group from outside is already one commit and one promise. The three
+cases that miss are expected failures that name #1079, so they flip when the feature
+moves onto the one-commit model.
+
+## How it is enforced
+
+Four layers, cheapest first.
+
+**A static tripwire.** `pnpm check:suspense-contract`
+(`tools/check-suspense-contract.mjs`, CI lint job) fails when a file outside two short
+lists calls the tree update emitter, or builds a router boundary or a value one waits
+for. It also fails when an emitter stops naming its cause. It pins the place, not the
+behaviour: a new entry means "read this document and add a case first".
+
+**The dev audit.** `src/suspense-audit.ts` (hooks in `src/suspense-audit-react.tsx`) watches
+every boundary in a dev build and reports on `console.error` under `[rango][suspense]`.
+Counters are on `window.__rangoSuspenseAudit`.
+
+| Invariant | Message            | Counter         | Fires when                                                                                          |
+| --------- | ------------------ | --------------- | --------------------------------------------------------------------------------------------------- |
+| I1        | `I1 swap`          | `swaps`         | a boundary on screen, waiting on a pending thenable, is handed another pending one for the same URL |
+| I2        | `I2 untracked`     | `untracked`     | content that has been on screen is handed a settled native promise React has not read               |
+| I3        | `I3 idle-fallback` | `idleFallbacks` | a boundary new to the page shows its fallback with nothing pending                                  |
+| I3        | `I3 resuspended`   | `resuspended`   | a fallback replaces content on screen with nothing pending                                          |
+| I4        | `I4 remount`       | `remounts`      | a segment is unmounted and mounted again under the same key                                         |
+| I5        | `I5 drift`         | `drifts`        | a segment keeps its key and changes its wrapper chain, or its key changes shape                     |
+| I6        | `I6 uncaused`      | `uncaused`      | a tree update reaches React from an emitter that named no cause, or a cause outside the six         |
+
+Three more fields are counts, not violations: `treeUpdates` (per cause), `handed` (the
+distinct thenables each boundary or read was handed) and `shownWhilePending` (rule 3's
+by-design fallbacks).
+
+The audit is dev only. The boundary components pick their audited variant once per
+module (`RouteContentWrapper`, `LoaderBoundary`, `OutletProvider`), and every other call
+sits behind `process.env.NODE_ENV !== "production"`. No audit code reaches a build:
+cloudflare-basic's client router chunk is 47,515 B gzip against 47,488 B on main, and the
+27 B are three one-line aliases. The switch is per module and not a branch inside the
+component because React Compiler runs before `NODE_ENV` is folded: a dev branch in a
+compiled component leaves its memo slots behind (measured: 76 B).
+
+**The console guard.** `tests/shared-e2e/src/console-guard.ts` is installed by
+`useFixture` in both apps, so every dev e2e test runs under it with no opt-in. A deny
+list (the audit's six messages, React's hydration, key, update-while-rendering,
+max-update-depth and uncached-promise warnings, and any router message at error level)
+fails the test that printed one. A test that provokes a message on purpose declares it
+with `expectConsole(page, { allow: [/.../] })`, and fails if the message does not appear.
+Messages on neither list go to the test's annotations and to one `messages.jsonl` per
+run.
+
+What fails on main today is listed in `tools/e2e-console-baseline.json`, one entry per
+test and rule, each with a reason. `pnpm check:e2e-console-baseline` (CI lint job) fails
+on an entry without a reason or one whose test is gone; the guard itself fails a test
+whose entry no longer fires. A message that depends on timing goes into the baseline
+marked `intermittent`, not behind a retry.
+
+**The cases.** `tests/shared-e2e/src/suspense-cases.ts` and
+`held-boundary-scenario.ts`, run by `suspense-cases.test.ts` and `held-boundary.test.ts`
+in both apps, in a dev and a `(production)` describe. Each case asserts the flash probe
+(DOM), the mounted instance of what is held, the audit at zero, and the tree updates each
+step handed React. Cases that are red on main are expected failures listed by title with
+`#1079`; they fail the run the day they pass, so the entry gets removed.
+
+Unit level: `src/__tests__/suspense-audit.test.tsx` runs each invariant against real React
+with StrictMode on and off, including a streaming navigation the audit must stay silent
+on, and the #1079 shape itself (an awaited render, then an urgent render of the same
+boundaries) as an expected failure.
+
+## Dev is not production
+
+Two things a dev build does that a build does not. Both are encoded, and both decide
+which assertions run where.
+
+- **Client references load per render in dev.** `@vitejs/plugin-rsc` tags client
+  reference ids freshly on each render, so the Flight client hands the first render a
+  lazy that is still `blocked` on its import for a few milliseconds. A boundary new to
+  the page shows its fallback, and React keeps it 300 ms. The audit looks for a blocked
+  reference in what the boundary was handed and stays silent. Assertions that a **new**
+  boundary shows no fallback are production only.
+- **The document's own streamed fallback** stays at least 300 ms. The flash probe is
+  installed after it is gone.
+
+In the other direction, the audit's counters and the tree-update counts are dev only: a
+build carries no audit. In production the cases assert the flash probe, the mounted
+instances and the fixtures' own commit counters.
+
+## Adding a producer
+
+A producer is anything that creates a value a boundary waits for: a new lane in
+`renderSegments`, a new kind of slot, a merge of loader results, a cache restore.
+
+1. Decide what the boundary is handed when the value is pending (one thenable, stable
+   across renders) and when it is in hand (the value). Both branches, on every lane:
+   plain, awaited, action.
+2. Check the wrapper chain is the same on every lane ([tree-structure.md](../tree-structure.md)).
+3. Add a case to `suspense-cases.ts` that reaches it on screen: mounted, then re-rendered
+   by an urgent commit with the value in hand. Run it in dev and production, in both
+   apps.
+4. Add the file to `PRODUCERS` in `tools/check-suspense-contract.mjs` with its reason.
+
+If the feature needs to change the page later, do not emit a tree update. Use a store or
+a promise (rule 5). If you believe it really is a new cause, add it to `TreeUpdateCause`
+in `src/suspense-audit.ts`, to the table above, and to `EMITTERS` in the check.
+
+## Reading an audit message
+
+- **`I2 untracked at content:<id>`**: that segment's content was handed
+  `Promise.resolve(node)` (or an equivalent) while on screen. Hand the node.
+  `at loaders:<key>` is the loader aggregate; `at read:<loader id>` is a `useLoader` read.
+- **`I3 idle-fallback`**: a new boundary suspended on something already settled. Usually
+  the same fix as I2, one lane earlier.
+- **`I3 resuspended ... with nothing pending`**: the 300 ms skeleton of #1079.
+- **`I5 drift at outlet:<id>: wrapper chain link N changed from A to B`**: two lanes build
+  different trees for that segment. Make the wrapper unconditional.
+- **`I4 remount`**: the consequence of a drift at or above the segment's outlet. A link
+  that changes below the outlet (the loader error boundary, a ViewTransition, the
+  content wrapper) remounts the content under it and is reported by I5 alone.
+- **`I6 uncaused`**: something called the emitter without `auditTreeCause`. If it is one
+  of the six causes, name it. If it is not, it should not be a tree update.
+
+## Running the suites
+
+From `packages/rangojs-router` (and the same in `tests/cloudflare-basic`):
+
+```bash
+./node_modules/.bin/playwright test --project=dev suspense-cases.test.ts held-boundary.test.ts
+./node_modules/.bin/playwright test --project=production --no-deps suspense-cases.test.ts held-boundary.test.ts
+```
+
+`RANGO_CONSOLE_GUARD=record` records without failing, `RANGO_CONSOLE_GUARD_DIR=<dir>`
+chooses where `messages.jsonl` and `tests.jsonl` go, and
+`node tools/check-e2e-console-baseline.mjs --from <dir>` compares a recorded run with the
+baseline (`--write` rewrites it and leaves new reasons empty for you to fill).
+`RANGO_SUSPENSE_MEASURE=1` prints the tree updates and commit counts of each case step
+instead of asserting them. `INTERNAL_RANGO_DEBUG=1` makes the audit trace every
+hand-over, mount and fallback.
+
+## What the audit does not see
+
+- I3 stays silent while a payload is streaming. The audit knows what the router handed
+  a boundary; it does not know what inside the content waits on the stream. So a
+  route-level `loading()` that shows while only readers behind their own `<Suspense>`
+  are waiting is not an I3 report. The case "a route whose loaders are all read behind
+  their own boundaries" asserts it with the flash probe in a build instead (red on main,
+  #1079 and #1080).
+
+- A remount below a segment's outlet has no mount record of its own (see I4 above). The
+  cases use an instance marker in the fixture for that.
+- Boundaries an app creates itself (`<Suspense>` in a page) are the app's. The audit
+  covers the router's two boundary components and the `useLoader` read.
+- A test file that does not call `useFixture()` has no guard, HMR projects are recorded
+  and not enforced (they edit source under a running page), and a page from a manual
+  `browser.newContext()` is covered only once the test calls `guardContext(context)`.

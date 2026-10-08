@@ -191,6 +191,9 @@ API docs. They cover both public and internal surfaces.
 - [Matching & lazy-discovery](./internal/matching-and-lazy-discovery.md) -
   dev/prod matching parity, the trie-vs-regex contract, the matching
   invariants, and the measured lazy include() cost tradeoffs
+- [Suspense contract](./internal/suspense-contract.md) - what a boundary may
+  be handed, when a fallback may show, what may hand React a tree, and the
+  dev audit, console guard and cases that hold it
 - [Semantic change checklist](./internal/semantic-change-checklist.md) - the
   pre-merge checklist for PRs that touch routing, rendering, middleware,
   actions, revalidation, intercepts, prerender, or request-context propagation
