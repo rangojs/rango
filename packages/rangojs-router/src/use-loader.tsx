@@ -38,6 +38,11 @@ let privateGroupBucketSeq = 0;
 
 const NOT_FOUND = Symbol("not-found");
 
+/** A settled read as a thenable use() returns at once. */
+function settledRead(value: unknown): Promise<unknown> {
+  return Object.assign(Promise.resolve(value), { status: "fulfilled", value });
+}
+
 /**
  * SPIKE (streaming useLoader): lookup results distinguish a synchronously
  * available value from a still-streaming per-loader promise. A pending stream
@@ -202,10 +207,20 @@ function useLoaderInternal<T>(
     }
     return { contextData: undefined, hasContextData: false };
   }, [context, loader.$$id]);
+  // Every read calls use(), on the stream or on the settled value. React
+  // records a reader that suspended in use() while it mounted, matched by its
+  // place in the tree, and logs a later render there that finishes without
+  // use() ("This library called use() to suspend in a previous render but did
+  // not call use() when it finished"): a read that mounted on a stream, and a
+  // later tree that hands it the value settled (a lane that awaits loaders
+  // before it renders).
+  const read = useMemo(
+    () => walk.pendingStream ?? settledRead(walk.contextData),
+    [walk],
+  );
 
   // SPIKE (streaming useLoader): a pending per-loader stream suspends HERE —
-  // the implicit-suspense read. use() is exempt from hook-order rules, so the
-  // conditional call is legal; on replay after resolution it returns
+  // the implicit-suspense read. On replay after resolution use() returns
   // synchronously and the decoded value takes the contextData slot. Hooks
   // below never run in a suspended render, so their order is stable across
   // every COMPLETED render.
@@ -217,7 +232,9 @@ function useLoaderInternal<T>(
       walk.awaitedLoaderIds,
       walk.pendingStream,
     );
-    contextData = decodeLoaderEntry(use(walk.pendingStream)) as T;
+    contextData = decodeLoaderEntry(use(read)) as T;
+  } else {
+    use(read);
   }
 
   const loaderId = loader.$$id;
