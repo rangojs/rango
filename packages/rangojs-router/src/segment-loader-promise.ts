@@ -7,7 +7,12 @@ import { INTERNAL_RANGO_DEBUG } from "./internal-debug.js";
  * promise it has not read, in a render that cannot wait, shows its fallback.
  * So a cache entry records its array once the aggregate fulfils and later
  * calls return that same array; until then (and when it rejects) they return
- * the promise. A boundary with no loaders gets one shared empty array.
+ * the promise. A boundary with no loaders gets one shared empty array. An
+ * aggregate whose sources are all streams that have fulfilled (React's
+ * `status` on the thenable, which Flight sets itself) is known on its first
+ * call and is the array from the start: the sources of a page whose entry was
+ * rewritten without a render (browser/partial-update.ts settleHoles) are
+ * first aggregated by the next navigation that keeps them.
  *
  * Server: a fresh promise per call, so Suspense emits the fallback in the
  * streamed HTML. A shared resolved promise would carry React's `.status`
@@ -23,8 +28,8 @@ const IS_BROWSER = typeof window !== "undefined";
 interface LoaderCacheEntry {
   sources: any[];
   // Resolves to the same array it records in `value`; a rejection passes
-  // through untouched.
-  promise: Promise<any[]>;
+  // through untouched. Not built for sources that have all fulfilled.
+  promise?: Promise<any[]>;
   value?: any[];
 }
 
@@ -131,17 +136,20 @@ export function getMemoizedLoaderPromise(
   if (entries) {
     for (const entry of entries) {
       if (hasSameReferences(entry.sources, sources)) {
-        return entry.value ?? entry.promise;
+        return (entry.value ?? entry.promise)!;
       }
     }
   }
 
-  const newEntry = { sources } as LoaderCacheEntry;
-  const promise = buildLoaderPromise(loaders).then((values) => {
-    newEntry.value = values;
-    return values;
-  });
-  newEntry.promise = promise;
+  const newEntry: LoaderCacheEntry = { sources };
+  if (sources.every((source) => source?.status === "fulfilled")) {
+    newEntry.value = sources.map((source) => source.value);
+  } else {
+    newEntry.promise = buildLoaderPromise(loaders).then((values) => {
+      newEntry.value = values;
+      return values;
+    });
+  }
   if (entries) {
     // Bound the array: drop the oldest entry before appending when at the cap.
     if (entries.length >= MAX_ENTRIES_PER_KEY) {
@@ -153,5 +161,5 @@ export function getMemoizedLoaderPromise(
   } else {
     primitiveLoaderCache.set(first, [newEntry]);
   }
-  return promise;
+  return (newEntry.value ?? newEntry.promise)!;
 }
