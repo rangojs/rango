@@ -94,6 +94,7 @@ import {
   type DevShellLookup,
 } from "./shell-build-manifest.js";
 import { contextGet } from "../context-var.js";
+import { PREFETCH_HEADER } from "../router/segment-resolution/prefetch-deferral.js";
 import {
   isWarmReplace,
   noteWarmShellEvent,
@@ -302,7 +303,10 @@ type PreparedRender =
   | {
       kind: "payload";
       payload: RscPayload;
-      /** The response depends on the source page: an intercept targets the route. */
+      /**
+       * The response depends on the source page: an intercept targets the
+       * route, or it carries deferred units (`prefetch: false`).
+       */
       sourceScoped: boolean;
       pprReplayStatus?: PprReplayStatus;
       /** The key a navigation-only heal capture stores under, when one is needed. */
@@ -831,6 +835,12 @@ function* preparePayloadPlan<TEnv>(
       };
     }
 
+    // What a prefetch defers depends on what the source page holds: a page
+    // that holds the segment gets it rendered. Adopted from another page, a
+    // deferring payload held the click on a fill for content a plain click
+    // showed at once, and ran held work again.
+    const deferring = result.segments.some((s) => s.deferred);
+    if (deferring) reqCtx._payloadDeferred = true;
     return {
       kind: "payload",
       payload: {
@@ -860,7 +870,7 @@ function* preparePayloadPlan<TEnv>(
           stateCookieName: ctx.router.resolvedStateCookieName,
         },
       },
-      sourceScoped: result.interceptTargeted === true,
+      sourceScoped: result.interceptTargeted === true || deferring,
       pprReplayStatus,
       healKey,
     };
@@ -1200,15 +1210,33 @@ function renderPreparedRscResponse<TEnv>(
     rscHeaders["x-rsc-prefetch-scope"] = "source";
   }
   // Enable browser HTTP caching for prefetch responses only.
-  // Requires X-Rango-Prefetch header (sent by Link prefetch fetch),
-  // a source-agnostic response (see sourceScoped above), and a configured
-  // cache-control value (false disables caching).
-  const isPrefetch = requestHeaders(request).has("X-Rango-Prefetch");
-  if (isPrefetch && isPartial && !sourceScoped) {
+  // Requires a prefetch request (X-Rango-Prefetch, sent by Link prefetch
+  // fetch), a source-agnostic response (see sourceScoped above), and a
+  // configured cache-control value (false disables caching).
+  if (reqCtx._requestKind === "prefetch" && isPartial && !sourceScoped) {
     const cc = ctx.router.prefetchCacheControl;
     if (cc) {
       rscHeaders["cache-control"] = cc;
     }
+  }
+  // prefetch: false (docs/design/prefetch-false.md, R7). A response that
+  // carries deferred units answers one page's prefetch, and a fill is the
+  // second half of one adoption: neither is reused by a shared cache or the
+  // document cache (which also refuses a payload marked `_payloadDeferred`),
+  // whatever Cache-Control the route set. A route with no flag keeps its
+  // headers.
+  if (
+    reqCtx._payloadDeferred ||
+    (isPartial && reqCtx._requestKind === "fill")
+  ) {
+    rscHeaders["cache-control"] = NOT_REUSED;
+  }
+  // The browser may still keep the body, and answers from it without asking
+  // while it reloads a document for back/forward. A navigation is the same
+  // URL as its prefetch: the header that tells them apart keeps the deferring
+  // body from answering one.
+  if (reqCtx._payloadDeferred) {
+    rscHeaders.vary += `, ${PREFETCH_HEADER}`;
   }
 
   const isFlightResponse = isRscRequest(request, url, isPartial);
@@ -1693,6 +1721,21 @@ function publishTailTiming(
 }
 
 const PENDING = Symbol("pending");
+
+/**
+ * Cache-Control of a response that is not to be reused: one that carries
+ * deferred units (`prefetch: false`), and a fill. `private` keeps it out of
+ * shared caches; `no-cache` makes the browser ask again, and with no
+ * validator on the response that is a full request. The browser may keep the
+ * body all the same (Chromium does) and answers from it, without asking,
+ * while it reloads a document for back/forward. That is harmless: the client
+ * completes any payload that carries deferred work, wherever it came from.
+ * Not `no-store`:
+ * Chromium reports a `no-store` fetch whose body is read through a stream
+ * as canceled (net::ERR_ABORTED in DevTools, and Playwright's
+ * response.finished() never settles), though every byte arrived.
+ */
+const NOT_REUSED = "private, no-cache";
 
 /**
  * Whether `value` is not a promise, or a promise that has already settled:

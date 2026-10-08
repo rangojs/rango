@@ -137,7 +137,7 @@
     },
     {
       "name": "loader",
-      "description": "Define data loaders with createLoader and register them on routes with loader(). Use when a route needs per-request data that stays fresh and streams while the page renders, a client component reads server data with useLoader, a loader should re-run after specific actions (revalidate), be cached (cache), be callable from the client (fetchable loaders), throw notFound()/redirect(), write page meta/breadcrumbs handles, or must be settled in the SSR'd document (ssr:false).",
+      "description": "Define data loaders with createLoader and register them on routes with loader(). Use when a route needs per-request data that stays fresh and streams while the page renders, a client component reads server data with useLoader, a loader should re-run after specific actions (revalidate), be cached (cache), be callable from the client (fetchable loaders), throw notFound()/redirect(), write page meta/breadcrumbs handles, must be settled in the SSR'd document (ssr:false), or must stay out of link prefetches (prefetch:false).",
       "argumentHint": "[loader]",
       "path": "skills/loader/SKILL.md"
     },

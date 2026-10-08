@@ -303,6 +303,7 @@ import { interceptWhenShapePatterns } from "./pages/intercept-when-shape.js";
 import { authRedirectPatterns } from "./pages/auth-redirect.js";
 import { redirectLoopPatterns } from "./pages/redirect-loop.js";
 import { deferredHandleNavPatterns } from "./pages/deferred-handle-nav.js";
+import { prefetchFalsePatterns } from "./pages/prefetch-false.js";
 import { onErrorLog, clearOnErrorLog } from "./error-log.js";
 import {
   WarmCachedPage,
@@ -2710,6 +2711,11 @@ export const urlpatterns = urls(
         // Fully-prefetched commit mode: no-flash + client-mount-suspense
         // layout-hold contract (mirrors the router e2e app).
         include("/", prefetchTransitionPatterns, { name: "" }),
+        // prefetch: false on loader() and loading(): one page per case with
+        // server-side run counters (mirrors the router e2e app).
+        include("/prefetch-false", prefetchFalsePatterns, {
+          name: "prefetchFalse",
+        }),
         // transition({ when }) conditional-gate coverage (mirrors the router
         // e2e app's /tx-when/:hold/:n).
         include("/", txWhenPatterns, { name: "" }),

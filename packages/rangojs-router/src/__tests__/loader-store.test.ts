@@ -796,5 +796,26 @@ describe("LoaderStore", () => {
       store.reset();
       expect(store.isStreamPending("product")).toBe(false);
     });
+
+    // An abandoned fill's gate never settles (browser/partial-update.ts).
+    it("releasePendingStream() releases a stream that will never settle", () => {
+      const gate = new Promise(() => {});
+      store.trackPendingStream("product", gate);
+      store.releasePendingStream("product", gate);
+      expect(store.isStreamPending("product")).toBe(false);
+    });
+
+    it("releasePendingStream() leaves the family pending while another stream is", () => {
+      const gate = new Promise(() => {});
+      const other = new Promise(() => {});
+      store.trackPendingStream("product", gate);
+      store.trackPendingStream("product", other);
+      store.releasePendingStream("product", gate);
+      expect(store.isStreamPending("product")).toBe(true);
+      // Unknown stream or family: nothing to release.
+      store.releasePendingStream("product", gate);
+      store.releasePendingStream("unknown", gate);
+      expect(store.isStreamPending("product")).toBe(true);
+    });
   });
 });

@@ -17,6 +17,7 @@ export function SegmentsDisplay() {
         fontSize: "12px",
         padding: "8px",
         background: "#f5f5f5",
+        color: "#111",
         marginTop: "8px",
       }}
     >

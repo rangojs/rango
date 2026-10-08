@@ -1,0 +1,23 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`a prefetch of a route with no prefetch: false > is byte-identical to the response before the option existed 1`] = `
+{
+  "cacheControl": "private, max-age=300",
+  "flight": "1:"<package>/src/client.tsx"
+2:I["$1",[],"Outlet",1]
+5:x
+0:{"metadata":{"pathname":"/product/1","routerId":"unflagged","segments":[{"id":"M0L0","namespace":"#router.M0.$root","type":"layout","index":0,"component":["$","$L2",null,{}],"loading":"$undefined","transition":"$undefined","params":{"id":"1"},"belongsToRoute":false,"layoutName":"#router.M0.$root"},{"id":"M0L0L0D0.__rango_runtime_loader_1","namespace":"#router.M0.$root.$layout.0","type":"loader","index":0,"component":null,"params":"$0:metadata:segments:0:params","loaderId":"__rango_runtime_loader_1","loaderData":"$@3","belongsToRoute":false},{"id":"M0L0L0","namespace":"#router.M0.$root.$layout.0","type":"layout","index":0,"component":["$","main",null,{"children":"shell"}],"loading":"$undefined","transition":"$undefined","params":"$0:metadata:segments:0:params","belongsToRoute":false,"layoutName":"#router.M0.$root.$layout.0"},{"id":"M0L0L0R1D0.__rango_runtime_loader_0","namespace":"#router.M0.$root.$layout.0.$route.1.product","type":"loader","index":0,"component":null,"params":"$0:metadata:segments:0:params","loaderId":"__rango_runtime_loader_0","loaderData":"$@4","belongsToRoute":true},{"id":"M0L0L0R1.@side","namespace":"#router.M0.$root.$layout.0.$route.1.product.$$parallel.0","type":"parallel","index":0,"component":["$","aside",null,{"children":"side"}],"loading":["$","p",null,{"children":"side-loading"}],"transition":"$undefined","params":"$0:metadata:segments:0:params","slot":"@side","belongsToRoute":true,"parallelName":"#router.M0.$root.$layout.0.$route.1.product.$$parallel.0.@side"},{"id":"M0L0L0R1","namespace":"#router.M0.$root.$layout.0.$route.1.product","type":"route","index":0,"component":["$","article",null,{"children":"product-1"}],"loading":["$","p",null,{"children":"product-loading"}],"transition":"$undefined","params":"$0:metadata:segments:0:params","belongsToRoute":true}],"matched":["M0L0","M0L0L0D0.__rango_runtime_loader_1","M0L0L0","M0L0L0R1D0.__rango_runtime_loader_0","M0L0L0R1.@side","M0L0L0R1"],"diff":["M0L0","M0L0L0D0.__rango_runtime_loader_1","M0L0L0","M0L0L0R1D0.__rango_runtime_loader_0","M0L0L0R1.@side","M0L0L0R1"],"resolvedIds":["M0L0","M0L0L0","M0L0L0R1.@side","M0L0L0R1"],"params":"$0:metadata:segments:0:params","routeName":"product","isPartial":true,"slots":"$undefined","interceptTargets":"$undefined","handles":"$5","version":"v1","prefetchCacheTTL":300000,"prefetchCacheSize":100,"prefetchConcurrency":2,"defaultPrefetch":"viewport","stateCookieName":"rango-state_unflagged"}}
+3:{"__loaderResult":true,"ok":true,"data":{"stock":3}}
+4:{"__loaderResult":true,"ok":true,"data":{"price":12}}
+5:C
+",
+  "headers": [
+    "cache-control",
+    "content-type",
+    "server-timing",
+    "vary",
+    "x-rsc-router-id",
+  ],
+  "vary": "accept, X-Rango-State, X-RSC-Router-Client-Path, X-Rango-Fragment-Passthrough, X-Rango-Fragment-Recovery",
+}
+`;

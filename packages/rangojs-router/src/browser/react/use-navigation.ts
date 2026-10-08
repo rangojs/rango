@@ -12,6 +12,7 @@ import { NavigationStoreContext } from "./context.js";
 import { shallowEqual } from "./shallow-equal.js";
 import type { PublicNavigationState } from "../types.js";
 import type { DerivedNavigationState } from "../event-controller.js";
+import { isAdopting } from "../pending-fill.js";
 
 /**
  * Convert derived state to public version (strips inflightActions)
@@ -108,6 +109,18 @@ export function useNavigation<T>(
 
         // Always update base state so UI reflects current state
         setBaseValue(nextSelected);
+      }
+
+      // Last, so it wins over a release above (pending-fill.ts emitAdoption).
+      if (isAdopting()) {
+        const select = selectorRef.current;
+        const loading: PublicNavigationState = {
+          ...publicState,
+          state: "loading",
+        };
+        startTransition(() => {
+          setOptimisticValue(select ? select(loading) : loading);
+        });
       }
     };
 

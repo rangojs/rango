@@ -14,6 +14,7 @@
  */
 
 import { requestHeaders } from "../server/request-headers.js";
+import { FILL_PARAM } from "../router/segment-resolution/prefetch-deferral.js";
 import type { MiddlewareFn, MiddlewareContext } from "../router/middleware.js";
 import { hasPerClientSignal } from "../browser/cookie-name.js";
 import {
@@ -122,7 +123,10 @@ function parseCacheControl(header: string | null): CacheDirectives | null {
  */
 function shouldCacheResponse(
   response: Response,
-  requestCtx?: Pick<RequestContext, "_payloadVisitorTheme">,
+  requestCtx?: Pick<
+    RequestContext,
+    "_payloadVisitorTheme" | "_payloadDeferred"
+  >,
 ): CacheDirectives | null {
   // Only cache successful responses
   if (response.status !== 200) {
@@ -143,6 +147,15 @@ function shouldCacheResponse(
   // response opted in (a Cache-Control written after next()), so
   // payloadInitialTheme could not render the default.
   if (requestCtx?._payloadVisitorTheme) {
+    return null;
+  }
+
+  // prefetch: false. The payload carries deferred units: it answers one
+  // page's prefetch and nothing else. parseCacheControl refuses the
+  // Cache-Control it is sent with (rsc-rendering.ts NOT_REUSED), but a
+  // middleware can replace that after next(), and a navigation answered
+  // with this body would show a fallback no fill ever replaces.
+  if (requestCtx?._payloadDeferred) {
     return null;
   }
 
@@ -334,6 +347,14 @@ export function createDocumentCacheMiddleware<TEnv = any>(
 
     // Skip loader requests (have their own caching)
     if (rawUrl.searchParams.has("_rsc_loader")) {
+      return next();
+    }
+
+    // Skip fill requests (prefetch: false): a fill is the second half of one
+    // adoption, rendered against what that client holds. Never served from a
+    // stored body and never stored. Asked of the raw URL like the two skips
+    // above: the request context is not read yet.
+    if (rawUrl.searchParams.has(FILL_PARAM)) {
       return next();
     }
 

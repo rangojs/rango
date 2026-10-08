@@ -479,6 +479,30 @@ mounted viewport/render Links. Links share one document-level scope observer,
 not one observer per Link or container. Adding a scope cannot recall work already
 queued or in flight; removing it re-arms both Link types.
 
+### What a prefetch renders
+
+A prefetch is a navigation sent early (a partial request with an
+`X-Rango-Prefetch` header), and by default the server renders everything for
+it: every handler and every loader. That is the point, a click then commits
+without a request, but it is also forty renders for a grid of forty links.
+Keep the expensive part out of the prefetch on the route, not on the link:
+
+```tsx
+// skip one loader
+loader(ReviewsLoader, { prefetch: false }),
+// skip what the fallback covers
+loading(<OrdersSkeleton />, { prefetch: false }),
+```
+
+A click that adopts such a prefetch commits what was prefetched, shows the
+fallback for the deferred part, and sends one extra request for it. Only what
+is new to the page is deferred: a segment already on screen (the layout of the
+section you are in, the route itself on `/product/a` to `/product/b`) is
+prefetched as usual. See
+`/loader` → "`prefetch: false`" and `/route` → "`loading()` options". To stop
+a link or a whole section from prefetching at all, use the `prefetch` prop or
+`data-prefetch-scope` above.
+
 ## When to use what
 
 | Context          | API                                                | Resolves                                  | Use for                                                          |

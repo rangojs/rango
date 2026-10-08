@@ -32,7 +32,12 @@ import {
   getContext,
   type InterceptSelectorContext,
 } from "../server/context";
-import type { ErrorBoundaryHandler, ErrorInfo, MatchResult } from "../types";
+import type {
+  ErrorBoundaryHandler,
+  ErrorInfo,
+  InternalHandlerContext,
+  MatchResult,
+} from "../types";
 import type { ReactNode } from "react";
 import type { MatchContext } from "./match-context.js";
 import type { MatchApiDeps, ActionContext } from "./types.js";
@@ -49,6 +54,11 @@ import {
   type RouteSnapshot,
 } from "./route-snapshot.js";
 import { resolveNavigation } from "./navigation-snapshot.js";
+import {
+  partialDeferralMode,
+  planPrefetchDeferral,
+  requestKind,
+} from "./segment-resolution/prefetch-deferral.js";
 
 /**
  * Create match context for full requests (document/SSR).
@@ -174,6 +184,9 @@ export async function createMatchContextForFull<TEnv>(
   if (reqCtx?._shellCaptureRun) {
     reqCtx._shellCaptureLoaderLanes = routeLoaderLanes(snapshot.entries);
   }
+  // A document never defers; the plan feeds the ctx.rendered() guards.
+  (handlerContext as InternalHandlerContext<any, TEnv>)._prefetchDeferral =
+    planPrefetchDeferral(snapshot.entries, undefined, matched, cacheScope);
 
   return {
     request,
@@ -452,6 +465,28 @@ export async function createMatchContextForPartial<TEnv>(
   // before any handler runs (#957); see the full-match site for #964's arm.
   if (cacheScope) armRecordTagOwners();
   if (bindsLoaderCache(snapshot.entries)) armLoaderTagSets();
+
+  // `prefetch: false` (segment-resolution/prefetch-deferral.ts). With no
+  // request context (a match run on its own) the request is asked directly.
+  const kind = reqCtx ? reqCtx._requestKind : requestKind(request, rawUrl);
+  const deferral = planPrefetchDeferral(
+    snapshot.entries,
+    partialDeferralMode({
+      fill: kind === "fill",
+      prefetch: kind === "prefetch",
+      method: request.method,
+      isAction,
+      isIntercept,
+      isShellCapture: reqCtx?._shellCaptureRun === true,
+    }),
+    matched,
+    cacheScope,
+    // As the request listed them, not the copy forced above: see
+    // prefetch-deferral.ts.
+    nav.clientSegmentSet,
+  );
+  (handlerContext as InternalHandlerContext<any, TEnv>)._prefetchDeferral =
+    deferral;
 
   return {
     request,

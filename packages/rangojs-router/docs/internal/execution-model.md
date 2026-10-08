@@ -61,6 +61,68 @@ global middleware
   -> intercept handler / intercept loaders
 ```
 
+### 5) Prefetch, then fill (`prefetch: false`)
+
+A prefetch is a partial request sent early (`X-Rango-Prefetch`). Without the
+flag it runs everything flow 1 runs. With
+`loader(Def, { prefetch: false })` or `loading(fallback, { prefetch: false })`
+somewhere in the matched tree, it leaves the flagged work out, and the click
+that adopts the prefetch sends a second request for it:
+
+```text
+prefetch request (X-Rango-Prefetch)
+  global middleware
+    -> route middleware
+      -> layout / handler / orphan / parallel / loaders,
+         minus the flagged work, which is marked deferred
+
+fill request (_rsc_fill), sent when the click adopts that payload
+  global middleware
+    -> route middleware
+      -> only the segments the client does not hold: the deferred work
+```
+
+"Flagged work" is a flagged loader, or everything behind a flagged
+`loading()`: the entry's handler, its loaders, its orphan layouts and slots
+and, for a layout, every deeper entry. An entry whose handler output is
+stored (`cache()`, `ppr`, `Prerender`/`Static`) is served as usual and only
+its loaders are left out.
+
+Three things to keep in mind, because each looks like a bug the first time:
+
+- **The flag applies only to a segment the client does not have yet.** "New"
+  is the segment's id being absent from `_rsc_segments`. A segment the client
+  holds is never deferred, whether or not its `revalidate()` returns true: a
+  held flagged layout or route renders in the prefetch as it does without the
+  flag, a flagged loader on a held segment runs when it revalidates, and
+  nothing below a held segment is deferred because of it. A new route with its
+  own flagged `loading()` under a held layout is still its own unit. The
+  invariant: a click that adopts a prefetch with deferred units is never worse
+  than the same click with no prefetch at all. It never covers more of the
+  page with a fallback than that plain navigation does, and never for longer,
+  it waits only where the plain navigation would wait, and content on screen
+  is never replaced by a fallback, blanked or remounted while a fill is
+  pending. What a prefetch defers depends on what its source page holds, so a
+  response that defers is used only on that page (`x-rsc-prefetch-scope:
+source`) and is never reused by the document cache or a shared cache.
+- **Deferral replaces execution; it never adds a skip.** A new segment always
+  renders, so the flag only ever turns work that would have run into deferred
+  work. Revalidation of held segments is untouched.
+- **The fill is not a revalidation.** In a fill a segment the client holds is
+  skipped outright: no `revalidate()` predicate is called, no handler runs,
+  nothing is emitted for it. What renders is exactly the set of ids missing
+  from `_rsc_segments`, which is the first-render guarantee below doing the
+  work.
+
+Every other request kind is untouched by the flag: a document request, a
+navigation with no prefetch to adopt, an action revalidation, back/forward, a
+no-JS form post, a shell capture, a warm request, an on-demand prerender and
+the `_rsc_loader` lane all run the flagged work as flow 1 to 4 describe.
+
+The decisions live in `router/segment-resolution/revalidation.ts` and ask
+`router/segment-resolution/prefetch-deferral.ts`; the design is
+`docs/design/prefetch-false.md`.
+
 ## Guarantees
 
 - Global middleware wraps the entire request lifecycle.
@@ -842,6 +904,10 @@ value within a group is therefore opt-in via a common `key`.
 
 - Route middleware is not an action guard.
 - Partial revalidation does not implicitly recompute non-revalidated ancestors.
+- A fill request (`prefetch: false`) does not recompute the handlers the
+  prefetch already rendered: `ctx.set()` values from outside the deferred unit
+  are not visible to deferred work, and no `revalidate()` contract changes
+  that.
 - `ctx.set()` values do not cross arbitrary sibling boundaries.
 - Parallel slots do not share a single global context; visibility is structural.
 
@@ -1032,6 +1098,28 @@ should not be treated as equivalent.
 - If a child depends on data set by an outer segment:
   - revalidate that outer segment too, or
   - load/guard the data in the child independently.
+
+- **A fill request (`prefetch: false`) is the same rule with no way out.**
+  Deferred work runs in the fill, after the prefetch already rendered the
+  rest. Middleware runs there as on any render pass, so what middleware puts
+  in context is there. Handlers outside the deferred unit do not run: the
+  client holds their segments, and a fill skips a held segment without asking
+  its `revalidate()`. So a value a held handler would have set with
+  `ctx.set()` is `undefined` to the deferred work, exactly like the `[R1]`
+  case above.
+
+  The difference from an action revalidation is that you cannot fix it with a
+  `revalidate()` contract: predicates are not consulted in a fill. A flagged
+  loader that needs a value from a layout above it has three options: read it
+  from middleware context instead, compute it in the loader, or move the
+  `loading(fallback, { prefetch: false })` up to the entry that produces the
+  value so the producer is deferred with its consumer (inside one deferred
+  unit the handler-first order holds as usual).
+
+  The same reasoning is why a deferrable loader cannot call `ctx.rendered()`:
+  the barrier waits for handlers that a fill does not run. That one is a hard
+  error rather than a silent `undefined`
+  (`docs/internal/rendered-barrier.md`, "Guard Rules").
 
 ### Revalidation Contracts Pattern
 

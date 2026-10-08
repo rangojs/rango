@@ -93,6 +93,9 @@ Read these before changing the corresponding subsystem.
 - [Cache tags flow](../../../docs/design/cache-tags-flow.md) - tag
   invalidation end to end: `updateTag()`/`revalidateTag()`, tag markers, and
   the read-latency budgets
+- [`prefetch: false`](../../../docs/design/prefetch-false.md) - keeping
+  expensive work out of prefetches: the deferral rules R1 to R13, the path
+  table, the fill request, and the limits
 - [Shell fast path](../../../docs/design/shell-fast-path.md) - the PPR shell
   entry as a `cache()` of the handler layer, and the fragment splice
 - [Shell entry layout](../../../docs/design/shell-entry-layout.md) - what a

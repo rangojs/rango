@@ -244,30 +244,58 @@ function wrapDefaultOutletContent(
  * reader sits above every boundary, so the throw is a Fizz shell error (500).
  * `settledFallback` is that node; the caller plants it and, for a redirect,
  * replaces the whole page (an ancestor reading the loader would still throw).
+ *
+ * `settle` is the forceAwait/action lane of a loader set that holds a
+ * deferred loader (`prefetch: false`, see hasDeferred): every other loader is
+ * settled like a flagged one, so the commit stays whole for them, and the
+ * deferred one keeps its gate for the read site to suspend on. A settled
+ * error with no boundary is left to the read site there, where the aggregate
+ * lane it replaces would have thrown it.
  */
-async function buildLoaderStreams(loaders: ResolvedSegment[]): Promise<{
+async function buildLoaderStreams(
+  loaders: ResolvedSegment[],
+  settle?: boolean,
+): Promise<{
   streams: Record<string, unknown>;
   awaitedIds: string[] | undefined;
   settledFallback: ReactNode | undefined;
 }> {
   const streams: Record<string, unknown> = {};
   let awaitedIds: string[] | undefined;
-  let awaitedValues: unknown[] | undefined;
+  let settledIds: string[] | undefined;
+  let settledValues: unknown[] | undefined;
   for (const l of loaders) {
-    if (l.awaitBeforeFlush) {
+    if (l.awaitBeforeFlush || (settle && !l.deferred)) {
       const value = await l.loaderData;
       streams[l.loaderId!] = value;
-      (awaitedIds ??= []).push(l.loaderId!);
-      (awaitedValues ??= []).push(value);
+      if (l.awaitBeforeFlush) (awaitedIds ??= []).push(l.loaderId!);
+      (settledIds ??= []).push(l.loaderId!);
+      (settledValues ??= []).push(value);
     } else {
       streams[l.loaderId!] = l.loaderData;
     }
   }
-  const settledFallback = awaitedIds
-    ? (decodeLoaderResults(awaitedValues!, awaitedIds).errorFallback ??
-      undefined)
-    : undefined;
+  let settledFallback: ReactNode | undefined;
+  if (settledIds) {
+    try {
+      settledFallback =
+        decodeLoaderResults(settledValues!, settledIds).errorFallback ??
+        undefined;
+    } catch (error) {
+      if (!settle) throw error;
+    }
+  }
   return { streams, awaitedIds, settledFallback };
+}
+
+/**
+ * A loader set that holds a deferred loader (`prefetch: false`): its
+ * `loaderData` is a gate the browser resolves when the fill request lands
+ * (browser/partial-update.ts), so no lane may await the set as a whole. The
+ * tree build would wait for a request that is only sent once it returns.
+ */
+function hasDeferred(loaders: ResolvedSegment[]): boolean {
+  return loaders.some((l) => l.deferred);
 }
 
 function isLoaderRedirectNode(node: ReactNode): boolean {
@@ -460,8 +488,10 @@ export async function renderSegments(
       (loader) => loader.loaderId && loader.loaderData !== undefined,
     );
 
+    // A deferred unit's component is a gate (see hasDeferred): never awaited.
+    const deferredUnit = node.segment.deferred === true;
     let resolvedComponent = component;
-    if (isAction && component instanceof Promise) {
+    if (isAction && !deferredUnit && component instanceof Promise) {
       const componentAwaitStart = segDebug ? performance.now() : 0;
       resolvedComponent = await component;
       if (segDebug) {
@@ -486,7 +516,7 @@ export async function renderSegments(
       // pre-resolved).
       const contentPromise = getMemoizedContentPromise(resolvedComponent);
       let loadingContent: Promise<ReactNode> | ReactNode = contentPromise;
-      if (forceAwait) {
+      if (forceAwait && !deferredUnit) {
         const contentAwaitStart = segDebug ? performance.now() : 0;
         loadingContent = await contentPromise;
         if (segDebug) {
@@ -517,7 +547,9 @@ export async function renderSegments(
           componentTypeof: typeof c,
         });
       }
-      nodeContent = registerLazyRef(resolvedComponent);
+      nodeContent = deferredUnit
+        ? resolvedComponent
+        : registerLazyRef(resolvedComponent);
     }
 
     // Wrap with <ViewTransition> if transition config exists (React 19.3+ / experimental).
@@ -591,7 +623,8 @@ export async function renderSegments(
       // for content-suspending routes (segment-loader-promise.ts).
       let boundaryLoaderStreams: Record<string, unknown> | undefined;
       let boundaryAwaitedLoaderIds: string[] | undefined;
-      if (forceAwait || isAction) {
+      const settleLoaders = forceAwait || isAction;
+      if (settleLoaders && !hasDeferred(loaderEntries)) {
         const awaitStart = segDebug ? performance.now() : 0;
         boundaryLoaderData = await loaderDataPromise;
         if (segDebug) {
@@ -606,7 +639,7 @@ export async function renderSegments(
           streams: boundaryLoaderStreams,
           awaitedIds: boundaryAwaitedLoaderIds,
           settledFallback,
-        } = await buildLoaderStreams(loaderEntries));
+        } = await buildLoaderStreams(loaderEntries, settleLoaders));
         if (settledFallback !== undefined) {
           if (isLoaderRedirectNode(settledFallback)) {
             content = settledFallback;
@@ -662,7 +695,8 @@ export async function renderSegments(
       let errorFallback: ReactNode = null;
       let loaderStreams: Record<string, unknown> | undefined;
       let awaitedLoaderIds: string[] | undefined;
-      if (forceAwait || isAction) {
+      const settleLoaders = forceAwait || isAction;
+      if (settleLoaders && !hasDeferred(layoutLoaders)) {
         const layoutAwaitStart = segDebug ? performance.now() : 0;
         const resolvedData = await buildLoaderPromise(layoutLoaders);
         if (segDebug) {
@@ -690,7 +724,7 @@ export async function renderSegments(
           streams: loaderStreams,
           awaitedIds: awaitedLoaderIds,
           settledFallback,
-        } = await buildLoaderStreams(layoutLoaders));
+        } = await buildLoaderStreams(layoutLoaders, settleLoaders));
         if (settledFallback !== undefined) {
           if (isLoaderRedirectNode(settledFallback)) {
             content = settledFallback;
@@ -744,9 +778,10 @@ export async function renderSegments(
           // loader paid the pre-flush await, settle the aggregate so
           // LoaderResolver decodes the array without a Flight-chunk use().
           const settleParallelAggregate =
-            forceAwait ||
-            isAction ||
-            ownedLoaders.every((l) => l.awaitBeforeFlush === true);
+            (forceAwait ||
+              isAction ||
+              ownedLoaders.every((l) => l.awaitBeforeFlush === true)) &&
+            !hasDeferred(ownedLoaders);
           if (settleParallelAggregate) {
             const parallelAwaitStart = segDebug ? performance.now() : 0;
             p.loaderDataPromise =

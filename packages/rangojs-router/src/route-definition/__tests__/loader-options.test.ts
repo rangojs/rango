@@ -9,7 +9,7 @@
  */
 import { describe, it, expect, vi } from "vitest";
 import { RangoContext, type EntryData } from "../../server/context.js";
-import { loader } from "../dsl-helpers.js";
+import { loader, loading } from "../dsl-helpers.js";
 import type { LoaderDefinition } from "../../types.js";
 
 /** A parent entry shaped enough for loader() to attach to. */
@@ -179,5 +179,136 @@ describe("bake stamping (every evaluation)", () => {
       undefined,
       undefined,
     ]);
+  });
+});
+
+// prefetch: false (docs/design/prefetch-false.md). The flag is a property of
+// the registration, the same on every evaluation: a prefetch is served from
+// the navigation-lane entries, the rendered() guard reads the document ones.
+describe("loader() prefetch option", () => {
+  it.each([
+    ["an SSR", true],
+    ["a navigation-lane", false],
+    ["an isSSR-less", undefined],
+  ] as const)("records prefetch: false on %s evaluation", (_label, isSSR) => {
+    const parent = parentEntry();
+    withDslStore(parent, isSSR, () => {
+      loader(testLoaderDef(), { prefetch: false });
+    });
+    expect(parent.loader[0]!.prefetch).toBe(false);
+  });
+
+  it("records nothing for prefetch: true, an empty options object or no options", () => {
+    const parent = parentEntry();
+    withDslStore(parent, false, () => {
+      loader(testLoaderDef(), { prefetch: true });
+      loader(testLoaderDef(), {});
+      loader(testLoaderDef());
+    });
+    expect(parent.loader.map((entry) => "prefetch" in entry)).toEqual([
+      false,
+      false,
+      false,
+    ]);
+  });
+
+  it("combines with ssr: false and still runs the use() callback", () => {
+    const parent = parentEntry();
+    const use = vi.fn(() => []);
+    withDslStore(parent, true, () => {
+      loader(testLoaderDef(), { ssr: false, prefetch: false }, use);
+    });
+    expect(use).toHaveBeenCalledTimes(1);
+    expect(parent.loader[0]).toMatchObject({
+      prefetch: false,
+      bake: true,
+      awaitBeforeFlush: true,
+    });
+  });
+
+  it("throws on a prefetch value that is not a boolean (JS consumers)", () => {
+    const parent = parentEntry();
+    expect(() =>
+      withDslStore(parent, true, () => {
+        loader(testLoaderDef(), { prefetch: "never" } as never);
+      }),
+    ).toThrow(/loader\(\) prefetch must be a boolean \(got "never"\)/);
+  });
+});
+
+describe("loading() prefetch option", () => {
+  const fallback = "skeleton";
+
+  it.each([
+    ["an SSR", true],
+    ["a navigation-lane", false],
+  ] as const)("records the flag on %s evaluation", (_label, isSSR) => {
+    const parent = parentEntry();
+    withDslStore(parent, isSSR, () => {
+      loading(fallback, { prefetch: false });
+    });
+    expect(parent.loadingPrefetch).toBe(false);
+    expect(parent.loading).toBe(fallback);
+  });
+
+  it("records it with ssr: false too, where the document shows no fallback", () => {
+    const parent = parentEntry();
+    withDslStore(parent, true, () => {
+      loading(fallback, { ssr: false, prefetch: false });
+    });
+    // The document evaluation suppresses the fallback and still knows the
+    // entry is flagged: the rendered() guard reads these entries.
+    expect(parent.loading).toBe(false);
+    expect(parent.loadingPrefetch).toBe(false);
+  });
+
+  it("unwraps the function form before deciding", () => {
+    const parent = parentEntry();
+    withDslStore(parent, false, () => {
+      loading(() => fallback, { prefetch: false });
+    });
+    expect(parent.loadingPrefetch).toBe(false);
+  });
+
+  it.each([[null], [false], [undefined]])(
+    "records nothing without a fallback to show (%s)",
+    (component) => {
+      const parent = parentEntry();
+      withDslStore(parent, false, () => {
+        loading(component as never, { prefetch: false });
+      });
+      expect(parent.loadingPrefetch).toBeUndefined();
+    },
+  );
+
+  it("records nothing for prefetch: true or no options", () => {
+    const parent = parentEntry();
+    withDslStore(parent, false, () => {
+      loading(fallback, { prefetch: true });
+    });
+    expect(parent.loadingPrefetch).toBeUndefined();
+    withDslStore(parent, false, () => {
+      loading(fallback);
+    });
+    expect(parent.loadingPrefetch).toBeUndefined();
+  });
+
+  it("the last loading() on an entry decides, like the fallback itself", () => {
+    const parent = parentEntry();
+    withDslStore(parent, false, () => {
+      loading(fallback, { prefetch: false });
+      loading("other");
+    });
+    expect(parent.loading).toBe("other");
+    expect(parent.loadingPrefetch).toBeUndefined();
+  });
+
+  it("throws on a prefetch value that is not a boolean (JS consumers)", () => {
+    const parent = parentEntry();
+    expect(() =>
+      withDslStore(parent, false, () => {
+        loading(fallback, { prefetch: 0 } as never);
+      }),
+    ).toThrow(/loading\(\) prefetch must be a boolean \(got 0\)/);
   });
 });

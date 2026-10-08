@@ -98,7 +98,19 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // of it can load lazily: the snapshot is recorded in the commit and read
 // during render. The step is a whole KB because main sat 27B under the old
 // limit: a smaller one would leave the ratchet tripping on the next change.
-const ROUTER_CHUNK_GZIP_MAX = 47 * 1024;
+//
+// Raised 47KB -> 48KB on 2026-10-07 for `prefetch: false`
+// (docs/design/prefetch-false.md), measured 47488B -> 48837B (+1349B gzip).
+// A deliberate call: adopting a payload with deferred segments is decided
+// where every partial payload is committed, so the gates, the fill request
+// and its merge live in browser/partial-update.ts (armGates, runFill), with
+// the lanes of segment-system.tsx that must not await a gate and the commit
+// signal a unit's reveal waits for (NavigationUpdate.onCommit). An app with no
+// flag pays for it too: deferral is a property of the payload, known only
+// once one arrives. None of it can load lazily: the gates are armed
+// synchronously before the adoption renders, and partial-update.ts is on the
+// rejected-splits list (AGENTS.md, Bundle hygiene).
+const ROUTER_CHUNK_GZIP_MAX = 48 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

@@ -362,6 +362,12 @@ export type PathHelpers<TEnv> = {
    * flag BAKES: the loader executes at shell capture and its settled return
    * freezes into the shell (nested promises stay live holes) — the pre-flush
    * promise applied to the prelude.
+   *
+   * Pass `{ prefetch: false }` to keep the loader out of prefetches: a
+   * prefetch skips it and the click that adopts the prefetch fetches it in
+   * one follow-up request (see {@link LoaderOptions}). Only on a segment the
+   * client does not have yet: a loader the client already holds runs in the
+   * prefetch when it revalidates.
    */
   loader: <TData>(
     loaderDef: LoaderDefinition<TData>,
@@ -370,11 +376,25 @@ export type PathHelpers<TEnv> = {
   ) => LoaderItem;
 
   /**
-   * Attach a loading component to the current route/layout
+   * Attach a loading component to the current route/layout.
+   *
+   * `{ ssr: false }` skips the fallback on document requests. `{ prefetch:
+   * false }` keeps what the fallback covers out of prefetches, when this
+   * entry's segment is new to the client: the entry's handler, its loaders,
+   * its orphan layouts and parallel slots and, for a layout, every deeper
+   * entry. The click that adopts the prefetch shows the fallback and fetches
+   * them in one follow-up request, which reads cache() and "use cache" as
+   * any request does (a prefetch reads neither for skipped work). A segment
+   * the client already holds is never deferred: a prefetch renders it as
+   * usual when it revalidates, and what is below it follows its own flags.
+   * To keep a child out of prefetches while moving inside a section, flag
+   * the child's own loading(). An entry whose handler output is stored
+   * (cache(), ppr, Prerender/Static) is served as usual and only its loaders
+   * are skipped.
    */
   loading: (
     component: ReactNode | (() => ReactNode),
-    options?: { ssr?: boolean },
+    options?: { ssr?: boolean; prefetch?: boolean },
   ) => LoadingItem;
 
   /**

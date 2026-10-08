@@ -487,3 +487,113 @@ describe("createNavigationTransaction traversal commit", () => {
     tx[Symbol.dispose]();
   });
 });
+
+// prefetch: false (docs/design/prefetch-false.md, "Abort"): a fill is
+// cancelled when the tree it belongs to is replaced, not when a navigation
+// merely starts.
+describe("createNavigationTransaction and a pending fill", () => {
+  async function pendingFill() {
+    const { setPendingFill, cancelPendingFill } =
+      await import("../browser/pending-fill");
+    const cancel = vi.fn();
+    setPendingFill(cancel);
+    return { cancel, cancelPendingFill };
+  }
+
+  function transaction(options: Record<string, unknown>) {
+    const { store, eventController } = createTestContext();
+    const tx = createNavigationTransaction(
+      store,
+      eventController,
+      "http://localhost/target",
+      { replace: true },
+    );
+    return {
+      tx,
+      commit: () => {
+        tx.commit({
+          url: "http://localhost/target",
+          segmentIds: [],
+          segments: [],
+          ...options,
+        });
+        tx[Symbol.dispose]();
+      },
+    };
+  }
+
+  it("is not cancelled by a navigation that only starts", async () => {
+    const { cancel, cancelPendingFill } = await pendingFill();
+    const { tx } = transaction({});
+    expect(cancel).not.toHaveBeenCalled();
+    tx[Symbol.dispose]();
+    expect(cancel).not.toHaveBeenCalled();
+    cancelPendingFill();
+  });
+
+  it.each([{}, { traversal: true }])(
+    "is cancelled by a commit that replaces the page (%o)",
+    async (options) => {
+      const { cancel } = await pendingFill();
+      transaction(options).commit();
+      expect(cancel).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([{ storeOnly: true }, { cacheOnly: true }])(
+    "survives a commit that keeps the page (%o)",
+    async (options) => {
+      const { cancel, cancelPendingFill } = await pendingFill();
+      transaction(options).commit();
+      expect(cancel).not.toHaveBeenCalled();
+      cancelPendingFill();
+    },
+  );
+});
+
+// Scroll belongs to the navigation transaction. A navigation always decides,
+// and "do not scroll" is a decision. A commit that is not a navigation
+// decides nothing: its update carries no scroll and leaves a pending
+// decision alone (react/NavigationProvider.tsx).
+describe("what a commit says about scroll", () => {
+  function commit(
+    options: Record<string, unknown>,
+    overrides?: Record<string, unknown>,
+  ) {
+    const { store, eventController } = createTestContext();
+    const tx = createNavigationTransaction(
+      store,
+      eventController,
+      "http://localhost/target",
+      {},
+    );
+    const result = tx
+      .with({ url: "http://localhost/target", ...options })
+      .commit([], [], overrides);
+    tx[Symbol.dispose]();
+    return result;
+  }
+
+  it("a navigation decides, also when it decides not to scroll", () => {
+    expect(commit({})).toEqual({ scroll: { enabled: undefined } });
+    expect(commit({ scroll: true })).toEqual({ scroll: { enabled: true } });
+    // <Link scroll={false}>, router.replace(url, { scroll: false }).
+    expect(commit({ scroll: false })).toEqual({ scroll: { enabled: false } });
+    // An intercept: partial-update.ts overrides the bound option.
+    expect(commit({}, { scroll: false, intercept: true })).toEqual({
+      scroll: { enabled: false },
+    });
+    expect(commit({ traversal: true, scroll: false })).toEqual({
+      scroll: { enabled: false },
+    });
+  });
+
+  it.each([
+    ["an action refetch into the entry on screen", { storeOnly: true }],
+    ["a cache-only commit", { cacheOnly: true }],
+  ])("%s decides nothing", (_label, options) => {
+    expect(commit(options)).toEqual({});
+    // Whatever the options said: it is not a navigation.
+    expect(commit({ ...options, scroll: true })).toEqual({});
+  });
+});

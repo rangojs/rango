@@ -302,7 +302,12 @@ export interface HistoryEntryMemory {
 export interface NavigationUpdate {
   root: ReactNode | Promise<ReactNode>;
   metadata: RscMetadata;
-  /** Scroll behavior to apply after React commits this update */
+  /**
+   * The scroll decision of the navigation transaction this update commits,
+   * applied after React commits it. Absent on every update that is not a
+   * navigation's (server action, error, `prefetch: false` fill): such an
+   * update says nothing about scroll, and leaves a pending decision alone.
+   */
   scroll?: {
     /** For back/forward: restore saved position */
     restore?: boolean;
@@ -311,6 +316,13 @@ export interface NavigationUpdate {
     /** Function to check if streaming is in progress */
     isStreaming?: () => boolean;
   };
+  /**
+   * Called once, after React has committed this update's tree, or a later
+   * update's when this one is never committed on its own (React batched or
+   * superseded it). Never before: an earlier update that commits meanwhile
+   * does not call it.
+   */
+  onCommit?: () => void;
 }
 
 /**
@@ -676,6 +688,12 @@ export interface FetchPartialOptions {
   routerId?: string;
   /** If true, this is an HMR refetch - server should invalidate manifest cache */
   hmr?: boolean;
+  /**
+   * The fill request of an adopted prefetch that carried deferred segments
+   * (`prefetch: false`): marked `_rsc_fill`, never answered from or written
+   * to a prefetch cache or the HTTP cache, and it cancels no prefetch.
+   */
+  fill?: boolean;
 }
 
 /**

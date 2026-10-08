@@ -391,6 +391,15 @@ function createHelpers(): ClientUrlHelpers {
         `clientUrls() loader() ssr must be a boolean (got ${JSON.stringify(options.ssr)}). Omit it (or pass true) to stream on every render.`,
       );
     }
+    // Typed out (ClientUrlHelpers.loader); a JS caller gets the reason in dev.
+    if (
+      process.env.NODE_ENV !== "production" &&
+      (options as { prefetch?: unknown } | undefined)?.prefetch !== undefined
+    ) {
+      throw new Error(
+        "clientUrls() loader() does not take prefetch: a clientUrls() route renders its destination in the browser, so a prefetch has nothing to defer behind. Declare the route in urls() to use loader(Def, { prefetch: false }).",
+      );
+    }
     const items = use ? runUse(use, "loader use") : [];
     rejectItems(items, new Set(["revalidate"]), "loader");
     return toPublicItem({

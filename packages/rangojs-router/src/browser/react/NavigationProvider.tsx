@@ -315,7 +315,10 @@ export function NavigationProvider({
   nonce,
 }: NavigationProviderProps): ReactNode {
   // Track current payload for rendering (this triggers re-renders)
-  const [payload, setPayload] = useState(initialPayload);
+  // `at` numbers the payloads handed to React (see commitsRef).
+  const [payload, setPayload] = useState<NavigationUpdate & { at?: number }>(
+    initialPayload,
+  );
   // The location state of the entry `payload` renders (LocationStateContext).
   // Only ever set next to setPayload, or for a commit that has no payload.
   const [locationState, setLocationState] = useState(
@@ -409,8 +412,26 @@ export function NavigationProvider({
     return unsub;
   }, [eventController]);
 
-  // Pending scroll action to apply after React commits
+  // The last navigation's scroll decision, until React commits its update.
   const pendingScrollRef = useRef<NavigationUpdate["scroll"]>(undefined);
+
+  // NavigationUpdate.onCommit. Every payload handed to React is numbered
+  // (`at`). A commit calls back its own update and the earlier ones still
+  // waiting (React batched or superseded them: they will not commit on their
+  // own), never a later one.
+  const commitsRef = useRef({
+    count: 0,
+    waiting: [] as { at: number; onCommit: () => void }[],
+  });
+
+  useLayoutEffect(() => {
+    const { waiting } = commitsRef.current;
+    if (waiting.length === 0) return;
+    const at = payload.at ?? 0;
+    while (waiting.length > 0 && waiting[0].at <= at) {
+      waiting.shift()!.onCommit();
+    }
+  });
 
   // Apply scroll after React commits the new content to the DOM
   useLayoutEffect(() => {
@@ -430,16 +451,21 @@ export function NavigationProvider({
   // Subscribe to UI updates (for re-rendering the tree)
   useEffect(() => {
     const unsubscribe = store.onUpdate((update) => {
-      // Capture scroll intent — it will be applied in useLayoutEffect
-      // after React commits this state update to the DOM.
-      // Always assign (even undefined) to clear stale scroll from prior navigations,
-      // so server actions or error updates don't accidentally replay old scroll.
-      pendingScrollRef.current = update.scroll;
+      // Scroll belongs to the navigation transaction: only an update that
+      // carries one's decision sets the pending action, and the layout effect
+      // above consumes it once, after the commit that follows. An update with
+      // no decision (server action, error, prefetch: false fill) leaves a
+      // pending one alone. React can hold a navigation's commit, and whatever
+      // lands meanwhile must not cost the navigation its scroll. Nothing
+      // stale is replayed: every update commits, and that commit consumes.
+      if (update.scroll) pendingScrollRef.current = update.scroll;
 
-      setPayload({
-        root: update.root,
-        metadata: update.metadata,
-      });
+      const commits = commitsRef.current;
+      const at = ++commits.count;
+      if (update.onCommit) {
+        commits.waiting.push({ at, onCommit: update.onCommit });
+      }
+      setPayload({ root: update.root, metadata: update.metadata, at });
       // The state of the entry this payload renders, as its commit recorded
       // it: one update, so one lane, so one React commit with the tree.
       setLocationState(eventController.getLocationState());

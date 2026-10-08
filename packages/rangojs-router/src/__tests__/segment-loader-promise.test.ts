@@ -16,11 +16,14 @@ function loaderSeg(id: string, loaderData: any): ResolvedSegment {
 }
 
 describe("getMemoizedLoaderPromise", () => {
-  it("returns a Promise resolving to an empty array for zero loaders", async () => {
+  // Not a promise: React knows a resolved promise as fulfilled only once it
+  // has read it, and a boundary on screen that is handed one it has not read,
+  // in a render that cannot wait, shows its fallback again.
+  it("returns one shared empty array for zero loaders in the browser", () => {
     const result = getMemoizedLoaderPromise([]);
 
-    expect(result).toBeInstanceOf(Promise);
-    await expect(result as Promise<any[]>).resolves.toEqual([]);
+    expect(result).toEqual([]);
+    expect(getMemoizedLoaderPromise([])).toBe(result);
   });
 
   it("reuses the same aggregate when loader.loaderData refs are unchanged", () => {

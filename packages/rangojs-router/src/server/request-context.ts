@@ -78,6 +78,7 @@ import {
   readGuardedTheme,
 } from "./cookie-store.js";
 import { requestHeaders } from "./request-headers.js";
+import { requestKind } from "../router/segment-resolution/prefetch-deferral.js";
 import {
   createReverseFunction,
   stripInternalParams,
@@ -714,6 +715,21 @@ export interface RequestContext<
   _payloadVisitorTheme?: boolean;
 
   /**
+   * @internal Set by the partial render when its payload carries deferred
+   * units (`prefetch: false`): what one page's prefetch left for the fill.
+   * The document cache does not store that response, whatever Cache-Control
+   * it ends up with (docs/design/prefetch-false.md, R7).
+   */
+  _payloadDeferred?: boolean;
+
+  /**
+   * @internal What the request says it is: a `<Link>` prefetch or a fill
+   * (`prefetch: false`), read once at creation
+   * (segment-resolution/prefetch-deferral.ts requestKind).
+   */
+  _requestKind?: "prefetch" | "fill";
+
+  /**
    * Attach location state entries to the current response.
    *
    * For partial (SPA) requests, the state is included in the RSC payload
@@ -1000,6 +1016,8 @@ export type PublicRequestContext<
   | "_readTheme"
   | "_documentCacheRender"
   | "_payloadVisitorTheme"
+  | "_payloadDeferred"
+  | "_requestKind"
   | "_locationState"
   | "_routeName"
   | "_prevRouteKey"
@@ -1432,12 +1450,14 @@ export function createRequestContext<TEnv>(
   };
 
   const cleanUrl = stripInternalParams(url);
+  const originalUrl = new URL(request.url);
 
   const ctx: RequestContext<TEnv> = {
     env,
     request,
     url: cleanUrl,
-    originalUrl: new URL(request.url),
+    originalUrl,
+    _requestKind: requestKind(request, originalUrl),
     pathname: url.pathname,
     searchParams: cleanUrl.searchParams,
     _variables: variables,

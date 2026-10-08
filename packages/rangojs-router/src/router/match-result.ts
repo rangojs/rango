@@ -235,6 +235,10 @@ export function buildMatchResult<TEnv>(
     resolvedIds = [];
     for (const s of allSegments) {
       if (s._handlerRan) resolvedIds.push(s.id);
+      // A deferred unit (prefetch: false) has a null component and is sent:
+      // only a segment the client does not hold is ever deferred, and
+      // deferral reads these same ids (prefetch-deferral.ts
+      // PrefetchDeferral.held), not the set the match forces renders with.
       if (
         s.component !== null ||
         s.type === "loader" ||

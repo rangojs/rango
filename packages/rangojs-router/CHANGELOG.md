@@ -2,6 +2,92 @@
 
 ## Unreleased
 
+### Added: `prefetch: false` on `loader()` and `loading()` keeps expensive work out of prefetches
+
+A prefetch renders everything a click would: every handler and every loader.
+With the default `"viewport"` strategy a page with forty product links renders
+forty pages the visitor will mostly never open. Two options now keep the
+expensive part out:
+
+```tsx
+loader(ReviewsLoader, { prefetch: false }); // this loader is skipped in a prefetch
+loading(<OrdersSkeleton />, { prefetch: false }); // everything behind this fallback is skipped
+```
+
+A prefetch of the route skips the flagged work and marks it deferred. When the
+visitor clicks, the page commits at once with the prefetched content, the
+fallback shows where the deferred part goes, and one second request (the fill)
+runs only that part and merges it in without remounting. A hard load, a
+navigation with nothing prefetched, an action and back/forward behave as
+before. Without the options nothing changes.
+
+What to know before you use it:
+
+- **Only what is new to the page is deferred.** A segment the browser already
+  holds is prefetched as usual: the layout of the section you are in, or the
+  route itself on a same-route navigation (`/product/a` to `/product/b`). So a
+  click that adopts a prefetch is never worse than the same click with no
+  prefetch at all, and content on screen is never swapped for a fallback. To
+  defer navigation inside a section, flag the `loading()` of its routes.
+- **A deferred loader never blocks the click.** It behaves like a loader that
+  is still streaming: its own `<Suspense>` shows at once, the route's
+  `loading()` shows when that is the nearest boundary, and with no boundary
+  React holds the page being left until the fill returns
+  (`useNavigation()` reads `loading` meanwhile).
+- **Under `transition()` a deferred `loading()` commits with its fill.** Its
+  fallback shows with the fill's first chunk, as a plain click's shows with
+  its response, not at the click. That is also the case when the
+  `transition()` is on something the fallback covers (a route under a
+  flagged layout). React holds the page being left until then and
+  `useNavigation()` reads `loading`. Committed with the click, the content
+  could only arrive in a second commit, which under a `<ViewTransition>` is
+  a view transition of its own that the reveal then waits for. A flagged
+  `loader()` under `transition()` commits with the click. A
+  `transition({ when })` on an entry the prefetch skipped is not asked for
+  that click: it commits as under a plain `transition()`.
+- **While React holds the page being left, the URL has already changed.**
+  The address bar and the URL hooks move with the click, and the page moves
+  when the fill answers (a deferred `loading()` under `transition()`) or
+  when the value arrives (a deferred loader read with no boundary). A click
+  with no prefetch moves the hooks with the page. Known, not fixed.
+- **A `<ViewTransition>` on the page being left.** A click that commits from
+  a prefetch commits in a transition, with or without the flag, so React
+  runs a view transition there that a click with no prefetch does not, and
+  the deferred part is revealed after it. Measured against a click with no
+  prefetch, at the browser's default duration: 0 to 40 ms later, and 290 ms
+  for a flagged loader that lands while that view transition runs. With
+  `animation-duration: 600ms` on the view-transition pseudo-elements: 320
+  to 350 ms later, 650 ms for that loader. Known, not fixed.
+- **A prefetch that deferred something is used only on the page that made
+  it.** A page that already shows the segment makes its own prefetch, which
+  defers nothing for it.
+- **`ctx.rendered()` is refused** in a loader a prefetch can defer, on every
+  request, and so is the handle data it unlocks.
+- **A deferred loader cannot see `ctx.set()` values** from handlers the client
+  already holds, and its `redirect()`, `notFound()` and handle pushes arrive
+  after the page is on screen.
+- **Stored routes defer loaders only.** Under `cache()`, `ppr` and `Prerender`
+  the stored handler output is served as before. A loader with its own
+  `cache()` is skipped in a prefetch even on a hit; the fill reads through
+  `cache()` and `"use cache"` as any request does.
+- A loader a handler awaits with `ctx.use()`, `clientUrls()` routes and
+  `intercept()` ignore the flag.
+- **Double runs.** A flagged loader that a handler under `loading()`, or
+  another loader, reads with `ctx.use()` after an `await` runs in the
+  prefetch for its reader and again in the fill.
+- **A response that defers is never reused** by the document cache or by a
+  shared cache in front of the app (`cache-control: private, no-cache`,
+  whatever the route set), and it never answers a navigation: its `Vary`
+  names `X-Rango-Prefetch`. The browser may keep a copy, which it reuses only
+  while it reloads a page for back/forward, for the same prefetch from the
+  same page; the client completes any payload that carries deferred work.
+  The document cache keeps one slot for a prefetch and a navigation, as
+  before, and every body in it is complete.
+
+`@rangojs/router/testing` gets `serveShellRequest(..., { partial: { prefetch,
+fill } })` and `result.readDeferred()` to test it. See `/loader`, `/route` and
+the design note `docs/design/prefetch-false.md`.
+
 ### Fixed: a prerender refresh that started before `markStale()` is stored stale ([#1072](https://github.com/rangojs/rango/issues/1072))
 
 `router.prerender()` stamped an entry with the time of the store write. A
@@ -236,6 +322,18 @@ under the dev server. You no longer need a subclass declaring
 `readonly scope = "global"`. Two instances with the same `name` share their
 maps but each keeps its own `scope`, like `defaults` and `keyGenerator`: keep
 them identical.
+
+### Fixed: a server action that lands while a navigation commits no longer costs the navigation its scroll
+
+A navigation scrolls to the top (or restores a position) when React commits
+its page, and React can take a moment to do that, or hold the commit while a
+transition waits. A server action that finished in that window cancelled the
+scroll: its update reached the page first and was read as "do not scroll", so
+the visitor stayed at the old scroll position on the new page. An action
+update, an action's refetch of the route and an error update now say nothing
+about scroll and leave a pending navigation's decision alone. A navigation
+that asks not to scroll (`<Link scroll={false}>`, an intercept) is honoured
+as before.
 
 ### Fixed: two routers on one cache store no longer share entries for the same host and path ([#1065](https://github.com/rangojs/rango/issues/1065))
 

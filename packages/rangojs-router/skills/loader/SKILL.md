@@ -1,6 +1,6 @@
 ---
 name: loader
-description: Define data loaders with createLoader and register them on routes with loader(). Use when a route needs per-request data that stays fresh and streams while the page renders, a client component reads server data with useLoader, a loader should re-run after specific actions (revalidate), be cached (cache), be callable from the client (fetchable loaders), throw notFound()/redirect(), write page meta/breadcrumbs handles, or must be settled in the SSR'd document (ssr:false).
+description: Define data loaders with createLoader and register them on routes with loader(). Use when a route needs per-request data that stays fresh and streams while the page renders, a client component reads server data with useLoader, a loader should re-run after specific actions (revalidate), be cached (cache), be callable from the client (fetchable loaders), throw notFound()/redirect(), write page meta/breadcrumbs handles, must be settled in the SSR'd document (ssr:false), or must stay out of link prefetches (prefetch:false).
 argument-hint: "[loader]"
 ---
 
@@ -1093,6 +1093,164 @@ The costs and constraints:
 
 Also available in `clientUrls()` route groups (`/client-urls`), where the
 loader-heavy shape makes it most useful.
+
+## `prefetch: false` — Keep a Loader Out of Prefetches
+
+A `<Link>` prefetch is a navigation sent early: the server renders every
+handler and every loader for it. With the default `"viewport"` strategy that
+means a grid of forty product links runs forty copies of your slowest loader
+for pages most visitors never open. Pass `prefetch: false` to keep one loader
+out:
+
+```tsx
+import { Suspense } from "react";
+
+path("/product/:slug", ProductPage, { name: "product" }, () => [
+  loader(PriceLoader), // cheap: still runs in the prefetch
+  loader(ReviewsLoader, { prefetch: false }), // expensive: skipped in a prefetch
+  loading(<ProductSkeleton />),
+]),
+```
+
+(`prefetch` sits beside `ssr` in `LoaderOptions`; combine them as
+`{ ssr: false, prefetch: false }` if you need both.)
+
+What happens:
+
+- A **prefetch** of the route does not run the loader and does not read its
+  `cache()`; the payload marks it deferred. The rest of the page prefetches as
+  usual.
+- Only on a route the browser does not show yet. A loader the page already
+  holds, on a same-route navigation such as `/product/a` to `/product/b`, runs
+  in the prefetch when it revalidates, exactly as without the flag, and the
+  click sends no second request. The rule: a click that adopts a prefetch is
+  never worse than the same click with no prefetch at all, and content on
+  screen is never swapped for a fallback because of the flag. For the same
+  reason a prefetch that deferred something is used only on the page that
+  made it: a page that already shows the segment makes its own prefetch.
+- A **click** that adopts that prefetch is never blocked by the loader. A
+  deferred loader behaves like a loader that is still streaming, and where
+  the page reads it (`useLoader(ReviewsLoader)`) React does what it does for
+  one:
+  - the read has its own `<Suspense>`: the page shows at once with that
+    fallback in it. This can be a finer fallback than the same click shows
+    with no prefetch, where the whole route is still streaming behind its
+    `loading()`;
+  - the nearest boundary is the route's `loading()`: that fallback shows;
+  - no boundary at all: React holds the page being left until the value
+    arrives.
+
+  Meanwhile the browser sends one second request, the fill, that runs only
+  the deferred loader. Its value merges into the page that is already on
+  screen; nothing remounts.
+
+- A **document request** (hard load), a **navigation with no prefetch to
+  adopt**, an action, back/forward and a no-JS form post run the loader as
+  they always did. Leaving the option out is the old behavior.
+
+Read the loader behind a boundary, as you would any streamed loader:
+
+```tsx
+"use client";
+function Reviews() {
+  const { data } = useLoader(ReviewsLoader);
+  return <ReviewList items={data} />;
+}
+
+// in the server component:
+<Suspense fallback={<ReviewsSkeleton />}>
+  <Reviews />
+</Suspense>;
+```
+
+The limits:
+
+- **A boundary is required for a fallback.** With no `loading()` on the entry
+  and no `<Suspense>` around the read, nothing can show a fallback, so React
+  holds the page being left on screen until the fill returns. The URL and
+  the URL hooks (`useNavigation().location`) have already changed, where a
+  click with no prefetch changes the hooks with the page, and
+  `useNavigation()` reads `state: "loading"` for that time, as on any
+  navigation that is still streaming, so a progress bar shows. There is no
+  definition-time error.
+- **`ctx.rendered()` is refused.** A loader that can be deferred throws on
+  every request kind (a document load included, so you see it the first time
+  you open the page in development) if it calls `await ctx.rendered()`. The
+  fill does not re-run the entry's handler, so there is no render to wait for
+  and no handle data to read. Remove `{ prefetch: false }` from the loader, or
+  stop calling `ctx.rendered()`. Pushing a handle from the loader is fine.
+- **`ctx.set()` values from held handlers are not visible.** The fill runs the
+  deferred work and middleware only. A handler or layout the client already
+  holds does not run again, so a variable it set with `ctx.set()` is missing
+  when the loader reads it with `ctx.get()`. Variables set by middleware are
+  there, as middleware runs on every request; so are `ctx.params` and
+  `ctx.request`.
+- **`redirect()`, `notFound()` and handle pushes arrive late.** They behave as
+  for a loader that streams behind `loading()`, but they come with the fill,
+  after the page is already on screen: a redirect becomes a replace
+  navigation, `notFound()` renders the nearest not-found boundary, an error
+  reaches the error boundary.
+- **The fill reads through the loader's own caching; a prefetch reads none
+  of it, by intent.** A loader with `cache()` is skipped in a prefetch even
+  when its entry is warm, and so is a `"use cache"` function it calls: a
+  prefetch that looked would have to run the loader on a miss, which is the
+  work the flag keeps out. The fill is where the loader runs. It serves a
+  warm `cache()` entry without running the loader, runs the loader and
+  stores on a cold one, and a `"use cache"` function inside the loader hits
+  or stores as on any request.
+- **A loader something else reads with `ctx.use()` runs in the prefetch.**
+  The reader needs the value, so the flag cannot keep the loader out. When
+  the read is in time, the loader is an ordinary loader for that prefetch:
+  one run, nothing deferred, no fill for it. In time means: inside a handler
+  that has no `loading()` (the router waits for it), or before the reader's
+  first `await`.
+- **Two late readers make it run twice.** The loader runs in the prefetch for
+  its reader and again in the fill, because by the time the read happens the
+  loader's own segment has already been sent as deferred:
+
+  ```tsx
+  // 1. A handler under loading() is streamed: the router does not wait for
+  //    it, so a read after its first await comes late.
+  path(
+    "/product/:id",
+    async (ctx) => {
+      const product = await getProduct(ctx.params.id);
+      const reviews = await ctx.use(ReviewsLoader); // late: runs it here
+      return <Product product={product} reviews={reviews} />;
+    },
+    { name: "product" },
+    () => [
+      loader(ReviewsLoader, { prefetch: false }), // and the fill runs it again
+      loading(<ProductSkeleton />),
+    ],
+  );
+
+  // 2. A loader that is not deferred itself and reads it after an await.
+  const SummaryLoader = createLoader(async (ctx) => {
+    const product = await getProduct(ctx.params.id);
+    const reviews = await ctx.use(ReviewsLoader); // late: two runs
+    return summarize(product, reviews);
+  });
+  ```
+
+  Data is never missing, only fetched twice, and the page shows the fill's
+  value. To get one run, start the read before the first `await`
+  (`const reviews = ctx.use(ReviewsLoader)` at the top, awaited where you
+  need it), or drop the flag from a loader the page cannot render without.
+
+- **No effect in `clientUrls()` routes and `intercept()`.** `clientUrls()`
+  `loader()` throws in development if you pass `prefetch`.
+- **`ppr` and `ssr: false`.** On a `ppr` route an `ssr: false` loader is the
+  bake lane and is served from the shell, so `prefetch: false` is ignored for
+  it and development logs a warning. Under `cache()` and `Prerender` the flag
+  works as above (see `/caching`, `/prerender`, `/ppr`).
+
+To skip a handler along with its loaders, flag the `loading()` instead (see
+`/route` → "`loading()` options"). `loader(Def, { prefetch: false })` accepts
+only a boolean; anything else throws `loader() prefetch must be a boolean`.
+
+Test it with `serveShellRequest(router, url, { partial: { prefetch: true } })`
+and `result.readDeferred()` (see `/testing`).
 
 ## Fetchable Loaders
 

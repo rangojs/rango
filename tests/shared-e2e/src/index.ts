@@ -22,6 +22,49 @@ export { createDeployFixture, readBuiltVersions } from "./deploy-fixture.js";
 export type { DeployFixture, DeployFixtureOptions } from "./deploy-fixture.js";
 export { runCacheVersionScenario } from "./cache-version-scenario.js";
 export type { CacheVersionScenarioOptions } from "./cache-version-scenario.js";
+export {
+  expectBackAndForwardDuringAFillEndOnTheFilledPage,
+  expectBackAndForwardKeepTheFilledPage,
+  expectClickDuringThePrefetchAdoptsIt,
+  expectClickFromAScrolledPageEndsAtTheTop,
+  expectDeferredOutcomeArrivesWithTheFill,
+  expectDeferringPrefetchTheBrowserKeptIsHarmless,
+  expectDocumentAwaitsLoaderThatPrefetchSkips,
+  expectDoubleClickEndsOnTheLastRequest,
+  expectRevisitUsesWhatTheClientHolds,
+  expectFailedFillReachesTheNetworkErrorBoundary,
+  expectLeavingAHeldAdoptionAbortsItsFill,
+  expectLeavingBeforeTheFillAbortsItAndBackRefetches,
+  expectNoBoundaryHoldsThePageLeftUntilTheFillReturns,
+  expectPrefetchSkipsFlaggedWorkAndClickFillsIt,
+  expectUnflaggedRouteIsPrefetchedWhole,
+  expectUnitUnderTransitionCommitsWithItsFill,
+  expectUnusableFillReachesTheErrorBoundary,
+  expectAdoptedClickIsNeverWorseThanAPlainClick,
+  recordPlainAndAdoptedClick,
+  expectCachedRouteUnderHeldFlaggedLayoutUsesItsRecord,
+  expectHeldFlaggedLayoutLeavesRoutesToTheirOwnFlags,
+  expectPendingFillReadsLikeAStreamingNavigation,
+  expectPrefetchThatDeferredStaysWithItsPage,
+  expectDeferredLoaderShowsItsOwnFallbackAtOnce,
+  definePrefetchFalseTests,
+  prefetchFalseParityTitle,
+  PREFETCH_FALSE_PARITY_CASES,
+  expectSameRouteNavigationIsNeverDeferred,
+} from "./prefetch-false.js";
+export type {
+  PrefetchFalseCase,
+  PrefetchFalseClick,
+  PrefetchFalseElsewhereCase,
+  PrefetchFalseFixture,
+  PrefetchFalseFlags,
+  PrefetchFalseObservation,
+  PrefetchFalsePair,
+  PrefetchFalseParityCase,
+  PrefetchFalseRequestKind,
+  PrefetchFalseScrollCase,
+  PrefetchFalseSuite,
+} from "./prefetch-false.js";
 
 /**
  * Shared end-to-end test utilities for HMR-driven tests across apps.
