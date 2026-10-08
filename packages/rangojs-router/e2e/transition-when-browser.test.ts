@@ -202,17 +202,29 @@ function browserDecisionTests(mode: "dev" | "build") {
 
       // A form action (useActionState): React opens a transition for the
       // call, but the router's commit runs after the response, outside it.
-      // Gated off, that commit is urgent and unanimated: no view transition
-      // starts. The segment it re-renders has nothing pending (the action
-      // response carries its data), so no loading() skeleton shows either.
+      // Gated off, that commit is unanimated: no view transition starts (that
+      // it is also urgent is pinned by the unit tests,
+      // server-action-bridge-transition-when.test.ts and
+      // partial-update.test.ts). The segment it re-renders has nothing
+      // pending (the action response carries its data), so a build shows no
+      // loading() skeleton either. The dev server still shows it: the client
+      // references of the action payload are still importing in that first
+      // render (cause in @shared/e2e held-boundary-scenario.ts).
+      await watchFlash(page, "tx-src-loading");
       await testId(page, "tx-action-run").click();
       await expect(testId(page, "tx-action-run")).toHaveText("actions:1", {
         timeout: 8000,
       });
       await page.waitForTimeout(500);
+      const actionFlash = await readFlash(page);
+      if (mode === "build") {
+        expect(actionFlash, "gated-off action commit shows no skeleton").toBe(
+          false,
+        );
+      }
       expect(
         await viewTransitions(page),
-        "gated-off action commit is urgent: no view transition",
+        "gated-off action commit is unanimated: no view transition",
       ).toBe(vt0);
       await testId(page, "tx-action-run").click();
       await expect(testId(page, "tx-action-run")).toHaveText("actions:2", {
