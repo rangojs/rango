@@ -32,6 +32,7 @@ import {
 import type { NavigationUpdate } from "./types.js";
 import { OPTIMISTIC_COMMIT_TRANSITION_TYPE } from "./optimistic-commit.js";
 import { loaderStore } from "../loader-store.js";
+import { vtExperiment } from "../vt-experiment.js";
 import {
   collectClientRevalidationDecisions,
   setActiveInterceptTargets,
@@ -68,6 +69,12 @@ export function shouldStartViewTransition(
     else if (s.transition) hasTransition = true;
   }
   return !hasIntercept && hasTransition;
+}
+
+/** #1078 candidate "c": the wait before a cold navigation's first commit, or -1. */
+function coldCommitWaitMs(): number {
+  const exp = vtExperiment();
+  return exp === "c0" ? 0 : exp === "c30" ? 30 : exp === "c100" ? 100 : -1;
 }
 
 /**
@@ -574,6 +581,36 @@ export function createPartialUpdater(
       // reach renderSegments. The response carries no decision, so a reused
       // prefetch is decided against the real source.
       const gatedOff = decideGatedOff(reconciled.segments, payload.metadata);
+      // #1078 candidate "c" (vt-experiment.ts), not for merge: a cold
+      // navigation waits up to coldCommitWaitMs() for the response to
+      // complete. If it does, the commit is the fully-prefetched one (data
+      // awaited, inside a transition, no fallback); otherwise it is today's
+      // commit, made that much later.
+      let completedInWait = false;
+      const coldWait = coldCommitWaitMs();
+      if (
+        coldWait >= 0 &&
+        mode.type === "navigate" &&
+        !fullyPrefetched &&
+        mode.optimisticPresented !== true
+      ) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        completedInWait = await Promise.race([
+          rawStreamComplete.then(
+            () => true,
+            () => false,
+          ),
+          new Promise<boolean>((resolve) => {
+            timer = setTimeout(() => resolve(false), coldWait);
+          }),
+        ]);
+        clearTimeout(timer);
+        if (signal?.aborted) {
+          debugLog("[Browser] Ignoring stale navigation (aborted in wait)");
+          return;
+        }
+      }
+      const responseComplete = fullyPrefetched || completedInWait;
       const renderOptions = {
         transitionGatedOff: gatedOff,
         isAction: mode.type === "action",
@@ -582,7 +619,7 @@ export function createPartialUpdater(
         // its router data already resolved (the prefetch stream drained), so
         // awaiting it here is free; the commit below then runs in a transition
         // (fullyPrefetched branch) so nothing router-owned can flash.
-        forceAwait: mode.type === "stale-revalidation" || fullyPrefetched,
+        forceAwait: mode.type === "stale-revalidation" || responseComplete,
         interceptSegments:
           reconciled.interceptSegments.length > 0
             ? reconciled.interceptSegments
@@ -739,7 +776,7 @@ export function createPartialUpdater(
         );
       } else if (
         !gatedOff &&
-        (fullyPrefetched || isSameStructureNav || optimisticPresented)
+        (responseComplete || isSameStructureNav || optimisticPresented)
       ) {
         // Content-hold commit, two triggers. Fully-prefetched nav: the payload
         // is fully resolved (forceAwait above), so the transition commits
