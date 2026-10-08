@@ -64,7 +64,7 @@ promise; `getMemoizedLoaderPromise` (`src/segment-loader-promise.ts:115`) hands 
 aggregate per set of loader references while it is pending; the per-loader streams
 `buildLoaderStreams` passes through untouched (`src/segment-system.tsx`). The three
 places that read them are `Suspender` (`src/route-content-wrapper.tsx:178`),
-`LoaderResolver` (`:330`) and the `useLoader` read site (`src/use-loader.tsx:226`).
+`LoaderResolver` (`:334`) and the `useLoader` read site (`src/use-loader.tsx:226`).
 
 A navigation to another URL hands new values, and that is not a violation: it is new
 data. So is a replacement that is already settled in a form React can read (rule 2).
@@ -89,12 +89,21 @@ switch under a render.
 One gap is left, and it is a timing one. `entry.value ?? entry.promise` is decided when
 the tree is built. A tree built while the loader data is pending, and rendered only after
 the aggregate has settled, still hands the loader boundary a settled promise React has
-not read. On a refresh under load that is what happens: with 4x CPU throttling the shell
-layout's loader data fulfilled 13 ms after the build and its boundary rendered 94 ms
-after it, in 6 of 6 runs (0 of 64 unthrottled on a quiet machine); cloudflare-basic needs
-8x throttling for the same 6 of 6. The refresh commits in a transition, so nothing shows;
-on an urgent commit it would be the 300 ms fallback. The baseline carries it as an
-intermittent I2 entry in each app, with that reason.
+not read. Does React then suspend on it? Only where something reads the aggregate. A
+layout's or route's loader boundary does not: `buildLoaderStreams` gives it per-loader
+streams, and `LoaderResolver` hands those to `OutletProvider` before it reaches
+`use(loaderDataPromise)` (`src/route-content-wrapper.tsx:317`), so its `useLoader`
+readers suspend on the streams and the aggregate is never read. An earlier version of
+the audit observed each promise's settlement itself and reported that unread aggregate
+as I2 on a refresh under CPU throttling (the shell layout's loader data fulfilled 13 ms
+after the build and its boundary rendered 94 ms after it). With an accessor on every
+promise handed unread, the same throttled refresh showed React writing a status on none
+of them, so those two baseline entries are gone. A parallel slot does read the
+aggregate: slots take no streams (`src/segment-system.tsx:772`), and there the gap is
+real. A full dev run of cloudflare-basic at a load average of 20 to 49 once caught the
+`@badge` slot of the PPR slot-hole route mounting its `loading()` fallback over an
+aggregate already settled (I3, idle-fallback); 6 reruns and 6 runs with 8x CPU
+throttling did not repeat it. The baseline carries it as an intermittent entry.
 
 The fix direction, for a PR of its own: in `getMemoizedLoaderPromise`, the same `.then`
 that sets `entry.value` also stamps `status: "fulfilled"` and `value` on the router's
@@ -328,8 +337,8 @@ run.
 
 What fails on main today and no test asks for is listed in
 `tools/e2e-console-baseline.json`, one entry per test and rule, each with a reason:
-messages no test declares (`Undeclared, cause: ...`), the intermittent I2 reports of
-rule 2's timing gap, and the I7 reports of the slot writes under rule 6. `pnpm check:e2e-console-baseline` (CI lint job) fails on an
+messages no test declares (`Undeclared, cause: ...`), the intermittent I3 report of
+rule 2's timing gap on a slot, and the I7 reports of the slot writes under rule 6. `pnpm check:e2e-console-baseline` (CI lint job) fails on an
 entry without a reason, or one whose full title path is not a test in that app's dev
 project as `playwright test --list` enumerates it; the guard itself fails a test whose
 entry no longer fires. A message that depends on timing goes into the baseline marked
@@ -342,7 +351,7 @@ inside a transition (13 tests) and a same-route navigation inside a transition s
 `transition({ when })` (12 and 1), where the route's fallback covered the content for
 300 ms. Every one was a route's content boundary handed `Promise.resolve(component)`.
 #1080 took all 36 to zero, measured with the guard in both apps; the timing gap under
-rule 2 is a different shape (a loader boundary, and only under load).
+rule 2 is a different shape (a parallel slot's loader boundary, and only under load).
 
 **The cases.** `tests/shared-e2e/src/suspense-cases.ts` and
 `held-boundary-scenario.ts`, run by `suspense-cases.test.ts` and `held-boundary.test.ts`
@@ -458,6 +467,14 @@ too, or the audit is off.
   transition, and the content lands about 250 ms after its data (#1078, #1084). No
   router hand-over is involved, so none of the invariants sees it.
 
+- A needless suspension React starts in a later task than the hand-over. I2 and the I3
+  attribution judge the status React leaves on a promise two microtasks after the
+  boundary was handed it, so they see React's read only when the boundary and its reader
+  render in the same task. A render that yields between them reads the promise later;
+  if it settled in between, React suspends on a settled value and the audit does not
+  see it (the fallback is counted in `unattributedFallbacks`). Judging at React's first
+  read instead needs an accessor on the promise's `status` until React writes it,
+  since a `.then` would mark a rejection handled; not built.
 - A fallback the content puts up itself: an app's `use()` or a `React.lazy` in a route's
   content shows the route's (or the loader boundary's) fallback without the router
   suspending React on anything. Counted (`unattributedFallbacks`), not reported.
