@@ -304,10 +304,14 @@ everything as before.
 `transition()` commits in a transition: with no prefetch, React keeps the page
 being left until the response starts and then shows the new page with its
 fallback. A prefetched click to a flagged `loading()` on such a route does the
-same with its fill. The URL changes with the click, `useNavigation()` reads
-`loading`, and the page shows, fallback included, when the fill starts
-answering. So the click is the plain click's equal there, not ahead of it;
-what the prefetch saves is the rest of the page, which is not fetched again.
+same with its fill: the fallback shows with the fill's first chunk, as a plain
+click's shows with its response, not at the click. The same holds when the
+`transition()` is on something the fallback covers, such as a route under a
+flagged layout. The URL and the URL hooks change with the click,
+`useNavigation()` reads `loading`, and the page shows, fallback included,
+when the fill starts answering. So the click is the plain click's equal
+there, not ahead of it; what the prefetch saves is the rest of the page,
+which is not fetched again.
 (Shown with the click, the content could only arrive in a second commit,
 which under a `<ViewTransition>` runs a view transition of its own and delays
 the reveal.) `loader(Def, { prefetch: false })` on a `transition()` route is

@@ -1167,10 +1167,12 @@ The limits:
 
 - **A boundary is required for a fallback.** With no `loading()` on the entry
   and no `<Suspense>` around the read, nothing can show a fallback, so React
-  holds the page being left on screen until the fill returns. The URL has
-  already changed, and `useNavigation()` reads `state: "loading"` for that
-  time, as on any navigation that is still streaming, so a progress bar
-  shows. There is no definition-time error.
+  holds the page being left on screen until the fill returns. The URL and
+  the URL hooks (`useNavigation().location`) have already changed, where a
+  click with no prefetch changes the hooks with the page, and
+  `useNavigation()` reads `state: "loading"` for that time, as on any
+  navigation that is still streaming, so a progress bar shows. There is no
+  definition-time error.
 - **`ctx.rendered()` is refused.** A loader that can be deferred throws on
   every request kind (a document load included, so you see it the first time
   you open the page in development) if it calls `await ctx.rendered()`. The
