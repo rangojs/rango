@@ -1324,20 +1324,15 @@ segments. A fill refuses `rendered()` outright for the same reason R12 exists.
   where a predicate that returns false would have made the plain click
   urgent. Read from the code, not measured: no fixture has that shape.
 - Two flagged loaders read in boundaries of their own, on a route whose
-  `loading()` covers both, can cost one fallback and 100 ms. The plain click
-  reveals the route 300 ms after its response starts, which restarts React's
-  throttle: two values that land inside the next 300 ms show together at its
-  end. The adopted click has the page up already, so the first value shows
-  as it lands and the second one 300 ms after that, behind a fallback the
-  plain click never shows. Measured in production on `nested` with loaders of
-  400 and 550 ms: 706 ms against 612, and 814 against 711 with the server
-  100 ms away, `pf-nested-late-fallback` in every click. It was the same
-  before the rules above (+96 ms). An exact fix has to know whether the
-  plain click's route-level reveal would have happened yet, which the client
-  can only learn from a probe inside the boundary. That is about 200 bytes
-  gzip, and the router chunk is 3 bytes under its budget. The parity matrix
-  runs both cells as expected failures (`OPEN_NESTED` in
-  `tests/shared-e2e/src/prefetch-false.ts`; "Open cases" below).
+  `loading()` covers both, used to cost one fallback and 100 ms against the
+  plain click (`nested` with loaders of 400 and 550 ms: 706 ms against 612 in
+  production). The plain click showed the route's `loading()` first and
+  revealed the page 300 ms later, which restarted React's throttle, so both
+  values showed together. Since the held-boundary fix (#1080) a route whose
+  handler has returned is handed to its boundary as the node, the plain
+  click shows the page with its response, and the two clicks show the same
+  sequence: measured 710 ms against 706, and 811 against 808 with the server
+  100 ms away, green three runs of three in both apps and modes.
 - A loader that lands within a few milliseconds of React's 300 ms is a coin
   flip for a plain click too: the value either makes the throttled reveal or
   waits 300 ms for the next one. The fill's deadline runs from its first
@@ -1494,14 +1489,13 @@ still runs. Every rule the gap does not break is asserted first, so a
 regression in the same cell is a real failure. Then the test is marked with
 `test.fail` and the broken rules are asserted: the run reports an expected
 failure with the reason, and an unexpected pass, which fails the suite, the
-day the gap is fixed. 35 cells per mode and app:
+day the gap is fixed. 33 cells per mode and app:
 
 | Gap           | Cells | Rules it breaks            |
 | ------------- | ----- | -------------------------- |
 | `OPEN_HELD`   | 20    | the URL rule               |
 | `OPEN_ABOVE`  | 3     | URL, fallbacks, lateness   |
 | `OPEN_QUEUED` | 10    | transitions, lateness, URL |
-| `OPEN_NESTED` | 2     | fallbacks, lateness        |
 
 A gap need not break every rule it names in every cell or app: `OPEN_ABOVE`
 breaks the URL rule everywhere, and the other two where the plain click
