@@ -37,7 +37,27 @@ function install() {
       rec.vt.push(r);
       const vt = orig(arg);
       vt.ready.then(
-        () => (r.ready = now()),
+        () => {
+          r.ready = now();
+          // What this transition animates. React cancels a group it found
+          // unchanged with a zero-duration opacity [0, 0] animation; the
+          // browser's own animations on that group keep running under it.
+          r.anims = document
+            .getAnimations()
+            .map((a: any) => {
+              const e = a.effect;
+              const pseudo: string = e?.pseudoElement ?? "";
+              if (!pseudo.startsWith("::view-transition")) return null;
+              const kf = e.getKeyframes?.() ?? [];
+              return {
+                pseudo,
+                name: a.animationName ?? "script",
+                duration: e.getTiming?.().duration,
+                opacity: kf.map((k: any) => k.opacity).join(">"),
+              };
+            })
+            .filter(Boolean);
+        },
         () => (r.readyErr = now()),
       );
       vt.finished.then(

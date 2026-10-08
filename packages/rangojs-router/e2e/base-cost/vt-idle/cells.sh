@@ -3,7 +3,7 @@
 # against servers you started yourself (vite / vite preview in e2e/test-app).
 #
 # usage: cells.sh <out-dir> <mode: dev|production> <base-url> [exp] [N]
-#   exp: "" (main behavior) | a | b1 | b2 | c0 | c30 | c100  (src/vt-experiment.ts)
+#   exp: "" (main behavior) | a | b1 | b2 | c0 | c30 | c100 | d  (src/vt-experiment.ts)
 # env: ROUTES_A (default vt,skeleton,vt-bare), DELAYS_A (default 100,280,400,500),
 #      ROUTES_B (default vt-two; "none" skips the two-loader cell)
 set -e
