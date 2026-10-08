@@ -9,6 +9,11 @@ import {
   type test as base,
 } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import {
+  expectConsole,
+  readSuspenseAudit,
+  resetSuspenseAudit,
+} from "./console-guard.js";
 
 /**
  * `prefetch: false` on `loader()` and `loading()`, as a browser sees it
@@ -1182,6 +1187,14 @@ export async function expectFailedFillReachesTheNetworkErrorBoundary(
   fixture: PrefetchFalseFixture,
   name: string = "loader",
 ): Promise<void> {
+  // Provoked on purpose (console guard, console-guard.ts). A fill React
+  // holds the click for (vt-unit) fails as the navigation it completes.
+  expectConsole(page, {
+    allow: [
+      /\[rango\] fill failed: NetworkError|\[Browser\] Network error during navigation: NetworkError/,
+      /\[RootErrorBoundary\] Unhandled error caught: NetworkError/,
+    ],
+  });
   const hub = await openHub(page, fixture);
   await prefetchCase(page, hub, name);
   await page.route(isFill, (route) => route.abort("failed"));
@@ -1205,6 +1218,13 @@ export async function expectUnusableFillReachesTheErrorBoundary(
   page: Page,
   fixture: PrefetchFalseFixture,
 ): Promise<void> {
+  // Provoked on purpose (console guard, console-guard.ts).
+  expectConsole(page, {
+    allow: [
+      /\[rango\] fill failed: Error: Connection closed/,
+      /\[RootErrorBoundary\] Unhandled error caught: Error: Connection closed/,
+    ],
+  });
   const hub = await openHub(page, fixture);
   await prefetchCase(page, hub, "loader");
   await page.route(isFill, (route) =>
@@ -1869,6 +1889,7 @@ export async function expectAdoptedClickBuildsThePageOnce(
   await prefetchCase(page, hub, name);
 
   const watch = await watchPage(page, ["pf-layout"]);
+  await resetSuspenseAudit(page);
   await clickWithoutHover(page, name);
   await expect(byId(page, `pf-${name}-value`)).toBeVisible();
   await expect(page).toHaveURL(hub.pageUrl(name));
@@ -1879,6 +1900,42 @@ export async function expectAdoptedClickBuildsThePageOnce(
   expect(seen.remounted, "an element was mounted a second time").toEqual([]);
   expect(seen.hidden, "the layout the page keeps stayed").toEqual([]);
   expect(seen.blank, "the page was never blank").toBe(false);
+
+  // Dev only: the suspense audit (src/suspense-audit.ts) counts the trees
+  // React is handed. The click's is the one; the fill resolves gates.
+  // The audit reports two microtasks after a mount.
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  const audit = await readSuspenseAudit(page);
+  if (audit) {
+    expect(
+      audit.treeUpdates,
+      "one tree update, the click's: the fill hands React none",
+    ).toEqual({ navigation: 1 });
+    const { swaps, untracked, idleFallbacks, resuspended } = audit;
+    const { remounts, drifts, uncaused, mutations } = audit;
+    expect(
+      {
+        swaps,
+        untracked,
+        idleFallbacks,
+        resuspended,
+        remounts,
+        drifts,
+        uncaused,
+        mutations,
+      },
+      JSON.stringify(audit.events),
+    ).toEqual({
+      swaps: 0,
+      untracked: 0,
+      idleFallbacks: 0,
+      resuspended: 0,
+      remounts: 0,
+      drifts: 0,
+      uncaused: 0,
+      mutations: 0,
+    });
+  }
 }
 
 /**
