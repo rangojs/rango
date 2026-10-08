@@ -2,7 +2,7 @@
 
 If you are about to create, memoize or hand a promise to one of the router's Suspense
 boundaries, or to touch `src/segment-system.tsx`, `src/route-content-wrapper.tsx`,
-`src/segment-loader-promise.ts`, `src/segment-content-promise.ts` or `src/use-loader.tsx`,
+`src/segment-loader-promise.ts`, `src/segment-boundary-content.ts` or `src/use-loader.tsx`,
 start here. Same if you are adding anything that needs to update the page after it
 committed.
 
@@ -28,10 +28,11 @@ transition nobody notices, because React holds the old screen. On an urgent comm
 boundary shows its fallback, and React keeps a fallback it has shown for 300 ms.
 
 The router handed the layout `Promise.resolve(node)`, a promise that is settled and
-unread by construction (`getMemoizedContentPromise`, `src/segment-content-promise.ts:39`).
-Every lane that awaits the tree first (`forceAwait`: back/forward, stale revalidation,
-a fully prefetched click) hands the node itself, so the bug only shows on the plain lane
-right after an awaited one. It took a while to find for exactly that reason.
+unread by construction (`getMemoizedContentPromise`, which #1080 removed). Every lane that
+awaits the tree first (`forceAwait`: back/forward, stale revalidation, a fully
+prefetched click) handed the node itself, so the bug only showed on the plain lane right
+after an awaited one. It took a while to find for exactly that reason. #1080 fixed it by
+handing every lane the settled value (rules 1 and 2).
 
 ## Why React will not tell you
 
@@ -43,9 +44,9 @@ render attempt. Its state is cleared when the render finishes or unwinds. A boun
 that is handed a different promise through its props on the next render is, to React, a
 new render reading a new value.
 
-Measured on main with the guard recording: the router's dev suite printed that warning
-zero times across 1405 tests, while 25 of those tests handed content on screen a settled
-promise it had not read. The warning stays on the console guard's deny list, because
+Measured before #1080 with the guard recording: the router's dev suite printed that
+warning zero times across 1405 tests, while 25 of those tests handed content on screen a
+settled promise it had not read. The warning stays on the console guard's deny list, because
 the day it does fire something is badly wrong, but it is not what protects this
 contract. The audit below is.
 
@@ -57,13 +58,13 @@ While a value is pending, every render hands the boundary the same thenable. A n
 promise for the same value makes React start waiting again, and a boundary that was
 about to reveal shows its fallback instead.
 
-Where this is kept today: `getMemoizedContentPromise`
-(`src/segment-content-promise.ts:39`, one promise per component reference),
-`getMemoizedLoaderPromise` (`src/segment-loader-promise.ts:129`, one aggregate per set of
-loader references) and the per-loader streams `buildLoaderStreams` passes through
-untouched (`src/segment-system.tsx`). The three places that read them are `Suspender`
-(`src/route-content-wrapper.tsx:183`), `LoaderResolver` (`:337`) and the `useLoader` read
-site (`src/use-loader.tsx:226`).
+Where this is kept today: `getBoundaryContent` (`src/segment-boundary-content.ts:20`)
+hands a component that is still a promise (a Flight-streamed segment) as that same
+promise; `getMemoizedLoaderPromise` (`src/segment-loader-promise.ts:115`) hands one
+aggregate per set of loader references while it is pending; the per-loader streams
+`buildLoaderStreams` passes through untouched (`src/segment-system.tsx`). The three
+places that read them are `Suspender` (`src/route-content-wrapper.tsx:178`),
+`LoaderResolver` (`:330`) and the `useLoader` read site (`src/use-loader.tsx:226`).
 
 A navigation to another URL hands new values, and that is not a violation: it is new
 data. So is a replacement that is already settled in a form React can read (rule 2).
@@ -75,10 +76,24 @@ carries `status: "fulfilled"` (a Flight chunk, or a promise React has read befor
 not wrap it in `Promise.resolve`, and do not build a fresh `Promise.all` over settled
 parts.
 
-This is the rule #1079 broke. It is also the one with the most debt on main: the action
-lane, a same-route navigation inside a transition scope and a commit `transition({ when })`
-gated off all hand content on screen a settled, unread promise. Inside a transition that
-is invisible. On an urgent commit it is the 300 ms skeleton.
+This is the rule #1079 broke, and what #1080 put in place on every lane. In the
+browser, `getBoundaryContent` (`src/segment-boundary-content.ts:20`) hands a settled
+component as the node itself; only the server wraps it, so Suspense still streams the
+fallback in the document. `getMemoizedLoaderPromise` remembers the array once its
+aggregate fulfils and from then on hands that array (`return entry.value ??
+entry.promise`, `src/segment-loader-promise.ts:134`), so a later tree reads the loader
+data without suspending. A boundary may get the promise in one tree and the settled
+array in a later one: that is a different value at a different time (rule 6), not a
+switch under a render.
+
+One gap is left, and it is a timing one. `entry.value ?? entry.promise` is decided when
+the tree is built. A tree built while the loader data is pending, and rendered only after
+the aggregate has settled, still hands the loader boundary a settled promise React has
+not read. On a refresh under load that is what happens: with 4x CPU throttling the shell
+layout's loader data fulfilled 13 ms after the build and its boundary rendered 94 ms
+after it, in 6 of 6 runs (0 of 64 unthrottled on a quiet machine). The refresh commits in
+a transition, so nothing shows; on an urgent commit it would be the 300 ms fallback. The
+baseline carries it as an intermittent I2 entry with that reason.
 
 ### 3. No fallback while nothing is pending
 
@@ -165,6 +180,29 @@ each. Entering a group from outside is already one commit and one promise. The t
 cases that miss are expected failures that name #1079, so they flip when the feature
 moves onto the one-commit model.
 
+### 6. Nothing a render reads changes while React renders
+
+The router decides what a boundary gets when it builds the tree. After it hands the tree
+to React, the only change is a promise settling, once. A segment object, a props object,
+a loader map: none of them is written again. Why so strict? React may render a tree more
+than once (a transition that suspends and retries, StrictMode, a boundary that reveals
+later), and every render has to see the same inputs. A write after hand-over makes one
+render of a tree read different values from another render of the same tree, and with
+React Compiler a component may not even re-read them: the compiled `ParallelOutlet`
+caches `renderSlotContent(segment)` on the segment's identity, so it keeps what it read
+first.
+
+When a later tree needs a different value, it gets a new object. A promise in one tree
+and the settled value in a later tree is fine: a different input at a different time.
+A switch within one render, or one that shows a fallback, is not.
+
+The known violation on main: `renderSegments` writes `loaderIds`, `loaderDataPromise`,
+`loaderStreams` and `awaitedLoaderIds` on a parallel slot's segment object in place (the
+parallel slot loop in `src/segment-system.tsx`), and when the slot is reused from the
+cache that object is the one the previous tree handed to React. `ParallelOutlet` reads
+those fields during render (`renderSlotContent`, `src/client.tsx`). The audit does not
+check this rule yet.
+
 ## How it is enforced
 
 Four layers, cheapest first.
@@ -224,39 +262,36 @@ run.
 
 What fails on main today and no test asks for is listed in
 `tools/e2e-console-baseline.json`, one entry per test and rule, each with a reason:
-the I2 reports (`#1079`, with the lane below), and messages no test declares
-(`Undeclared, cause: ...`). `pnpm check:e2e-console-baseline` (CI lint job) fails on an
+messages no test declares (`Undeclared, cause: ...`), and the one intermittent I2
+report of rule 2's timing gap. `pnpm check:e2e-console-baseline` (CI lint job) fails on an
 entry without a reason or one whose test is gone; the guard itself fails a test whose
 entry no longer fires. A message that depends on timing goes into the baseline marked
 `intermittent`, not behind a retry. A test that provokes an error on purpose (an error
 boundary, a failed action, a redirect loop) declares it with `expectConsole` instead.
 
-The 36 I2 entries fall into four lanes, measured with the audit's traces: the commit
-that handed the settled, unread promise, and whether a fallback then covered the
-content.
-
-| Lane                                                      | Tests | Fallback over the content             | Example                                                                      |
-| --------------------------------------------------------- | ----- | ------------------------------------- | ---------------------------------------------------------------------------- |
-| Action commit inside a transition                         | 13    | none: the transition holds            | `inline-bound-action.test.ts`, document MISS streams a bound action          |
-| Same-route navigation inside a transition scope           | 10    | none: the transition holds            | `conditional-transition.test.ts`, holds the same-route nav                   |
-| Same-route navigation gated off by `transition({ when })` | 12    | 300 ms, the skeleton the test expects | `conditional-transition.test.ts`, re-streams the skeleton on same-route nav  |
-| Action commit gated off by `transition({ when })`         | 1     | 300 ms                                | `transition-when-browser.test.ts`, an action commit decides with kind action |
-
-No entry is a slot boundary or a plain streaming navigation: every one is a route's
-content boundary (`content:<segment id>`) handed a promise of a component the client
-already holds.
+Before #1080 the baseline also held 36 I2 entries, in four lanes: an action commit
+inside a transition (13 tests) and a same-route navigation inside a transition scope
+(10), both invisible because the transition held; and the same two gated off by
+`transition({ when })` (12 and 1), where the route's fallback covered the content for
+300 ms. Every one was a route's content boundary handed `Promise.resolve(component)`.
+#1080 took all 36 to zero, measured with the guard in both apps; the timing gap under
+rule 2 is a different shape (a loader boundary, and only under load).
 
 **The cases.** `tests/shared-e2e/src/suspense-cases.ts` and
 `held-boundary-scenario.ts`, run by `suspense-cases.test.ts` and `held-boundary.test.ts`
 in both apps, in a dev and a `(production)` describe. Each case asserts the flash probe
 (DOM), the mounted instance of what is held, the audit at zero, and the tree updates each
 step handed React. Cases that are red on main are expected failures listed by title with
-`#1079`; they fail the run the day they pass, so the entry gets removed.
+`#1079`; they fail the run the day they pass, so the entry gets removed. Two remain: the
+`clientUrls()` one-commit cases (rule 5), and in a build a client component at the top of
+a route's content whose module the click uses for the first time in the document: the
+Flight client waits for that module's `import()` although its chunk is already fetched,
+so the route's `loading()` shows for 300 ms (see below).
 
 Unit level: `src/__tests__/suspense-audit.test.tsx` runs each invariant against real React
 with StrictMode on and off, including a streaming navigation the audit must stay silent
 on, and the #1079 shape itself (an awaited render, then an urgent render of the same
-boundaries) as an expected failure.
+boundaries).
 
 ## Dev is not production
 
@@ -302,6 +337,7 @@ in `src/suspense-audit.ts`, to the table above, and to `EMITTERS` in the check.
 - **`I3 idle-fallback`**: a new boundary suspended on something already settled. Usually
   the same fix as I2, one lane earlier.
 - **`I3 resuspended ... with nothing pending`**: the 300 ms skeleton of #1079.
+  A held boundary is handed its settled content and loader data since #1080.
 - **`I5 drift at outlet:<id>: wrapper chain link N changed from A to B`**: two lanes build
   different trees for that segment. Make the wrapper unconditional.
 - **`I4 remount`**: the consequence of a drift at or above the segment's outlet. A link
@@ -332,9 +368,17 @@ hand-over, mount and fallback.
 - I3 stays silent while a payload is streaming. The audit knows what the router handed
   a boundary; it does not know what inside the content waits on the stream. So a
   route-level `loading()` that shows while only readers behind their own `<Suspense>`
-  are waiting is not an I3 report. The case "a route whose loaders are all read behind
-  their own boundaries" asserts it with the flash probe in a build instead (red on main,
-  #1079 and #1080).
+  are waiting is not an I3 report. The flash probe asserts it in a build instead: "a
+  route whose loaders are all read behind their own boundaries" (green since #1080) and
+  "a client component directly in a route's content" (red: the click is the first use of
+  the component's module in the document, so the Flight client's `requireAsyncModule`
+  blocks the element on plugin-rsc's `import()` promise for 3 to 6 ms with no request,
+  and the route's boundary is the nearest one; 300 ms in both apps).
+- What a view transition does with a fallback. On a route with `loading()` and
+  `transition()` whose loaders take longer than about 320 ms, React's own retry of the
+  route's boundary commits while the fallback is still up, that commit starts a view
+  transition, and the content lands about 250 ms after its data (#1078, #1084). No
+  router hand-over is involved, so none of the invariants sees it.
 
 - A remount below a segment's outlet has no mount record of its own (see I4 above). The
   cases use an instance marker in the fixture for that.

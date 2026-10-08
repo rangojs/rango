@@ -66,7 +66,8 @@ const PRODUCERS = {
   "segment-system.tsx": "renderSegments: every segment's boundaries",
   "client.tsx": "renderSlotContent: parallel and intercept slot boundaries",
   "route-content-wrapper.tsx": "the boundary components and their props",
-  "segment-content-promise.ts": "getMemoizedContentPromise",
+  "segment-boundary-content.ts":
+    "getBoundaryContent: what a route's content boundary is handed",
   "segment-loader-promise.ts": "getMemoizedLoaderPromise, buildLoaderPromise",
   "browser/merge-segment-loaders.ts":
     "client merge of a segment's loader results after a partial update",
@@ -81,7 +82,7 @@ const PRODUCERS = {
 
 const EMITTER_CALL = /\b(?:emitUpdate|onUpdate|commitInTransition)\s*\(/;
 const PRODUCER_USE = [
-  /\bgetMemoizedContentPromise\s*\(/,
+  /\bgetBoundaryContent\s*\(/,
   /\bgetMemoizedLoaderPromise\s*\(/,
   /\bbuildLoaderPromise\s*\(/,
   /\bbuildLoaderStreams\s*\(/,
