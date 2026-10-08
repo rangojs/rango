@@ -87,7 +87,7 @@ const router: any = createRouter<Record<string, never>>({
       meta: ctx.metadata,
     });
   },
-}).routes(({ path, layout, intercept }: any) => [
+}).routes(({ path, layout, intercept, loading, errorBoundary }: any) => [
   layout(<div>shell</div>, () => [
     path(
       "/product",
@@ -113,6 +113,20 @@ const router: any = createRouter<Record<string, never>>({
         return <div>crumb</div>;
       }),
       { name: "crumb" },
+    ),
+    path(
+      "/streamed",
+      Prerender(async () => {
+        await Promise.resolve();
+        if (skipReviews) throw new Skip("reviews are build-time only");
+        if (failReviews) throw new Error("streamed handler down");
+        return <div>streamed</div>;
+      }),
+      { name: "streamed" },
+      () => [
+        loading(<p>loading</p>),
+        errorBoundary(() => <p>declared error fallback</p>),
+      ],
     ),
     path(
       "/photo",
@@ -188,6 +202,28 @@ describe("matchForPrerender: an async child that throws during the encode", () =
     await expect(router.matchForPrerender("/crumb", {})).rejects.toThrow(
       "reviews upstream down",
     );
+  });
+});
+
+describe("matchForPrerender: a streamed handler under loading() + errorBoundary()", () => {
+  it("control: a healthy streamed handler bakes", async () => {
+    const result = await router.matchForPrerender("/streamed", {});
+    expect(result.routeName).toBe("streamed");
+    expect(errorRows(result.segments)).toEqual([]);
+  });
+
+  it("rejects instead of baking the declared fallback", async () => {
+    failReviews = true;
+    await expect(router.matchForPrerender("/streamed", {})).rejects.toThrow(
+      "streamed handler down",
+    );
+  });
+
+  it("a Skip propagates as a Skip", async () => {
+    skipReviews = true;
+    await expect(
+      router.matchForPrerender("/streamed", {}),
+    ).rejects.toBeInstanceOf(Skip);
   });
 });
 

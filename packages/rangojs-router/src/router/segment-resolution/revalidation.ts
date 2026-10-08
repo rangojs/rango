@@ -47,7 +47,7 @@ import { applyViewTransitionDefault } from "./view-transition-default.js";
 import { getRouterContext } from "../router-context.js";
 import { observeEvent, observeSegmentHandler } from "../instrument.js";
 import { runInSegmentTagScope } from "../../cache/cache-tag.js";
-import { observeStreamedHandler } from "./streamed-handler-telemetry.js";
+import { trackStreamedHandler } from "./streamed-handler-boundary.js";
 import {
   track,
   RangoContext,
@@ -441,6 +441,8 @@ async function resolveParallelSlotComponent<TEnv>(args: {
   deps: SegmentResolutionDeps<TEnv>;
   routeKey: string;
   params: Record<string, string>;
+  /** Matched chain entry (where the sync path catches), else the slot's owner. */
+  boundaryEntry: EntryData;
 }): Promise<{ component: ReactNode | undefined; handlerRan: boolean }> {
   const {
     shouldResolve,
@@ -452,6 +454,7 @@ async function resolveParallelSlotComponent<TEnv>(args: {
     deps,
     routeKey,
     params,
+    boundaryEntry,
   } = args;
 
   let component: ReactNode | undefined;
@@ -484,19 +487,15 @@ async function resolveParallelSlotComponent<TEnv>(args: {
             : handler;
         if (result instanceof Promise) {
           warnOnStreamedResponse(result, parallelId);
-          const tracked = deps.trackHandler(result, {
+          component = trackStreamedHandler(deps, result, {
+            boundaryEntry,
             segmentId: parallelId,
             segmentType: "parallel",
-          });
-          observeStreamedHandler(
-            tracked,
-            parallelId,
-            "parallel",
-            context.pathname,
+            context,
             routeKey,
             params,
-          );
-          component = tracked as ReactNode;
+            recover: true,
+          });
         } else {
           component = result as ReactNode;
         }
@@ -547,6 +546,8 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
      * to it: loader sub-ids are filtered out and slots are re-grouped by parent).
      */
     loaderOrder?: "after" | "before";
+    /** Matched chain entry being resolved; see ResolveSegmentOptions.boundaryEntry. */
+    boundaryEntry?: EntryData;
   },
 ): Promise<SegmentRevalidationResult> {
   const segments: ResolvedSegment[] = [];
@@ -696,6 +697,7 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
       deps,
       routeKey,
       params,
+      boundaryEntry: options?.boundaryEntry ?? entry,
     });
 
     segments.push({
@@ -865,19 +867,17 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
         if (result instanceof Promise) {
           warnOnStreamedResponse(result, routeEntry.id);
           result.finally(doneHandler).catch(() => {});
-          const tracked = deps.trackHandler(result, {
-            segmentId: entry.shortCode,
-            segmentType: entry.type,
-          });
-          observeStreamedHandler(
-            tracked,
-            entry.shortCode,
-            entry.type,
-            context.pathname,
-            routeKey,
-            params,
-          );
-          return { content: tracked };
+          return {
+            content: trackStreamedHandler(deps, result, {
+              boundaryEntry: entry,
+              segmentId: entry.shortCode,
+              segmentType: entry.type,
+              context,
+              routeKey,
+              params,
+              recover: true,
+            }),
+          };
         }
         doneHandler();
         return { content: result };
@@ -1098,6 +1098,8 @@ export async function resolveSegmentWithRevalidation<TEnv>(
         deps,
         actionContext,
         stale,
+        undefined,
+        entry,
       );
       segments.push(...orphanResult.segments);
       matchedIds.push(...orphanResult.matchedIds);
@@ -1126,6 +1128,8 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
   stale?: boolean,
   /** Parent route entry — its loaders are inherited so parallel slots can access them. */
   parentRouteEntry?: EntryData,
+  /** Matched chain entry being resolved (see ResolveSegmentOptions.boundaryEntry); defaults to parentRouteEntry. */
+  boundaryEntry: EntryData | undefined = parentRouteEntry,
 ): Promise<SegmentRevalidationResult> {
   invariant(
     orphan.type === "layout" || orphan.type === "cache",
@@ -1286,7 +1290,11 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
     deps,
     actionContext,
     stale,
-    { parentChainDefault: "force-render", loaderOrder: "before" },
+    {
+      parentChainDefault: "force-render",
+      loaderOrder: "before",
+      boundaryEntry,
+    },
   );
   segments.push(...parallelResult.segments);
   matchedIds.push(...parallelResult.matchedIds);
@@ -1307,6 +1315,8 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
       deps,
       actionContext,
       stale,
+      undefined,
+      boundaryEntry,
     );
     segments.push(...nestedResult.segments);
     matchedIds.push(...nestedResult.matchedIds);

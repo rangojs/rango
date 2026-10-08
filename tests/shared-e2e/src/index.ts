@@ -21,6 +21,11 @@ export type {
 export { createDeployFixture, readBuiltVersions } from "./deploy-fixture.js";
 export type { DeployFixture, DeployFixtureOptions } from "./deploy-fixture.js";
 export { runCacheVersionScenario } from "./cache-version-scenario.js";
+export { defineStreamedBoundaryScenarios } from "./streamed-boundary-scenarios.js";
+export type {
+  StreamedBoundaryFixture,
+  StreamedBoundaryScenariosOptions,
+} from "./streamed-boundary-scenarios.js";
 export { runHeldBoundaryTests } from "./held-boundary-scenario.js";
 export type { HeldBoundaryScenarioOptions } from "./held-boundary-scenario.js";
 export { runUseLoaderSettledReadTests } from "./use-loader-settled-read-scenario.js";

@@ -29,7 +29,6 @@ import type {
   LoaderContext,
   LoaderDataResult,
   ErrorBoundaryHandler,
-  ErrorBoundaryFallbackProps,
   ErrorInfo,
   NotFoundBoundaryHandler,
   NotFoundBoundaryFallbackProps,
@@ -44,6 +43,7 @@ import {
 } from "../redirect-origin.js";
 import {
   createNotFoundInfo,
+  renderErrorFallback,
   renderNotFoundFallback,
   resolveNotFoundFallback,
 } from "./error-handling.js";
@@ -302,15 +302,7 @@ export function wrapLoaderWithErrorHandling<T>(
       // error, and the wrapped promise still resolves to a LoaderDataResult.
       let renderedFallback: ReactNode;
       try {
-        if (typeof fallback === "function") {
-          // ErrorBoundaryHandler - call with error info
-          const props: ErrorBoundaryFallbackProps = {
-            error: errorInfo,
-          };
-          renderedFallback = fallback(props);
-        } else {
-          renderedFallback = fallback;
-        }
+        renderedFallback = renderErrorFallback(fallback, errorInfo);
       } catch (fallbackError) {
         debugLog("loader", "error boundary fallback render threw", {
           segmentId,

@@ -404,6 +404,35 @@ path("/checkout", CheckoutPage, { name: "checkout" }, () => [
 ]);
 ```
 
+## Errors in a streamed handler
+
+A handler under `loading()` (a route, or a parallel slot) streams: it settles
+after the response started. When it rejects, the nearest `errorBoundary()`
+renders in place of that segment; `notFound()` renders the nearest
+`notFoundBoundary()`. A slot finds boundaries declared on its owning layout or
+route. Layouts and nav stay, on the document load and on a client navigation.
+
+```typescript
+path("/product/:slug", ProductPage, { name: "product" }, () => [
+  loading(<ProductSkeleton />),
+  errorBoundary(({ error }) => <ProductError message={error.message} />),
+  notFoundBoundary(() => <ProductNotFound />),
+]);
+```
+
+- The HTTP status stays what the stream already sent (200), `notFound()`
+  included; a failure before the flush (no `loading()`, or
+  `loading(fallback, { ssr: false })` on a document load) still sets 500 / 404.
+  A loader's 404 is likewise only set when its rejection settles before the
+  response is built.
+- `onError` fires once per failure.
+- A failed render is never stored: `cache()` skips the write for the scope that
+  holds the failed segment, a `ppr` shell and the document cache refuse the
+  whole document, and a Prerender route still fails the build.
+- With no declared boundary the rejection reaches the client and
+  `RootErrorBoundary` replaces the page. A `redirect()` thrown from a streamed
+  handler is not recovered either (see "Redirects").
+
 ## Redirects
 
 `redirect(url, statusOrOptions?)` returns a `Response` (default status `302`).

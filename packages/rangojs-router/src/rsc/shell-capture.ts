@@ -2184,6 +2184,7 @@ export function deriveShellCaptureContext(
   // Own list: the capture's render errors refuse the capture only, and the
   // foreground's never reach it.
   derivedCtx._renderErrors = [];
+  derivedCtx._recoveredHandlerErrors = undefined;
   derivedCtx._shellCaptureRun = true;
   // Own dynamic() latch. The inherited method writes the FOREGROUND context
   // (its closure), which already served, and nothing read it for a runtime

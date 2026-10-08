@@ -854,6 +854,18 @@ export interface RequestContext<
   _renderErrors?: unknown[];
 
   /**
+   * @internal Rejections of streamed (loading()) handlers that were recovered
+   * into a declared errorBoundary()/notFoundBoundary() fallback, by segment id.
+   * The recovered promise resolves, so Flight reports nothing; cacheRoute
+   * (cache-scope.ts) refuses a write only when one of ITS segments is listed,
+   * the granularity a Flight error row has. The same errors are also pushed to
+   * `_renderErrors` for the document cache and PPR shell capture. A render
+   * under a derived context (shell capture, SWR re-render) owns its own map.
+   * Allocated on the first recovery.
+   */
+  _recoveredHandlerErrors?: Map<string, unknown>;
+
+  /**
    * @internal Report a non-fatal background error through the router's
    * onError callback. Wired by the RSC handler / router during request
    * creation. Cache-runtime and other subsystems call this to surface
@@ -1006,6 +1018,7 @@ export type PublicRequestContext<
   | "_inActionRevalidation"
   | "_reportedErrors"
   | "_renderErrors"
+  | "_recoveredHandlerErrors"
   | "_renderBarrier"
   | "_resolveRenderBarrier"
   | "_renderBarrierSegmentOrder"

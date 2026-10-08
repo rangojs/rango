@@ -99,6 +99,8 @@ describe("segment-resolution parallel loading", () => {
       new Map(),
       {
         trackHandler: (p: any) => p,
+        findNearestErrorBoundary: () => null,
+        findNearestNotFoundBoundary: () => null,
         wrapLoaderPromise: (p: Promise<any>) => p,
       } as any,
     );
@@ -141,6 +143,8 @@ describe("segment-resolution parallel loading", () => {
       context.url,
       {
         trackHandler: (p: any) => p,
+        findNearestErrorBoundary: () => null,
+        findNearestNotFoundBoundary: () => null,
         wrapLoaderPromise: (p: Promise<any>) => p,
       } as any,
     );
@@ -180,7 +184,11 @@ describe("segment-resolution parallel loading", () => {
       context.url,
       context.url,
       "/blog",
-      { trackHandler: (p: any) => p } as any,
+      {
+        trackHandler: (p: any) => p,
+        findNearestErrorBoundary: () => null,
+        findNearestNotFoundBoundary: () => null,
+      } as any,
     );
 
     const quickResult = await Promise.race([
@@ -232,7 +240,11 @@ describe("segment-resolution parallel loading", () => {
       context.url,
       "/blog",
       false,
-      { trackHandler: (p: any) => p } as any,
+      {
+        trackHandler: (p: any) => p,
+        findNearestErrorBoundary: () => null,
+        findNearestNotFoundBoundary: () => null,
+      } as any,
     );
 
     const quickResult = await Promise.race([
@@ -288,7 +300,11 @@ describe("segment-resolution parallel loading", () => {
       context.url,
       context.url,
       "/blog",
-      { trackHandler: (p: any) => p } as any,
+      {
+        trackHandler: (p: any) => p,
+        findNearestErrorBoundary: () => null,
+        findNearestNotFoundBoundary: () => null,
+      } as any,
     );
 
     const quickResult = await Promise.race([

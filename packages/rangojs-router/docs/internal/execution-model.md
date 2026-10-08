@@ -626,6 +626,58 @@ loader, or a synchronous handler return. In development, `warnOnStreamedResponse
 (`segment-resolution/helpers.ts`) logs a warning when a streamed handler resolves
 or rejects with a `Response`, so the swallowed-redirect failure mode is visible.
 
+### Streamed handler rejections render the declared boundary
+
+The same non-awaited promise carries failures. `trackStreamedHandler`
+(`segment-resolution/streamed-handler-boundary.ts`) is the one entry for every
+streamed handler (fresh and revalidation route handlers, parallel slots,
+intercept slots): it runs `trackHandler`, `observeStreamedHandler`, and, when a
+boundary exists, derives a promise that resolves to the nearest
+`errorBoundary()` / `notFoundBoundary()` fallback. Layouts and nav stay on the
+document and on a client navigation. The boundary is looked up from the matched
+chain entry being resolved (`ResolveSegmentOptions.boundaryEntry`, threaded
+explicitly through `fresh.ts` / `revalidation.ts`; no mutable field): the entry
+the sync path catches at, whatever
+routeless layout owns a slot (parallel entries have `parent: null`). Intercept
+slots use their declaring entry.
+
+Rules that are easy to break:
+
+- No status write. The status line is committed at first flush (or races
+  Response construction). Sync handler errors still set 500 / 404 through
+  `catchSegmentError`.
+- No `onError` call. `trackHandler` (`router.ts`) reports each rejection once;
+  recovery must not be folded into it, because the shell capture and handle
+  store need the rejection to propagate.
+- The recovered promise resolves, so Flight reports no error and every writer
+  that refuses on Flight errors would store the fallback. Recovery therefore
+  pushes the error to `reqCtx._renderErrors` (document cache, prerender warm)
+  and records it by segment id in `_recoveredHandlerErrors` (allocated on the
+  first recovery; `cacheRoute` in `cache-scope.ts` refuses only when one of its
+  own segments is listed, like a Flight error row). A PPR capture is refused
+  through `cacheRoute` too: no doc record, no shell. The shell capture and the SWR
+  re-render each own both (a foreground failure must not refuse a healthy
+  capture, and a refresh's failure must not land in the already-served
+  foreground's accumulators, including the map the foreground allocated lazily).
+  A new writer must read one of
+  them.
+- Never recovered: no boundary found, a thrown `Response` (the redirect
+  limitation above), a `Skip`, a throwing fallback, `recover: false`
+  (`throwOnError` for prerender and on-demand refresh, which must reject, and
+  the intercept `skipMiddleware` background re-render, which must not write a
+  fallback, #878).
+- `loading(fallback, { ssr: false })` awaits the handler on a document load, so
+  the document takes the sync `catchSegmentError` lane; a client navigation
+  takes the streamed lane. Both show the declared fallback.
+
+Pinned by `router/__tests__/streamed-handler-boundary.test.ts`,
+`router/__tests__/intercept-handler-errors.test.tsx`,
+`router/__tests__/prerender-flight-error.rsc-test.tsx`,
+`cache/__tests__/streamed-handler-swr-render-errors.rsc-test.tsx`,
+`testing/__tests__/streamed-handler-boundary*.rsc-test.tsx` (serveShellRequest),
+and the `streaming-errors` e2e describes in `e2e/error-boundary.test.ts` and
+`tests/cloudflare-basic/e2e/streamed-handler-boundary.test.ts`.
+
 ## Loader Context: params vs routeParams
 
 Loaders receive two param fields:
