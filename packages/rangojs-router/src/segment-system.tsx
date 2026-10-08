@@ -20,6 +20,8 @@ import {
 import { RootErrorBoundary } from "./root-error-boundary.js";
 import { INTERNAL_RANGO_DEBUG } from "./internal-debug.js";
 import { getMemoizedContentPromise } from "./segment-content-promise.js";
+import { vtExperiment } from "./vt-experiment.js";
+import { settleClientReferences } from "./browser/settle-client-references.js";
 import {
   buildLoaderPromise,
   getMemoizedLoaderPromise,
@@ -494,6 +496,10 @@ export async function renderSegments(
             ms: Math.round(performance.now() - contentAwaitStart),
           });
         }
+      }
+      // #1078 candidate "a": awaited with temporalLazyRefs before the commit.
+      if (!forceAwait && typeof window === "object" && vtExperiment() === "a") {
+        temporalLazyRefs.push(settleClientReferences(contentPromise));
       }
       nodeContent = createElement(RouteContentWrapper, {
         key: `suspense-loading-${id}`,
