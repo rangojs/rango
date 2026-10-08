@@ -13,11 +13,6 @@ export interface HeldBoundaryScenarioOptions {
   url: (pathname: string) => string;
   waitForHydration: (page: Page) => Promise<void>;
   production: boolean;
-  /**
-   * Tests that are red today, by title, with the reason. An open test is an
-   * expected failure: it fails the run the day it passes.
-   */
-  open?: Record<string, string>;
 }
 
 interface Scenario {
@@ -146,19 +141,10 @@ async function expectHeldVisible(page: Page, held: string[]): Promise<void> {
   }
 }
 
-/** The title of one scenario test, for a caller's `open` table. */
-export function heldBoundaryTitle(scenario: string, entry: string): string {
-  return `${scenario}: after ${entry}, a plain click to an un-prefetched sibling keeps what is on screen`;
-}
-
-/** The title of the test for a boundary new to the page. */
-export const HELD_BOUNDARY_NEW_TITLE: string =
-  "a loading() boundary new to the page with nothing pending renders, with no fallback in a build";
-
 export function runHeldBoundaryTests(
   options: HeldBoundaryScenarioOptions,
 ): void {
-  const { url, waitForHydration, production, open = {} } = options;
+  const { url, waitForHydration, production } = options;
   const ctx: Ctx = { url, waitForHydration };
 
   // Dev only: a build carries no suspense audit (src/suspense-audit.ts).
@@ -187,9 +173,9 @@ export function runHeldBoundaryTests(
 
   for (const sc of SCENARIOS) {
     for (const entry of ENTRIES) {
-      const title = heldBoundaryTitle(sc.name, entry.name);
-      test(title, async ({ page }) => {
-        test.fail(title in open, open[title]);
+      test(`${sc.name}: after ${entry.name}, a plain click to an un-prefetched sibling keeps what is on screen`, async ({
+        page,
+      }) => {
         const bRequests = trackRequestsFor(page, `/${sc.s}/b`);
         await entry.enter(page, sc.s, ctx);
         await expectHeldVisible(page, sc.held);
@@ -224,8 +210,9 @@ export function runHeldBoundaryTests(
     }
   }
 
-  test(HELD_BOUNDARY_NEW_TITLE, async ({ page }) => {
-    test.fail(HELD_BOUNDARY_NEW_TITLE in open, open[HELD_BOUNDARY_NEW_TITLE]);
+  test("a loading() boundary new to the page with nothing pending renders, with no fallback in a build", async ({
+    page,
+  }) => {
     await fromHub(page, ctx);
     await watchFlash(page, "zlb-fallback");
     await testId(page, "zlb-hub-plain").click();

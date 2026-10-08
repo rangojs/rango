@@ -1,9 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import {
-  expectConsole,
-  readSuspenseAudit,
-  resetSuspenseAudit,
-} from "./console-guard.js";
+import { readSuspenseAudit, resetSuspenseAudit } from "./console-guard.js";
 import { readProbe, watchFlash } from "./flash-probe.js";
 
 /**
@@ -267,11 +263,6 @@ export function runSuspenseCases(options: SuspenseCasesOptions): void {
   });
 
   it("transition({ when }) flipping true, false, true keeps the route mounted", async (page) => {
-    // #1079: each commit hands content on screen a settled promise React has
-    // not read. Declared, so this case can pin the mount meanwhile.
-    if (!production) {
-      expectConsole(page, { allow: [/I2 untracked at content:/] });
-    }
     await fromHub(page, "sc-hub-when-a");
     await expect(testId(page, "sc-when-value")).toHaveText(/^item-a-/);
     const when = await instance(page, "when");
@@ -289,7 +280,7 @@ export function runSuspenseCases(options: SuspenseCasesOptions): void {
       expect(await instance(page, "when"), `held through ${n}`).toBe(when);
       await updates({ navigation: 1 }, `the click to ${n}`);
     }
-    await expectAudit(page, { untracked: "any" });
+    await expectAudit(page);
     if (!production) {
       // The gated-off step is the audit telling a fallback that waits for
       // data apart from one that waits for nothing.
@@ -416,10 +407,6 @@ export function runSuspenseCases(options: SuspenseCasesOptions): void {
   });
 
   it("an action refetch, a refresh and a back/forward restore keep every wrapper chain", async (page) => {
-    // #1079: the action lane hands content on screen a settled promise React
-    // has not read. Declared, so this case can pin the tree shape meanwhile.
-    if (!production)
-      expectConsole(page, { allow: [/I2 untracked at content:/] });
     await fromHub(page, "sc-hub-plain-1");
     await expect(testId(page, "sc-item-value")).toHaveText(/^item-1-/);
     const shell = await instance(page, "shell");
@@ -456,11 +443,6 @@ export function runSuspenseCases(options: SuspenseCasesOptions): void {
   });
 
   it("a back to a page an action made stale is one restore, and one more update only for what its revalidation brings", async (page) => {
-    // #1079: the action lane hands content on screen a settled promise React
-    // has not read. Declared, so this case can pin the tree updates.
-    if (!production) {
-      expectConsole(page, { allow: [/I2 untracked at (content|loaders):/] });
-    }
     await fromHub(page, "sc-hub-plain-1");
     await expect(testId(page, "sc-item-value")).toHaveText(/^item-1-/);
     const stored = await testId(page, "sc-item-value").textContent();

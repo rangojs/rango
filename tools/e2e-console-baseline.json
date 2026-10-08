@@ -8,136 +8,10 @@
       "intermittent": true
     },
     {
-      "app": "cloudflare-basic",
-      "test": "ppr-header-guard.test.ts > ppr-header-guard (dev) > basket continuity: action POST -> GET(HIT) still sees the session cookie",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): an action's commit hands content on screen a settled promise React has not read. The commit is inside a transition, so nothing flashes today."
-    },
-    {
-      "app": "cloudflare-basic",
-      "test": "ppr-shell.test.ts > ppr-shell caching (dev) > document HIT streams a bound action while a page hole is pending",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): an action's commit hands content on screen a settled promise React has not read. The commit is inside a transition, so nothing flashes today."
-    },
-    {
-      "app": "cloudflare-basic",
-      "test": "ppr-shell.test.ts > ppr-shell caching (dev) > document MISS streams a bound action while a page hole is pending",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): an action's commit hands content on screen a settled promise React has not read. The commit is inside a transition, so nothing flashes today."
-    },
-    {
-      "app": "cloudflare-basic",
-      "test": "ppr-shell.test.ts > ppr-shell caching (dev) > partial PPR replay streams a bound action while a page hole is pending",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): an action's commit hands content on screen a settled promise React has not read. The commit is inside a transition, so nothing flashes today."
-    },
-    {
-      "app": "cloudflare-basic",
-      "test": "tx-when-transition.test.ts > tx-when transition (dev) > <Link transition={false}> gates its navigation off without calling when",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): a same-route navigation gated off by transition({ when }), and so urgent, hands the route's content boundary a settled promise React has not read; the route's fallback covers the content for 300 ms (the skeleton the test expects)."
-    },
-    {
-      "app": "cloudflare-basic",
-      "test": "tx-when-transition.test.ts > tx-when transition (dev) > Def.read(ctx.to): a Link pushing { animate: false } gates its navigation off",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): a same-route navigation gated off by transition({ when }), and so urgent, hands the route's content boundary a settled promise React has not read; the route's fallback covers the content for 300 ms (the skeleton the test expects)."
-    },
-    {
-      "app": "cloudflare-basic",
-      "test": "tx-when-transition.test.ts > tx-when transition (dev) > an inline when holds the same-route nav (no skeleton) when the destination's :hold is 1",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): a same-route navigation inside a transition scope hands the route's content boundary a settled promise React has not read. The transition holds, so nothing flashes today."
-    },
-    {
-      "app": "cloudflare-basic",
-      "test": "tx-when-transition.test.ts > tx-when transition (dev) > an inline when re-streams the skeleton on same-route nav when the destination's :hold is 0",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): a same-route navigation gated off by transition({ when }), and so urgent, hands the route's content boundary a settled promise React has not read; the route's fallback covers the content for 300 ms (the skeleton the test expects)."
-    },
-    {
-      "app": "cloudflare-basic",
-      "test": "tx-when-transition.test.ts > tx-when transition (dev) > back/forward decides with kind pop against the entry left",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): a same-route navigation inside a transition scope hands the route's content boundary a settled promise React has not read. The transition holds, so nothing flashes today."
-    },
-    {
-      "app": "cloudflare-basic",
-      "test": "tx-when-transition.test.ts > tx-when transition (dev) > when gates on the navigation source: re-streams when navigating away from n=b",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): a same-route navigation gated off by transition({ when }), and so urgent, hands the route's content boundary a settled promise React has not read; the route's fallback covers the content for 300 ms (the skeleton the test expects)."
-    },
-    {
-      "app": "cloudflare-basic",
-      "test": "tx-when-transition.test.ts > tx-when transition (dev) > when runs in the browser with the navigation source, never on the document load, and holds away from n=a",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): a same-route navigation inside a transition scope hands the route's content boundary a settled promise React has not read. The transition holds, so nothing flashes today."
-    },
-    {
       "app": "rangojs-router",
       "test": "client-urls.test.ts > clientUrls vertical slice > middleware vars: a createVar token and a string key reach a group loader on the document and partial lanes",
       "rule": "react-use-not-called",
       "reason": "Undeclared, cause: a clientUrls() navigation renders the destination first with a never-settling gate per loader (PENDING_FOREVER, src/client-urls/client-root.tsx:30, :152-178) and the reader mounts suspended on it. When the server's answer has settled before the canonical tree renders, useLoader finds a settled value in loaderStreams (src/use-loader.tsx:54-65) and calls no use() at the same key path, which React reports as a conditional use(). Timing-dependent. The gate-then-value hand-over of the clientUrls one-commit cases (#1079). Reproduced on origin/main."
-    },
-    {
-      "app": "rangojs-router",
-      "test": "conditional-transition.test.ts > conditional-transition (dev) > transition({ when }) gates on the navigation source: holds when navigating away from n=a",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): a same-route navigation inside a transition scope hands the route's content boundary a settled promise React has not read. The transition holds, so nothing flashes today."
-    },
-    {
-      "app": "rangojs-router",
-      "test": "conditional-transition.test.ts > conditional-transition (dev) > transition({ when }) gates on the navigation source: re-streams when navigating away from n=b",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): a same-route navigation gated off by transition({ when }), and so urgent, hands the route's content boundary a settled promise React has not read; the route's fallback covers the content for 300 ms (the skeleton the test expects)."
-    },
-    {
-      "app": "rangojs-router",
-      "test": "conditional-transition.test.ts > conditional-transition (dev) > transition({ when }) holds the same-route nav (no skeleton) when the predicate returns true",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): a same-route navigation inside a transition scope hands the route's content boundary a settled promise React has not read. The transition holds, so nothing flashes today."
-    },
-    {
-      "app": "rangojs-router",
-      "test": "conditional-transition.test.ts > conditional-transition (dev) > transition({ when }) re-streams the skeleton on same-route nav when the predicate returns false",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): a same-route navigation gated off by transition({ when }), and so urgent, hands the route's content boundary a settled promise React has not read; the route's fallback covers the content for 300 ms (the skeleton the test expects)."
-    },
-    {
-      "app": "rangojs-router",
-      "test": "inline-bound-action.test.ts > inline bound action (dev) > document HIT streams a bound action while a page hole is pending",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): an action's commit hands content on screen a settled promise React has not read. The commit is inside a transition, so nothing flashes today."
-    },
-    {
-      "app": "rangojs-router",
-      "test": "inline-bound-action.test.ts > inline bound action (dev) > document MISS streams a bound action while a page hole is pending",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): an action's commit hands content on screen a settled promise React has not read. The commit is inside a transition, so nothing flashes today."
-    },
-    {
-      "app": "rangojs-router",
-      "test": "inline-bound-action.test.ts > inline bound action (dev) > partial PPR replay streams a bound action while a page hole is pending",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): an action's commit hands content on screen a settled promise React has not read. The commit is inside a transition, so nothing flashes today."
-    },
-    {
-      "app": "rangojs-router",
-      "test": "loader-behavior.test.ts > loader-behavior > loader-revalidation > action on skipSSR route after SPA navigation should trigger loader revalidation",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): an action's commit hands content on screen a settled promise React has not read. The commit is inside a transition, so nothing flashes today."
-    },
-    {
-      "app": "rangojs-router",
-      "test": "loader-behavior.test.ts > loader-behavior > loader-revalidation > action on streaming route should trigger loader revalidation",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): an action's commit hands content on screen a settled promise React has not read. The commit is inside a transition, so nothing flashes today."
-    },
-    {
-      "app": "rangojs-router",
-      "test": "mini.test.ts > mini > transition(): same-route nav holds the subtree (state survives)",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): a same-route navigation inside a transition scope hands the route's content boundary a settled promise React has not read. The transition holds, so nothing flashes today."
     },
     {
       "app": "rangojs-router",
@@ -153,99 +27,16 @@
     },
     {
       "app": "rangojs-router",
-      "test": "prefetch-intercept-source.test.ts > prefetch-intercept-source (dev) > control: a route no intercept targets serves clicks from two pages with one prefetch",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): a same-route navigation inside a transition scope hands the route's content boundary a settled promise React has not read. The transition holds, so nothing flashes today."
-    },
-    {
-      "app": "rangojs-router",
       "test": "progressive-enhancement.test.ts > progressive-enhancement > with JavaScript enabled > form submission should work with JS enhancement",
       "rule": "react-hydration-mismatch",
       "reason": "Undeclared, cause: the fixture's form passes method=\"post\" next to a server function action (e2e/test-app/src/urls/hooks.handlers.tsx:390). React's server renderer writes the server reference's method (POST) and the client compares the prop (post); React also logs that method is overridden for a function action. A fixture issue, not the router. Reproduced on origin/main."
     },
     {
       "app": "rangojs-router",
-      "test": "ref-serialization.test.ts > ref-serialization > loader-ref-as-prop > revalidation: should reload loader data via prop-passed ref",
+      "test": "suspense-cases.test.ts > suspense cases (dev) > an action refetch, a refresh and a back/forward restore keep every wrapper chain",
       "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): an action's commit hands content on screen a settled promise React has not read. The commit is inside a transition, so nothing flashes today."
-    },
-    {
-      "app": "rangojs-router",
-      "test": "shell-cache-action.test.ts > shell-cache action correctness (dev) > JS action mutates SHELL material + updateTag: hard GET MISSes then recaptures the new shell",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): an action's commit hands content on screen a settled promise React has not read. The commit is inside a transition, so nothing flashes today."
-    },
-    {
-      "app": "rangojs-router",
-      "test": "shell-cache-action.test.ts > shell-cache action correctness (dev) > JS action mutates the HOLE; a later hard GET stays HIT with the mutated value",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): an action's commit hands content on screen a settled promise React has not read. The commit is inside a transition, so nothing flashes today."
-    },
-    {
-      "app": "rangojs-router",
-      "test": "transition-when-browser.test.ts > transition-when browser decision (dev) > <Link transition={false}> gates its navigation off without calling when",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): a same-route navigation gated off by transition({ when }), and so urgent, hands the route's content boundary a settled promise React has not read; the route's fallback covers the content for 300 ms (the skeleton the test expects)."
-    },
-    {
-      "app": "rangojs-router",
-      "test": "transition-when-browser.test.ts > transition-when browser decision (dev) > Def.read(ctx.to): a Link pushing { animate: false } gates its navigation off",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): a same-route navigation gated off by transition({ when }), and so urgent, hands the route's content boundary a settled promise React has not read; the route's fallback covers the content for 300 ms (the skeleton the test expects)."
-    },
-    {
-      "app": "rangojs-router",
-      "test": "transition-when-browser.test.ts > transition-when browser decision (dev) > a server-route when runs in the browser with the real source, never on the document load",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): a same-route navigation inside a transition scope hands the route's content boundary a settled promise React has not read. The transition holds, so nothing flashes today."
-    },
-    {
-      "app": "rangojs-router",
-      "test": "transition-when-browser.test.ts > transition-when browser decision (dev) > an action commit decides with kind action, to === from, and the action's formData and result",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): an action's commit, gated off by transition({ when }) and so urgent, hands content on screen a settled promise React has not read; the route's fallback covers it for 300 ms."
-    },
-    {
-      "app": "rangojs-router",
-      "test": "transition-when-browser.test.ts > transition-when browser decision (dev) > an inline when in urls() is hoisted into a client module and decides in the browser",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): a same-route navigation gated off by transition({ when }), and so urgent, hands the route's content boundary a settled promise React has not read; the route's fallback covers the content for 300 ms (the skeleton the test expects)."
-    },
-    {
-      "app": "rangojs-router",
-      "test": "transition-when-browser.test.ts > transition-when browser decision (dev) > back/forward decides with kind pop against the entry left",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): a same-route navigation inside a transition scope hands the route's content boundary a settled promise React has not read. The transition holds, so nothing flashes today."
-    },
-    {
-      "app": "rangojs-router",
-      "test": "transition-when-browser.test.ts > transition-when browser decision (dev) > router.refresh() decides with kind revalidate",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): a same-route navigation inside a transition scope hands the route's content boundary a settled promise React has not read. The transition holds, so nothing flashes today."
-    },
-    {
-      "app": "rangojs-router",
-      "test": "transition-when-browser.test.ts > transition-when browser decision (dev) > router.refresh() gated off commits urgently: the skeleton streams",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): a same-route navigation gated off by transition({ when }), and so urgent, hands the route's content boundary a settled promise React has not read; the route's fallback covers the content for 300 ms (the skeleton the test expects)."
-    },
-    {
-      "app": "rangojs-router",
-      "test": "transition-when-regressions.test.ts > transition-when regressions (dev) > #995: state survives when true -> false -> true, and false still streams the skeleton",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): a same-route navigation gated off by transition({ when }), and so urgent, hands the route's content boundary a settled promise React has not read; the route's fallback covers the content for 300 ms (the skeleton the test expects)."
-    },
-    {
-      "app": "rangojs-router",
-      "test": "transition-when-regressions.test.ts > transition-when regressions (dev) > prefetch source: a prefetch reused from another page is decided against the page left",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): a same-route navigation gated off by transition({ when }), and so urgent, hands the route's content boundary a settled promise React has not read; the route's fallback covers the content for 300 ms (the skeleton the test expects)."
-    },
-    {
-      "app": "rangojs-router",
-      "test": "use-cache-inline-action.test.ts > use cache embedded inline action (dev) > frozen capture + live body + live request scope",
-      "rule": "suspense-untracked",
-      "reason": "#1079 (audit I2): an action's commit hands content on screen a settled promise React has not read. The commit is inside a transition, so nothing flashes today."
+      "reason": "#1079, rule 2 after #1080: on the refresh, renderSegments builds the tree while the shell layout's loader data is still pending (src/segment-system.tsx:604), so getMemoizedLoaderPromise hands the loader boundary the aggregate promise (src/segment-loader-promise.ts:134). When React renders that boundary only after the aggregate has settled, LoaderResolver (src/route-content-wrapper.tsx:330) is handed a settled promise React has not read. Measured with 4x CPU throttling: the loader data fulfilled 13 ms after the build and the boundary rendered 94 ms after it, 6 of 6 runs; 0 of 64 unthrottled at load 12, 5 of 5 at load 20-50. The refresh commits in a transition, so nothing shows (no fallback counted). Timing-dependent.",
+      "intermittent": true
     }
   ]
 }

@@ -434,10 +434,10 @@ for (const strict of [false, true]) {
       expect(audit().mounts["outlet:R0"]).toBe(1);
     });
 
-    // #1079. Red on main: the plain lane hands the boundary
-    // getMemoizedContentPromise's and getMemoizedLoaderPromise's promises,
-    // settled and never read. Passes once it hands the values themselves.
-    it.fails("an awaited render, then an urgent render of the same boundaries, commits no fallback", async () => {
+    // The plain lane hands the boundaries their settled values
+    // (getBoundaryContent, getMemoizedLoaderPromise), not promises React has
+    // not read (#1079, fixed by #1080).
+    it("an awaited render, then an urgent render of the same boundaries, commits no fallback", async () => {
       const component = <p data-testid="content">a</p>;
       const segments = (): ResolvedSegment[] => [
         seg({
