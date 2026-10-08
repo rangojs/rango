@@ -115,6 +115,53 @@ describe("resolveDeferralScope", () => {
     ]);
   });
 
+  // The prefetch skips what a unit covers, and with it the one thing the
+  // browser has to know before the fill: that the page commits in a
+  // transition.
+  it("says a unit covers a transition() when an entry it covers declares one", () => {
+    const transition = {};
+    const section = entry("layout", flagged);
+    const route = entry("route", { transition });
+    expect(
+      resolveDeferralScope([entry("layout"), section, route]).units.get(
+        section,
+      ),
+    ).toEqual({ index: 1, ids: [section.shortCode], transition: true });
+
+    // In a slot or an orphan layout of an entry it covers, too.
+    const slotted = entry("route", {
+      parallel: { "@side": entry("parallel", { transition }) },
+    });
+    const above = entry("layout", flagged);
+    expect(
+      resolveDeferralScope([above, slotted]).units.get(above)?.transition,
+    ).toBe(true);
+    const orphaned = entry("route", {
+      ...flagged,
+      layout: [entry("layout", { transition })],
+    });
+    expect(
+      resolveDeferralScope([entry("layout"), orphaned]).units.get(orphaned)
+        ?.transition,
+    ).toBe(true);
+  });
+
+  it("does not say so for a transition() above the unit, or beside a slot", () => {
+    const transition = {};
+    const route = entry("route", flagged);
+    const outer = entry("layout", { transition });
+    expect(
+      resolveDeferralScope([outer, route]).units.get(route)?.transition,
+    ).toBeUndefined();
+
+    const slot = entry("parallel", flagged);
+    const parent = entry("route", { transition, parallel: { "@side": slot } });
+    expect(
+      resolveDeferralScope([entry("layout"), parent]).units.get(slot)
+        ?.transition,
+    ).toBeUndefined();
+  });
+
   it("a flagged route does not cover anything after it", () => {
     // A cache() entry between two routes cannot exist; a route is the leaf.
     const route = entry("route", flagged);

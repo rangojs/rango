@@ -41,6 +41,7 @@ import {
   getPrefetchDeferral,
   isFillRequest,
   markUnitDeferred,
+  placeholderTransition,
 } from "./prefetch-deferral.js";
 import {
   handleHandlerResult,
@@ -1049,10 +1050,11 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
     index: 0,
     component: resolvedComponent,
     loading: entry.loading === false ? null : entry.loading,
-    transition: applyViewTransitionDefault(
-      entry.transition,
-      deps.viewTransitionDefault,
-    ),
+    transition:
+      applyViewTransitionDefault(
+        entry.transition,
+        deps.viewTransitionDefault,
+      ) ?? (deferred ? placeholderTransition(context, entry) : undefined),
     params,
     belongsToRoute,
     ...(entry.clientGroup ? { clientGroup: entry.clientGroup } : {}),

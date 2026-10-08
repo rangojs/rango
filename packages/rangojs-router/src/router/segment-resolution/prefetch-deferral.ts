@@ -80,6 +80,13 @@ export interface DeferralScope {
 interface DeferralUnit {
   readonly index: number;
   readonly ids: readonly string[];
+  /**
+   * A chain entry whose fallback covers a transition(): its own, a slot's or
+   * an orphan layout's, and for a layout every deeper chain entry's. A plain
+   * navigation to the page commits in a transition, and a prefetch that skips
+   * the unit skips the entries that say so (placeholderTransition).
+   */
+  readonly transition?: true;
 }
 
 /** Per match: InternalHandlerContext._prefetchDeferral. */
@@ -149,6 +156,10 @@ export function resolveDeferralScope(
   // render loading() themselves (segment-system.tsx): the flag is inert.
   const inert = leaf.clientGroup !== undefined;
 
+  // The chain indexes at which the entry, one of its slots or one of its
+  // orphan layouts declares transition().
+  const transitions = new Set<number>();
+
   // `behind`: the segment ids of the flagged entries whose fallback covers
   // `entry`'s loaders.
   const collect = (
@@ -156,6 +167,7 @@ export function resolveDeferralScope(
     behind: readonly string[],
     index: number,
   ): void => {
+    if (entry.transition) transitions.add(index);
     for (const loaderEntry of entry.loader ?? []) {
       const own = loaderEntry.prefetch === false;
       if (!own && behind.length === 0) continue;
@@ -210,6 +222,15 @@ export function resolveDeferralScope(
       // A layout's fallback covers its outlet: every deeper chain entry.
       if (flagged && entry.type !== "route") behind = own;
     });
+    for (const [entry, unit] of units) {
+      // A slot's unit sits at its parent's index and covers the slot alone.
+      if (entry.type === "parallel") continue;
+      const covers = (at: number): boolean =>
+        entry.type === "route" ? at === unit.index : at >= unit.index;
+      if ([...transitions].some(covers)) {
+        units.set(entry, { ...unit, transition: true });
+      }
+    }
   }
 
   const scope: DeferralScope =
@@ -355,6 +376,34 @@ export function defersUnit(
   segmentId: string,
 ): boolean {
   return getPrefetchDeferral(ctx)?.skipped.has(segmentId) === true;
+}
+
+/**
+ * What the placeholder of a deferred chain unit carries as `transition` when
+ * the entry declares none and something its fallback covers does.
+ *
+ * The browser decides how a click commits from the segments it has
+ * (browser/partial-update.ts shouldStartViewTransition): a plain navigation
+ * to a page with a transition() commits in a transition, with the content
+ * its response has. An adopted prefetch that skipped the entry carrying it
+ * could not know, committed with the click, and brought the content in a
+ * commit of its own afterwards (measured in production on a flagged layout
+ * whose route has transition(): the layout 300 ms later than a plain click
+ * shows it, and the page 200 ms late with a 400 ms loader). With this the
+ * adoption waits for its fill (Fill.held) and commits as the plain click
+ * does.
+ *
+ * `viewTransition: false`: the placeholder's own entry places no boundary.
+ * No `when`: the predicate belongs to an entry the prefetch did not send, so
+ * a transition({ when }) that the fill brings is not asked for this click.
+ */
+export function placeholderTransition(
+  ctx: HandlerContext<any, any>,
+  entry: EntryData,
+): { viewTransition: false } | undefined {
+  return getPrefetchDeferral(ctx)?.scope.units.get(entry)?.transition
+    ? { viewTransition: false }
+    : undefined;
 }
 
 /**
