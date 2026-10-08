@@ -21,8 +21,9 @@ export type {
 export { createDeployFixture, readBuiltVersions } from "./deploy-fixture.js";
 export type { DeployFixture, DeployFixtureOptions } from "./deploy-fixture.js";
 export { runCacheVersionScenario } from "./cache-version-scenario.js";
-export { runZeroLoaderBoundaryTests } from "./zero-loader-boundary-scenario.js";
-export type { ZeroLoaderBoundaryScenarioOptions } from "./zero-loader-boundary-scenario.js";
+export { runHeldBoundaryTests } from "./held-boundary-scenario.js";
+export type { HeldBoundaryScenarioOptions } from "./held-boundary-scenario.js";
+export { readFlash, readProbe, watchFlash } from "./flash-probe.js";
 export type { CacheVersionScenarioOptions } from "./cache-version-scenario.js";
 
 /**

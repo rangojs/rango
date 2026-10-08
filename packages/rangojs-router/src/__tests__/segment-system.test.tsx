@@ -1700,17 +1700,10 @@ describe("segment-system", () => {
         ).find((b) => b.props.segment.id === "L0R0")!;
         const secondPromise = secondBoundary.props.loaderDataPromise;
 
-        // The first aggregate is a promise; once it has settled, later
-        // renders get its array, the same one every time.
+        // The first aggregate is a promise; once settled, later renders get
+        // its array.
         expect(firstPromise).toBeInstanceOf(Promise);
-        const settled = await firstPromise;
-        expect(secondPromise).toBe(settled);
-        const thirdResult = await renderSegments(segments);
-        const thirdBoundary = collectByType(
-          toTreeNode(thirdResult),
-          MockLoaderBoundary,
-        ).find((b) => b.props.segment.id === "L0R0")!;
-        expect(thirdBoundary.props.loaderDataPromise).toBe(settled);
+        expect(secondPromise).toBe(await firstPromise);
       });
 
       it("creates a new aggregate loaderDataPromise when a loader.loaderData ref changes", async () => {

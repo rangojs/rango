@@ -24,7 +24,7 @@ import {
 } from "./route-content-wrapper.js";
 import { OutletProvider } from "./outlet-provider.js";
 import { MountContextProvider } from "./browser/react/mount-context.js";
-import { getMemoizedContentPromise } from "./segment-content-promise.js";
+import { getBoundaryContent } from "./segment-boundary-content.js";
 
 /**
  * Render the content for a named parallel/intercept slot segment.
@@ -39,7 +39,7 @@ function renderSlotContent(segment: ResolvedSegment | null): ReactNode {
   const content: ReactNode =
     segment.loading || segment.component instanceof Promise ? (
       <RouteContentWrapper
-        content={getMemoizedContentPromise(segment.component)}
+        content={getBoundaryContent(segment.component)}
         fallback={segment.loading}
         segmentId={segment.id}
       />

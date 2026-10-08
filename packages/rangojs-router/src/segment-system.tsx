@@ -19,7 +19,7 @@ import {
 } from "./route-content-wrapper.js";
 import { RootErrorBoundary } from "./root-error-boundary.js";
 import { INTERNAL_RANGO_DEBUG } from "./internal-debug.js";
-import { getMemoizedContentPromise } from "./segment-content-promise.js";
+import { getBoundaryContent } from "./segment-boundary-content.js";
 import {
   buildLoaderPromise,
   getMemoizedLoaderPromise,
@@ -473,22 +473,16 @@ export async function renderSegments(
 
     let nodeContent: ReactNode = null;
     if (!clientGroup && isRenderableLoading(loading)) {
-      // forceAwait (popstate, stale-revalidation, fully-prefetched nav) renders a
-      // loading() route with the route content ALREADY resolved, so its
-      // RouteContentWrapper Suspender does not suspend for a microtask and flash
-      // the loading() fallback on a NORMAL (non-transition) commit. The router
-      // data is known-ready on these paths, so awaiting the content here is free.
-      // The wrapper tree is unchanged (RouteContentWrapper is still created with
-      // the same key/fallback) — only the `content` prop is a resolved node
-      // instead of a pending promise, which Suspender renders synchronously. This
-      // mirrors the forceAwait loaderData unwrap above; a CLIENT component that
-      // suspends on mount inside the content still reveals a fallback (it is not
-      // pre-resolved).
-      const contentPromise = getMemoizedContentPromise(resolvedComponent);
-      let loadingContent: Promise<ReactNode> | ReactNode = contentPromise;
+      // The wrapper tree is the same on every path; only `content` differs. A
+      // settled component is handed over as the node (getBoundaryContent), a
+      // pending one as its promise, so only pending work shows the loading()
+      // fallback. forceAwait also awaits a pending component here. A CLIENT
+      // component that suspends on mount inside the content still reveals a
+      // fallback.
+      let loadingContent: ReactNode = getBoundaryContent(resolvedComponent);
       if (forceAwait) {
         const contentAwaitStart = segDebug ? performance.now() : 0;
-        loadingContent = await contentPromise;
+        loadingContent = await loadingContent;
         if (segDebug) {
           segDebugLog(`segment ${id}: content awaited (forceAwait)`, {
             ms: Math.round(performance.now() - contentAwaitStart),
@@ -593,7 +587,10 @@ export async function renderSegments(
       let boundaryAwaitedLoaderIds: string[] | undefined;
       if (forceAwait || isAction) {
         const awaitStart = segDebug ? performance.now() : 0;
-        boundaryLoaderData = await loaderDataPromise;
+        boundaryLoaderData =
+          loaderDataPromise instanceof Promise
+            ? await loaderDataPromise
+            : loaderDataPromise;
         if (segDebug) {
           segDebugLog(`segment ${id}: loaders awaited (forceAwait/action)`, {
             loaderIds,

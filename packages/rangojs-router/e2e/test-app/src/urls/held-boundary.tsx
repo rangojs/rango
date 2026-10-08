@@ -4,12 +4,12 @@ import {
   ZlbLayoutLoader,
   ZlbRouteLoader,
   ZlbSlotLoader,
-} from "./zero-loader-boundary.loaders.js";
+} from "./held-boundary.loaders.js";
 import {
   ZlbLayoutValue,
   ZlbRouteValue,
   ZlbSlotValue,
-} from "./zero-loader-boundary.client.js";
+} from "./held-boundary.client.js";
 
 /**
  * Held-boundary fixtures. The hub (/zlb) sits outside every layout, so
@@ -107,12 +107,12 @@ const routePage =
   () => (
     <div data-testid={`zlbr-${which}`}>
       {which}
-      <ZlbRouteValue testId={`zlbr-${which}-value`} />
+      <ZlbRouteValue />
       {which === "a" ? toB("zlbr") : null}
     </div>
   );
 
-export const zeroLoaderBoundaryPatterns = urls(
+export const heldBoundaryPatterns = urls(
   ({ layout, path, loading, parallel }) => [
     path("/zlb", ZlbHub, { name: "zlbHub" }),
 

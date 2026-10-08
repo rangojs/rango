@@ -5,7 +5,7 @@ import {
   ZlbLayoutLoader,
   ZlbRouteLoader,
   ZlbSlotLoader,
-} from "./zero-loader-boundary.loaders.js";
+} from "./held-boundary.loaders.js";
 
 export function ZlbLayoutValue() {
   const { data } = useLoader(ZlbLayoutLoader);
@@ -17,7 +17,7 @@ export function ZlbSlotValue() {
   return <span data-testid="zlbs-slot-value">{data.value}</span>;
 }
 
-export function ZlbRouteValue({ testId }: { testId: string }) {
+export function ZlbRouteValue() {
   const { data } = useLoader(ZlbRouteLoader);
-  return <span data-testid={testId}>{data.value}</span>;
+  return <span>{data.value}</span>;
 }

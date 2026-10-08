@@ -2,18 +2,31 @@
 
 ## Unreleased
 
-### Fixed: a link that was not prefetched no longer flashes a `loading()` fallback over a layout or slot already on screen
+### Fixed: a boundary with nothing pending no longer shows its `loading()` fallback
 
-After entering a page through a prefetched link, clicking a link that was not
-prefetched could replace a layout or a parallel slot that was already on screen
-with its `loading()` fallback for about 300 ms, although nothing in it was
-loading. It showed for a layout with `loading()` and no loaders, for a layout
-with a loader read by `useLoader`, and for a slot with its own loader and
-`loading()`. After a plain click or a document load on the same page it never
-did. A boundary on screen that has nothing to wait for is now handed its content
-and loader data directly instead of an already resolved promise that React had
-not read yet. A route that is new to the page still shows its own `loading()`
-fallback, and the server render is unchanged.
+A `loading()` boundary showed its fallback for about 300 ms in cases where
+nothing in it was pending. Three consumer-visible changes, all in the browser:
+
+- A layout or parallel slot with `loading()` that was already on screen was
+  replaced by its fallback when the visitor clicked a link that was not
+  prefetched, after entering the page through a prefetched link (or back and
+  forward). It showed for a layout with no loaders, for a layout with
+  `loading()` and a loader read by `useLoader`, and for a slot with its own
+  loader and `loading()`. After a plain click or a document load it never did.
+  It no longer shows.
+- A `loading()` boundary that is new to the page and has nothing pending (a
+  layout with `loading()` and no loaders, reached by a plain click) showed its
+  fallback for about 300 ms in production. It no longer does. In dev the
+  fallback can still show on the first visit of a page in a session.
+- A commit that `transition({ when })` gated off (a form action or a
+  revalidation) re-rendered the route with its `loading()` skeleton although
+  the data was already in hand. It is still urgent and unanimated, and now a
+  segment it re-renders shows its `loading()` only while something in it is
+  still pending.
+
+What does not change: a boundary with pending work (a loader still streaming,
+a navigation gated off whose data is still arriving) shows its fallback as
+before, and the server render is unchanged.
 
 ### Fixed: a prerender refresh that started before `markStale()` is stored stale ([#1072](https://github.com/rangojs/rango/issues/1072))
 
