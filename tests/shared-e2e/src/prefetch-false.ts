@@ -1866,28 +1866,6 @@ const OPEN_QUEUED: PrefetchFalseOpenGap = {
   breaks: ["transitions", "late", "url"],
 };
 
-/**
- * OPEN, not fixed: `nested` with both of its loaders landing between 300 and
- * 600 ms after the response starts (`&delay=300`: 400 and 550 ms). The plain
- * click shows the route's `loading()` first and reveals the page 300 ms
- * later, which starts React's 300 ms again: both values arrive inside it and
- * show together. The adopted click has had the page up since the click, so
- * the first value shows as it arrives, the second behind a fallback the plain
- * click never shows, 300 ms after the first. It needs the client to know
- * whether the route's own boundary has revealed, which costs more bytes than
- * the router chunk's ratchet leaves (docs/design/prefetch-false.md,
- * "Limits").
- *
- * Measured in production: the page complete at 609 ms against 708, and 713
- * against 809 with the server 100 ms away, `pf-nested-late-fallback` in
- * every adopted click.
- */
-const OPEN_NESTED: PrefetchFalseOpenGap = {
-  reason:
-    "the adopted page is up since the click: the second of two nested reads shows behind a fallback the plain click never shows",
-  breaks: ["fallback", "late"],
-};
-
 const IN_SECTION = { from: "section", held: ["pf-section-layout"] };
 const BESIDE_SLOT = { held: ["pf-slot-layout", "pf-slot-side"] };
 
@@ -2040,15 +2018,13 @@ const HEAD_HELD_CLICKS: PrefetchFalseParityCase[] = [
 /**
  * The gap a case has by what the matrix made of it, beside the one its click
  * names: a held click with the server away (`OPEN_HELD`: without latency the
- * hold is the fill's round trip, a few milliseconds), and `nested` at the
- * one duration `OPEN_NESTED` is about.
+ * hold is the fill's round trip, a few milliseconds).
  */
 function openGap(
   spec: PrefetchFalseParityCase,
 ): PrefetchFalseOpenGap | undefined {
   if (spec.open) return spec.open;
   if (spec.commitsWithFill && spec.latency) return OPEN_HELD;
-  if (spec.name === "nested" && spec.delay === MID_DELAY_MS) return OPEN_NESTED;
   return undefined;
 }
 
