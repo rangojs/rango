@@ -648,6 +648,10 @@ export function createPartialUpdater(
         });
         if (gone()) return;
         releaseGates(holes);
+        // The navigation's outcome (see settleHoles), so its cause.
+        if (process.env.NODE_ENV !== "production") {
+          auditTreeCause("navigation");
+        }
         // No `scroll`: this is not a navigation transaction. A decision
         // here, even "do not scroll", would replace the tree's pending one
         // (NavigationProvider).

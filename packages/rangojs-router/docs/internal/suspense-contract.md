@@ -60,7 +60,7 @@ about to reveal shows its fallback instead.
 
 Where this is kept today: `getBoundaryContent` (`src/segment-boundary-content.ts:20`)
 hands a component that is still a promise (a Flight-streamed segment) as that same
-promise; `getMemoizedLoaderPromise` (`src/segment-loader-promise.ts:115`) hands one
+promise; `getMemoizedLoaderPromise` (`src/segment-loader-promise.ts:120`) hands one
 aggregate per set of loader references while it is pending; the per-loader streams
 `buildLoaderStreams` passes through untouched (`src/segment-system.tsx`). The three
 places that read them are `Suspender` (`src/route-content-wrapper.tsx:178`),
@@ -80,9 +80,12 @@ This is the rule #1079 broke, and what #1080 put in place on every lane. In the
 browser, `getBoundaryContent` (`src/segment-boundary-content.ts:20`) hands a settled
 component as the node itself; only the server wraps it, so Suspense still streams the
 fallback in the document. `getMemoizedLoaderPromise` remembers the array once its
-aggregate fulfils and from then on hands that array (`return entry.value ??
-entry.promise`, `src/segment-loader-promise.ts:134`), so a later tree reads the loader
-data without suspending. A boundary may get the promise in one tree and the settled
+aggregate fulfils and from then on hands that array (`entry.value ??
+entry.promise`, `src/segment-loader-promise.ts:139`), so a later tree reads the loader
+data without suspending. An aggregate whose sources have all fulfilled (Flight sets the
+status on its chunks) is that array from its first call: the sources of a page a
+`prefetch: false` fill settled without a render are first aggregated by the next
+navigation that keeps them. A boundary may get the promise in one tree and the settled
 array in a later one: that is a different value at a different time (rule 6), not a
 switch under a render.
 
@@ -99,7 +102,7 @@ as I2 on a refresh under CPU throttling (the shell layout's loader data fulfille
 after the build and its boundary rendered 94 ms after it). With an accessor on every
 promise handed unread, the same throttled refresh showed React writing a status on none
 of them, so those two baseline entries are gone. A parallel slot does read the
-aggregate: slots take no streams (`src/segment-system.tsx:772`), and there the gap is
+aggregate: slots take no streams (`src/segment-system.tsx:806`), and there the gap is
 real. A full dev run of cloudflare-basic at a load average of 20 to 49 once caught the
 `@badge` slot of the PPR slot-hole route mounting its `loading()` fallback over an
 aggregate already settled (I3, idle-fallback); 6 reruns and 6 runs with 8x CPU
@@ -144,16 +147,16 @@ update emitter. An inner update, like `useLoader().load()`, is an in-place updat
 
 The allowed causes, and where each one emits:
 
-| Cause                | What it is                                                     | Where it emits                                                                                          |
-| -------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `navigation`         | a link click, `router.push` / `replace` / `refresh`            | `src/browser/partial-update.ts:476` (cached), `:506` (leave intercept), `:736` (partial), `:843` (full) |
-| `popstate`           | back/forward restored from the history cache, or refetched     | `src/browser/navigation-bridge.ts:712`; a refetch goes through `partial-update.ts`                      |
-| `stale-revalidation` | the background refresh after a back/forward onto a stale entry | `src/browser/partial-update.ts:736`, `:860`                                                             |
-| `action`             | a server action's result, its error boundary, its refetch      | `src/browser/server-action-bridge.ts:663`, `:924`; `partial-update.ts` in `action` mode                 |
-| `error`              | a failed request rendered into the tree                        | `src/browser/network-error-handler.ts:37`                                                               |
-| `hmr`                | the refetch after a source edit (dev)                          | `src/browser/rsc-router.tsx:598`                                                                        |
+| Cause                | What it is                                                     | Where it emits                                                                                                                                                                                        |
+| -------------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `navigation`         | a link click, `router.push` / `replace` / `refresh`            | `src/browser/partial-update.ts:1034` (cached), `:1064` (leave intercept), `:1382` (partial), `:1497` (full), `:653` (a `prefetch: false` fill whose segments are not the ones its tree was built for) |
+| `popstate`           | back/forward restored from the history cache, or refetched     | `src/browser/navigation-bridge.ts:748`; a refetch goes through `partial-update.ts`                                                                                                                    |
+| `stale-revalidation` | the background refresh after a back/forward onto a stale entry | `src/browser/partial-update.ts:1382`, `:1514`                                                                                                                                                         |
+| `action`             | a server action's result, its error boundary, its refetch      | `src/browser/server-action-bridge.ts:663`, `:924`; `partial-update.ts` in `action` mode                                                                                                               |
+| `error`              | a failed request rendered into the tree                        | `src/browser/network-error-handler.ts:37`                                                                                                                                                             |
+| `hmr`                | the refetch after a source edit (dev)                          | `src/browser/rsc-router.tsx:598`                                                                                                                                                                      |
 
-The one subscriber is in `src/browser/react/NavigationProvider.tsx:433`: `store.onUpdate`
+The one subscriber is in `src/browser/react/NavigationProvider.tsx:479`: `store.onUpdate`
 receives the update and calls `setPayload`.
 
 What a new feature that needs a late update uses instead:
@@ -182,8 +185,15 @@ and in cloudflare-basic, dev, `tests/shared-e2e/src/suspense-cases.ts`):
 | `useLoader().load()`                                  | 0                                                                                  | 0                                                        |
 | A handle pushed after the page committed              | 0                                                                                  | 0                                                        |
 | A `clientUrls()` navigation                           | 1 `navigation`, and one commit                                                     | 1 `navigation`, and 2 to 4 commits                       |
+| A click that adopts a `prefetch: false` prefetch      | 1 `navigation`; its fill resolves the tree's gates and hands React nothing         | 1                                                        |
 
-The last row is where main does not meet the target. A cross-route navigation inside a
+The `prefetch: false` row is measured by `expectAdoptedClickBuildsThePageOnce`
+(`tests/shared-e2e/src/prefetch-false.ts`, 17 fixture pages, both apps, dev). The fill
+emits a tree in one case only: an answer whose segments are not the ones the tree was
+built for (a deferred handler that threw or called `notFound()`), which is that
+navigation's outcome and names `navigation` as its cause.
+
+The `clientUrls()` row is where main does not meet the target. A cross-route navigation inside a
 `clientUrls()` group presents its destination at the click with a local state update
 (`beginClientUrlNavigation`, `src/client-urls/navigation.ts`; the intent lives in
 `ClientUrlsRoot`, `src/client-urls/client-root.tsx:126`), the router's tree update
@@ -214,7 +224,7 @@ A switch within one render, or one that shows a fallback, is not.
 
 The known violation on main: `renderSegments` writes `loaderIds`, `loaderDataPromise`,
 `loaderStreams` and `awaitedLoaderIds` on a parallel slot's segment object in place
-(`src/segment-system.tsx:769`, `:787-803`), and when the slot is reused from the cache
+(`src/segment-system.tsx:804`, `:822-838`), and when the slot is reused from the cache
 that object is the one the previous tree handed to React. `ParallelOutlet` reads those
 fields during render (`renderSlotContent`, `src/client.tsx:40`). The audit reports a
 write to a segment object after its tree was handed to React as I7. Measured with the
