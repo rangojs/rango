@@ -49,7 +49,11 @@ export default defineConfig(({ command }) => ({
     poke(),
     ...analyze(),
   ],
-  define: productionDefines(command),
+  define: {
+    ...productionDefines(command),
+    // #1078 measurement switch (src/vt-experiment.ts). Not for merge.
+    __RANGO_VT_EXP_DEFAULT__: JSON.stringify(process.env.RANGO_VT_EXP ?? ""),
+  },
   server: {
     hmr: {
       // Several e2e routes intentionally throw to verify router error payloads.
