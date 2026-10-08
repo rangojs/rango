@@ -77,6 +77,12 @@ const SUPERSEDED: TreeUpdates = { navigation: [1, 2] };
 // One per back/forward, and one more only when the stored page was stale.
 const BACK_FROM_INTERCEPT: TreeUpdates = { popstate: 1 };
 const BACK_TO_STORED: TreeUpdates = { popstate: 1 };
+// The revalidation of a stale page is a tree update only when it brings
+// something: here no loader re-runs, and main hands React nothing for it.
+const BACK_TO_STALE: TreeUpdates = {
+  popstate: 1,
+  "stale-revalidation": [0, 1],
+};
 
 // A missing probe reads as "no flash, nothing detached" (flash-probe.ts).
 const PROBE_LOST = "the flash probe is still installed at the read";
@@ -449,6 +455,41 @@ export function runSuspenseCases(options: SuspenseCasesOptions): void {
     });
   });
 
+  it("a back to a page an action made stale is one restore, and one more update only for what its revalidation brings", async (page) => {
+    // #1079: the action lane hands content on screen a settled promise React
+    // has not read. Declared, so this case can pin the tree updates.
+    if (!production) {
+      expectConsole(page, { allow: [/I2 untracked at (content|loaders):/] });
+    }
+    await fromHub(page, "sc-hub-plain-1");
+    await expect(testId(page, "sc-item-value")).toHaveText(/^item-1-/);
+    const stored = await testId(page, "sc-item-value").textContent();
+    const shell = await instance(page, "shell");
+    await testId(page, "sc-to-two").click();
+    await expect(testId(page, "sc-a-value")).toHaveText(/^a-/);
+    const updates = await trackTreeUpdates(page);
+
+    const a = await testId(page, "sc-a-value").textContent();
+    await testId(page, "sc-action").click();
+    await expect(testId(page, "sc-a-value")).not.toHaveText(a!);
+    await updates({ action: 1 }, "one action");
+
+    // The stored page at once, then its revalidation in the background.
+    const revalidated = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/sc/plain/1" &&
+        new URL(response.url()).searchParams.has("_rsc_partial"),
+      { timeout: 15000 },
+    );
+    await page.goBack();
+    await expect(testId(page, "sc-plain-id")).toHaveText("1");
+    await expect(testId(page, "sc-item-value")).toHaveText(stored!);
+    await (await revalidated).finished();
+    await expect(testId(page, "sc-nav")).toHaveText("idle");
+    await updates(BACK_TO_STALE, "one back to a page an action made stale");
+    expect(await instance(page, "shell"), "the layout is held").toBe(shell);
+  });
+
   it("a slot whose component arrives as a promise, then as a node, is not remounted", async (page) => {
     await fromHub(page, "sc-hub-slot-fast");
     await expect(testId(page, "sc-side-id")).toHaveText("fast");
@@ -508,6 +549,34 @@ export function runSuspenseCases(options: SuspenseCasesOptions): void {
     await testId(page, "cus-b-to-c").click();
     await expect(testId(page, "cus-c-loader")).toBeVisible();
     await updates({ navigation: 1 }, "one click");
+    await expectAudit(page);
+  });
+
+  it("a route whose loaders are all read behind their own boundaries shows its page, not its loading() fallback", async (page) => {
+    await page.goto(url("/sc"));
+    await waitForHydration(page);
+    const updates = await trackTreeUpdates(page);
+
+    await watchFlash(page, "sc-own-fallback");
+    await testId(page, "sc-hub-own-1").click();
+    await expect(testId(page, "sc-own-a-value")).toHaveText(/^own-a-/);
+    await expect(testId(page, "sc-own-b-value")).toHaveText(/^own-b-/);
+    await updates({ navigation: 1 }, "one click and two streamed loaders");
+    const seen = await readProbe(page);
+    expect(seen.installed, PROBE_LOST).toBe(true);
+    if (MEASURE) {
+      const audit = production ? null : await readSuspenseAudit(page);
+      console.log(
+        `[measure] ${test.info().title} | ${production ? "production" : "dev"} | flash ${seen.flash} | ${JSON.stringify(audit?.events ?? [])}`,
+      );
+      return;
+    }
+    // Nothing the route's own boundary waits for is pending: each loader has
+    // a boundary of its own. A dev build shows the fallback while a client
+    // reference loads, so the DOM assertion is for a build.
+    if (production) {
+      expect(seen.flash, "the route's loading() fallback").toBe(false);
+    }
     await expectAudit(page);
   });
 

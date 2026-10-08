@@ -9,6 +9,8 @@ let aRuns = 0;
 let bRuns = 0;
 let slowRuns = 0;
 let liveRuns = 0;
+let ownARuns = 0;
+let ownBRuns = 0;
 
 export const ScShellLoader = createLoader(async () => {
   await wait(30);
@@ -41,3 +43,14 @@ export const ScLiveLoader = createLoader(async () => {
   await wait(50);
   return { value: `live-${++liveRuns}` };
 }, true);
+
+// Both read behind a boundary of their own (/sc/own/:id).
+export const ScOwnALoader = createLoader(async () => {
+  await wait(400);
+  return { value: `own-a-${++ownARuns}` };
+});
+
+export const ScOwnBLoader = createLoader(async () => {
+  await wait(550);
+  return { value: `own-b-${++ownBRuns}` };
+});

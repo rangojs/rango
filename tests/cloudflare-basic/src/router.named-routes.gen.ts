@@ -177,6 +177,7 @@ export const NamedRoutes = {
   "sc.hub": "/sc",
   "sc.list": "/sc/list",
   "sc.live": "/sc/live",
+  "sc.own": "/sc/own/:id",
   "sc.plain": "/sc/plain/:id",
   "sc.slot": "/sc/slot/:id",
   "sc.slow": "/sc/slow",

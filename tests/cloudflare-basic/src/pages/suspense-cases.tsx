@@ -6,6 +6,8 @@ import {
   ScBLoader,
   ScItemLoader,
   ScLiveLoader,
+  ScOwnALoader,
+  ScOwnBLoader,
   ScShellLoader,
   ScSlowLoader,
 } from "./suspense-cases.loaders.js";
@@ -18,6 +20,8 @@ import {
   ScLive,
   ScNavState,
   ScNotesView,
+  ScOwnAValue,
+  ScOwnBValue,
   ScShellValue,
   ScSlowValue,
 } from "./suspense-cases.client.js";
@@ -40,6 +44,8 @@ import { scWhen } from "./suspense-cases.when.js";
  *  - /sc/when/:n: transition({ when: scWhen })
  *  - /sc/above/:id: the route's loader is read by the layout above it
  *  - /sc/slot/:id: a parallel slot with no loading(), slow for id "slow"
+ *  - /sc/own/:id: a route with loading() whose two loaders are each read
+ *    behind a boundary of their own
  *  - /sc/live: what updates in place: a handle with one push made after
  *    the page committed, and a loader its reader refetches
  */
@@ -74,6 +80,7 @@ const ScHub: Handler = () => (
     <To to="/sc/above/1" id="sc-hub-above-1" />
     <To to="/sc/slot/fast" id="sc-hub-slot-fast" />
     <To to="/sc/live" id="sc-hub-live" />
+    <To to="/sc/own/1" id="sc-hub-own-1" />
     <To to="/client-urls-slow/b/first" id="sc-hub-cus-b" />
   </div>
 );
@@ -117,6 +124,19 @@ const ScLivePage: Handler = (ctx) => {
     </div>
   );
 };
+
+const ScOwn: Handler<"/sc/own/:id"> = (ctx) => (
+  <div data-testid="sc-own">
+    <span data-testid="sc-own-id">{ctx.params.id}</span>
+    <ScInstance id="own" />
+    <Suspense fallback={<span data-testid="sc-own-a-fallback">a</span>}>
+      <ScOwnAValue />
+    </Suspense>
+    <Suspense fallback={<span data-testid="sc-own-b-fallback">b</span>}>
+      <ScOwnBValue />
+    </Suspense>
+  </div>
+);
 
 const ScSlow: Handler = () => (
   <div data-testid="sc-slow">
@@ -229,6 +249,11 @@ export const suspenseCasesPatterns = urls(
     revalidate,
   }) => [
     path("/sc", ScHub, { name: "hub" }),
+    path("/sc/own/:id", ScOwn, { name: "own" }, () => [
+      loader(ScOwnALoader),
+      loader(ScOwnBLoader),
+      loading(<div data-testid="sc-own-fallback">sc-own-loading</div>),
+    ]),
     path("/sc/live", ScLivePage, { name: "live" }, () => [
       loader(ScLiveLoader),
     ]),

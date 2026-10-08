@@ -12,6 +12,8 @@ import {
   ScBLoader,
   ScItemLoader,
   ScLiveLoader,
+  ScOwnALoader,
+  ScOwnBLoader,
   ScShellLoader,
   ScSlowLoader,
 } from "./suspense-cases.loaders.js";
@@ -53,6 +55,16 @@ export function ScBValue() {
 export function ScSlowValue() {
   const { data } = useLoader(ScSlowLoader);
   return <span data-testid="sc-slow-value">{data.value}</span>;
+}
+
+export function ScOwnAValue() {
+  const { data } = useLoader(ScOwnALoader);
+  return <span data-testid="sc-own-a-value">{data.value}</span>;
+}
+
+export function ScOwnBValue() {
+  const { data } = useLoader(ScOwnBLoader);
+  return <span data-testid="sc-own-b-value">{data.value}</span>;
 }
 
 /** Reads a loader and refetches it in place: no navigation, no action. */

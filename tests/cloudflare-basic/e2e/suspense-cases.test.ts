@@ -10,6 +10,8 @@ import { waitForHydration } from "./helper";
  */
 
 // Red today, by case title. Remove an entry when its case passes.
+const OWN_BOUNDARIES =
+  "a route whose loaders are all read behind their own boundaries shows its page, not its loading() fallback";
 const GATED_ACTION =
   "an action commit transition({ when }) gated off shows no fallback when its data is in hand";
 // Measured in both apps and both modes: 3 commits of the destination and 2
@@ -25,9 +27,14 @@ const OPEN_PRODUCTION: Record<string, string> = {
   "a clientUrls() navigation to a route with loading() is one commit":
     ONE_COMMIT,
   "a clientUrls() same-route navigation is one commit": ONE_COMMIT,
+  // A build only: a dev build shows that fallback while a client reference
+  // loads, and the audit stays silent while the payload streams.
+  [OWN_BOUNDARIES]:
+    "#1079, #1080: on a cold click the route's loading() shows for about 300 ms although each loader is read behind a boundary of its own and the route's own content is in hand",
 };
+const { [OWN_BOUNDARIES]: _buildOnly, ...OPEN_IN_BOTH } = OPEN_PRODUCTION;
 const OPEN_DEV: Record<string, string> = {
-  ...OPEN_PRODUCTION,
+  ...OPEN_IN_BOTH,
   "same-route navigation inside a transition scope reconciles the route":
     "#1079: the route's boundary is handed a settled promise React has not read (audit I2); the transition holds, so nothing flashes",
   "an action that re-runs one of two loaders keeps the other reader on screen":
