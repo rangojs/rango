@@ -70,6 +70,9 @@ interface Ctx {
 const testId = (page: Page, id: string) =>
   page.locator(`[data-testid="${id}"]`);
 
+// A missing probe reads as "no flash, nothing detached" (flash-probe.ts).
+const PROBE_LOST = "the flash probe is still installed at the read";
+
 async function fromHub(page: Page, ctx: Ctx): Promise<void> {
   await page.goto(ctx.url("/zlb"));
   await ctx.waitForHydration(page);
@@ -163,6 +166,7 @@ export function runHeldBoundaryTests(
         // read.
         await expectHeldVisible(page, sc.held);
         const seen = await readProbe(page);
+        expect(seen.installed, PROBE_LOST).toBe(true);
 
         if (sc.noFallback) {
           expect(
@@ -177,7 +181,7 @@ export function runHeldBoundaryTests(
     }
   }
 
-  test("a loading() boundary new to the page with nothing pending shows no fallback", async ({
+  test("a loading() boundary new to the page with nothing pending renders, with no fallback in a build", async ({
     page,
   }) => {
     await fromHub(page, ctx);
@@ -186,10 +190,24 @@ export function runHeldBoundaryTests(
     await expect(testId(page, "zlb-a")).toBeVisible();
     await expect(testId(page, "zlb-layout")).toBeVisible();
     const seen = await readProbe(page);
+    expect(seen.installed, PROBE_LOST).toBe(true);
 
-    // Dev still shows the fallback on the first visit of a page's modules:
-    // the content arrives, but a client reference the payload names is not
-    // settled in that first render. Production has it settled, so none shows.
+    // The layout is new to the page, so this commit is urgent
+    // (browser/partial-update.ts, the plain `onUpdate(update)` branch) and
+    // anything still pending in it shows the fallback. A build has nothing
+    // pending: the loader value is the shared empty array and the content is
+    // a node.
+    //
+    // Dev shows the fallback for about 300 ms, on every payload and not only
+    // on a first visit. Measured in the router test-app: the layout node
+    // names a client reference (<Outlet>), which the Flight client hands to
+    // that first render as a lazy still blocked on its module import (chunk
+    // status "blocked", fulfilled 4 ms later), and React keeps a fallback it
+    // has shown for 300 ms. The import is new each time because
+    // @vitejs/plugin-rsc gives client reference ids a fresh `$$cache=` tag per
+    // render in dev (createClientManifest) and memoizes the browser import on
+    // the tagged id. A build has no tag, so the import is already settled and
+    // the reference resolves during render.
     if (production) {
       expect(seen.flash, "no fallback when nothing is pending").toBe(false);
     }

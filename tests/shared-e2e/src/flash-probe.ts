@@ -55,13 +55,20 @@ export async function watchFlash(
   );
 }
 
+/**
+ * Stop the probe and read it. `installed` is false when the probe is gone,
+ * which is what a document reload between watchFlash() and the read leaves:
+ * `flash` and `detached` are then false without anything having been watched,
+ * so a negative assertion must check `installed` first.
+ */
 export async function readProbe(
   page: Page,
-): Promise<{ flash: boolean; detached: boolean }> {
+): Promise<{ installed: boolean; flash: boolean; detached: boolean }> {
   return page.evaluate(() => {
     const w = window as unknown as { __flashProbe?: FlashProbe };
     w.__flashProbe?.obs.disconnect();
     return {
+      installed: w.__flashProbe !== undefined,
       flash: w.__flashProbe?.flash === true,
       detached: w.__flashProbe?.detached === true,
     };
