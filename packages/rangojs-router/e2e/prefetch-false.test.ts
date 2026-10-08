@@ -8,9 +8,9 @@ import { expectNoPageError } from "./helper";
 // (docs/design/prefetch-false.md). Every case reads the fixture's server-side
 // run counters. Fixture: test-app/src/urls/prefetch-false.tsx; tests and
 // bodies: tests/shared-e2e/src/prefetch-false.ts.
-function prefetchFalseSuite(f: Fixture, production = false) {
+function prefetchFalseSuite(f: Fixture) {
   definePrefetchFalseTests(test, {
-    fixture: () => ({ url: (path) => f.url(path), production }),
+    fixture: () => ({ url: (path) => f.url(path) }),
     expectNoPageError,
   });
 }
@@ -22,5 +22,5 @@ test.describe("prefetch-false", () => {
 
 test.describe("prefetch-false (production)", () => {
   const f = useFixture({ root: "./e2e/test-app", mode: "build" });
-  prefetchFalseSuite(f, true);
+  prefetchFalseSuite(f);
 });

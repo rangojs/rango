@@ -13,6 +13,7 @@ import {
 } from "../components/PrefetchFalseCounts.js";
 import { PrefetchFalseNotes } from "../components/PrefetchFalseNotes.js";
 import {
+  PrefetchFalseInvalidate,
   PrefetchFalseNav,
   PrefetchFalseValue,
 } from "../components/PrefetchFalseValue.js";
@@ -347,6 +348,7 @@ function PrefetchFalseLayout(ctx: any) {
       </div>
       <PrefetchFalseNotes />
       <PrefetchFalseNav />
+      <PrefetchFalseInvalidate />
       <div style={{ margin: "16px 0 4px", fontSize: 12, opacity: 0.6 }}>
         PAGE
       </div>

@@ -589,12 +589,20 @@ export function createPartialUpdater(
         // shows (measured on two reads in nested boundaries, 150 ms apart).
         // Where React has not committed the tree there is no fallback to
         // keep up, and it may be one of these gates that React is waiting
-        // for.
+        // for. A layout's placeholder covers the layout: revealed before the
+        // answer has streamed, the layout shows its own fallback inside, and
+        // React keeps that up FALLBACK_THROTTLE_MS more (measured: content at
+        // 605 ms against a plain click's 406). It shows with what it holds.
         if (holes.shown) {
-          await Promise.race([
-            result.streamComplete.catch(() => {}),
-            new Promise((resolve) => setTimeout(resolve, FALLBACK_THROTTLE_MS)),
-          ]);
+          const wait = [result.streamComplete.catch(() => {})];
+          if (!placeholders.some((p) => p.type === "layout")) {
+            wait.push(
+              new Promise((resolve) =>
+                setTimeout(resolve, FALLBACK_THROTTLE_MS),
+              ),
+            );
+          }
+          await Promise.race(wait);
           if (gone()) return;
         }
         // All in one task: a hole below another one is read in the render

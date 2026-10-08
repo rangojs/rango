@@ -367,6 +367,50 @@ describe("a click that adopts a prefetch, and its fill", () => {
     expect(mounts.fallback).toBe(1);
   });
 
+  // The maintainer's choice for a flagged layout entered from outside: its
+  // skeleton with the click, and the layout with everything it holds once
+  // the fill has streamed. Revealed sooner, the layout would show its own
+  // fallback inside, which React keeps up 300 ms more.
+  it("keeps a layout unit's skeleton until its fill has streamed, then shows the layout with its content", async () => {
+    function Section({ find }: { find: (id: string) => ResolvedSegment }) {
+      return (
+        <section>
+          {read(find(UNIT).component)}
+          <Unit content={find(ROUTE).component} />
+        </section>
+      );
+    }
+    const stream = deferred<void>();
+    const { shown, fill, updates } = await adopt({
+      adopted: [
+        segment(UNIT, "layout", { loading: "skeleton", deferred: true }),
+        segment(ROUTE, "route", { deferred: true }),
+      ],
+      filled: [
+        segment(UNIT, "layout", { loading: "skeleton", component: "layout " }),
+        segment(ROUTE, "route", { component: "content" }),
+      ],
+      stream: stream.promise,
+      render: (find) => (
+        <Suspense fallback={<Fallback />}>
+          <Section find={find} />
+        </Suspense>
+      ),
+    });
+    expect(shown()).toBe("skeleton");
+
+    await fill(500);
+    expect(shown(), "the fill is still streaming").toBe("skeleton");
+
+    await act(async () => {
+      stream.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(shown()).toBe("content");
+    expect(updates()).toBe(1);
+    expect(mounts.fallback).toBe(1);
+  });
+
   // A layout above the unit reads the route's loader, with no boundary: the
   // read is above the unit's fallback, so React holds the click on that
   // loader's gate. Every gate resolves when the fill answers, the unit's

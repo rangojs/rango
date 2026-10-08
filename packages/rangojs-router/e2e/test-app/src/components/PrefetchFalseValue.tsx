@@ -1,5 +1,6 @@
 "use client";
 
+import { invalidateClientCache } from "@rangojs/router";
 import { useLoader, useNavigation } from "@rangojs/router/client";
 import type { LoaderDefinition } from "@rangojs/router/client";
 
@@ -47,6 +48,22 @@ export function PrefetchFalseNav() {
       data-streaming={String(nav.isStreaming)}
       data-path={nav.location.pathname}
       hidden
+    />
+  );
+}
+
+/**
+ * Marks the client's history stale, as a server action does
+ * (invalidateClientCache): a suite clicks it by script, so that back and
+ * forward show the entry they restore and revalidate it. Not visible.
+ */
+export function PrefetchFalseInvalidate() {
+  return (
+    <button
+      type="button"
+      data-testid="pf-invalidate"
+      hidden
+      onClick={() => invalidateClientCache()}
     />
   );
 }

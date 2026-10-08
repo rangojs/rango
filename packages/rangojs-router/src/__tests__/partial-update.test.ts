@@ -1495,6 +1495,47 @@ describe("partial-update", () => {
       expect(onUpdate).toHaveBeenCalled();
     });
 
+    // Back/forward shows a stale entry at once and commits the revalidated
+    // tree after it: in a transition, so the page on screen stays until the
+    // new one is ready and no fallback shows, on a page with no transition()
+    // too.
+    it("commits a stale revalidation in a transition", async () => {
+      const store = createMockStore({
+        cachedSegments: [seg("R0")],
+      });
+      const { client } = createMockClient({
+        metadata: {
+          isPartial: true,
+          segments: [seg("R0", { component: "updated" })],
+          matched: ["R0"],
+          diff: ["R0"],
+        },
+      });
+      const lanes: boolean[] = [];
+      const updater = createPartialUpdater({
+        getVersion: () => undefined,
+        store: store as any,
+        client: client as any,
+        onUpdate: vi.fn(() => {
+          lanes.push(transitionState.inTransition);
+        }),
+        renderSegments: vi.fn(async () => "tree"),
+      });
+
+      await updater(
+        "http://localhost/",
+        ["R0"],
+        false,
+        undefined,
+        createMockTx(),
+        {
+          type: "stale-revalidation",
+        },
+      );
+
+      expect(lanes).toEqual([true]);
+    });
+
     it("passes forceAwait to renderSegments when staleRevalidation=true", async () => {
       const store = createMockStore({
         cachedSegments: [seg("R0")],

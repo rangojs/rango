@@ -30,6 +30,12 @@ What to know before you use it:
   click that adopts a prefetch is never worse than the same click with no
   prefetch at all, and content on screen is never swapped for a fallback. To
   defer navigation inside a section, flag the `loading()` of its routes.
+- **A click before its prefetch has answered waits for it.** The click
+  reuses the prefetch that is still in flight, as it does without the flag,
+  and sends the fill when it answers. The page shows no later than with no
+  prefetch; the deferred part can complete later, by up to what was left of
+  the prefetch. That is the price of keeping expensive or slow work out of
+  every prefetch, which is what the flag is for.
 - **A deferred loader never blocks the click.** It behaves like a loader that
   is still streaming: its own `<Suspense>` shows at once, the route's
   `loading()` shows when that is the nearest boundary, and with no boundary
@@ -51,13 +57,16 @@ What to know before you use it:
   the page in both. The address bar moves with the click, where a click with
   no prefetch moves it when its response starts: earlier by one round trip
   to the server. Known, not fixed.
-- **A flagged `loading()` on a layout covers the layout in a production
-  build.** A click with no prefetch shows the layout with its response's
-  first chunk and the fallback inside it. The prefetch skipped the layout's
-  handler, so the prefetched click shows the fallback in place of the whole
-  layout until the fill answers (measured: the layout at 303 ms against
-  10). A development server shows the fallback alone in both. Known, not
-  fixed.
+- **A flagged `loading()` on a layout shows its skeleton over the whole
+  layout.** Entered from a page without the layout, the prefetch skips the
+  layout's handler too, so the click shows the skeleton at once, in place of
+  the whole layout, and the layout appears with its content when the fill
+  has streamed, at least React's 300 ms after the skeleton. A click with no
+  prefetch, in a production build, shows the layout with its first chunk and
+  the fallback inside it; the content is no later with the prefetch. This is
+  the one place where the two clicks show different pages, by design. A slow
+  read behind an inner `<Suspense>` in such a layout keeps the skeleton up
+  until it has streamed.
 - **A prefetch that deferred something is used only on the page that made
   it.** A page that already shows the segment makes its own prefetch, which
   defers nothing for it.

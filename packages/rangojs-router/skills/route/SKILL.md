@@ -269,9 +269,11 @@ flag has no say: a prefetch of a sibling route renders that route's handler
 and loaders as usual, and the click sends no second request. The same goes for
 a same-route navigation (`/product/a` to `/product/b`). The rule behind it:
 a click that adopts a prefetch is never worse than the same click with no
-prefetch at all. It never covers more of the page with a fallback than that
-plain navigation does, and never for longer, it waits only where that one
-would, and it never replaces content that is on screen with a fallback. For
+prefetch at all (two exceptions, under "Limits": a click before its
+prefetch has answered, and a flagged `layout()` entered from outside). It
+never covers more of the page with a fallback than that plain navigation
+does, and never for longer, it waits only where that one would, and it never
+replaces content that is on screen with a fallback. For
 the same reason a prefetch that deferred something is used only on the page
 that made it: a page that already shows the entry makes its own prefetch,
 which defers nothing for it. To keep navigation _inside_ a section out of
@@ -326,6 +328,12 @@ loaders behind the fallback are deferred. See `/caching`, `/ppr` and
 
 **Limits.**
 
+- A click before its prefetch has answered reuses that prefetch, waits for
+  it and then fetches the deferred part. The page shows no later than with no
+  prefetch; the deferred part can complete later, by up to what was left of
+  the prefetch. That is the price of keeping expensive or slow work out of
+  every prefetch, which is what the flag is for. See `/loader` →
+  "`prefetch: false`".
 - It needs a renderable fallback. `loading(false)` has nothing to show, so the
   flag does nothing there. The last `loading()` on an entry wins, flag
   included.
@@ -336,11 +344,15 @@ loaders behind the fallback are deferred. See `/caching`, `/ppr` and
 - A layout the client already holds is not deferred (its fallback would not
   show). To keep navigation inside it out of prefetches, flag the route's own
   `loading()`.
-- On a `layout()` the prefetch skips the layout's own handler too, so in a
-  production build the prefetched click shows the fallback in place of the
-  whole layout until the fill answers, where a click with no prefetch shows
-  the layout with its first chunk and the fallback inside it. Known, not
-  fixed.
+- On a `layout()` entered from a page without it, the prefetch skips the
+  layout's own handler too. This is the one place where a prefetched click
+  shows a different page from a click with no prefetch, by design: it shows
+  the skeleton at once, over the layout's whole area, and the layout appears
+  with its content when the fill has streamed, at least React's 300 ms after
+  the skeleton. A click with no prefetch, in a production build, shows the
+  layout with its first chunk and the fallback inside it. The content is no
+  later with the prefetch. A slow read behind an inner `<Suspense>` in such a
+  layout keeps the skeleton up until it has streamed.
 - An orphan layout's flagged `loading()` defers its loaders but not its
   handler: the route's handler has already run by then.
 - `clientUrls()` routes and `intercept()` ignore the flag.

@@ -1124,7 +1124,8 @@ What happens:
   holds, on a same-route navigation such as `/product/a` to `/product/b`, runs
   in the prefetch when it revalidates, exactly as without the flag, and the
   click sends no second request. The rule: a click that adopts a prefetch is
-  never worse than the same click with no prefetch at all, and content on
+  never worse than the same click with no prefetch at all (one exception: a
+  click before its prefetch has answered, under "The limits"), and content on
   screen is never swapped for a fallback because of the flag. For the same
   reason a prefetch that deferred something is used only on the page that
   made it: a page that already shows the segment makes its own prefetch.
@@ -1165,6 +1166,16 @@ function Reviews() {
 
 The limits:
 
+- **A click before its prefetch has answered waits for it, then fetches the
+  deferred part.** The flag is there to keep expensive or slow work out of
+  every prefetch, so that an API that is costly to call is not called for
+  every link a visitor might click. A click that comes while the link's
+  prefetch is still in flight reuses that prefetch, as it does without the
+  flag, and sends the fill when the prefetch answers. The page shows no later
+  than with no prefetch; the deferred part shows its fallback until the fill
+  lands, and can complete later than a click with no prefetch, by up to what
+  was left of the prefetch. That is the price of keeping the work out of the
+  prefetch.
 - **A boundary is required for a fallback.** With no `loading()` on the entry
   and no `<Suspense>` around the read, nothing can show a fallback, so React
   holds the page being left on screen until the fill returns.

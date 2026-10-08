@@ -392,7 +392,12 @@ server projection.
   and writes handle data and location state to their stores
   (`PartialUpdateConfig.fill`, `consumeHandles`). Gates of a tree that is on
   screen resolve when the fill has streamed or 300 ms after its first chunk
-  (`FALLBACK_THROTTLE_MS`), at once where React has not committed the tree.
+  (`FALLBACK_THROTTLE_MS`), at once where React has not committed the tree;
+  a tree with a layout placeholder waits for the whole fill, so a flagged
+  layout entered from outside shows its skeleton with the click and the
+  layout with its content (the one place the page differs from a plain
+  click's). A click on a prefetch still in flight reuses it and sends the
+  fill after it (bounded in the shared suite).
   A deferred unit on a page that commits in a transition is a navigation
   that waits for its fill and commits once with the fill's first chunk, as a
   plain click commits with its response. A response that defers is for the page

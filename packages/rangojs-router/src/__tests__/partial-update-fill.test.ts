@@ -692,9 +692,14 @@ describe("the fill landing", () => {
       expect(onUpdate).toHaveBeenCalledTimes(1);
     });
 
-    // A unit's content renders the holes below it. Resolved in one task, a
-    // hole that is read in that render costs it a microtask, not a fallback.
-    it("resolves a unit's gate and every gate below it after the same wait", async () => {
+    // A layout's placeholder covers the layout. Revealed 300 ms after the
+    // first chunk with its route still streaming, the layout shows its own
+    // fallback inside, and React keeps that up 300 ms more: content at 605 ms
+    // where a plain click shows it at 406 (a 400 ms loader). So a layout unit
+    // shows when its answer has streamed. A unit's content renders the holes
+    // below it: resolved in one task, a hole read in that render costs it a
+    // microtask, not a fallback.
+    it("resolves a layout unit's gate and every gate below it when the answer has streamed", async () => {
       vi.useFakeTimers();
       const adoption = sectionAdoption();
       const { navigate, fill, onUpdate } = setup(adoption);
@@ -705,15 +710,38 @@ describe("the fill landing", () => {
         void gateOf(placeholder).then(() => resolved++);
       }
 
-      const { response } = streaming(
+      const { stream, response } = streaming(
         fillPayload(adoption.filled, adoption.matched),
       );
       fill.resolve(response);
-      await tick(299);
+      await tick(1000);
       expect(resolved).toBe(0);
 
-      await tick(1);
+      stream.resolve();
+      await tick(0);
       expect(resolved).toBe(adoption.placeholders.length);
+    });
+
+    it("resolves a route unit's gate 300 ms after the first chunk", async () => {
+      vi.useFakeTimers();
+      const adoption = unitAdoption();
+      const { navigate, fill, onUpdate } = setup(adoption);
+      await navigate();
+      showAdoption(onUpdate);
+      let resolved = false;
+      void gateOf(adoption.unit).then(() => {
+        resolved = true;
+      });
+
+      const { response } = streaming(
+        fillPayload([adoption.filled], adoption.matched),
+      );
+      fill.resolve(response);
+      await tick(299);
+      expect(resolved).toBe(false);
+
+      await tick(1);
+      expect(resolved).toBe(true);
     });
 
     // The wait is for a fallback that is on screen. Where React still holds

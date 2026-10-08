@@ -54,6 +54,23 @@ that plain navigation does, and never for longer; it waits only where the
 plain navigation would wait; and content that is already on screen is never
 replaced by a fallback, blanked or remounted while a fill is pending.**
 
+Two exceptions, both the maintainer's call, both asserted rather than left
+open. The first is the one place where the adopted click shows a different
+page: a flagged `loading()` on a layout, entered from a page without the
+layout, shows its skeleton with the click over the layout's whole area, and
+the layout with its content once the fill has streamed, at least React's
+300 ms after the skeleton, where a plain click shows the layout with its
+first chunk ("A layout unit shows with everything it holds"). The second is
+a click that comes before its own prefetch has answered. The router reuses a
+prefetch that is still in flight, with or without the flag, and keeps doing
+so. When that answer has holes the click sends its fill after it, so the
+deferred part completes later than a plain click's, by up to what was left
+of the prefetch. The flag exists to keep expensive or slow work out of every
+prefetch, so that the API behind it is not called for every link a visitor
+might click; the later deferred part is the price the app chose. The
+exception is asserted with a bound, so it
+cannot grow ("A click before its prefetch has answered").
+
 What a deferred loader does to the click follows from one sentence: **a
 deferred loader never blocks the navigation, and behaves like a loader that
 is still streaming.** React then decides what shows, as it does for any
@@ -99,6 +116,7 @@ Three words carry the rest of this document:
 | Prefetch request, segment the client holds                           | runs when it revalidates, as before (R14)   | renders when it revalidates, as before (R14) |
 | Click that adopts a payload with deferred units                      | fallback shows; fill request sent (R4)      | fallback shows; fill request sent (R4)       |
 | The same click, on a route with `transition()`                       | as above                                    | commits with the fill's first chunk (R4)     |
+| The same click, before the prefetch has answered                     | waits for the prefetch, then as above       | waits for the prefetch, then as above        |
 | Click on another page than the one that prefetched                   | that prefetch is not used (R15)             | that prefetch is not used (R15)              |
 | Fill request                                                         | executes; only missing ids are emitted (R5) | executes; only missing ids are emitted (R5)  |
 | Action revalidation, popstate, no-JS (PE)                            | unchanged                                   | unchanged                                    |
@@ -902,9 +920,12 @@ click would reveal: 300 ms after the answer's own first chunk
 (`FALLBACK_THROTTLE_MS`, named for React's constant). An answer that has
 streamed resolves them at once: all of it is there, so one reveal shows all of
 it, and that reveal is never later than the plain click's. Waiting for the end
-of the stream with no deadline is not an option: a unit with a slow read
-behind an inner `<Suspense>` would keep its outer fallback up long after a
-plain click had revealed it.
+of the stream with no deadline is not an option for a route unit: one with a
+slow read behind an inner `<Suspense>` would keep its outer fallback up long
+after a plain click had revealed it. A layout unit is the exception ("A
+layout unit shows with everything it holds" below), and the table's
+`section` rows are the measurement that introduced the 300 ms rule, before
+that exception.
 
 Look at the last row: the rule costs something. Before it, a loader slower
 than the throttle made the adopted click 100 ms _earlier_ than the plain one,
@@ -936,6 +957,60 @@ parity matrix with the server 100 ms away are there for it. What the rule
 takes from a lone reader is small: React keeps its fallback up for 300 ms
 from the click anyway, so the value is later by at most the fill's time to
 its first chunk.
+
+#### A layout unit shows with everything it holds
+
+A flagged `loading()` on a layout, entered from a page that does not hold the
+layout, defers the layout's handler with everything below it (R2), so the
+adopted click shows the layout's skeleton over the layout's whole area. A
+plain click in a production build shows the layout with its response's first
+chunk and the fallback inside the layout's outlet (#1080 hands a handler that
+has returned to its boundary as the node). That is the one place where the
+page a prefetched click shows differs from a plain click's, and it is the
+maintainer's call: the skeleton with the click, rather than the page being
+left until the fill's first chunk (holding the click was rejected), and the
+layout's handler stays out of the prefetch (running it there was rejected).
+
+What the click then must not do is cost the content time. Revealed with the
+300 ms rule, the layout shows its own fallback inside, a boundary that React
+keeps up for 300 ms from then. The route's content then came 300 ms after a
+plain click's wherever it landed between the two reveals: production, router
+app, `hub to section` with a 400 ms loader, the content at 605 ms against the
+plain click's 406, and the layout's fallback mounted a second time. So the
+gates of a tree with a layout placeholder wait for the whole answer, with no
+deadline (`settleHoles` in `partial-update.ts`): the layout shows with its
+content, in one reveal, at least React's 300 ms after the skeleton.
+Production, the completed page, plain against adopted, before and after
+that change:
+
+| click                                         | router app: before | after          | Cloudflare app: after |
+| --------------------------------------------- | ------------------ | -------------- | --------------------- |
+| `hub to section`                              | 308 and 303 ms     | 312 and 304 ms | 317 and 303 ms        |
+| loaders 300 ms slower                         | 406 and 605 ms     | 407 and 405 ms | 412 and 408 ms        |
+| slow loaders                                  | 708 and 705 ms     | 706 and 705 ms | 707 and 714 ms        |
+| a 600 ms layout handler                       | 919 and 714 ms     | 909 and 706 ms | 908 and 710 ms        |
+| loaders 300 ms slower, the server 100 ms away | 509 and 709 ms     | 511 and 507 ms | 512 and 514 ms        |
+
+Without the change 12 of the 42 cells failed in the router app's
+production build (the content late, the layout's fallback mounted twice);
+with it all 42 pass in both apps and both modes.
+
+The price is the shape the 300 ms deadline exists for: a layout unit with a
+slow read behind an inner `<Suspense>` keeps its skeleton until that read has
+streamed, where a plain click shows the layout and the rest of its content
+with the first chunk. Read from the code, not measured: no fixture has that
+shape.
+
+The parity cases of these clicks (`layoutSkeleton` in the shared suite, 42
+cells per app in each mode) assert the expectation instead of the plain
+click's layout time: the skeleton is the click's first change and shows
+within the parity margin of the click; the layout and the route's content
+show in the same frame, no sooner than 280 ms after the skeleton (React's
+300, with sampling to spare); the content and the completed page are no
+later than the plain click's, with the margin. Every other rule is asserted
+as in any parity case, nothing mounted twice included. The skeleton is the
+one fallback the adopted click may show that the plain click does not (on
+`section-own` the plain click shows the route's own).
 
 #### At once where nothing is on screen
 
@@ -1019,8 +1094,8 @@ pseudo-elements (`&vtms=600`), before and now:
 | hub with a boundary to `loader` | 2 and 3             | 328 and 614 ms | 666 and 1313 ms | 2 and 2          | 322 and 312 ms | 655 and 674 ms |
 
 "Before" is `bfacee1f`, "now" the medians of three production runs of the
-router app. `vt` to `section` is at parity on these columns and still open in
-production for another reason, the layout's chrome ("Limits"). The `loader`
+router app. `vt` to `section` is at parity on these columns; its layout shows
+with the fill by design ("A layout unit shows with everything it holds"). The `loader`
 rows once failed the animated-changes count (plain 1, adopted 2) in 3 of 12
 runs: both clicks start a view transition for the handle push right after
 their first commit, and the adopted click's commit and that call landed in
@@ -1302,6 +1377,16 @@ The click's entry is stored with its placeholders, flagged `deferred`. The
 fill rewrites it in place with the filled segments (above), and back/forward
 to it is then an ordinary cache restore.
 
+An entry that history has marked stale since (an action ran, or
+`invalidateClientCache()`) is shown at once and revalidated after it, as
+any stale entry is: one `_rsc_stale` request, not a prefetch and not a fill,
+and the revalidated tree committed in a transition (mode
+`"stale-revalidation"` goes to `commitInTransition`, as on main), so no
+fallback shows. The rewrite in place keeps the entry's stale flag for that.
+`expectStaleFilledEntryShowsAtOnceThenRevalidates` pins it in both apps and
+modes, and `src/__tests__/partial-update.test.ts` pins the lane. A
+back/forward with no entry is a fetch, unchanged.
+
 If the user leaves first, the fill is cancelled and the entry keeps its
 placeholders. Both readers of the history cache treat such an entry as a miss:
 `handlePopstate` falls through to the fetch path, and `navigate()` does not
@@ -1453,6 +1538,61 @@ request: it lists that page's segments, so the key does not match and the
 click is a plain navigation over the cached copy
 (`expectRevisitUsesWhatTheClientHolds`).
 
+### A click before its prefetch has answered
+
+A visitor who clicks fast clicks before the hover's prefetch has answered.
+The navigation client reuses that request instead of sending its own
+(`consumeInflightPrefetch` in `navigation-client.ts`, a promise that resolves
+with the prefetch's response headers), as it did before the flag. When the
+answer has holes the click adopts it like any prefetch, and its fill leaves
+only then. So the deferred part completes later than a plain click's would,
+by up to what was left of the prefetch at the click.
+
+That is the maintainer's call, and one of the two exceptions to "never
+worse than a plain click" (the other: "A layout unit shows with everything
+it holds"). The flag exists to keep expensive or slow work out of every
+prefetch, so that an API that is costly to call is not called for every link
+a visitor might click. A click that finds the prefetch in flight waits for
+it and then fetches the deferred part; the later deferred part is the price
+the app chose for that. The reuse code is unchanged.
+
+The exception is asserted, with a bound, so it cannot grow
+(`expectClickDuringThePrefetchStaysWithinItsBound`, `loader`, `unit` and
+`bare`, both apps and both modes). Each case records a plain click and a
+click 100 ms after its prefetch left, with the server 300 ms away for every
+request, the prefetch included: a prefetch delayed on its own would be later
+than the plain click's request only because the test made it so.
+
+- The page appears no later than the plain click's, plus a margin. A
+  prefetch that left before the click answers before a request sent with
+  the click. `bare` has no page before its deferred part (React holds the
+  page being left), so only the second bound applies to it.
+- The page completes no later than the plain click's, plus what was left of
+  the prefetch, plus a margin. What was left is measured on the page's clock:
+  from the click to the prefetch's `responseStart` in Resource Timing, the
+  moment the reused promise resolves.
+
+The margin is the parity margin, 100 ms, and the measurement says it has
+room. Over 60 pairs, 5 per case, mode and app, with what was left of the
+prefetch between 45 and 382 ms:
+
+| Measured over the pairs                                        | development     | production      |
+| -------------------------------------------------------------- | --------------- | --------------- |
+| Page, adopted minus plain (`loader`, `unit`)                   | -337 to -151 ms | -133 to -99 ms  |
+| Completed, adopted minus plain minus what was left (all three) | -344 to +36 ms  | -223 to +10 ms  |
+| Completed, adopted minus plain (`loader`, `unit`)              | -193 to +152 ms | -26 to +12 ms   |
+| `bare` completed, adopted minus plain                          | +85 to +374 ms  | +190 to +214 ms |
+
+The adopted page shows ahead of the plain one by what the prefetch had
+already done. In production the deferred part of `loader` and `unit` lands
+within a few milliseconds of the plain click's: the plain click's reveal
+waits for React's 300 ms fallback minimum, and the fill's wait fits inside
+it. In development `loader` lands 58 to 152 ms after the plain click's, at
+most 13 ms past what was left. `bare` is the case that pays: with no
+boundary the page waits for the fill, so it shows later than the plain
+click's by what was left of the prefetch, and never more than 36 ms past
+that.
+
 ### Where it is pinned
 
 - `src/__tests__/partial-update-fill.test.ts`: the updater with a mocked
@@ -1506,26 +1646,20 @@ segments. A fill refuses `rendered()` outright for the same reason R12 exists.
 
 ## Limits
 
-- A flagged `loading()` on a layout covers the layout's chrome on the
-  adopted click and not on the plain one, in a production build. Since the
-  held-boundary fix (#1080) a layout handler that has returned is handed to
-  its boundary as the node, so a plain click shows the layout with its
-  response's first chunk and the layout's fallback inside the outlet. The
-  prefetch skipped the layout's handler (R2), so the adopted click shows the
-  fallback in place of the whole layout until the fill answers, and then
-  mounts it a second time inside the layout. Production, router app, plain
-  against adopted, when the layout shows, over four runs: `hub to section` 9
-  to 16 and 303 to 336 ms, with the server 100 ms away 115 to 137 and 305 to
-  350, from `vt` 4 to 6 and 303 to 313; with a 600 ms layout handler about
-  607 and 709. Before #1080 the plain click showed the layout
-  at 311 ms and the two clicks were equal. A development server does not put
-  the layout in the plain response's first chunk, and is at parity. Two ways
-  to close it, neither built: the click to a flagged layout waits for its
-  fill, as a unit under `transition()` does (equal to the plain click, no
-  head start); or the layout's own handler runs in the prefetch and only its
-  outlet is deferred (ahead of the plain click; a change to R2). The cells
-  run as expected failures in production (`OPEN_LAYOUT_CHROME`), the slow
-  layout ones as reports (`OPEN_LAYOUT_CHROME_AT_MARGIN`, "Open cases").
+- A flagged `loading()` on a layout, entered from a page that does not hold
+  the layout, is where the adopted click shows a different page from the
+  plain click's, by the maintainer's choice: its skeleton with the click over
+  the layout's whole area, and the layout with its content once the fill has
+  streamed, at least React's 300 ms after the skeleton. A plain click in a
+  production build shows the layout with its response's first chunk (#1080)
+  and the fallback inside it; a development server shows the fallback alone
+  first in both. Production, router app, plain against adopted, when the
+  layout shows: `hub to section` 12 and 304 ms, from `vt` 3 and 303; with a
+  600 ms layout handler 608 and 706, the content at 909 and 706. A layout
+  unit with a slow read behind an inner `<Suspense>` keeps its skeleton
+  until that read has streamed ("A layout unit shows with everything it
+  holds"; not measured). The parity cases assert this expectation
+  (`layoutSkeleton`).
 - A fill whose segments are not the ones the tree was built for ("Failure")
   makes React log once, in development: "This library called use() to
   suspend in a previous render but did not call use() when it finished". The
@@ -1593,6 +1727,11 @@ segments. A fill refuses `rendered()` outright for the same reason R12 exists.
   1 of 12; development: none of either; measured before the fill stopped
   rendering a tree, and the deadline is the same one). The parity matrix
   keeps its mid-duration column at 400 ms for that reason.
+- A prefetch that is still unanswered when its link is clicked on its own
+  page is waited for and adopted, and the fill leaves after it: the deferred
+  part completes later than a plain click's by up to what was left of the
+  prefetch. The maintainer's exception to parity, asserted with a bound ("A
+  click before its prefetch has answered").
 - A prefetch that is still unanswered when its link is clicked on _another_
   page is waited for and then dropped, because a response that defers is for
   its source page only (R15). That click is later than a plain one by what
@@ -1640,23 +1779,11 @@ still runs. Every rule the gap does not break is asserted first, so a
 regression in the same cell is a real failure. Then the test is marked with
 `test.fail` and the broken rules are asserted: the run reports an expected
 failure with the reason, and an unexpected pass, which fails the suite, the
-day the gap is fixed. A gap can be open in a production build only
-(`production`): the suite files tell the bodies which build they run against
-(`PrefetchFalseFixture.production`).
+day the gap is fixed.
 
-| Gap                            | Cells per app  | Rules it breaks           |
-| ------------------------------ | -------------- | ------------------------- |
-| `OPEN_HELD`                    | 1, both modes  | the URL rule              |
-| `OPEN_LAYOUT_CHROME`           | 27, production | lateness, fallbacks, kept |
-| `OPEN_LAYOUT_CHROME_AT_MARGIN` | 15, production | lateness, at the margin   |
-
-`OPEN_LAYOUT_CHROME_AT_MARGIN` is the one gap that is not an expected
-failure. Its cells (a click into the section with a slow layout handler) are
-late by the margin to within a few milliseconds, so they fail in some runs
-and pass in others; marked `test.fail`, a pass would fail the suite. The rule
-they break is reported as an annotation and not asserted, every other rule
-is. They do not announce the day the gap is fixed: check them with
-`OPEN_LAYOUT_CHROME`.
+| Gap         | Cells per app | Rules it breaks |
+| ----------- | ------------- | --------------- |
+| `OPEN_HELD` | 1, both modes | the URL rule    |
 
 Before the fill stopped rendering a tree (`f43a4a27`) there were 35 cells.
 `OPEN_NESTED` (2) closed with the held-boundary fix (#1080). 32 closed with
@@ -1668,9 +1795,17 @@ the one-tree click:
 | `OPEN_ABOVE`  | 3     | Every gate resolves at once where React has not committed the tree, a unit's own included   |
 | `OPEN_HELD`   | 19    | A unit under `transition()` commits nothing at the click; the hooks move with a held commit |
 
-The same #1080 merge opened `OPEN_LAYOUT_CHROME` (it made the plain click
-faster, see "Limits"); those cells were red on the merge commit, with the
-fill still rendering its own tree, in both apps.
+The same #1080 merge opened `OPEN_LAYOUT_CHROME` and
+`OPEN_LAYOUT_CHROME_AT_MARGIN`, 42 cells in production (it made the plain
+click show a flagged layout with its first chunk); they were red on the
+merge commit, with the fill still rendering its own tree, in both apps. The
+maintainer chose the skeleton at the click over both ways to close them, and
+the cells now assert that expectation in both modes ("A layout unit shows
+with everything it holds").
+
+Two more exceptions to the plain click are asserted, not open: a click
+before its prefetch has answered ("A click before its prefetch has
+answered"), and the layout unit above.
 
 The retry of a late pair (three pairs, the case fails only if every one is
 late; structure is judged on the first pair alone) means a lateness that

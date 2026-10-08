@@ -41,8 +41,6 @@ import { randomUUID } from "node:crypto";
 export interface PrefetchFalseFixture {
   /** Absolute URL of a path in the app under test. */
   url: (path: string) => string;
-  /** The app is a production build. Default: a development server. */
-  production?: boolean;
 }
 
 export interface PrefetchFalseCase {
@@ -600,6 +598,74 @@ export async function expectBackAndForwardKeepTheFilledPage(
 }
 
 /**
+ * A filled entry that history marked stale (an action ran, or
+ * invalidateClientCache()) is shown at once on back/forward and then
+ * revalidated, as any stale entry is: one ordinary request (`_rsc_stale`),
+ * not a prefetch and not a fill; the fill rewrote the entry in place, so the
+ * entry kept its stale flag. The revalidated tree commits after it with no
+ * fallback at any point and nothing mounted again, and the page shows what
+ * the revalidation left (the server re-runs what its revalidation rules say;
+ * on this page, by default, nothing). The commit's lane, a transition
+ * (partial-update.ts, mode "stale-revalidation"), is pinned in
+ * src/__tests__/partial-update.test.ts.
+ */
+export async function expectStaleFilledEntryShowsAtOnceThenRevalidates(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+): Promise<void> {
+  const hub = await openHub(page, fixture);
+  await prefetchCase(page, hub, "loader");
+  await clickWithoutHover(page, "loader");
+  await expect(byId(page, "pf-loader-value")).toHaveText("loader.data:1");
+  await complete(page);
+
+  await page.goBack();
+  await expect(byId(page, "pf-hub")).toBeVisible();
+  await settled(page);
+  await byId(page, "pf-invalidate").evaluate((button) =>
+    (button as HTMLElement).click(),
+  );
+
+  const requests = recordPartials(page, hub.pathname("loader"));
+  const revalidation = latch();
+  await page.route(
+    (url) => isPartialFor(url.href, hub.pathname("loader")),
+    async (route) => {
+      await revalidation.opened;
+      await route.continue().catch(() => {});
+    },
+  );
+  const watch = await watchPage(page, ["pf-layout"]);
+  await page.goForward();
+  await expect(page).toHaveURL(hub.pageUrl("loader"));
+  await expect(
+    byId(page, "pf-loader-value"),
+    "the stale entry is on screen while it revalidates",
+  ).toHaveText("loader.data:1");
+  await expect.poll(() => requests.length, "it revalidates").toBe(1);
+
+  revalidation.open();
+  await (await requests[0]!.response())?.finished();
+  await complete(page);
+  const seen = await watch.stop();
+  const counts = await hub.counts();
+  await expect(
+    byId(page, "pf-loader-value"),
+    "the page shows what the revalidation left: a loader it ran, its new value",
+  ).toHaveText(`loader.data:${counts["loader.data"]}`);
+
+  expect(kindsOf(requests), "one ordinary request").toEqual(["navigation"]);
+  expect(
+    new URL(requests[0]!.url()).searchParams.get("_rsc_stale"),
+    "the stale entry's revalidation",
+  ).toBe("true");
+  expect(seen.fallbacks, "no fallback showed").toEqual([]);
+  expect(seen.remounted, "nothing was mounted again").toEqual([]);
+  expect(seen.hidden).toEqual([]);
+  expect(seen.blank, "the page was never blank").toBe(false);
+}
+
+/**
  * Leaving before the fill returns aborts it, and going back to the entry
  * fetches what is missing instead of restoring a fallback nobody fills.
  */
@@ -800,36 +866,211 @@ export async function expectClickFromAScrolledPageEndsAtTheTop(
 }
 
 /**
- * A click while the prefetch is still in flight adopts that prefetch when it
- * answers: one prefetch and one fill, and no navigation request of its own.
+ * The server is this far away for every request of an in-flight click and of
+ * the plain click it is compared with, the prefetch included, and the click
+ * comes this long after its prefetch left. So the prefetch has 200 ms of the
+ * way left, plus the server's time, when the click adopts it.
  */
-export async function expectClickDuringThePrefetchAdoptsIt(
+const IN_FLIGHT_LATENCY_MS = 300;
+const IN_FLIGHT_CLICK_AFTER_MS = 100;
+
+/**
+ * The spare on both in-flight bounds: `PARITY_MARGIN_MS`, the noise allowed
+ * between two clicks. Measured over 60 pairs (5 per case, mode and app), the
+ * adopted page was 99 to 337 ms ahead of the plain one (`loader`, `unit`),
+ * and the completed page at most 36 ms past the plain click's plus what was
+ * left of the prefetch (`bare` in development; 10 ms in production).
+ */
+const IN_FLIGHT_MARGIN_MS = 100;
+
+export interface PrefetchFalseInFlightCase {
+  /** The link, clicked while its prefetch has not answered. */
+  name: string;
+  /**
+   * The deferred read has no boundary, so the page shows with its value:
+   * the whole page is the deferred part, and only its bound applies.
+   */
+  pageIsDeferred?: boolean;
+}
+
+/** A plain click and the same click on a prefetch that has not answered. */
+export interface PrefetchFalseInFlightPair {
+  plain: PrefetchFalseClick;
+  adopted: PrefetchFalseClick;
+  /**
+   * From the adopted click to the prefetch's response headers, on the page's
+   * clock: what was left of the prefetch, which the click waits for.
+   */
+  remainingMs: number;
+}
+
+/**
+ * A click while its prefetch is still in flight adopts that prefetch: one
+ * prefetch and one fill, no navigation request of its own. That is the
+ * maintainer's call, kept as it was before the flag: the in-flight prefetch
+ * is reused, and when its answer has holes the click sends the fill after it,
+ * so the deferred part shows its fallback until the fill lands. Such a click
+ * can complete later than a plain one, by up to what was left of the
+ * prefetch: the price an app pays for keeping expensive work out of every
+ * prefetch. The bounds keep that price from growing:
+ *
+ * - the page appears no later than the plain click's, `IN_FLIGHT_MARGIN_MS`
+ *   to spare (a prefetch that left before the click answers before a request
+ *   sent with it);
+ * - the page completes no later than the plain click's plus what was left of
+ *   the prefetch (`remainingMs`), with the same margin.
+ *
+ * Both clicks run with the server `IN_FLIGHT_LATENCY_MS` away for every
+ * request: a prefetch held on its own would be later than a plain request
+ * only because the test made it so. A pair outside a bound is recorded
+ * again, up to `PARITY_PAIRS` pairs, as the parity cases are.
+ */
+export async function expectClickDuringThePrefetchStaysWithinItsBound(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+  spec: PrefetchFalseInFlightCase,
+  hooks: { onRepeat?: (late: string) => void } = {},
+): Promise<PrefetchFalseInFlightPair> {
+  const outside = ({
+    plain,
+    adopted,
+    remainingMs,
+  }: PrefetchFalseInFlightPair): string[] => {
+    const late: string[] = [];
+    if (
+      !spec.pageIsDeferred &&
+      adopted.firstChangeAt > plain.firstChangeAt + IN_FLIGHT_MARGIN_MS
+    ) {
+      late.push(
+        `the page appeared at ${adopted.firstChangeAt} ms, the plain click's at ${plain.firstChangeAt}`,
+      );
+    }
+    if (
+      adopted.completeAt >
+      plain.completeAt + remainingMs + IN_FLIGHT_MARGIN_MS
+    ) {
+      late.push(
+        `the page completed at ${adopted.completeAt} ms, the plain click's at ${plain.completeAt} with ${remainingMs} ms of the prefetch left`,
+      );
+    }
+    return late;
+  };
+
+  const first = await recordInFlightPair(page, fixture, spec.name);
+  const { plain, adopted, remainingMs } = first;
+  expect(plain.requests, "the plain click is one navigation").toEqual([
+    "navigation",
+  ]);
+  expect(
+    adopted.requests,
+    "the click adopted the prefetch it found in flight",
+  ).toEqual(["prefetch", "fill"]);
+  expect(
+    remainingMs,
+    "the prefetch had not answered when the click came",
+  ).toBeGreaterThan(0);
+  expect(adopted.ran[`${spec.name}.data`], "the fill ran the loader").toBe(1);
+  for (const [work, runs] of Object.entries(adopted.ran)) {
+    expect(
+      runs,
+      `${work}: no more runs than the plain click`,
+    ).toBeLessThanOrEqual(plain.ran[work] ?? 0);
+  }
+  expect(adopted.blank, "the page was never blank").toBe(false);
+
+  const pairs = [first];
+  let late = outside(first);
+  while (late.length > 0 && pairs.length < PARITY_PAIRS) {
+    hooks.onRepeat?.(`pair ${pairs.length}: ${late.join("; ")}`);
+    const next = await recordInFlightPair(page, fixture, spec.name);
+    pairs.push(next);
+    late = outside(next);
+  }
+  expect(
+    late,
+    pairs
+      .map(
+        (pair, index) =>
+          `pair ${index + 1}: ${outside(pair).join("; ") || "within the bounds"}\n${describeInFlightPair(pair)}`,
+      )
+      .join("\n"),
+  ).toEqual([]);
+  return pairs[pairs.length - 1]!;
+}
+
+export function describeInFlightPair(pair: PrefetchFalseInFlightPair): string {
+  return `  remaining ${pair.remainingMs} ms\n${describePair(pair)}`;
+}
+
+/** The two clicks of `expectClickDuringThePrefetchStaysWithinItsBound`. */
+async function recordInFlightPair(
   page: Page,
   fixture: PrefetchFalseFixture,
   name: string,
-): Promise<void> {
-  const hub = await openHub(page, fixture);
-  const requests = recordPartials(page, hub.pathname(name));
-  await page.route(
-    (url) => isPartialFor(url.href, hub.pathname(name)) && !isFill(url),
-    async (route) => {
-      if (isPrefetch(route.request())) await sleep(500);
-      await route.continue().catch(() => {});
-    },
-  );
+): Promise<PrefetchFalseInFlightPair> {
+  const click = async (
+    inFlight: boolean,
+  ): Promise<{ click: PrefetchFalseClick; remainingMs: number }> => {
+    const hub = await openHub(page, fixture);
+    const before = await hub.counts();
+    const requests = recordPartials(page, hub.pathname(name));
+    const near = await farAway(page, IN_FLIGHT_LATENCY_MS);
+    const watch = await watchPage(page, ["pf-layout"]);
+    await page.evaluate(() =>
+      document.addEventListener(
+        "click",
+        () => {
+          (window as unknown as { __pfClickAt: number }).__pfClickAt =
+            performance.now();
+        },
+        { capture: true, once: true },
+      ),
+    );
+    if (inFlight) {
+      await page.mouse.move(0, 0);
+      await byId(page, `pf-link-${name}`).hover();
+      await expect.poll(() => requests.length, "the prefetch left").toBe(1);
+      await page.waitForTimeout(IN_FLIGHT_CLICK_AFTER_MS);
+    }
+    await clickWithoutHover(page, name);
+    await expect(page).toHaveURL(hub.pageUrl(name));
+    await expect(byId(page, `pf-${name}-value`)).toBeVisible({
+      timeout: 15_000,
+    });
+    await complete(page);
+    const seen = await watch.stop();
+    await near();
+    // Resource Timing has the entry once the response has streamed.
+    const remainingMs = inFlight
+      ? await page.evaluate((url) => {
+          const entry = performance.getEntriesByName(url)[0] as
+            | PerformanceResourceTiming
+            | undefined;
+          const at = (window as unknown as { __pfClickAt?: number })
+            .__pfClickAt;
+          return entry && at !== undefined
+            ? Math.round(entry.responseStart - at)
+            : Number.NaN;
+        }, requests[0]!.url())
+      : 0;
+    const after = await hub.counts();
+    const ran: Record<string, number> = {};
+    for (const [work, runs] of Object.entries(after)) {
+      if (runs !== (before[work] ?? 0)) ran[work] = runs - (before[work] ?? 0);
+    }
+    return {
+      click: { ...seen, requests: kindsOf(requests), ran },
+      remainingMs,
+    };
+  };
 
-  await byId(page, `pf-link-${name}`).hover();
-  await expect.poll(() => requests.length, "the prefetch is in flight").toBe(1);
-  await byId(page, `pf-link-${name}`).click();
-
-  await expect(byId(page, `pf-${name}-value`)).toHaveText(`${name}.data:1`, {
-    timeout: 15_000,
-  });
-  expect(
-    kindsOf(requests),
-    "the click adopted the prefetch it found in flight",
-  ).toEqual(["prefetch", "fill"]);
-  expect((await hub.counts())[`${name}.data`]).toBe(1);
+  const plain = await click(false);
+  const adopted = await click(true);
+  return {
+    plain: plain.click,
+    adopted: adopted.click,
+    remainingMs: adopted.remainingMs,
+  };
 }
 
 /**
@@ -1806,6 +2047,16 @@ export interface PrefetchFalseParityCase extends PrefetchFalseFlags {
    */
   latency?: number;
   /**
+   * A flagged layout entered from a page that does not hold it. The
+   * maintainer's expectation replaces the plain click's time for the layout:
+   * its skeleton (`fallback`) is the click's first change and shows with the
+   * click; the layout (`layout`) shows with the route's content, in one
+   * reveal, at least React's 300 ms after the skeleton. The content and the
+   * completed page are compared with the plain click as in any case. The
+   * skeleton is the one fallback the plain click need not show.
+   */
+  skeleton?: { fallback: string; layout: string };
+  /**
    * A gap that is known and not fixed. The case runs all the same: every
    * comparison the gap does not break has to hold, and one it breaks has to
    * fail. So the report shows an expected failure, and an unexpected pass
@@ -1829,23 +2080,15 @@ export type PrefetchFalseParityRule =
   /** Later than the plain click in every pair. */
   | "late"
   /** The address bar or a URL hook further ahead of the page. */
-  | "url";
+  | "url"
+  /** A flagged layout's skeleton and layout, against the expectation. */
+  | "skeleton";
 
 export interface PrefetchFalseOpenGap {
   /** Why the case is open, as the report prints it. */
   reason: string;
   /** The comparisons the gap breaks. Every other one still has to hold. */
   breaks: PrefetchFalseParityRule[];
-  /** Open in a production build only: a development server is at parity. */
-  production?: true;
-  /**
-   * The comparisons the gap breaks land on either side of their margin from
-   * run to run. They are reported and not asserted, and the case is not an
-   * expected failure: an expected failure that passes one run in four would
-   * fail the suite as an unexpected pass. Such a case does not report the day
-   * the gap is fixed; its comment lists the cells to check by hand.
-   */
-  atMargin?: true;
 }
 
 /**
@@ -1870,63 +2113,23 @@ const OPEN_HELD: PrefetchFalseOpenGap = {
 };
 
 /**
- * OPEN, not fixed, production only: a click into the section layout, whose
- * `loading()` is flagged, from a page that does not hold it. Since the
- * held-boundary fix (#1080) a production build hands a layout handler that
- * has returned to its boundary as the node: a plain click shows the layout
- * with its response's first chunk, and the layout's fallback inside the
- * layout's outlet. The prefetch skipped the layout's handler (R2), so the
- * adopted click's placeholder shows that fallback in place of the whole
- * layout until the fill, and then mounts it a second time inside the layout.
- * A development server does not have the layout in the plain response's
- * first chunk (the plain click shows the fallback alone for 300 ms), and the
- * two clicks are equal there.
- *
- * Measured in production (router app), plain against adopted, when the
- * layout shows: `hub to section` 10 against 303 ms, with the server 100 ms
- * away 116 against 305, `vt to section` 5 against 303. Before #1080 the
- * plain click showed it at 311.
- *
- * Two ways to close it are the maintainer's to choose: the click to a
- * flagged layout waits for its fill, as a unit under `transition()` does; or
- * the layout's own handler runs in the prefetch and only its outlet is
- * deferred.
+ * A click into the section, whose layout's `loading()` is flagged, from a
+ * page that does not hold the layout: the layout's handler is deferred with
+ * everything below it, and the maintainer chose its skeleton with the click
+ * over holding the page being left. A plain click in a production build
+ * shows the layout with its first chunk (#1080) and the fallback inside it,
+ * so the two clicks differ there by design. Measured in production (router
+ * app), plain against adopted, when the layout shows: `hub to section` 12
+ * and 304 ms, `vt to section` 3 and 303, with a 600 ms layout handler 608
+ * and 706 (the content at 909 and 706).
  */
-const OPEN_LAYOUT_CHROME: PrefetchFalseOpenGap = {
-  reason:
-    "a flagged layout's chrome shows with a plain click's first chunk (#1080); the adopted click covers it with the fallback until the fill",
-  // "kept": the layout's fallback mounts again inside the layout.
-  breaks: ["late", "fallback", "kept"],
-  production: true,
-};
-
-/**
- * `OPEN_LAYOUT_CHROME` with a slow layout handler (`hslow`). The plain click
- * holds the page being left until the handler returns and shows the layout
- * then (about 607 ms); the adopted click shows it when its fill is complete,
- * the route's 100 ms loader later (about 709 ms). That is the parity margin
- * to within a few milliseconds, so the lateness lands on either side of it:
- * in four production runs of the router app these cells failed 0 to 4 times
- * each. `section-own` is not here: its fallback rule breaks every time.
- */
-const OPEN_LAYOUT_CHROME_AT_MARGIN: PrefetchFalseOpenGap = {
-  reason:
-    "a flagged layout's chrome shows with a plain click's first chunk (#1080); with a slow layout the adopted click shows it about the margin later",
-  breaks: ["late"],
-  production: true,
-  atMargin: true,
-};
-
-/** The gap of a click into the section layout from a page without it. */
-function layoutGap(
+function layoutSkeleton(
   spec: PrefetchFalseParityCase,
-): PrefetchFalseOpenGap | undefined {
+): PrefetchFalseParityCase["skeleton"] {
   if (!SECTION_PAGES.includes(spec.name) || spec.from === "section") {
     return undefined;
   }
-  return spec.hslow && spec.name !== "section-own"
-    ? OPEN_LAYOUT_CHROME_AT_MARGIN
-    : OPEN_LAYOUT_CHROME;
+  return { fallback: "pf-section-fallback", layout: "pf-section-layout" };
 }
 
 const IN_SECTION = { from: "section", held: ["pf-section-layout"] };
@@ -2123,8 +2326,8 @@ export const PREFETCH_FALSE_PARITY_CASES: PrefetchFalseParityCase[] = [
   ]),
   ...HEAD_HELD_CLICKS,
 ].map((spec: PrefetchFalseParityCase) => {
-  const open = spec.open ?? layoutGap(spec);
-  return open ? { ...spec, open } : spec;
+  const skeleton = layoutSkeleton(spec);
+  return skeleton ? { ...spec, skeleton } : spec;
 });
 
 /** A title for one parity case: unique within `PREFETCH_FALSE_PARITY_CASES`. */
@@ -2140,7 +2343,8 @@ export function prefetchFalseParityTitle(
     spec.boundary && "an app boundary on screen",
     spec.vtms && `view transitions of ${spec.vtms} ms`,
     spec.latency && `the server ${spec.latency} ms away`,
-    spec.open && (spec.open.production ? "open in production" : "open"),
+    spec.skeleton && "its layout with the fill",
+    spec.open && "open",
   ]
     .filter(Boolean)
     .join(", ");
@@ -2207,6 +2411,13 @@ export interface PrefetchFalsePair {
  *   the page (`animatedChanges`).
  * - The address bar and the URL hooks do not move further ahead of the page
  *   than in the plain click (`URL_LEAD_MARGIN_MS`).
+ * - A case with `skeleton` (a flagged layout entered from outside) shows the
+ *   layout's skeleton first, within `PARITY_MARGIN_MS` of the click, and the
+ *   layout in the same frame as the route's content (`SAME_FRAME_MS`), no
+ *   sooner than
+ *   `SKELETON_MIN_MS` after the skeleton. The layout's own time is not
+ *   compared with the plain click's, and the skeleton may be a fallback the
+ *   plain click does not show; everything else is.
  *
  * Times are compared with `PARITY_MARGIN_MS` to spare. A pair that is later
  * than that is recorded again, up to `PARITY_PAIRS` pairs: the case fails
@@ -2218,8 +2429,7 @@ export interface PrefetchFalsePair {
  *
  * A case with `open` reports its gap: what the gap does not break is
  * asserted first, as for any case. Then `onOpen` is called (the suite marks
- * the test as an expected failure there) and what the gap breaks is asserted,
- * unless the gap is `atMargin`.
+ * the test as an expected failure there) and what the gap breaks is asserted.
  *
  * Returns the first pair, for a case that pins more.
  */
@@ -2246,7 +2456,10 @@ export async function expectAdoptedClickIsNeverWorseThanAPlainClick(
   };
 
   const added = adopted.fallbacks.filter(
-    (id) => !plain.fallbacks.includes(id) && id !== spec.ownFallback,
+    (id) =>
+      !plain.fallbacks.includes(id) &&
+      id !== spec.ownFallback &&
+      id !== spec.skeleton?.fallback,
   );
   check(
     "fallback",
@@ -2313,18 +2526,50 @@ export async function expectAdoptedClickIsNeverWorseThanAPlainClick(
     );
   }
 
+  if (spec.skeleton) {
+    const { fallback, layout } = spec.skeleton;
+    const at = (id: string): number | undefined => {
+      const index = adopted.order.indexOf(id);
+      return index < 0 ? undefined : adopted.seenAt[index];
+    };
+    const skeletonAt = at(fallback);
+    const layoutAt = at(layout);
+    const contentAt = at(`pf-${spec.stem ?? spec.name}-value`);
+    check(
+      "skeleton",
+      skeletonAt !== undefined &&
+        Math.abs(skeletonAt - adopted.firstChangeAt) <= SAME_FRAME_MS &&
+        skeletonAt <= PARITY_MARGIN_MS,
+      `the skeleton is not the click's first change, within ${PARITY_MARGIN_MS} ms: the skeleton at ${skeletonAt}, the first change at ${adopted.firstChangeAt}`,
+    );
+    check(
+      "skeleton",
+      layoutAt !== undefined &&
+        contentAt !== undefined &&
+        Math.abs(layoutAt - contentAt) <= SAME_FRAME_MS,
+      `the layout did not show with the content: the layout at ${layoutAt}, the content at ${contentAt}`,
+    );
+    check(
+      "skeleton",
+      layoutAt !== undefined &&
+        skeletonAt !== undefined &&
+        layoutAt - skeletonAt >= SKELETON_MIN_MS,
+      `the layout showed ${layoutAt! - skeletonAt!} ms after the skeleton, sooner than React's 300`,
+    );
+  }
+
   const known = (broken: Broken): boolean =>
     spec.open?.breaks.includes(broken.rule) === true;
   const list = (broken: Broken[]): string[] => broken.map(({ what }) => what);
   const pairs = [first];
-  let late = laterThanPlain(first);
+  let late = laterThanPlain(first, spec);
   // What the case's open gap explains is in every pair: no pair is recorded
   // again for it.
   while (late.some((broken) => !known(broken)) && pairs.length < PARITY_PAIRS) {
     hooks.onRepeat?.(`pair ${pairs.length}: ${list(late).join("; ")}`);
     const next = await recordPlainAndAdoptedClick(page, fixture, spec);
     pairs.push(next);
-    late = laterThanPlain(next);
+    late = laterThanPlain(next, spec);
   }
   for (const rule of new Set(late.map((broken) => broken.rule))) {
     wrong.push({
@@ -2339,15 +2584,13 @@ export async function expectAdoptedClickIsNeverWorseThanAPlainClick(
   const report = `${prefetchFalseParityTitle(spec)}\n${pairs
     .map(
       (pair, index) =>
-        `pair ${index + 1}: ${list(laterThanPlain(pair)).join("; ") || "on time"}\n${describePair(pair)}`,
+        `pair ${index + 1}: ${list(laterThanPlain(pair, spec)).join("; ") || "on time"}\n${describePair(pair)}`,
     )
     .join("\n")}`;
   expect(list(wrong.filter((broken) => !known(broken))), report).toEqual([]);
   if (spec.open) {
     hooks.onOpen?.(spec.open);
-    if (!spec.open.atMargin) {
-      expect(list(wrong), `open: ${spec.open.reason}\n${report}`).toEqual([]);
-    }
+    expect(list(wrong), `open: ${spec.open.reason}\n${report}`).toEqual([]);
   }
   return first;
 }
@@ -2391,10 +2634,26 @@ function animatedChanges(click: PrefetchFalseClick): number {
 const IDLE_WINDOW_MS = 100;
 
 /**
+ * How soon after a flagged layout's skeleton its layout may show: React keeps
+ * a fallback up for 300 ms (FALLBACK_THROTTLE_MS in react-reconciler), less
+ * what sampling the page can take off the measured gap.
+ */
+const SKELETON_MIN_MS = 280;
+
+/**
+ * Two elements of one commit, as the page's sampler times them: one sample
+ * reads the clock per element, so they can differ by a millisecond or two.
+ */
+const SAME_FRAME_MS = 16;
+
+/**
  * Where the adopted click of a pair is later than the plain one, past the
  * margin, or has the URL further ahead of the page.
  */
-function laterThanPlain({ plain, adopted }: PrefetchFalsePair): Broken[] {
+function laterThanPlain(
+  { plain, adopted }: PrefetchFalsePair,
+  spec: PrefetchFalseParityCase,
+): Broken[] {
   const late: Broken[] = [];
   const never = (
     what: string,
@@ -2445,7 +2704,9 @@ function laterThanPlain({ plain, adopted }: PrefetchFalsePair): Broken[] {
   // time.
   adopted.order.forEach((id, index) => {
     const was = plain.order.indexOf(id);
+    // A flagged layout entered from outside shows with the fill by design.
     if (was < 0 || adopted.fallbacks.includes(id)) return;
+    if (id === spec.skeleton?.layout) return;
     never(`${id} visible at (ms)`, plain.seenAt[was]!, adopted.seenAt[index]!);
   });
   return late;
@@ -2864,12 +3125,10 @@ export function definePrefetchFalseTests(
   // same click with no prefetch at all.
   for (const spec of PREFETCH_FALSE_PARITY_CASES) {
     it(`a click that adopts a prefetch is never worse than a plain click: ${prefetchFalseParityTitle(spec)}`, async (page, fixture) => {
-      const open =
-        spec.open?.production && !fixture.production ? undefined : spec.open;
       const pair = await expectAdoptedClickIsNeverWorseThanAPlainClick(
         page,
         fixture,
-        { ...spec, open },
+        spec,
         {
           // In the report: how often one pair of clicks was not enough.
           onRepeat: (late) =>
@@ -2878,14 +3137,8 @@ export function definePrefetchFalseTests(
               description: late,
             }),
           // An expected failure from here on, and an unexpected pass once
-          // the gap is closed. A gap at the margin is reported only.
-          onOpen: ({ reason, atMargin }) =>
-            atMargin
-              ? test.info().annotations.push({
-                  type: "open at the margin",
-                  description: reason,
-                })
-              : test.fail(true, reason),
+          // the gap is closed.
+          onOpen: ({ reason }) => test.fail(true, reason),
         },
       );
       // In the report: the numbers of a case that passed. A case that
@@ -3011,6 +3264,9 @@ export function definePrefetchFalseTests(
   it("back and forward after a fill restore the filled page", (page, fixture) =>
     expectBackAndForwardKeepTheFilledPage(page, fixture));
 
+  it("a filled entry marked stale shows at once on back/forward, then revalidates with no fallback", (page, fixture) =>
+    expectStaleFilledEntryShowsAtOnceThenRevalidates(page, fixture));
+
   it("leaving before the fill returns aborts it, and going back fetches what is missing", (page, fixture) =>
     expectLeavingBeforeTheFillAbortsItAndBackRefetches(page, fixture));
 
@@ -3045,9 +3301,31 @@ export function definePrefetchFalseTests(
       expectClickFromAScrolledPageEndsAtTheTop(page, fixture, spec));
   }
 
-  for (const name of ["loader", "unit", "bare"]) {
-    it(`a click while the prefetch is still in flight adopts it: ${name}`, (page, fixture) =>
-      expectClickDuringThePrefetchAdoptsIt(page, fixture, name));
+  // The maintainer's exception to parity, bounded so it cannot grow.
+  const inFlight: PrefetchFalseInFlightCase[] = [
+    { name: "loader" },
+    { name: "unit" },
+    { name: "bare", pageIsDeferred: true },
+  ];
+  for (const spec of inFlight) {
+    it(`a click while the prefetch is still in flight adopts it, late by no more than what was left of it: ${spec.name}`, async (page, fixture) => {
+      const pair = await expectClickDuringThePrefetchStaysWithinItsBound(
+        page,
+        fixture,
+        spec,
+        {
+          onRepeat: (late) =>
+            test.info().annotations.push({
+              type: "in-flight pair repeated",
+              description: late,
+            }),
+        },
+      );
+      test.info().annotations.push({
+        type: "in flight",
+        description: describeInFlightPair(pair),
+      });
+    });
   }
 
   it("a double click on one link ends on what the last click fetched", (page, fixture) =>
