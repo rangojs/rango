@@ -74,11 +74,9 @@ export function useNavigation<T>(
     const update = () => {
       const currentState = ctx.eventController.getState();
       const publicState = toPublicState(currentState);
-      const select = (
-        state: PublicNavigationState,
-      ): T | PublicNavigationState =>
-        selectorRef.current ? selectorRef.current(state) : state;
-      const nextSelected = select(publicState);
+      const nextSelected = selectorRef.current
+        ? selectorRef.current(publicState)
+        : publicState;
 
       // Check if selected value has changed
       if (!shallowEqual(nextSelected, prevState.current)) {
@@ -115,8 +113,13 @@ export function useNavigation<T>(
 
       // Last, so it wins over a release above (pending-fill.ts emitAdoption).
       if (isAdopting()) {
+        const select = selectorRef.current;
+        const loading: PublicNavigationState = {
+          ...publicState,
+          state: "loading",
+        };
         startTransition(() => {
-          setOptimisticValue(select({ ...publicState, state: "loading" }));
+          setOptimisticValue(select ? select(loading) : loading);
         });
       }
     };
