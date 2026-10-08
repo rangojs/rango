@@ -24,6 +24,8 @@ import {
  *  - zlbs: parallel slot with its own loader and loading()
  *  - zlbr: layout without loading(); each child route has its own loader and
  *          loading() (the new route's fallback may show, the layout is held)
+ *  - zlbo: an outer layout around a start page (/zlbo) and a layout with
+ *          loading(): the start page links to /zlbo/a with prefetch off
  */
 
 function HubLinks({ s }: { s: string }) {
@@ -100,6 +102,26 @@ const ZlbSSlot: Handler = () => (
 
 const ZlbRLayout: Handler = () => (
   <div data-testid="zlbr-layout">
+    <Outlet />
+  </div>
+);
+
+const ZlbOOuter: Handler = () => (
+  <div data-testid="zlbo-outer">
+    <Outlet />
+  </div>
+);
+
+const ZlbOStart: Handler = () => (
+  <div data-testid="zlbo-start">
+    <Link to="/zlbo/a" data-testid="zlbo-start-plain" prefetch="none">
+      zlbo a (no prefetch)
+    </Link>
+  </div>
+);
+
+const ZlbOLayout: Handler = () => (
+  <div data-testid="zlbo-layout">
     <Outlet />
   </div>
 );
@@ -181,6 +203,15 @@ export const heldBoundaryPatterns = urls(
       ]),
       path("/zlbs/a", page("zlbs", "a"), { name: "zlbsA" }),
       path("/zlbs/b", page("zlbs", "b"), { name: "zlbsB" }),
+    ]),
+
+    layout(ZlbOOuter, () => [
+      path("/zlbo", ZlbOStart, { name: "zlboStart" }),
+      layout(ZlbOLayout, () => [
+        loading(<div data-testid="zlbo-fallback">zlbo-loading</div>),
+        path("/zlbo/a", page("zlbo", "a"), { name: "zlboA" }),
+        path("/zlbo/b", page("zlbo", "b"), { name: "zlboB" }),
+      ]),
     ]),
 
     layout(ZlbRLayout, () => [

@@ -22,7 +22,13 @@ const OPEN_DEV: Record<string, string> = {
     ONE_COMMIT,
   "a clientUrls() same-route navigation is one commit": ONE_COMMIT,
 };
-const OPEN_PRODUCTION: Record<string, string> = OPEN_DEV;
+// A build only: a dev build shows that fallback while a client reference
+// loads, and the audit stays silent while the payload streams.
+const OPEN_PRODUCTION: Record<string, string> = {
+  ...OPEN_DEV,
+  "a client component directly in a route's content does not show the route's loading() on a cold click":
+    "#1079: the click is the first use of the client component's module in the document; its chunk is already fetched, but the Flight client waits for the module's import() (3 to 6 ms) and the route's loading() is the nearest boundary: 300 ms",
+};
 
 function describeSuspenseCases(mode: "dev" | "build") {
   const production = mode === "build";

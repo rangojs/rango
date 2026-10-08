@@ -45,7 +45,10 @@ import { scWhen } from "./suspense-cases.when.js";
  *  - /sc/above/:id: the route's loader is read by the layout above it
  *  - /sc/slot/:id: a parallel slot with no loading(), slow for id "slow"
  *  - /sc/own/:id: a route with loading() whose two loaders are each read
- *    behind a boundary of their own
+ *    behind a boundary of their own, and nothing else that can suspend
+ *  - /sc/top/:id: the same route with a client component at the top of its
+ *    content, outside both boundaries; the hub renders nothing from this
+ *    module, so a click from it is the module's first use
  *  - /sc/live: what updates in place: a handle with one push made after
  *    the page committed, and a loader its reader refetches
  */
@@ -81,6 +84,7 @@ const ScHub: Handler = () => (
     <To to="/sc/slot/fast" id="sc-hub-slot-fast" />
     <To to="/sc/live" id="sc-hub-live" />
     <To to="/sc/own/1" id="sc-hub-own-1" />
+    <To to="/sc/top/1" id="sc-hub-top-1" />
     <To to="/client-urls-slow/b/first" id="sc-hub-cus-b" />
   </div>
 );
@@ -128,11 +132,24 @@ const ScLivePage: Handler = (ctx) => {
 const ScOwn: Handler<"/sc/own/:id"> = (ctx) => (
   <div data-testid="sc-own">
     <span data-testid="sc-own-id">{ctx.params.id}</span>
-    <ScInstance id="own" />
     <Suspense fallback={<span data-testid="sc-own-a-fallback">a</span>}>
+      <ScInstance id="own" />
       <ScOwnAValue />
     </Suspense>
     <Suspense fallback={<span data-testid="sc-own-b-fallback">b</span>}>
+      <ScOwnBValue />
+    </Suspense>
+  </div>
+);
+
+const ScTop: Handler<"/sc/top/:id"> = (ctx) => (
+  <div data-testid="sc-top">
+    <span data-testid="sc-top-id">{ctx.params.id}</span>
+    <ScInstance id="top" />
+    <Suspense fallback={<span data-testid="sc-top-a-fallback">a</span>}>
+      <ScOwnAValue />
+    </Suspense>
+    <Suspense fallback={<span data-testid="sc-top-b-fallback">b</span>}>
       <ScOwnBValue />
     </Suspense>
   </div>
@@ -253,6 +270,11 @@ export const suspenseCasesPatterns = urls(
       loader(ScOwnALoader),
       loader(ScOwnBLoader),
       loading(<div data-testid="sc-own-fallback">sc-own-loading</div>),
+    ]),
+    path("/sc/top/:id", ScTop, { name: "top" }, () => [
+      loader(ScOwnALoader),
+      loader(ScOwnBLoader),
+      loading(<div data-testid="sc-top-fallback">sc-top-loading</div>),
     ]),
     path("/sc/live", ScLivePage, { name: "live" }, () => [
       loader(ScLiveLoader),

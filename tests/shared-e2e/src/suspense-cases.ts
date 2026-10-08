@@ -562,6 +562,36 @@ export function runSuspenseCases(options: SuspenseCasesOptions): void {
     await expectAudit(page);
   });
 
+  it("a client component directly in a route's content does not show the route's loading() on a cold click", async (page) => {
+    await page.goto(url("/sc"));
+    await waitForHydration(page);
+    const updates = await trackTreeUpdates(page);
+
+    await watchFlash(page, "sc-top-fallback");
+    await testId(page, "sc-hub-top-1").click();
+    await expect(testId(page, "sc-own-a-value")).toHaveText(/^own-a-/);
+    await expect(testId(page, "sc-own-b-value")).toHaveText(/^own-b-/);
+    await updates({ navigation: 1 }, "one click and two streamed loaders");
+    const seen = await readProbe(page);
+    expect(seen.installed, PROBE_LOST).toBe(true);
+    if (MEASURE) {
+      const audit = production ? null : await readSuspenseAudit(page);
+      console.log(
+        `[measure] ${test.info().title} | ${production ? "production" : "dev"} | flash ${seen.flash} | ${JSON.stringify(audit?.events ?? [])}`,
+      );
+      return;
+    }
+    // The route's content is handed over settled. The click is the first use
+    // of its client component's module in the document (the hub renders none
+    // of them): the chunk is already fetched, but the Flight client waits for
+    // the module's import(). A dev build shows the fallback while a client
+    // reference loads anyway, so the DOM assertion is for a build.
+    if (production) {
+      expect(seen.flash, "the route's loading() fallback").toBe(false);
+    }
+    await expectAudit(page);
+  });
+
   it("a loader refetched where it is read updates in place, with no tree update", async (page) => {
     await fromHub(page, "sc-hub-live");
     await expect(testId(page, "sc-live-value")).toHaveText(/^live-/);
