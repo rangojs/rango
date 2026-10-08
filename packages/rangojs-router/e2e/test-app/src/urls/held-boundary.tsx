@@ -1,11 +1,13 @@
 import { urls, loader, loading, type Handler } from "@rangojs/router";
 import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 import {
+  UlrLoader,
   ZlbLayoutLoader,
   ZlbRouteLoader,
   ZlbSlotLoader,
 } from "./held-boundary.loaders.js";
 import {
+  UlrValue,
   ZlbLayoutValue,
   ZlbRouteValue,
   ZlbSlotValue,
@@ -112,9 +114,42 @@ const routePage =
     </div>
   );
 
+/**
+ * ulr: a route whose useLoader reader mounts while its loader streams (reached
+ * from the /ulr hub), then renders again with the value settled after a click
+ * to the page already shown, or back in the history.
+ * React logs a conditional use() in dev when the read skips use() on the
+ * settled render (use-loader.tsx).
+ */
+const UlrHub: Handler = () => (
+  <div data-testid="ulr-hub">
+    <Link to="/ulr/a" data-testid="ulr-hub-plain" prefetch="none">
+      ulr a
+    </Link>{" "}
+  </div>
+);
+
+const UlrPage: Handler = () => (
+  <div data-testid="ulr-a">
+    <UlrValue />
+    <Link to="/ulr/a" data-testid="ulr-self-plain" prefetch="none">
+      self
+    </Link>
+    <Link to="/ulr" data-testid="ulr-to-hub" prefetch="none">
+      hub
+    </Link>
+  </div>
+);
+
 export const heldBoundaryPatterns = urls(
   ({ layout, path, loading, parallel }) => [
     path("/zlb", ZlbHub, { name: "zlbHub" }),
+
+    path("/ulr", UlrHub, { name: "ulrHub" }),
+    path("/ulr/a", UlrPage, { name: "ulrA" }, () => [
+      loader(UlrLoader),
+      loading(<div data-testid="ulr-fallback">ulr-loading</div>),
+    ]),
 
     layout(ZlbLayout, () => [
       loading(<div data-testid="zlb-fallback">zlb-loading</div>),

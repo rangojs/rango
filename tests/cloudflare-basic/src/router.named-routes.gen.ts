@@ -246,6 +246,8 @@ export const NamedRoutes = {
   "transformCases.state": "/transform-cases/state",
   txSrc: "/tx-src/:n",
   txWhen: "/tx-when/:hold/:n",
+  ulrA: "/ulr/a",
+  ulrHub: "/ulr",
   useCacheDep: "/use-cache-dep",
   useCacheMemoBinding: "/use-cache-memo/binding",
   useCacheMemoHandlerFirst: "/use-cache-memo/handler-first",

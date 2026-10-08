@@ -23,6 +23,8 @@ export type { DeployFixture, DeployFixtureOptions } from "./deploy-fixture.js";
 export { runCacheVersionScenario } from "./cache-version-scenario.js";
 export { runHeldBoundaryTests } from "./held-boundary-scenario.js";
 export type { HeldBoundaryScenarioOptions } from "./held-boundary-scenario.js";
+export { runUseLoaderSettledReadTests } from "./use-loader-settled-read-scenario.js";
+export type { UseLoaderSettledReadScenarioOptions } from "./use-loader-settled-read-scenario.js";
 export { readFlash, readProbe, watchFlash } from "./flash-probe.js";
 export type { CacheVersionScenarioOptions } from "./cache-version-scenario.js";
 

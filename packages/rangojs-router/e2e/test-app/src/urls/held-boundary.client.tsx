@@ -2,6 +2,7 @@
 
 import { useLoader } from "@rangojs/router/client";
 import {
+  UlrLoader,
   ZlbLayoutLoader,
   ZlbRouteLoader,
   ZlbSlotLoader,
@@ -20,4 +21,9 @@ export function ZlbSlotValue() {
 export function ZlbRouteValue() {
   const { data } = useLoader(ZlbRouteLoader);
   return <span>{data.value}</span>;
+}
+
+export function UlrValue() {
+  const { data } = useLoader(UlrLoader);
+  return <span data-testid="ulr-value">{data.value}</span>;
 }
