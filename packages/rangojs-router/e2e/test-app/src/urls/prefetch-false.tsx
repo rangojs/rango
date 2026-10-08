@@ -60,8 +60,17 @@ import { countRun, readRunCounts } from "../prefetch-false-counts.js";
 // `nested` is the same page with no unit: two flagged loaders, each read
 // behind a <Suspense> of its own (pf-nested-outer-fallback around both).
 //
-// pf-nav mirrors useNavigation() as data-state / data-streaming, and
-// pf-outlet is the box the page renders in.
+// `above` is a unit whose loader the layout above it reads too
+// (pf-above-read, in pf-above-layout): a reader above the unit's fallback,
+// with no boundary of its own. `bare-inner` is `bare` with a second flagged
+// loader, 600 ms slower, behind a <Suspense> (pf-bare-inner-early is the read
+// with no boundary): the fill's response stays open after the value the page
+// waits for. `vt-below` is a flagged loading() on a layout
+// (pf-vt-below-layout, counter `vt-below.layout`) whose route has
+// transition(): the prefetch skips the route, transition() included.
+//
+// pf-nav mirrors useNavigation() as data-state / data-streaming / data-path
+// (its location's pathname), and pf-outlet is the box the page renders in.
 //
 // Four cases have no value to show: their deferred work ends another way.
 // `throws` and `missing` render pf-<c>-error / pf-<c>-not-found, `redirects`
@@ -81,6 +90,8 @@ import { countRun, readRunCounts } from "../prefetch-false-counts.js";
 // &boundary=1 puts the heading in a <ViewTransition> of the app's own. It is
 // on screen before, during and after every click, and React starts a view
 // transition for any commit made in a transition while one is mounted.
+// &vtms=<ms> makes every view transition take that long (the default is
+// about 250 ms): what a commit that waits for one waits for.
 // The flags ride on every link. Without them the page is quiet for a suite.
 
 const runOf = (ctx: any): string => ctx.searchParams.get("run") ?? "";
@@ -180,6 +191,18 @@ export const PfNestedEarlyLoader = createLoader((ctx) =>
 export const PfNestedLoader = createLoader((ctx) =>
   work(ctx, "nested.data", 250),
 );
+export const PfAboveLoader = createLoader((ctx) =>
+  work(ctx, "above.data", 100),
+);
+export const PfBareInnerEarlyLoader = createLoader((ctx) =>
+  work(ctx, "bare-inner.early", 100),
+);
+export const PfBareInnerLoader = createLoader((ctx) =>
+  work(ctx, "bare-inner.data", 700),
+);
+export const PfVtBelowLoader = createLoader((ctx) =>
+  work(ctx, "vt-below.data", 100),
+);
 
 const CASES = [
   ["loader", "one flagged loader beside an unflagged one, own Suspense"],
@@ -212,6 +235,9 @@ const CASES = [
   ["inner", "flagged loading(), a slower read behind its own Suspense"],
   ["vt-inner", "the same on a route with transition()"],
   ["nested", "two flagged loaders, the second read in a nested Suspense"],
+  ["above", "flagged loading(), its loader also read by the layout above"],
+  ["bare-inner", "bare, and a slower flagged loader behind a Suspense"],
+  ["vt-below", "flagged loading() on a layout, transition() on its route"],
 ] as const;
 
 const box = {
@@ -228,13 +254,17 @@ function PrefetchFalseLayout(ctx: any) {
   const hslow = ctx.searchParams.get("hslow") === "1";
   const delay = delayOf(ctx);
   const boundary = ctx.searchParams.get("boundary") === "1";
-  const query = `run=${run}${manual ? "&manual=1" : ""}${tall ? "&tall=1" : ""}${slow ? "&slow=1" : ""}${delay ? `&delay=${delay}` : ""}${hslow ? "&hslow=1" : ""}${boundary ? "&boundary=1" : ""}`;
+  const vtms = Number(ctx.searchParams.get("vtms") ?? 0) || 0;
+  const query = `run=${run}${manual ? "&manual=1" : ""}${tall ? "&tall=1" : ""}${slow ? "&slow=1" : ""}${delay ? `&delay=${delay}` : ""}${hslow ? "&hslow=1" : ""}${boundary ? "&boundary=1" : ""}${vtms ? `&vtms=${vtms}` : ""}`;
   const heading = <h2 style={{ margin: "16px 0 4px" }}>prefetch: false</h2>;
   return (
     <div
       data-testid="pf-layout"
       style={{ fontFamily: "system-ui, sans-serif", lineHeight: 1.5 }}
     >
+      {vtms > 0 && (
+        <style>{`::view-transition-group(*),::view-transition-old(*),::view-transition-new(*){animation-duration:${vtms}ms}`}</style>
+      )}
       {boundary ? <ViewTransition>{heading}</ViewTransition> : heading}
       <p style={{ margin: "0 0 12px", opacity: 0.75 }}>
         Hover a link to prefetch it, then click it. The panel on the right shows
@@ -457,6 +487,26 @@ function NestedPage() {
         </Suspense>
       </Suspense>
     </div>
+  );
+}
+
+// Reads its route's loader, with no boundary: above the route's fallback.
+function AboveLayout() {
+  return (
+    <div data-testid="pf-above-layout">
+      <PrefetchFalseValue loader={PfAboveLoader} testId="pf-above-read" />
+      <Outlet />
+    </div>
+  );
+}
+
+// A flagged loading() on a layout whose route has transition().
+function VtBelowLayout(ctx: any) {
+  countRun(runOf(ctx), "vt-below.layout");
+  return (
+    <section data-testid="pf-vt-below-layout">
+      <Outlet />
+    </section>
   );
 }
 
@@ -813,6 +863,43 @@ export const prefetchFalsePatterns = urls(
         loader(PfNestedEarlyLoader, { prefetch: false }),
         loader(PfNestedLoader, { prefetch: false }),
         loading(fallback("nested")),
+      ]),
+
+      // A unit whose loader the layout above it reads as well.
+      layout(AboveLayout, () => [
+        path(
+          "/above",
+          countedPage("above", PfAboveLoader),
+          { name: "above" },
+          () => [
+            loader(PfAboveLoader),
+            loading(fallback("above"), { prefetch: false }),
+          ],
+        ),
+      ]),
+
+      // A flagged loader nothing can show a fallback for, and a slower one
+      // behind a boundary: the response outlives the value the page waits for.
+      path(
+        "/bare-inner",
+        innerPage("bare-inner", PfBareInnerEarlyLoader, PfBareInnerLoader),
+        { name: "bareInner" },
+        () => [
+          loader(PfBareInnerEarlyLoader, { prefetch: false }),
+          loader(PfBareInnerLoader, { prefetch: false }),
+        ],
+      ),
+
+      // A flagged loading() on a layout: the prefetch skips the route below
+      // it, and with it the route's transition().
+      layout(VtBelowLayout, () => [
+        loading(fallback("vt-below"), { prefetch: false }),
+        path(
+          "/vt-below",
+          countedPage("vt-below", PfVtBelowLoader),
+          { name: "vtBelow" },
+          () => [loader(PfVtBelowLoader), transition()],
+        ),
       ]),
 
       // No flag: a prefetch runs everything and the click sends nothing.

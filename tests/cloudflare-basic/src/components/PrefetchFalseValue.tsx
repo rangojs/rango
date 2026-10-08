@@ -35,7 +35,8 @@ export function PrefetchFalseValue({
 
 /**
  * useNavigation() as attributes, for a suite to read while a fill is in
- * flight: data-state and data-streaming. Not visible.
+ * flight: data-state, data-streaming and data-path (the pathname of its
+ * location). Not visible.
  */
 export function PrefetchFalseNav() {
   const nav = useNavigation();
@@ -44,6 +45,7 @@ export function PrefetchFalseNav() {
       data-testid="pf-nav"
       data-state={nav.state}
       data-streaming={String(nav.isStreaming)}
+      data-path={nav.location.pathname}
       hidden
     />
   );
