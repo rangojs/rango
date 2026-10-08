@@ -1,23 +1,13 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render } from "@testing-library/react";
-import { Suspense, useState, type ReactNode } from "react";
+import { Suspense, useDeferredValue, useState, type ReactNode } from "react";
 import { OutletProvider } from "../outlet-provider.js";
-import { useLoader } from "../use-loader.js";
+import { useFetchLoader, useLoader } from "../use-loader.js";
 import { loaderStore } from "../loader-store.js";
 import type { LoaderDefinition } from "../types.js";
 
-/**
- * A read that mounted suspended on a stream and is later handed its value
- * settled (a lane that awaits loaders before it renders). React records the
- * reader that suspended in use() while it mounted, by its place in the tree,
- * and logs a later render there that finishes without use(): "This library
- * called use() to suspend in a previous render but did not call use() when it
- * finished". The retry after the stream resolves does not always clear that
- * record: React matches the place by fiber identity up the tree, and the
- * retry renders on the other copy of the root. Seen in an e2e run on a click
- * to the page already shown.
- */
+// Why every read with route context calls use(): see use-loader.tsx.
 const ProductLoader = { $$id: "product" } as unknown as LoaderDefinition<{
   name: string;
 }>;
@@ -77,5 +67,18 @@ describe("useLoader read sites", () => {
     expect(
       logged.filter((text) => text.includes("conditional-use-of-use")),
     ).toEqual([]);
+  });
+
+  it("a read with no route context does not call use(), so a synchronous act() still flushes", () => {
+    // use() inside act() marks the render as having used a promise, and a
+    // synchronous act() then stops flushing (react.development.js).
+    function Outside() {
+      useFetchLoader(ProductLoader);
+      const value = useDeferredValue("final", "initial");
+      return <p data-testid="deferred">{value}</p>;
+    }
+    const result = render(<Outside />);
+    act(() => {});
+    expect(result.getByTestId("deferred").textContent).toBe("final");
   });
 });

@@ -10,7 +10,9 @@ page already shown), could make React log in development: "This library called
 use() to suspend in a previous render but did not call use() when it finished".
 The read called `use()` only on a pending stream. It now calls `use()` on every
 read, on a settled value too, which returns at once. Nothing on screen changes,
-and production never logged it.
+and production never logged it. Tests that render a `useLoader` reader inside
+route context and drive state with `act()` should await `act()`, which
+`renderRoute` already does. A read outside route context is unchanged.
 
 ### Fixed: a `loading()` boundary on screen is no longer replaced by its fallback when nothing in it is pending
 

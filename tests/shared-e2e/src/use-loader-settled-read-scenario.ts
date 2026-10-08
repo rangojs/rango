@@ -1,14 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
+import { readProbe, watchFlash } from "./flash-probe.js";
 
-/**
- * A useLoader read that mounted while its loader streamed, rendered again
- * with the value settled, must call use() on both renders (src/use-loader.tsx).
- * React logs "called use() to suspend in a previous render but did not call
- * use() when it finished" in development otherwise; a build never logs it, so
- * the production describe pins the same flow's output instead. Fixture:
- * held-boundary.tsx in each app (/ulr hub, /ulr/a); both apps call this from
- * a dev and a (production) describe.
- */
+// Why every useLoader read with route context calls use(): src/use-loader.tsx.
+// Fixture: held-boundary.tsx in each app (/settled-read hub and page). React
+// logs the warning in development only, so a production describe pins the
+// same flows' value and the absence of a fallback instead.
 
 export interface UseLoaderSettledReadScenarioOptions {
   url: (pathname: string) => string;
@@ -17,10 +13,18 @@ export interface UseLoaderSettledReadScenarioOptions {
 }
 
 const CONDITIONAL_USE = "did not call use() when it finished";
-const VALUE = "ulr-loader-data";
+const RUN_VALUE = /^settled-read-run-\d+$/;
 
 const testId = (page: Page, id: string) =>
   page.locator(`[data-testid="${id}"]`);
+
+function readCommits(page: Page): Promise<number> {
+  return page.evaluate(
+    () =>
+      (window as unknown as { __settledReadCommits?: number })
+        .__settledReadCommits ?? 0,
+  );
+}
 
 function trackConditionalUse(page: Page): string[] {
   const seen: string[] = [];
@@ -31,63 +35,67 @@ function trackConditionalUse(page: Page): string[] {
   return seen;
 }
 
-// Enters /ulr/a by a client navigation: the reader mounts while the 400 ms
+// Enters the page by a client navigation: the reader mounts while the 400 ms
 // loader streams, behind the route's loading() fallback.
 async function enterStreaming(
   page: Page,
   options: UseLoaderSettledReadScenarioOptions,
-): Promise<void> {
-  await page.goto(options.url("/ulr"));
+): Promise<string> {
+  await page.goto(options.url("/settled-read"));
   await options.waitForHydration(page);
-  await testId(page, "ulr-hub-plain").click();
-  await expect(testId(page, "ulr-value")).toHaveText(VALUE);
+  await testId(page, "settled-read-hub-link").click();
+  const value = testId(page, "settled-read-value");
+  await expect(value).toHaveText(RUN_VALUE);
+  return (await value.textContent()) ?? "";
 }
-
-interface Flow {
-  name: string;
-  run: (
-    page: Page,
-    options: UseLoaderSettledReadScenarioOptions,
-  ) => Promise<void>;
-}
-
-const FLOWS: Flow[] = [
-  {
-    name: "a plain click to the page already shown",
-    run: async (page) => {
-      await testId(page, "ulr-self-plain").click();
-    },
-  },
-  {
-    name: "back through the history to the page",
-    run: async (page) => {
-      await testId(page, "ulr-to-hub").click();
-      await expect(testId(page, "ulr-hub")).toBeVisible();
-      await page.goBack();
-    },
-  },
-];
 
 export function runUseLoaderSettledReadTests(
   options: UseLoaderSettledReadScenarioOptions,
 ): void {
-  for (const flow of FLOWS) {
-    test(`useLoader reader mounted on a stream, then rendered settled by ${flow.name}: reads the value${options.production ? "" : " and logs no conditional use()"}`, async ({
-      page,
-    }) => {
-      const conditionalUse = trackConditionalUse(page);
-      await enterStreaming(page, options);
-      await flow.run(page, options);
+  const { production } = options;
+  const suffix = production ? "" : " and logs no conditional use()";
 
-      await expect(testId(page, "ulr-value")).toHaveText(VALUE);
-      // Past React's 300 ms minimum fallback display and any trailing render.
-      await page.waitForTimeout(800);
-      await expect(testId(page, "ulr-value")).toHaveText(VALUE);
-      await expect(testId(page, "ulr-fallback")).toHaveCount(0);
-      expect(
-        conditionalUse,
-        "React must not log a conditional use() for a useLoader read",
-      ).toEqual([]);
-    });
-  }
+  test(`useLoader reader mounted on a stream, then rendered settled by a click to the page already shown: keeps the value with no fallback${suffix}`, async ({
+    page,
+  }) => {
+    const conditionalUse = trackConditionalUse(page);
+    const first = await enterStreaming(page, options);
+    const value = testId(page, "settled-read-value");
+
+    await watchFlash(page, "settled-read-fallback", ["settled-read-value"]);
+    // The value on screen is the same before and after the click, so the
+    // reader's commit counter (held-boundary.client.tsx) marks the render.
+    const commits = await readCommits(page);
+    await testId(page, "settled-read-self-link").click();
+    await expect.poll(() => readCommits(page)).toBeGreaterThan(commits);
+    await expect(value).toHaveText(first);
+
+    const seen = await readProbe(page);
+    expect(seen.installed, "the flash probe is still installed").toBe(true);
+    expect(seen.flash, "no loading() fallback on the page already shown").toBe(
+      false,
+    );
+    expect(
+      conditionalUse,
+      "React must not log a conditional use() for a useLoader read",
+    ).toEqual([]);
+  });
+
+  test(`useLoader reader mounted on a stream, then rendered settled by back through the history to the page: reads the value${suffix}`, async ({
+    page,
+  }) => {
+    const conditionalUse = trackConditionalUse(page);
+    await enterStreaming(page, options);
+
+    await testId(page, "settled-read-to-hub").click();
+    await expect(testId(page, "settled-read-hub")).toBeVisible();
+    await page.goBack();
+    await expect(testId(page, "settled-read-hub")).toBeHidden();
+    await expect(testId(page, "settled-read-value")).toHaveText(RUN_VALUE);
+
+    expect(
+      conditionalUse,
+      "React must not log a conditional use() for a useLoader read",
+    ).toEqual([]);
+  });
 }

@@ -17,6 +17,7 @@ import { OutletContext, type OutletContextValue } from "./outlet-context.js";
 import { loaderStore, type LoaderEntry } from "./loader-store.js";
 import { decodeLoaderEntry } from "./decode-loader-results.js";
 import { warnAwaitedSsrSuspension } from "./ssr-suspension-warning.js";
+import { SETTLED_THENABLE } from "./thenable-status.js";
 import type { LoaderDefinition, LoadOptions } from "./types.js";
 
 function isShareableGet(options: LoadOptions | undefined): boolean {
@@ -37,11 +38,6 @@ function isPlainRefetch(options: LoadOptions | undefined): boolean {
 let privateGroupBucketSeq = 0;
 
 const NOT_FOUND = Symbol("not-found");
-
-/** A settled read as a thenable use() returns at once. */
-function settledRead(value: unknown): Promise<unknown> {
-  return Object.assign(Promise.resolve(value), { status: "fulfilled", value });
-}
 
 /**
  * SPIKE (streaming useLoader): lookup results distinguish a synchronously
@@ -207,18 +203,6 @@ function useLoaderInternal<T>(
     }
     return { contextData: undefined, hasContextData: false };
   }, [context, loader.$$id]);
-  // Every read calls use(), on the stream or on the settled value. React
-  // records a reader that suspended in use() while it mounted, matched by its
-  // place in the tree, and logs a later render there that finishes without
-  // use() ("This library called use() to suspend in a previous render but did
-  // not call use() when it finished"): a read that mounted on a stream, and a
-  // later tree that hands it the value settled (a lane that awaits loaders
-  // before it renders).
-  const read = useMemo(
-    () => walk.pendingStream ?? settledRead(walk.contextData),
-    [walk],
-  );
-
   // SPIKE (streaming useLoader): a pending per-loader stream suspends HERE —
   // the implicit-suspense read. On replay after resolution use() returns
   // synchronously and the decoded value takes the contextData slot. Hooks
@@ -232,9 +216,11 @@ function useLoaderInternal<T>(
       walk.awaitedLoaderIds,
       walk.pendingStream,
     );
-    contextData = decodeLoaderEntry(use(read)) as T;
-  } else {
-    use(read);
+    contextData = decodeLoaderEntry(use(walk.pendingStream)) as T;
+  } else if (hasContextData) {
+    // React logs a render that finishes without use() at a place whose reader
+    // suspended in use() on mount, so every read with route context calls it.
+    use(SETTLED_THENABLE);
   }
 
   const loaderId = loader.$$id;

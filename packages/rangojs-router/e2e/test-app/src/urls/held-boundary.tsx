@@ -1,13 +1,13 @@
 import { urls, loader, loading, type Handler } from "@rangojs/router";
 import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 import {
-  UlrLoader,
+  SettledReadLoader,
   ZlbLayoutLoader,
   ZlbRouteLoader,
   ZlbSlotLoader,
 } from "./held-boundary.loaders.js";
 import {
-  UlrValue,
+  SettledReadValue,
   ZlbLayoutValue,
   ZlbRouteValue,
   ZlbSlotValue,
@@ -114,28 +114,31 @@ const routePage =
     </div>
   );
 
-/**
- * ulr: a route whose useLoader reader mounts while its loader streams (reached
- * from the /ulr hub), then renders again with the value settled after a click
- * to the page already shown, or back in the history.
- * React logs a conditional use() in dev when the read skips use() on the
- * settled render (use-loader.tsx).
- */
-const UlrHub: Handler = () => (
-  <div data-testid="ulr-hub">
-    <Link to="/ulr/a" data-testid="ulr-hub-plain" prefetch="none">
-      ulr a
-    </Link>{" "}
+// settled-read: useLoader reader that mounts on a streaming loader, then
+// renders settled (why: use-loader.tsx).
+const SettledReadHub: Handler = () => (
+  <div data-testid="settled-read-hub">
+    <Link
+      to="/settled-read/page"
+      data-testid="settled-read-hub-link"
+      prefetch="none"
+    >
+      settled-read page
+    </Link>
   </div>
 );
 
-const UlrPage: Handler = () => (
-  <div data-testid="ulr-a">
-    <UlrValue />
-    <Link to="/ulr/a" data-testid="ulr-self-plain" prefetch="none">
+const SettledReadPage: Handler = () => (
+  <div data-testid="settled-read-page">
+    <SettledReadValue />
+    <Link
+      to="/settled-read/page"
+      data-testid="settled-read-self-link"
+      prefetch="none"
+    >
       self
     </Link>
-    <Link to="/ulr" data-testid="ulr-to-hub" prefetch="none">
+    <Link to="/settled-read" data-testid="settled-read-to-hub" prefetch="none">
       hub
     </Link>
   </div>
@@ -145,11 +148,18 @@ export const heldBoundaryPatterns = urls(
   ({ layout, path, loading, parallel }) => [
     path("/zlb", ZlbHub, { name: "zlbHub" }),
 
-    path("/ulr", UlrHub, { name: "ulrHub" }),
-    path("/ulr/a", UlrPage, { name: "ulrA" }, () => [
-      loader(UlrLoader),
-      loading(<div data-testid="ulr-fallback">ulr-loading</div>),
-    ]),
+    path("/settled-read", SettledReadHub, { name: "settledReadHub" }),
+    path(
+      "/settled-read/page",
+      SettledReadPage,
+      { name: "settledReadPage" },
+      () => [
+        loader(SettledReadLoader),
+        loading(
+          <div data-testid="settled-read-fallback">settled-read-loading</div>,
+        ),
+      ],
+    ),
 
     layout(ZlbLayout, () => [
       loading(<div data-testid="zlb-fallback">zlb-loading</div>),
