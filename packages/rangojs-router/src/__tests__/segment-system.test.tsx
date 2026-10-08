@@ -1700,8 +1700,10 @@ describe("segment-system", () => {
         ).find((b) => b.props.segment.id === "L0R0")!;
         const secondPromise = secondBoundary.props.loaderDataPromise;
 
+        // The first aggregate is a promise; once settled, later renders get
+        // its array.
         expect(firstPromise).toBeInstanceOf(Promise);
-        expect(secondPromise).toBe(firstPromise);
+        expect(secondPromise).toBe(await firstPromise);
       });
 
       it("creates a new aggregate loaderDataPromise when a loader.loaderData ref changes", async () => {
@@ -1804,7 +1806,7 @@ describe("segment-system", () => {
           toTreeNode(secondResult),
           MockLoaderBoundary,
         ).find((b) => b.props.segment.id === "L0R0")!;
-        expect(secondBoundary.props.loaderDataPromise).toBe(firstPromise);
+        expect(secondBoundary.props.loaderDataPromise).toBe(await firstPromise);
       });
 
       it("keeps the cached segment ref when reconciling cached-only entries with truthy loading", async () => {
@@ -1827,7 +1829,8 @@ describe("segment-system", () => {
           MockRouteContentWrapper,
         )[0];
         const firstContent = firstWrapper.props.content;
-        expect(firstContent).toBeInstanceOf(Promise);
+        // The browser hands the node itself, not a promise React has not read.
+        expect(firstContent).toBe(component);
 
         // Cached-only entries stay as-is: renderSegments must stay in the
         // LoaderBoundary branch across partial updates (e.g., opening an

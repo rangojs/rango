@@ -201,9 +201,9 @@ export function reconcileSegments(input: ReconcileInput): ReconcileResult {
       // inside renderSegments, causing React to unmount the entire chain
       // (LoaderBoundary > Suspense > LoaderResolver > RouteContentWrapper >
       // Suspender) every time the user opened an intercept or navigated back
-      // to a cached page. The flicker is now prevented by renderSegments'
-      // promise memoization keeping React's use() in "known fulfilled" state,
-      // so preserving `loading` keeps the element tree stable.
+      // to a cached page. The flicker is now prevented by renderSegments
+      // handing the boundary settled content and loader data, so preserving
+      // `loading` keeps the element tree stable.
       return fromCache;
     })
     .filter(Boolean) as ResolvedSegment[];

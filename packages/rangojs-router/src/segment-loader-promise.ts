@@ -2,36 +2,30 @@ import type { ResolvedSegment } from "./types.js";
 import { INTERNAL_RANGO_DEBUG } from "./internal-debug.js";
 
 /**
- * Cache of aggregate Promise.all results keyed on the first loader's
- * `loaderData` reference. Each entry holds the source refs it was built from
- * plus the resulting Promise/array; lookup scans entries for the matching
- * source array (typically a single entry, since distinct loader groups rarely
- * share a first source). Object first-refs live in a WeakMap (auto-GC);
- * primitive first-refs (strings/numbers/booleans/null) live in a Map so
- * loaders that resolve to primitive data are memoized too. The per-key array
- * is capped (MAX_ENTRIES_PER_KEY, oldest evicted) so a long session under a
- * stable first-ref does not grow it without bound.
+ * Browser: a boundary is handed the settled value. React treats a promise as
+ * fulfilled only after it has read it, and a boundary on screen handed a
+ * promise it has not read, in a render that cannot wait, shows its fallback.
+ * So a cache entry records its array once the aggregate fulfils and later
+ * calls return that same array; until then (and when it rejects) they return
+ * the promise. A boundary with no loaders gets one shared empty array.
  *
- * Keying externally means reconciliation's fresh segment objects no longer
- * drop memoization — the cache survives as long as the underlying loader
- * segments do, and GC collects entries when those loaders are released
- * (object keys only).
+ * Server: a fresh promise per call, so Suspense emits the fallback in the
+ * streamed HTML. A shared resolved promise would carry React's `.status`
+ * across requests and skip it.
  *
- * Browser-only. On the server each SSR render needs a fresh Promise so
- * Suspense can actually suspend and emit the loading fallback HTML before
- * content streams. A shared already-resolved promise has `.status` attached
- * by React on first `use()`; subsequent observations return synchronously
- * and skip the fallback. The zero-loader case is especially prone because
- * every empty-loader site would otherwise share one promise across requests.
+ * Entries are keyed on the first loader's `loaderData` reference (object refs
+ * in a WeakMap, primitives in a Map), so reconciliation's fresh segment
+ * objects keep hitting them. Each key's entry list is capped (see
+ * MAX_ENTRIES_PER_KEY).
  */
 const IS_BROWSER = typeof window !== "undefined";
 
 interface LoaderCacheEntry {
   sources: any[];
-  // buildLoaderPromise always returns a Promise, so the cached value is never a
-  // bare array. The public getMemoizedLoaderPromise return type stays broader
-  // (Promise<any[]> | any[]) to mirror its siblings.
+  // Resolves to the same array it records in `value`; a rejection passes
+  // through untouched.
   promise: Promise<any[]>;
+  value?: any[];
 }
 
 // Cap the per-key entries array. A stable first-ref (e.g. a layout loader whose
@@ -51,12 +45,8 @@ const primitiveLoaderCache = IS_BROWSER
   ? new Map<unknown, LoaderCacheEntry[]>()
   : null;
 
-// In the browser, a single shared empty aggregate is safe (and desirable) —
-// reusing the same resolved promise keeps React's `use()` in a known-fulfilled
-// state across renders. On the server it would leak `.status = "fulfilled"`
-// across requests and skip the Suspense fallback, so we rebuild on each call.
-const SHARED_EMPTY_LOADER_PROMISE: Promise<any[]> | null = IS_BROWSER
-  ? Promise.resolve([])
+const SHARED_EMPTY_LOADERS: any[] | null = IS_BROWSER
+  ? (Object.freeze([]) as unknown as any[])
   : null;
 
 function hasSameReferences(a: any[], b: any[]): boolean {
@@ -117,12 +107,8 @@ function isObjectLike(value: unknown): value is object {
 }
 
 /**
- * Memoize an aggregate Promise.all for a set of loader segments. Reusing the
- * same aggregate across renders — invalidated only when any underlying
- * loader.loaderData ref changes — keeps React's `use()` in "known fulfilled"
- * state and prevents a fresh Promise.all from suspending (and briefly
- * committing the Suspense fallback) on every partial update that doesn't
- * actually change loader data.
+ * The aggregate for a set of loader segments, memoized on their `loaderData`
+ * refs: the settled array once it has fulfilled, the promise before that.
  *
  * @internal
  */
@@ -130,7 +116,7 @@ export function getMemoizedLoaderPromise(
   loaders: ResolvedSegment[],
 ): Promise<any[]> | any[] {
   if (loaders.length === 0) {
-    return SHARED_EMPTY_LOADER_PROMISE ?? buildLoaderPromise(loaders);
+    return SHARED_EMPTY_LOADERS ?? buildLoaderPromise(loaders);
   }
   if (!objectLoaderCache || !primitiveLoaderCache) {
     return buildLoaderPromise(loaders);
@@ -145,13 +131,17 @@ export function getMemoizedLoaderPromise(
   if (entries) {
     for (const entry of entries) {
       if (hasSameReferences(entry.sources, sources)) {
-        return entry.promise;
+        return entry.value ?? entry.promise;
       }
     }
   }
 
-  const promise = buildLoaderPromise(loaders);
-  const newEntry: LoaderCacheEntry = { sources, promise };
+  const newEntry = { sources } as LoaderCacheEntry;
+  const promise = buildLoaderPromise(loaders).then((values) => {
+    newEntry.value = values;
+    return values;
+  });
+  newEntry.promise = promise;
   if (entries) {
     // Bound the array: drop the oldest entry before appending when at the cap.
     if (entries.length >= MAX_ENTRIES_PER_KEY) {

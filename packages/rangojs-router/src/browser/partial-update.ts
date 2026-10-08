@@ -772,12 +772,13 @@ export function createPartialUpdater(
       } else {
         // Cold/partially-prefetched nav that mounts NEW segments, or any
         // commit transition({ when }) gated off (navigation, action refetch,
-        // stale revalidation): normal commit so fallbacks stream
-        // like a first load and the click has visible feedback. A gated-off
-        // segment keeps its key, so its loading() fallback comes from its
-        // boundary re-suspending on this urgent commit, not from a remount
-        // (#995). Explicit transition() routes keep the content-hold via the
-        // hasTransition branch above (the opt-in).
+        // stale revalidation): normal, unanimated commit. A segment with work
+        // still pending shows its loading() fallback like a first load; one
+        // whose data is already in hand shows none. A gated-off segment keeps
+        // its key, so a fallback comes from its boundary suspending on pending
+        // work in this urgent commit, not from a remount (#995). Explicit
+        // transition() routes keep the content-hold via the hasTransition
+        // branch above (the opt-in).
         onUpdate(update);
       }
 

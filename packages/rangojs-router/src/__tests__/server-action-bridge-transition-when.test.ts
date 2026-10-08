@@ -156,7 +156,7 @@ describe("server-action-bridge transition({ when })", () => {
       transitionGatedOff: true,
       isAction: true,
     });
-    // Gated off: urgent, so a re-suspending segment streams its loading().
+    // Gated off: urgent.
     expect(commitLanes).toEqual([false]);
   });
 

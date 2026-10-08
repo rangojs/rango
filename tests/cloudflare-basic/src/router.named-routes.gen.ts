@@ -254,6 +254,15 @@ export const NamedRoutes = {
   warmCached: "/warm/cached",
   warmPersonal: "/warm/personal",
   warmShell: "/warm/shell",
+  zlbA: "/zlb/a",
+  zlbB: "/zlb/b",
+  zlbHub: "/zlb",
+  zlblA: "/zlbl/a",
+  zlblB: "/zlbl/b",
+  zlbrA: "/zlbr/a",
+  zlbrB: "/zlbr/b",
+  zlbsA: "/zlbs/a",
+  zlbsB: "/zlbs/b",
 } as const;
 
 // Aliased so the augmentation below does not pay a homomorphic mapped-type

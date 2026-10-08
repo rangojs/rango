@@ -50,56 +50,8 @@ export async function bump(page: Page, n: number): Promise<void> {
   for (let i = 0; i < n; i++) await testId(page, "tx-probe").last().click();
 }
 
-/**
- * Record whether a loading fallback appears (added, or revealed from a hidden
- * Suspense boundary) until readFlash(). A MutationObserver catches even a
- * single-frame skeleton that a plain toBeHidden() would miss.
- */
-export async function watchFlash(
-  page: Page,
-  fallbackTestId: string,
-): Promise<void> {
-  await page.evaluate((id) => {
-    const w = window as unknown as {
-      __flash?: boolean;
-      __obs?: MutationObserver;
-    };
-    w.__flash = false;
-    const hit = (n: Node) =>
-      n.nodeType === 1 &&
-      ((n as Element).matches?.(`[data-testid="${id}"]`) ||
-        (n as Element).querySelector?.(`[data-testid="${id}"]`) != null);
-    w.__obs = new MutationObserver((records) => {
-      for (const r of records) {
-        for (const n of Array.from(r.addedNodes)) if (hit(n)) w.__flash = true;
-        if (
-          r.type === "attributes" &&
-          hit(r.target) &&
-          getComputedStyle(r.target as Element).display !== "none"
-        ) {
-          w.__flash = true;
-        }
-      }
-    });
-    w.__obs.observe(document.documentElement, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ["style"],
-    });
-  }, fallbackTestId);
-}
-
-export async function readFlash(page: Page): Promise<boolean> {
-  return page.evaluate(() => {
-    const w = window as unknown as {
-      __flash?: boolean;
-      __obs?: MutationObserver;
-    };
-    w.__obs?.disconnect();
-    return w.__flash === true;
-  });
-}
+// The flash probe lives in @shared/e2e so the held-boundary scenario shares it.
+export { readFlash, watchFlash } from "@shared/e2e";
 
 /** Click a /tx-src link and wait for the destination's :n to render. */
 export async function goTxSrc(

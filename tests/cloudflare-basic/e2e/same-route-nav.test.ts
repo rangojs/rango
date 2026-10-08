@@ -25,7 +25,12 @@ import {
  * Covered in BOTH dev and production (build) modes.
  */
 
+// The document's own skeleton must be gone before the sentinel is installed:
+// a streamed fallback stays attached until React reveals the content, while
+// the hidden content already satisfies a text assertion (see the helper in
+// packages/rangojs-router/e2e/same-route-nav.test.ts).
 async function installSkeletonSentinel(page: Page, skeletonTestId: string) {
+  await expect(testId(page, skeletonTestId)).toHaveCount(0);
   await page.evaluate((id) => {
     const w = window as unknown as { __swrSkeletonSeen?: boolean };
     w.__swrSkeletonSeen = false;
