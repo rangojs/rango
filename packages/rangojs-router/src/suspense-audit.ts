@@ -18,8 +18,14 @@
  *
  * No React import: segment-system.tsx is evaluated outside the browser too.
  * The hooks are in suspense-audit-react.tsx.
+ *
+ * Imports nothing a product module does not already import first: a new
+ * static import here, or in suspense-audit-react.tsx, moves that module
+ * earlier in the client router chunk (route-content-wrapper.tsx imports both)
+ * and a build stops matching main byte for byte, although every audit call
+ * is folded away. Measured in cloudflare-basic for handles/is-thenable.ts and
+ * browser/react/context.ts.
  */
-import { isThenable } from "./handles/is-thenable.js";
 import { INTERNAL_RANGO_DEBUG } from "./internal-debug.js";
 import { INTERNAL_RANGO_SUSPENSE_AUDIT } from "./internal-suspense-audit.js";
 
@@ -121,6 +127,15 @@ const MAX_BOUNDARIES = 500;
 const MAX_SCAN = 400;
 
 type Tracked = PromiseLike<unknown> & { status?: string; value?: unknown };
+
+// handles/is-thenable.ts, inlined (see the header).
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    typeof (value as { then?: unknown }).then === "function"
+  );
+}
 
 // A Flight chunk extends Promise.prototype with its own `then` and always
 // carries a status.
@@ -445,11 +460,22 @@ export function auditRead(rec: BoundaryAudit, stream: unknown): void {
   auditReveal(rec);
 }
 
-function streamOpen(isStreaming: () => boolean): boolean {
+let streamProbe: (() => boolean) | undefined;
+
+/**
+ * How the audit learns that a payload is still streaming: the event
+ * controller, set at boot (browser/rsc-router.tsx). Not read from
+ * NavigationStoreContext in AuditedFallback: see the header.
+ */
+export function setSuspenseAuditStreamProbe(probe: () => boolean): void {
+  streamProbe = probe;
+}
+
+function streamOpen(): boolean {
   if (typeof document !== "undefined" && document.readyState === "loading") {
     return true;
   }
-  return isStreaming();
+  return streamProbe?.() === true;
 }
 
 /**
@@ -468,10 +494,7 @@ function streamOpen(isStreaming: () => boolean): boolean {
  * design (transition({ when }) gated off, #995), and so does dev while a
  * client reference loads.
  */
-export function auditFallback(
-  rec: BoundaryAudit,
-  isStreaming: () => boolean,
-): () => void {
+export function auditFallback(rec: BoundaryAudit): () => void {
   const shownAt = performance.now();
   const revealed = rec.revealed;
   // StrictMode runs this effect, its cleanup and the effect again in one
@@ -484,7 +507,7 @@ export function auditFallback(
         ? [handed, ...Object.values(rec.streams)]
         : [handed];
       const waiting = values.some(isPending);
-      const streaming = !waiting && streamOpen(isStreaming);
+      const streaming = !waiting && streamOpen();
       const owned = values.some(
         (value) =>
           isThenable(value) && isNative(value) && statusOf(value) !== undefined,

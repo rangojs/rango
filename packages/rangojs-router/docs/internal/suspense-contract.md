@@ -225,7 +225,8 @@ for, and when a file outside a third references an `Audited*` variant. It also f
 when an emit call is not preceded by its cause. It reads the TypeScript AST, so an
 import alias, a destructured binding (`const { emitUpdate: send } = store`), a function
 that forwards its argument to the emitter, and a shorthand write
-(`Object.assign(segment, { loaderDataPromise })`) all count. It pins the place, not the
+(`Object.assign(segment, { loaderDataPromise })`) all count. It also fails when an audit
+module gains an import (see "a build does not change" below). It pins the place, not the
 behaviour: a new entry means "read this document and add a case first".
 
 **The dev audit.** `src/suspense-audit.ts` (hooks in `src/suspense-audit-react.tsx`) watches
@@ -292,6 +293,16 @@ comments. With the current layout, cloudflare-basic, cloudflare-stress-demo and 
 test-app build byte for byte as on main, server bundles included, apart from the cache
 version table, which hashes the sources. `check:bundle-guards` fails if an audit module
 reaches a client build.
+
+One more way to lose that, and it is the quiet one: an import. The audit modules are
+tree-shaken from a build, but their static imports still decide where the imported
+module lands in the client router chunk, because `route-content-wrapper.tsx` imports
+them early. Importing `handles/is-thenable.ts` into `suspense-audit.ts`, or
+`NavigationStoreContext` into `suspense-audit-react.tsx`, moved existing code in
+cloudflare-basic's router chunk and renamed its minified identifiers (+3 B raw, no new
+code). So the audit inlines its thenable check, learns that a payload is streaming
+from a probe `rsc-router.tsx` sets at boot (`setSuspenseAuditStreamProbe`), and the
+static check allows the two modules only the imports they have today.
 
 **The console guard.** `tests/shared-e2e/src/console-guard.ts` is installed by
 `useFixture` in both apps, so every dev e2e test runs under it with no opt-in. A deny

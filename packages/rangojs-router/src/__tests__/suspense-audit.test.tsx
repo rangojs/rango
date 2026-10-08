@@ -13,13 +13,11 @@ import {
   use,
   useLayoutEffect,
   useState,
-  type ContextType,
   type ReactNode,
 } from "react";
 import { Outlet } from "../client.js";
 import { AuditedRouteContent } from "../route-content-wrapper.js";
 import { renderSegments } from "../segment-system.js";
-import { NavigationStoreContext } from "../browser/react/context.js";
 import type { SuspenseAuditReport } from "../suspense-audit.js";
 import {
   auditHandover,
@@ -29,6 +27,7 @@ import {
   createBoundaryAudit,
   finishTreeAudit,
   forgetSuspenseAudit,
+  setSuspenseAuditStreamProbe,
   startTreeAudit,
   type TreeUpdateCause,
 } from "../suspense-audit.js";
@@ -95,17 +94,11 @@ function setTree(tree: ReactNode): void {
   setState(tree);
 }
 let streaming = false;
-const storeContext = {
-  eventController: { getState: () => ({ isStreaming: streaming }) },
-} as unknown as NonNullable<ContextType<typeof NavigationStoreContext>>;
+setSuspenseAuditStreamProbe(() => streaming);
 function Harness({ initial }: { initial: ReactNode }) {
   const [tree, set] = useState(initial);
   setState = set;
-  return (
-    <NavigationStoreContext.Provider value={storeContext}>
-      {tree}
-    </NavigationStoreContext.Provider>
-  );
+  return tree;
 }
 
 // The route boundary as segment-system creates it outside a build.

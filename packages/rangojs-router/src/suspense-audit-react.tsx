@@ -1,11 +1,4 @@
-import {
-  useContext,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  type ReactNode,
-} from "react";
-import { NavigationStoreContext } from "./browser/react/context.js";
+import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import {
   auditCommit,
   auditFallback,
@@ -88,15 +81,7 @@ export function AuditedFallback({
   audit: BoundaryAudit;
   children: ReactNode;
 }): ReactNode {
-  const store = useContext(NavigationStoreContext);
-  useLayoutEffect(
-    () =>
-      auditFallback(
-        audit,
-        () => store?.eventController.getState().isStreaming === true,
-      ),
-    [audit, store],
-  );
+  useLayoutEffect(() => auditFallback(audit), [audit]);
   return children;
 }
 

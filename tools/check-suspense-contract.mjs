@@ -20,6 +20,13 @@
 //     new producer. The dev-only Audited* boundary variants are referenced
 //     only from AUDITED.
 //
+//  3. A build does not change. The audit modules import only what
+//     DEV_ONLY_IMPORTS lists: a new static import there moves the imported
+//     module earlier in the client router chunk (route-content-wrapper.tsx
+//     imports both), and a build stops matching main byte for byte although
+//     every audit call is folded away (measured in cloudflare-basic for
+//     handles/is-thenable.ts and browser/react/context.ts).
+//
 // Read from the TypeScript AST, so comments never count, and a call through
 // an import alias, a destructured or renamed binding, or a function that
 // forwards its argument to the emitter is still a call of the emitter.
@@ -106,6 +113,12 @@ const PRODUCER_CALLS = new Set([
 const BOUNDARY_COMPONENTS = new Set(["RouteContentWrapper", "LoaderBoundary"]);
 const BOUNDARY_FIELDS = new Set(["loaderDataPromise", "loaderStreams"]);
 const AUDITED_NAME = /^Audited[A-Z]/;
+
+/** The only imports of the dev-only audit modules (rule 3). */
+const DEV_ONLY_IMPORTS = {
+  "suspense-audit.ts": ["./internal-debug.js", "./internal-suspense-audit.js"],
+  "suspense-audit-react.tsx": ["react", "./suspense-audit.js"],
+};
 
 const root = path.join(REPO_ROOT, SRC);
 const files = walk(
@@ -464,6 +477,22 @@ const seenProducers = new Set();
 const seenAudited = new Set();
 
 for (const { rel, sf } of files) {
+  const allowedImports = DEV_ONLY_IMPORTS[rel];
+  if (allowedImports) {
+    for (const statement of sf.statements) {
+      if (
+        (ts.isImportDeclaration(statement) ||
+          ts.isExportDeclaration(statement)) &&
+        statement.moduleSpecifier &&
+        ts.isStringLiteral(statement.moduleSpecifier) &&
+        !allowedImports.includes(statement.moduleSpecifier.text)
+      ) {
+        problems.push(
+          `${SRC}/${rel}:${lineOf(sf, statement)} imports ${statement.moduleSpecifier.text}. The audit modules import only ${allowedImports.join(", ")}: a new import reorders the client router chunk and a build stops matching main. Inline what you need.`,
+        );
+      }
+    }
+  }
   const { calls, references } = emitCalls(sf, emitters, localEmitters.get(rel));
   const definesEmitter = (() => {
     let found = false;
