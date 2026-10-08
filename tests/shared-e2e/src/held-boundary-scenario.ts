@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { readSuspenseAudit, resetSuspenseAudit } from "./console-guard.js";
 import { readProbe, watchFlash } from "./flash-probe.js";
 
 /**
@@ -12,6 +13,11 @@ export interface HeldBoundaryScenarioOptions {
   url: (pathname: string) => string;
   waitForHydration: (page: Page) => Promise<void>;
   production: boolean;
+  /**
+   * Tests that are red today, by title, with the reason. An open test is an
+   * expected failure: it fails the run the day it passes.
+   */
+  open?: Record<string, string>;
 }
 
 interface Scenario {
@@ -140,24 +146,60 @@ async function expectHeldVisible(page: Page, held: string[]): Promise<void> {
   }
 }
 
+/** The title of one scenario test, for a caller's `open` table. */
+export function heldBoundaryTitle(scenario: string, entry: string): string {
+  return `${scenario}: after ${entry}, a plain click to an un-prefetched sibling keeps what is on screen`;
+}
+
+/** The title of the test for a boundary new to the page. */
+export const HELD_BOUNDARY_NEW_TITLE: string =
+  "a loading() boundary new to the page with nothing pending renders, with no fallback in a build";
+
 export function runHeldBoundaryTests(
   options: HeldBoundaryScenarioOptions,
 ): void {
-  const { url, waitForHydration, production } = options;
+  const { url, waitForHydration, production, open = {} } = options;
   const ctx: Ctx = { url, waitForHydration };
+
+  // Dev only: a build carries no suspense audit (src/suspense-audit.ts).
+  async function expectAuditSilent(page: Page): Promise<void> {
+    if (production) return;
+    await page.evaluate(() => new Promise((r) => setTimeout(r, 0)));
+    const audit = await readSuspenseAudit(page);
+    expect(audit, "a dev build exposes the suspense audit").not.toBeNull();
+    const {
+      events,
+      shownWhilePending: _byDesign,
+      treeUpdates: _updates,
+      handed: _handed,
+      ...counters
+    } = audit!;
+    expect(counters, JSON.stringify(events)).toEqual({
+      uncaused: 0,
+      swaps: 0,
+      untracked: 0,
+      idleFallbacks: 0,
+      resuspended: 0,
+      remounts: 0,
+      drifts: 0,
+    });
+  }
 
   for (const sc of SCENARIOS) {
     for (const entry of ENTRIES) {
-      test(`${sc.name}: after ${entry.name}, a plain click to an un-prefetched sibling keeps what is on screen`, async ({
-        page,
-      }) => {
+      const title = heldBoundaryTitle(sc.name, entry.name);
+      test(title, async ({ page }) => {
+        test.fail(title in open, open[title]);
         const bRequests = trackRequestsFor(page, `/${sc.s}/b`);
         await entry.enter(page, sc.s, ctx);
         await expectHeldVisible(page, sc.held);
         expect(bRequests, `/${sc.s}/b must not have been requested`).toEqual(
           [],
         );
+        // The entry is held to the contract too.
+        await expectAuditSilent(page);
 
+        await resetSuspenseAudit(page);
         await watchFlash(page, `${sc.s}-fallback`, sc.held);
         await testId(page, `${sc.s}-to-b`).click();
         await expect(testId(page, `${sc.s}-b`)).toBeVisible();
@@ -177,13 +219,13 @@ export function runHeldBoundaryTests(
         expect(seen.detached, "a boundary on screen must not be detached").toBe(
           false,
         );
+        await expectAuditSilent(page);
       });
     }
   }
 
-  test("a loading() boundary new to the page with nothing pending renders, with no fallback in a build", async ({
-    page,
-  }) => {
+  test(HELD_BOUNDARY_NEW_TITLE, async ({ page }) => {
+    test.fail(HELD_BOUNDARY_NEW_TITLE in open, open[HELD_BOUNDARY_NEW_TITLE]);
     await fromHub(page, ctx);
     await watchFlash(page, "zlb-fallback");
     await testId(page, "zlb-hub-plain").click();

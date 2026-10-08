@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect } from "react";
+import { Suspense, useEffect, useRef } from "react";
 import {
   clientUrls,
   Link,
@@ -33,6 +33,27 @@ function SlowState({ where, identity }: { where: string; identity: string }) {
       []).push(commit);
   }, [commit]);
   return <p data-testid={`cus-${where}-note`}>{note}</p>;
+}
+
+/**
+ * Counts, on `window.__cusCommits[where]`, the commits that rendered the
+ * component calling it: how many times React committed that part of the tree
+ * for one click (suspense-cases.ts). StrictMode runs a mount's effects twice
+ * in a row; runs with no microtask between them are one commit.
+ */
+function useSlowCommits(where: string): void {
+  const counted = useRef(false);
+  useEffect(() => {
+    if (counted.current) return;
+    counted.current = true;
+    queueMicrotask(() => {
+      counted.current = false;
+    });
+    const commits = ((
+      window as { __cusCommits?: Record<string, number> }
+    ).__cusCommits ??= {});
+    commits[where] = (commits[where] ?? 0) + 1;
+  });
 }
 
 /** Chrome OUTSIDE the group (rendered by the server parent layout): its route
@@ -76,11 +97,15 @@ function SlowA() {
       >
         To B with a note
       </Link>
+      <Link to="/client-urls-slow/f" prefetch="none" data-testid="cus-a-to-f">
+        To F
+      </Link>
     </div>
   );
 }
 
 function SlowData({ testId }: { testId: string }) {
+  useSlowCommits(testId);
   const { data } = useLoader(ClientUrlsSlowLoader);
   return <p data-testid={testId}>{data}</p>;
 }
@@ -95,6 +120,7 @@ function SlowRedirectData() {
 // B renders its own chrome immediately; only the loader read waits, behind an
 // inline boundary. Route hooks inside describe B (the optimistic branch).
 function SlowB() {
+  useSlowCommits("cus-b");
   const { tag } = useParams<{ tag: string }>();
   return (
     <div data-testid="cus-b">
@@ -172,7 +198,19 @@ function SlowE() {
   );
 }
 
-export default clientUrls(({ layout, path, loader }) => [
+// F reads its loader under the route's own loading(): the destination and
+// its reader are one component, behind the router's boundary.
+function SlowF() {
+  useSlowCommits("cus-f");
+  const { data } = useLoader(ClientUrlsSlowLoader);
+  return (
+    <div data-testid="cus-f">
+      <p data-testid="cus-f-loader">{data}</p>
+    </div>
+  );
+}
+
+export default clientUrls(({ layout, path, loader, loading }) => [
   layout(SlowLayout, () => [
     path("/", SlowA, { name: "a" }),
     path("/b/:tag", SlowB, { name: "b" }, () => [loader(ClientUrlsSlowLoader)]),
@@ -181,5 +219,9 @@ export default clientUrls(({ layout, path, loader }) => [
       loader(ClientUrlsSlowRedirectLoader),
     ]),
     path("/e", SlowE, { name: "e" }, () => [loader(ClientUrlsSlowLoader)]),
+    path("/f", SlowF, { name: "f" }, () => [
+      loader(ClientUrlsSlowLoader),
+      loading(<p data-testid="cus-f-loading">loading F</p>),
+    ]),
   ]),
 ]);

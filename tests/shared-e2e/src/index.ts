@@ -21,12 +21,18 @@ export type {
 export { createDeployFixture, readBuiltVersions } from "./deploy-fixture.js";
 export type { DeployFixture, DeployFixtureOptions } from "./deploy-fixture.js";
 export { runCacheVersionScenario } from "./cache-version-scenario.js";
-export { runHeldBoundaryTests } from "./held-boundary-scenario.js";
+export {
+  HELD_BOUNDARY_NEW_TITLE,
+  heldBoundaryTitle,
+  runHeldBoundaryTests,
+} from "./held-boundary-scenario.js";
 export type { HeldBoundaryScenarioOptions } from "./held-boundary-scenario.js";
 export { runUseLoaderSettledReadTests } from "./use-loader-settled-read-scenario.js";
 export type { UseLoaderSettledReadScenarioOptions } from "./use-loader-settled-read-scenario.js";
 export { readFlash, readProbe, watchFlash } from "./flash-probe.js";
 export type { CacheVersionScenarioOptions } from "./cache-version-scenario.js";
+export { runSuspenseCases } from "./suspense-cases.js";
+export type { SuspenseCasesOptions } from "./suspense-cases.js";
 export {
   CONSOLE_BASELINE_PATH,
   CONSOLE_DENY_RULES,
