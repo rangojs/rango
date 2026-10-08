@@ -112,19 +112,19 @@ export const SUSPENSE_CASES_OPEN_PRODUCTION: Record<string, string> = {
 };
 
 /**
- * One app's `suspense cases (dev)` or `suspense cases (production)` describe:
- * `mode: "build"` and the `(production)` title come from here together.
- * `fixture` is the app's useFixture() for that mode, called inside the
- * describe.
+ * One app's `suspense cases (dev)` or `suspense cases (production)` describe.
+ * `mode` drives both the title and the fixture: `fixture` is the app's
+ * useFixture(), called inside the describe with this mode, so a `(production)`
+ * title cannot sit on a dev server or the other way round.
  */
 export function describeSuspenseCases(
   mode: "dev" | "build",
   waitForHydration: (page: Page) => Promise<void>,
-  fixture: () => { url: (pathname: string) => string },
+  fixture: (mode: "dev" | "build") => { url: (pathname: string) => string },
 ): void {
   const production = mode === "build";
   test.describe(`suspense cases (${production ? "production" : "dev"})`, () => {
-    const f = fixture();
+    const f = fixture(mode);
     test.setTimeout(60000);
     runSuspenseCases({
       url: (pathname) => f.url(pathname),

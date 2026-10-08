@@ -3,9 +3,6 @@ import { useFixture } from "./fixture";
 import { waitForHydration } from "./helper";
 
 // Body and open cases: tests/shared-e2e/src/suspense-cases.ts.
-describeSuspenseCases("dev", waitForHydration, () =>
-  useFixture({ root: ".", mode: "dev" }),
-);
-describeSuspenseCases("build", waitForHydration, () =>
-  useFixture({ root: ".", mode: "build" }),
-);
+const fixture = (mode: "dev" | "build") => useFixture({ root: ".", mode });
+describeSuspenseCases("dev", waitForHydration, fixture);
+describeSuspenseCases("build", waitForHydration, fixture);
