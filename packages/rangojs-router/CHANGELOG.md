@@ -2,6 +2,51 @@
 
 ## Unreleased
 
+### Fixed: a component that hydrates late renders what the server rendered
+
+On a document load, a component in a `<Suspense>` or `loading()` boundary that
+streams in after the rest of the page hydrates with the document's state from
+every router hook: pathname, params, search params and segments, an idle
+`useNavigation()` and `useAction()`, a `useLinkStatus()` that is not pending, the
+handle data the HTML was rendered from, and `undefined` location state. Before,
+`usePathname`, `useParams`, `useSearchParams`, `useSegments`, `useNavigation`,
+`useLinkStatus` and `useAction` read the live state in that render, so a
+navigation or an action started while the page was still streaming made React
+report a hydration mismatch and render the boundary on the client.
+
+- Navigation state, params and action state show their live value right after
+  the component hydrates.
+- Late loader pushes and the entry's location state now reach readers once the
+  whole document has streamed and every boundary has hydrated, in one transition;
+  a reader re-renders only when its selection changes. Before, each reader took
+  them right after its own hydration.
+- A navigation that commits while the page is still streaming mounts its page
+  with the destination's values from its first render.
+- `useHandle` and `useLocationState` no longer use `useSyncExternalStore`.
+
+### Changed: router hooks read only the router store
+
+The router store (the per-router `NavigationStore` and `EventController`, reached
+through `NavigationStoreContext`) is now the only source these hooks read, and none
+of them reads it during render. What you can notice:
+
+- `useSegments(selector)` applies the selector when the router store changes (a
+  navigation or new handle data), as `useNavigation` and `useAction` already do. A
+  new selector function on a re-render takes effect at the next change. Before, the
+  hook re-read the store during render whenever the selector function changed, and
+  an inline selector changes on every render: a component inside a page React was
+  still holding could show the next page's path. To derive from a prop, call
+  `useSegments()` and derive in render.
+- `useLoader`, `useFetchLoader` and `useRefreshLoaders` keep client loader data in
+  each router's store instead of one module-level store per browser tab. A reader
+  whose `key` changes renders without the new key's shared data until its effect
+  delivers it, on the next render. Outside a router, `load()` keeps its result in
+  the calling hook and `useRefreshLoaders()` does nothing.
+- `<Link>` resolves `prefetch="adaptive"` when it arms or is hovered, and still
+  re-arms when the input capability changes. It reads the document origin from the
+  router store. A `<Link>` rendered outside a router no longer sets `data-external`
+  on an absolute URL to another origin; its click still navigates natively.
+
 ### Fixed: `useLoader` no longer makes React log a conditional `use()` in development
 
 A `useLoader` read that mounted while its loader was still streaming, and that a

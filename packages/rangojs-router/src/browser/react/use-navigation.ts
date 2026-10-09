@@ -47,7 +47,10 @@ export function useNavigation<T>(
   }
 
   const [baseValue, setBaseValue] = useState<T | PublicNavigationState>(() => {
-    const publicState = toPublicState(ctx.eventController.getState());
+    const publicState = toPublicState(
+      ctx.eventController.getHydrationSnapshot()?.state ??
+        ctx.eventController.getState(),
+    );
     return selector ? selector(publicState) : publicState;
   });
   const prevState = useRef(baseValue);

@@ -35,7 +35,6 @@ import {
   setPrefetchConcurrency,
   setPrefetchDecoder,
 } from "./prefetch/loader.js";
-import { setDefaultPrefetchStrategy } from "./prefetch/default-strategy.js";
 import { setAppVersion } from "./app-version.js";
 import {
   isInterceptSegment,
@@ -151,6 +150,12 @@ export interface BrowserAppContext {
    * prefetch TTL are document-lifetime too (see AppShell).
    */
   appShellRef?: import("./app-shell.js").AppShellRef;
+  /**
+   * Resolves when the document's stream has ended and every Suspense boundary
+   * in it has been revealed. NavigationProvider closes the hydration window
+   * then (NavigationProviderProps.hydration).
+   */
+  documentRevealed: Promise<void>;
 }
 
 // Module-level state for the initialized app
@@ -314,11 +319,9 @@ export async function initBrowserApp(
     if (lateGenerator) {
       void (async () => {
         try {
-          // Applied once the root has hydrated (see hydrationCommitted): the
-          // readers that hydrated with it are subscribed by then and take
-          // the update as an ordinary one. Yields buffer in the generator
-          // meanwhile; nothing is lost.
-          await hydrationCommitted;
+          // Applied as they arrive: during the hydration window (lockHydration
+          // below) the store keeps them in order, and readers see them after
+          // the commit that hydrates every boundary (NavigationProvider).
           for await (const rawLateData of lateGenerator) {
             // Handles are async by design: a push(promise) value resolves
             // whenever it resolves — only SSR'd handles are awaited server-
@@ -344,10 +347,11 @@ export async function initBrowserApp(
   } else {
     bootLog("handles: none in payload");
   }
-  // What every reader hydrates with, whenever its boundary hydrates
-  // (useHandle): the late channel above changes the live state once the root
-  // has hydrated, and a navigation can before a streamed boundary has.
-  eventController.freezeHydrationHandleState();
+  // The hydration window: until NavigationProvider's barrier commit has
+  // hydrated every boundary, reads return the handle state the document's HTML
+  // was rendered with, and the late channel's and any navigation's handle
+  // writes wait in order (EventController.lockHydration).
+  eventController.lockHydration();
 
   // Create composable utilities
   const client = createNavigationClient(deps);
@@ -378,13 +382,10 @@ export async function initBrowserApp(
   if (prefetchConcurrency !== undefined) {
     setPrefetchConcurrency(prefetchConcurrency);
   }
-  // Apply the router-wide default Link prefetch strategy. Undefined (older
-  // server payload) keeps the module's environment-aware default, which equals
-  // the server resolver's default by contract — see default-strategy.ts.
+  // The router-wide default Link prefetch strategy, for delegated plain
+  // anchors (navigation bridge). Undefined falls back to the environment
+  // default (default-strategy.ts).
   const defaultPrefetch = initialPayload.metadata?.defaultPrefetch;
-  if (defaultPrefetch !== undefined) {
-    setDefaultPrefetchStrategy(defaultPrefetch);
-  }
 
   // Wire the RSC decoder so prefetches decode eagerly and warm the route's
   // client chunks (same createFromFetch the navigation client uses). Fragment
@@ -635,6 +636,28 @@ export async function initBrowserApp(
     linkInterceptionEnabled: linkInterception,
     version,
     appShellRef,
+    documentRevealed: new Promise<void>((resolve) => {
+      // Parsing ends with the stream, but React reveals a streamed boundary
+      // in batches up to 300 ms later (Fizz's $RC marks it `$~` and reveals
+      // it from a timer), so the boundary is still pending at
+      // DOMContentLoaded. A transition then would make React client-render
+      // it over its server HTML.
+      const start = (): void => {
+        // A reveal rewrites the same comment's data, or React removes the
+        // node; a boundary nested in revealed content joins the document
+        // only then, so resolve only once a full walk finds none.
+        let pending = unrevealedBoundaries();
+        const check = (): void => {
+          pending = pending.filter(isUnrevealed);
+          if (pending.length === 0) pending = unrevealedBoundaries();
+          if (pending.length > 0) requestAnimationFrame(check);
+          else resolve();
+        };
+        check();
+      };
+      if (document.readyState !== "loading") start();
+      else document.addEventListener("DOMContentLoaded", start, { once: true });
+    }),
   };
   browserAppContext = context;
 
@@ -642,26 +665,26 @@ export async function initBrowserApp(
   return context;
 }
 
+/**
+ * A Suspense boundary of the document React has not revealed yet: Fizz marks
+ * one `$?` while its content streams and `$~` once its reveal is queued.
+ */
+function isUnrevealed(node: Comment): boolean {
+  return node.isConnected && (node.data === "$?" || node.data === "$~");
+}
+
+function unrevealedBoundaries(): Comment[] {
+  const found: Comment[] = [];
+  const walker = document.createTreeWalker(document, NodeFilter.SHOW_COMMENT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (isUnrevealed(node as Comment)) found.push(node as Comment);
+  }
+  return found;
+}
+
 // Once-flag so the hydration-commit boot log fires a single time (StrictMode
 // re-runs the root effect; the second flush is not a second hydration).
 let hydrationCommitLogged = false;
-
-// Hydration-commit barrier for the late handle channel: the late consumer
-// applies nothing before the root's effects have run. A hydrating render
-// reads the handle state frozen before hydrateRoot (useHandle,
-// EventController.getHydrationHandleState), so an earlier application would
-// no longer mismatch (it did while the initializer read the LIVE state: seen
-// when a loader's push lost the handler-barrier race by milliseconds and its
-// late yield landed mid-hydration). What the barrier still buys: a reader
-// that hydrates after the live state moved on is rendered a second time
-// right after, since React re-renders a reader whose hydration state is not
-// the client one. Readers that hydrate with the root would all pay that;
-// after the commit they are subscribed and take the update as an ordinary
-// one. The root effect below resolves this.
-let resolveHydrationCommitted!: () => void;
-const hydrationCommitted: Promise<void> = new Promise((resolve) => {
-  resolveHydrationCommitted = resolve;
-});
 
 /**
  * Get the browser app context. Throws if initBrowserApp hasn't been called.
@@ -724,6 +747,7 @@ export function Rango(_props: RangoProps): React.ReactElement {
     version,
     appShellRef,
     linkInterceptionEnabled,
+    documentRevealed,
   } = getBrowserAppContext();
 
   // Signal that the React tree has hydrated. useEffect only fires after
@@ -738,9 +762,6 @@ export function Rango(_props: RangoProps): React.ReactElement {
       hydrationCommitLogged = true;
       bootLog("hydration commit (root effect flushed)");
     }
-    // Release the late handle channel (see hydrationCommitted above).
-    // StrictMode double-invoke: resolving twice is a no-op.
-    resolveHydrationCommitted();
     return cleanupPrefetch;
   }, [bridge, linkInterceptionEnabled]);
 
@@ -756,6 +777,7 @@ export function Rango(_props: RangoProps): React.ReactElement {
       version={version}
       basename={initialPayload.metadata?.basename}
       appShellRef={appShellRef}
+      hydration={{ settled: documentRevealed }}
     />
   );
 }

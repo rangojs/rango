@@ -9,6 +9,7 @@ import type {
   HandleData,
 } from "./types.js";
 import { clearPrefetchCache } from "./prefetch/cache.js";
+import { LoaderStore } from "../loader-store.js";
 import {
   adoptRangoState,
   getRangoState,
@@ -390,6 +391,8 @@ export function createNavigationStore(
   }
 
   const store: NavigationStore = {
+    loaders: new LoaderStore(),
+
     // ========================================================================
     // Internal Segment State (for bridges)
     // ========================================================================

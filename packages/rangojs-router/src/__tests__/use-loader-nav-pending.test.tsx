@@ -4,7 +4,11 @@ import { act, cleanup, render } from "@testing-library/react";
 import { startTransition, Suspense, useState, type ReactNode } from "react";
 import { OutletProvider } from "../outlet-provider.js";
 import { useFetchLoader, useLoader } from "../use-loader.js";
-import { loaderStore } from "../loader-store.js";
+import { LoaderStore } from "../loader-store.js";
+import {
+  NavigationStoreContext,
+  type NavigationStoreContextValue,
+} from "../browser/react/context.js";
 import type { LoaderDefinition } from "../types.js";
 
 /**
@@ -76,26 +80,38 @@ function dedupe(list: string[]): string[] {
   return list.filter((v, i) => i === 0 || list[i - 1] !== v);
 }
 
+// The router store the hooks read loader data from (NavigationProvider's).
+let loaders: LoaderStore;
+function RouterStore({ children }: { children: ReactNode }) {
+  return (
+    <NavigationStoreContext.Provider
+      value={{ store: { loaders } } as unknown as NavigationStoreContextValue}
+    >
+      {children}
+    </NavigationStoreContext.Provider>
+  );
+}
+
 beforeEach(() => {
   renders = [];
+  loaders = new LoaderStore();
 });
 afterEach(() => {
   cleanup();
-  loaderStore.reset();
 });
 
 describe("useLoader isLoading on a held navigation", () => {
   it("pins isLoading:true on the held data until the transition commits the new data", async () => {
-    const result = render(<Harness initial={seeded("P1")} />);
+    const result = render(<Harness initial={seeded("P1")} />, {
+      wrapper: RouterStore,
+    });
     expect(result.getByTestId("status").textContent).toBe("fresh:P1");
 
     const next = deferred<{ name: string }>();
 
     await act(async () => {
       startTransition(() => {
-        loaderStore.announcePendingStreams([
-          loaderSeg("product", next.promise),
-        ]);
+        loaders.announcePendingStreams([loaderSeg("product", next.promise)]);
         setTree(streaming(next.promise));
       });
     });
@@ -113,7 +129,9 @@ describe("useLoader isLoading on a held navigation", () => {
   });
 
   it("does not pin for a stream that settled before the commit (a fulfilled Flight chunk)", async () => {
-    const result = render(<Harness initial={seeded("P1")} />);
+    const result = render(<Harness initial={seeded("P1")} />, {
+      wrapper: RouterStore,
+    });
     // A settled Flight chunk carries status/value, which use() unwraps
     // synchronously and trackPendingStream skips.
     const settled = Object.assign(Promise.resolve({ name: "P2" }), {
@@ -122,7 +140,7 @@ describe("useLoader isLoading on a held navigation", () => {
     });
     await act(async () => {
       startTransition(() => {
-        loaderStore.announcePendingStreams([loaderSeg("product", settled)]);
+        loaders.announcePendingStreams([loaderSeg("product", settled)]);
         setTree(streaming(settled));
       });
     });
@@ -131,11 +149,11 @@ describe("useLoader isLoading on a held navigation", () => {
   });
 
   it("leaves an ephemeral reader outside route context alone", async () => {
-    const result = render(<Orphan />);
+    const result = render(<Orphan />, { wrapper: RouterStore });
     expect(result.getByTestId("orphan").textContent).toBe("false:none");
     await act(async () => {
       startTransition(() =>
-        loaderStore.announcePendingStreams([
+        loaders.announcePendingStreams([
           loaderSeg("orphan", new Promise(() => {})),
         ]),
       );

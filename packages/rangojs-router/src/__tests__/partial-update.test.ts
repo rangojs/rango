@@ -28,7 +28,7 @@ vi.mock("../browser/segment-structure-assert.js", () => ({
 }));
 
 import { createPartialUpdater } from "../browser/partial-update";
-import { loaderStore } from "../loader-store";
+import { LoaderStore } from "../loader-store";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -67,6 +67,7 @@ function createMockStore(opts?: {
   let interceptSourceUrl: string | null = null;
 
   return {
+    loaders: new LoaderStore(),
     getHistoryKey: vi.fn(() => currentHistoryKey),
     setHistoryKey: vi.fn((k: string) => {
       currentHistoryKey = k;
@@ -389,6 +390,7 @@ describe("partial-update", () => {
         renderSegments: vi.fn(async () => "tree"),
       });
       return {
+        store,
         commitLanes,
         onUpdate,
         run: () =>
@@ -419,9 +421,8 @@ describe("partial-update", () => {
     });
 
     it("a transition commit announces the committed tree's loader segments (held readers pin isLoading)", async () => {
-      const announce = vi.spyOn(loaderStore, "announcePendingStreams");
       const pending = new Promise(() => {});
-      const { commitLanes, run } = runNav({
+      const { store, commitLanes, run } = runNav({
         cached: [
           seg("L0", { type: "layout" }),
           seg("L0R0"),
@@ -438,6 +439,7 @@ describe("partial-update", () => {
           }),
         ],
       });
+      const announce = vi.spyOn(store.loaders, "announcePendingStreams");
       try {
         await run();
         expect(commitLanes).toEqual([true]);
@@ -445,21 +447,20 @@ describe("partial-update", () => {
         expect(announce.mock.calls[0]![0]).toContainEqual(
           expect.objectContaining({ id: "L0R0D0.p", loaderData: pending }),
         );
-        expect(loaderStore.isStreamPending("p")).toBe(true);
+        expect(store.loaders.isStreamPending("p")).toBe(true);
       } finally {
         announce.mockRestore();
-        loaderStore.reset();
       }
     });
 
     it("an urgent commit announces nothing (nothing is held)", async () => {
-      const announce = vi.spyOn(loaderStore, "announcePendingStreams");
-      const { commitLanes, run } = runNav({
+      const { store, commitLanes, run } = runNav({
         cached: [seg("L0", { type: "layout" }), seg("L0R0")],
         matched: ["L0", "L0R1"],
         diff: ["L0R1"],
         serverSegments: [seg("L0R1")],
       });
+      const announce = vi.spyOn(store.loaders, "announcePendingStreams");
       try {
         await run();
         expect(commitLanes).toEqual([false]);

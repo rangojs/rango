@@ -61,10 +61,11 @@ function createMockEventController() {
   const routeSegmentIds = ["L0", "L0L1"];
   return {
     getState: () => ({ location }),
-    getLocation: () => location,
-    getHandleState: () => ({ segmentOrder, routeSegmentIds }),
-    subscribe: vi.fn(() => vi.fn()),
-    subscribeToHandles: vi.fn(() => vi.fn()),
+    getLocation: vi.fn(() => location),
+    getHandleState: vi.fn(() => ({ segmentOrder, routeSegmentIds })),
+    getHydrationSnapshot: vi.fn(() => undefined),
+    subscribe: vi.fn((_listener: () => void) => vi.fn()),
+    subscribeToHandles: vi.fn((_listener: () => void) => vi.fn()),
   };
 }
 
@@ -129,64 +130,55 @@ describe("useSegments", () => {
     expect(capturedEffectDeps).toEqual([]);
   });
 
-  it("eagerly recomputes when selector produces a different result", () => {
+  it("a re-render with a new selector reads nothing from the store", () => {
     const ec = createMockEventController();
     mockedUseContext.mockReturnValue({ eventController: ec } as any);
 
-    // First render: selector picks path
     useSegments((s) => s.path);
     const setState = stateSlots[0][1];
+    ec.getLocation.mockClear();
+    ec.getHandleState.mockClear();
 
-    // The first render also triggers setState because SSR initial state
-    // (empty in Node where typeof document === "undefined") differs from
-    // the event controller state. Clear that so we only check the re-render.
-    setState.mockClear();
-
-    // Simulate re-render: reset hook indices so useState/useRef return
-    // existing slots, then call with a different selector
     resetHookIndices();
     useSegments((s) => s.segmentIds);
 
-    expect(setState).toHaveBeenCalledWith(["L0", "L0L1"]);
-  });
-
-  it("does not call setState when selector produces the same result", () => {
-    const ec = createMockEventController();
-    mockedUseContext.mockReturnValue({ eventController: ec } as any);
-
-    // First render
-    useSegments((s) => s.path);
-    const setState = stateSlots[0][1];
-
-    // First render triggers setState (SSR → client mismatch). Clear it.
-    setState.mockClear();
-    // Update prevState to reflect the setState that would have happened
-    refSlots[0].current = ["shop", "products"];
-
-    // Re-render with same selector behavior (new identity, same result)
-    resetHookIndices();
-    useSegments((s) => s.path);
-
+    expect(ec.getLocation).not.toHaveBeenCalled();
+    expect(ec.getHandleState).not.toHaveBeenCalled();
     expect(setState).not.toHaveBeenCalled();
   });
 
-  it("eagerly recomputes when selector is removed", () => {
+  it("the next store change applies the current selector", () => {
     const ec = createMockEventController();
     mockedUseContext.mockReturnValue({ eventController: ec } as any);
 
-    // First render with a selector picking path
     useSegments((s) => s.path);
     const setState = stateSlots[0][1];
-
-    // Clear SSR → client mismatch setState, update prevState
+    capturedEffectFn!();
     setState.mockClear();
-    refSlots[0].current = ["shop", "products"];
 
-    // Re-render without selector (selector removed)
+    resetHookIndices();
+    useSegments((s) => s.segmentIds);
+    const onStoreChange = ec.subscribe.mock.calls[0][0];
+    onStoreChange();
+
+    expect(setState).toHaveBeenCalledOnce();
+    expect(setState).toHaveBeenCalledWith(["L0", "L0L1"]);
+  });
+
+  it("the next store change applies a removed selector as the full state", () => {
+    const ec = createMockEventController();
+    mockedUseContext.mockReturnValue({ eventController: ec } as any);
+
+    useSegments((s) => s.path);
+    const setState = stateSlots[0][1];
+    capturedEffectFn!();
+    setState.mockClear();
+
     resetHookIndices();
     useSegments();
+    const onStoreChange = ec.subscribeToHandles.mock.calls[0][0];
+    onStoreChange();
 
-    // Should switch to full SegmentsState
     expect(setState).toHaveBeenCalledOnce();
     expect(setState).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -212,6 +204,7 @@ describe("useSegments", () => {
         segmentOrder: ["L0", "L0.@panel", "R0", "R0.@meta"],
         routeSegmentIds: ["L0", "R0"],
       }),
+      getHydrationSnapshot: vi.fn(() => undefined),
       subscribe: vi.fn(() => vi.fn()),
       subscribeToHandles: vi.fn(() => vi.fn()),
     };
@@ -222,32 +215,19 @@ describe("useSegments", () => {
     expect(state.segmentIds).toEqual(["L0", "R0"]);
   });
 
-  it("does not loop for composite selectors returning wrapped arrays", () => {
+  it("a store change with an unchanged selection does not set state", () => {
     const ec = createMockEventController();
     mockedUseContext.mockReturnValue({ eventController: ec } as any);
 
-    // First render with composite selector wrapping path array
+    // A composite selector returns a new object each call; the cached
+    // SegmentsState keeps `path` the same reference, so it compares equal.
     useSegments((s) => ({ path: s.path }));
     const setState = stateSlots[0][1];
+    capturedEffectFn!();
     setState.mockClear();
 
-    // First re-render: populates the SegmentsState cache.
-    // May trigger one setState (SSR → client mismatch, acceptable one-time cost).
-    resetHookIndices();
-    useSegments((s) => ({ path: s.path }));
-
-    // Sync prevState with whatever recompute produced
-    const cachedResult =
-      setState.mock.calls.length > 0
-        ? setState.mock.calls[0][0]
-        : refSlots[0].current;
-    refSlots[0].current = cachedResult;
-    setState.mockClear();
-
-    // Second re-render: cache hit means path reference is stable,
-    // so the composite selector produces an object with the same path ref.
-    resetHookIndices();
-    useSegments((s) => ({ path: s.path }));
+    const onStoreChange = ec.subscribe.mock.calls[0][0];
+    onStoreChange();
 
     expect(setState).not.toHaveBeenCalled();
   });

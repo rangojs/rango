@@ -143,6 +143,16 @@ export interface HandleState {
 }
 
 /**
+ * What the document's HTML was rendered with, kept for the hydration window
+ * (EventController.lockHydration).
+ */
+export interface HydrationSnapshot {
+  state: DerivedNavigationState;
+  params: Record<string, string>;
+  handles: HandleState;
+}
+
+/**
  * Result from starting a navigation
  * Implements Disposable for use with `using` keyword
  */
@@ -263,22 +273,30 @@ export interface EventController {
   ): void;
   getHandleState(): HandleState;
   /**
-   * Keep the current handle state as the one the document's HTML was rendered
-   * with. initBrowserApp calls it before hydrateRoot, once the document's
-   * handle snapshot is applied.
+   * Open the hydration window. Until releaseHydrationLock(), getHandleState()
+   * returns the state the document's HTML was rendered with, and handle writes
+   * (setHandleData, setRouteSegmentIds) wait in order. initBrowserApp opens it
+   * before hydrateRoot, once the document's handle snapshot is applied: a hook
+   * reading the handle state when its boundary hydrates, however late, reads
+   * what SSR rendered (issue #1035).
    */
-  freezeHydrationHandleState(): void;
+  lockHydration(): void;
   /**
-   * The handle state the document's HTML was rendered with, once the live
-   * state has moved on from it; undefined while the live state is still that
-   * state (nothing changed since the freeze, or nothing was frozen: a tree
-   * that was mounted, an SSR pass). A render React is hydrating reads it
-   * (useHandle), whenever its boundary hydrates: the late handle channel
-   * (rsc-router.tsx) waits for the root to hydrate, not for a `<Suspense>`
-   * boundary that hydrates after it, and by then the live state can hold
-   * values that boundary's HTML does not (issue #1035).
+   * While the hydration window is open, the state the document's HTML was
+   * rendered with; undefined once it closes. A router hook's first render
+   * reads it: a component hydrating in a boundary that streamed in late
+   * renders what SSR rendered, even after a navigation or an action started.
+   * The hook's effect then catches up with the live state, and its
+   * subscription stays live, so pending UI is not held back.
    */
-  getHydrationHandleState(): HandleState | undefined;
+  getHydrationSnapshot(): HydrationSnapshot | undefined;
+  /**
+   * Close the hydration window: apply the writes that waited, in order, and
+   * notify handle subscribers. NavigationProvider calls it after the commit
+   * that made React hydrate every boundary still dehydrated (its barrier).
+   * Idempotent.
+   */
+  releaseHydrationLock(): void;
   /**
    * Update ONLY `routeSegmentIds` (what `useSegments` reads) from `matched`,
    * leaving `data` and `segmentOrder` (what `useHandle` collects over) untouched.
@@ -498,8 +516,10 @@ export function createEventController(
   let handleData: HandleData = {};
   let handleSegmentOrder: string[] = [];
   let routeSegmentIds: string[] = [];
-  // freezeHydrationHandleState: what the document's HTML was rendered with.
-  let hydrationHandleState: HandleState | undefined;
+  // The hydration window (lockHydration): what the document's HTML was
+  // rendered with, and the handle writes waiting for its release.
+  let hydrationSnapshot: HydrationSnapshot | undefined;
+  let writesAfterHydration: (() => void)[] = [];
 
   let routeParams: Record<string, string> = {};
 
@@ -1028,6 +1048,12 @@ export function createEventController(
     isPartial?: boolean,
     resolvedIds?: string[],
   ): void {
+    if (hydrationSnapshot) {
+      writesAfterHydration.push(() =>
+        setHandleData(data, matched, isPartial, resolvedIds),
+      );
+      return;
+    }
     const rawMatched = matched ?? [];
     const newSegmentOrder = filterSegmentOrder(rawMatched);
     // Separate list for useSegments(): "layouts and routes only" — strip
@@ -1036,9 +1062,8 @@ export function createEventController(
 
     if (isPartial && newSegmentOrder.length > 0) {
       // Partial update: merge new data with existing, into a copy of the
-      // containers. The object a reader was handed is never written to: the
-      // hydration snapshot (freezeHydrationHandleState) and a history entry
-      // restored from the store's cache can be that object.
+      // containers. The object a reader was handed is never written to: a
+      // history entry restored from the store's cache can be that object.
       handleData = cloneHandleData(handleData);
       for (const handleName of Object.keys(data)) {
         if (!handleData[handleName]) {
@@ -1076,6 +1101,7 @@ export function createEventController(
   }
 
   function getHandleState(): HandleState {
+    if (hydrationSnapshot) return hydrationSnapshot.handles;
     return {
       data: handleData,
       segmentOrder: handleSegmentOrder,
@@ -1083,7 +1109,29 @@ export function createEventController(
     };
   }
 
+  function lockHydration(): void {
+    if (hydrationSnapshot) return;
+    hydrationSnapshot = {
+      state: getState(),
+      params: routeParams,
+      handles: getHandleState(),
+    };
+  }
+
+  function releaseHydrationLock(): void {
+    if (!hydrationSnapshot) return;
+    hydrationSnapshot = undefined;
+    const writes = writesAfterHydration;
+    writesAfterHydration = [];
+    for (const write of writes) write();
+    notifyHandles.flush();
+  }
+
   function setRouteSegmentIds(matched: string[]): void {
+    if (hydrationSnapshot) {
+      writesAfterHydration.push(() => setRouteSegmentIds(matched));
+      return;
+    }
     const next = filterRouteSegmentIds(matched);
     if (
       next.length === routeSegmentIds.length &&
@@ -1177,13 +1225,9 @@ export function createEventController(
     // Handles
     setHandleData,
     getHandleState,
-    freezeHydrationHandleState: () => {
-      hydrationHandleState = getHandleState();
-    },
-    getHydrationHandleState: () =>
-      hydrationHandleState?.data === handleData
-        ? undefined
-        : hydrationHandleState,
+    lockHydration,
+    getHydrationSnapshot: () => hydrationSnapshot,
+    releaseHydrationLock,
     setRouteSegmentIds,
 
     // Params

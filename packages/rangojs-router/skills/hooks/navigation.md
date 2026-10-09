@@ -166,6 +166,16 @@ function Breadcrumbs() {
 const isShopRoute = useSegments((s) => s.path[0] === "shop");
 ```
 
+The selector is applied when the router store changes (a navigation or new
+handle data), as with `useNavigation` and `useAction`. A new selector function
+on a re-render takes effect at the next change. To derive from a prop, select
+the state and derive in render:
+
+```tsx
+const segments = useSegments();
+const part = segments.path[depth];
+```
+
 ### useLinkStatus()
 
 Track pending state inside a Link component. `pending` is `true` while a

@@ -40,6 +40,11 @@ Contract for any coding agent in this repo (CLAUDE.md symlinks here). **Hard rul
 5. **Semantic matrix stays green.** `packages/rangojs-router/e2e/semantic-matrix.test.ts` encodes the router's core execution guarantees (middleware scope, handler-first ordering, context visibility, PE/JS parity). Intentional semantic changes update the matrix rows AND `docs/internal/execution-model.md`.
 6. **`--no-verify` only for `*.gen.ts` formatter-hook rejections.** Never to bypass failing checks on source files.
 7. **No "Co-Authored-By" or "Generated with Claude Code" lines** in commits or PRs.
+8. **Router hooks depend only on the router store. External stores are strictly forbidden.**
+   - Every router hook (`useNavigation`, `useAction`, `useHandle`, `useLinkStatus`, `usePathname`, `useParams`, `useSearchParams`, `useLocationState`, `useLoader`, and any new one) depends only on the router store, its single source of truth, reached through `NavigationStoreContext`.
+   - `startTransition` and `useOptimistic` are the only escapes.
+   - Anything that is an external store is strictly forbidden, in every package and app: `useSyncExternalStore`, its shim, any store library, or a second source of truth for a hook (module-level state, a separate registry, `window.history` / `window.location`).
+9. **AGENTS.md holds instructions only.** Never use it for note-taking: no status, history, measurements, logs, lists of current violations or TODOs. Delete any note found here before any other work.
 
 ## Definition of done (shipping a feature)
 
@@ -80,8 +85,8 @@ Match the surrounding code first; repo-wide conventions:
 
 ## Environment gotchas
 
-- `pnpm <script>` can fail locally (verifyDepsBeforeRun → install → lefthook). Run binaries directly instead: `./node_modules/.bin/vitest run`, `./node_modules/.bin/playwright test …` — or reuse running Playwright servers. Don't debug the pnpm wrapper. The Playwright webServer commands call `./node_modules/.bin/vite` for the same reason; in a git worktree with symlinked node_modules the pnpm check aborts with `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY` (issue #886).
-- **E2e ports are per-checkout, not the documented bases.** The shared Playwright webServer ports (rangojs-router base 5188/5189 + host 5296/5297, cloudflare-basic 5198/5199) are shifted by an automatic per-clone offset (`checkoutPortOffset()` in `tests/shared-e2e` — hash of the checkout path) so parallel clones can't silently test each other's servers or kill them mid-run (scar tissue: PR #705 verification chased phantom failures for an hour). Read the actual ports from playwright's webServer command output; `RANGO_E2E_PORT_OFFSET=<n>` overrides (0 forces the bases); CI pins 0. Never hardcode a port in cleanup commands (`lsof ... | kill`) — derive it the same way. Local `reuseExistingServer` also probes GET `/` (sent with `Host: localhost:<port>`, like the suites) for an app-specific marker and fails at config load with `lsof` if a foreign process is on the port (issue #863) — the offset is the escape hatch for that too, not only clone collisions.
+- `pnpm <script>` can fail locally (verifyDepsBeforeRun → install → lefthook). Run binaries directly instead: `./node_modules/.bin/vitest run`, `./node_modules/.bin/playwright test …` — or reuse running Playwright servers. Don't debug the pnpm wrapper. The Playwright webServer commands call `./node_modules/.bin/vite` for the same reason; in a git worktree with symlinked node_modules the pnpm check aborts with `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`.
+- **E2e ports are per-checkout, not the documented bases.** The shared Playwright webServer ports (rangojs-router base 5188/5189 + host 5296/5297, cloudflare-basic 5198/5199) are shifted by an automatic per-clone offset (`checkoutPortOffset()` in `tests/shared-e2e` — hash of the checkout path) so parallel clones can't silently test each other's servers or kill them mid-run. Read the actual ports from playwright's webServer command output; `RANGO_E2E_PORT_OFFSET=<n>` overrides (0 forces the bases); CI pins 0. Never hardcode a port in cleanup commands (`lsof ... | kill`) — derive it the same way. Local `reuseExistingServer` also probes GET `/` (sent with `Host: localhost:<port>`, like the suites) for an app-specific marker and fails at config load with `lsof` if a foreign process is on the port — the offset is the escape hatch for that too, not only clone collisions.
 - Full suite output is massive: `pnpm test 2>&1 | tail -80` from the repo root.
 - Format-fix commits go AFTER CI passes on the substantive commit, with `[skip ci]`.
 - Lefthook pre-commit runs formatting and `check:e2e-bucketing`; if your harness bypasses hooks, run `pnpm run format` and `pnpm check:e2e-bucketing` manually.
@@ -93,10 +98,10 @@ If your harness supports subagents (Task/Agent tool), use them well:
 - **Spawn for breadth, search directly for depth.** A subagent pays off when the answer spans many files (audit, sweep, "where is X handled across apps") or when work is independent and parallelizable. For a single known file/symbol, grep yourself — a spawn costs more than the lookup.
 - **Launch independent agents in parallel** (one message, multiple calls). Chain only when one agent's output feeds the next. Don't also do the delegated work yourself.
 - **Prompts must be self-contained.** Agents don't see your conversation. Give: exact paths (see Repo map — e2e apps are under `packages/rangojs-router/e2e/`, not root), the commands to run, what "done" means, and the exact return shape you want (`path:line` list, diff, verdict + evidence). Vague prompts return vague essays.
-- **Hard rules don't auto-propagate.** An agent writing code must be told the ones its task can violate: dev+prod e2e pairing, `*.gen.ts` in every app, `isolatedDeclarations` annotations, no default exports. Paste the specific rules into the prompt, not "follow AGENTS.md".
+- **Hard rules don't auto-propagate.** An agent writing code must be told the ones its task can violate: dev+prod e2e pairing, `*.gen.ts` in every app, `isolatedDeclarations` annotations, no default exports, no external stores (Hard rule 8). Paste the specific rules into the prompt, not "follow AGENTS.md".
 - **Pass the environment gotchas** to agents that run tests: `./node_modules/.bin/*` directly (pnpm wrapper can fail), pipe long output through `tail`.
 - **Prefer read-only agents** for search/audit/review. Grant write access only for a scoped edit task; use worktree isolation when parallel agents mutate files.
-- **Verify before trusting.** When an agent removes or rewrites code, diff-check it didn't remove too much — this has happened here. Behavior claims from an agent need a file reference you can spot-check.
+- **Verify before trusting.** When an agent removes or rewrites code, diff-check it didn't remove too much. Behavior claims from an agent need a file reference you can spot-check.
 - **Agents never push, publish, comment on PRs, or run `pnpm publish`.** They return results; the top-level session (or the user) takes outward-facing actions.
 - **Scout, then fan out.** For large sweeps, run one cheap scout to build the concrete work-list (files, routes, test titles), then parallelize over the list — not N agents each re-discovering scope.
 
@@ -108,22 +113,22 @@ RULES:
 - Prefer the `prodDescribe(name, (f) => { ... })` helper (e.g. `tests/vite-rsc-demo/e2e/helper.ts`) — it generates the tag and wires the build fixture so the title can't drift. Use `f.url(...)`.
 - A helper taking a `mode` variable (e.g. `defineSpec(label, mode)`) must itself couple `mode: "build"` with a `(production)` title — the static check can't tie a variable mode to a title.
 
-Why: suites bucket dev vs production by grepping describe titles — `production` matches `(production)`, `dev` matches everything else. A mistitled production describe (`(prod)`, `-build` — both have happened) silently lands in the dev bucket and production coverage vanishes with no error. Guards: `pnpm check:e2e-bucketing` enforces (CI lint + pre-commit); `pnpm check:e2e-parity` (CI lint runs `--strict`) fails on any top-level fixture-owning describe without a same-file `(production)` sibling unless it is listed in `tools/e2e-parity-allowlist.json` with a non-empty reason. Guard-blind (non-literal mode) describes are reported but do not fail strict mode — the helper that generates them must couple `mode: "build"` with a `(production)` title. Intentional dev-only (HMR, serve-only plugins) must be allowlisted — do not silence gaps by renaming titles.
+Why: suites bucket dev vs production by grepping describe titles — `production` matches `(production)`, `dev` matches everything else. A mistitled production describe (e.g. `(prod)`, `-build`) silently lands in the dev bucket and production coverage vanishes with no error. Guards: `pnpm check:e2e-bucketing` enforces (CI lint + pre-commit); `pnpm check:e2e-parity` (CI lint runs `--strict`) fails on any top-level fixture-owning describe without a same-file `(production)` sibling unless it is listed in `tools/e2e-parity-allowlist.json` with a non-empty reason. Guard-blind (non-literal mode) describes are reported but do not fail strict mode — the helper that generates them must couple `mode: "build"` with a `(production)` title. Intentional dev-only (HMR, serve-only plugins) must be allowlisted — do not silence gaps by renaming titles.
 
 ## E2e: running a subset locally
 
-`--grep` alone balloons: (1) dependency projects run unfiltered — `production` depends on `dev` (~200 tests; measured 208 vs 1) — add **`--no-deps`**; (2) `--grep` is a regex, so `()`/`[]`/`?` in a pasted title silently mis-match — use a metacharacter-free title fragment.
+`--grep` alone balloons: (1) dependency projects run unfiltered — `production` depends on `dev` — add **`--no-deps`**; (2) `--grep` is a regex, so `()`/`[]`/`?` in a pasted title silently mis-match — use a metacharacter-free title fragment.
 
 - webServer-build suites (rangojs-router, cloudflare-basic): `pnpm exec playwright test --project=production --no-deps --grep "<fragment>"` — the webServer still builds/serves.
 - Setup-project-build suites (vite-rsc-demo, no-typescript): `pnpm build` in the app first, then `--no-deps`.
 - Match stable title fragments, not `file:line` — react-compiler apps report compiler-transformed line numbers in `--list`.
-- A local full `dev`+`production` router run is ~2200 tests / ~15+ min; CI shards it (5+2). `globalTimeout` is 10 min on CI only — do not size a local run against that cap (issue #864). `--global-timeout=0` restores Playwright's unlimited default if a config ever pins one again.
+- `globalTimeout` is 10 min on CI only — do not size a local full run against that cap. `--global-timeout=0` restores Playwright's unlimited default.
 
 ## Userland test coverage
 
 RULE: every consumer-touchable feature ships unit coverage **through the public `@rangojs/router/testing` primitives** (`renderHandler`, `runLoader`, `runMiddleware`, `renderRoute`, `dispatch`, `flight`, and `serveShellRequest` for a PPR shell capture and HIT, partial replay included) — in addition to internal unit tests and dev+prod e2e, not instead. Dogfood guarantee: if we can't test it with the primitives we hand consumers, neither can they.
 
-- If a primitive can't reach the feature, **extend the primitive in the same PR** — wrap stubs with the same production wiring, don't fake methods. (Scar tissue: `renderHandler` stubbed `ctx.use` without production's `withDefer` wrapper, making `.defer()` unreachable from the harness; fix was wrapping the stub in `src/testing/render-handler.ts`.)
+- If a primitive can't reach the feature, **extend the primitive in the same PR** — wrap stubs with the same production wiring, don't fake methods.
 - Put the test where `test:unit:all` runs it: `packages/rangojs-router/src/testing/__tests__/` and/or a consumer dogfood suite (`packages/rangojs-router/e2e/mini/test/*`, `tests/cloudflare-basic/**`).
 
 ## Pull request descriptions
@@ -175,16 +180,14 @@ RULES:
 1. **Generated route data lives in exactly ONE chunk** — the contract is lazy-only (`virtual:rsc-router/routes-manifest/<routerId>`, populated via `await ensureRouterManifest(routerId)` before matching). Never inline the trie/precomputedEntries into the eager manifest (via `setRouterTrie`/`setRouterPrecomputedEntries` or otherwise).
 2. **Non-Cloudflare app vite configs MUST fold NODE_ENV for build**: `define: { "process.env.NODE_ENV": JSON.stringify("production") }`. Reference: `packages/rangojs-router/e2e/test-app/vite.config.ts`.
 
-Why (tree-shaking can't catch either; both caused large regressions — commits `d10a2470`, `e56f2ee2`): (1) inlined `JSON.parse('<huge string>')` data in both an eager and a lazy chunk stays live in BOTH — each is side-effectful; (2) unfolded NODE_ENV makes the minifier keep React's dev AND prod branches, doubling its footprint. The Cloudflare vite plugin folds automatically; vanilla `vite build` folds client only, not SSR/RSC.
+Why (tree-shaking can't catch either): (1) inlined `JSON.parse('<huge string>')` data in both an eager and a lazy chunk stays live in BOTH — each is side-effectful; (2) unfolded NODE_ENV makes the minifier keep React's dev AND prod branches, doubling its footprint. The Cloudflare vite plugin folds automatically; vanilla `vite build` folds client only, not SSR/RSC.
 
 Guard: `packages/rangojs-router/e2e/build-test-app.setup.ts` fails any production build containing a `react*.development*.js` chunk. Analyzer: `RANGO_ANALYZE=1 pnpm exec vite build` in any wired app emits treemaps to `<app>/bundle-stats/{client,ssr,rsc}.html` (per-environment plugin instances via `applyToEnvironment` — don't collapse to one visualizer call).
 
-**Rejected client-runtime optimizations** (don't redo without new information):
+Do not lazy-load or split these client modules (don't redo without new information):
 
-- `browser/server-action-bridge.ts` (~3.5 KB gzip) — lazy-loading adds a chunk fetch on first server-action call; actions are fundamental to almost every app.
-- Theme modules (~3 KB) — FOUC prevention; the class must hit `<html>` before first paint, so any chunk fetch defeats it.
-- `NavigationProvider.tsx` per-feature splitting (~1.9 KB) — feature gates are context-shape needed for types regardless; big API churn for <2 KB.
-- `browser/partial-update.ts` (~2.8 KB) — used on every navigation and action response; no path improves cold-start.
-- `browser/prefetch/` lazy-chunk split (~2.3 KB gzip) — tried in #766; production `defaultPrefetch: "viewport"` loads the prefetch runtime on almost every page, so the split became a document → router → runtime request waterfall (measured 502 ms critical-path latency in a deployed worker) and the merged chunk gzips ~0.6 KB smaller than the pair. Folded back; loader.ts's dynamic import now resolves in-chunk with no fetch.
-
-Baselines: Rango client runtime ~50 KB gzip; React + RSC client ~115 KB gzip (react-dom 96K + react 5K + rsd-webpack-client 12K + scheduler 3K). Further reductions require architectural changes, not surgical edits.
+- `browser/server-action-bridge.ts` — lazy-loading adds a chunk fetch on the first server-action call; actions are fundamental to almost every app.
+- Theme modules — the class must hit `<html>` before first paint, so any chunk fetch defeats FOUC prevention.
+- `NavigationProvider.tsx` per feature — the feature gates are context shape the types need regardless.
+- `browser/partial-update.ts` — used on every navigation and action response; no split improves cold start.
+- `browser/prefetch/` — production `defaultPrefetch: "viewport"` loads it on almost every page, so a split becomes a document → router → runtime request waterfall.

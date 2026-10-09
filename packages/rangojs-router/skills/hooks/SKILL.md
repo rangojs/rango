@@ -97,3 +97,25 @@ the one for your case.
 | `useAction()`             | Server action state                                            | state, actionId, payload, error, result                                         |
 | `useLocationState()`      | History state (persists or flash)                              | T \| undefined                                                                  |
 | `invalidateClientCache()` | Force client caches to miss (function, not a hook; root entry) | `void`                                                                          |
+
+## Hydration
+
+On a document load every router hook renders what the server rendered until
+the document has finished streaming, wherever the component sits. A component
+in a `<Suspense>` or `loading()` boundary that streams in after the rest of
+the page hydrates with the document's pathname, params, search params and
+segments, an idle `useNavigation()` and `useAction()`, a `useLinkStatus()` that
+is not pending, the handle data the HTML was rendered from, and `undefined`
+location state, even when a navigation or an action has started meanwhile. It
+cannot mismatch its server HTML.
+
+- Navigation state, params and action state: the component shows the live
+  value right after it hydrates.
+- Handle data a loader pushed late, and the entry's location state: every
+  reader gets them once the whole document has streamed and hydrated, in one
+  transition. A reader re-renders only when its selection changes.
+- A navigation that commits before then mounts its page with the live values
+  from its first render. A boundary of the document that persists across that
+  navigation and has not hydrated yet then hydrates against the live values;
+  where they differ from its HTML, React reports the mismatch and renders that
+  boundary on the client.
