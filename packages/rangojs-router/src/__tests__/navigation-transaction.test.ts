@@ -488,67 +488,67 @@ describe("createNavigationTransaction traversal commit", () => {
   });
 });
 
-// prefetch: false (docs/design/prefetch-false.md, "Abort"): a fill is
-// cancelled when the tree it belongs to is replaced, not when a navigation
-// merely starts.
-describe("createNavigationTransaction and a pending fill", () => {
-  async function pendingFill() {
-    const { setPendingFill, cancelPendingFill } =
-      await import("../browser/pending-fill");
-    const cancel = vi.fn();
-    setPendingFill(cancel);
-    return { cancel, cancelPendingFill };
-  }
-
-  function transaction(options: Record<string, unknown>) {
+// prefetch: false (docs/design/prefetch-false.md, "Abort"): the navigation
+// that adopts a prefetch fills its holes after its commit, with its own
+// signal. A newer navigation or a back/forward aborts that signal while the
+// navigation's stream is open, as it aborts a navigation that has not
+// committed; nothing else tracks the fill.
+describe("a committed navigation that is still streaming", () => {
+  function committed(options: Record<string, unknown> = {}) {
     const { store, eventController } = createTestContext();
     const tx = createNavigationTransaction(
       store,
       eventController,
       "http://localhost/target",
-      { replace: true },
+      {},
     );
-    return {
-      tx,
-      commit: () => {
-        tx.commit({
-          url: "http://localhost/target",
-          segmentIds: [],
-          segments: [],
-          ...options,
-        });
-        tx[Symbol.dispose]();
-      },
-    };
+    const bound = tx.with({ url: "http://localhost/target" });
+    const token = bound.startStreaming();
+    bound.commit([], [], options);
+    tx[Symbol.dispose]();
+    return { store, eventController, signal: tx.handle.signal, token };
   }
 
-  it("is not cancelled by a navigation that only starts", async () => {
-    const { cancel, cancelPendingFill } = await pendingFill();
-    const { tx } = transaction({});
-    expect(cancel).not.toHaveBeenCalled();
-    tx[Symbol.dispose]();
-    expect(cancel).not.toHaveBeenCalled();
-    cancelPendingFill();
+  it("is aborted by the next navigation", () => {
+    const { store, eventController, signal } = committed();
+    expect(signal.aborted).toBe(false);
+    const next = createNavigationTransaction(
+      store,
+      eventController,
+      "http://localhost/other",
+      {},
+    );
+    expect(signal.aborted).toBe(true);
+    expect(next.handle.signal.aborted).toBe(false);
+    next[Symbol.dispose]();
   });
 
-  it.each([{}, { traversal: true }])(
-    "is cancelled by a commit that replaces the page (%o)",
-    async (options) => {
-      const { cancel } = await pendingFill();
-      transaction(options).commit();
-      expect(cancel).toHaveBeenCalledTimes(1);
-    },
-  );
+  it("is aborted by a back/forward", () => {
+    const { eventController, signal } = committed();
+    // handlePopstate (navigation-bridge.ts) starts here.
+    eventController.abortNavigation();
+    expect(signal.aborted).toBe(true);
+  });
 
-  it.each([{ storeOnly: true }, { cacheOnly: true }])(
-    "survives a commit that keeps the page (%o)",
-    async (options) => {
-      const { cancel, cancelPendingFill } = await pendingFill();
-      transaction(options).commit();
-      expect(cancel).not.toHaveBeenCalled();
-      cancelPendingFill();
-    },
-  );
+  it("reads idle once committed: the stream is not a pending navigation", () => {
+    const { eventController } = committed();
+    const state = eventController.getState();
+    expect(state.state).toBe("idle");
+    expect(state.isNavigating).toBe(false);
+    expect(state.isStreaming).toBe(true);
+  });
+
+  it("is left alone once its stream has ended", () => {
+    const { store, eventController, signal, token } = committed();
+    token.end();
+    createNavigationTransaction(
+      store,
+      eventController,
+      "http://localhost/other",
+      {},
+    )[Symbol.dispose]();
+    expect(signal.aborted).toBe(false);
+  });
 });
 
 // Scroll belongs to the navigation transaction. A navigation always decides,

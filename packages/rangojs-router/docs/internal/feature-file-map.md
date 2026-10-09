@@ -246,13 +246,18 @@ The public DOM seam is
   boundary for fetch, queue, and observer code.
 - `prefetch: false` is owned by
   [router/segment-resolution/prefetch-deferral.ts](../../src/router/segment-resolution/prefetch-deferral.ts)
-  (the per-route plan: which loaders and handler units a prefetch defers) and
-  [browser/pending-fill.ts](../../src/browser/pending-fill.ts) (the one
-  in-flight fill request). The decisions sit in the grouped
-  `router/segment-resolution/*` row (`revalidation.ts`), the cache-skip rules
-  in [cache/document-cache.ts](../../src/cache/document-cache.ts), the adoption
-  and the routine that settles its holes in
-  [browser/partial-update.ts](../../src/browser/partial-update.ts),
+  (the per-route plan: which loaders and handler units a prefetch defers). The
+  decisions sit in the grouped `router/segment-resolution/*` row
+  (`revalidation.ts`), the cache-skip rules in
+  [cache/document-cache.ts](../../src/cache/document-cache.ts), the adoption
+  and the navigation's fill of its holes in
+  [browser/partial-update.ts](../../src/browser/partial-update.ts) (one
+  deferred per hole, [browser/defer.ts](../../src/browser/defer.ts)), what
+  cancels the fill in
+  [browser/event-controller.ts](../../src/browser/event-controller.ts) (a
+  committed navigation stays abortable while its stream is open) and
+  [browser/navigation-client.ts](../../src/browser/navigation-client.ts) (the
+  signal cancels a request until its response arrives),
   and the user-facing options in
   [route-definition/dsl-helpers.ts](../../src/route-definition/dsl-helpers.ts)
   (`loader()`, `loading()`). Design: [prefetch-false.md](../../../../docs/design/prefetch-false.md).

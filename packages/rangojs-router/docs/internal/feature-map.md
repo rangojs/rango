@@ -385,22 +385,23 @@ server projection.
   so a click that adopts a prefetch is never worse than the same click with no
   prefetch. The payload is the page's skeleton: one placeholder per skipped
   segment, with what its wrapper chain is built from, and a complete
-  `matched`. The click that adopts it builds the page's tree once, with a
-  gate per placeholder (`armGates`), commits it urgently and sends one fill
-  request (`_rsc_fill=1`) that runs only the deferred work. The fill hands
-  React no tree: `settleHoles` resolves the gates, rewrites the stored entry
-  and writes handle data and location state to their stores
-  (`PartialUpdateConfig.fill`, `consumeHandles`). Gates of a tree that is on
-  screen resolve when the fill has streamed or 300 ms after its first chunk
-  (`FALLBACK_THROTTLE_MS`, which lines the first reveal up with a plain
-  click's), at once where React has not committed the tree; the gates in a
-  flagged layout's subtree wait for what the layout's own `loading()` covers
-  (`coveredBy`: the layout, its own loaders, the components below it with no
-  `loading()` of their own), so a flagged layout entered from outside shows
-  its skeleton with the click and the layout with that content (the one
-  place the page differs from a plain click's), and what is still pending
-  shows inside it. A click on a prefetch still in flight reuses it and
-  sends the fill after it (bounded in the shared suite).
+  `matched`. The navigation that adopts it builds the page's tree once, with
+  a deferred per placeholder (`armHoles`, `browser/defer.ts`), sends one fill
+  request (`_rsc_fill=1`) that runs only the deferred work, with its own
+  signal, before it renders, commits the tree urgently, and then, inside the
+  same navigation, fills the holes from the fill's answer (`fillHoles`):
+  every deferred resolves in one task with its own stream or node, the
+  stored entry is rewritten, and handle data and location state go to their
+  stores (`PartialUpdateConfig.fill`, `consumeHandles`). The fill hands React
+  no tree, and its stream keeps the navigation's streaming token open. A
+  newer navigation or a back/forward aborts the navigation's signal, also
+  after its commit while its stream is open (`event-controller.ts`), which
+  cancels the fill request until it has answered (`navigation-client.ts`)
+  and drops an answer that arrives later; the deferreds are released. A
+  flagged layout entered from outside shows its skeleton with the click
+  (the one place the page differs from a plain click's). A click on a
+  prefetch still in flight reuses it and sends the fill after it (bounded
+  in the shared suite).
   A deferred unit on a page that commits in a transition is a navigation
   that waits for its fill and commits once with the fill's first chunk, as a
   plain click commits with its response. A response that defers is for the page
@@ -414,8 +415,7 @@ server projection.
   `PrefetchDeferral` on `InternalHandlerContext._prefetchDeferral`),
   `segment-resolution/revalidation.ts`; stored routes (`cache()`, `ppr`,
   `Prerender`) defer loaders only. Browser: `browser/partial-update.ts`
-  (`armGates`, `runFill`, `settleHoles`), the in-flight fill slot in
-  `browser/pending-fill.ts`.
+  (`armHoles`, `fillHoles`), `browser/defer.ts`.
   `ctx.rendered()` is refused for a deferrable loader on every request kind
   (`router/loader-resolution.ts`). The document cache keeps one slot,
   refuses a payload that carries deferred units

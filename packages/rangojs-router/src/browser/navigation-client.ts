@@ -251,6 +251,17 @@ export function createNavigationClient(
           });
         }
 
+        // `signal` cancels the request until its response arrives. A response
+        // that has arrived streams to its end: aborting a Flight body
+        // mid-read rejects every chunk a mounted tree may be reading, as
+        // server-action-bridge.ts notes for actions. A prefetch: false fill
+        // passes its navigation's signal, which stays abortable after the
+        // commit (event-controller.ts streamingNavigation).
+        const request = signal ? new AbortController() : undefined;
+        const cancel = (): void => request!.abort(signal!.reason);
+        if (signal?.aborted) cancel();
+        else signal?.addEventListener("abort", cancel, { once: true });
+
         const responsePromise = fetch(fetchUrl, {
           // During an action's flight the state is not rotated, so the old
           // X-Rango-State still matches the Vary-keyed HTTP-cache entry; bypass
@@ -282,24 +293,26 @@ export function createNavigationClient(
             }),
             ...(hmr && { "X-RSC-HMR": "1" }),
           },
-          signal,
-        }).then((response) => {
-          const validated = validateRscHeaders(
-            response,
-            "fetch",
-            resolveStreamComplete,
-          );
-          if (validated instanceof Promise) return validated;
+          signal: request?.signal,
+        })
+          .finally(() => signal?.removeEventListener("abort", cancel))
+          .then((response) => {
+            const validated = validateRscHeaders(
+              response,
+              "fetch",
+              resolveStreamComplete,
+            );
+            if (validated instanceof Promise) return validated;
 
-          return teeWithCompletion(
-            validated,
-            () => {
-              if (tx) browserDebugLog(tx, "stream complete");
-              resolveStreamComplete();
-            },
-            signal,
-          );
-        });
+            return teeWithCompletion(
+              validated,
+              () => {
+                if (tx) browserDebugLog(tx, "stream complete");
+                resolveStreamComplete();
+              },
+              signal,
+            );
+          });
 
         return {
           payload: deps.createFromFetch<RscPayload>(responsePromise),

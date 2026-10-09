@@ -2060,7 +2060,7 @@ describe("segment-system", () => {
       // The click builds the page's tree once, from the prefetched segments
       // and one placeholder per segment whose work did not run, and the
       // fill only resolves what that tree reads (browser/partial-update.ts
-      // settleHoles). So the tree has to be the one a plain click's payload
+      // fillHoles). So the tree has to be the one a plain click's payload
       // builds: the same router elements, with the same keys, around every
       // segment. What differs is what the boundaries are handed.
       it("builds a plain click's wrapper chain from the skeleton: the same elements and keys around every segment", async () => {

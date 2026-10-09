@@ -11,7 +11,7 @@ import { INTERNAL_RANGO_DEBUG } from "./internal-debug.js";
  * aggregate whose sources are all streams that have fulfilled (React's
  * `status` on the thenable, which Flight sets itself) is known on its first
  * call and is the array from the start: the sources of a page whose entry was
- * rewritten without a render (browser/partial-update.ts settleHoles) are
+ * rewritten without a render (browser/partial-update.ts fillHoles) are
  * first aggregated by the next navigation that keeps them.
  *
  * Server: a fresh promise per call, so Suspense emits the fallback in the

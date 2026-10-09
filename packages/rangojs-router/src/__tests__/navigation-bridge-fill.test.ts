@@ -38,7 +38,6 @@ import {
   createNavigationStore,
   generateHistoryKey,
 } from "../browser/navigation-store";
-import { cancelPendingFill, setPendingFill } from "../browser/pending-fill";
 
 const HUB = "http://localhost/hub";
 const PRODUCT = "http://localhost/product";
@@ -123,7 +122,6 @@ function setup(product: ResolvedSegment[], location = HUB) {
 }
 
 afterEach(() => {
-  cancelPendingFill();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   fetchPartialUpdateMock.mockClear();
@@ -179,22 +177,42 @@ describe("navigation-bridge: an entry left before its fill landed", () => {
   });
 });
 
+/**
+ * The navigation that adopted the prefetch owns its fill and has committed:
+ * its stream (the fill's) is still open. What cancels the fill is that
+ * navigation's signal.
+ */
 describe("navigation-bridge: a fill in flight", () => {
-  it("is cancelled by back/forward, before anything is restored", async () => {
-    const { bridge } = setup(filled(), PRODUCT);
-    const cancel = vi.fn();
-    setPendingFill(cancel);
+  function committedAndStreaming(
+    eventController: ReturnType<typeof setup>["eventController"],
+  ): AbortSignal {
+    const handle = eventController.startNavigation(PRODUCT);
+    handle.startStreaming();
+    handle.complete(new URL(PRODUCT));
+    return handle.signal;
+  }
+
+  it("is aborted by back/forward, before anything is restored", async () => {
+    const { bridge, eventController, renderSegments } = setup(
+      filled(),
+      PRODUCT,
+    );
+    const signal = committedAndStreaming(eventController);
+    let restoredAfterAbort: boolean | undefined;
+    renderSegments.mockImplementation(async () => {
+      restoredAfterAbort = signal.aborted;
+      return "tree";
+    });
     await bridge.handlePopstate();
-    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(signal.aborted).toBe(true);
+    expect(restoredAfterAbort).toBe(true);
   });
 
-  it("is not cancelled by a navigation that has not committed", async () => {
-    const { bridge } = setup(filled());
-    const cancel = vi.fn();
-    setPendingFill(cancel);
-    // The updater mock never commits its transaction.
+  it("is aborted by the next navigation", async () => {
+    const { bridge, eventController } = setup(filled());
+    const signal = committedAndStreaming(eventController);
     await bridge.navigate(PRODUCT);
-    expect(cancel).not.toHaveBeenCalled();
+    expect(signal.aborted).toBe(true);
   });
 });
 

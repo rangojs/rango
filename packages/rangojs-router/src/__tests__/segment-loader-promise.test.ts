@@ -200,7 +200,7 @@ describe("getMemoizedLoaderPromise", () => {
     });
 
     // The entry of a page is rewritten with streams no tree has read yet
-    // (a `prefetch: false` fill, browser/partial-update.ts settleHoles): the
+    // (a `prefetch: false` fill, browser/partial-update.ts fillHoles): the
     // first render from it is the first call for these sources. A promise
     // built over them would be one more promise React has not read, and a
     // slot's boundary handed it in a render that cannot wait shows its

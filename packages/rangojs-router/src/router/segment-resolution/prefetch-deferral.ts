@@ -115,7 +115,7 @@ export interface PrefetchDeferral {
    * a route's orphan layouts and slots after its handler): every handler it
    * reaches from here on is skipped too, and sends a placeholder with what
    * the entry declares. The browser builds the page's tree once, from those
-   * (browser/partial-update.ts armGates), so they have to list every segment
+   * (browser/partial-update.ts armHoles), so they have to list every segment
    * a navigation to the page lists.
    */
   below?: true;

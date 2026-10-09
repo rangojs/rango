@@ -458,6 +458,11 @@ export function createEventController(
   config?: EventControllerConfig,
 ): EventController {
   let currentNavigation: NavigationEntry | null = null;
+  // The navigation that committed last, while its stream is still open. A
+  // newer navigation or a back/forward aborts it as it aborts one that has
+  // not committed: what a navigation does after its commit (the fill of a
+  // prefetch: false adoption, partial-update.ts fillHoles) reads its signal.
+  let streamingNavigation: AbortController | null = null;
 
   const inflightActions = new Map<string, ActionEntry>();
 
@@ -678,6 +683,7 @@ export function createEventController(
     options?: NavigateOptionsInternal & { skipLoadingState?: boolean },
   ): NavigationHandle {
     // Cancel existing navigation (switchMap semantics)
+    abortStreamingNavigation();
     if (currentNavigation) {
       currentNavigation.abort.abort();
       currentNavigation = null;
@@ -696,6 +702,7 @@ export function createEventController(
     notify();
 
     let completed = false;
+    let openStreams = 0;
 
     return {
       abort,
@@ -709,6 +716,7 @@ export function createEventController(
         let ended = false;
         entry.phase = "streaming";
         activeStreamCount++;
+        openStreams++;
         notify();
 
         return {
@@ -716,6 +724,9 @@ export function createEventController(
             if (ended) return;
             ended = true;
             activeStreamCount = Math.max(0, activeStreamCount - 1);
+            if (--openStreams === 0 && streamingNavigation === abort) {
+              streamingNavigation = null;
+            }
             notify();
           },
         };
@@ -726,6 +737,7 @@ export function createEventController(
           completed = true;
           location = newLocation;
           currentNavigation = null;
+          if (openStreams > 0) streamingNavigation = abort;
           notify();
         }
       },
@@ -744,7 +756,14 @@ export function createEventController(
     };
   }
 
+  function abortStreamingNavigation(): void {
+    const streaming = streamingNavigation;
+    streamingNavigation = null;
+    streaming?.abort();
+  }
+
   function abortNavigation() {
+    abortStreamingNavigation();
     if (currentNavigation) {
       currentNavigation.abort.abort();
       currentNavigation = null;

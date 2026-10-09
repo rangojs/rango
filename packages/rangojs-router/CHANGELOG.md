@@ -17,8 +17,9 @@ loading(<OrdersSkeleton />, { prefetch: false }); // everything behind this fall
 A prefetch of the route skips the flagged work and marks it deferred. When the
 visitor clicks, the page commits at once with the prefetched content, the
 fallback shows where the deferred part goes, and one second request (the fill)
-runs only that part. The page is built once: the fill resolves what it is
-waiting for, and nothing is mounted twice. A hard load, a
+runs only that part. The page is built once: the navigation waits for the
+fill and resolves what the page is waiting for, and nothing is mounted twice.
+Leaving the page (another click, back/forward) cancels the fill. A hard load, a
 navigation with nothing prefetched, an action and back/forward behave as
 before. Without the options nothing changes.
 
@@ -26,10 +27,9 @@ What to know before you use it:
 
 - **Only what is new to the page is deferred.** A segment the browser already
   holds is prefetched as usual: the layout of the section you are in, or the
-  route itself on a same-route navigation (`/product/a` to `/product/b`). So a
-  click that adopts a prefetch is never worse than the same click with no
-  prefetch at all, and content on screen is never swapped for a fallback. To
-  defer navigation inside a section, flag the `loading()` of its routes.
+  route itself on a same-route navigation (`/product/a` to `/product/b`). So
+  content on screen is never swapped for a fallback. To defer navigation
+  inside a section, flag the `loading()` of its routes.
 - **A click before its prefetch has answered waits for it.** The click
   reuses the prefetch that is still in flight, as it does without the flag,
   and sends the fill when it answers. The page shows no later than with no
@@ -60,17 +60,21 @@ What to know before you use it:
 - **A flagged `loading()` on a layout shows its skeleton over the whole
   layout.** Entered from a page without the layout, the prefetch skips the
   layout's handler too, so the click shows the skeleton at once, in place of
-  the whole layout, and the layout appears once what its own `loading()`
-  covers has arrived, at least React's 300 ms after the skeleton. A click
-  with no prefetch, in a production build, shows the layout with its first
-  chunk and the fallback inside it; the covered content is no later with the
-  prefetch. This is the one place where the two clicks show different pages,
-  by design. A loader below the layout streams as with no prefetch, and what
+  the whole layout, and the layout appears when the fill answers, at least
+  React's 300 ms after the skeleton. A click with no prefetch, in a
+  production build, shows the layout with its first chunk and the fallback
+  inside it. This is the one place where the two clicks show different
+  pages, by design. A loader below the layout streams as with no prefetch, and what
   is still pending shows its fallback inside the layout: a route's own
   `loading()`, a `<Suspense>` in its content, or, for a read with no boundary
   of its own, the layout's own fallback a second time. React keeps that
   fallback up at least 300 ms and holds the page's other reveals as long, so
   content can show up to 300 ms later than with no prefetch.
+- **A nested deferred read can come later than with no prefetch.** The
+  adopted click shows its fallback with the click, so React may reveal the
+  deferred part a round trip sooner than a plain click; a nested read that
+  lands in between shows a fallback of its own and its content waits another
+  300 ms (with the server 100 ms away: about 605 ms against 410).
 - **A prefetch that deferred something is used only on the page that made
   it.** A page that already shows the segment makes its own prefetch, which
   defers nothing for it.

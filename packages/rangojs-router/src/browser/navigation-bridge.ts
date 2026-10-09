@@ -19,7 +19,6 @@ import {
   mergeLocationState,
   pushHistoryWithIdx,
 } from "./history-state.js";
-import { cancelPendingFill } from "./pending-fill.js";
 import { consumeHandles } from "./react/NavigationProvider.js";
 import {
   handleNavigationStart,
@@ -603,10 +602,10 @@ export function createNavigationBridge(
      * Uses cached segments when available for instant restoration
      */
     async handlePopstate(): Promise<void> {
-      // Abort any pending navigation to prevent race conditions
+      // Abort any pending navigation to prevent race conditions, and the
+      // fill of the page being left (prefetch: false), which its committed
+      // navigation still owns.
       eventController.abortNavigation();
-      // The page being left may be waiting on a fill (prefetch: false).
-      cancelPendingFill();
       handleTraversalStart();
 
       const url = window.location.href;

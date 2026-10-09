@@ -5,22 +5,23 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { EventController } from "../../browser/event-controller.js";
 import { createNavigationTransaction } from "../../browser/navigation-transaction.js";
 import { createPartialUpdater } from "../../browser/partial-update.js";
-import { cancelPendingFill } from "../../browser/pending-fill.js";
 import { NavigationStoreContext } from "../../browser/react/context.js";
 import { consumeHandles } from "../../browser/react/NavigationProvider.js";
 import { useNavigation } from "../../browser/react/use-navigation.js";
 import type { NavigationUpdate } from "../../browser/types.js";
 import type { ResolvedSegment } from "../../types.js";
+import { loaderStore } from "../../loader-store.js";
 import { renderRoute } from "../render-route.js";
 
 // A click that adopts a payload with deferred segments (`prefetch: false`),
 // through the real provider and the real event controller: what
-// useNavigation() reads while React holds the click's tree, and how many
-// trees the click and its fill hand React (one: the fill resolves what that
-// tree is waiting for, browser/partial-update.ts settleHoles).
+// useNavigation() reads while React holds the click's tree, how many trees
+// the click and its fill hand React (one: the navigation resolves what that
+// tree is waiting for, browser/partial-update.ts fillHoles), and what cancels
+// the fill (the navigation's signal).
 
 afterEach(() => {
-  cancelPendingFill();
+  loaderStore.reset();
   cleanup();
 });
 
@@ -224,10 +225,14 @@ describe("a click that adopts a prefetch, and its fill", () => {
     });
     const answer = deferred<void>();
     let updates = 0;
+    let fillRequest: { signal?: AbortSignal } | undefined;
     const updater = createPartialUpdater({
       store: router.store,
       client: {
-        fetchPartial: async (request: { fill?: boolean }) => {
+        fetchPartial: async (request: {
+          fill?: boolean;
+          signal?: AbortSignal;
+        }) => {
           if (!request.fill) {
             return {
               payload: payload(
@@ -237,7 +242,14 @@ describe("a click that adopts a prefetch, and its fill", () => {
               fullyPrefetched: !options.plain,
             };
           }
-          await answer.promise;
+          fillRequest = request;
+          // As fetch() does: the request rejects once its signal aborts.
+          await new Promise<void>((resolve, reject) => {
+            void answer.promise.then(resolve);
+            request.signal?.addEventListener("abort", () =>
+              reject(new DOMException("aborted", "AbortError")),
+            );
+          });
           return {
             payload: payload(options.filled),
             streamComplete: options.stream ?? Promise.resolve(),
@@ -281,7 +293,10 @@ describe("a click that adopts a prefetch, and its fill", () => {
       await Promise.race([navigation, tick()]);
     });
     return {
+      router,
       navigation,
+      /** The signal the fill request was sent with. */
+      fillSignal: (): AbortSignal | undefined => fillRequest?.signal,
       updates: (): number => updates,
       shown: (): string | null => getByTestId("page").textContent,
       /** The fill answers; `ms` later the page is read. */
@@ -367,11 +382,12 @@ describe("a click that adopts a prefetch, and its fill", () => {
     expect(mounts.fallback).toBe(1);
   });
 
-  // The maintainer's choice for a flagged layout entered from outside: its
-  // skeleton with the click, and the layout once what its own loading()
-  // covers has arrived. Revealed sooner, the layout would show that fallback
-  // again inside, which React keeps up 300 ms more.
-  it("keeps a layout unit's skeleton until what its loading() covers has arrived, however long the fill stays open", async () => {
+  // A flagged layout entered from outside: its skeleton with the click. Every
+  // deferred resolves when the fill answers, each with its own value; the
+  // route's content is still on its way, read below the layout with no
+  // boundary of its own, so React keeps the layout's fallback up until it
+  // arrives, as on a plain click.
+  it("keeps a layout unit's skeleton until the content it covers has arrived, however long the fill stays open", async () => {
     function Section({ find }: { find: (id: string) => ResolvedSegment }) {
       return (
         <section>
@@ -472,8 +488,8 @@ describe("a click that adopts a prefetch, and its fill", () => {
 
   // A layout above the unit reads the route's loader, with no boundary: the
   // read is above the unit's fallback, so React holds the click on that
-  // loader's gate. Every gate resolves when the fill answers, the unit's
-  // included. Whether the commit that ends the hold shows the page or the
+  // loader's deferred. Every deferred resolves when the fill answers, the
+  // unit's included. Whether the commit that ends the hold shows the page or the
   // unit's fallback first is React's (it has read the unit's gate where it
   // rendered past the suspended read): the browser suite compares that with
   // a plain click (tests/shared-e2e, the `above` parity cases).
@@ -552,6 +568,90 @@ describe("a click that adopts a prefetch, and its fill", () => {
     expect(shown()).toBe("content");
     expect(updates()).toBe(1);
     expect(mounts.fallback).toBe(0);
+  });
+
+  // The navigation that adopted the prefetch owns the fill. A newer
+  // navigation or a back/forward aborts that navigation's signal through the
+  // event controller, also after its commit, and nothing else cancels it.
+  describe("the fill of a navigation that is left", () => {
+    async function leftWhileFilling(
+      leave: (controller: EventController) => void,
+    ) {
+      const { adopted, filled } = unit();
+      const loaderSegment = segment(DATA, "loader", {
+        loaderId: "data",
+        deferred: true,
+      });
+      const page = await adopt({
+        adopted: [adopted, loaderSegment],
+        filled: [
+          filled,
+          segment(DATA, "loader", { loaderId: "data", loaderData: "value" }),
+        ],
+        render: (find) => (
+          <Suspense fallback={<Fallback />}>
+            <Unit content={find(UNIT).component} />
+          </Suspense>
+        ),
+      });
+      expect(page.shown()).toBe("skeleton");
+      const signal = page.fillSignal()!;
+      expect(signal.aborted, "the commit leaves the fill running").toBe(false);
+      const hole = loaderSegment.loaderData as Promise<unknown>;
+      loaderStore.trackPendingStream("data", hole);
+
+      await act(async () => leave(page.router.eventController));
+      await page.navigation;
+      await page.fill(50);
+      return { page, signal, hole };
+    }
+
+    it("is aborted by a newer navigation: nothing resolves and the click's tree is left as it is", async () => {
+      const { page, signal, hole } = await leftWhileFilling((controller) => {
+        controller.startNavigation("http://localhost/elsewhere");
+      });
+      expect(signal.aborted).toBe(true);
+      let settled = false;
+      void hole.then(() => (settled = true));
+      await act(async () => tick());
+      expect(settled).toBe(false);
+      expect(loaderStore.isStreamPending("data")).toBe(false);
+      expect(page.shown(), "the newer navigation has not committed").toBe(
+        "skeleton",
+      );
+      expect(page.updates()).toBe(1);
+      const entry = page.router.store.getCachedSegments(
+        page.router.store.getHistoryKey(),
+      )!.segments;
+      expect(entry.some((s) => s.deferred)).toBe(true);
+    });
+
+    it("is aborted by a back/forward", async () => {
+      const { page, signal } = await leftWhileFilling((controller) => {
+        // handlePopstate (navigation-bridge.ts) starts here.
+        controller.abortNavigation();
+      });
+      expect(signal.aborted).toBe(true);
+      expect(page.shown()).toBe("skeleton");
+      expect(page.updates()).toBe(1);
+    });
+
+    it("control: lands when nothing leaves", async () => {
+      const { adopted, filled } = unit();
+      const page = await adopt({
+        adopted: [adopted],
+        filled: [filled],
+        render: (find) => (
+          <Suspense fallback={<Fallback />}>
+            <Unit content={find(UNIT).component} />
+          </Suspense>
+        ),
+      });
+      await page.fill(50);
+      await page.navigation;
+      expect(page.fillSignal()!.aborted).toBe(false);
+      expect(page.shown()).toBe("content");
+    });
   });
 
   // The count the model stands on. An update that hands React a tree belongs
@@ -740,7 +840,6 @@ describe("a click that adopts a prefetch, and its fill", () => {
       expect(adopted.shown()).toBe(page.ends);
       expect(adopted.updates(), "the adopted click and its fill").toBe(1);
 
-      cancelPendingFill();
       cleanup();
       const plain = await adopt({ ...page, plain: true });
       await plain.navigation;

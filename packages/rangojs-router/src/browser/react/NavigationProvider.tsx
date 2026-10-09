@@ -214,7 +214,7 @@ async function processHandles(
  * Read the handle stream of `metadata` into the event controller and the
  * entry on screen. The provider's own call for every payload it is handed,
  * and the one write for a response that hands React nothing (a fill,
- * browser/partial-update.ts settleHoles).
+ * browser/partial-update.ts fillHoles).
  */
 export function consumeHandles(
   metadata: RscMetadata,
@@ -341,10 +341,7 @@ export function NavigationProvider({
   nonce,
 }: NavigationProviderProps): ReactNode {
   // Track current payload for rendering (this triggers re-renders)
-  // `at` numbers the payloads handed to React (see commitsRef).
-  const [payload, setPayload] = useState<NavigationUpdate & { at?: number }>(
-    initialPayload,
-  );
+  const [payload, setPayload] = useState(initialPayload);
   // The location state of the entry `payload` renders (LocationStateContext).
   // Only ever set next to setPayload, or for a commit that has no payload.
   const [locationState, setLocationState] = useState(
@@ -441,24 +438,6 @@ export function NavigationProvider({
   // The last navigation's scroll decision, until React commits its update.
   const pendingScrollRef = useRef<NavigationUpdate["scroll"]>(undefined);
 
-  // NavigationUpdate.onCommit. Every payload handed to React is numbered
-  // (`at`). A commit calls back its own update and the earlier ones still
-  // waiting (React batched or superseded them: they will not commit on their
-  // own), never a later one.
-  const commitsRef = useRef({
-    count: 0,
-    waiting: [] as { at: number; onCommit: () => void }[],
-  });
-
-  useLayoutEffect(() => {
-    const { waiting } = commitsRef.current;
-    if (waiting.length === 0) return;
-    const at = payload.at ?? 0;
-    while (waiting.length > 0 && waiting[0].at <= at) {
-      waiting.shift()!.onCommit();
-    }
-  });
-
   // Apply scroll after React commits the new content to the DOM
   useLayoutEffect(() => {
     const scrollAction = pendingScrollRef.current;
@@ -487,12 +466,7 @@ export function NavigationProvider({
       // stale is replayed: every update commits, and that commit consumes.
       if (update.scroll) pendingScrollRef.current = update.scroll;
 
-      const commits = commitsRef.current;
-      const at = ++commits.count;
-      if (update.onCommit) {
-        commits.waiting.push({ at, onCommit: update.onCommit });
-      }
-      setPayload({ root: update.root, metadata: update.metadata, at });
+      setPayload({ root: update.root, metadata: update.metadata });
       // The state of the entry this payload renders, as its commit recorded
       // it: one update, so one lane, so one React commit with the tree.
       setLocationState(eventController.getLocationState());

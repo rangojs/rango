@@ -122,7 +122,8 @@ describe("navigation-client", () => {
     expect(String(fetchUrl)).toContain(
       "/products?_rsc_partial=true&_rsc_segments=root%2Cproducts&_rsc_stale=true&_rsc_v=v7",
     );
-    expect(init.signal).toBe(signal);
+    // Linked to `signal` until the response arrives (next tests).
+    expect(init.signal).toBeInstanceOf(AbortSignal);
     expect(
       (init.headers as Record<string, string>)["X-RSC-Router-Client-Path"],
     ).toBe("/current");
@@ -134,6 +135,84 @@ describe("navigation-client", () => {
     ).toBe("1");
 
     await expect(result.streamComplete).resolves.toBeUndefined();
+  });
+
+  // The signal cancels the request until its response arrives. A response
+  // that has arrived streams to its end: aborting a Flight body mid-read
+  // rejects every chunk a mounted tree may be reading. A prefetch: false fill
+  // passes its navigation's signal, which a newer navigation aborts after the
+  // fill's deferreds were resolved with the response's streams.
+  describe("the signal", () => {
+    const decode = vi.fn(async (responsePromise: Promise<Response>) => {
+      await responsePromise;
+      return { metadata: { matched: [], diff: [], isPartial: true } };
+    });
+
+    it("cancels the request while it waits for its response", async () => {
+      let init: RequestInit | undefined;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          (_input: RequestInfo | URL, requestInit?: RequestInit) =>
+            new Promise<Response>((_resolve, reject) => {
+              init = requestInit;
+              requestInit!.signal!.addEventListener("abort", () =>
+                reject(requestInit!.signal!.reason),
+              );
+            }),
+        ) as unknown as typeof fetch,
+      );
+      const client = createNavigationClient({
+        createFromFetch: decode,
+      } as any);
+      const controller = new AbortController();
+      const request = client.fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/current",
+        segmentIds: [],
+        fill: true,
+        signal: controller.signal,
+      });
+      await Promise.resolve();
+      controller.abort();
+
+      await expect(request).rejects.toMatchObject({ name: "AbortError" });
+      expect(init!.signal!.aborted).toBe(true);
+    });
+
+    it("leaves a response that has arrived to stream to its end", async () => {
+      let init: RequestInit | undefined;
+      let body!: ReadableStreamDefaultController<Uint8Array>;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (_input: RequestInfo | URL, requestInit?: RequestInit) => {
+          init = requestInit;
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                body = controller;
+              },
+            }),
+            { status: 200 },
+          );
+        }) as unknown as typeof fetch,
+      );
+      const client = createNavigationClient({
+        createFromFetch: decode,
+      } as any);
+      const controller = new AbortController();
+      await client.fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/current",
+        segmentIds: [],
+        fill: true,
+        signal: controller.signal,
+      });
+
+      controller.abort();
+      expect(init!.signal!.aborted).toBe(false);
+      body.close();
+    });
   });
 
   it("keeps fragment passthrough disabled after this document observed corruption", async () => {
