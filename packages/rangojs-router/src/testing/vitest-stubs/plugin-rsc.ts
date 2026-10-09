@@ -17,9 +17,14 @@
  *
  * Without the condition React's server build refuses to load, so the codec
  * functions throw and a "use cache" call runs uncached. Any other load failure
- * (a moved vendored path, a missing peer) throws. The action entries stay
- * inert either way: no primitive decodes an action request.
+ * (a moved vendored path, a missing peer) throws. decodeAction and
+ * decodeFormState decode a no-JS form POST under the condition, resolving its
+ * action from the modules createActionForm() registered, as do
+ * `loadServerAction` and `decodeReply` for a plain form action. Without the
+ * condition they stay inert.
  */
+
+import { loadServerModule } from "../internal/server-modules.js";
 
 /** React's server build throws this on load without the react-server condition. */
 const MISSING_REACT_SERVER_CONDITION =
@@ -52,11 +57,7 @@ async function loadFlightRuntime() {
   // Resolves the `$$decode-client:` / `$$preserve:` ids a cached value's client
   // and server references decode to; any other id would load a server module.
   core.setRequireModule({
-    load: (id) => {
-      throw new Error(
-        `plugin-rsc stub: server reference module "${id}" is not loadable in a test`,
-      );
-    },
+    load: (id) => loadServerModule(id),
   });
   return { server, client, core };
 }
@@ -121,7 +122,32 @@ export const encodeReply = (
     : unavailable("encodeReply");
 export const createClientTemporaryReferenceSet = (): unknown =>
   runtime ? runtime.client.createTemporaryReferenceSet() : {};
-export const loadServerAction = (): undefined => undefined;
-export const decodeReply = (): undefined => undefined;
-export const decodeAction = (): undefined => undefined;
-export const decodeFormState = (): undefined => undefined;
+export const loadServerAction = (id: string): Promise<unknown> | undefined => {
+  if (!runtime) return undefined;
+  const [file, name] = id.split("#");
+  return Promise.resolve(loadServerModule(file!)[name!]);
+};
+export const decodeReply = (
+  body: string | FormData,
+  options?: object,
+): Promise<unknown> | undefined =>
+  runtime
+    ? runtime.server.decodeReply(body, referenceManifest("$$server:"), options)
+    : undefined;
+export const decodeAction = (
+  body: FormData,
+): Promise<unknown> | null | undefined =>
+  runtime
+    ? runtime.server.decodeAction(body, referenceManifest("$$server:"))
+    : undefined;
+export const decodeFormState = (
+  actionResult: unknown,
+  body: FormData,
+): Promise<unknown> | undefined =>
+  runtime
+    ? runtime.server.decodeFormState(
+        actionResult,
+        body,
+        referenceManifest("$$server:"),
+      )
+    : undefined;
