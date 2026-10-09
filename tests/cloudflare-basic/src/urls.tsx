@@ -312,6 +312,7 @@ import { buildEnvDirectPatterns } from "./pages/build-env-direct-handler.js";
 import { ActionLocationStatePage } from "./pages/action-location-state.js";
 import { renderedBarrierPatterns } from "./pages/rendered-barrier.js";
 import { prefetchTransitionPatterns } from "./pages/prefetch-transition.js";
+import { lateHistoryPatterns } from "./pages/late-history.js";
 import { heldBoundaryPatterns } from "./pages/held-boundary.js";
 import { suspenseCasesPatterns } from "./pages/suspense-cases.js";
 import { txWhenPatterns } from "./pages/tx-when.js";
@@ -2823,6 +2824,7 @@ export const urlpatterns = urls(
         // layout-hold contract (mirrors the router e2e app).
         include("/", prefetchTransitionPatterns, { name: "" }),
         include("/", heldBoundaryPatterns, { name: "" }),
+        include("/", lateHistoryPatterns, { name: "" }),
         include("/", suspenseCasesPatterns, { name: "sc" }),
         // transition({ when }) conditional-gate coverage (mirrors the router
         // e2e app's /tx-when/:hold/:n).
