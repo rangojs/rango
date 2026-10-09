@@ -59,6 +59,7 @@ function createMockEventController(pathname = "/products/123") {
   const location = new URL(`http://localhost${pathname}`);
   return {
     getState: vi.fn(() => ({ location })),
+    getHydrationSnapshot: vi.fn(() => undefined),
     subscribe: vi.fn((_cb: () => void) => vi.fn()),
   };
 }

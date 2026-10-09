@@ -1261,58 +1261,97 @@ describe("createEventController", () => {
     });
   });
 
-  // Issue #1035: a render React is hydrating reads the handle state the
-  // document's HTML was rendered with (useHandle), whenever its boundary
-  // hydrates. The controller keeps that state from before hydrateRoot.
-  describe("hydration handle state", () => {
-    it("is undefined until the live state moves on from the frozen one", () => {
-      const ctrl = createController();
-      expect(ctrl.getHydrationHandleState()).toBeUndefined();
-
-      ctrl.setHandleData({ Notes: { R0: ["document"] } }, ["R0"]);
-      ctrl.freezeHydrationHandleState();
-
-      // Nothing arrived since: the live state is the document's state.
-      expect(ctrl.getHydrationHandleState()).toBeUndefined();
-    });
-
-    it("keeps the frozen state after a late (full) update", () => {
+  // Issue #1035: a component React hydrates, however late its boundary,
+  // renders what the document's HTML was rendered with. The controller keeps
+  // that state from before hydrateRoot until NavigationProvider releases it.
+  describe("hydration window", () => {
+    it("holds the document's handle state, and handle writes wait until release", () => {
       const ctrl = createController();
       ctrl.setHandleData({ Notes: { R0: ["document"] } }, ["L0", "R0"]);
-      ctrl.freezeHydrationHandleState();
+      vi.advanceTimersByTime(0);
+      ctrl.lockHydration();
+      const listener = vi.fn();
+      ctrl.subscribeToHandles(listener);
 
       ctrl.setHandleData({ Notes: { R0: ["document", "late"] } }, ["L0", "R0"]);
+      ctrl.setRouteSegmentIds(["L0", "R1"]);
+      vi.advanceTimersByTime(0);
 
-      expect(ctrl.getHydrationHandleState()).toEqual({
+      expect(ctrl.getHandleState()).toEqual({
         data: { Notes: { R0: ["document"] } },
         segmentOrder: ["L0", "R0"],
         routeSegmentIds: ["L0", "R0"],
       });
-      expect(ctrl.getHandleState().data).toEqual({
-        Notes: { R0: ["document", "late"] },
-      });
+      expect(listener).not.toHaveBeenCalled();
     });
 
-    it("a partial update merges into the live state, not into the frozen one", () => {
+    it("release applies the writes that waited, in order, and notifies once", () => {
       const ctrl = createController();
       ctrl.setHandleData(
         { Notes: { L0: ["layout"], R0: ["document"] }, Meta: { R0: ["m"] } },
         ["L0", "R0"],
       );
-      ctrl.freezeHydrationHandleState();
+      ctrl.lockHydration();
+      const listener = vi.fn();
+      ctrl.subscribeToHandles(listener);
 
-      // A navigation's partial payload: R0 re-resolved, pushed Notes only.
+      // A late full update, then a partial update over it: R0 re-resolved
+      // and pushed Notes only, so its Meta bucket is stale.
+      ctrl.setHandleData(
+        { Notes: { L0: ["layout"], R0: ["late"] }, Meta: { R0: ["m"] } },
+        ["L0", "R0"],
+      );
       ctrl.setHandleData({ Notes: { R0: ["navigated"] } }, ["L0", "R0"], true, [
         "R0",
       ]);
+      ctrl.releaseHydrationLock();
 
-      expect(ctrl.getHydrationHandleState()?.data).toEqual({
-        Notes: { L0: ["layout"], R0: ["document"] },
-        Meta: { R0: ["m"] },
-      });
       expect(ctrl.getHandleState().data).toEqual({
         Notes: { L0: ["layout"], R0: ["navigated"] },
         Meta: {},
+      });
+      expect(listener).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(0);
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the document's navigation state and params while the live state moves on", () => {
+      const ctrl = createController("/items/7");
+      ctrl.setParams({ id: "7" });
+      expect(ctrl.getHydrationSnapshot()).toBeUndefined();
+      ctrl.lockHydration();
+
+      ctrl.startNavigation("/items/8");
+      ctrl.setParams({ id: "8" });
+
+      const snapshot = ctrl.getHydrationSnapshot();
+      expect(snapshot?.state.state).toBe("idle");
+      expect(snapshot?.state.pendingUrl).toBeNull();
+      expect(snapshot?.state.location.href).toBe("http://localhost/items/7");
+      expect(snapshot?.params).toEqual({ id: "7" });
+      // The live state is not held.
+      expect(ctrl.getState().state).toBe("loading");
+      expect(ctrl.getParams()).toEqual({ id: "8" });
+
+      ctrl.releaseHydrationLock();
+      expect(ctrl.getHydrationSnapshot()).toBeUndefined();
+    });
+
+    it("release is idempotent, and a no-op when the window was never opened", () => {
+      const ctrl = createController();
+      ctrl.setHandleData({ Notes: { R0: ["document"] } }, ["R0"]);
+      const listener = vi.fn();
+      ctrl.subscribeToHandles(listener);
+
+      ctrl.releaseHydrationLock();
+      expect(listener).not.toHaveBeenCalled();
+
+      ctrl.lockHydration();
+      ctrl.releaseHydrationLock();
+      ctrl.releaseHydrationLock();
+      expect(ctrl.getHydrationSnapshot()).toBeUndefined();
+      expect(ctrl.getHandleState().data).toEqual({
+        Notes: { R0: ["document"] },
       });
     });
 
@@ -1331,18 +1370,6 @@ describe("createEventController", () => {
       expect(restored).toEqual({ Notes: { L0: ["layout"], R0: ["entry"] } });
       expect(ctrl.getHandleState().data).toEqual({
         Notes: { L0: ["layout"], R0: ["navigated"] },
-      });
-    });
-
-    it("a partial update that changes nothing still moves the live state on", () => {
-      const ctrl = createController();
-      ctrl.setHandleData({ Notes: { R0: ["document"] } }, ["R0"]);
-      ctrl.freezeHydrationHandleState();
-
-      ctrl.setHandleData({}, ["R0"], true);
-
-      expect(ctrl.getHydrationHandleState()?.data).toEqual({
-        Notes: { R0: ["document"] },
       });
     });
   });

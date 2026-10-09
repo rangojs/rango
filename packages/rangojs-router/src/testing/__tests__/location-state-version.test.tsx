@@ -128,6 +128,7 @@ async function hydrateReaders(): Promise<{
           root: <Readers />,
           metadata: app.initialPayload.metadata!,
         }}
+        hydration={{ settled: app.documentRevealed }}
       />
     );
     root = hydrateRoot(container, routed, {

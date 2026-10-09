@@ -40,10 +40,9 @@ bake into the shell. See `/loader` → "Writing Handles from Loaders". `useHandl
 re-renders on every handle update, late loader pushes included.
 
 On a document load `useHandle` hydrates with the handle data its HTML was
-rendered from, then takes whatever arrived since. That holds wherever the
-reader sits: a reader inside a `<Suspense>` or `loading()` boundary, which
-hydrates after the rest of the page, does not see a late loader push during
-its hydration render, so it cannot mismatch its server HTML.
+rendered from, wherever the reader sits; late loader pushes reach every reader
+once the document has finished streaming and every boundary has hydrated (see
+`SKILL.md`, "Hydration").
 
 Handles can be passed as props from server to client components:
 

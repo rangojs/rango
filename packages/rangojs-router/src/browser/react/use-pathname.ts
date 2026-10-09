@@ -26,7 +26,10 @@ export function usePathname(): string {
     if (!ctx) {
       return "/";
     }
-    return (ctx.eventController.getState().location as URL).pathname;
+    const state =
+      ctx.eventController.getHydrationSnapshot()?.state ??
+      ctx.eventController.getState();
+    return (state.location as URL).pathname;
   });
 
   const prevPathname = useRef(pathname);

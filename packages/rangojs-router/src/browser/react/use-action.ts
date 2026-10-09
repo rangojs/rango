@@ -149,7 +149,10 @@ export function useAction<T>(
     if (!ctx) {
       return selector ? selector(DEFAULT_ACTION_STATE) : DEFAULT_ACTION_STATE;
     }
-    const state = ctx.eventController.getActionState(actionId);
+    // The document renders no action in flight.
+    const state = ctx.eventController.getHydrationSnapshot()
+      ? DEFAULT_ACTION_STATE
+      : ctx.eventController.getActionState(actionId);
     return selector ? selector(state) : state;
   });
   const prevSelected = useRef(baseState);
