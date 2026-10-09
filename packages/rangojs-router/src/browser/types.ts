@@ -1,4 +1,5 @@
 import type { ReactNode, ComponentType } from "react";
+import type { ReactFormState } from "react-dom/client";
 import type { ResolvedSegment, SlotState } from "../types.js";
 import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
 import type { RenderSegmentsOptions } from "../segment-system.js";
@@ -14,6 +15,11 @@ import type { RenderSegmentsOptions } from "../segment-system.js";
 export interface RscPayload<TMetadata = RscMetadata> {
   metadata?: TMetadata;
   returnValue?: ActionResult;
+  /**
+   * Form state of a PE POST document, for hydrateRoot's `formState` option.
+   * Rejects when the action's state is not Flight-serializable.
+   */
+  formState?: Promise<ReactFormState>;
 }
 
 /**

@@ -1415,6 +1415,19 @@ A HIT runs no handler: it replays the handler output the capture baked. Count
 a handler's runs across the MISS and the HITs after it to pin that; only a
 loader under `loading()` runs again.
 
+#### A form submitted before hydration
+
+`serveShellRequest(router, url, { form })` POSTs the form a browser sends before
+the page hydrates, through the production no-JS path (action, re-render, the
+document payload). Build the body with `createActionForm(action, { id })`; it
+writes React's `$ACTION_REF_` fields (or `$ACTION_ID_` with
+`useActionState: false`) and registers `action` where the Flight stub's
+`decodeAction` resolves it. `result.formState` is what the SSR render received
+and `await result.readPayloadFormState()` is the payload's `formState`, the
+value the browser entry hands `hydrateRoot` so a hydrated `useActionState` does
+not reset (#1087). A GET, a plain-form POST and a redirecting action carry none. A state Flight cannot serialize leaves the document intact and makes `readPayloadFormState()` reject. `fields` carries the form's own fields to the action.
+The hydration itself stays e2e.
+
 ## E2E with dev/prod and PE parity
 
 ### parityDescribe — the default unit of organization
