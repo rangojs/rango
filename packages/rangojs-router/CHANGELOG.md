@@ -47,6 +47,69 @@ of them reads it during render. What you can notice:
   router store. A `<Link>` rendered outside a router no longer sets `data-external`
   on an absolute URL to another origin; its click still navigates natively.
 
+### Fixed: a `useActionState` result from a form submitted before hydration survives hydration
+
+Before: a form using `useActionState` that was submitted before the page hydrated
+(a slow connection, a cold start) posted natively, and the server rendered the
+page with the action's result. Then the client hydrated, `useActionState` started
+again from its initial state, and the result disappeared. For a value shown once
+(a fresh API token, an invite link) the person never saw it and could not get it
+back.
+
+Now: the result is still on screen after hydration. The progressive-enhancement
+re-render carries the decoded form state in the document payload
+(`RscPayload.formState`, a promise, only for a `useActionState` submit, so a
+GET adds no bytes), and the generated browser entry hands it to React:
+`hydrateRoot(document, app, formState ? { formState } : undefined)`.
+
+Nothing changes for an app on the generated entry. An app with a custom browser
+entry (one that calls `initBrowserApp` and `hydrateRoot` itself) passes the same
+option:
+
+```tsx
+const { initialPayload } = await initBrowserApp({ rscStream, deps });
+// Rejects when the action's state is not Flight-serializable.
+const formState = await Promise.resolve(initialPayload.formState).catch(
+  () => undefined,
+);
+hydrateRoot(document, app, formState ? { formState } : undefined);
+```
+
+As on the JS path, the state an action returns must be Flight-serializable to
+survive hydration. A state that is not (a class instance, a function) still
+renders in the HTML with status 200, and the page hydrates and resets the hook
+to its initial state, as before this change. One thing is new for that case: the
+payload's form state slot rejects, so your `onError` now receives a `rendering`
+phase error ("Only plain objects... can be passed to Client Components") for the
+POST. Before, the state only reached the server-side HTML render, so nothing
+reported it.
+
+What does not change: a normal GET, a POST whose action redirects, and a POST
+whose action throws into an `errorBoundary()` render and hydrate as before. A
+throw with no boundary re-renders with status 500 and the hook hydrates as
+`undefined`, what the server rendered, instead of mismatching and resetting to
+its initial state.
+
+### Added: test a form submitted before hydration with `createActionForm` and `serveShellRequest({ form })`
+
+`@rangojs/router/testing/flight` builds the POST a form sends before hydration
+and serves it through the production no-JS path, so a unit test can pin what a
+person sees after it:
+
+```tsx
+const form = createActionForm(makeToken, { id: "actions/token#makeToken" });
+const result = await serveShellRequest(router, "/token", { form });
+expect(result.formState).toEqual([
+  { token: "tok-1" },
+  "k0",
+  "actions/token#makeToken",
+  0,
+]);
+expect(await result.readPayloadFormState()).toEqual(result.formState);
+```
+
+`useActionState: false` builds a plain `<form action={fn}>` POST instead.
+
 ### Fixed: `useLoader` no longer makes React log a conditional `use()` in development
 
 A `useLoader` read that mounted while its loader was still streaming, and that a

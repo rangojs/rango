@@ -727,13 +727,18 @@ export interface RangoProps {}
  * import * as rscBrowser from "@vitejs/plugin-rsc/browser";
  *
  * async function main() {
- *   await initBrowserApp({ rscStream, deps: rscBrowser });
+ *   const { initialPayload } = await initBrowserApp({ rscStream, deps: rscBrowser });
+ *   // Rejects when the action's state is not Flight-serializable.
+ *   const formState = await Promise.resolve(initialPayload.formState).catch(
+ *     () => undefined,
+ *   );
  *
  *   hydrateRoot(
  *     document,
  *     <React.StrictMode>
  *       <Rango />
- *     </React.StrictMode>
+ *     </React.StrictMode>,
+ *     formState ? { formState } : undefined
  *   );
  * }
  * main();

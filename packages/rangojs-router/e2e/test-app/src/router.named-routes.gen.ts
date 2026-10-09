@@ -349,6 +349,7 @@ export const NamedRoutes = {
   "paramsAfterAction.error": "/params-after-action/error/:postId/section/:section",
   "paramsAfterAction.show": "/params-after-action/:postId/section/:section",
   parityCounter: "/parity-counter",
+  peFormState: "/pe-form-state",
   peHeader: "/pe-header",
   peRedirect: "/pe-redirect",
   "plainProduct.detail": "/plain-product/:id",

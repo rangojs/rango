@@ -84,11 +84,23 @@ interface StubCtxOptions {
   matchErrorResult: unknown;
   // Captures the Request passed to router.match during the PE re-render.
   onMatch?: (request: Request) => void;
+  // The form state decodeFormState resolves (default null: no useActionState).
+  formState?: unknown;
+  // The RSC payload and the SSR render options the re-render produced.
+  onPayload?: (payload: unknown) => void;
+  onRenderOptions?: (options: unknown) => void;
+}
+
+function closedStream(): ReadableStream<Uint8Array> {
+  return new ReadableStream({ start: (controller) => controller.close() });
 }
 
 function makeStubCtx(opts: StubCtxOptions): HandlerContext<unknown> {
   const ssrModule = {
-    renderHTML: vi.fn(async () => new ReadableStream()),
+    renderHTML: vi.fn(async (_stream: unknown, options?: unknown) => {
+      opts.onRenderOptions?.(options);
+      return closedStream();
+    }),
   };
   return {
     version: "v-test",
@@ -127,8 +139,12 @@ function makeStubCtx(opts: StubCtxOptions): HandlerContext<unknown> {
         }
       };
     },
-    decodeFormState: async () => null,
-    renderToReadableStream: () => new ReadableStream(),
+    decodeAction: async () => async () => ({ ok: true }),
+    decodeFormState: async () => opts.formState ?? null,
+    renderToReadableStream: (payload: unknown) => {
+      opts.onPayload?.(payload);
+      return closedStream();
+    },
     loadSSRModule: async () => ssrModule,
     resolveStreamMode: async () => "stream",
   } as unknown as HandlerContext<unknown>;
@@ -284,5 +300,81 @@ describe("handleProgressiveEnhancement — transition({ when }) never runs on th
     expect(res).not.toBeNull();
     expect(when).not.toHaveBeenCalled();
     errSpy.mockRestore();
+  });
+});
+
+// #1087: hydrateRoot needs the form state the SSR render received, so the PE
+// re-render carries it in the payload too, and only when there is one.
+describe("handleProgressiveEnhancement — form state reaches the client (#1087)", () => {
+  function buildUseActionStateRequest(): Request {
+    const fd = new FormData();
+    fd.set("$ACTION_REF_1", "");
+    fd.set("$ACTION_1:0", JSON.stringify({ id: "a#b", bound: "$@1" }));
+    fd.set("$ACTION_1:1", JSON.stringify([null]));
+    fd.set("$ACTION_KEY", "k0");
+    return new Request("http://localhost/pe", { method: "POST", body: fd });
+  }
+
+  async function rerender(
+    request: Request,
+    formState: unknown,
+    nonce?: string,
+  ) {
+    const reqCtx = makeReqCtx(request);
+    let payload: { formState?: Promise<unknown> } | undefined;
+    let renderOptions: { formState?: unknown } | undefined;
+    const ctx = makeStubCtx({
+      actionThrows: false,
+      matchErrorResult: null,
+      formState,
+      onPayload: (p) => (payload ??= p as typeof payload),
+      onRenderOptions: (o) => (renderOptions = o as typeof renderOptions),
+    });
+    const res = await runWithRequestContext(reqCtx, () =>
+      handleProgressiveEnhancement(
+        ctx,
+        request,
+        {},
+        new URL(request.url),
+        false,
+        reqCtx._handleStore,
+        nonce,
+      ),
+    );
+    expect(res).not.toBeNull();
+    // The HTML stage runs lazily with the response stream.
+    await res!.text().catch(() => {});
+    return { payload, renderOptions };
+  }
+
+  it("puts the decoded form state, the same value SSR renders with, in the payload", async () => {
+    const formState = [{ token: "t" }, "k0", "a#b", 0];
+    const { payload, renderOptions } = await rerender(
+      buildUseActionStateRequest(),
+      formState,
+    );
+
+    // A promise, so an unserializable state rejects only its own slot.
+    expect(payload?.formState).toBeInstanceOf(Promise);
+    await expect(payload?.formState).resolves.toBe(formState);
+    expect(renderOptions?.formState).toBe(formState);
+  });
+
+  it("passes the nonce through beside the form state", async () => {
+    const formState = [{ token: "t" }, "k0", "a#b", 0];
+    const { renderOptions } = await rerender(
+      buildUseActionStateRequest(),
+      formState,
+      "n-1",
+    );
+
+    expect(renderOptions).toMatchObject({ formState, nonce: "n-1" });
+  });
+
+  it("leaves formState off the payload when the POST carries no useActionState state", async () => {
+    const { payload } = await rerender(buildDirectActionRequest(), null);
+
+    expect(payload).toBeDefined();
+    expect("formState" in payload!).toBe(false);
   });
 });

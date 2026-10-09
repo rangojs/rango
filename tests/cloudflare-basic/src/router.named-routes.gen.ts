@@ -106,6 +106,7 @@ export const NamedRoutes = {
   outerLive: "/outer-live",
   "parallelNewSlotReval.noSlot": "/parallel-new-slot-reval/no-slot",
   "parallelNewSlotReval.withSlot": "/parallel-new-slot-reval/with-slot",
+  peFormState: "/pe-form-state",
   pprBakeSlow: "/ppr-shell/bake-slow",
   pprBasket: "/ppr-basket",
   pprBlog: "/ppr-blog",

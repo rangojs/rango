@@ -293,6 +293,35 @@ expect(hit.shellStatus).toBe("HIT");
 - `router.fetch` binds its handler's document version once, as a production
   isolate does, so `setBuildVersions()` between two warms does not move it.
 
+## A form submitted before hydration
+
+`serveShellRequest(router, url, { form })` POSTs a form the way a browser does before the page hydrates, through the production no-JS path: the action runs, the page re-renders, and for a `useActionState` form the document payload carries the form state. Build the body with `createActionForm(action, { id })` from the same entry; it writes React's hidden fields and registers `action` under `id` (`<module id>#<export name>`, any unique string of that shape in a test).
+
+```tsx
+import {
+  createActionForm,
+  serveShellRequest,
+} from "@rangojs/router/testing/flight";
+
+const form = createActionForm(makeToken, { id: "actions/token#makeToken" });
+const result = await serveShellRequest(router, "/token", { form });
+
+// What the SSR render received, and what the browser entry hands hydrateRoot:
+expect(result.formState).toEqual([
+  { token: "tok-1" },
+  "k0",
+  "actions/token#makeToken",
+  0,
+]);
+expect(await result.readPayloadFormState()).toEqual(result.formState);
+```
+
+- `useActionState: false` builds a plain `<form action={fn}>` POST (`$ACTION_ID_`): the action runs as `(formData)` and no form state is carried. Default true runs `(prevState, formData)` with the hook's initial `null`. `fields` are the form's own fields (`formData.get("name")`).
+- An action returning a state Flight cannot serialize (a class instance) still renders the document with status 200 and `formState` holds the raw value, but `readPayloadFormState()` rejects: the entry catches that and hydrates without it, as before the fix.
+- A GET, a plain-form POST and a redirecting action carry no form state: `formState` and `readPayloadFormState()` are undefined, a redirect has no `flight`.
+- Request headers come from `headers`. No `Origin` is sent by default, which the origin guard allows.
+- Not with `partial`. The hydration itself (`hydrateRoot` taking the state, the hook not resetting) is e2e.
+
 ## Caveats
 
 What the HTML stub cannot reproduce, so keep it in e2e:
@@ -308,7 +337,7 @@ Other caveats:
 - Call `resetShellTestState()` in `beforeEach` (see above). Without it, a URL a previous test left backed off, or a shell memoized by another `CFCacheStore`, changes what the next test sees.
 - `readEntry()` reads the document entry under `key`. A partial request that finds no entry captures a navigation-only entry, which is stored apart from it.
 - `updateTag()` needs a request context with the store: call it through `runInRequestContext(fn, { cacheStore })` or your app's own endpoint (`dispatch`). A store refuses a capture that starts in the invalidation's millisecond (the invalidation wins) and backs the key off; `serveShellRequest` starts each request in a later millisecond than the call, so an invalidation made before the call cannot collide with it.
-- GET only. Server actions are not served; test their effects with `runInRequestContext`.
+- GET, and one POST shape: a form submitted before hydration (see "A form submitted before hydration" above). Other server action requests are not served; test their effects with `runInRequestContext`.
 - Same setup as every Flight test: the react-server condition and `rangoTestAliases()` (see [`./setup.md`](./setup.md)).
 
 ## See also

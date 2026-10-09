@@ -314,6 +314,7 @@ import { renderedBarrierPatterns } from "./pages/rendered-barrier.js";
 import { prefetchTransitionPatterns } from "./pages/prefetch-transition.js";
 import { lateHistoryPatterns } from "./pages/late-history.js";
 import { heldBoundaryPatterns } from "./pages/held-boundary.js";
+import { peFormStatePatterns } from "./pages/pe-form-state.js";
 import { suspenseCasesPatterns } from "./pages/suspense-cases.js";
 import { txWhenPatterns } from "./pages/tx-when.js";
 import { interceptWhenShapePatterns } from "./pages/intercept-when-shape.js";
@@ -2825,6 +2826,7 @@ export const urlpatterns = urls(
         include("/", prefetchTransitionPatterns, { name: "" }),
         include("/", heldBoundaryPatterns, { name: "" }),
         include("/", lateHistoryPatterns, { name: "" }),
+        include("/", peFormStatePatterns, { name: "" }),
         include("/", suspenseCasesPatterns, { name: "sc" }),
         // transition({ when }) conditional-gate coverage (mirrors the router
         // e2e app's /tx-when/:hold/:n).
