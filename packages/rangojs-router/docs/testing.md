@@ -736,9 +736,9 @@ cause is usually a missing `mount` seed, not an auto-fill gap.)
 Everything above mounts with `createRoot`. That is the right default, and it has
 one blind spot: a component never runs its **hydration** render. On a document
 load React renders the component on the server, then renders it again in the
-browser against that HTML, and the two must agree. `useSyncExternalStore` reads
-`getServerSnapshot` for both, and only then switches to the client snapshot. A
-fresh mount skips all of that, so a hook can be correct under `renderRoute` and
+browser against that HTML, and the two must agree: React adopts the server DOM
+nodes, and anything the hydration render reads that the server render did not
+see is a mismatch. A fresh mount skips all of that, so a hook can be correct under `renderRoute` and
 still mismatch in production. That is how #992 got through: `useLocationState`
 inside a `<Suspense>` boundary hydrated after the root had marked the page
 hydrated, read `history.state` during that hydration render, and disagreed with

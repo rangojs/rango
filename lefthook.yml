@@ -26,6 +26,9 @@ pre-commit:
     - name: skills
       run: node tools/check-skills.mjs
       glob: "packages/rangojs-router/skills/**"
+    - name: no-external-store
+      run: node tools/check-no-external-store.mjs
+      glob: "*.{ts,tsx,js,jsx,mjs,cjs,mts,cts,json}"
     - name: skills-catalog
       run: node tools/generate-skills-catalog.mjs --check
       glob: "packages/rangojs-router/skills/**"

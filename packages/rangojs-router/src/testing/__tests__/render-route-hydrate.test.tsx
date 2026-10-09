@@ -1,12 +1,5 @@
 // @vitest-environment happy-dom
-import {
-  Suspense,
-  use,
-  useEffect,
-  useState,
-  useSyncExternalStore,
-  type ReactNode,
-} from "react";
+import { Suspense, use, useEffect, useState, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   act,
@@ -54,21 +47,22 @@ function Env() {
 
 describe("renderRoute: hydrate", () => {
   it("server-renders the tree, then hydrates that HTML into an interactive root", async () => {
-    // A hydration render returns the server snapshot; a fresh mount never does.
-    const snapshots: string[] = [];
+    // Hydration adopts the server-rendered node; a client render replaces it.
+    const adopted: Array<{ found: Element | null; attached: Element | null }> =
+      [];
     function Counter() {
       const { id } = useParams<{ id: string }>();
-      const snapshot = useSyncExternalStore(
-        () => () => {},
-        () => "client",
-        () => "server",
-      );
-      snapshots.push(snapshot);
+      const found =
+        currentPass() === "client"
+          ? document.querySelector('[data-testid="counter"]')
+          : null;
       const [count, setCount] = useState(0);
       return (
         <button
           data-testid="counter"
-          data-snapshot={snapshot}
+          ref={(node) => {
+            if (node) adopted.push({ found, attached: node });
+          }}
           onClick={() => setCount((n) => n + 1)}
         >
           {`${id}:${count}`}
@@ -81,14 +75,13 @@ describe("renderRoute: hydrate", () => {
       { request: "/items/7", hydrate: true },
     );
 
-    expect(serverHtml).toBe(
-      '<button data-testid="counter" data-snapshot="server">7:0</button>',
-    );
-    expect(snapshots).toEqual(["server", "server", "client"]);
+    expect(serverHtml).toBe('<button data-testid="counter">7:0</button>');
     expect(recoverableErrors).toEqual([]);
 
     const button = getByTestId("counter");
-    expect(button.getAttribute("data-snapshot")).toBe("client");
+    expect(adopted[0]?.found).not.toBeNull();
+    expect(adopted[0]?.attached).toBe(adopted[0]?.found);
+    expect(button).toBe(adopted[0]?.found);
     fireEvent.click(button);
     expect(button.textContent).toBe("7:1");
   });

@@ -9,7 +9,7 @@ Contract for any coding agent in this repo (CLAUDE.md symlinks here). **Hard rul
 - `tests/` — consumer app suites (cloudflare-basic, vite-rsc-demo, no-typescript, react-experimental, …) that dogfood the published API.
 - `examples/`, `apps/` — example/demo apps. Examples are API surface: an old pattern in an example reads as endorsed.
 - `docs/` (root) and `packages/rangojs-router/docs/` — design docs and internal reference docs.
-- `tools/` — repo check scripts (`check:e2e-bucketing`, `check:docs-api`, bundle analyzer, …).
+- `tools/` — repo check scripts (`check:e2e-bucketing`, `check:docs-api`, `check:no-external-store`, bundle analyzer, …).
 
 ## If you are about to…
 
@@ -43,7 +43,7 @@ Contract for any coding agent in this repo (CLAUDE.md symlinks here). **Hard rul
 8. **Router hooks depend only on the router store. External stores are strictly forbidden.**
    - Every router hook (`useNavigation`, `useAction`, `useHandle`, `useLinkStatus`, `usePathname`, `useParams`, `useSearchParams`, `useLocationState`, `useLoader`, and any new one) depends only on the router store, its single source of truth, reached through `NavigationStoreContext`.
    - `startTransition` and `useOptimistic` are the only escapes.
-   - Anything that is an external store is strictly forbidden, in every package and app: `useSyncExternalStore`, its shim, any store library, or a second source of truth for a hook (module-level state, a separate registry, `window.history` / `window.location`).
+   - Anything that is an external store is strictly forbidden, in every package and app: `useSyncExternalStore`, its shim, any store library, or a second source of truth for a hook (module-level state, a separate registry, `window.history` / `window.location`). `pnpm check:no-external-store` (CI lint + pre-commit) catches `useSyncExternalStore`, its shim, store-library imports and dependencies, and render-time reads of the router controller; review covers the rest.
 9. **AGENTS.md holds instructions only.** Never use it for note-taking: no status, history, measurements, logs, lists of current violations or TODOs. Delete any note found here before any other work.
 
 ## Definition of done (shipping a feature)
