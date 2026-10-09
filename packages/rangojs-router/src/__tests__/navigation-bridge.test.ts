@@ -42,6 +42,7 @@ function createEventController() {
   return {
     abortNavigation: vi.fn(),
     getHandleState: vi.fn(() => ({ data: {} })),
+    getHydrationSnapshot: vi.fn(() => undefined),
     commitLocationState: vi.fn(),
   };
 }

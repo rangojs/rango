@@ -6,6 +6,7 @@ import {
 import {
   createNavigationStore,
   generateHistoryKey,
+  liveHandleDataForCache,
 } from "./navigation-store.js";
 import { createEventController } from "./event-controller.js";
 import { resolveDeferredHandleValues } from "../handles/deferred-resolution.js";
@@ -588,7 +589,11 @@ export async function initBrowserApp(
               intercept: responseIsIntercept,
             });
             store.setHistoryKey(historyKey);
-            const currentHandleData = eventController.getHandleState().data;
+            const currentHandleData = liveHandleDataForCache(
+              eventController,
+              store,
+              historyKey,
+            );
             store.cacheSegmentsForHistory(
               historyKey,
               segments,
