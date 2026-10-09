@@ -42,7 +42,7 @@ import {
   type OwnedPushDelivery,
   encodeHandles,
 } from "./handle-snapshot.js";
-import { cacheKeyBase, composeCacheKeys } from "./cache-key-utils.js";
+import { composeCacheKeys, requestKeyBase } from "./cache-key-utils.js";
 import {
   DEFAULT_ROUTE_TTL,
   isFiniteNonNegativeSeconds,
@@ -138,7 +138,7 @@ function getDefaultRouteCacheKey(
     ? "intercept"
     : (prefixOverride ?? (isPartial ? "partial" : "doc"));
 
-  return `${prefix}:${cacheKeyBase(host, pathname, searchParams, params, ctx?._searchParamsFilter)}`;
+  return `${prefix}:${requestKeyBase(ctx, host, pathname, searchParams, params, ctx?._searchParamsFilter)}`;
 }
 
 // ============================================================================
@@ -1105,15 +1105,25 @@ export class CacheScope {
         // the tree) or a rejected handle value as an error row and completes
         // normally; stored, every HIT would render that error until expiry.
         if (flightErrors.length > 0) throw flightErrors[0];
+        // A streamed handler recovered into its boundary fallback resolves, so
+        // Flight reports nothing; refuse like a Flight error row.
+        const recovered = requestCtx._recoveredHandlerErrors;
+        if (recovered?.size) {
+          const failed = nonLoaderSegments.find((s) => recovered.has(s.id));
+          if (failed) throw recovered.get(failed.id);
+        }
 
+        const recordTags = collectRecordTags(requestCtx, tags, [
+          ...nonLoaderSegments.map((s) => s.id),
+          handlesOwnerId,
+        ]);
         const data: CachedEntryData = {
           segments: serializedSegments,
           handles: encodedHandles,
           expiresAt: Date.now() + ttl * 1000,
-          tags: collectRecordTags(requestCtx, tags, [
-            ...nonLoaderSegments.map((s) => s.id),
-            handlesOwnerId,
-          ]),
+          tags: recordTags,
+          // The stamp is the render's start, not the write's (#1068).
+          ...(start && recordTags?.length ? { taggedAt: start.at } : {}),
         };
         if (handleOwners && encodedHandles) data.handleOwners = handleOwners;
 
@@ -1177,7 +1187,7 @@ function collectRecordTags(
  * enclosing scopes on another store (#974) and of a scope without its own
  * `key()` (#970)); with none, the app store's keyGenerator result
  * given the document default key. Undefined (synchronously, with no work)
- * when neither applies: the shell key stays host + path + filtered search.
+ * when neither applies: the shell key stays unpartitioned (buildShellKey).
  * Resolves to null when the partition is the default key itself (a
  * keyGenerator that returns it unchanged): that partitions nothing, so the
  * shell stays unpartitioned and keeps its build shell. The shell's key, its

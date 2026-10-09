@@ -82,14 +82,15 @@ export function useLinkStatus(): LinkStatus {
   const linkTo = useContext(LinkContext);
   const ctx = useContext(NavigationStoreContext);
 
-  const origin =
-    typeof window !== "undefined" ? window.location.origin : "http://localhost";
+  const origin = ctx?.origin ?? "http://localhost";
 
   const [basePending, setBasePending] = useState<boolean>(() => {
     if (!ctx || linkTo === null) {
       return false;
     }
-    const state = ctx.eventController.getState();
+    const state =
+      ctx.eventController.getHydrationSnapshot()?.state ??
+      ctx.eventController.getState();
     return isPendingFor(linkTo, state.pendingUrl, origin);
   });
 

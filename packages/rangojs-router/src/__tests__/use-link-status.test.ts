@@ -58,6 +58,7 @@ function createMockEventController(pendingUrl: string | null = null) {
       state: pendingUrl ? "loading" : "idle",
       pendingUrl,
     })),
+    getHydrationSnapshot: vi.fn(() => undefined),
     subscribe: vi.fn((_cb: () => void) => vi.fn()),
   };
 }
@@ -124,6 +125,7 @@ describe("useLinkStatus", () => {
         state: pendingUrl ? "loading" : "idle",
         pendingUrl,
       })),
+      getHydrationSnapshot: vi.fn(() => undefined),
       subscribe: vi.fn((_cb: () => void) => vi.fn()),
     };
     wireContexts("/dashboard", { eventController: ec });
@@ -170,6 +172,7 @@ describe("useLinkStatus", () => {
     let pendingUrl: string | null = null;
     const ec = {
       getState: vi.fn(() => ({ state, pendingUrl })),
+      getHydrationSnapshot: vi.fn(() => undefined),
       subscribe: vi.fn((_cb: () => void) => vi.fn()),
     };
     wireContexts("/dashboard", { eventController: ec });
@@ -203,6 +206,7 @@ describe("useLinkStatus", () => {
     let pendingUrl: string | null = null;
     const ec = {
       getState: vi.fn(() => ({ state, pendingUrl })),
+      getHydrationSnapshot: vi.fn(() => undefined),
       subscribe: vi.fn((_cb: () => void) => vi.fn()),
     };
     wireContexts("/dashboard", { eventController: ec });

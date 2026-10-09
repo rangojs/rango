@@ -501,7 +501,7 @@ function* shellServePlan<TEnv>(
   // other visitor. Every step below, a HIT included, therefore runs without
   // one.
   const store = reqCtx._cacheStore;
-  const baseKey = buildShellKey(url, reqCtx._searchParamsFilter);
+  const baseKey = buildShellKey(ctx.router.id, url, reqCtx._searchParamsFilter);
   if (activeRequestNonce(nonce, reqCtx) !== undefined) {
     // Declared intent that cannot be honored deserves a diagnostic (unlike an
     // undeclared route, which is silent): a ppr route gated off by an active
@@ -714,17 +714,23 @@ function* shellServePlan<TEnv>(
     // route warned. A search-bearing URL never reads one: nothing to probe.
     const routeName = reqCtx._classifiedRoute?.routeKey;
     if (
-      !partitionBuildShellCheckDone(url.pathname, routeName) &&
+      !partitionBuildShellCheckDone(ctx.router.id, url.pathname, routeName) &&
       shellSearchSeed(url, reqCtx._searchParamsFilter) === ""
     ) {
       const found = yield* step("build-shell-check", () =>
-        hasBuildShell(url.pathname, devShellLookup),
+        hasBuildShell(ctx.router.id, url.pathname, devShellLookup),
       );
-      notePartitionBuildShellCheck(url.pathname, routeName, found);
+      notePartitionBuildShellCheck(
+        ctx.router.id,
+        url.pathname,
+        routeName,
+        found,
+      );
     }
   } else {
     buildHit = yield* step("build-shell-lookup", () =>
       lookupBuildShell(
+        ctx.router.id,
         url,
         ctx.version,
         store,
@@ -1433,7 +1439,7 @@ async function matchPartialWithPprReplay<TEnv>(
   // The visitor's own partition (resolveShellPartition): replay never
   // crosses into another partition's shell.
   const key = await resolveRequestShellKey(
-    buildShellKey(url, reqCtx._searchParamsFilter),
+    buildShellKey(ctx.router.id, url, reqCtx._searchParamsFilter),
     routeSnapshot,
     store,
     reqCtx,

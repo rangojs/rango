@@ -12,37 +12,59 @@ import type { Connect } from "vite";
  * runs on the module regardless of how (or whether) the define is delivered, in
  * both dev and build and for every environment, so the discovery plugin uses this
  * to replace the module with the resolved literal.
+ *
+ * internal-suspense-audit.ts takes the same path for INTERNAL_RANGO_SUSPENSE_AUDIT,
+ * the repo-only switch of the dev suspense audit.
  */
 
+// The router's flag modules, by file name: each exports one boolean named after
+// the env var it is baked from.
+const FLAG_MODULE =
+  /\/(internal-debug|internal-suspense-audit)\.[cm]?[jt]sx?(\?|$)/;
+const FLAG_NAMES: Record<string, string> = {
+  "internal-debug": "INTERNAL_RANGO_DEBUG",
+  "internal-suspense-audit": "INTERNAL_RANGO_SUSPENSE_AUDIT",
+};
+
 /**
- * Scope to the router's own internal-debug module: the published package
- * (`/@rangojs/router/`, incl. pnpm's nested layout) or the monorepo workspace
- * (`/packages/rangojs-router/`). The package-anchored path avoids matching a
- * consumer file that merely sits under a directory named `rangojs-router`.
- * Accepts module ids and dev-server URLs (`/@fs/...internal-debug.ts?v=abc`).
+ * The env var a router flag module is baked from, or undefined. Scoped to the
+ * router's own modules: the published package (`/@rangojs/router/`, incl.
+ * pnpm's nested layout) or the monorepo workspace (`/packages/rangojs-router/`).
+ * The package-anchored path avoids matching a consumer file that merely sits
+ * under a directory named `rangojs-router`. Accepts module ids and dev-server
+ * URLs (`/@fs/...internal-debug.ts?v=abc`).
  */
-export function isRouterInternalDebugId(id: string): boolean {
-  if (!id.includes("internal-debug")) return false;
+function routerFlagName(id: string): string | undefined {
+  if (!id.includes("internal-")) return undefined;
   const norm = id.replace(/\\/g, "/");
-  return (
-    /\/internal-debug\.[cm]?[jt]sx?(\?|$)/.test(norm) &&
-    (norm.includes("/@rangojs/router/") ||
-      norm.includes("/packages/rangojs-router/"))
-  );
+  if (
+    !norm.includes("/@rangojs/router/") &&
+    !norm.includes("/packages/rangojs-router/")
+  ) {
+    return undefined;
+  }
+  const match = FLAG_MODULE.exec(norm);
+  return match ? FLAG_NAMES[match[1]!] : undefined;
+}
+
+/** A router flag module: internal-debug.ts or internal-suspense-audit.ts. */
+export function isRouterInternalDebugId(id: string): boolean {
+  return routerFlagName(id) !== undefined;
 }
 
 /**
- * Transform: replace the module with the resolved literal.
- * Returns null for any module that is not the router's internal-debug module.
+ * Transform: replace a router flag module with the resolved literal.
+ * Returns null for any other module.
  */
 export function injectClientDebugFlag(
   id: string,
 ): { code: string; map: null } | null {
   // Cheap early-out: this hook runs on every module in every environment.
-  if (!isRouterInternalDebugId(id)) return null;
-  // Emit the whole module: internal-debug.ts has a single export, kept in sync.
+  const name = routerFlagName(id);
+  if (name === undefined) return null;
+  // Emit the whole module: each flag module has a single export, kept in sync.
   return {
-    code: `export const INTERNAL_RANGO_DEBUG = ${!!process.env.INTERNAL_RANGO_DEBUG};\n`,
+    code: `export const ${name} = ${!!process.env[name]};\n`,
     map: null,
   };
 }
@@ -63,9 +85,9 @@ export function injectClientDebugFlag(
  * immune -- workspace source is outside node_modules and served no-cache --
  * which is why this bit only npm consumers.
  *
- * internal-debug.ts is the ONLY flag-varying module in the graph (its importers
- * are byte-identical across flag states), so forcing revalidation for this one
- * tiny module is sufficient and costs one conditional request per session. The
+ * The two flag modules are the only flag-varying modules in the graph (their
+ * importers are byte-identical across flag states), so forcing revalidation for
+ * them is sufficient and costs a conditional request each per session. The
  * middleware is unconditional (not gated on the flag) so an already-poisoned
  * cache heals in both directions. Alternatives that do not work: a plugin
  * `resolveId` appending a flag query never fires in Vite 8 dev for

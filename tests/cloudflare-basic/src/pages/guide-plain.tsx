@@ -1,6 +1,18 @@
-import { Prerender } from "@rangojs/router";
+import { Prerender, notFound } from "@rangojs/router";
 import { GuidePlainLoaderValue } from "../components/GuidePlainLoaderValue.js";
 import { GuidePlainActionPanel } from "../components/GuidePlainActionPanel.js";
+
+/**
+ * KV key of a slug the e2e deleted from the data source. Per mode: the dev
+ * and preview servers share the miniflare KV, and their suites can run at the
+ * same time.
+ */
+export const guidePlainGoneKey = (slug: string): string =>
+  `gp-gone:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
+
+/** KV key of a slug whose data source the e2e took down: a refresh throws. */
+export const guidePlainFailKey = (slug: string): string =>
+  `gp-fail:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
 
 // PLAIN (non-Passthrough) on-demand prerender route. Contract under test
 // (gateOnDemandProducer): a live PRODUCTION request for a param with no overlay
@@ -8,9 +20,24 @@ import { GuidePlainActionPanel } from "../components/GuidePlainActionPanel.js";
 // producer must NOT run live); in dev a miss falls through to a live render.
 // The onDemand option MUST be a static literal so the bundle-eviction pass
 // retains this producer body for router.prerender().
+// A slug the e2e deleted from the data source (guidePlainGoneKey, set by the
+// trigger's ?gone=1 op) is a notFound(): a refresh of it stores the "removed"
+// marker. Read only on a refresh, where ctx.env is the live env.
 export const GuidePlainDef = Prerender<{ slug: string }>(
   async () => [{ slug: "intro" }],
   async (ctx) => {
+    if (
+      ctx.onDemand &&
+      (await ctx.env.PRERENDER_KV.get(guidePlainGoneKey(ctx.params.slug)))
+    ) {
+      notFound();
+    }
+    if (
+      ctx.onDemand &&
+      (await ctx.env.PRERENDER_KV.get(guidePlainFailKey(ctx.params.slug)))
+    ) {
+      throw new Error("upstream 500");
+    }
     // Per-render stamp + entropy: stable across overlay hits (frozen payload),
     // different across renders.
     const stamp = `${new Date().toISOString()}:${Math.random().toString(36).slice(2, 10)}`;

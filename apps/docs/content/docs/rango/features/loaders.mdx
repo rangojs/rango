@@ -62,7 +62,7 @@ loader(ProductLoader, () => [cache({ ttl: 60 })]),
 
 A hit skips the loader body, so the handle pushes it made on the miss (a `Meta` title, `Breadcrumbs`) are stored with the data and replayed on every hit, stale hits included.
 
-The entry is keyed by the loader, host, path and params — not by the route's `cache()` key — so one entry serves every user. A body that reads `cookies()`, `headers()`, `ctx.request.headers` or a `createVar({ cache: false })` variable therefore fails on a miss unless the loader's `cache()` has a `key()`. Any `key()` (or a store `keyGenerator`) switches that check off, so it must include the value:
+The entry is keyed by the loader, router, host, path and params — not by the route's `cache()` key — so one entry serves every user. A body that reads `cookies()`, `headers()`, `ctx.request.headers` or a `createVar({ cache: false })` variable therefore fails on a miss unless the loader's `cache()` has a `key()`. Any `key()` (or a store `keyGenerator`) switches that check off, so it must include the value:
 
 ```tsx
 loader(AccountLoader, () => [

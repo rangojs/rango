@@ -30,6 +30,7 @@ import { magazinePatterns } from "./magazine.js";
 import { compositionPatterns } from "./composition-test.js";
 import { refreshDemoPatterns } from "./refresh-demo.js";
 import { gtmDemoPatterns } from "./gtm.js";
+import { hydrationPatterns } from "./hydration.js";
 
 /**
  * Consumer-app CategoryTemplate mirror: a server layout between the chrome
@@ -103,6 +104,7 @@ export const urlpatterns = urls(
     include("/kanban", kanbanPatterns, { name: "kanban" }),
     include("/loaders", loadersPatterns, { name: "loaders" }),
     include("/refresh", refreshDemoPatterns, { name: "refresh" }),
+    include("/hydration", hydrationPatterns, { name: "hydration" }),
     include("/middleware", middlewarePatterns, { name: "middleware" }),
     include("/shop", shopPatterns, { name: "shop" }),
     // clientUrls() shop mirror: the /shop product experience with all data

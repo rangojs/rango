@@ -1,7 +1,6 @@
 "use client";
 
-import { useContext, useEffect, useSyncExternalStore } from "react";
-import { subscribeToNothing } from "./subscribe-to-nothing.js";
+import { useContext, useEffect } from "react";
 import { LocationStateContext } from "./context.js";
 import { OptimisticLocationContext } from "../../client-urls/optimistic-location.js";
 import {
@@ -18,15 +17,6 @@ export {
   type LocationStateDefinition,
   type LocationStateOptions,
 } from "./location-state-shared.js";
-
-/**
- * Server and hydration renders must match the SSR output (`undefined`).
- * React then re-renders with `getSnapshot`, including a reader whose Suspense
- * boundary hydrates after the root has set `data-hydrated`.
- */
-function getServerSnapshot(): undefined {
-  return undefined;
-}
 
 /**
  * Hook to read the location state of the history entry on screen
@@ -73,16 +63,12 @@ export function useLocationState<TArgs extends unknown[], TState>(
   // Typed state: the slot under its key. Plain state: the `state` slot.
   // Inside an optimistically rendered clientUrls() destination the provider
   // still holds the entry being left: read the entry the navigation will push.
-  const shown = (optimistic ? readableLocationState(optimistic) : entry)?.[
+  // While the document hydrates, the provider holds `undefined`, what SSR
+  // rendered, and gives the entry's state once every boundary has hydrated
+  // (NavigationProvider's hydration barrier, issue #992).
+  const state = (optimistic ? readableLocationState(optimistic) : entry)?.[
     key || "state"
   ] as TState | undefined;
-  // useSyncExternalStore only for its server snapshot: no other hook tells a
-  // hydrating render from a client one.
-  const state = useSyncExternalStore<TState | undefined>(
-    subscribeToNothing,
-    () => shown,
-    getServerSnapshot,
-  );
 
   // Flash: removed from history.state after paint, so a reload or a return to
   // the entry does not show it again. The provider's snapshot keeps it, so it

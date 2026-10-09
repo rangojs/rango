@@ -3,9 +3,11 @@
 import {
   Component,
   createElement,
+  isValidElement,
   useContext,
   useMemo,
   Suspense,
+  type ComponentProps,
   type ReactNode,
 } from "react";
 // Not `export * as Html`: plugin-rsc's "use client" proxy transform only
@@ -19,12 +21,15 @@ import {
   type ResolvedSegment,
 } from "./types";
 import {
+  AuditedLoaderBoundary,
+  AuditedRouteContent,
   RouteContentWrapper,
   LoaderBoundary,
 } from "./route-content-wrapper.js";
-import { OutletProvider } from "./outlet-provider.js";
+import { AuditedOutletProvider, OutletProvider } from "./outlet-provider.js";
+import { INTERNAL_RANGO_SUSPENSE_AUDIT } from "./internal-suspense-audit.js";
 import { MountContextProvider } from "./browser/react/mount-context.js";
-import { getMemoizedContentPromise } from "./segment-content-promise.js";
+import { getBoundaryContent } from "./segment-boundary-content.js";
 
 /**
  * Render the content for a named parallel/intercept slot segment.
@@ -39,7 +44,7 @@ function renderSlotContent(segment: ResolvedSegment | null): ReactNode {
   const content: ReactNode =
     segment.loading || segment.component instanceof Promise ? (
       <RouteContentWrapper
-        content={getMemoizedContentPromise(segment.component)}
+        content={getBoundaryContent(segment.component)}
         fallback={segment.loading}
         segmentId={segment.id}
       />
@@ -83,6 +88,10 @@ function renderSlotContent(segment: ResolvedSegment | null): ReactNode {
     result = content;
   }
 
+  if (process.env.NODE_ENV !== "production" && INTERNAL_RANGO_SUSPENSE_AUDIT) {
+    result = auditedSlot(result);
+  }
+
   if (segment.mountPath) {
     return (
       <MountContextProvider value={segment.mountPath}>
@@ -92,6 +101,34 @@ function renderSlotContent(segment: ResolvedSegment | null): ReactNode {
   }
 
   return result;
+}
+
+// Dev only (suspense-audit.ts): the boundaries renderSlotContent built, as
+// their audited components with the same props. After the fact, not a choice
+// per JSX element: a build must fold to the product elements alone (see
+// AuditedRouteContent, route-content-wrapper.tsx).
+function auditedSlot(node: ReactNode): ReactNode {
+  if (!isValidElement(node)) return node;
+  const props = node.props as Record<string, any>;
+  if (node.type === OutletProvider) {
+    return createElement(AuditedOutletProvider, {
+      ...(props as ComponentProps<typeof OutletProvider>),
+      content: auditedSlot(props.content),
+    });
+  }
+  if (node.type === LoaderBoundary) {
+    return createElement(AuditedLoaderBoundary, {
+      ...(props as ComponentProps<typeof LoaderBoundary>),
+      children: auditedSlot(props.children),
+    });
+  }
+  if (node.type === RouteContentWrapper) {
+    return createElement(
+      AuditedRouteContent,
+      props as ComponentProps<typeof RouteContentWrapper>,
+    );
+  }
+  return node;
 }
 
 function useSlotSegment(

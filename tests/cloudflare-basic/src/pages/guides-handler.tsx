@@ -3,14 +3,36 @@ import { Link } from "@rangojs/router/client";
 
 // Known slugs that get pre-rendered at build time.
 // Unknown slugs fall through to the Passthrough live handler.
+// "removable" is baked for the removal e2e alone
+// (e2e/prerender-ondemand.test.ts), which removes its page, and
+// "decline-baked" for the decline e2e alone, which toggles its decline.
 const knownGuides: Record<string, string> = {
   routing: "Routing Guide",
   caching: "Caching Guide",
+  removable: "Removable Guide",
+  "decline-baked": "Decline Baked Guide",
 };
+
+/**
+ * KV key of a slug whose build handler declines (ctx.passthrough()), set by
+ * the trigger's ?decline=1. Per mode: the dev and preview servers share the
+ * miniflare KV.
+ */
+export const guideDeclineKey = (slug: string): string =>
+  `guide-decline:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
 
 export const GuidesDetailDef = Prerender<{ slug: string }>(
   async () => Object.keys(knownGuides).map((slug) => ({ slug })),
   async (ctx) => {
+    // A param the build handler declines: the live handler answers for it
+    // (skipped-passthrough). Prefix-keyed so no other test's slug is touched.
+    if (
+      ctx.params.slug.startsWith("declined-") ||
+      (ctx.onDemand &&
+        (await ctx.env.PRERENDER_KV.get(guideDeclineKey(ctx.params.slug))))
+    ) {
+      return ctx.passthrough();
+    }
     const title = knownGuides[ctx.params.slug] ?? `Guide: ${ctx.params.slug}`;
     const renderedAt = new Date().toISOString();
 

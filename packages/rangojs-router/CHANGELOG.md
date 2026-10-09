@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.22.0 (2026-10-06)
+## 0.22.0 (2026-10-09)
 
 ### Added: on-demand prerender: refresh a prerendered page without a deploy ([#640](https://github.com/rangojs/rango/pull/640))
 
@@ -93,6 +93,176 @@ re-exported from `@rangojs/router/testing`. See the `prerender` skill,
 A tag listed twice in `cache({ tags })` is stored once. Invalidation is
 unchanged: `updateTag()` of that tag drops the entry as before.
 
+### Fixed: a component that hydrates late renders what the server rendered
+
+On a document load, a component in a `<Suspense>` or `loading()` boundary that
+streams in after the rest of the page hydrates with the document's state from
+every router hook: pathname, params, search params and segments, an idle
+`useNavigation()` and `useAction()`, a `useLinkStatus()` that is not pending, the
+handle data the HTML was rendered from, and `undefined` location state. Before,
+`usePathname`, `useParams`, `useSearchParams`, `useSegments`, `useNavigation`,
+`useLinkStatus` and `useAction` read the live state in that render, so a
+navigation or an action started while the page was still streaming made React
+report a hydration mismatch and render the boundary on the client.
+
+- Navigation state, params and action state show their live value right after
+  the component hydrates.
+- Late loader pushes and the entry's location state now reach readers once the
+  whole document has streamed and every boundary has hydrated, in one transition;
+  a reader re-renders only when its selection changes. Before, each reader took
+  them right after its own hydration.
+- A navigation that commits while the page is still streaming mounts its page
+  with the destination's values from its first render.
+- `useHandle` and `useLocationState` no longer use `useSyncExternalStore`.
+
+### Changed: router hooks read only the router store
+
+The router store (the per-router `NavigationStore` and `EventController`, reached
+through `NavigationStoreContext`) is now the only source these hooks read, and none
+of them reads it during render. What you can notice:
+
+- `useSegments(selector)` applies the selector when the router store changes (a
+  navigation or new handle data), as `useNavigation` and `useAction` already do. A
+  new selector function on a re-render takes effect at the next change. Before, the
+  hook re-read the store during render whenever the selector function changed, and
+  an inline selector changes on every render: a component inside a page React was
+  still holding could show the next page's path. To derive from a prop, call
+  `useSegments()` and derive in render.
+- `useLoader`, `useFetchLoader` and `useRefreshLoaders` keep client loader data in
+  each router's store instead of one module-level store per browser tab. A reader
+  whose `key` changes renders without the new key's shared data until its effect
+  delivers it, on the next render. Outside a router, `load()` keeps its result in
+  the calling hook and `useRefreshLoaders()` does nothing.
+- `<Link>` resolves `prefetch="adaptive"` when it arms or is hovered, and still
+  re-arms when the input capability changes. It reads the document origin from the
+  router store. A `<Link>` rendered outside a router no longer sets `data-external`
+  on an absolute URL to another origin; its click still navigates natively.
+
+### Fixed: `useLoader` no longer makes React log a conditional `use()` in development
+
+A `useLoader` read that mounted while its loader was still streaming, and that a
+later navigation rendered with the value already settled (seen on a click to the
+page already shown), could make React log in development: "This library called
+use() to suspend in a previous render but did not call use() when it finished".
+The read called `use()` only on a pending stream. It now calls `use()` on every
+read, on a settled value too, which returns at once. Nothing on screen changes,
+and production never logged it. Tests that render a `useLoader` reader inside
+route context and drive state with `act()` should await `act()`, which
+`renderRoute` already does. A read outside route context is unchanged.
+
+### Fixed: a streamed handler that fails renders your errorBoundary() instead of the root error page
+
+Before: a route handler on a route with `loading()` that rejected, or called
+`notFound()`, after the response started replaced the whole page with the
+router's root error page, even with an `errorBoundary()` or `notFoundBoundary()`
+declared for it.
+
+```tsx
+path("/product/:slug", ProductPage, { name: "product" }, () => [
+  loading(<ProductSkeleton />),
+  errorBoundary(() => <ProductError />), // before: ignored when the handler rejects late
+  notFoundBoundary(() => <ProductNotFound />),
+]);
+```
+
+Now: the nearest `errorBoundary()` renders in place of the failing segment, and
+`notFound()` renders the nearest `notFoundBoundary()`. Layouts and navigation
+stay, on the document load and on a client navigation. It applies to route
+handlers and parallel slots (a slot finds its layout's boundary) under
+`loading()`, and to intercept slots.
+
+What does not change:
+
+- The HTTP status stays what the stream already carried (200).
+- `onError` is called once per failure. An intercept slot under `loading()` now
+  also emits the `handler.error` telemetry event, as route handlers and
+  parallel slots do.
+- A failed render is never cached, so the next request runs the handler again.
+  `cache()` skips the write only for the cache scope that holds the failed
+  segment; a `ppr` shell and the document cache refuse the whole document. A
+  Prerender route still fails the build.
+- A `notFound()` from a streamed handler keeps status 200: the status was sent
+  with the first flush. The same call before the flush still sets 404.
+- With no declared `errorBoundary()` the root error page still replaces the
+  whole page, and a `redirect()` thrown from a streamed handler is still not an
+  HTTP redirect (issue redirects from middleware, a loader, or a synchronous
+  handler return).
+
+### Fixed: a `loading()` boundary on screen is no longer replaced by its fallback when nothing in it is pending
+
+A `loading()` boundary showed its fallback for about 300 ms although nothing
+in it was pending. Three cases, all in the browser:
+
+- A layout or parallel slot with `loading()` that was already on screen was
+  replaced by its fallback when the visitor clicked a link that was not
+  prefetched, after entering the page through a prefetched link (or back and
+  forward). It showed for a layout with no loaders, for a layout with
+  `loading()` and a loader read by `useLoader`, and for a slot with its own
+  loader and `loading()`. After a plain click or a document load it never did.
+  It no longer shows.
+- A layout with `loading()` and no loaders that is new to the page, reached by
+  a plain click, showed its fallback for about 300 ms in production. It no
+  longer does. In dev it still shows: a client component the layout renders is
+  still importing its module in that first render.
+- A form action whose commit `transition({ when })` gated off re-rendered the
+  route behind its `loading()` skeleton although the action response carried
+  the data. The commit is still urgent and unanimated, and in production the
+  skeleton no longer shows. In dev it still shows, for the same reason as
+  above.
+
+What does not change: a boundary with pending work (a loader still streaming,
+a gated-off navigation or `router.refresh()` whose data is still arriving)
+shows its fallback as before, and the server render is unchanged.
+
+### Fixed: a prerender refresh that started before `markStale()` is stored stale ([#1072](https://github.com/rangojs/rango/issues/1072))
+
+`router.prerender()` stamped an entry with the time of the store write. A
+render that began before `markStale(tags)` and finished after it was kept as
+fresh, holding pre-invalidation content. A page, the marker of a refresh that
+hit `notFound()` and a `ctx.passthrough()` decline marker are now stamped
+(`meta.storedAt`) with the render's start, so both stores mark them stale and
+they keep serving until the next refresh. `createMemoryPrerenderStore` now also
+remembers when each tag was last marked per router and marks a write rendered
+before that mark. `staleAt` still counts the ttl from the write.
+
+Behaviour note: two refreshes of one page can race. A `remove()` still wins over
+a render in flight. A `notFound()` marker from a render that started earlier no
+longer wins over a render that started later: that render read newer data, and
+its page is kept.
+
+A custom `WritablePrerenderStore` that compares a tag marker with
+`meta.storedAt` needs no change; one that marks only the entries it holds at
+`markStale()` time should also mark a later write stamped before the mark.
+
+### Added: prerender tags are per router
+
+`router.prerender({ env, ctx }).markStale(["product:1"])` marks only that
+router's entries. Routers behind a host router can share one prerender store
+(one KV namespace), and a mark on one router does not mark another router's
+entries for the same tag, in both shipped stores. `createKVPrerenderStore`
+writes markers at `__rango_pr_tag__/{encoded routerId}/{tag}`; they have no
+expiry.
+
+A custom `WritablePrerenderStore` implements `markStale(routerId, tags)` and
+marks only entries whose `key.routerId` equals `routerId`.
+
+### Fixed: a render that started before `updateTag()` is no longer served as fresh after it ([#1068](https://github.com/rangojs/rango/issues/1068))
+
+`CFCacheStore` and `VercelCacheStore` stamped a cached entry with the time it
+was written. A render that began before an invalidation and finished after it
+was therefore stored as newer than the invalidation, holding old content. The
+stores now stamp `set`, `setItem` and `putResponse` entries with the start of
+the render that produced them (a stale-while-revalidate refresh stamps its
+own). `CFCacheStore` with KV markers then rejects such an entry on any later
+read, and `MemorySegmentCacheStore` refuses the write. `VercelCacheStore` and
+`CFCacheStore` L1 hits in purge mode or without KV compare no marker on a data
+read: there the stamp protects only the request that invalidated (its mask now
+also covers a late write from another instance), and a later request still
+gets the entry unless the write gate skipped the write
+([#1071](https://github.com/rangojs/rango/issues/1071)). Nothing to change in
+your app; a custom store keeps working and may read the optional
+`CacheItemOptions.startedAt` and `CachedEntryData.taggedAt` to do the same.
+
 ### Added: `router.prerender()` warms any route before traffic ([#1062](https://github.com/rangojs/rango/issues/1062))
 
 After a deploy that changes server code, and after an `updateTag()`, every
@@ -159,9 +329,220 @@ What to know before you call it:
   builds its own `createRSCHandler({ cache, version })` (a warm runs
   `router.fetch`).
 
-`skipped-not-on-demand`, the status an unreleased build of on-demand prerender
-returned for these routes, is gone. See the `prerender` skill, "Warm any route
-before traffic".
+`skipped-not-on-demand` is not a status of a refresh: a route that is not
+on-demand is warmed. Only `prerender.remove()` returns it (below). See the
+`prerender` skill, "Warm any route before traffic".
+
+### Added: remove a page from on-demand prerender ([#1060](https://github.com/rangojs/rango/issues/1060))
+
+Part of on-demand prerender, which is in this release too. When the item
+behind a refreshed page is deleted, the page has to stop serving, and for a
+param the build baked, the build-time page must not come back in its place.
+There are two ways to remove a page:
+
+```ts
+const prerender = router.prerender({ env, ctx });
+
+// From a "product deleted" webhook. Nothing is rendered, so it does not wait
+// for the data source to catch up.
+await prerender.remove("/products/42");
+await prerender.remove.many(paths, { concurrency: 4 });
+
+// Or let the route say so: a refresh whose render hits notFound() removes
+// the page.
+await prerender("/products/42"); // { ok: true, status: "removed", ... }
+```
+
+Both store a "removed" marker in the prerender store in place of the page.
+From the next request on the route answers 404 for that param, in dev and in
+production; a `Passthrough` route runs its live handler. A page the build
+baked is covered too: its build-time entry is not served.
+
+What to know before you call it:
+
+- **A `notFound()` anywhere in the render removes the page**: the route
+  handler, a layout handler, a parallel slot handler, any server component,
+  sync or async. The result is `{ ok: true, path: "on-demand", status:
+"removed" }`, so count `removed` in what a sweep reports. It removes the
+  page only when nothing else went wrong: when the data source may be
+  failing, throw anything else, which is `render-failed` and keeps the page.
+  A render that hits a `notFound()` and another error is `render-failed`,
+  whichever came first.
+- **A `notFound()` removal is rechecked; `remove()` is permanent.** The
+  marker of a refresh has the route's `ttl` and `tags`, like the page it
+  replaces. Once it is stale (the `ttl` passed, or `markStale()` marked one of
+  its tags) it still answers 404, a request schedules `onRevalidate`, and
+  `{ onlyIfStale: true }` renders the page again: an item the data source
+  lost for a moment comes back on the next recheck. A `remove()` marker has
+  no `ttl` and no tags: nothing reaches it until a `prerender(url)` without
+  `onlyIfStale` renders the page.
+- **`ctx.passthrough()` in a refresh hands the page to the live handler.** A
+  `Passthrough` route whose build handler declines a param gets
+  `skipped-passthrough`, and the marker is stored so that the live handler
+  answers, not a page stored or baked earlier.
+- **`remove()` is for on-demand routes.** On any other route it returns
+  `skipped-not-on-demand` and renders or warms nothing. `throwOnError` works
+  as on a refresh, and the error names the call
+  (`prerender.remove("/products/42") failed: ...`); `remove.many()` also
+  takes `concurrency` (default 1).
+- **Last write wins.** `remove()` and a refresh of the same page are two
+  writes to one key. Pass `{ onlyIfStale: true }` where a refresh runs later
+  than it was scheduled, in `onRevalidate` and in a queue consumer: a job
+  queued before a removal then finds the marker and renders nothing, where a
+  plain refresh would bring the page back. A marker that lands while a
+  refresh is still rendering is not overwritten by that render's page, which
+  narrows the race and cannot close it on an eventually consistent store.
+- **Remove first, then invalidate, when a cache sits above the router.** No
+  warm request follows a removal, and the marker does not reach a document
+  cache (`createDocumentCacheMiddleware`): it keeps serving the document it
+  stored until `s-maxage` and `stale-while-revalidate` run out. Call
+  `await prerender.remove(url)`, then `await updateTag(tag)` for a tag the
+  document carries. In the other order a visitor between the two calls is
+  served the page the store still holds, and the document cache stores it
+  again. `updateTag()` needs a request context: from a queue or cron handler
+  the stored document serves until it expires. A `Passthrough` route's live
+  handler serves through its own `cache()`, as it does for a page that was
+  never refreshed.
+- **A custom prerender store needs no change** when it persists the value it
+  is given. The marker is `{ v: 1, removed: true, meta }` with no `entry`, and
+  `meta` has the fields a page's has, with the same meaning.
+  `PrerenderStoredEntry` is a union of the two, so code that reads
+  `stored.entry` has to check for it. A store that cannot be read is a miss,
+  for a marker as for a page: while it is failing, the build-time entry of a
+  removed page can serve.
+- **Intercepted navigations do not see the marker**: they do not read the
+  prerender store, so the build's intercept variant of a removed page still
+  serves.
+
+The `notFound()` half is the Next.js Pages Router's rule: "With
+`notFound: true`, the page will return a `404` even if there was a
+successfully generated page before. This is meant to support use cases like
+user-generated content getting removed by its author. Note, `notFound`
+follows the same `revalidate` behavior described here."
+([getStaticProps](https://nextjs.org/docs/pages/api-reference/functions/get-static-props))
+See the `prerender` skill, "Remove a page".
+
+### Added: `MemorySegmentCacheStore({ scope })` lets a single-process server be warmed
+
+`router.prerender()` warms a route only into a store that is shared beyond the
+process that runs the call. `MemorySegmentCacheStore` is per process, and the
+router cannot tell one long-running server from several replicas or serverless
+instances, so it stays `"local"` and a production warm of it returns
+`skipped-store-not-shared`: counting it as shared by default would report
+`warmed` while most visitors reached a cold instance.
+
+If you do run exactly one process (a single Node server), say so:
+
+```ts
+import { MemorySegmentCacheStore } from "@rangojs/router/cache";
+
+const store = new MemorySegmentCacheStore({
+  scope: "global",
+  defaults: { ttl: 60, swr: 300 },
+});
+```
+
+A warm of that store is `warmed` in production. Without the option nothing
+changes: the store is `"local"`, refused in production and counted as shared
+under the dev server. You no longer need a subclass declaring
+`readonly scope = "global"`. Two instances with the same `name` share their
+maps but each keeps its own `scope`, like `defaults` and `keyGenerator`: keep
+them identical.
+
+### Fixed: two routers on one cache store no longer share entries for the same host and path ([#1065](https://github.com/rangojs/rango/issues/1065))
+
+A cached entry was keyed by the request's host and path. That names one page
+while each host goes to one router, the usual `createHostRouter()` setup. It
+does not when two routers answer under the same host and path:
+
+- `createHostRouter({ hostOverride })` picks the app from a cookie and
+  forwards the request unchanged, so on a preview origin every app serves the
+  same URL host;
+- a `fallback()` mapped to an app serves that app under whatever host the
+  request named;
+- `router.prerender()` warms the origin it resolved, which can be another
+  app's host.
+
+With one cache store behind both routers, what went wrong depended on their
+versions:
+
+| Versions of the two routers                                                              | `ppr` shell                                                                                                                  | Every other entry listed below                  |
+| ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| The same (development, or one `version` on both routers or on the store)                 | The second app's request was a HIT with the first app's page                                                                 | The second app was served the first app's entry |
+| Their own (a production build), on `MemorySegmentCacheStore` or a store without versions | Each app's capture replaced the other's shell: a request after the other app's was a MISS again, so neither app kept a shell | The second app was served the first app's entry |
+| Their own, on `CFCacheStore` or `VercelCacheStore`                                       | Stored apart already: the version is in the storage key                                                                      | Stored apart already                            |
+
+The other entries are the ones that hold one router's output: a route's
+`cache()` record, a document-cache response, a response route's entry, a
+loader's own `cache()` entry, and a `"use cache"` entry of a function called
+with a handler or loader `ctx`. A `ctx` belongs to one router (its context
+variables, its `env`, its `reverse()` map), so a loader both apps mount, or a
+`"use cache"` function both call with `ctx`, returned the first app's value
+to the second.
+
+A build-time shell had the same gap: `vite build` staged it under the
+pathname, so another router with a `ppr` route on that pathname and the same
+`version` served it.
+
+Those keys now start with the id of the router that serves the request
+(`{routerId}@{host}{path}...`), and a build-time shell is staged under the id
+of the router it was captured for. Each app reads and writes its own shells,
+records, responses, loader entries and `ctx`-keyed `"use cache"` entries.
+
+```ts
+// preview.dev serves every app; the cookie names the one to show
+const host = createHostRouter({
+  hostOverride: { cookieName: "app", allowedHosts: ["preview.dev"] },
+});
+host.host("shop.internal").lazy(() => import("./apps/shop/handler.js"));
+host.host("admin.internal").lazy(() => import("./apps/admin/handler.js"));
+// GET https://preview.dev/pricing with app=shop.internal, then with
+// app=admin.internal: each app gets its own MISS, then its own HIT.
+```
+
+Nothing to configure, and no namespace or version to manage: the id is the
+router's own. Each router of a multi-router app needs a stable one, which
+routes and cache versions need already: write the `createRouter({ ... })`
+options as an object literal, so the Vite plugin gives the router an id, or
+pass `id`. The build's existing `N routers use auto-generated IDs` warning
+names the case that has neither.
+
+After upgrading, the stored keys are new. What that costs depends on where
+the app's cache versions come from:
+
+- **Build-computed versions (the default):** nothing extra. Upgrading the
+  router already changes every cache version, so this release refills every
+  stored entry with or without the new keys.
+- **A pinned `version`** (`createRouter({ version })`, or `version` on the
+  store), and **a custom store that ignores versions:** the entries above are
+  lost once. `ppr` shells are captured again, and records, responses, loader
+  entries and `"use cache"` entries called with `ctx` refill on their next
+  request.
+
+A single-router app otherwise behaves as before: the same hits and misses and
+the same number of store reads. Unchanged, because they name no router: a
+`"use cache"` entry of a function called with plain arguments or a bare
+`Request`, tag markers, and keys you build yourself (`cache({ key })` on a
+route or a loader, the document cache's `keyGenerator`).
+
+### Breaking: the testing helper `shellCacheKey()` takes the router first ([#1065](https://github.com/rangojs/rango/issues/1065))
+
+A shell's store key now names the router that serves it, so the helper that
+builds that key needs the router:
+
+```ts
+// Before
+const key = shellCacheKey("/products/1");
+
+// After
+const key = shellCacheKey(router, "/products/1");
+```
+
+`router` is the router under test, or `{ id }` where the router cannot be
+imported (a Playwright test). `searchParams` and `partition` follow as
+before. TypeScript reports every call that still passes the URL first.
+`serveShellRequest()` is unchanged: its `result.key` is the key the serve
+path resolved.
 
 ### Fixed: a superseded link click no longer follows its server redirect ([#1047](https://github.com/rangojs/rango/issues/1047))
 

@@ -391,28 +391,158 @@ Compose cached + fresh segments into single RSC stream
 
 ## Cache Key Structure
 
-Cache keys combine request type prefix, pathname, sorted route params, and sorted user-facing search params:
+Cache keys combine request type prefix, the serving router's id, host, pathname, sorted route params, and sorted user-facing search params:
 
 ```
-{prefix}:{pathname}:{sortedParams}?{sortedSearchParams}
+{prefix}:{routerId}@{host}{pathname}:{sortedParams}?{sortedSearchParams}
 ```
 
 - **Prefix**: `doc` (full page), `partial` (navigation), or `intercept` (modal/overlay).
+- **Router and host**: `{routerId}@{host}` says whose output the entry is. See [The router part](#the-router-part-whose-output-an-entry-is) below.
 - **Search params**: User-facing params are included (sorted, URL-encoded). Router-internal params are excluded: `_rsc*` by prefix, plus an exact allowlist of `__`-prefixed params (`__no_cache`, `__rsc`, `__html`) — deliberately not a blanket `__*` filter, so consumer params like `__variant` still key the cache (see `src/cache/cache-key-utils.ts`).
 - **Partial response capability**: document-cache entries append a fragment-capable variant when `X-Rango-Fragment-Passthrough: 1` is present. The middleware can return before route matching, so its key must mirror the RSC response's `Vary` contract and never serve fragment envelopes to a legacy or context-less client. `X-Rango-Fragment-Recovery: 1` skips that variant's read so the failed fragment retry reaches segment decode and eviction, then the ordinary write path replaces the corrupt response bytes with the valid fallback.
 - **Determinism**: Both route params and search params are sorted alphabetically for stable keys regardless of insertion order.
 
 ```typescript
-// Examples:
-// "doc:/products"
-// "partial:/products:slug=shoes"
-// "partial:/products:slug=shoes?page=2&sort=asc"
-// "intercept:/products:slug=shoes"
+// Examples (router id "a1b2c3d4", host "shop.example"):
+// "doc:a1b2c3d4@shop.example/products"
+// "partial:a1b2c3d4@shop.example/products:slug=shoes"
+// "partial:a1b2c3d4@shop.example/products:slug=shoes?page=2&sort=asc"
+// "intercept:a1b2c3d4@shop.example/products:slug=shoes"
 ```
 
 For `"use cache"` functions, cache keys follow the format `use-cache:{functionId}:{serializedArgs}` where tainted ctx arguments contribute `pathname`, `params`, `_responseType`, and normalized search params to the key.
 
 Request data the key does not see must not reach the stored value, so the non-cacheable variable guard applies in both scopes. A `ctx.get()` of a `createVar({ cache: false })` variable (or a value written with `{ cache: false }`) throws inside a `cache()` boundary and inside a `"use cache"` body, whether it reads through `getRequestContext()`, a handler ctx, or a response-route ctx. The fix at the call site is to read the value outside and pass it in as an argument, which puts it in the key. The guard is `assertNonCacheableReadAllowed` (`src/server/context.ts`), called only after `isNonCacheable()` matches, so ordinary reads skip it. It is a wrapper over `guardIdentityRead`, the one guard `cookies()`, `headers()` and the theme reads go through too, so all four refuse in the same places: a PPR capture first, then a `"use cache"` body, then a `cache()` boundary. Loader bodies stay exempt under `cache()` (a route `cache()` never stores a loader's value). Under `"use cache"` nothing is exempt: a loader body entered inside the cached function (`await ctx.use(Loader)`) runs as part of that body, and its value is part of what the function returns and stores. Before, a non-cacheable `ctx.get()` there was exempt while `cookies()` threw, and the entry kept the first request's value under a key that did not include it.
+
+### The router part: whose output an entry is
+
+You would expect a host and a path to name a page. With one router they do.
+With several routers behind `createHostRouter()` they usually still do,
+because the host router sends each host to one router. Two things break that
+(issue #1065):
+
+- **`hostOverride`.** `createHostRouter({ hostOverride })` picks the router
+  from a cookie and forwards the request as it came. On a preview origin every
+  app is then served under the same URL host, and a `fallback()` after a cookie
+  error does the same.
+- **A warm under another router's host.** `router.prerender()` requests the
+  origin it resolved. Called from a route of another router with no `origin`,
+  that is the other router's host.
+
+Either way two routers on one cache store build the same host-and-path key.
+The only thing between them used to be the version, and how that failed
+depends on the versions and on the store:
+
+- **Equal versions** (a dev server gives every router one stamp; so does one
+  `version` set on both routers or on the store). The two keys are one string
+  on every store. Router B's request was a HIT with router A's shell, and B
+  read A's `cache()` record, document-cache response, response-route entry,
+  cached loader value and `ctx`-keyed `"use cache"` value.
+- **Per-router versions** (what a build gives you). `CFCacheStore` and
+  `VercelCacheStore` put the version in the storage key (next section), so
+  the stored entries were already apart there. A store with no version in its
+  keys (`MemorySegmentCacheStore`, a custom store) kept one shell slot: the
+  entry's version stamp (`isValidShellHit`, `src/rsc/shell-serve.ts`) turned
+  router B's read into a MISS, B's capture replaced A's shell, and A's next
+  request did the same to B's, so neither kept one. Records carry no stamp
+  and were shared outright.
+
+On every store the per-isolate capture state is keyed by the shell key
+(`inFlightCaptures`, `refusedCaptures` in `src/rsc/shell-capture.ts`), so the
+two routers also shared one in-flight guard and one refusal backoff per URL.
+
+So every key that names a router's output for a host and path starts with the
+router: `routerKeyPrefix(routerId)` in `src/cache/cache-key-utils.ts`, which is
+`{encodeURIComponent(router.id)}@`. `cacheKeyBase` and `buildShellKey` take the
+id as their first argument, and the id is the serving router's:
+`RequestContext._routerId`, which `src/rsc/handler.ts` sets before any cache is
+read, or `ctx.router.id` on the render path. The encoding is what keeps the key
+unambiguous: an encoded id holds no `@` or `/` and a host holds no `@`, so a
+key carries a router part exactly when its first `@` comes before its first
+`/`, and no explicit `id` can be chosen to spell another router's key.
+
+| Family                                                        | Built in                                                                                                       | Key                                                                                                              | Router part                                                       |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| PPR document shell                                            | `buildShellKey` (`src/rsc/shell-capture-constants.ts`), called from `src/rsc/rsc-rendering.ts`                 | `{routerId}@{host}{path}[?search]:shell`                                                                         | yes                                                               |
+| Navigation-only shell, `key()` partitions                     | `navigationShellKey`, `partitionShellKey` (same module)                                                        | the document shell key + `:navigation` / `\|{partition}`                                                         | yes, inherited from the base key                                  |
+| Build-time shell manifest                                     | `buildShellManifestKey` (`src/prerender/shell-manifest-key.ts`)                                                | `{routerId}@{path}`                                                                                              | yes                                                               |
+| Route `cache()` records                                       | `getDefaultRouteCacheKey` (`src/cache/cache-scope.ts`)                                                         | `doc:\|partial:\|intercept:` + `cacheKeyBase`                                                                    | yes                                                               |
+| Document cache                                                | `createDocumentCacheMiddleware` (`src/cache/document-cache.ts`)                                                | `cacheKeyBase` + segment hash + `:html` / `:rsc`                                                                 | yes                                                               |
+| Response routes                                               | `serveResponseRouteWithCache` (`src/rsc/response-cache-serve.ts`)                                              | `response:{type}:` + `cacheKeyBase`                                                                              | yes                                                               |
+| Per-isolate shell state                                       | the shell memo, the capture stampede guard and backoff (`src/rsc/shell-capture.ts`, `src/cache/shell-memo.ts`) | the shell key                                                                                                    | yes, they are keyed by the shell key                              |
+| Loader cache                                                  | `resolveLoaderKey` (`src/router/segment-resolution/loader-cache.ts`)                                           | `loader:{loaderId}:` + `cacheKeyBase`                                                                            | yes: a loader's `ctx` is one router's                             |
+| `"use cache"` called with a handler or loader `ctx`           | `src/cache/cache-runtime.ts`                                                                                   | `use-cache:{functionId}:{args}`, the `ctx` folded in as `{routerId}@{host}`, route name, path, params and search | yes: same reason                                                  |
+| `"use cache"` called with plain arguments or a bare `Request` | `src/cache/cache-runtime.ts` (`requestArgKey` for the `Request`)                                               | `use-cache:{functionId}:{args}`                                                                                  | no: keyed by the function and its arguments, which name no router |
+| A loader's `key()`                                            | `loaderKeyFromResult` (`loader-cache.ts`)                                                                      | `loader:{loaderId}:key:{encoded result}`                                                                         | no: a full override, like the row below                           |
+| On-demand prerender overlay                                   | `src/prerender/writable-store.ts`                                                                              | `prerender:{routerId}:{version}:{routeName}:{paramHash}`                                                         | already there                                                     |
+| Tag markers                                                   | the stores                                                                                                     | `__tag__/{tag}`, `rg:tm:{tag}`                                                                                   | no: an invalidation reaches every router and every version        |
+| Your own keys: `cache({ key })`, `keyGenerator(url)`          | your code                                                                                                      | what you return                                                                                                  | no: a full override owns its namespace, as it owns the host       |
+
+The three built-in stores add nothing of their own that names a host and path.
+`CFCacheStore` and `VercelCacheStore` wrap the key they are given in a version
+and a family prefix, and `MemorySegmentCacheStore` uses it as it is, which is
+why the two-router tests run on it: nothing but the key keeps the routers
+apart there.
+
+Two rows look like "a function and its arguments" and are not. A loader's
+cache key starts with the loader definition's id, and a `"use cache"` key
+with the function's, so it is tempting to say two routers that reach the same
+entry are running one function over one set of inputs. They are not when the
+function is handed a `ctx`: a `ctx` is one router's. It reads that router's
+context variables (set by that router's middleware), its `env`, and its
+`reverse()` map. Two routers that mounted one loader on the same host and
+path, each setting a `Brand` variable in its own middleware, had the second
+router render the first one's brand; a `"use cache"` function called with
+`ctx` returned the first router's `ctx.reverse()` URLs to the second
+(`src/testing/__tests__/two-routers-cache-records.rsc-test.tsx` pins both).
+So both carry the router part. A `"use cache"` function called with plain
+arguments, or with the bare `Request`, reads nothing of a router, and its key
+stays the function and its arguments: the same test pins that two routers
+share that one entry.
+
+A request context always has a router id when a request is served
+(`src/rsc/handler.ts` sets it before the request scope opens, and derived
+contexts inherit it). Only a hand-built context has none: a unit test, or the
+`runLoader` / `renderHandler` testing primitives. `requestKeyBase` builds
+those keys without a router part, which no served request's key can equal.
+
+**The id has to be the same everywhere.** The key is only useful if every
+isolate, and the build that captures a shell ahead of time, compute the same id
+for the same router. `router.id` (`src/router.ts`) is, in order:
+
+1. `createRouter({ id })`, if you pass one.
+2. The `$$id` the Vite transform injects: a hash of the router's root-relative
+   file and its position among that file's `createRouter()` calls (`routerId`
+   in `src/vite/plugins/expose-ids/router-transform.ts`). Build-time discovery,
+   the bundle and every isolate run the same transformed source, so they agree.
+3. `router_{n}`, a counter, when the transform cannot reach the call (an
+   options variable instead of an object literal, for instance). A single
+   router on the counter is `router_0` everywhere, build included
+   (`src/vite/__tests__/build-shell-router-key.test.ts` pins that its build-time
+   shell is a HIT on a cold server). Several routers on the counter get ids in
+   module evaluation order, which a lazy host router does not fix.
+
+So a multi-router app needs explicit or injected ids. That is not a new rule:
+the lazy route manifest and the cache versions are keyed by the same id, and
+build discovery already warns when more than one router is on the counter
+(`src/vite/discovery/discover-routers.ts`). The cache keys inherit the
+requirement; they add no option and nothing for an app author to manage.
+
+Two doubts worth answering. Does a single-router app pay for this? No: the
+part is a prefix on a key the request already builds, and
+`src/testing/__tests__/single-router-cache-reads.rsc-test.tsx` pins the same
+number of store reads as before. And in dev, where a router on the counter
+gets a new id each time its module is re-evaluated? The new instance misses
+once and captures its own shell; the old id's entry runs out on its ttl (the
+same test file pins this). A dev server already bumps the version stamp on
+every server edit (`bumpVersion` in `src/vite/plugins/version-plugin.ts`), so
+that request was a miss before as well.
+
+What the change costs once: the stored keys changed. An app on build-computed
+versions loses nothing extra, because a router upgrade already changes every
+cache version. An app that pins `version`, and a custom store that ignores
+versions, recapture shells and refill the keyed entries once.
 
 ### Versions: which build may read an entry
 
@@ -901,7 +1031,7 @@ up the route's partition. It doesn't. A loader's own `cache()` and `"use
 cache"` are independent layers, keyed only by what they declare: the loader
 entry by `key()` (stored as `loader:{id}:key:{encoded result}`, see "Loader
 key results are namespaced" below), else the store's `keyGenerator`, else
-the default `loader:{id}:{host}{pathname}:{sortedParams}`
+the default `loader:{id}:{routerId}@{host}{pathname}:{sortedParams}`
 (`resolveLoaderKey` in `src/router/segment-resolution/loader-cache.ts`); a
 `"use cache"` entry by its id and arguments. The default loader key names no
 user, so one entry serves everyone.
@@ -1552,9 +1682,10 @@ the route scheme's `key:` part (`KEY_PART_PREFIX`) behind the loader's own
 - An encoded result holds no `:`, so a namespaced key reads unambiguously
   from the right: the result, then `key:`, then the loader id. Two
   namespaced keys are equal only for the same loader and the same result.
-- A default key `loader:{id}:{host}{pathname}...` holds a `/` past its id,
-  and an encoded result holds none. So a namespaced key equals a default key
-  only if one loader's id is literally `<other id>:<host>/<path>...`.
+- A default key `loader:{id}:{routerId}@{host}{pathname}...` holds a `/` past
+  its id, and an encoded result holds none. So a namespaced key equals a
+  default key only if one loader's id is literally
+  `<other id>:<router>@<host>/<path>...`.
 
 You might expect the argument to rest on loader ids holding no `:`. It
 can't: a dev id is a root-relative path plus `#<export>`, and on Windows a
@@ -1700,7 +1831,41 @@ The document cache takes the request's start, not its own: a middleware ahead of
 
 The cost: an untagged write checks nothing, and a tagged one reads its markers before the put (KV or the L1 marker cache on `CFCacheStore`, the `tm` entries on `VercelCacheStore`), once per tag for the gates of a request that ask while the read is in flight. The read runs in the write's `waitUntil` task, but two callers do wait on it: a `"use cache"` call that joined an in-flight execution waits for the leader's gate before it gets the value, and where the request context has no `waitUntil` (`runBackground` then runs the task inline) the leader itself awaits its write, gate included.
 
-The invariant: a skipped write only costs a later miss, never a stale read, and the execution still returns the value it computed. What stays open: a KV-less `CFCacheStore` has no marker to read, so another isolate's late write lands and ttl+swr bounds it (purge mode purges before it); KV itself is eventually consistent across colos, so a marker written in another colo that this colo's KV read does not see yet lets the write through; with `tagCacheTtl` the read can come from this colo's L1 marker cache, up to `tagCacheTtl` behind another colo's invalidation; and a check-then-write window remains on `CFCacheStore`/`VercelCacheStore` between the marker read and the put, which a shared read in flight widens by at most one marker round-trip (the shell family closes it by stamping the capture start as `taggedAt`; the data families stamp write time). One consequence to know: an entry whose tag is invalidated more often than its execution takes never fills, since every write started before the latest invalidation. Nested tags (#980) make that likelier, because an outer entry now answers to every tag of the calls inside it.
+**The stamp is the execution's start ([#1068](https://github.com/rangojs/rango/issues/1068)).** The gate is a check before the write, and a check before a write has gaps: the marker read can come back from a colo that has not seen another colo's marker yet (KV is eventually consistent), an invalidation can land between the gate's last look and the put, and a writer that passes no start is not gated at all. The entry itself used to carry no memory of any of that, because `CFCacheStore` stamped `taggedAt` and `VercelCacheStore` stamped `ta` with the write's `Date.now()`: an entry holding old content, written after the marker, looked newer than the marker to every later read, and a location with no copy of its own served it from KV until its ttl ended. `putShell` never had the problem, since a shell's `taggedAt` is the capture's start. Now the data families do the same: the stamp is the start of the execution that produced the value, so a marker written while it ran is not older than the stamp and the existing read-side check (`marker >= taggedAt`) rejects the entry. The write gate stays; it saves the store write, and where a read compares the stamp with a marker, the stamp makes the entry safe when the gate let it through.
+
+Where that holds, exactly. Protected on later requests: `CFCacheStore` with KV markers (every read path compares `marker >= taggedAt`), and `MemorySegmentCacheStore`, which refuses the write. Not protected on later requests: `VercelCacheStore`, whose data reads compare `ta` with the invalidating request's mask only (`maskedForRequest`), so across function instances only the gate guards a late write; and `CFCacheStore` L1 hits in purge mode or without KV, which read no marker. A test pins the Vercel limit (`VercelCacheStore: ... known limit` in `tag-write-after-invalidation.rsc-test.ts`); a data-read marker check on Vercel would turn those cases around and is a cost decision (a `tm` read per tag per data read), not part of this change.
+
+The start travels on the existing call paths, never through ambient state:
+
+- `set`: `CachedEntryData.taggedAt`, which the store already wrote and read. `CacheScope.cacheRoute` sets it to its `start.at` when the record has tags; a store that finds none stamps write time.
+- `setItem`: the new optional `CacheItemOptions.startedAt`, set by the `"use cache"` writers (`cache-runtime.ts`) and the loader `cache()` writer (`loader-cache.ts`) to the same `start.at` their gate used.
+- `putResponse`: no options object, and no new positional parameter, so the writer marks the `Response` it hands over (`markResponseStart`, `invalidation-order.ts`, a `WeakMap` on `globalThis` like the order itself) and the store reads it back (`responseStartedAt`). A custom store never sees it; it only ignores a mark.
+
+A custom store is unaffected: `startedAt` and `taggedAt` are optional, an old store ignores them and keeps its own stamp, and nothing about hits or misses changes when no invalidation happens. `entryStamp(startedAt)` (`invalidation-order.ts`) turns the start into the stamp: the start when it is known, write time when it is not, and never later than now, because a start from a skewed clock would otherwise stamp the future and make the entry newer than every marker.
+
+Which start each writer has, which stamp each store wrote before and writes now, and what already refused a write that started before an invalidation:
+
+| Family                 | Writer                                                              | Start the writer has                                                                      | Stamp before (CF / Vercel / Memory) | Stamp now                             | Write refused when started before an invalidation? |
+| ---------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------- | ------------------------------------- | -------------------------------------------------- |
+| `set` (segment record) | route `cache()` MISS, `withCacheStore` -> `CacheScope.cacheRoute`   | `renderStart`, before the lookup and the handlers                                         | write time / write time / none      | the start (`data.taggedAt`)           | yes, `predatesInvalidation` in `cacheRoute`        |
+| `set`                  | route `cache()` stale or proactive refresh, `rerenderAndCacheRoute` | its own `executionStart()`                                                                | write time / write time / none      | the refresh's own start               | yes                                                |
+| `set`                  | the implicit doc scope of a shell capture                           | none: the record lives in the shell entry, which `putShell` stamps with the capture start | write time / write time / none      | write time (unchanged)                | no, by design: `putShell` gates it                 |
+| `setItem`              | `"use cache"` MISS                                                  | `executionStart()` before the body runs                                                   | write time / write time / none      | the start (`startedAt`)               | yes                                                |
+| `setItem`              | `"use cache"` stale refresh                                         | the refresh's own `executionStart()`, not the request's                                   | write time / write time / none      | the refresh's own start               | yes                                                |
+| `setItem`              | loader `cache()` MISS and stale refresh                             | `earliestRecordedStart(bodyTags)`: the oldest run the value is built from                 | write time / write time / none      | that start                            | yes                                                |
+| `putResponse`          | document cache MISS and stale refresh                               | the request's `_requestStart` (see below)                                                 | write time / write time / none      | that start (marked on the `Response`) | yes                                                |
+| `putResponse`          | route `cache()` response route, MISS and stale refresh              | `executionStart()` before the handler, each refresh its own                               | write time / write time / none      | that start                            | yes                                                |
+| `putShell`             | shell capture                                                       | the capture start (`entry.createdAt`)                                                     | the capture start on all three      | unchanged                             | yes, and the store checks its generation marker    |
+
+`MemorySegmentCacheStore` has no stamp: it deletes tagged entries on invalidation and checks no marker on read. What it can do is refuse the write, and it now does when a tag was invalidated in a millisecond strictly after the execution's start (`invalidatedAfter`, `memory-segment-store.ts`). Strictly, not `>=`: an invalidation in the start's own millisecond is ambiguous (it may precede the start), and in a process that runs everything in one isolate the order in `invalidation-order.ts` already sorts those exactly. `VercelCacheStore` reads `ta` only through the request mask, because `expireTag` keeps no queryable history: the stamp makes the invalidating request's own late write masked, but another request cannot tell it from a fresh entry (the `tm` markers are for shells and the gate).
+
+Two cases keep the write-time stamp on purpose. A writer that knows no start gets today's behaviour (the shell capture's doc record, above, and a custom caller of `set`/`setItem`/`putResponse` that passes none). A background refresh stamps its own start, never the request's: the request that scheduled it may have started before an invalidation of a tag the refresh records, and a stamp from the request would reject a refresh that read fresh data. The document cache is the exception on purpose, as the writers table above explains: its stale refresh re-runs only the handler, over what the middleware ahead of it read at the request's start, so it keeps the request's.
+
+The same-millisecond rule is the one `putShell` already had. A marker in the stamp's own millisecond wins (`>=`), so an entry whose execution started in the same millisecond as an invalidation that preceded it reads as invalidated: one wasted fill, never a stale read, and the next render starts in a later millisecond. On Workers the clock only moves on I/O, and the marker's KV put is I/O.
+
+The on-demand prerender store is stamped the same way and is closed (#1072, `ondemand-prerender.md`): a page or marker carries its render's start, the KV prerender store compares its tag marker with it, and the memory store remembers the last mark per tag and router; those entries are marked stale rather than refused, and nothing stays open for KV beyond its eventual consistency across colos, nor for the memory store beyond a mark and a render start in the same millisecond with the render first.
+
+The invariant: a skipped write only costs a later miss, never a stale read, and the execution still returns the value it computed. What stays open for the runtime cache: a KV-less `CFCacheStore` has no marker to read, so another isolate's late write lands and ttl+swr bounds it (purge mode purges before it); KV itself is eventually consistent across colos, so a marker written in another colo that this colo's KV read does not see yet lets the write through; with `tagCacheTtl` the read can come from this colo's L1 marker cache, up to `tagCacheTtl` behind another colo's invalidation; and a KV-less `CFCacheStore` or one in purge mode reads no marker for an L1 hit, and `VercelCacheStore` reads none for data, so the execution-start stamp reaches those reads only through the request mask. A third gap: an outer entry that bakes an inner cache HIT is stamped with the outer's start, and a hit carries no stamp of its own (`CacheItemResult`, `types.ts`), so the outer can hold inner content older than a marker that the outer's start is after. The check-then-write window between the marker read and the put, which a shared read in flight widens by at most one marker round-trip, is closed by the stamp (#1068, above) wherever a read compares it. One consequence to know: an entry whose tag is invalidated more often than its execution takes never fills, since every write started before the latest invalidation. Nested tags (#980) make that likelier, because an outer entry now answers to every tag of the calls inside it.
 
 A custom store gets the same behavior by recording its invalidation in request-scoped state its reads consult before the first await of its `invalidateTags()` (the contract is on `SegmentCacheStore.invalidateTags` in `src/cache/types.ts`). One that does not still works; the request that ran `revalidateTag()` can then read entries the invalidation covers until the durable write lands.
 

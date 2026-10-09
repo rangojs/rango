@@ -45,7 +45,10 @@ route was pre-rendered.
   sets both `onDemand` and `ppr` throws at definition (a refresh cannot replace
   the captured shell atomically). A plain (non-Passthrough) `onDemand` route keeps the
   pr-miss contract in production: an overlay+manifest miss is a 404
-  (`DataNotFoundError`), never an in-request producer render. A refresh cannot
+  (`DataNotFoundError`), never an in-request producer render. A page is taken
+  out of service by a "removed" marker in the overlay (`prerender.remove()`,
+  or a refresh whose handler calls `notFound()`), which also hides the
+  build-time entry below it. A refresh cannot
   reach connected clients until their prefetch/HTTP caches expire — see the
   staleness call-outs in `docs/design/ondemand-prerender.md`.
 
@@ -392,9 +395,12 @@ where an entry came from. Design:
 4. A capture that is refused (identity guard, rejected bake-lane loader),
    produces no shell, or never consulted the prerender store is SKIPPED with a
    loud `SHELL SKIP` build line — the route keeps runtime-capture semantics,
-   never a wrong-lane bake. Manifest keys are pathname-only (router ids hash
-   transformed source positions and differ across realms); pathname collisions
-   across routers are declined at build.
+   never a wrong-lane bake. A manifest key is the capturing router's id plus the
+   pathname (`buildShellManifestKey`, `src/prerender/shell-manifest-key.ts`),
+   and the runtime looks a shell up under the serving router's id, so a router
+   reads only a shell the build captured for it (#1065). A pathname two
+   `Prerender` routes claim is still declined at build: a candidate names a
+   route, not a router.
 
 ### Runtime flow
 

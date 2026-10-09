@@ -52,12 +52,15 @@ function describeLoaderNavStale(label: string, mode: "dev" | "build") {
         { timeout: 5000 },
       );
 
-      const log = await page.evaluate(() => window.__featureStatusLog);
-      expect(log).toEqual([
-        "fresh:server-components",
-        "stale:server-components",
-        "fresh:server-actions",
-      ]);
+      // The log is written from an effect: a commit inside a view transition
+      // runs its effects when the animation ends.
+      await expect
+        .poll(() => page.evaluate(() => window.__featureStatusLog))
+        .toEqual([
+          "fresh:server-components",
+          "stale:server-components",
+          "fresh:server-actions",
+        ]);
     });
 
     test("a layout loader the navigation does not re-run never reports isLoading:true", async ({
@@ -95,6 +98,16 @@ function describeLoaderNavStale(label: string, mode: "dev" | "build") {
         { timeout: 5000 },
       );
 
+      // Logs are written from effects, which a commit inside a view
+      // transition runs when the animation ends: the route's complete log
+      // means every effect up to the destination's commit has run.
+      await expect
+        .poll(() => page.evaluate(() => window.__featureStatusLog))
+        .toEqual([
+          "fresh:server-components",
+          "stale:server-components",
+          "fresh:server-actions",
+        ]);
       expect(await page.evaluate(() => window.__featureShellStatusLog)).toEqual(
         ["fresh:shell"],
       );

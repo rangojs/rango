@@ -1,6 +1,6 @@
 ---
 name: prerender
-description: Pre-render route segments at build time with Prerender (with getParams), Passthrough live fallback, Static segments, and Skip, refresh them from a running app with on-demand prerender (Prerender onDemand + router.prerender, ISR-style), and warm any other route's runtime caches (ppr shell, cache(), "use cache", document cache) before traffic with the same router.prerender. Use when a page's content is mostly static and shouldn't render on every request, speeding up cold responses, reading build-only data (files, build env), refreshing one page from a webhook, cron or queue without a redeploy, making routes ready after a deploy or an updateTag so no visitor pays the first render, or deciding which routes to prerender vs render live.
+description: Pre-render route segments at build time with Prerender (with getParams), Passthrough live fallback, Static segments, and Skip, refresh them from a running app with on-demand prerender (Prerender onDemand + router.prerender, ISR-style), and warm any other route's runtime caches (ppr shell, cache(), "use cache", document cache) before traffic with the same router.prerender. Use when a page's content is mostly static and shouldn't render on every request, speeding up cold responses, reading build-only data (files, build env), refreshing one page from a webhook, cron or queue without a redeploy, removing a deleted item's page (prerender.remove, or notFound() in a refresh), making routes ready after a deploy or an updateTag so no visitor pays the first render, or deciding which routes to prerender vs render live.
 argument-hint: [passthrough]
 ---
 
@@ -596,6 +596,10 @@ export const BlogPost = Passthrough(BlogPostDef, async (ctx) => {
 - `ctx.passthrough()` on a route not wrapped with `Passthrough()` throws.
 - `ctx.passthrough()` at runtime (`ctx.build === false`) also throws.
   It is a build-time-only control flow.
+- On an on-demand route, a refresh (`router.prerender()`) whose build handler
+  returns `ctx.passthrough()` reports `skipped-passthrough` and stores a
+  "removed" marker for that param, so the live handler answers there too, not
+  a page a refresh stored or the build baked earlier (see "Remove a page").
 - `getParams()` still enumerates the param set; the build handler decides
   per-param whether to produce an artifact or defer to the live handler.
 
@@ -790,6 +794,7 @@ await prerender(
 );
 await prerender.many(targets, { concurrency: 4, onlyIfStale: true });
 await prerender.markStale(["product:42"]);
+await prerender.remove("/products/42"); // see "Remove a page"
 ```
 
 `router.prerender({ env, ctx })` binds the live env (and the Cloudflare `ctx`,
@@ -806,10 +811,13 @@ will not finish.
 A refresh always renders and replaces; `{ onlyIfStale: true }` (cron sweeps)
 skips a fresh entry and returns `already-fresh`. The result is inspectable
 (`{ ok, path: "on-demand", status, key, tags, ttl }`); statuses are `rendered`,
-`already-fresh`, `no-match`, `no-store`, `skipped-personalized`,
+`already-fresh`, `removed` (the render hit `notFound()`, see "Remove a
+page"), `no-match`, `no-store`, `skipped-personalized`,
 `skipped-unsupported-target` (a target with `?search` or `#hash`),
 `skipped-passthrough`, `render-failed` and `store-failed`. Every failure keeps
-the previous entry.
+the previous entry, except `skipped-passthrough`, which hands the page to the
+live handler. A `markStale()` that lands while a refresh renders marks the entry that
+refresh stores.
 
 A route that is not on-demand is not refused: the same call warms its runtime
 caches instead (see "Warm any route before traffic"). An on-demand route gets
@@ -818,12 +826,141 @@ loaders' own `cache()` and the document cache are rebuilt on the new entry.
 That request needs a shared app cache store and an origin; without them the
 refresh is complete as it is, and the result has no `caches`.
 
+### Remove a page
+
+A deleted product's page has to stop serving, and for a param the build baked,
+the older build-time page must not come back in its place. So a removal does
+not delete the entry: it stores a "removed" marker in the prerender store in
+place of the page. There are two ways to write it.
+
+```typescript
+// 1. Explicitly, for example from a "product deleted" webhook. Nothing is
+//    rendered, so it does not wait for the data source to catch up.
+const prerender = router.prerender({ env, ctx });
+await prerender.remove("/products/42");
+await prerender.remove.many(paths, { concurrency: 4 });
+
+// 2. By refreshing: a render that hits notFound() removes its own page.
+export const ProductPage = Prerender(
+  async () => [{ id: "featured" }],
+  async (ctx) => {
+    const product = await ctx.env.PRODUCTS.get(ctx.params.id);
+    if (!product) notFound();
+    return <Product data={product} />;
+  },
+  { onDemand: { ttl: 3600, tags: ({ params }) => [`product:${params.id}`] } },
+);
+await prerender("/products/42"); // { ok: true, status: "removed", ... }
+```
+
+Both return `{ ok: true, path: "on-demand", status: "removed", key, tags }`.
+The result is `ok: true`: a removal worked, so count `removed` in what a sweep
+reports, next to `rendered` and `already-fresh`. From the next request on, the
+route answers 404 for that param, in dev and in production; a `Passthrough`
+route runs its live handler. A page the build baked is covered too: its
+build-time entry is not served.
+
+The two differ in how long they last:
+
+|                          | `prerender.remove(url)`                    | a refresh that hits `notFound()`                                                   |
+| ------------------------ | ------------------------------------------ | ---------------------------------------------------------------------------------- |
+| renders                  | no                                         | yes                                                                                |
+| the marker               | permanent: no `ttl`, no tags               | has the route's `ttl` and `tags`, like the page it replaces                        |
+| `onRevalidate`           | never scheduled                            | scheduled by a request once the marker is stale; the 404 keeps answering meanwhile |
+| `{ onlyIfStale: true }`  | leaves it and returns `removed`            | leaves it while fresh (`removed`); renders again once stale                        |
+| `markStale(tags)`        | never reaches it                           | marks it stale through the route's tags, so it is rechecked                        |
+| the page comes back when | a refresh without `onlyIfStale` renders it | the next recheck renders it, or any refresh does                                   |
+
+- **A `notFound()` anywhere in the render removes the page**: in the route
+  handler, a layout handler, a parallel slot handler, or any server component
+  in the tree, sync or async. It removes it only when nothing else went wrong.
+  When the data source may be failing, throw anything else: that is
+  `render-failed` and keeps the page. A render that hits a `notFound()` and
+  another error is `render-failed` too, whichever came first.
+- **A `notFound()` removal is rechecked; `remove()` is permanent.** A data
+  source that loses an item for a moment must not remove its page until the
+  next deploy, so the marker of a refresh goes stale by the route's `ttl`
+  (else the router's `prerender.ttl`; with neither it never does) and is
+  rendered again by `onRevalidate` or a sweep, like a stale page. `remove()` is
+  a decision, not an observation: its marker stays until a
+  `prerender(url)` without `onlyIfStale` renders the page.
+- **`ctx.passthrough()` in a refresh stores the marker too.** A `Passthrough`
+  route whose build handler declines a param gets `skipped-passthrough`, and
+  the live handler answers from then on, not a page stored or baked earlier.
+  The marker is stamped and rechecked like a `notFound()` one.
+- **`remove()` is for on-demand routes.** On any other route it returns
+  `skipped-not-on-demand` and never warms. `no-match`, `no-store`,
+  `skipped-unsupported-target` and `store-failed` are as for a refresh, and
+  `throwOnError` works the same. `remove.many()` takes `concurrency` and
+  `throwOnError`, and returns one result per target in input order.
+- **Last write wins.** `remove()` and a refresh of the same page are two
+  writes to one key. A job queued before a removal (an `onRevalidate` for the
+  page when it was stale) that runs a plain refresh after it brings the page
+  back: pass `{ onlyIfStale: true }` in `onRevalidate` and queue consumers, so
+  they find the marker and render nothing. A marker that lands while a refresh
+  is still rendering is not overwritten by that render's page; that narrows
+  the race and cannot close it (the check and the write are two store calls,
+  and KV is eventually consistent).
+- **The marker does not reach the runtime caches around the route**, and no
+  warm request follows a removal. A document cache
+  (`createDocumentCacheMiddleware`) answers ahead of the router, so it keeps
+  serving the document it stored until that entry's `s-maxage` and
+  `stale-while-revalidate` run out. A `Passthrough` route's live handler serves
+  through its own `cache()` as it does for a page that was never refreshed.
+  Remove first, then invalidate:
+
+  ```typescript
+  path.json("/hooks/product-deleted", async (ctx) => {
+    const { id } = (await ctx.request.json()) as { id: string };
+    const result = await router
+      .prerender({ env: ctx.env, ctx: ctx.executionContext })
+      .remove(`/products/${id}`);
+    await updateTag(`product:${id}`); // then drop the cached document
+    return { status: result.status };
+  });
+  ```
+
+  The order matters. With the invalidation first, a visitor between the two
+  calls misses the document cache, is served the page the store still holds,
+  and the document cache stores it again; the removal then cannot reach it.
+  With the removal first, that visitor gets the document that is still
+  cached, or, past the cache, the marker's 404, which is never stored: nothing
+  can put the page back. `updateTag()` needs a request context: a webhook
+  route has one, a
+  queue or cron handler does not, and there the stored document serves until
+  it expires. The cached document carries the tags its own request recorded
+  (for example a `cacheTag()` call in middleware), not the route's
+  `onDemand.tags`, which are prerender tags. A plain on-demand route's own
+  `cache()` and its loaders' `cache()` need nothing: the request is a 404
+  before any of them is shown.
+
+- **A store that cannot be read is a miss**, for a marker as for a page: while
+  the prerender store is failing, the build-time entry of a removed page can
+  serve again.
+- **The marker is per data version**, like every entry: a deploy that leaves
+  the router's server code unchanged keeps it. After one that changes it the
+  build decides again: a param `getParams()` still lists is baked and served.
+  In dev every edit to a server module is such a change, so a marker (like a
+  refreshed page) is gone after one.
+- **Intercepted navigations do not see it.** They do not read the prerender
+  store (see the rules below), so the build's intercept variant of a removed
+  page still serves.
+
+The `notFound()` half is the Next.js Pages Router's rule: "With
+`notFound: true`, the page will return a `404` even if there was a
+successfully generated page before. This is meant to support use cases like
+user-generated content getting removed by its author. Note, `notFound`
+follows the same `revalidate` behavior described here."
+([getStaticProps](https://nextjs.org/docs/pages/api-reference/functions/get-static-props))
+
 ### What is served
 
 | Request finds                     | `Prerender(..., { onDemand })`                              | `Passthrough(def, live)`                   |
 | --------------------------------- | ----------------------------------------------------------- | ------------------------------------------ |
 | fresh overlay entry               | the overlay entry, loaders fresh (dev and production)       | same                                       |
 | stale overlay entry               | the overlay entry; `onRevalidate` scheduled if configured   | same                                       |
+| "removed" marker                  | **404** (dev and production); the build entry is not served | the live handler (dev and production)      |
+| stale "removed" marker            | the same 404; `onRevalidate` scheduled if configured        | the live handler; `onRevalidate` likewise  |
 | no overlay entry, param baked     | production: the build entry; dev: the dev prerender render  | same                                       |
 | no overlay entry, param not baked | production: **404**; dev: rendered through the dev endpoint | the live handler (dev and production)      |
 | server action re-render           | overlay, then build entry, then 404, as above               | the live handler (the overlay is not read) |
@@ -831,7 +968,7 @@ refresh is complete as it is, and the result has no `caches`.
 The retained handler never renders inside a production request: a plain
 on-demand route 404s for a param until something refreshes it. Dev renders any
 param through the dev prerender endpoint, so a production 404 does not show up
-in dev.
+in dev. A removed page is the exception: its marker answers 404 in dev too.
 
 ### Rules worth knowing
 
@@ -843,9 +980,14 @@ in dev.
   on a single Node process. Across isolates, dedup belongs to the queue. Its
   `target` is a `PrerenderTargetObject`, which the runner and its `.many()`
   accept as is, so
-  `onRevalidate: (target, env, ctx) => router.prerender({ env, ctx })(target)`
+  `onRevalidate: (target, env, ctx) => router.prerender({ env, ctx })(target, { onlyIfStale: true })`
   typechecks without a cast. `onRevalidate` receives `(target, env, ctx)`;
   `ctx` is the stale request's execution context, absent where none exists.
+  Pass `{ onlyIfStale: true }` wherever the refresh runs later than it was
+  scheduled (here, and in a queue consumer): the entry is stale, so it
+  renders, unless another job already refreshed it (`already-fresh`) or
+  `prerender.remove()` removed the page in between (`removed`, nothing
+  rendered). A refresh without it would bring a removed page back.
 - **Prerender tags are their own namespace.** `cacheTag()`, `updateTag()` and
   `revalidateTag()` never reach the prerender store; the runner's `markStale()`
   never reaches the runtime cache. (`updateTag()` needs a request context;
@@ -859,8 +1001,9 @@ in dev.
   live env bound by `router.prerender({ env })`, not `buildEnv`, and `ctx.onDemand` is `true`.
 - **A trigger may render params `getParams()` never returned.** Validate ids
   from webhooks before refreshing them.
-- **`notFound()` or a throw in a refresh keeps the old entry** (`render-failed`).
-  There is no delete through the trigger in v1.
+- **A throw in a refresh keeps the old entry** (`render-failed`). A
+  `notFound()` on its own is not a failure: it removes the page (see "Remove
+  a page").
 - **Intercepted navigations are not refreshed.** A refresh writes the main
   variant only; an intercept navigation still serves the build's intercept
   variant, and an on-demand route used as an intercept target 404s on a param
@@ -892,21 +1035,71 @@ const store: WritablePrerenderStore = {
   async set(key, stored) {
     await blob.put(serializePrerenderKey(key), JSON.stringify(stored));
   },
-  // optional: delete(key), markStale(tags)
+  // optional: delete(key), markStale(routerId, tags)
 };
 ```
+
+`markStale(routerId, tags)` receives the id of the router whose runner was
+called (`key.routerId` on that router's entries). Mark only entries whose
+`key.routerId` equals it: routers behind a host router share one store, and a
+tag means something only inside the router whose routes declared it.
 
 Key everything off the `key` you are given (`serializePrerenderKey` includes
 `key.version`). Do not call `getCacheVersions()` in a prerender store: `set()`
 runs outside the producer's request context.
+
+`stored` is a page (`{ v, entry, meta }`) or the "removed" marker
+(`{ v, removed: true, meta }`, no `entry`). A store that persists the JSON it
+is given, like the one above, handles both and needs no change. `meta` has the
+same fields on both, and means the same: a store that indexes by `meta.tags`
+or lowers `meta.staleAt` for `markStale()` treats a marker as it treats a
+page. That is how a `notFound()` marker is rechecked. A `remove()` marker has
+no tags and no `staleAt`. Never drop or rewrite a value you do not
+recognize: the router decides what it means. The router does not call
+`delete(key)`; removing a page is a `set()` of the marker.
+
+### Several routers (host router)
+
+A runner belongs to the router `router.prerender()` was called on, so an app
+with several routers behind a host router calls it on each router:
+
+- It matches only that router's routes. A URL only another router has is
+  `no-match`.
+- Entries are keyed by router id plus that router's data version, so two
+  routers can share one `prerender.store` (one KV namespace) without touching
+  each other's entries. A deploy that changes one router's server code leaves
+  the others' refreshed entries served when their code is separate (for
+  example lazy mounts); routers that share a statically imported module move
+  together.
+- `markStale(tags)` marks only that router's entries, in every shipped store:
+  `markStale(["product:1"])` on one router does not make another router's
+  `product:1` entry stale.
+- A warm of a non-on-demand route goes through that router's own handler, and
+  its cache keys carry the host: pass the host the visitors use as `origin`
+  (`router.prerender({ env, ctx, origin: "https://a.example" })`), or a path
+  target resolves against the calling request's origin. A multi-router app
+  passes `origin` or a full URL on every warm, so each router warms the host
+  its visitors use. A warm that resolves another router's host stores the
+  warming router's entries under that host; the router that owns the host
+  never reads them (cache keys start with the router's id: `/host-router`,
+  "Shared cache store").
+
+### KV tag markers
+
+`createKVPrerenderStore(kv)` writes a marker per tag at
+`__rango_pr_tag__/{encodeURIComponent(routerId)}/{tag}` (the encoded router id)
+and markers have no expiry: an entry without a `ttl` never goes stale by
+itself, so an expired marker would silently drop an invalidation.
 
 ### Test it
 
 `router.prerender()` and the serve path run under the public testing
 primitives: render with `router.prerender()`, then `serveShellRequest(router,
 url)` from `@rangojs/router/testing/flight` serves the route through the
-production handler and returns the Flight payload. `createMemoryPrerenderStore`
-is exported from `@rangojs/router/testing` too. See `/testing`.
+production handler and returns the Flight payload. After
+`prerender.remove(url)` the same request is a `404` (`result.response.status`).
+`createMemoryPrerenderStore` is exported from `@rangojs/router/testing` too.
+See `/testing`.
 
 ### loading() is ignored without Passthrough
 
@@ -973,13 +1166,13 @@ A warm fills the cache where the call runs. That helps other traffic only when
 the store is shared beyond that place, so the router asks the store
 (`SegmentCacheStore.scope`):
 
-| Store                       | `scope`      | Warm                                                                                           |
-| --------------------------- | ------------ | ---------------------------------------------------------------------------------------------- |
-| `CFCacheStore` with `kv`    | `"global"`   | yes                                                                                            |
-| `CFCacheStore` without `kv` | `"local"`    | refused: the Cache API is per colo                                                             |
-| `VercelCacheStore`          | `"regional"` | yes; fills the region the call runs in (all traffic only on a single-region project)           |
-| `MemorySegmentCacheStore`   | `"local"`    | refused in production; allowed under the dev server (one process serves every request)         |
-| a custom store              | its own      | only when it declares `scope: "global"` or `"regional"`; a store that declares none is refused |
+| Store                       | `scope`      | Warm                                                                                                                    |
+| --------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `CFCacheStore` with `kv`    | `"global"`   | yes                                                                                                                     |
+| `CFCacheStore` without `kv` | `"local"`    | refused: the Cache API is per colo                                                                                      |
+| `VercelCacheStore`          | `"regional"` | yes; fills the region the call runs in (all traffic only on a single-region project)                                    |
+| `MemorySegmentCacheStore`   | `"local"`    | refused in production; allowed under the dev server (one process serves every request); `{ scope: "global" }` admits it |
+| a custom store              | its own      | only when it declares `scope: "global"` or `"regional"`; a store that declares none is refused                          |
 
 `VercelCacheStore` is not checked for the number of regions: Vercel's Runtime
 Cache is per region, and a warm fills the one it runs in. New projects and
@@ -994,13 +1187,18 @@ process only, so no other process or location sees the new entry.
 The dev exception exists so you can try warming locally on the Node preset. It
 follows the dev server, not `NODE_ENV`: a production build, `vite preview` and
 a test runner all refuse the memory store. A single-process deployment whose
-memory store really is the only copy declares it:
+memory store really is the only copy says so with the `scope` option:
 
 ```typescript
-class SingleProcessStore extends MemorySegmentCacheStore {
-  readonly scope = "global" as const;
-}
+const store = new MemorySegmentCacheStore({ scope: "global" });
 ```
+
+It is not the default because the store is per process and the router cannot
+tell one long-running server from several replicas or serverless instances. A
+default of `"global"` would report `warmed` while most visitors hit a cold
+instance, so you opt in only when exactly one process serves the app. Two
+instances with the same `name` share their maps but each declares its own
+`scope`: keep them identical.
 
 ### The origin
 
@@ -1143,8 +1341,8 @@ before an invalidation of one of its tags is refused.
 the next visitor's request through the production handler (`shellStatus:
 "HIT"`). Configure the store on the router (`createRouter({ cache: { store }
 })`), not through `serveShellRequest`'s `cacheStore` option, and give it a
-shared scope: the shipped `MemorySegmentCacheStore` is refused, so subclass it
-as above. See `/testing`.
+shared scope: the shipped `MemorySegmentCacheStore` is refused, so pass
+`{ scope: "global" }` as above. See `/testing`.
 
 ## Complete Example
 

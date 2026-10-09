@@ -5,9 +5,10 @@
  * way a throwing intercept loader does.
  *
  * Also pinned: a thrown/returned Response propagates, the background cache
- * re-render (skipMiddleware) rejects, and an async handler error under
- * loading() streams as a rejected component (a fallback there would land after
- * the 200 and could be cached).
+ * re-render (skipMiddleware) rejects (also for a streamed handler: a fallback
+ * there would be cached), and an async handler error under loading() streams,
+ * resolves to the declared boundary and records the failure on the request so
+ * cacheRoute refuses to store it.
  */
 import { describe, it, expect, beforeAll, vi } from "vitest";
 import { createRouter } from "../../router.js";
@@ -183,7 +184,7 @@ async function navigate(pathname: string) {
   );
   const modal = result.segments.find((s: any) => s.slot === "@modal");
   expect(modal).toBeDefined();
-  return { result, modal, status: reqCtx.res.status };
+  return { result, modal, status: reqCtx.res.status, reqCtx };
 }
 
 function expectModalFallback(
@@ -296,14 +297,14 @@ describe("intercept handler lanes left unchanged", () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
-  it("an async throw under loading() still streams as a rejected component, reported like a streamed route handler", async () => {
+  it("an async throw under loading() streams, then resolves to the declared boundary; reported like a streamed route handler", async () => {
     const nav = await navigate("/streamed/1");
     expect(nav.status).toBe(200);
     expect(nav.modal.component).toBeInstanceOf(Promise);
-    await expect(nav.modal.component).rejects.toThrow("streamed modal failed");
+    await expect(nav.modal.component).resolves.toBe(LayoutError);
+    expect(nav.reqCtx._recoveredHandlerErrors?.size).toBe(1);
 
-    // deps.trackHandler reports the streamed rejection to onError without
-    // swallowing it (the client's boundary renders it).
+    // deps.trackHandler reports the streamed rejection to onError once.
     await new Promise((r) => setTimeout(r, 0));
     expect(onError).toHaveBeenCalledTimes(1);
     const [errCtx] = onError.mock.calls[0];
@@ -370,5 +371,65 @@ describe("intercept handler lanes left unchanged", () => {
       ),
     ).rejects.toThrow("background modal failed");
     expect(deps.callOnError).not.toHaveBeenCalled();
+  });
+
+  it("the background re-render (skipMiddleware) of a streamed handler rejects and records nothing", async () => {
+    const parentEntry = {
+      type: "layout",
+      shortCode: "L9",
+      id: "bg-layout",
+      parent: null,
+      errorBoundary: [LayoutError],
+      notFoundBoundary: [],
+    } as any;
+    const interceptEntry = {
+      slotName: "@modal",
+      routeName: "bg",
+      handler: async () => {
+        throw new Error("background streamed modal failed");
+      },
+      loading: <div>modal-loading</div>,
+      middleware: [],
+      loader: [],
+      when: [],
+    } as any;
+    const deps = {
+      wrapLoaderPromise: vi.fn(),
+      trackHandler: vi.fn((p) => p),
+      findNearestErrorBoundary: vi.fn(() => LayoutError),
+      findNearestNotFoundBoundary: vi.fn(() => null),
+      callOnError: vi.fn(),
+    } as any;
+    const context = {
+      request: new Request("https://example.com/bg/1"),
+      url: new URL("https://example.com/bg/1"),
+      env: {},
+      params: {},
+      pathname: "/bg/1",
+    } as any;
+    const reqCtx = createRequestContext({
+      env: {},
+      request: context.request,
+      url: context.url,
+      variables: {},
+    } as any);
+
+    const result = await runWithRequestContext(reqCtx, () =>
+      resolveInterceptEntry(
+        interceptEntry,
+        parentEntry,
+        {},
+        context,
+        true,
+        deps,
+        undefined,
+        { skipMiddleware: true },
+      ),
+    );
+    const slot = result.find((seg: any) => seg.slot === "@modal");
+    await expect(slot!.component).rejects.toThrow(
+      "background streamed modal failed",
+    );
+    expect(reqCtx._recoveredHandlerErrors?.size ?? 0).toBe(0);
   });
 });

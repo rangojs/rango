@@ -61,6 +61,31 @@ describe("injectClientDebugFlag", () => {
     ).toBeNull();
   });
 
+  it("bakes the suspense audit flag into its own module, off unless set", () => {
+    const original = process.env.INTERNAL_RANGO_SUSPENSE_AUDIT;
+    try {
+      delete process.env.INTERNAL_RANGO_SUSPENSE_AUDIT;
+      expect(
+        injectClientDebugFlag(
+          "/app/node_modules/@rangojs/router/src/internal-suspense-audit.ts",
+        )?.code,
+      ).toBe("export const INTERNAL_RANGO_SUSPENSE_AUDIT = false;\n");
+      process.env.INTERNAL_RANGO_SUSPENSE_AUDIT = "1";
+      expect(
+        injectClientDebugFlag(
+          "/repo/packages/rangojs-router/src/internal-suspense-audit.ts?v=1",
+        )?.code,
+      ).toBe("export const INTERNAL_RANGO_SUSPENSE_AUDIT = true;\n");
+      expect(
+        injectClientDebugFlag("/app/src/internal-suspense-audit.ts"),
+      ).toBeNull();
+    } finally {
+      if (original === undefined)
+        delete process.env.INTERNAL_RANGO_SUSPENSE_AUDIT;
+      else process.env.INTERNAL_RANGO_SUSPENSE_AUDIT = original;
+    }
+  });
+
   it("does not match an internal-debug file outside the router package", () => {
     process.env.INTERNAL_RANGO_DEBUG = "true";
     expect(injectClientDebugFlag("/app/src/internal-debug.ts")).toBeNull();

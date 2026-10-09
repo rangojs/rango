@@ -31,7 +31,7 @@ import {
 } from "./validate-redirect-origin.js";
 import type { NavigationUpdate } from "./types.js";
 import { OPTIMISTIC_COMMIT_TRANSITION_TYPE } from "./optimistic-commit.js";
-import { loaderStore } from "../loader-store.js";
+import type { LoaderStore } from "../loader-store.js";
 import {
   collectClientRevalidationDecisions,
   setActiveInterceptTargets,
@@ -44,6 +44,7 @@ import {
 import { buildHistoryState } from "./history-state.js";
 import { addLocationState } from "./react/location-state-shared.js";
 import type { TransitionWhenKind } from "../types/segments.js";
+import { auditTreeCause, type TreeUpdateCause } from "../suspense-audit.js";
 
 function toScrollPayload(
   scroll: boolean | undefined,
@@ -70,6 +71,13 @@ export function shouldStartViewTransition(
   return !hasIntercept && hasTransition;
 }
 
+// Dev only (suspense-audit.ts I6): what this updater's commit is.
+function treeCause(mode: UpdateMode, traversal?: boolean): TreeUpdateCause {
+  if (mode.type === "action") return "action";
+  if (mode.type === "stale-revalidation") return "stale-revalidation";
+  return traversal ? "popstate" : "navigation";
+}
+
 /**
  * Transition commit. Every held commit announces the loader streams the
  * committed tree is still receiving (loader-store.ts announcePendingStreams)
@@ -79,13 +87,14 @@ export function shouldStartViewTransition(
  * its fallback. Also used by renderRoute's navigate() (testing/render-route.tsx).
  */
 export function commitInTransition(
+  loaders: LoaderStore,
   onUpdate: UpdateSubscriber,
   segments: readonly ResolvedSegment[],
   update: NavigationUpdate,
   transitionTypes: readonly string[],
 ): void {
   startTransition(() => {
-    loaderStore.announcePendingStreams(segments);
+    loaders.announcePendingStreams(segments);
     if (addTransitionType) {
       for (const type of transitionTypes) addTransitionType(type);
     }
@@ -464,10 +473,17 @@ export function createPartialUpdater(
             scroll: toScrollPayload(commitScroll),
           };
 
+          if (process.env.NODE_ENV !== "production") {
+            auditTreeCause(treeCause(mode, tx.traversal));
+          }
           if (shouldStartViewTransition(existingSegments, cachedGatedOff)) {
-            commitInTransition(onUpdate, existingSegments, cachedUpdate, [
-              "navigation",
-            ]);
+            commitInTransition(
+              store.loaders,
+              onUpdate,
+              existingSegments,
+              cachedUpdate,
+              ["navigation"],
+            );
           } else {
             onUpdate(cachedUpdate);
           }
@@ -491,6 +507,9 @@ export function createPartialUpdater(
             { routeName: payload.metadata.routeName },
           );
 
+          if (process.env.NODE_ENV !== "production") {
+            auditTreeCause(treeCause(mode, tx.traversal));
+          }
           onUpdate({
             root: newTree,
             metadata: payload.metadata,
@@ -718,11 +737,15 @@ export function createPartialUpdater(
         metadata: payload.metadata!,
         scroll: scrollPayload,
       };
+      if (process.env.NODE_ENV !== "production") {
+        auditTreeCause(treeCause(mode, tx.traversal));
+      }
       if (
         !gatedOff &&
         (mode.type === "action" || mode.type === "stale-revalidation")
       ) {
         commitInTransition(
+          store.loaders,
           onUpdate,
           reconciled.mainSegments,
           update,
@@ -730,6 +753,7 @@ export function createPartialUpdater(
         );
       } else if (hasTransition) {
         commitInTransition(
+          store.loaders,
           onUpdate,
           reconciled.mainSegments,
           update,
@@ -764,6 +788,7 @@ export function createPartialUpdater(
         // segment reconciles in place (clientGroup key), so a read that still
         // suspends must hold the presented content, not flash a fallback.
         commitInTransition(
+          store.loaders,
           onUpdate,
           reconciled.mainSegments,
           update,
@@ -772,12 +797,13 @@ export function createPartialUpdater(
       } else {
         // Cold/partially-prefetched nav that mounts NEW segments, or any
         // commit transition({ when }) gated off (navigation, action refetch,
-        // stale revalidation): normal commit so fallbacks stream
-        // like a first load and the click has visible feedback. A gated-off
-        // segment keeps its key, so its loading() fallback comes from its
-        // boundary re-suspending on this urgent commit, not from a remount
-        // (#995). Explicit transition() routes keep the content-hold via the
-        // hasTransition branch above (the opt-in).
+        // stale revalidation): normal, unanimated commit. A segment with work
+        // still pending shows its loading() fallback like a first load; one
+        // whose data is already in hand shows none. A gated-off segment keeps
+        // its key, so a fallback comes from its boundary suspending on pending
+        // work in this urgent commit, not from a remount (#995). Explicit
+        // transition() routes keep the content-hold via the hasTransition
+        // branch above (the opt-in).
         onUpdate(update);
       }
 
@@ -822,6 +848,9 @@ export function createPartialUpdater(
         scroll: fullScrollPayload,
       };
 
+      if (process.env.NODE_ENV !== "production") {
+        auditTreeCause(treeCause(mode, tx.traversal));
+      }
       if (mode.type === "stale-revalidation") {
         await rawStreamComplete;
         // Mirror the partial branch's history-key staleness guard (above): the
@@ -836,9 +865,13 @@ export function createPartialUpdater(
           );
           return;
         }
+        if (process.env.NODE_ENV !== "production") {
+          auditTreeCause("stale-revalidation");
+        }
         if (fullGatedOff) onUpdate(fullUpdate);
         else {
           commitInTransition(
+            store.loaders,
             onUpdate,
             segments,
             fullUpdate,
@@ -847,13 +880,16 @@ export function createPartialUpdater(
         }
       } else if (mode.type === "action" && !fullGatedOff) {
         commitInTransition(
+          store.loaders,
           onUpdate,
           segments,
           fullUpdate,
           fullHasTransition ? ["action"] : [],
         );
       } else if (fullHasTransition) {
-        commitInTransition(onUpdate, segments, fullUpdate, ["navigation"]);
+        commitInTransition(store.loaders, onUpdate, segments, fullUpdate, [
+          "navigation",
+        ]);
       } else {
         onUpdate(fullUpdate);
       }

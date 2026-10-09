@@ -46,20 +46,24 @@ export interface StoredEntryOptions {
   params: Record<string, string>;
 }
 
-/**
- * Versioned envelope the router composes on a refresh and verifies on every
- * read. A store persists it as given and returns it as stored.
- */
-export interface PrerenderStoredEntry {
+/** What a page and a "removed" marker both carry: a store reads either alike. */
+interface StoredEnvelope {
   v: 1;
-  entry: PrerenderEntry;
   meta: {
+    /**
+     * When the render started, not when the entry was written: a `markStale()`
+     * at or after it (strictly after in an in-process store) covers the entry.
+     * A `remove()` marker renders nothing and carries its write time.
+     */
     storedAt: number;
     /**
      * Absent = never stale. Soft metadata only; controls `onRevalidate`
-     * scheduling, not serving. A store may lower it (KV tag markers do).
+     * scheduling, not serving. Counts the ttl from the write. A store may
+     * lower it (tag markers do).
      */
     staleAt?: number;
+    /** The configured ttl in seconds, as a result reports it. Absent = none. */
+    ttl?: number;
     tags: string[];
     /** The key's `version` at write time; verified on read. */
     version: string;
@@ -67,6 +71,26 @@ export interface PrerenderStoredEntry {
     params: Record<string, string>;
   };
 }
+
+type StoredPage = StoredEnvelope & { entry: PrerenderEntry; removed?: never };
+
+/**
+ * The "removed" marker (tombstone) stored in place of a page, by
+ * `prerender.remove()` or by a refresh whose render hit `notFound()` (or
+ * declined with `ctx.passthrough()`). A request that finds it is not served
+ * the build-time entry below the overlay. No `entry`: a router from before the
+ * marker rejects it as malformed (a miss) instead of serving an empty page.
+ * `meta` is stamped like a page's for a render outcome, so that marker goes
+ * stale and is rechecked; a `remove()` marker has no `staleAt` and no tags.
+ */
+type StoredTombstone = StoredEnvelope & { removed: true; entry?: never };
+
+/**
+ * Versioned envelope the router composes on a refresh or a removal and
+ * verifies on every read: a page, or the marker that the page was removed. A
+ * store persists either as given and returns it as stored.
+ */
+export type PrerenderStoredEntry = StoredPage | StoredTombstone;
 
 /**
  * The writable durable overlay: plain get/set. Backed in production by a
@@ -88,16 +112,25 @@ export interface WritablePrerenderStore {
    */
   get(key: PrerenderKey): Promise<PrerenderStoredEntry | null>;
 
-  /** Persist `stored` under `key`, replacing any previous entry. No expiry. */
+  /**
+   * Persist `stored` (a page, or the marker that the page was removed) under
+   * `key`, replacing any previous entry. No expiry.
+   */
   set(key: PrerenderKey, stored: PrerenderStoredEntry): Promise<void>;
 
   delete?(key: PrerenderKey): Promise<void>;
 
   /**
-   * Mark entries carrying any of `tags` stale (they keep serving). Optional:
-   * without it, `router.prerender.markStale()` is a no-op for this store.
+   * Mark the entries of router `routerId` (`PrerenderKey.routerId`) carrying
+   * any of `tags` stale (they keep serving). A mark covers an entry whose
+   * `meta.storedAt` it is at or after (strictly after for an in-process
+   * store), including one `set()` after the mark: a store that marks held
+   * entries in place has to remember its marks. Scope it to that router: routers
+   * behind a host router share one store, and a tag is only meaningful inside
+   * the router whose routes declared it. Optional: without it,
+   * `router.prerender().markStale()` is a no-op for this store.
    */
-  markStale?(tags: string[]): Promise<void>;
+  markStale?(routerId: string, tags: string[]): Promise<void>;
 }
 
 /**
@@ -110,14 +143,16 @@ export function serializePrerenderKey(key: PrerenderKey): string {
 
 /**
  * @internal Compose the versioned envelope the trigger hands to `store.set()`.
- * `now` is passed explicitly so tests stay deterministic.
+ * `now` is `meta.storedAt`; `staleFrom` (default `now`) is where the ttl
+ * starts counting. Both are passed explicitly so tests stay deterministic.
  */
 export function composeStoredEntry(
   key: PrerenderKey,
   entry: PrerenderEntry,
   options: StoredEntryOptions,
   now: number,
-): PrerenderStoredEntry {
+  staleFrom: number = now,
+): StoredPage {
   // Only a finite, non-negative ttl produces a staleAt: NaN would never go
   // stale and a negative ttl would be stale on every request.
   const hasTtl =
@@ -129,7 +164,12 @@ export function composeStoredEntry(
     entry,
     meta: {
       storedAt: now,
-      ...(hasTtl ? { staleAt: now + (options.ttl as number) * 1000 } : {}),
+      ...(hasTtl
+        ? {
+            staleAt: staleFrom + (options.ttl as number) * 1000,
+            ttl: options.ttl as number,
+          }
+        : {}),
       tags: options.tags,
       version: key.version,
       params: options.params,
@@ -138,12 +178,35 @@ export function composeStoredEntry(
 }
 
 /**
+ * @internal Compose the "removed" marker stored in place of a page. Its meta
+ * is a page's (composeStoredEntry), so `ttl` and `tags` mean the same: the
+ * marker of a render outcome is given the route's and is rechecked like a
+ * page; `prerender.remove()` gives neither, and its marker never goes stale.
+ */
+export function composeStoredTombstone(
+  key: PrerenderKey,
+  options: StoredEntryOptions,
+  now: number,
+  staleFrom: number = now,
+): StoredTombstone {
+  const { v, meta } = composeStoredEntry(
+    key,
+    { segments: [], handles: "" },
+    options,
+    now,
+    staleFrom,
+  );
+  return { v, removed: true, meta };
+}
+
+/**
  * @internal Verify a store's answer is safe to serve for this key: the
  * envelope shape and version tag, the key version, and the stored params
  * against the request's (the 8-hex DJB2 collision guard, param-hash.ts: a
  * runtime write keyed off webhook-supplied params must not serve one page's
- * content under another's URL). False means treat it as a miss. Run by the
- * router on every read, so a third-party store cannot skip it.
+ * content under another's URL, nor remove another's page). False means treat
+ * it as a miss. Run by the router on every read, so a third-party store
+ * cannot skip it.
  */
 export function isStoredEntryValidFor(
   stored: unknown,
@@ -158,10 +221,12 @@ export function isStoredEntryValidFor(
   const meta = candidate.meta;
   if (
     candidate.v !== 1 ||
-    entry == null ||
-    typeof entry !== "object" ||
-    !Array.isArray(entry.segments) ||
-    typeof entry.handles !== "string" ||
+    // The "removed" marker has no entry; a page must have a whole one.
+    (candidate.removed !== true &&
+      (entry == null ||
+        typeof entry !== "object" ||
+        !Array.isArray(entry.segments) ||
+        typeof entry.handles !== "string")) ||
     meta == null ||
     typeof meta !== "object" ||
     !Array.isArray(meta.tags) ||

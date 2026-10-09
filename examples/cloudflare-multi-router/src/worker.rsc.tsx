@@ -2,7 +2,13 @@
 import { createHostRouter } from "@rangojs/router/host";
 import type { AppBindings } from "./env.js";
 
-const hostRouter = createHostRouter();
+// Dev and preview workflow: the `x-rango-host` cookie picks the app to serve
+// from the one localhost origin (e.g. `admin.localhost` for the admin app).
+// The request is forwarded unchanged, so the picked app answers under the
+// same host and path as the site app.
+const hostRouter = createHostRouter({
+  hostOverride: { cookieName: "x-rango-host", allowedHosts: ["localhost"] },
+});
 
 // Admin sub-app on admin.localhost (must be registered before the catch-all)
 hostRouter.host(["*.localhost"]).lazy(() => import("./apps/admin/handler.js"));

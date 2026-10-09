@@ -36,7 +36,7 @@ import {
 import { applyViewTransitionDefault } from "./view-transition-default.js";
 import { _getRequestContext } from "../../server/request-context.js";
 import { getRouterContext } from "../router-context.js";
-import { observeStreamedHandler } from "./streamed-handler-telemetry.js";
+import { trackStreamedHandler } from "./streamed-handler-boundary.js";
 import { observeSegmentHandler } from "../instrument.js";
 import {
   track,
@@ -280,6 +280,13 @@ export interface ResolveSegmentOptions {
    * #918: resolved twice on a MISS, once and discarded on a HIT).
    */
   chain?: readonly EntryData[];
+  /**
+   * The matched chain entry being resolved: where the sync path catches a
+   * handler error, so a streamed handler (or slot owned by a routeless layout)
+   * recovers into the same boundary. resolveSegment sets it for the entry it
+   * resolves; nested resolutions keep the outer value.
+   */
+  boundaryEntry?: EntryData;
 }
 
 /**
@@ -298,6 +305,8 @@ export async function resolveSegment<TEnv>(
   options?: ResolveSegmentOptions,
 ): Promise<ResolvedSegment[]> {
   const segments: ResolvedSegment[] = [];
+  const boundaryEntry = options?.boundaryEntry ?? entry;
+  if (!options?.boundaryEntry) options = { ...options, boundaryEntry };
 
   if (entry.type === "layout" || entry.type === "cache") {
     if (!options?.skipLoaders) {
@@ -398,19 +407,15 @@ export async function resolveSegment<TEnv>(
         if (result instanceof Promise) {
           warnOnStreamedResponse(result, entry.id);
           result.finally(doneRouteHandler).catch(() => {});
-          const tracked = deps.trackHandler(result, {
+          component = trackStreamedHandler(deps, result, {
+            boundaryEntry,
             segmentId: entry.shortCode,
             segmentType: entry.type,
-          });
-          observeStreamedHandler(
-            tracked,
-            entry.shortCode,
-            entry.type,
-            context.pathname,
+            context,
             routeKey,
             params,
-          );
-          component = tracked;
+            recover: !options?.throwOnError,
+          });
         } else {
           doneRouteHandler();
           component = result;
@@ -679,19 +684,15 @@ export async function resolveParallelEntry<TEnv>(
             : handler;
         if (result instanceof Promise) {
           result.finally(doneParallelHandler).catch(() => {});
-          const tracked = deps.trackHandler(result, {
+          component = trackStreamedHandler(deps, result, {
+            boundaryEntry: options?.boundaryEntry ?? parallelEntry,
             segmentId: `${parentShortCode}.${slot}`,
             segmentType: "parallel",
-          });
-          observeStreamedHandler(
-            tracked,
-            `${parentShortCode}.${slot}`,
-            "parallel",
-            context.pathname,
+            context,
             routeKey,
             params,
-          );
-          component = tracked as ReactNode;
+            recover: !options?.throwOnError,
+          });
         } else {
           doneParallelHandler();
           component = result as ReactNode;

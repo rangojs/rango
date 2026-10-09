@@ -691,10 +691,11 @@ describe("one run per loader: a shell record's pushes follow the loader's pin", 
   });
 
   it("a navigation whose explicit route cache() misses replays the shell record: the captured push stays next to the pinned data", async () => {
-    const { serve, cacheStore } = setup();
+    const { serve, cacheStore, router } = setup();
     expect((await serve("/eb-cached")).shellStatus).toBe("MISS");
-    await cacheStore.delete("doc:localhost/eb-cached");
-    await cacheStore.delete("partial:localhost/eb-cached");
+    const keyBase = `${router.id}@localhost/eb-cached`;
+    expect(await cacheStore.delete(`doc:${keyBase}`)).toBe(true);
+    await cacheStore.delete(`partial:${keyBase}`);
     source.generation = 3;
 
     const nav = await serve("/eb-cached", { partial: { from: "/about" } });
@@ -1108,11 +1109,11 @@ describe("one run per loader: a deferred push reaches every replay of its pin (#
 
 describe("one run per loader: a route cache() record's copy of a loader push never outranks the loader's own source", () => {
   it("a document MISS that hits the route cache() record and the loader's cache() entry shows the entry's push next to its data", async () => {
-    const { serve, cacheStore, withLoaderMiss } = setup();
+    const { serve, cacheStore, withLoaderMiss, router } = setup();
     const realNow = Date.now.bind(Date);
     let offset = 0;
     vi.spyOn(Date, "now").mockImplementation(() => realNow() + offset);
-    const recordKey = "doc:localhost/owned-cached";
+    const recordKey = `doc:${router.id}@localhost/owned-cached`;
 
     expect((await serve("/owned-cached")).shellStatus).toBe("MISS");
     // A recapture that misses the route record writes it, with the loader's

@@ -2234,13 +2234,16 @@ function describePprShell(mode: "dev" | "build") {
       const aged = await page.request.get(
         f.url(`/__test/age-ppr-shell?target=${encodeURIComponent(one)}`),
       );
-      expect(await aged.json()).toEqual({
+      const agedEntry = await aged.json();
+      expect(agedEntry).toEqual({
         ok: true,
         found: true,
-        segmentKeys: [
-          `doc:${new URL(one).host}/ppr-stale-replay/1:id=1?probe=${probe}`,
-        ],
+        // The route's doc record, under the serving router's key.
+        segmentKeys: [expect.stringMatching(/^doc:[^@/]+@/)],
       });
+      expect(agedEntry.segmentKeys[0].split("@")[1]).toBe(
+        `${new URL(one).host}/ppr-stale-replay/1:id=1?probe=${probe}`,
+      );
       await page.waitForTimeout(1_200);
 
       // A stale document HIT schedules recapture. Navigate while its handler

@@ -905,9 +905,13 @@ function setup(
   return shellHarness(options.router ?? makeRouter(), options.cacheStore);
 }
 
+/** `router`'s default cache() record key for a document request. */
+const docKey = (router: { id: string }, pathAndSearch: string): string =>
+  `doc:${router.id}@localhost${pathAndSearch}`;
+
 describe("serveShellRequest: document MISS, capture, HIT", () => {
   it("a MISS renders axis 1 and stores the capture; the next request is a HIT from it", async () => {
-    const { serve } = setup();
+    const { serve, router } = setup();
 
     const miss = await serve("/product/1");
     expect(miss.response.status).toBe(200);
@@ -915,7 +919,7 @@ describe("serveShellRequest: document MISS, capture, HIT", () => {
     expect(miss.prelude).toBeUndefined();
     expect(miss.flight).toContain("chrome@g1");
     expect(miss.flight).toContain("stock@g1");
-    expect(miss.key).toBe("localhost/product/1:shell");
+    expect(miss.key).toBe(`${router.id}@localhost/product/1:shell`);
     const entry = await miss.readEntry();
     expect(entry).toMatchObject({
       reactVersion: React.version,
@@ -1027,14 +1031,16 @@ describe("serveShellRequest: request-partitioned shells", () => {
   const tier = (name: string) => ({ headers: { "x-tier": name } });
 
   it("each cache({ key }) partition captures and HITs its own shell, under the key production resolved", async () => {
-    const { serve, cacheStore } = setup();
+    const { serve, cacheStore, router } = setup();
 
     const goldMiss = await serve("/tiered", tier("gold"));
     expect(goldMiss.shellStatus).toBe("MISS");
     expect(goldMiss.key).toBe(
-      shellCacheKey("http://localhost/tiered", undefined, "tier:gold"),
+      shellCacheKey(router, "http://localhost/tiered", undefined, "tier:gold"),
     );
-    expect(goldMiss.key).toBe("localhost/tiered:shell|key%3Atier%253Agold");
+    expect(goldMiss.key).toBe(
+      `${router.id}@localhost/tiered:shell|key%3Atier%253Agold`,
+    );
     expect(await goldMiss.readEntry()).not.toBeNull();
 
     // Another partition never reads gold's shell: its own MISS and capture.
@@ -1056,7 +1062,9 @@ describe("serveShellRequest: request-partitioned shells", () => {
     }
 
     // No shell is stored under the unpartitioned key.
-    expect(await cacheStore.getShell!("localhost/tiered:shell")).toBeNull();
+    expect(
+      await cacheStore.getShell!(`${router.id}@localhost/tiered:shell`),
+    ).toBeNull();
   });
 
   it("a partition ending in :navigation never names another partition's navigation entry", async () => {
@@ -1075,7 +1083,7 @@ describe("serveShellRequest: request-partitioned shells", () => {
   });
 
   it("a key() that reads cookies() partitions the shell and reaches a HIT; key() runs once per request", async () => {
-    const { serve } = setup();
+    const { serve, router } = setup();
     const gold = { headers: { cookie: "tier=gold" } };
     const warn = vi.spyOn(console, "warn");
 
@@ -1084,7 +1092,9 @@ describe("serveShellRequest: request-partitioned shells", () => {
     expect(miss.shellStatus).toBe("MISS");
     // The shell key, the record lookup and write, and the capture share it.
     expect(keyRuns.cookie).toBe(1);
-    expect(miss.key).toBe("localhost/cookie-tiered:shell|key%3Atier%253Agold");
+    expect(miss.key).toBe(
+      `${router.id}@localhost/cookie-tiered:shell|key%3Atier%253Agold`,
+    );
     expect(await miss.readEntry()).not.toBeNull();
 
     const hit = await serve("/cookie-tiered", gold);
@@ -1115,7 +1125,7 @@ describe("serveShellRequest: request-partitioned shells", () => {
     });
 
     it("an inner cache() without key() keeps its record in the outer partition: another tier never HITs it", async () => {
-      const { serve, cacheStore } = setup();
+      const { serve, cacheStore, router } = setup();
       nestedRuns.record = 0;
 
       const gold = await serve("/nested-record", request("gold"));
@@ -1132,7 +1142,7 @@ describe("serveShellRequest: request-partitioned shells", () => {
       for (const tierName of ["gold", "silver"]) {
         expect(
           await cacheStore.get(
-            `key:tier%3A${tierName}|doc%3Alocalhost%2Fnested-record`,
+            `key:tier%3A${tierName}|${encodeURIComponent(docKey(router, "/nested-record"))}`,
           ),
         ).not.toBeNull();
       }
@@ -1150,14 +1160,16 @@ describe("serveShellRequest: request-partitioned shells", () => {
     });
 
     it("a ppr route under an inner cache() without key() captures and HITs one shell per outer partition", async () => {
-      const { serve, cacheStore } = setup();
+      const { serve, cacheStore, router } = setup();
       const url = "http://localhost/nested-tiered";
 
       const goldMiss = await serve("/nested-tiered", request("gold"));
       expect(goldMiss.shellStatus).toBe("MISS");
       // The partition is the key() result alone: the shell key carries the
       // URL.
-      expect(goldMiss.key).toBe(shellCacheKey(url, undefined, "tier:gold"));
+      expect(goldMiss.key).toBe(
+        shellCacheKey(router, url, undefined, "tier:gold"),
+      );
 
       const silverMiss = await serve("/nested-tiered", request("silver"));
       expect(silverMiss.shellStatus).toBe("MISS");
@@ -1174,11 +1186,11 @@ describe("serveShellRequest: request-partitioned shells", () => {
         expect(hit.prelude).toContain(`layout-${own}`);
         expect(hit.body).not.toContain(other);
       }
-      expect(await cacheStore.getShell!(shellCacheKey(url))).toBeNull();
+      expect(await cacheStore.getShell!(shellCacheKey(router, url))).toBeNull();
     });
 
     it("an inner key() composes with the outer partition, for the shell, the record and a client navigation; each key() runs once per request", async () => {
-      const { serve } = setup();
+      const { serve, router } = setup();
       const url = "http://localhost/nested-composed";
       keyRuns.nestedTier = 0;
       keyRuns.nestedVariant = 0;
@@ -1186,7 +1198,7 @@ describe("serveShellRequest: request-partitioned shells", () => {
       const goldA = await serve("/nested-composed", request("gold", "a"));
       expect(goldA.shellStatus).toBe("MISS");
       expect(goldA.key).toBe(
-        shellCacheKey(url, undefined, ["tier:gold", "v:a"]),
+        shellCacheKey(router, url, undefined, ["tier:gold", "v:a"]),
       );
       // The shell key, the record lookup and write, and the capture share
       // one run of each key().
@@ -1220,10 +1232,10 @@ describe("serveShellRequest: request-partitioned shells", () => {
     const cacheStore = Object.assign(new MemorySegmentCacheStore(), {
       keyGenerator: (_ctx: unknown, defaultKey: string) => defaultKey,
     });
-    const { serve } = setup({ cacheStore });
+    const { serve, router } = setup({ cacheStore });
 
     const miss = await serve("/product/41");
-    expect(miss.key).toBe("localhost/product/41:shell");
+    expect(miss.key).toBe(`${router.id}@localhost/product/41:shell`);
     expect(await miss.readEntry()).not.toBeNull();
     expect((await serve("/product/41")).shellStatus).toBe("HIT");
   });
@@ -1320,11 +1332,11 @@ describe("serveShellRequest: a MISS that races another request's capture", () =>
 
 describe("serveShellRequest: owned pushes a route cache() record restores into a capture", () => {
   it("keep their loader as owner, so that loader's run on a HIT replaces them instead of adding a copy", async () => {
-    const { serve, cacheStore } = setup();
+    const { serve, cacheStore, router } = setup();
     const realNow = Date.now.bind(Date);
     let offset = 0;
     vi.spyOn(Date, "now").mockImplementation(() => realNow() + offset);
-    const recordKey = "doc:localhost/owned-replay";
+    const recordKey = docKey(router, "/owned-replay");
 
     expect((await serve("/owned-replay")).shellStatus).toBe("MISS");
     // A recapture that misses the route record writes it, the loader's
@@ -1927,19 +1939,21 @@ describe("serveShellRequest: a shell never outlives its route cache() entry", ()
    * at its deadline (`atDeadline` decides which reads, counting from 1).
    */
   function nearExpiryStore(atDeadline: (read: number) => boolean) {
+    const router = makeRouter();
+    const recordKey = docKey(router, "/near-expiry");
     const cacheStore = new MemorySegmentCacheStore();
     const get = cacheStore.get.bind(cacheStore);
     const reads = { count: 0 };
     vi.spyOn(cacheStore, "get").mockImplementation(async (key) => {
       const result = await get(key);
-      if (key !== "doc:localhost/near-expiry") return result;
+      if (key !== recordKey) return result;
       if (!result || typeof result !== "object") return result;
       reads.count += 1;
       return atDeadline(reads.count)
         ? { ...result, data: { ...result.data, expiresAt: Date.now() } }
         : result;
     });
-    return { ...setup({ cacheStore }), reads };
+    return { ...setup({ cacheStore, router }), reads };
   }
 
   it("a capture that outlives the near-expiry record it replayed retries on a fresh match and stores, without a warning", async () => {
@@ -1985,12 +1999,14 @@ describe("serveShellRequest: a shell never outlives its route cache() entry", ()
 
   it("a retry that produces no shell after an expired attempt warns with its cause, like the no-shell retry", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const router = makeRouter();
+    const recordKey = docKey(router, "/slow-near-expiry");
     const cacheStore = new MemorySegmentCacheStore();
     const get = cacheStore.get.bind(cacheStore);
     let reads = 0;
     vi.spyOn(cacheStore, "get").mockImplementation(async (key) => {
       const result = await get(key);
-      if (key !== "doc:localhost/slow-near-expiry") return result;
+      if (key !== recordKey) return result;
       if (!result || typeof result !== "object") return result;
       reads += 1;
       // Attempt 1 replays the record at its deadline; attempt 2 finds none
@@ -2000,7 +2016,7 @@ describe("serveShellRequest: a shell never outlives its route cache() entry", ()
       }
       return null;
     });
-    const { serve } = setup({ cacheStore });
+    const { serve } = setup({ cacheStore, router });
 
     expect((await serve("/slow-near-expiry")).shellStatus).toBe("MISS");
 
@@ -2041,11 +2057,11 @@ describe("serveShellRequest: a shell never outlives its route cache() entry", ()
 
   it("a record this capture read is retried even when its cache() ttl + swr is shorter than the capture; the retry that writes its own refuses", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const { serve, cacheStore } = setup();
+    const { serve, cacheStore, router } = setup();
     const putShell = vi.spyOn(cacheStore, "putShell");
     // cache({ ttl: 0, swr: 0 }): the first capture read gets the record the
     // foreground wrote, at its deadline; later reads miss, as the store does.
-    const recordKey = "doc:localhost/dead-record";
+    const recordKey = docKey(router, "/dead-record");
     let written: CachedEntryData | undefined;
     const set = cacheStore.set.bind(cacheStore);
     vi.spyOn(cacheStore, "set").mockImplementation(
@@ -2107,7 +2123,7 @@ describe("serveShellRequest: a shell never outlives its route cache() entry", ()
   });
 
   it("the cap reads the nested cache() record under its composed key (#970)", async () => {
-    const { serve, cacheStore } = setup();
+    const { serve, cacheStore, router } = setup();
     const putShell = vi.spyOn(cacheStore, "putShell");
     const gold = { headers: { "x-tier": "gold" } };
     const realNow = Date.now.bind(Date);
@@ -2117,7 +2133,7 @@ describe("serveShellRequest: a shell never outlives its route cache() entry", ()
     expect((await serve("/nested-short-cache", gold)).shellStatus).toBe("MISS");
     expect(
       await cacheStore.get(
-        "key:tier%3Agold|doc%3Alocalhost%2Fnested-short-cache",
+        `key:tier%3Agold|${encodeURIComponent(docKey(router, "/nested-short-cache"))}`,
       ),
     ).not.toBeNull();
     // Capped to that record (ttl 1, swr 0), not ppr.ttl 300.
@@ -2138,7 +2154,7 @@ describe("serveShellRequest: a shell never outlives its route cache() entry", ()
 
 describe("serveShellRequest: the forced-MISS marker", () => {
   it("is stripped before anything reads the request: the render sees the clean URL and caches under its key", async () => {
-    const { serve, cacheStore } = setup();
+    const { serve, cacheStore, router } = setup();
     const set = vi.spyOn(cacheStore, "set");
 
     const marked = await serve("/echo?probe=1&_rsc_shell=miss");
@@ -2150,7 +2166,7 @@ describe("serveShellRequest: the forced-MISS marker", () => {
     expect(marked.flight).toContain('"loaderUrls":"?probe=1|?probe=1"');
     expect(marked.body).not.toContain("_rsc_shell");
     expect(set.mock.calls.map(([key]) => key)).toContain(
-      "doc:localhost/echo?probe=1",
+      docKey(router, "/echo?probe=1"),
     );
     // No shell under any key: the gate passed the request.
     expect(await marked.readEntry()).toBeNull();
@@ -2170,9 +2186,9 @@ describe("serveShellRequest: the forced-MISS marker", () => {
 
   it("a corrupt cache() record on a marked request is a miss: the handler renders and no reload script is sent", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
-    const { serve, cacheStore } = setup();
+    const { serve, cacheStore, router } = setup();
     await serve("/echo?probe=3");
-    const key = "doc:localhost/echo?probe=3";
+    const key = docKey(router, "/echo?probe=3");
     const stored = await cacheStore.get(key);
     if (!stored || typeof stored !== "object") throw new Error("no record");
     // An undecodable record: its segments are not Flight fragments.
@@ -2283,7 +2299,7 @@ describe("serveShellRequest: partial navigation", () => {
 describe("serveShellRequest: the router's configuration", () => {
   it("cacheStore replaces the router's store and keeps its searchParams", async () => {
     const routerStore = new MemorySegmentCacheStore();
-    const { serve } = setup({
+    const { serve, router } = setup({
       router: makeRouter({
         cache: { store: routerStore, searchParams: { exclude: ["utm_*"] } },
       }),
@@ -2292,7 +2308,7 @@ describe("serveShellRequest: the router's configuration", () => {
     const miss = await serve("/product/5?utm_source=a");
     const hit = await serve("/product/5?utm_source=b");
 
-    expect(miss.key).toBe("localhost/product/5:shell");
+    expect(miss.key).toBe(`${router.id}@localhost/product/5:shell`);
     expect(hit.shellStatus).toBe("HIT");
     expect(await routerStore.getShell(miss.key)).toBeNull();
   });
@@ -2462,16 +2478,19 @@ describe("resetShellTestState", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
     shellThrows = true;
-    await setup().serve("/flaky");
+    // One router, as an app's router module is across a test file's cases:
+    // the per-isolate state is keyed by the router's shell key.
+    const router = makeRouter();
+    await setup({ router }).serve("/flaky");
     shellThrows = false;
 
-    // A new router and store: the refused URL is still backed off.
-    const leaked = setup();
+    // A new store: the refused URL is still backed off.
+    const leaked = setup({ router });
     await leaked.serve("/flaky");
     expect((await leaked.serve("/flaky")).shellStatus).toBe("MISS");
 
     await resetShellTestState();
-    const { serve } = setup();
+    const { serve } = setup({ router });
     const miss = await serve("/flaky");
     const hit = await serve("/flaky");
     expect([miss.shellStatus, hit.shellStatus]).toEqual(["MISS", "HIT"]);
@@ -2479,21 +2498,22 @@ describe("resetShellTestState", () => {
 
   it("clears the CFCacheStore isolate memo another store filled", async () => {
     freshEdgeCache();
-    const warm = cfRouter();
+    // One router: the memo is keyed by the router's shell key.
+    const router = cfRouter();
     const warmEnv = { KV: kv() };
-    await serveShellRequest(warm, "/product/cf-reset", { env: warmEnv });
-    await serveShellRequest(warm, "/product/cf-reset", { env: warmEnv });
+    await serveShellRequest(router, "/product/cf-reset", { env: warmEnv });
+    await serveShellRequest(router, "/product/cf-reset", { env: warmEnv });
 
     // An empty edge cache and KV: the isolate memo still serves the shell.
     freshEdgeCache();
-    const leaked = await serveShellRequest(cfRouter(), "/product/cf-reset", {
+    const leaked = await serveShellRequest(router, "/product/cf-reset", {
       env: { KV: kv() },
     });
     expect(leaked.shellStatus).toBe("HIT");
 
     await resetShellTestState();
     freshEdgeCache();
-    const fresh = await serveShellRequest(cfRouter(), "/product/cf-reset", {
+    const fresh = await serveShellRequest(router, "/product/cf-reset", {
       env: { KV: kv() },
     });
     expect(fresh.shellStatus).toBe("MISS");

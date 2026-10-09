@@ -98,7 +98,7 @@ describe("dispatch + VercelCacheStore (consumer dogfood)", () => {
 
     // Default key: response:{type}: + cacheKeyBase(host, path, searchParams).
     const cached = await store.getResponse(
-      "response:json:localhost/vc-cached2",
+      `response:json:${router.id}@localhost/vc-cached2`,
     );
     expect(cached).not.toBeNull();
     expect(cached?.response.status).toBe(200);

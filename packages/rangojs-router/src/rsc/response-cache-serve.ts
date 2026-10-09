@@ -33,10 +33,11 @@ import {
   finalizeResponse,
 } from "./helpers.js";
 import { reportCacheError } from "../cache/cache-error.js";
-import { cacheKeyBase } from "../cache/cache-key-utils.js";
+import { requestKeyBase } from "../cache/cache-key-utils.js";
 import { isWarmReplace, noteWarmWrite } from "../prerender/warm-request.js";
 import {
   executionStart,
+  markResponseStart,
   predatesInvalidation,
   type ExecutionStart,
 } from "../cache/tag-invalidation.js";
@@ -105,7 +106,7 @@ export async function serveResponseRouteWithCache(
   // Default key: response:{type}: + host-namespaced base (sorted search, reserved
   // _rsc*/__* params excluded). Same composition as document/segment tiers so
   // the host-namespacing and search-normalization rules cannot drift.
-  let cacheKey = `response:${responseType}:${cacheKeyBase(url.host, url.pathname, url.searchParams, undefined, reqCtx._searchParamsFilter)}`;
+  let cacheKey = `response:${responseType}:${requestKeyBase(reqCtx, url.host, url.pathname, url.searchParams, undefined, reqCtx._searchParamsFilter)}`;
 
   // Keyed like the segment record (CacheScope.resolveKeyFrom): with key()
   // results on the cache() chain (a full override, namespaced, #975) or an
@@ -181,7 +182,7 @@ export async function serveResponseRouteWithCache(
     }
     await store2.putResponse!(
       cacheKey,
-      fresh,
+      markResponseStart(fresh, start),
       cacheScope!.ttl,
       cacheScope!.swr,
       responseTags,

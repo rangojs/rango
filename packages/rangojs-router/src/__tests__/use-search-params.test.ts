@@ -51,6 +51,7 @@ function createMockEventController(search = "?q=react&page=2") {
   const location = new URL(`http://localhost/products${search}`);
   return {
     getState: vi.fn(() => ({ location })),
+    getHydrationSnapshot: vi.fn(() => undefined),
     subscribe: vi.fn((_cb: () => void) => vi.fn()),
   };
 }

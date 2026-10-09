@@ -56,12 +56,11 @@ function describeLoaderNavStale(label: string, mode: "dev" | "build") {
         "fresh:Product 2",
       );
 
-      const log = await page.evaluate(() => window.__swrStatusLog);
-      expect(log).toEqual([
-        "fresh:Product 1",
-        "stale:Product 1",
-        "fresh:Product 2",
-      ]);
+      // The log is written from an effect: a commit inside a view transition
+      // runs its effects when the animation ends.
+      await expect
+        .poll(() => page.evaluate(() => window.__swrStatusLog))
+        .toEqual(["fresh:Product 1", "stale:Product 1", "fresh:Product 2"]);
     });
 
     test("a layout loader the navigation does not re-run never reports isLoading:true", async ({
@@ -94,13 +93,14 @@ function describeLoaderNavStale(label: string, mode: "dev" | "build") {
         "fresh:Product 2",
       );
 
+      // Logs are written from effects, which a commit inside a view
+      // transition runs when the animation ends: the route's complete log
+      // means every effect up to the destination's commit has run.
+      await expect
+        .poll(() => page.evaluate(() => window.__swrStatusLog))
+        .toEqual(["fresh:Product 1", "stale:Product 1", "fresh:Product 2"]);
       expect(await page.evaluate(() => window.__txShellStatusLog)).toEqual([
         "fresh:shell",
-      ]);
-      expect(await page.evaluate(() => window.__swrStatusLog)).toEqual([
-        "fresh:Product 1",
-        "stale:Product 1",
-        "fresh:Product 2",
       ]);
       // The shell loader did not re-run: same loadedAt as before the nav.
       await expect(testId(page, "tx-shell-status")).toHaveAttribute(

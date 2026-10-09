@@ -10,6 +10,7 @@ import {
   expectOtherVersionLocationStateDroppedOnTraversal,
   expectReaderMountedDuringHeldNavigationReadsEntryOnScreen,
   returnToEvictedEntry,
+  expectConsole,
 } from "@shared/e2e";
 import { useFixture, type Fixture } from "./fixture";
 import {
@@ -958,6 +959,10 @@ test.describe("stateful-navigation-failure", () => {
   test("failed stateful navigation shows error UI at source URL", async ({
     page,
   }) => {
+    // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+    expectConsole(page, {
+      allow: [/NetworkError: Unable to connect to server/],
+    });
     // The bare link-state Links viewport-prefetch by default; a completed
     // prefetch of the target would be adopted by the click and the navigation
     // would SUCCEED instead of hitting the abort below — block prefetch

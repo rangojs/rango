@@ -210,6 +210,20 @@ import {
 } from "./pages/use-cache-non-cacheable.js";
 import { TaggedDocumentPage } from "./pages/tagged-document.js";
 import { StreamedDocumentPage } from "./pages/streamed-document.js";
+import {
+  StreamedHandlerBoundaryError,
+  StreamedHandlerBoundaryFails,
+  StreamedHandlerBoundaryFlakyCache,
+  StreamedHandlerBoundaryFlakyPpr,
+  StreamedHandlerBoundaryHeal,
+  StreamedHandlerBoundaryIndex,
+  StreamedHandlerBoundaryLoading,
+  StreamedHandlerBoundaryMissing,
+  StreamedHandlerBoundaryNotFound,
+  StreamedHandlerBoundaryReset,
+  StreamedHandlerBoundarySlotFails,
+} from "./pages/streamed-handler-boundary.js";
+import { SlotAncestorLayout } from "./components/SlotAncestorLayout.js";
 import { DslTaggedDocumentPage } from "./pages/dsl-tagged-document.js";
 import { CachedHandlesPage } from "./pages/cached-handles.js";
 import { LoaderCacheDepPage } from "./pages/loader-cache-dep.js";
@@ -259,7 +273,13 @@ import {
 } from "./pages/inline.js";
 import { clientReversePatterns } from "./pages/client-reverse.js";
 import { guidesPatterns } from "./pages/guides.js";
-import { GuidePlainDef, GuideSwrDef } from "./pages/guide-plain.js";
+import {
+  GuidePlainDef,
+  GuideSwrDef,
+  guidePlainFailKey,
+  guidePlainGoneKey,
+} from "./pages/guide-plain.js";
+import { guideDeclineKey } from "./pages/guides-handler.js";
 import { GuidePlainLoader } from "./loaders/guide-plain.js";
 import { suspenseDemoPatterns } from "./pages/suspense-demo.js";
 import { releasesPatterns } from "./pages/releases.js";
@@ -292,6 +312,8 @@ import { buildEnvDirectPatterns } from "./pages/build-env-direct-handler.js";
 import { ActionLocationStatePage } from "./pages/action-location-state.js";
 import { renderedBarrierPatterns } from "./pages/rendered-barrier.js";
 import { prefetchTransitionPatterns } from "./pages/prefetch-transition.js";
+import { heldBoundaryPatterns } from "./pages/held-boundary.js";
+import { suspenseCasesPatterns } from "./pages/suspense-cases.js";
 import { txWhenPatterns } from "./pages/tx-when.js";
 import { interceptWhenShapePatterns } from "./pages/intercept-when-shape.js";
 import { authRedirectPatterns } from "./pages/auth-redirect.js";
@@ -321,24 +343,44 @@ const docsPatterns = createDocsPatterns({ articles: docsArticles });
 
 // Serialize a PrerenderResult for the e2e: Error instances don't survive
 // Response.json, so flatten to the message.
+function flattenResult(result: PrerenderResult): unknown {
+  return !result.ok && result.error instanceof Error
+    ? { ...result, error: result.error.message }
+    : result;
+}
+
 function prerenderResultJson(result: PrerenderResult): Response {
-  return Response.json(
-    !result.ok && result.error instanceof Error
-      ? { ...result, error: result.error.message }
-      : result,
-  );
+  return Response.json(flattenResult(result));
 }
 
 // On-demand prerender trigger handler. Explicitly typed as Handler so the lazy
 // `import("./router.js")` inside it does not force TypeScript to infer this
 // module's type from the router (which is built from urlpatterns) — that would
 // be a circular type. Returns the PrerenderResult as JSON for the e2e.
+// ?remove=1 removes the page instead (prerender.remove()): the live handler
+// answers the next request. ?decline=1 / ?decline=0 make the build handler
+// decline the slug (ctx.passthrough()) / stop declining it.
 const GuidesTrigger: Handler<{ slug: string }> = async (ctx) => {
+  const decline = ctx.url.searchParams.get("decline");
+  if (decline) {
+    const declineKey = guideDeclineKey(ctx.params.slug);
+    if (decline === "1") await ctx.env.PRERENDER_KV.put(declineKey, "1");
+    else await ctx.env.PRERENDER_KV.delete(declineKey);
+    return Response.json({ decline: decline === "1" });
+  }
   const { router } = await import("./router.js");
-  const result = await router.prerender({
+  const prerender = router.prerender({
     env: ctx.env,
     ctx: ctx.executionContext,
-  })({ route: "guides.detail", params: { slug: ctx.params.slug } });
+  });
+  const target = {
+    route: "guides.detail",
+    params: { slug: ctx.params.slug },
+  } as const;
+  const result =
+    ctx.url.searchParams.get("remove") === "1"
+      ? await prerender.remove(target)
+      : await prerender(target);
   return prerenderResultJson(result);
 };
 
@@ -346,6 +388,13 @@ const GuidesTrigger: Handler<{ slug: string }> = async (ctx) => {
 //   default             -> plain refresh (always renders)
 //   ?onlyIfStale=1      -> cron-sweep opt-in; "already-fresh" when entry fresh
 //   ?markStale=<t>      -> KV tag-marker mark-stale (no render)
+//   ?remove=1           -> prerender.remove(): the "removed" marker, no render
+//   ?gone=1 / ?gone=0   -> delete / restore the slug in the data source, so
+//                          the next refresh hits notFound() or renders again
+//   ?fail=1 / ?fail=0   -> take the data source down / bring it back, so the
+//                          next refresh throws something other than notFound()
+//   ?target=<path> (repeated) -> prerender.many(targets): the results as a
+//                          JSON array in target order
 const GuidePlainTrigger: Handler<{ slug: string }> = async (ctx) => {
   const { router } = await import("./router.js");
   const prerender = router.prerender({
@@ -357,9 +406,34 @@ const GuidePlainTrigger: Handler<{ slug: string }> = async (ctx) => {
     await prerender.markStale([staleTag]);
     return Response.json({ markedStale: staleTag });
   }
+  const gone = ctx.url.searchParams.get("gone");
+  if (gone) {
+    const goneKey = guidePlainGoneKey(ctx.params.slug);
+    if (gone === "1") await ctx.env.PRERENDER_KV.put(goneKey, "1");
+    else await ctx.env.PRERENDER_KV.delete(goneKey);
+    return Response.json({ gone: gone === "1" });
+  }
+  const fail = ctx.url.searchParams.get("fail");
+  if (fail) {
+    const failKey = guidePlainFailKey(ctx.params.slug);
+    if (fail === "1") await ctx.env.PRERENDER_KV.put(failKey, "1");
+    else await ctx.env.PRERENDER_KV.delete(failKey);
+    return Response.json({ fail: fail === "1" });
+  }
+  const targets = ctx.url.searchParams.getAll("target");
+  if (targets.length > 0) {
+    return Response.json((await prerender.many(targets)).map(flattenResult));
+  }
+  const target = {
+    route: "guidePlain",
+    params: { slug: ctx.params.slug },
+  } as const;
+  if (ctx.url.searchParams.get("remove") === "1") {
+    return prerenderResultJson(await prerender.remove(target));
+  }
   const onlyIfStale = ctx.url.searchParams.get("onlyIfStale") === "1";
   const result = await prerender(
-    { route: "guidePlain", params: { slug: ctx.params.slug } },
+    target,
     onlyIfStale ? { onlyIfStale: true } : undefined,
   );
   return prerenderResultJson(result);
@@ -505,15 +579,17 @@ function CrossStorePage(ctx: HandlerContext): ReactNode {
 }
 
 // /test/loader-key-* (issue #1009): the loader's value, and the victim
-// loader's id, which its default key carries.
+// loader's id and the router's id, which its default key carries.
 async function LoaderKeyVictimPage(
   ctx: HandlerContext<{ probe: string }>,
 ): Promise<ReactNode> {
   const { from, stamp } = await ctx.use(LoaderKeyVictimLoader);
+  const { router } = await import("./router.js");
   return (
     <div>
       <p data-testid="nested-scope-render">{`${from}:${stamp}`}</p>
       <p data-testid="loader-key-victim-id">{LoaderKeyVictimLoader.$$id}</p>
+      <p data-testid="cache-key-router-id">{router.id}</p>
     </div>
   );
 }
@@ -560,6 +636,7 @@ export const urlpatterns = urls(
     transition,
     revalidate,
     errorBoundary,
+    notFoundBoundary,
   }) => [
     // API routes (response routes - skip RSC pipeline)
     include("/api", apiPatterns, { name: "api" }),
@@ -983,7 +1060,8 @@ export const urlpatterns = urls(
       }> => {
         const target = ctx.searchParams.get("target") ?? "";
         const targetUrl = new URL(target, ctx.url);
-        const key = `${targetUrl.host}${targetUrl.pathname}${targetUrl.search}:shell`;
+        const { router } = await import("./router.js");
+        const key = `${router.id}@${targetUrl.host}${targetUrl.pathname}${targetUrl.search}:shell`;
         const requestContext = getRequestContext<AppBindings>();
         const store = new CFCacheStore({
           ctx: requestContext.executionContext!,
@@ -2416,6 +2494,101 @@ export const urlpatterns = urls(
           () => [errorBoundary(UcmError)],
         ),
 
+        // A loading() handler that rejects (or calls notFound()) after the
+        // response started renders the declared boundary in place; the
+        // "undeclared" route pins the RootErrorBoundary fallback.
+        path("/streamed-handler-boundary", StreamedHandlerBoundaryIndex, {
+          name: "streamedHandlerBoundary",
+        }),
+        path(
+          "/streamed-handler-boundary/fails",
+          StreamedHandlerBoundaryFails,
+          { name: "streamedHandlerBoundaryFails" },
+          () => [
+            loading(<StreamedHandlerBoundaryLoading id="shb-fails" />),
+            errorBoundary(() => (
+              <StreamedHandlerBoundaryError id="shb-fails" />
+            )),
+          ],
+        ),
+        path(
+          "/streamed-handler-boundary/fails-no-ssr",
+          StreamedHandlerBoundaryFails,
+          { name: "streamedHandlerBoundaryFailsNoSsr" },
+          () => [
+            loading(<StreamedHandlerBoundaryLoading id="shb-no-ssr" />, {
+              ssr: false,
+            }),
+            errorBoundary(() => (
+              <StreamedHandlerBoundaryError id="shb-no-ssr" />
+            )),
+          ],
+        ),
+        path(
+          "/streamed-handler-boundary/missing",
+          StreamedHandlerBoundaryMissing,
+          { name: "streamedHandlerBoundaryMissing" },
+          () => [
+            loading(<StreamedHandlerBoundaryLoading id="shb-missing" />),
+            notFoundBoundary(() => <StreamedHandlerBoundaryNotFound />),
+          ],
+        ),
+        path.json(
+          "/streamed-handler-boundary/heal",
+          StreamedHandlerBoundaryHeal,
+          { name: "streamedHandlerBoundaryHeal" },
+        ),
+        path.json(
+          "/streamed-handler-boundary/reset",
+          StreamedHandlerBoundaryReset,
+          { name: "streamedHandlerBoundaryReset" },
+        ),
+        // A failed streamed render is never stored: the next request is healthy.
+        cache({ ttl: 300 }, () => [
+          path(
+            "/streamed-handler-boundary/flaky-cache",
+            StreamedHandlerBoundaryFlakyCache,
+            { name: "streamedHandlerBoundaryFlakyCache" },
+            () => [
+              loading(<StreamedHandlerBoundaryLoading id="shb-flaky" />),
+              errorBoundary(() => (
+                <StreamedHandlerBoundaryError id="shb-flaky" />
+              )),
+            ],
+          ),
+        ]),
+        path(
+          "/streamed-handler-boundary/flaky-ppr",
+          StreamedHandlerBoundaryFlakyPpr,
+          { name: "streamedHandlerBoundaryFlakyPpr", ppr: true },
+          () => [
+            loading(<StreamedHandlerBoundaryLoading id="shb-flaky" />),
+            errorBoundary(() => (
+              <StreamedHandlerBoundaryError id="shb-flaky" />
+            )),
+          ],
+        ),
+        // A slot with loading() finds the boundary declared on its layout.
+        layout(<SlotAncestorLayout />, () => [
+          errorBoundary(() => <StreamedHandlerBoundaryError id="shb-slot" />),
+          parallel({ "@side": StreamedHandlerBoundarySlotFails }, () => [
+            loading(<StreamedHandlerBoundaryLoading id="shb-slot" />),
+          ]),
+          path(
+            "/streamed-handler-boundary/slot-ancestor",
+            () => <p data-testid="shb-slot-page">page</p>,
+            { name: "streamedHandlerBoundarySlotAncestor" },
+          ),
+        ]),
+        path(
+          "/streamed-handler-boundary/undeclared",
+          StreamedHandlerBoundaryFails,
+          { name: "streamedHandlerBoundaryUndeclared" },
+          () => [
+            loading(<StreamedHandlerBoundaryLoading id="shb-undeclared" />),
+          ],
+        ),
+
         // Cookie overlay test route
         path(
           "/cookie-overlay",
@@ -2649,6 +2822,8 @@ export const urlpatterns = urls(
         // Fully-prefetched commit mode: no-flash + client-mount-suspense
         // layout-hold contract (mirrors the router e2e app).
         include("/", prefetchTransitionPatterns, { name: "" }),
+        include("/", heldBoundaryPatterns, { name: "" }),
+        include("/", suspenseCasesPatterns, { name: "sc" }),
         // transition({ when }) conditional-gate coverage (mirrors the router
         // e2e app's /tx-when/:hold/:n).
         include("/", txWhenPatterns, { name: "" }),

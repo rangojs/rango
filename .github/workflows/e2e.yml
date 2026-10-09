@@ -103,6 +103,12 @@ jobs:
       - name: Check e2e dev/prod parity
         run: node tools/check-e2e-parity.mjs --strict
 
+      - name: Check e2e console guard baseline
+        run: pnpm check:e2e-console-baseline
+
+      - name: Check suspense contract (tree update emitters, boundary producers)
+        run: pnpm check:suspense-contract
+
       - name: Check internal doc links
         run: pnpm check:doc-links
 

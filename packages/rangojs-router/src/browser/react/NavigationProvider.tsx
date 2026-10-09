@@ -8,9 +8,11 @@ import React, {
   useMemo,
   useRef,
   use,
+  startTransition,
   type ReactNode,
 } from "react";
 import {
+  HydrationBarrierContext,
   LocationStateContext,
   NavigationStoreContext,
   type NavigationStoreContextValue,
@@ -37,6 +39,7 @@ import {
   deferredHandleNames,
   resolveDeferredHandleValues,
 } from "../../handles/deferred-resolution.js";
+import { auditTreeUpdate } from "../../suspense-audit.js";
 
 /**
  * Process handles from an async generator, updating the event controller
@@ -278,6 +281,18 @@ export interface NavigationProviderProps {
    * it to seed a nonce so components calling useNonce() can be exercised.
    */
   nonce?: string;
+
+  /**
+   * The document this provider hydrates (initBrowserApp; renderRoute with
+   * `hydrate: true`), whose store EventController.lockHydration locked.
+   * `settled` resolves once the stream has ended and React has revealed every
+   * boundary. Until then location state is `undefined`, as SSR rendered it;
+   * then one transition gives the entry's state and changes
+   * HydrationBarrierContext, and the store is released after that commit. A
+   * navigation committed earlier releases the store before its update.
+   * Absent for a provider mounted on the client.
+   */
+  hydration?: { settled: Promise<void> };
 }
 
 /**
@@ -313,14 +328,18 @@ export function NavigationProvider({
   basename,
   appShellRef,
   nonce,
+  hydration,
 }: NavigationProviderProps): ReactNode {
   // Track current payload for rendering (this triggers re-renders)
   const [payload, setPayload] = useState(initialPayload);
   // The location state of the entry `payload` renders (LocationStateContext).
   // Only ever set next to setPayload, or for a commit that has no payload.
-  const [locationState, setLocationState] = useState(
-    eventController.getLocationState,
+  const [locationState, setLocationState] = useState(() =>
+    hydration ? undefined : eventController.getLocationState(),
   );
+  // HydrationBarrierContext's value; see NavigationProviderProps.hydration.
+  const [hydrationBarrier, setHydrationBarrier] = useState(0);
+  const hydrationOpen = useRef(hydration !== undefined);
 
   /**
    * Navigate to a URL (delegates to bridge)
@@ -356,6 +375,8 @@ export function NavigationProvider({
       navigate,
       refresh,
       defaultPrefetch: initialPayload.metadata.defaultPrefetch,
+      // Fixed for the document: read once, with the stable value.
+      origin: (eventController.getState().location as URL | undefined)?.origin,
     } as NavigationStoreContextValue;
     Object.defineProperty(value, "basename", {
       configurable: true,
@@ -378,6 +399,32 @@ export function NavigationProvider({
     if (!warmupEnabled) return;
     return startConnectionWarmup();
   }, [warmupEnabled]);
+
+  // The document has been revealed: one transition gives the entry's location
+  // state and moves the barrier, so React hydrates every boundary still
+  // dehydrated before it commits.
+  useEffect(() => {
+    if (!hydration) return;
+    let cancelled = false;
+    void hydration.settled.then(() => {
+      if (cancelled || !hydrationOpen.current) return;
+      startTransition(() => {
+        setLocationState(eventController.getLocationState());
+        setHydrationBarrier((n) => n + 1);
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // After the barrier's commit no boundary under this provider is dehydrated:
+  // release the store, and its handle writes reach their readers.
+  useEffect(() => {
+    if (hydrationBarrier === 0) return;
+    hydrationOpen.current = false;
+    eventController.releaseHydrationLock();
+  }, [hydrationBarrier]);
 
   // A commit no payload follows (a shallow navigation, a commit that keeps
   // every segment, merged server-set state): the tree on screen is already
@@ -430,11 +477,22 @@ export function NavigationProvider({
   // Subscribe to UI updates (for re-rendering the tree)
   useEffect(() => {
     const unsubscribe = store.onUpdate((update) => {
+      if (process.env.NODE_ENV !== "production") auditTreeUpdate(update.root);
       // Capture scroll intent — it will be applied in useLayoutEffect
       // after React commits this state update to the DOM.
       // Always assign (even undefined) to clear stale scroll from prior navigations,
       // so server actions or error updates don't accidentally replay old scroll.
       pendingScrollRef.current = update.scroll;
+
+      // Committed before the document finished hydrating: end the window
+      // first, so the page this update mounts reads the live store. A
+      // boundary of the document still dehydrated then hydrates against the
+      // live store; where that differs from its HTML, React reports the
+      // mismatch and renders the boundary on the client.
+      if (hydrationOpen.current) {
+        hydrationOpen.current = false;
+        eventController.releaseHydrationLock();
+      }
 
       setPayload({
         root: update.root,
@@ -529,7 +587,9 @@ export function NavigationProvider({
   return (
     <NavigationStoreContext.Provider value={contextValue}>
       <LocationStateContext.Provider value={locationState}>
-        {content}
+        <HydrationBarrierContext.Provider value={hydrationBarrier}>
+          {content}
+        </HydrationBarrierContext.Provider>
       </LocationStateContext.Provider>
     </NavigationStoreContext.Provider>
   );

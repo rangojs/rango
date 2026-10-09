@@ -1,13 +1,18 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { waitForHydration, testId, goBack } from "./helper";
+import { defineStreamedBoundaryScenarios, expectConsole } from "@shared/e2e";
 
 /**
  * Shared error boundary tests run against both dev and production.
  *
  * Contract under test:
  * - Sync server errors: caught per-segment during RSC render, layout preserved
- * - Streaming errors: caught client-side by RootErrorBoundary, layout replaced
+ * - Streaming errors with a declared errorBoundary()/notFoundBoundary(): the
+ *   declared fallback renders in place of the segment, layout preserved, status
+ *   unchanged after flush
+ * - Streaming errors with no declared boundary: caught client-side by
+ *   RootErrorBoundary, layout replaced
  * - Client errors: caught client-side by RootErrorBoundary, layout replaced
  * - Navigation away from error boundary recovers the app (layout restored)
  * - Back navigation from error boundary recovers the app
@@ -17,6 +22,12 @@ function errorBoundaryTests(f: ReturnType<typeof useFixture>, isDev: boolean) {
     test("should show error boundary when client component throws on interaction", async ({
       page,
     }) => {
+      // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+      expectConsole(page, {
+        allow: [
+          /\[RootErrorBoundary\] Unhandled error caught: Error: Client-side error/,
+        ],
+      });
       await page.goto(f.url("/errors/client-error"));
       await waitForHydration(page);
 
@@ -41,6 +52,12 @@ function errorBoundaryTests(f: ReturnType<typeof useFixture>, isDev: boolean) {
     test("client error replaces segment tree with error fallback", async ({
       page,
     }) => {
+      // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+      expectConsole(page, {
+        allow: [
+          /\[RootErrorBoundary\] Unhandled error caught: Error: Client-side error/,
+        ],
+      });
       await page.goto(f.url("/errors/client-error"));
       await waitForHydration(page);
 
@@ -102,10 +119,16 @@ function errorBoundaryTests(f: ReturnType<typeof useFixture>, isDev: boolean) {
     });
   });
 
-  test.describe("streaming-errors", () => {
+  test.describe("streaming-errors (no declared boundary)", () => {
     test("should show loading then error boundary for streaming error", async ({
       page,
     }) => {
+      // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+      expectConsole(page, {
+        allow: [
+          /\[RootErrorBoundary\] Unhandled error caught: Error: Streaming error/,
+        ],
+      });
       // The "loading first" pin lives on the RAW STREAM, not the live DOM.
       // The DOM fallback is transient: with head-executing module scripts
       // (headScripts "preinit") hydration can process the streamed error
@@ -147,6 +170,12 @@ function errorBoundaryTests(f: ReturnType<typeof useFixture>, isDev: boolean) {
     test("SPA navigation to streaming error replaces layout", async ({
       page,
     }) => {
+      // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+      expectConsole(page, {
+        allow: [
+          /\[RootErrorBoundary\] Unhandled error caught: Error: Streaming error/,
+        ],
+      });
       await page.goto(f.url("/errors"));
       await waitForHydration(page);
 
@@ -168,6 +197,105 @@ function errorBoundaryTests(f: ReturnType<typeof useFixture>, isDev: boolean) {
       // the RSC payload, so RootErrorBoundary catches them client-side and
       // replaces the entire tree (same as client errors, unlike sync server errors).
       await expect(testId(page, "nav")).not.toBeVisible();
+    });
+  });
+
+  test.describe("streaming-errors (declared boundary)", () => {
+    defineStreamedBoundaryScenarios({
+      url: (p) => f.url(p),
+      waitForHydration,
+      index: "/errors",
+      navId: "nav",
+      fails: {
+        path: "/errors/streaming-declared",
+        linkId: "streaming-declared-link",
+        fallbackId: "streaming-declared-fallback",
+        loadingId: "streaming-declared-loading",
+        segment: { id: "streaming-declared-segment", text: "route" },
+      },
+      noSsr: {
+        path: "/errors/streaming-declared-no-ssr",
+        linkId: "streaming-declared-no-ssr-link",
+        fallbackId: "streaming-declared-no-ssr-fallback",
+      },
+      missing: {
+        path: "/errors/streaming-not-found",
+        linkId: "streaming-not-found-link",
+        fallbackId: "streaming-not-found-fallback",
+        loadingId: "streaming-not-found-loading",
+      },
+    });
+  });
+
+  test.describe("streaming-errors (failed render is never stored)", () => {
+    // The flaky handlers fail until healed: serial, shared state.
+    test.describe.configure({ mode: "serial" });
+
+    test.beforeEach(async ({ request }) => {
+      await request.get(f.url("/errors/flaky/reset"));
+    });
+
+    for (const [label, path] of [
+      ["cache()", "/errors/flaky-cache"],
+      ["ppr", "/errors/flaky-ppr"],
+    ] as const) {
+      test(`${label}: the declared fallback is not stored, the next request is healthy`, async ({
+        page,
+        request,
+      }) => {
+        // cache() keeps a healthy entry for its TTL on a long-lived server:
+        // a per-run key keeps reruns independent.
+        const url = `${path}?run=${Date.now()}`;
+        await page.goto(f.url(url));
+        await expect(testId(page, "flaky-fallback")).toBeVisible({
+          timeout: 10000,
+        });
+
+        // Writes settle in the background: give a wrongly stored fallback
+        // time to land, then heal. Nothing may have been stored.
+        await page.waitForTimeout(1500);
+        await request.get(f.url("/errors/flaky/heal"));
+        if (label === "ppr") {
+          const res = await request.get(f.url(url), {
+            headers: { accept: "text/html" },
+          });
+          expect(res.headers()["x-rango-shell"]).toBe("MISS");
+          await page.waitForTimeout(1500);
+        }
+        for (let i = 0; i < 2; i++) {
+          await page.goto(f.url(url));
+          await expect(testId(page, "flaky-healthy")).toBeVisible({
+            timeout: 10000,
+          });
+          await expect(testId(page, "flaky-fallback")).toHaveCount(0);
+        }
+      });
+    }
+  });
+
+  test.describe("streaming-errors (slot under an ancestor boundary)", () => {
+    test("document: a failing slot with loading() renders the layout's errorBoundary", async ({
+      page,
+    }) => {
+      await page.goto(f.url("/errors/slot-ancestor"));
+      await expect(testId(page, "slot-ancestor-fallback")).toBeVisible({
+        timeout: 10000,
+      });
+      await expect(testId(page, "slot-ancestor-page")).toBeVisible();
+      await expect(page.getByText("Internal Server Error")).toHaveCount(0);
+      await expect(testId(page, "nav")).toBeVisible();
+    });
+
+    test("SPA navigation: same", async ({ page }) => {
+      await page.goto(f.url("/errors"));
+      await waitForHydration(page);
+      await testId(page, "slot-ancestor-link").click();
+      await expect(testId(page, "slot-ancestor-fallback")).toBeVisible({
+        timeout: 10000,
+      });
+      await expect(testId(page, "slot-ancestor-page")).toBeVisible();
+      await expect(page.getByText("Internal Server Error")).toHaveCount(0);
+      await expect(testId(page, "nav")).toBeVisible();
     });
   });
 
@@ -209,6 +337,12 @@ function errorBoundaryTests(f: ReturnType<typeof useFixture>, isDev: boolean) {
     test("server error preserves layout, client error replaces it", async ({
       page,
     }) => {
+      // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+      expectConsole(page, {
+        allow: [
+          /\[RootErrorBoundary\] Unhandled error caught: Error: Client-side error/,
+        ],
+      });
       // Server error: layout (nav) is preserved because the error is
       // caught per-segment during RSC render, not by the client-side
       // RootErrorBoundary which would replace the whole tree.

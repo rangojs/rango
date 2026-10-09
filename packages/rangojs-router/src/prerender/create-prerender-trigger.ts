@@ -2,7 +2,7 @@
  * `router.prerender()` trigger factory.
  *
  * Builds the `router.prerender` binder: `(runtime) => runner`, the runner being
- * the per-target callable (plus `.many` / `.markStale`) from router-supplied
+ * the per-target callable (plus `.many` / `.remove` / `.markStale`) from router-supplied
  * deps. Pure and testable: all router internals (reverse, match, the producer,
  * the request handler) arrive as injected functions, so this module has no RSC
  * imports and can be unit-tested with fakes.
@@ -21,6 +21,15 @@
  * - A refresh always renders and replaces; `onlyIfStale` is the cron-sweep
  *   opt-in and the only path that returns `already-fresh`.
  * - A failed render/store keeps the previous entry (replace-on-success).
+ * - A `notFound()` in the render is not a failure: it stores a "removed"
+ *   marker in place of the page, stamped with the route's ttl and tags so it
+ *   is rechecked like a page. `prerender.remove()` stores one without
+ *   rendering, which never goes stale. A Passthrough build handler that
+ *   declines (`ctx.passthrough()`) stores one too, so its live handler answers.
+ * - A page and a render's marker (a `notFound()` or a decline) carry the
+ *   render's start as `storedAt`, so a `markStale()` that lands during the
+ *   render marks the result; `staleAt` counts the ttl from the write. A
+ *   `remove()` marker renders nothing and carries its write time.
  * - An on-demand target is path-only (its key carries no search); a warm
  *   target keeps its search params, which cache keys carry.
  * - A warm writes only to a store shared beyond the place the call runs.
@@ -38,10 +47,12 @@ import { isPrerenderPersonalizationError } from "./producer-guard.js";
 import { normalizeTagList } from "../cache/cache-policy.js";
 import {
   composeStoredEntry,
+  composeStoredTombstone,
   isStoredEntryStale,
   readVerifiedStoredEntry,
   serializePrerenderKey,
   type PrerenderKey,
+  type PrerenderStoredEntry,
 } from "./writable-store.js";
 import type {
   OnDemandRouteConfig,
@@ -76,6 +87,8 @@ export interface ProducerOutput {
   routeName: string;
   params: Record<string, string>;
   passthrough?: true;
+  /** The render hit `notFound()` and nothing else failed: no page to store. */
+  notFound?: true;
   onDemandConfig?: OnDemandRouteConfig;
 }
 
@@ -137,9 +150,15 @@ export interface PrerenderTriggerDeps<TEnv = any> {
 /** Thrown by the trigger when `throwOnError: true` and the operation did not succeed. */
 export class PrerenderError extends Error {
   readonly result: Extract<PrerenderResult, { ok: false }>;
-  constructor(result: Extract<PrerenderResult, { ok: false }>) {
+  /** `operation` is the runner call that failed; the message names it. */
+  constructor(
+    result: Extract<PrerenderResult, { ok: false }>,
+    operation: "prerender" | "remove" = "prerender",
+  ) {
+    const call =
+      operation === "remove" ? "prerender.remove" : "router.prerender";
     super(
-      `router.prerender("${result.target}") failed: ${result.status}` +
+      `${call}("${result.target}") failed: ${result.status}` +
         (result.error instanceof Error ? ` — ${result.error.message}` : ""),
     );
     this.name = "PrerenderError";
@@ -218,14 +237,18 @@ function fromUrlLike(raw: string, display: string): ResolvedTarget {
 export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
   deps: PrerenderTriggerDeps<TEnv>,
 ): PrerenderFn<TEnv, TRoutes> {
+  /** One target: a refresh, or with `removing` a removal (`prerender.remove`). */
   async function refresh(
     target: PrerenderTarget<TRoutes>,
     runtime: PrerenderRuntime<TEnv>,
     options: PrerenderRunOptions = {},
     version: string = deps.resolveVersion(),
+    removing = false,
   ): Promise<PrerenderResult> {
-    const result = await run(target, runtime, options, version);
-    if (!result.ok && options.throwOnError) throw new PrerenderError(result);
+    const result = await run(target, runtime, options, version, removing);
+    if (!result.ok && options.throwOnError) {
+      throw new PrerenderError(result, removing ? "remove" : "prerender");
+    }
     return result;
   }
 
@@ -234,6 +257,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     runtime: PrerenderRuntime<TEnv>,
     options: PrerenderRunOptions,
     version: string,
+    removing: boolean,
   ): Promise<PrerenderResult> {
     const resolved = resolveTarget(target, deps.reverse);
     const display = resolved.display;
@@ -255,6 +279,17 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     if (!match) {
       return { ok: false, status: "no-match", target: display };
     }
+    if (removing && !match.isOnDemand) {
+      // Only an on-demand route has a page in the prerender store. Never the
+      // warm a refresh of this route would be.
+      return {
+        ok: false,
+        path: "on-demand",
+        status: "skipped-not-on-demand",
+        target: display,
+        routeName: match.routeName,
+      };
+    }
     if (resolved.hashOrReserved) {
       return {
         ok: false,
@@ -275,7 +310,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
 
     if (resolved.search) {
       // An on-demand key is route + params: a search would silently persist
-      // under the base key.
+      // (or remove the page) under the base key.
       return {
         ok: false,
         path: "on-demand",
@@ -291,12 +326,17 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
       runtime,
       options,
       version,
+      removing,
     );
     // Then the request handler, on top of the entry just stored: the route's
     // loaders' own cache() and the document cache are rebuilt on it. A
-    // Passthrough param the producer declined is served by the live handler,
-    // whose caches are warmed the same way. Quiet: the refresh is complete
-    // without it.
+    // Passthrough param the producer declined is served by the live handler
+    // (the marker renderOnDemand stored for it keeps a page stored or baked
+    // earlier from answering the warm), whose caches are warmed the same way.
+    // Quiet: the refresh is complete without it. Never after `removed`: there
+    // is no page to rebuild a cache on, and a Passthrough route's live handler
+    // may still render the removed page from a data source that has not
+    // caught up, which the warm would then write to its caches.
     if (
       result.status === "rendered" ||
       result.status === "skipped-passthrough"
@@ -395,7 +435,10 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     return composeWarmResult(outcome, url.href, match.routeName);
   }
 
-  /** The requestless render of an on-demand route into the prerender store (#640). */
+  /**
+   * The requestless render of an on-demand route into the prerender store
+   * (#640), or with `removing` the write of its "removed" marker (#1060).
+   */
   async function renderOnDemand(
     pathname: string,
     display: string,
@@ -403,6 +446,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     runtime: PrerenderRuntime<TEnv>,
     options: PrerenderRunOptions,
     version: string,
+    removing: boolean,
   ): Promise<PrerenderResult> {
     // The prerender factory is user code like tags()/store.set: a throw (e.g.
     // a missing binding tripping store construction) must map to a result, not
@@ -434,6 +478,51 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
       paramHash: hashParams(match.params),
     };
     const keyStr = serializePrerenderKey(key);
+    const store = config.store;
+    /** What the store holds for the page, as a result reports it. */
+    const held = (
+      status: "already-fresh" | "removed",
+      meta: PrerenderStoredEntry["meta"],
+    ): PrerenderResult => ({
+      ok: true,
+      path: "on-demand",
+      status,
+      target: display,
+      routeName: match.routeName,
+      key: keyStr,
+      tags: meta.tags,
+      // The configured ttl, not staleAt - storedAt: storedAt is the render's
+      // start and a markStale() lowers staleAt, so the difference is neither.
+      ...(meta.ttl != null ? { ttl: meta.ttl } : {}),
+    });
+    // Replace-on-success: a failed write leaves the prior durable entry (and
+    // the bundled manifest fallback) in place.
+    const storeFailed = (error: unknown): PrerenderResult => ({
+      ok: false,
+      path: "on-demand",
+      status: "store-failed",
+      target: display,
+      routeName: match.routeName,
+      error,
+    });
+
+    if (removing) {
+      // The "removed" marker in place of the page. Not store.delete(): that
+      // would bring a baked param's build-time entry back. No ttl and no
+      // tags: it never goes stale and markStale() cannot reach it, so only a
+      // refresh without onlyIfStale brings the page back.
+      const marker = composeStoredTombstone(
+        key,
+        { tags: [], params: match.params },
+        Date.now(),
+      );
+      try {
+        await store.set(key, marker);
+      } catch (error) {
+        return storeFailed(error);
+      }
+      return held("removed", marker.meta);
+    }
 
     // onlyIfStale: the cron-sweep opt-in. A CMS webhook (default) always renders,
     // because it fires precisely when content changed. This is the only path that
@@ -441,31 +530,20 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     if (options.onlyIfStale) {
       // An unreadable or unverifiable entry is "couldn't confirm fresh":
       // render, never throw (one result per target, many() keeps going).
-      const existing = await readVerifiedStoredEntry(
-        config.store,
-        key,
-        match.params,
-      );
+      const existing = await readVerifiedStoredEntry(store, key, match.params);
+      // A fresh marker is left like a fresh page; a stale one (a notFound()
+      // past its ttl, or marked stale) is rendered again below.
       if (existing && !isStoredEntryStale(existing, Date.now())) {
-        const existingTtl =
-          existing.meta.staleAt != null
-            ? Math.round(
-                (existing.meta.staleAt - existing.meta.storedAt) / 1000,
-              )
-            : undefined;
-        return {
-          ok: true,
-          path: "on-demand",
-          status: "already-fresh",
-          target: display,
-          routeName: match.routeName,
-          key: keyStr,
-          tags: existing.meta.tags,
-          ...(existingTtl != null ? { ttl: existingTtl } : {}),
-        };
+        return held(
+          existing.removed === true ? "removed" : "already-fresh",
+          existing.meta,
+        );
       }
     }
 
+    // The entry's storedAt (#1072): a markStale() while the render runs must
+    // mark it, and the stores compare their tag marker with storedAt.
+    const startedAt = Date.now();
     let produced: ProducerOutput | null;
     try {
       produced = await deps.runProducer({
@@ -505,15 +583,13 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
         routeName: match.routeName,
       };
     }
-    if (produced.passthrough) {
-      return {
-        ok: false,
-        path: "on-demand",
-        status: "skipped-passthrough",
-        target: display,
-        routeName: match.routeName,
-      };
-    }
+    // No page to store: the render hit notFound() (the page no longer
+    // exists; keeping the old entry would serve a deleted item until the next
+    // deploy), or a Passthrough build handler declined the param (the live
+    // handler is to answer, which it only does once nothing in a prerender
+    // store does). Both store the "removed" marker, stamped below with the
+    // route's ttl and tags like a page, so the outcome is rechecked like one.
+    const noPage = produced.notFound === true || produced.passthrough === true;
 
     // Resolve soft TTL + tags from the route's onDemand config (read off the
     // loaded route entry by the producer), falling back to the router default.
@@ -533,33 +609,55 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
         normalizeTagList(
           [...rawTags].filter((t): t is string => typeof t === "string"),
         ) ?? [];
+      const stamp = {
+        ...(ttl != null ? { ttl } : {}),
+        tags,
+        params: match.params,
+      };
+      if (!noPage) {
+        // A marker stored after this render started is not overwritten by its
+        // page: a remove() (stamped with its write time) always qualifies. A
+        // render's own marker carries that render's start, so only a render
+        // that started later than this one wins; an older render's notFound()
+        // does not (this one read newer data). This narrows the race, it
+        // cannot close it: the read and the write are two store calls, and KV
+        // is eventually consistent. Otherwise last write wins.
+        const current = await readVerifiedStoredEntry(store, key, match.params);
+        if (current?.removed === true && current.meta.storedAt > startedAt) {
+          return held("removed", current.meta);
+        }
+      }
       // The router composes the envelope; the store only persists it.
-      await config.store.set(
+      const writtenAt = Date.now();
+      await store.set(
         key,
-        composeStoredEntry(
-          key,
-          { segments: produced.segments, handles: produced.handles },
-          { ...(ttl != null ? { ttl } : {}), tags, params: match.params },
-          Date.now(),
-        ),
+        noPage
+          ? composeStoredTombstone(key, stamp, startedAt, writtenAt)
+          : composeStoredEntry(
+              key,
+              { segments: produced.segments, handles: produced.handles },
+              stamp,
+              startedAt,
+              writtenAt,
+            ),
       );
     } catch (err) {
-      // Replace-on-success: a failed write leaves the prior durable entry (and
-      // the bundled manifest fallback) in place.
+      return storeFailed(err);
+    }
+
+    if (produced.passthrough) {
       return {
         ok: false,
         path: "on-demand",
-        status: "store-failed",
+        status: "skipped-passthrough",
         target: display,
         routeName: match.routeName,
-        error: err,
       };
     }
-
     return {
       ok: true,
       path: "on-demand",
-      status: "rendered",
+      status: produced.notFound ? "removed" : "rendered",
       target: display,
       routeName: match.routeName,
       key: keyStr,
@@ -575,6 +673,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     runtime: PrerenderRuntime<TEnv>,
     targets: ReadonlyArray<PrerenderTarget<TRoutes>>,
     options: PrerenderManyOptions = {},
+    removing = false,
   ): Promise<PrerenderResult[]> {
     // Default to 1 for any invalid concurrency (undefined, NaN, < 1). Without
     // this, Math.floor(NaN) -> NaN spawns zero workers and many() resolves to an
@@ -588,7 +687,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     return runWithConcurrency(targets, concurrency, (target) =>
       // throwOnError propagates per-item so the batch stops on the first failure;
       // without it, every target yields a result.
-      refresh(target, runtime, options, version),
+      refresh(target, runtime, options, version, removing),
     );
   }
 
@@ -621,7 +720,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
           "(for example a sweep with { onlyIfStale: true }).",
       );
     }
-    await config.store.markStale(tags);
+    await config.store.markStale(deps.routerId, tags);
   }
 
   // Binding does no work: the config factory, version and manifest resolve per
@@ -630,6 +729,16 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     const runner = ((target, options) =>
       refresh(target, runtime, options)) as PrerenderRunner<TRoutes>;
     runner.many = (targets, options) => many(runtime, targets, options);
+    const remove = ((target, options) =>
+      refresh(
+        target,
+        runtime,
+        options,
+        undefined,
+        true,
+      )) as PrerenderRunner<TRoutes>["remove"];
+    remove.many = (targets, options) => many(runtime, targets, options, true);
+    runner.remove = remove;
     runner.markStale = (tags) => markStale(runtime, tags);
     return runner;
   };

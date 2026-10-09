@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError, testId } from "./helper";
+import { expectConsole } from "@shared/e2e";
 
 /**
  * Tests for useLoader and useFetchLoader hooks:
@@ -457,6 +458,12 @@ test.describe("Error handling - throwOnError: true (default)", () => {
   test("should propagate error to ErrorBoundary when throwOnError is true", async ({
     page,
   }) => {
+    // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+    expectConsole(page, {
+      allow: [
+        /\[ErrorBoundary\] Error caught: Error: Intentional loader error for testing/,
+      ],
+    });
     // When throwOnError: true (default), errors are thrown during render
     // so ErrorBoundaries can catch them
 
@@ -636,6 +643,12 @@ test.describe("useLoader throws when data missing", () => {
   test("useLoader throws error when loader is NOT registered on route", async ({
     page,
   }) => {
+    // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+    expectConsole(page, {
+      allow: [
+        /\[ErrorBoundary\] Error caught: Error: useLoader: Loader ".*" data not found/,
+      ],
+    });
     // This route does NOT have HookTestLoader registered via loader()
     // So useLoader should throw immediately during render
 

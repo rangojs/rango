@@ -49,7 +49,10 @@ export function useParams<T>(
   const optimistic = useContext(OptimisticLocationContext);
 
   const [value, setValue] = useState<T | Record<string, string>>(() => {
-    const params = ctx ? ctx.eventController.getParams() : EMPTY_PARAMS;
+    const params = ctx
+      ? (ctx.eventController.getHydrationSnapshot()?.params ??
+        ctx.eventController.getParams())
+      : EMPTY_PARAMS;
     return selector ? selector(params) : params;
   });
 

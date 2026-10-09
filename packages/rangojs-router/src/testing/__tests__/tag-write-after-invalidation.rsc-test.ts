@@ -42,6 +42,7 @@ import type { SegmentCacheStore } from "../../cache/types.js";
 import {
   getHeldShelf,
   getHotItem,
+  getVersionedInner,
   getPrice,
   priceSource,
   runs,
@@ -574,6 +575,9 @@ describe("the write gate's marker reads (#977)", () => {
 describe("a route cache() response entry whose handler ran before another request's updateTag() (#977)", () => {
   it("dispatch: the entry is not written; the next request runs the handler on the new data", async () => {
     const store = new MemorySegmentCacheStore();
+    // Memory refuses a late write itself (#1068): pin the gate by asserting
+    // the write never reached the store.
+    const putResponse = vi.spyOn(store, "putResponse");
     let source = "old";
     let gate: Promise<void> = Promise.resolve();
     let calls = 0;
@@ -606,6 +610,7 @@ describe("a route cache() response entry whose handler ran before another reques
     held.release();
     expect(await (await first).json()).toEqual({ value: "old" });
     await pause(20);
+    expect(putResponse).not.toHaveBeenCalled();
 
     gate = Promise.resolve();
     const next = await dispatch(router, { request: "/held-json" });
@@ -617,3 +622,280 @@ describe("a route cache() response entry whose handler ran before another reques
 function pause(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+/**
+ * A store whose write gate cannot see the invalidation: its marker read
+ * answers "not invalidated", as a KV read does that has not seen another
+ * colo's marker yet, or when the marker lands between the gate and the put.
+ * Only the stamp the store writes can reject the entry then (#1068). The
+ * read path keeps its own marker check, which is not asked fail-closed.
+ */
+function blindGate(store: StoreUnderTest): StoreUnderTest {
+  const target = store.cacheStore;
+  const ask = target.isTagsInvalidatedSince?.bind(target);
+  if (ask) {
+    target.isTagsInvalidatedSince = (tags, sinceMs, options) =>
+      options?.failClosed
+        ? Promise.resolve(false)
+        : ask(tags, sinceMs, options);
+  }
+  return store;
+}
+
+/** An invalidation no request order sees: straight on the store's markers. */
+const directInvalidation: Invalidate = async (store, tag) => {
+  await pause(2);
+  await (store.otherIsolate ?? store.cacheStore).invalidateTags!([tag]);
+};
+
+const STAMP_STORES = [
+  ["MemorySegmentCacheStore", memoryStore],
+  ["CFCacheStore with KV", cfStore],
+] as const;
+
+// #1068: the write gate can pass a value that predates the invalidation (an
+// eventually consistent KV read, a marker landing between the gate and the
+// put). The store's stamp is the second line: the entry carries the start of
+// the execution, so the read-side marker check rejects it.
+describe("a write the gate let through, started before an invalidation (#1068)", () => {
+  it.each(STAMP_STORES)(
+    '%s: a "use cache" miss is rejected on the next request',
+    async (_label, makeStore) => {
+      expect(
+        await useCacheMiss(
+          blindGate(makeStore()),
+          directInvalidation,
+          "s-miss",
+        ),
+      ).toEqual(["s-miss:old", "s-miss:new"]);
+    },
+  );
+
+  it.each(STAMP_STORES)(
+    '%s: a "use cache" stale refresh is rejected on the next request',
+    async (_label, makeStore) => {
+      expect(
+        await useCacheRefresh(
+          blindGate(makeStore()),
+          directInvalidation,
+          "s-refresh",
+        ),
+      ).toEqual(["s-refresh:old", "s-refresh:new"]);
+    },
+  );
+
+  it.each(STAMP_STORES)(
+    "%s: a loader's own cache() miss is rejected on the next request",
+    async (_label, makeStore) => {
+      expect(
+        await loaderCache(blindGate(makeStore()), directInvalidation, "miss"),
+      ).toEqual(["old", "new"]);
+    },
+  );
+
+  it.each(STAMP_STORES)(
+    "%s: a loader's own cache() stale refresh is rejected on the next request",
+    async (_label, makeStore) => {
+      expect(
+        await loaderCache(
+          blindGate(makeStore()),
+          directInvalidation,
+          "refresh",
+        ),
+      ).toEqual(["old", "new"]);
+    },
+  );
+
+  // The invalidating request reads its own writes: the store's request mask
+  // compares the same stamp (VercelCacheStore has no other read-side check).
+  it.each(STORES)(
+    '%s: a "use cache" miss is not served to the request that invalidated meanwhile',
+    async (_label, makeStore) => {
+      const store = blindGate(makeStore());
+      const options = {
+        cacheStore: store.cacheStore,
+        cacheProfiles: { default: { ttl: 60 } },
+      };
+      runs.getHeldShelf = 0;
+      shelfSource.value = "old";
+      const gate = hold();
+      shelfGate.held = gate.held;
+
+      const served = await runLoader(async () => {
+        const first = getHeldShelf("s-same");
+        await vi.waitFor(() => expect(runs.getHeldShelf).toBe(1));
+        shelfSource.value = "new";
+        await pause(2);
+        await store.cacheStore.invalidateTags!(["held-shelf"]);
+        await pause(2);
+        gate.release();
+        const before = await first;
+        await pause(20);
+        await store.settle();
+        return [before, await getHeldShelf("s-same")];
+      }, options);
+
+      expect(served).toEqual(["s-same:old", "s-same:new"]);
+    },
+  );
+
+  it.each(STAMP_STORES)(
+    "%s: a route cache() response entry is rejected on the next request",
+    async (_label, makeStore) => {
+      const store = blindGate(makeStore());
+      let source = "old";
+      let gate: Promise<void> = Promise.resolve();
+      let calls = 0;
+      const router = createRouter<{}>({
+        cache: { store: store.cacheStore },
+      }).routes(
+        urls(({ path, cache }) => [
+          cache({ ttl: 600, tags: ["stamp-json"] }, () => [
+            path.json(
+              "/stamp-json",
+              async () => {
+                calls++;
+                const value = source;
+                await gate;
+                return { value };
+              },
+              { name: "stamp.json" },
+            ),
+          ]),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      const held = hold();
+      gate = held.held;
+      const first = dispatch(router, { request: "/stamp-json" });
+      await vi.waitFor(() => expect(calls).toBe(1));
+      source = "new";
+      await directInvalidation(store, "stamp-json");
+      await pause(2);
+      held.release();
+      expect(await (await first).json()).toEqual({ value: "old" });
+      await pause(20);
+      await store.settle();
+
+      gate = Promise.resolve();
+      const next = await dispatch(router, { request: "/stamp-json" });
+      expect(await next.json()).toEqual({ value: "new" });
+      expect(calls).toBe(2);
+    },
+  );
+});
+
+// Known limit (#1068): VercelCacheStore compares an entry's `ta` with the
+// invalidating request's mask only (expireTag keeps no queryable history), so
+// a write the gate let through is served to a later request. These cases pin
+// today's behaviour. When a data-read marker check lands on VercelCacheStore,
+// flip each expectation to the fresh value and move the store into
+// STAMP_STORES.
+describe("VercelCacheStore: a write the gate let through is served to a later request (known limit, #1068)", () => {
+  it('a "use cache" miss serves the old value', async () => {
+    expect(
+      await useCacheMiss(vercelBlind(), directInvalidation, "v-miss"),
+    ).toEqual(["v-miss:old", "v-miss:old"]);
+  });
+
+  it('a "use cache" stale refresh serves the old value', async () => {
+    expect(
+      await useCacheRefresh(vercelBlind(), directInvalidation, "v-refresh"),
+    ).toEqual(["v-refresh:old", "v-refresh:old"]);
+  });
+
+  it("a loader's own cache() miss serves the old value", async () => {
+    expect(
+      await loaderCache(vercelBlind(), directInvalidation, "miss"),
+    ).toEqual(["old", "old"]);
+  });
+
+  it("a loader's own cache() stale refresh serves the old value", async () => {
+    expect(
+      await loaderCache(vercelBlind(), directInvalidation, "refresh"),
+    ).toEqual(["old", "old"]);
+  });
+
+  it("a route cache() response entry serves the old value", async () => {
+    const store = vercelBlind();
+    let source = "old";
+    let gate: Promise<void> = Promise.resolve();
+    const router = createRouter<{}>({
+      cache: { store: store.cacheStore },
+    }).routes(
+      urls(({ path, cache }) => [
+        cache({ ttl: 600, tags: ["limit-json"] }, () => [
+          path.json(
+            "/limit-json",
+            async () => {
+              const value = source;
+              await gate;
+              return { value };
+            },
+            { name: "limit.json" },
+          ),
+        ]),
+      ]),
+    ) as Parameters<typeof dispatch>[0];
+
+    const held = hold();
+    gate = held.held;
+    const first = dispatch(router, { request: "/limit-json" });
+    await pause(10);
+    source = "new";
+    await directInvalidation(store, "limit-json");
+    await pause(2);
+    held.release();
+    expect(await (await first).json()).toEqual({ value: "old" });
+    await pause(20);
+    await store.settle();
+
+    gate = Promise.resolve();
+    const next = await dispatch(router, { request: "/limit-json" });
+    expect(await next.json()).toEqual({ value: "old" });
+  });
+});
+
+function vercelBlind(): StoreUnderTest {
+  return blindGate(vercelStore());
+}
+
+// A refresh is its own execution: its stamp is its own start. This request
+// started before the invalidation of the tag the refresh records; the
+// refresh started after it and is kept.
+describe("a background refresh that started after an invalidation (#1068)", () => {
+  it.each(OTHER_ISOLATE_STORES)(
+    '%s: a "use cache" refresh is stored although its request started earlier',
+    async (_label, makeStore) => {
+      const store = makeStore();
+      const options = {
+        cacheStore: store.cacheStore,
+        cacheProfiles: { stale: { ttl: 0, swr: 60 } },
+      };
+      runs.getVersionedInner = 0;
+      await runLoader(() => getVersionedInner("s-late"), options);
+      await pause(20);
+      await store.settle();
+      expect(runs.getVersionedInner).toBe(1);
+
+      // Request R starts, then "versioned-v2" (the tag the refresh will
+      // record) is invalidated, then R reads the stale entry: the refresh
+      // starts after the invalidation.
+      const stale = await runLoader(async () => {
+        await pause(5);
+        await inAnotherRequest(store, "versioned-v2");
+        await afterInvalidationMillisecond();
+        return getVersionedInner("s-late");
+      }, options);
+      expect(stale).toBe("s-late:v1");
+      await pause(20);
+      await store.settle();
+      expect(runs.getVersionedInner).toBe(2);
+
+      // The refreshed entry (v2) was stored, not skipped.
+      expect(await runLoader(() => getVersionedInner("s-late"), options)).toBe(
+        "s-late:v2",
+      );
+    },
+  );
+});

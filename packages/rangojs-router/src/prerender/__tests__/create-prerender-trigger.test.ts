@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import {
   createPrerenderTrigger,
   PrerenderError,
@@ -8,9 +8,11 @@ import {
 import { createMemoryPrerenderStore } from "../memory-prerender-store.js";
 import { PrerenderPersonalizationError } from "../producer-guard.js";
 import {
+  isStoredEntryStale,
   serializePrerenderKey,
   type WritablePrerenderStore,
 } from "../writable-store.js";
+import { createKVPrerenderStore } from "../cloudflare.js";
 import { hashParams } from "../param-hash.js";
 import type { PrerenderConfig } from "../on-demand.js";
 import { readWarmMark, type PrerenderWarmRecord } from "../warm-request.js";
@@ -103,7 +105,7 @@ describe("createPrerenderTrigger", () => {
       routeName: "products.detail",
       paramHash: hashParams({ id: "42" }),
     });
-    expect(stored?.entry.segments.length).toBe(1);
+    expect(stored?.entry?.segments.length).toBe(1);
     expect(result.key).toBe(
       serializePrerenderKey({
         routerId: "r1",
@@ -239,7 +241,10 @@ describe("createPrerenderTrigger", () => {
     });
     const result = await trigger("/products/42");
     expect(result).toMatchObject({ ok: false, status: "skipped-passthrough" });
-    expect(store.size).toBe(0);
+    // No page is stored; the "removed" marker is, so nothing in a prerender
+    // store answers ahead of the live handler ("removing a page" below).
+    expect(store.size).toBe(1);
+    expect(store.entries()[0]![1]).not.toHaveProperty("entry");
   });
 
   it("returns store-failed and keeps the previous entry when set throws", async () => {
@@ -556,13 +561,217 @@ describe("createPrerenderTrigger", () => {
     });
   });
 
+  // A render that started before markStale() and stored after it holds
+  // pre-invalidation content: the stores compare their tag marker with
+  // storedAt, so storedAt is the render's start, and staleAt counts the ttl
+  // from the write (a render slower than its ttl is not born stale).
+  describe("a render and markStale() overlapping", () => {
+    const T0 = 1_000_000;
+    const storedKey = {
+      routerId: "r1",
+      version: "b1",
+      routeName: "products.detail",
+      paramHash: hashParams({ id: "42" }),
+    };
+    const tagged = { onDemandConfig: { ttl: 600, tags: ["x"] } as any };
+
+    function kvStore() {
+      const map = new Map<string, string>();
+      const kv = {
+        get: async (k: string) => map.get(k) ?? null,
+        put: async (k: string, v: string) => void map.set(k, v),
+        delete: async (k: string) => void map.delete(k),
+      };
+      return createKVPrerenderStore(kv as any);
+    }
+
+    /** A producer that signals `entered` and returns once `release()` is called. */
+    function holdRender(produced: ProducerOutput) {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let enter!: () => void;
+      const entered = new Promise<void>((resolve) => (enter = resolve));
+      return {
+        entered,
+        release,
+        runProducer: async () => {
+          enter();
+          await gate;
+          return produced;
+        },
+      };
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(T0);
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    /** One refresh with markStale(["x"]) landing 10 ms after it starts, 10 ms before its write. */
+    async function markDuringRender(
+      store: WritablePrerenderStore,
+      produced: ProducerOutput,
+    ) {
+      const hold = holdRender(produced);
+      const { trigger } = harness({
+        config: { store },
+        runProducer: hold.runProducer,
+      });
+      const run = trigger("/products/42");
+      await hold.entered;
+      vi.setSystemTime(T0 + 10);
+      await trigger.markStale(["x"]);
+      vi.setSystemTime(T0 + 20);
+      hold.release();
+      return run;
+    }
+
+    const stores = [
+      ["KV store", kvStore],
+      ["memory store", () => createMemoryPrerenderStore()],
+    ] as const;
+
+    it.each(stores)("%s: a page is stale once stored", async (_, make) => {
+      const store = make();
+      const result = await markDuringRender(store, output(tagged));
+      expect(result).toMatchObject({ ok: true, status: "rendered" });
+      const stored = await store.get(storedKey);
+      expect(stored!.meta.storedAt).toBe(T0);
+      expect(isStoredEntryStale(stored!, T0 + 20)).toBe(true);
+    });
+
+    it.each(stores)(
+      "%s: the marker of a notFound() refresh is stale too",
+      async (_, make) => {
+        const store = make();
+        const result = await markDuringRender(
+          store,
+          output({ notFound: true, ...tagged }),
+        );
+        expect(result).toMatchObject({ ok: true, status: "removed" });
+        const stored = await store.get(storedKey);
+        expect(stored).toMatchObject({ removed: true });
+        expect(isStoredEntryStale(stored!, T0 + 20)).toBe(true);
+      },
+    );
+
+    it("the marker of a ctx.passthrough() decline is stale too", async () => {
+      const store = createMemoryPrerenderStore();
+      const result = await markDuringRender(
+        store,
+        output({ passthrough: true, ...tagged }),
+      );
+      expect(result).toMatchObject({
+        ok: false,
+        status: "skipped-passthrough",
+      });
+      expect(isStoredEntryStale((await store.get(storedKey))!, T0 + 20)).toBe(
+        true,
+      );
+    });
+
+    it("a markStale() in the same millisecond, before the refresh, leaves the memory store's page fresh", async () => {
+      const store = createMemoryPrerenderStore();
+      const { trigger } = harness({
+        config: { store },
+        runProducer: async () => output(tagged),
+      });
+      await trigger.markStale(["x"]);
+      expect(await trigger("/products/42")).toMatchObject({
+        status: "rendered",
+      });
+      expect(isStoredEntryStale(store.peek(storedKey)!, T0)).toBe(false);
+      expect(
+        await trigger("/products/42", { onlyIfStale: true }),
+      ).toMatchObject({ ok: true, status: "already-fresh" });
+    });
+
+    it("a render slower than its ttl is stored fresh: staleAt counts from the write", async () => {
+      const store = createMemoryPrerenderStore();
+      const hold = holdRender(
+        output({ onDemandConfig: { ttl: 10, tags: [] } as any }),
+      );
+      const { trigger } = harness({
+        config: { store },
+        runProducer: hold.runProducer,
+      });
+      const run = trigger("/products/42");
+      await hold.entered;
+      vi.setSystemTime(T0 + 30_000);
+      hold.release();
+      expect(await run).toMatchObject({ status: "rendered", ttl: 10 });
+
+      const { meta } = store.peek(storedKey)!;
+      expect(meta.storedAt).toBe(T0);
+      expect(meta.staleAt).toBe(T0 + 40_000);
+      expect(
+        await trigger("/products/42", { onlyIfStale: true }),
+      ).toMatchObject({ ok: true, status: "already-fresh", ttl: 10 });
+    });
+
+    it("an onlyIfStale sweep renders again after a mark that landed during the previous render", async () => {
+      const store = createMemoryPrerenderStore();
+      await markDuringRender(store, output(tagged));
+      const { trigger } = harness({
+        config: { store },
+        runProducer: async () => output(tagged),
+      });
+      expect(
+        await trigger("/products/42", { onlyIfStale: true }),
+      ).toMatchObject({ ok: true, status: "rendered" });
+    });
+
+    it("a remove() that lands during the render wins over its page", async () => {
+      const store = createMemoryPrerenderStore();
+      const hold = holdRender(output(tagged));
+      const { trigger } = harness({
+        config: { store },
+        runProducer: hold.runProducer,
+      });
+      const run = trigger("/products/42");
+      await hold.entered;
+      vi.setSystemTime(T0 + 5);
+      await trigger.remove("/products/42");
+      hold.release();
+      expect(await run).toMatchObject({ ok: true, status: "removed" });
+      expect(store.peek(storedKey)).toMatchObject({ removed: true });
+    });
+
+    it("the notFound() marker of an older render does not win over a render that started later", async () => {
+      const store = createMemoryPrerenderStore();
+      const older = holdRender(output({ notFound: true }));
+      const newer = holdRender(output());
+      const producers = [older.runProducer, newer.runProducer];
+      const { trigger } = harness({
+        config: { store },
+        runProducer: () => producers.shift()!(),
+      });
+      const olderRun = trigger("/products/42");
+      await older.entered;
+      vi.setSystemTime(T0 + 5);
+      const newerRun = trigger("/products/42");
+      await newer.entered;
+      vi.setSystemTime(T0 + 10);
+      older.release();
+      expect(await olderRun).toMatchObject({ status: "removed" });
+      vi.setSystemTime(T0 + 20);
+      newer.release();
+
+      expect(await newerRun).toMatchObject({ ok: true, status: "rendered" });
+      expect(store.peek(storedKey)).not.toHaveProperty("removed");
+    });
+  });
+
   describe("markStale()", () => {
     it("delegates to the store", async () => {
       const store = createMemoryPrerenderStore();
       const spy = vi.spyOn(store, "markStale");
       const { trigger } = harness({ config: { store } });
       await trigger.markStale(["product:42"]);
-      expect(spy).toHaveBeenCalledWith(["product:42"]);
+      expect(spy).toHaveBeenCalledWith("r1", ["product:42"]);
     });
 
     it("is a no-op with no tags or no store", async () => {
@@ -652,6 +861,622 @@ describe("createPrerenderTrigger", () => {
       } finally {
         warn.mockRestore();
       }
+    });
+  });
+
+  /**
+   * Removing a refreshed page (#1060): a "removed" marker is stored in place
+   * of the page, by a refresh whose producer calls notFound() or by
+   * `prerender.remove()`, which renders nothing.
+   */
+  describe("removing a page", () => {
+    const productKey = (id = "42") => ({
+      routerId: "r1",
+      version: "b1",
+      routeName: "products.detail",
+      paramHash: hashParams({ id }),
+    });
+    const removed = {
+      ok: true,
+      path: "on-demand",
+      status: "removed",
+      target: "/products/42",
+      routeName: "products.detail",
+      key: serializePrerenderKey(productKey()),
+      tags: [],
+    };
+    const tombstone = {
+      v: 1,
+      removed: true,
+      meta: { tags: [], version: "b1", params: { id: "42" } },
+    };
+
+    describe("a refresh whose producer calls notFound()", () => {
+      it("stores the marker over the previous entry and reports removed", async () => {
+        const runProducer = vi.fn<PrerenderTriggerDeps["runProducer"]>(
+          async () => output(),
+        );
+        const { trigger, store } = harness({ runProducer });
+        await trigger("/products/42");
+        expect(store.peek(productKey())).toHaveProperty("entry");
+
+        runProducer.mockResolvedValueOnce(output({ notFound: true }));
+        const result = await trigger("/products/42");
+
+        expect(result).toEqual(removed);
+        const stored = store.peek(productKey());
+        expect(stored).toMatchObject(tombstone);
+        expect(stored).not.toHaveProperty("entry");
+        // No route ttl and no router ttl: never stale, like a page.
+        expect(stored?.meta).not.toHaveProperty("staleAt");
+        expect(store.size).toBe(1);
+      });
+
+      it("stamps the marker like a page: the route's ttl and tags, else the router's ttl", async () => {
+        const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
+        try {
+          const routed = harness({
+            runProducer: async () =>
+              output({
+                notFound: true,
+                onDemandConfig: {
+                  ttl: 60,
+                  tags: ({ params }) => [`product:${params.id}`, " "],
+                },
+              }),
+          });
+          expect(await routed.trigger("/products/42")).toEqual({
+            ...removed,
+            tags: ["product:42"],
+            ttl: 60,
+          });
+          expect(routed.store.peek(productKey())).toEqual({
+            v: 1,
+            removed: true,
+            meta: {
+              storedAt: 1000,
+              staleAt: 61_000,
+              ttl: 60,
+              tags: ["product:42"],
+              version: "b1",
+              params: { id: "42" },
+            },
+          });
+
+          const store = createMemoryPrerenderStore();
+          const routerDefault = harness({
+            config: { store, ttl: 5 },
+            runProducer: async () => output({ notFound: true }),
+          });
+          expect(await routerDefault.trigger("/products/42")).toEqual({
+            ...removed,
+            ttl: 5,
+          });
+          expect(store.peek(productKey())?.meta).toEqual({
+            storedAt: 1000,
+            staleAt: 6000,
+            ttl: 5,
+            tags: [],
+            version: "b1",
+            params: { id: "42" },
+          });
+        } finally {
+          clock.mockRestore();
+        }
+      });
+
+      it("any other throw stays render-failed and keeps the previous entry", async () => {
+        const runProducer = vi.fn<PrerenderTriggerDeps["runProducer"]>(
+          async () => output(),
+        );
+        const { trigger, store } = harness({ runProducer });
+        await trigger("/products/42");
+        const page = store.peek(productKey());
+
+        runProducer.mockRejectedValueOnce(new Error("upstream 500"));
+        expect(await trigger("/products/42")).toMatchObject({
+          ok: false,
+          status: "render-failed",
+        });
+        runProducer.mockRejectedValueOnce(
+          new PrerenderPersonalizationError("cookies()"),
+        );
+        expect(await trigger("/products/42")).toMatchObject({
+          ok: false,
+          status: "skipped-personalized",
+        });
+        expect(store.peek(productKey())).toBe(page);
+      });
+
+      it("ctx.passthrough() declining a refresh stores the marker too: the live handler answers, not a page stored or baked earlier", async () => {
+        // A Passthrough route whose build handler declines a param. The
+        // status says the live handler serves it, which is only true once
+        // nothing in a prerender store answers for that param.
+        const runProducer = vi.fn<PrerenderTriggerDeps["runProducer"]>(
+          async () => output(),
+        );
+        const { trigger, store } = harness({ runProducer });
+        await trigger("/products/42");
+        expect(store.peek(productKey())).toHaveProperty("entry");
+
+        runProducer.mockResolvedValueOnce(
+          output({
+            passthrough: true,
+            onDemandConfig: { ttl: 60, tags: ["product:42"] },
+          }),
+        );
+        expect(await trigger("/products/42")).toEqual({
+          ok: false,
+          path: "on-demand",
+          status: "skipped-passthrough",
+          target: "/products/42",
+          routeName: "products.detail",
+        });
+        const stored = store.peek(productKey());
+        // Stamped like a page, so the decline is rechecked like a notFound().
+        expect(stored).toMatchObject({
+          ...tombstone,
+          meta: { tags: ["product:42"] },
+        });
+        expect(stored).not.toHaveProperty("entry");
+        expect(stored?.meta.staleAt).toBeGreaterThan(stored!.meta.storedAt);
+      });
+
+      it("a failed marker write is store-failed and keeps the previous entry", async () => {
+        const store = createMemoryPrerenderStore();
+        const { trigger } = harness({
+          config: { store },
+          runProducer: async () => output({ notFound: true }),
+        });
+        store.set = async () => {
+          throw new Error("kv down");
+        };
+
+        const result = await trigger("/products/42");
+
+        expect(result).toMatchObject({
+          ok: false,
+          path: "on-demand",
+          status: "store-failed",
+        });
+        expect((result as { error: Error }).error.message).toBe("kv down");
+      });
+    });
+
+    describe("prerender.remove()", () => {
+      it("stores the marker without calling the producer", async () => {
+        const runProducer = vi.fn<PrerenderTriggerDeps["runProducer"]>(
+          async () => output(),
+        );
+        const { trigger, store, ensureManifest } = harness({ runProducer });
+        await trigger("/products/42");
+        runProducer.mockClear();
+
+        const result = await trigger.remove("/products/42");
+
+        expect(result).toEqual(removed);
+        expect(runProducer).not.toHaveBeenCalled();
+        expect(ensureManifest).toHaveBeenCalledTimes(2);
+        expect(store.peek(productKey())).toMatchObject(tombstone);
+        expect(store.peek(productKey())).not.toHaveProperty("entry");
+      });
+
+      it("removes a page that was never refreshed: a param baked at build has no entry here", async () => {
+        const { trigger, store } = harness();
+
+        expect(await trigger.remove("/products/42")).toEqual(removed);
+        expect(store.peek(productKey())).toMatchObject(tombstone);
+      });
+
+      it("accepts a { route, params } target and a URL", async () => {
+        const { trigger, store } = harness();
+
+        expect(
+          await trigger.remove({
+            route: "products.detail",
+            params: { id: "42" },
+          } as any),
+        ).toEqual(removed);
+        expect(
+          await trigger.remove(new URL("https://shop.example/products/7")),
+        ).toMatchObject({ ok: true, status: "removed", target: "/products/7" });
+        expect(store.size).toBe(2);
+      });
+
+      it("a later refresh overwrites the marker with the page", async () => {
+        const { trigger, store } = harness({
+          runProducer: async () => output({ onDemandConfig: { ttl: 60 } }),
+        });
+        await trigger.remove("/products/42");
+
+        expect(await trigger("/products/42")).toMatchObject({
+          ok: true,
+          status: "rendered",
+          ttl: 60,
+        });
+        const stored = store.peek(productKey());
+        expect(stored).toHaveProperty("entry");
+        expect(stored).not.toHaveProperty("removed");
+        expect(store.size).toBe(1);
+      });
+
+      it("refuses a route that is not on-demand, and warms nothing", async () => {
+        const fetch = vi.fn<PrerenderTriggerDeps["fetch"]>(
+          async () => new Response("ok"),
+        );
+        const { trigger, store } = harness({
+          match: () => ({
+            routeName: "plain",
+            params: {},
+            isOnDemand: false,
+            isPassthrough: false,
+          }),
+          resolveCacheConfig: () => ({ store: new MemorySegmentCacheStore() }),
+          isViteDevServer: () => true,
+          fetch,
+        });
+
+        expect(await trigger.remove("https://shop.example/plain")).toEqual({
+          ok: false,
+          path: "on-demand",
+          status: "skipped-not-on-demand",
+          target: "/plain",
+          routeName: "plain",
+        });
+        expect(fetch).not.toHaveBeenCalled();
+        expect(store.size).toBe(0);
+      });
+
+      it("removes a Passthrough route's page too: its live handler answers next", async () => {
+        const { trigger, store } = harness({
+          match: (pathname) => ({
+            routeName: "products.detail",
+            params: { id: pathname.split("/")[2] },
+            isOnDemand: true,
+            isPassthrough: true,
+          }),
+        });
+
+        expect(await trigger.remove("/products/42")).toEqual(removed);
+        expect(store.peek(productKey())).toMatchObject(tombstone);
+      });
+
+      it("no-match, no-store and an unsupported target are refused as a refresh refuses them", async () => {
+        const { trigger } = harness();
+        expect(await trigger.remove("/nope")).toEqual({
+          ok: false,
+          status: "no-match",
+          target: "/nope",
+        });
+        expect(await trigger.remove({ route: "unknown" } as any)).toMatchObject(
+          { ok: false, status: "no-match" },
+        );
+        // An on-demand key is route + params: a search would remove the page
+        // at the base key.
+        for (const target of ["/products/42?preview=1", "/products/42#top"]) {
+          expect(await trigger.remove(target)).toEqual({
+            ok: false,
+            path: "on-demand",
+            status: "skipped-unsupported-target",
+            target: "/products/42",
+            routeName: "products.detail",
+          });
+        }
+        expect(
+          await trigger.remove("mailto:someone@example.com"),
+        ).toMatchObject({ ok: false, status: "skipped-unsupported-target" });
+
+        const noStore = harness({ config: undefined });
+        expect(await noStore.trigger.remove("/products/42")).toEqual({
+          ok: false,
+          path: "on-demand",
+          status: "no-store",
+          target: "/products/42",
+          routeName: "products.detail",
+        });
+        const boom = new Error("missing binding");
+        const throwing = harness({
+          resolveConfig: () => {
+            throw boom;
+          },
+        });
+        expect(await throwing.trigger.remove("/products/42")).toMatchObject({
+          ok: false,
+          status: "no-store",
+          error: boom,
+        });
+      });
+
+      it("a failed write is store-failed, and the previous entry stays", async () => {
+        const store = createMemoryPrerenderStore();
+        const { trigger } = harness({ config: { store } });
+        await trigger("/products/42");
+        const page = store.peek(productKey());
+        store.set = async () => {
+          throw new Error("kv down");
+        };
+
+        expect(await trigger.remove("/products/42")).toMatchObject({
+          ok: false,
+          path: "on-demand",
+          status: "store-failed",
+        });
+        // A custom store whose set() throws before returning a promise.
+        store.set = () => {
+          throw new Error("sync throw");
+        };
+        await expect(trigger.remove("/products/42")).resolves.toMatchObject({
+          ok: false,
+          status: "store-failed",
+        });
+        expect(store.peek(productKey())).toBe(page);
+      });
+
+      it("throwOnError throws a PrerenderError on a refusal", async () => {
+        const { trigger } = harness({ config: undefined });
+        await expect(
+          trigger.remove("/products/42", { throwOnError: true }),
+        ).rejects.toBeInstanceOf(PrerenderError);
+        await expect(
+          harness().trigger.remove("/products/42", { throwOnError: true }),
+        ).resolves.toMatchObject({ ok: true, status: "removed" });
+      });
+    });
+
+    describe("prerender.remove.many()", () => {
+      it("returns one result per target in input order, and renders nothing", async () => {
+        const runProducer = vi.fn<PrerenderTriggerDeps["runProducer"]>(
+          async () => output(),
+        );
+        const { trigger, store } = harness({ runProducer });
+
+        const results = await trigger.remove.many(
+          ["/products/1", "/nope", "/products/3"],
+          { concurrency: 2 },
+        );
+
+        expect(results.map((r) => [r.status, r.target])).toEqual([
+          ["removed", "/products/1"],
+          ["no-match", "/nope"],
+          ["removed", "/products/3"],
+        ]);
+        expect(runProducer).not.toHaveBeenCalled();
+        expect(store.size).toBe(2);
+      });
+
+      it("resolves the key version once per batch, and defaults to one at a time", async () => {
+        let active = 0;
+        let peak = 0;
+        const store = createMemoryPrerenderStore();
+        const set = store.set.bind(store);
+        store.set = async (...args) => {
+          active += 1;
+          peak = Math.max(peak, active);
+          await new Promise((resolve) => setTimeout(resolve, 1));
+          active -= 1;
+          return set(...args);
+        };
+        const h = harness({ config: { store } });
+        const resolveVersion = vi.fn(() => "d1");
+        h.deps.resolveVersion = resolveVersion;
+        const t = createPrerenderTrigger(h.deps)({ env: {} });
+
+        const results = await t.remove.many(["/products/1", "/products/2"]);
+
+        expect(resolveVersion).toHaveBeenCalledTimes(1);
+        expect(peak).toBe(1);
+        expect(results.map((r) => r.ok && "key" in r && r.key)).toEqual([
+          serializePrerenderKey({ ...productKey("1"), version: "d1" }),
+          serializePrerenderKey({ ...productKey("2"), version: "d1" }),
+        ]);
+      });
+
+      it("throwOnError stops the batch at the first refusal", async () => {
+        const { trigger, store } = harness();
+
+        await expect(
+          trigger.remove.many(["/products/1", "/nope", "/products/3"], {
+            throwOnError: true,
+          }),
+        ).rejects.toBeInstanceOf(PrerenderError);
+        expect(store.size).toBe(1);
+      });
+    });
+
+    /**
+     * A notFound() is rechecked like any render outcome (its marker goes
+     * stale by the route's ttl or a markStale); a remove() is permanent until
+     * a refresh without onlyIfStale.
+     */
+    describe("a remove() marker is permanent, a notFound() marker is rechecked", () => {
+      it("remove(): no staleAt and no tags, whatever ttl the router has; onlyIfStale leaves it however old", async () => {
+        const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
+        try {
+          const store = createMemoryPrerenderStore();
+          const runProducer = vi.fn<PrerenderTriggerDeps["runProducer"]>(
+            async () => output({ onDemandConfig: { ttl: 1, tags: ["t"] } }),
+          );
+          const { trigger } = harness({
+            config: { store, ttl: 1 },
+            runProducer,
+          });
+          await trigger.remove("/products/42");
+          const marker = store.peek(productKey());
+          expect(marker?.meta).toEqual({
+            storedAt: 1000,
+            tags: [],
+            version: "b1",
+            params: { id: "42" },
+          });
+
+          clock.mockReturnValue(1000 + 365 * 24 * 3600 * 1000);
+          const result = await trigger("/products/42", { onlyIfStale: true });
+
+          expect(result).toEqual(removed);
+          expect(runProducer).not.toHaveBeenCalled();
+          expect(store.peek(productKey())).toBe(marker);
+        } finally {
+          clock.mockRestore();
+        }
+      });
+
+      it("notFound(): a transient not-found recovers on the next onlyIfStale sweep after the ttl", async () => {
+        const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
+        try {
+          const runProducer = vi.fn<PrerenderTriggerDeps["runProducer"]>(
+            async () => output({ onDemandConfig: { ttl: 1 } }),
+          );
+          const { trigger, store } = harness({ runProducer });
+          // The data source briefly loses the item.
+          runProducer.mockResolvedValueOnce(
+            output({ notFound: true, onDemandConfig: { ttl: 1 } }),
+          );
+          expect(await trigger("/products/42")).toMatchObject({
+            status: "removed",
+            ttl: 1,
+          });
+          runProducer.mockClear();
+
+          // Within the ttl the marker is fresh: the sweep leaves it.
+          clock.mockReturnValue(1500);
+          expect(
+            await trigger("/products/42", { onlyIfStale: true }),
+          ).toMatchObject({ ok: true, status: "removed", ttl: 1 });
+          expect(runProducer).not.toHaveBeenCalled();
+
+          // Past it, the sweep renders again and the page is back.
+          clock.mockReturnValue(5000);
+          expect(
+            await trigger("/products/42", { onlyIfStale: true }),
+          ).toMatchObject({ ok: true, status: "rendered" });
+          expect(runProducer).toHaveBeenCalledTimes(1);
+          expect(store.peek(productKey())).toHaveProperty("entry");
+        } finally {
+          clock.mockRestore();
+        }
+      });
+
+      it("markStale reaches a notFound() marker through its route's tags, and never a remove() marker", async () => {
+        let now = 1000;
+        const store = createMemoryPrerenderStore({ now: () => now });
+        const onDemandConfig = { ttl: 3600, tags: ["product:42"] };
+        const runProducer = vi.fn<PrerenderTriggerDeps["runProducer"]>(
+          async () => output({ onDemandConfig }),
+        );
+        const { trigger } = harness({
+          config: { store, onRevalidate: () => {} },
+          runProducer,
+        });
+        runProducer.mockResolvedValueOnce(
+          output({ notFound: true, onDemandConfig }),
+        );
+        await trigger("/products/42");
+        runProducer.mockClear();
+        expect(
+          await trigger("/products/42", { onlyIfStale: true }),
+        ).toMatchObject({ status: "removed", tags: ["product:42"] });
+
+        now = 2000;
+        await trigger.markStale(["product:42"]);
+
+        // Marked stale: the sweep rechecks it, and the page is back.
+        expect(
+          await trigger("/products/42", { onlyIfStale: true }),
+        ).toMatchObject({ ok: true, status: "rendered" });
+        expect(runProducer).toHaveBeenCalledTimes(1);
+
+        await trigger.remove("/products/42");
+        runProducer.mockClear();
+        await trigger.markStale(["product:42"]);
+        expect(store.peek(productKey())?.meta).not.toHaveProperty("staleAt");
+        expect(
+          await trigger("/products/42", { onlyIfStale: true }),
+        ).toMatchObject({ ok: true, status: "removed", tags: [] });
+        expect(runProducer).not.toHaveBeenCalled();
+      });
+    });
+
+    /**
+     * remove() and a refresh of the same page are two writes to one key:
+     * the last one wins. The one narrowing: a marker that lands while a
+     * render is in flight is not overwritten by that render's page.
+     */
+    describe("remove() racing a refresh of the same page", () => {
+      it("a marker stored while a render is in flight wins over that render's page", async () => {
+        const h = harness({
+          runProducer: async () => {
+            // The page is removed while this render runs.
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            await h.trigger.remove("/products/42");
+            return output({ onDemandConfig: { ttl: 60 } });
+          },
+        });
+
+        const result = await h.trigger("/products/42");
+
+        expect(result).toEqual(removed);
+        expect(h.store.peek(productKey())).toMatchObject(tombstone);
+        expect(h.store.peek(productKey())).not.toHaveProperty("entry");
+      });
+
+      it("last write wins otherwise: a refresh that starts after a remove() renders over it, unless it is onlyIfStale", async () => {
+        // A queued job (onRevalidate scheduled for the page before it was
+        // removed) that runs a plain refresh brings the page back. The same
+        // job with onlyIfStale finds the marker and renders nothing.
+        const runProducer = vi.fn<PrerenderTriggerDeps["runProducer"]>(
+          async () => output(),
+        );
+        const { trigger, store } = harness({ runProducer });
+        await trigger.remove("/products/42");
+
+        expect(
+          await trigger("/products/42", { onlyIfStale: true }),
+        ).toMatchObject({ status: "removed" });
+        expect(runProducer).not.toHaveBeenCalled();
+        expect(await trigger("/products/42")).toMatchObject({
+          status: "rendered",
+        });
+        expect(store.peek(productKey())).toHaveProperty("entry");
+
+        // And a remove() after a refresh is the last write.
+        await trigger.remove("/products/42");
+        expect(store.peek(productKey())).toMatchObject(tombstone);
+      });
+
+      it("a store that fails the re-read does not block the page write", async () => {
+        const store = createMemoryPrerenderStore();
+        store.get = async () => {
+          throw new Error("kv read blip");
+        };
+        const { trigger } = harness({ config: { store } });
+
+        expect(await trigger("/products/42")).toMatchObject({
+          ok: true,
+          status: "rendered",
+        });
+        expect(store.peek(productKey())).toHaveProperty("entry");
+      });
+    });
+
+    describe("PrerenderError names the call that failed", () => {
+      it("prerender.remove() and remove.many()", async () => {
+        const { trigger } = harness({ config: undefined });
+
+        await expect(
+          trigger.remove("/products/42", { throwOnError: true }),
+        ).rejects.toThrow('prerender.remove("/products/42") failed: no-store');
+        await expect(
+          trigger.remove.many(["/products/42"], { throwOnError: true }),
+        ).rejects.toThrow('prerender.remove("/products/42") failed: no-store');
+      });
+
+      it("a refresh keeps its message", async () => {
+        const { trigger } = harness({ config: undefined });
+
+        await expect(
+          trigger("/products/42", { throwOnError: true }),
+        ).rejects.toThrow('router.prerender("/products/42") failed: no-store');
+      });
     });
   });
 });
@@ -1350,18 +2175,48 @@ describe("createPrerenderTrigger: warming a route that is not on-demand", () => 
       expect(h.fetch).not.toHaveBeenCalled();
     });
 
-    it("a Passthrough param the producer declined is still warmed: the live handler serves it", async () => {
+    it("does not warm after a removal: there is no page, and a live handler's render of it must not be cached", async () => {
+      const h = handler();
+      const byNotFound = warmHarness({
+        fetch: h.fetch,
+        runProducer: async () => output({ notFound: true }),
+      });
+      const viaRefresh = await byNotFound.trigger(
+        "https://shop.example/products/42",
+      );
+      const viaRemove = await warmHarness({ fetch: h.fetch }).trigger.remove(
+        "https://shop.example/products/42",
+      );
+
+      for (const result of [viaRefresh, viaRemove]) {
+        expect(result).toMatchObject({ ok: true, status: "removed" });
+        expect(result).not.toHaveProperty("caches");
+      }
+      expect(h.fetch).not.toHaveBeenCalled();
+    });
+
+    it("a Passthrough param the producer declined is still warmed: the marker is stored first, so the live handler serves it", async () => {
+      const order: string[] = [];
       const h = handler((record) => {
+        order.push("warm");
         record.writes.record += 1;
       });
       const { trigger, store } = warmHarness({
         fetch: h.fetch,
         runProducer: async () => output({ passthrough: true }),
       });
+      const set = store.set.bind(store);
+      store.set = async (...args) => {
+        order.push("marker");
+        return set(...args);
+      };
 
       const result = await trigger("https://shop.example/products/42");
 
-      expect(store.size).toBe(0);
+      // The warm request must find the marker, or a page stored or baked
+      // earlier would answer it instead of the live handler.
+      expect(order).toEqual(["marker", "warm"]);
+      expect(store.entries()[0]![1]).not.toHaveProperty("entry");
       expect(result).toMatchObject({
         ok: false,
         path: "on-demand",

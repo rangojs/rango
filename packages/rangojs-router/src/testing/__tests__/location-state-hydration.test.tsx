@@ -1,5 +1,11 @@
 // @vitest-environment happy-dom
-import { StrictMode, useEffect, useState, type ReactNode } from "react";
+import {
+  StrictMode,
+  startTransition,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
 import { createRoot, hydrateRoot, type Root } from "react-dom/client";
 import { act, cleanup } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -11,17 +17,18 @@ import {
 import { LocationStateContext } from "../../browser/react/context.js";
 import { withLocationStateKey } from "../index.js";
 
-// #992: a reader that hydrates after the root effect has set `data-hydrated`
-// must still render the server snapshot (`undefined`) on that hydration pass.
-// `hydrateRoot` with the attribute already set is that late hydration render.
-// These cases hand-write the server HTML to isolate the hook; the same
-// contract through the public primitive (`renderRoute({ hydrate: true })`,
-// which produces the server HTML itself) is in render-route-hydrate.test.tsx.
+// #992: a reader that hydrates after the root must still render the server
+// snapshot (`undefined`) on that hydration pass. These cases hand-write the
+// server HTML to isolate the hook; the same contract through the public
+// primitive (`renderRoute({ hydrate: true })`, which produces the server HTML
+// itself) is in render-route-hydrate.test.tsx.
 //
 // A reader takes the entry's state from LocationStateContext (#1029). `Entry`
-// provides it the way NavigationProvider does for a commit without a payload
-// (the provider itself is covered through renderRoute), and `commitEntry` does
-// what such a commit site does: write history, commit that entry, flush.
+// provides it the way NavigationProvider does: while hydrating, `undefined`
+// first and the entry's state in a transition after it, and for a commit
+// without a payload with the commit's notification (the provider itself is
+// covered through renderRoute). `commitEntry` does what such a commit site
+// does: write history, commit that entry, flush.
 
 const GridState = withLocationStateKey(
   createLocationState<{ count: number }>(),
@@ -52,8 +59,22 @@ async function commitEntry(state?: object): Promise<void> {
   });
 }
 
-function Entry({ children }: { children: ReactNode }): ReactNode {
-  const [state, setState] = useState(controller.getLocationState);
+function Entry({
+  children,
+  hydrating,
+}: {
+  children: ReactNode;
+  hydrating: boolean;
+}): ReactNode {
+  const [state, setState] = useState(() =>
+    hydrating ? undefined : controller.getLocationState(),
+  );
+  // NavigationProvider's barrier transition, once the document is revealed.
+  useEffect(() => {
+    if (hydrating) {
+      startTransition(() => setState(controller.getLocationState()));
+    }
+  }, []);
   useEffect(
     () =>
       controller.subscribe(() => {
@@ -84,8 +105,8 @@ afterEach(async () => {
   document.body.replaceChildren();
 });
 
-function tree(node: ReactNode, strict = false): ReactNode {
-  const routed = <Entry>{node}</Entry>;
+function tree(node: ReactNode, strict = false, hydrating = false): ReactNode {
+  const routed = <Entry hydrating={hydrating}>{node}</Entry>;
   return strict ? <StrictMode>{routed}</StrictMode> : routed;
 }
 
@@ -110,7 +131,7 @@ async function hydrate(
   document.body.appendChild(container);
   const recoverable: string[] = [];
   await act(async () => {
-    root = hydrateRoot(container, tree(node, strict), {
+    root = hydrateRoot(container, tree(node, strict, true), {
       onRecoverableError(error: unknown) {
         recoverable.push(
           error instanceof Error ? error.message : String(error),
@@ -118,7 +139,7 @@ async function hydrate(
       },
     });
   });
-  // The client snapshot is applied from a passive effect. Flush that update
+  // The entry's state is applied from a passive effect. Flush that update
   // inside act so the assertion sees the settled value, not the server paint.
   await act(async () => {});
   return { container, recoverable };

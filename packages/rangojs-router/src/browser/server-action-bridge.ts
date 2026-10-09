@@ -46,6 +46,7 @@ import {
   type TransitionWhenActionInput,
 } from "./transition-when.js";
 import { CLIENT_REVALIDATION_HEADER } from "../client-urls/revalidation-protocol.js";
+import { auditTreeCause } from "../suspense-audit.js";
 
 // Polyfill Symbol.dispose/asyncDispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -659,6 +660,7 @@ export function createServerActionBridge(
         // Update UI with error boundary: urgent when transition({ when })
         // gated it off, like every gated-off commit.
         const errorUpdate = { root: errorTree, metadata: metadata! };
+        if (process.env.NODE_ENV !== "production") auditTreeCause("action");
         if (errorGatedOff) onUpdate(errorUpdate);
         else startTransition(() => onUpdate(errorUpdate));
 
@@ -862,9 +864,13 @@ export function createServerActionBridge(
 
         case "normal": {
           // transition({ when }) for the action commit (kind "action"): the
-          // page does not move, so `to` is `from`. False commits urgently (a
-          // re-suspending segment streams its loading()) and switches every
-          // <ViewTransition> class to "none"; true keeps the startTransition.
+          // page does not move, so `to` is `from`. False commits urgently and
+          // switches every <ViewTransition> class to "none"; the tree below
+          // is built with isAction, which awaits segment content and loader
+          // data, so a boundary on screen is handed settled values. A build
+          // then shows no loading(); the dev server still does, because the
+          // client references of a fresh payload are still importing in that
+          // first render. True keeps the startTransition.
           // This commit runs after awaits, outside the transition React opens
           // for a form action / useActionState call, so React does not force
           // a transition on it. The tree shape never changes, so
@@ -919,6 +925,7 @@ export function createServerActionBridge(
           store.rememberDisplayedEntry(metadata?.routeName);
 
           const actionUpdate = { root: newTree, metadata: metadata! };
+          if (process.env.NODE_ENV !== "production") auditTreeCause("action");
           if (gatedOff) onUpdate(actionUpdate);
           else startTransition(() => onUpdate(actionUpdate));
           // Invalidation deferred to finalizeAction() (runs after this caches

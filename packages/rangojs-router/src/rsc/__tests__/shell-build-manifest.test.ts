@@ -4,13 +4,30 @@ import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
 import { compileSearchParamsFilter } from "../../cache/search-params-filter.js";
 import type { ShellCacheEntry } from "../../cache/types.js";
 import {
-  lookupBuildShell,
+  hasBuildShell,
+  lookupBuildShell as lookupBuildShellFor,
   resetBuildShellManifestForTests,
   type BuildShellEntry,
 } from "../shell-build-manifest.js";
+import { buildShellManifestKey } from "../../prerender/shell-manifest-key.js";
 import { openShellDocument } from "../shell-serve.js";
 
 const BUILD_VERSION = "build-1";
+
+/** The router the manifest's records belong to, and the one that asks. */
+const ROUTER_ID = "app";
+
+type LookupArgs =
+  Parameters<typeof lookupBuildShellFor> extends [string, ...infer Rest]
+    ? Rest
+    : never;
+
+/** lookupBuildShell as ROUTER_ID's request asks it. */
+function lookupBuildShell(
+  ...args: LookupArgs
+): ReturnType<typeof lookupBuildShellFor> {
+  return lookupBuildShellFor(ROUTER_ID, ...args);
+}
 
 function entry(overrides: Partial<ShellCacheEntry> = {}): ShellCacheEntry {
   return {
@@ -24,10 +41,15 @@ function entry(overrides: Partial<ShellCacheEntry> = {}): ShellCacheEntry {
   };
 }
 
-/** Install a fake production shell manifest for one pathname. */
-function installManifest(records: Record<string, BuildShellEntry>): void {
+/** Install a fake production shell manifest of `routerId`, by pathname. */
+function installManifest(
+  records: Record<string, BuildShellEntry>,
+  routerId: string = ROUTER_ID,
+): void {
   (globalThis as any).__loadShellManifestModule = async () => ({
-    default: Object.fromEntries(Object.keys(records).map((k) => [k, k])),
+    default: Object.fromEntries(
+      Object.keys(records).map((k) => [buildShellManifestKey(routerId, k), k]),
+    ),
     loadShellAsset: async (spec: string) => ({ default: records[spec]! }),
   });
 }
@@ -115,10 +137,59 @@ describe("lookupBuildShell (build-shell read-through gates)", () => {
     ).toBeNull();
   });
 
-  // Document versions are per router, and the manifest key is the pathname
-  // alone, so two routers of one host build can ask about the same record.
-  // The verdict memo was keyed by the record only: whichever router asked
-  // first decided for both.
+  // #1065: the manifest key was the pathname alone, so a router with a `ppr`
+  // route on a pathname another router prerendered was handed that router's
+  // build shell, and served it whenever the two versions matched (one
+  // createRouter({ version }), or the whole-build pair).
+  it("a router reads only the shell the build captured for it", async () => {
+    installManifest({ "/pp/a": { entry: entry(), ttl: 300 } }, "app-a");
+
+    expect(
+      await lookupBuildShellFor("app-b", url("/pp/a"), BUILD_VERSION, store),
+    ).toBeNull();
+    expect(await hasBuildShell("app-b", "/pp/a")).toBe(false);
+
+    expect(
+      await lookupBuildShellFor("app-a", url("/pp/a"), BUILD_VERSION, store),
+    ).not.toBeNull();
+    expect(await hasBuildShell("app-a", "/pp/a")).toBe(true);
+  });
+
+  it("two routers each read their own shell for one pathname", async () => {
+    const records: Record<string, BuildShellEntry> = {
+      a: {
+        entry: entry({ prelude: btoa("<html><body>A</body></html>") }),
+        ttl: 300,
+      },
+      b: {
+        entry: entry({ prelude: btoa("<html><body>B</body></html>") }),
+        ttl: 300,
+      },
+    };
+    (globalThis as any).__loadShellManifestModule = async () => ({
+      default: {
+        [buildShellManifestKey("app-a", "/pp/a")]: "a",
+        [buildShellManifestKey("app-b", "/pp/a")]: "b",
+      },
+      loadShellAsset: async (spec: string) => ({ default: records[spec]! }),
+    });
+    const preludeFor = async (routerId: string): Promise<string> =>
+      atob(
+        (await lookupBuildShellFor(
+          routerId,
+          url("/pp/a"),
+          BUILD_VERSION,
+          store,
+        ))!.entry.prelude,
+      );
+
+    expect(await preludeFor("app-a")).toContain("A");
+    expect(await preludeFor("app-b")).toContain("B");
+  });
+
+  // The verdict memo is keyed by the asking version as well as the record:
+  // keyed by the record only, whichever version asked first decided for
+  // every later one.
   it("judges a record per asking router's version, in either order", async () => {
     installManifest({ "/pp/a": { entry: entry(), ttl: 300 } });
     // Another router (another document version) asks first: not its shell.

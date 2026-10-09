@@ -33,6 +33,13 @@ const HOST_PREVIEW_PORT = 5297 + PORT_OFFSET;
 // worktree with symlinked node_modules (issue #886).
 const VITE = "./node_modules/.bin/vite";
 const HOST_CONFIG = "--config .host-fixture/vite.config.ts";
+// The repo-only suspense audit runs in every dev server here
+// (src/internal-suspense-audit.ts). Set on the servers themselves: turbo's
+// strict env strips a variable the caller sets.
+const SERVER_ENV = {
+  ...(process.env as Record<string, string>),
+  INTERNAL_RANGO_SUSPENSE_AUDIT: "1",
+};
 
 const isUIMode = process.argv.includes("--ui");
 const isCI = !!process.env.CI;
@@ -108,6 +115,7 @@ export default defineConfig({
             cwd: "./e2e/test-app",
             port: DEV_SERVER_PORT,
             reuseExistingServer: !process.env.CI,
+            env: SERVER_ENV,
           },
           {
             // Shared preview server for all production tests using test-app.
@@ -116,6 +124,7 @@ export default defineConfig({
             cwd: "./e2e/test-app",
             port: PREVIEW_SERVER_PORT,
             reuseExistingServer: !process.env.CI,
+            env: SERVER_ENV,
           },
         ]),
     ...(RUN_HOST && !ROUTE_HMR_ONLY
@@ -128,6 +137,7 @@ export default defineConfig({
             cwd: "./e2e/test-app",
             port: HOST_DEV_PORT,
             reuseExistingServer: !process.env.CI,
+            env: SERVER_ENV,
           },
           {
             // Host-router fixture preview (built) for host-routing.test.ts
@@ -137,6 +147,7 @@ export default defineConfig({
             cwd: "./e2e/test-app",
             port: HOST_PREVIEW_PORT,
             reuseExistingServer: !process.env.CI,
+            env: SERVER_ENV,
           },
         ]
       : []),

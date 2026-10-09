@@ -21,7 +21,41 @@ export type {
 export { createDeployFixture, readBuiltVersions } from "./deploy-fixture.js";
 export type { DeployFixture, DeployFixtureOptions } from "./deploy-fixture.js";
 export { runCacheVersionScenario } from "./cache-version-scenario.js";
+export { defineStreamedBoundaryScenarios } from "./streamed-boundary-scenarios.js";
+export type {
+  StreamedBoundaryFixture,
+  StreamedBoundaryScenariosOptions,
+} from "./streamed-boundary-scenarios.js";
+export { runHeldBoundaryTests } from "./held-boundary-scenario.js";
+export type { HeldBoundaryScenarioOptions } from "./held-boundary-scenario.js";
+export { runUseLoaderSettledReadTests } from "./use-loader-settled-read-scenario.js";
+export type { UseLoaderSettledReadScenarioOptions } from "./use-loader-settled-read-scenario.js";
+export { readFlash, readProbe, watchFlash } from "./flash-probe.js";
 export type { CacheVersionScenarioOptions } from "./cache-version-scenario.js";
+export {
+  describeSuspenseCases,
+  runSuspenseCases,
+  SUSPENSE_CASES_OPEN_DEV,
+  SUSPENSE_CASES_OPEN_PRODUCTION,
+} from "./suspense-cases.js";
+export type { SuspenseCasesOptions } from "./suspense-cases.js";
+export {
+  CONSOLE_BASELINE_PATH,
+  CONSOLE_DENY_RULES,
+  consoleGuardMode,
+  expectConsole,
+  guardContext,
+  installConsoleGuard,
+  readSuspenseAudit,
+  resetSuspenseAudit,
+} from "./console-guard.js";
+import { expectConsole } from "./console-guard.js";
+export type {
+  ConsoleBaselineEntry,
+  ConsoleGuardMode,
+  ConsoleRule,
+  SuspenseAuditCounters,
+} from "./console-guard.js";
 
 /**
  * Shared end-to-end test utilities for HMR-driven tests across apps.
@@ -2289,6 +2323,10 @@ export async function expectPinlessHitKeepsRunPushWithRunData(
   page: Page,
   fixture: PushOwnershipFixture,
 ): Promise<void> {
+  // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+  expectConsole(page, {
+    allow: [/Hydration failed because the server rendered text/],
+  });
   const probe = pushProbe("capped");
   const url = `${fixture.cappedUrl}?probe=${probe}`;
   await warmShellToHit(page, url);
@@ -2590,6 +2628,10 @@ export async function expectRedirectLoopEndsInErrorBoundary(
   page: Page,
   fixture: RedirectLoopFixture,
 ): Promise<void> {
+  // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+  expectConsole(page, {
+    allow: [/Server redirect loop: stopped after following/],
+  });
   const loopLogs: string[] = [];
   page.on("console", (msg: ConsoleMessage) => {
     // React and the root boundary log the thrown error too; count the router's own line.
@@ -2675,11 +2717,12 @@ async function triggerWarm(
   page: Page,
   fixture: PrerenderWarmFixture,
   targets: string[],
-  options: { onlyIfStale?: boolean } = {},
+  options: { onlyIfStale?: boolean; localStore?: boolean } = {},
 ): Promise<unknown> {
   const params = new URLSearchParams();
   for (const target of targets) params.append("target", target);
   if (options.onlyIfStale) params.set("onlyIfStale", "1");
+  if (options.localStore) params.set("localStore", "1");
   const res = await page.request.get(`${fixture.triggerUrl}?${params}`);
   expect(res.ok(), await res.text()).toBe(true);
   return res.json();
@@ -2691,7 +2734,7 @@ async function warmOne(
   fixture: PrerenderWarmFixture,
   url: string,
   probe: string,
-  options?: { onlyIfStale?: boolean },
+  options?: { onlyIfStale?: boolean; localStore?: boolean },
 ): Promise<WarmTriggerResult> {
   return (await triggerWarm(
     page,
@@ -2925,4 +2968,556 @@ export async function expectOnlyIfStaleWarmLeavesFreshShellAlone(
       writes: { record: 0, item: 0, response: 0, shell: 0 },
     },
   });
+}
+
+/**
+ * A warm whose app store declares scope "local" is refused: the result says
+ * `skipped-store-not-shared` and carries no `caches` report. Nothing renders
+ * and nothing is stored: after the warm the content moves to generation 2,
+ * and the visitor's first request renders it as run 1 of the handler. The
+ * render counter (`#r1`) is the discriminator everywhere: a warm that ran
+ * would make it run 2. Where the refused store shares storage with the store
+ * visitors read (cloudflare-basic), a warm that stored would also replay
+ * generation 1; in the router test-app the two stores are separate, so only
+ * `#r1` tells. The trigger's `localStore=1` makes the gate read a "local"
+ * store.
+ */
+export async function expectWarmOfLocalStoreIsRefused(
+  page: Page,
+  fixture: PrerenderWarmFixture,
+): Promise<void> {
+  const probe = pushProbe("local");
+  const url = `${fixture.cachedUrl}?probe=${probe}`;
+
+  const result = await warmOne(page, fixture, fixture.cachedUrl, probe, {
+    localStore: true,
+  });
+  expect(result, JSON.stringify(result)).toMatchObject({
+    ok: false,
+    path: "warm",
+    status: "skipped-store-not-shared",
+    target: url,
+  });
+  expect(result.caches, JSON.stringify(result)).toBeUndefined();
+
+  const bumped = await page.request.get(`${fixture.bumpUrl}?probe=${probe}`);
+  expect(bumped.ok()).toBe(true);
+  expect((await warmDocument(page, url)).stamp).toBe(`cached-${probe}@g2#r1`);
+}
+
+/**
+ * The same warm under the Vite dev server, against a shipped
+ * MemorySegmentCacheStore (scope "local"): the dev rule counts it as shared,
+ * so the warm runs. The visitor's request is run 2 (the warm was run 1) and
+ * renders generation 1 afresh: the warm wrote into the store the
+ * trigger's env selected, not the one visitors read. That visitor miss is the
+ * evidence the gate read the "local" store: the app's default store also warms
+ * in dev, and a warm into it would have made the visitor's request a HIT
+ * (run 1).
+ */
+export async function expectDevWarmOfLocalMemoryStoreRuns(
+  page: Page,
+  fixture: PrerenderWarmFixture,
+): Promise<void> {
+  const probe = pushProbe("local-dev");
+  const url = `${fixture.cachedUrl}?probe=${probe}`;
+
+  const result = await warmOne(page, fixture, fixture.cachedUrl, probe, {
+    localStore: true,
+  });
+  expect(result, JSON.stringify(result)).toMatchObject({
+    ok: true,
+    path: "warm",
+    status: "warmed",
+    target: url,
+  });
+  expect(result.caches?.writes.record).toBeGreaterThanOrEqual(1);
+
+  // The entry a warm writes is the entry the next call reads: that is why
+  // the dev rule admits the memory store. A second, onlyIfStale warm finds it
+  // fresh and writes nothing.
+  const again = await warmOne(page, fixture, fixture.cachedUrl, probe, {
+    localStore: true,
+    onlyIfStale: true,
+  });
+  expect(again, JSON.stringify(again)).toMatchObject({
+    ok: true,
+    path: "warm",
+    status: "already-fresh",
+    target: url,
+  });
+  expect(again.caches?.writes).toEqual({
+    record: 0,
+    item: 0,
+    response: 0,
+    shell: 0,
+  });
+
+  expect((await warmDocument(page, url)).stamp).toBe(`cached-${probe}@g1#r2`);
+}
+
+// ---------------------------------------------------------------------------
+// Removing a refreshed page from on-demand prerender (issue #1060): a
+// "removed" marker in the prerender store, written by `prerender.remove()` or
+// by a refresh whose handler calls `notFound()`. Shared by
+// packages/rangojs-router/e2e/on-demand-prerender.test.ts (memory prerender
+// store) and tests/cloudflare-basic/e2e/prerender-ondemand.test.ts (KV).
+// ---------------------------------------------------------------------------
+
+/**
+ * The removal fixture both apps implement on their on-demand routes.
+ * - `pageUrl(slug)`: a plain `Prerender(..., { onDemand })` page. The element
+ *   `slugTestId` renders the slug, and `actionTestId` is a button in the page
+ *   that submits a server action which changes nothing.
+ * - `triggerUrl(slug)`: GET answers a runner call's result as JSON. No query
+ *   is `prerender(page)`; `?remove=1` is `prerender.remove(page)`;
+ *   `?onlyIfStale=1` is `prerender(page, { onlyIfStale: true })`;
+ *   `?markStale=<tag>` is `prerender.markStale([tag])`. `?gone=1` deletes the
+ *   slug from the fixture's data source, so the page's handler calls
+ *   `notFound()` on its next refresh, and `?gone=0` restores it.
+ * - `tag(slug)`: the tag the route's `onDemand.tags` stamps for the slug. The
+ *   route's `ttl` is long, so an entry goes stale only through `markStale`.
+ * - `bakedSlug`: a slug `getParams()` lists, which a production build bakes.
+ *   No other test may request it: these tests remove its page.
+ * - `passthrough`: the same page, trigger and baked slug for a
+ *   `Passthrough(def, live)` route. `sourceTestId` reads `prerender` for a
+ *   stored or baked page and `live` for the live handler's render.
+ */
+export interface PrerenderRemoveFixture {
+  pageUrl: (slug: string) => string;
+  triggerUrl: (slug: string) => string;
+  tag: (slug: string) => string;
+  slugTestId: string;
+  actionTestId: string;
+  bakedSlug: string;
+  passthrough: {
+    pageUrl: (slug: string) => string;
+    triggerUrl: (slug: string) => string;
+    sourceTestId: string;
+    bakedSlug: string;
+  };
+}
+
+/** One call of a removal fixture's trigger: its JSON answer. */
+async function removeTrigger(
+  page: Page,
+  url: string,
+  op = "",
+): Promise<unknown> {
+  const res = await page.request.get(url + op);
+  expect(res.ok(), await res.text()).toBe(true);
+  return res.json();
+}
+
+/** `prerender(page)` through the trigger, which must render and store it. */
+async function refreshPage(page: Page, triggerUrl: string): Promise<void> {
+  const result = await removeTrigger(page, triggerUrl);
+  expect(result, JSON.stringify(result)).toMatchObject({
+    ok: true,
+    path: "on-demand",
+    status: "rendered",
+  });
+}
+
+async function expectPageServed(
+  page: Page,
+  fixture: PrerenderRemoveFixture,
+  slug: string,
+): Promise<void> {
+  const response = await page.goto(fixture.pageUrl(slug));
+  expect(response?.status()).toBe(200);
+  await waitForShellHydration(page);
+  await expect(byTestId(page, fixture.slugTestId)).toHaveText(slug);
+}
+
+/**
+ * The page is a 404, as a document request and in the browser, and no render
+ * of it is in the response: neither the stored one nor the build-time one.
+ */
+async function expectPageRemoved(
+  page: Page,
+  fixture: PrerenderRemoveFixture,
+  slug: string,
+): Promise<void> {
+  const res = await page.request.get(fixture.pageUrl(slug), {
+    headers: PUSH_HTML_HEADERS,
+  });
+  expect(res.status()).toBe(404);
+  expect(await res.text()).not.toContain(`data-testid="${fixture.slugTestId}"`);
+
+  const response = await page.goto(fixture.pageUrl(slug));
+  expect(response?.status()).toBe(404);
+  await waitForShellHydration(page);
+  await expect(byTestId(page, fixture.slugTestId)).toHaveCount(0);
+}
+
+/**
+ * `prerender.remove(page)`: the refreshed page is a 404 from the next request
+ * on, although its data still exists (nothing is rendered to remove it), and
+ * a refresh brings it back.
+ */
+async function removeThroughRunner(
+  page: Page,
+  fixture: PrerenderRemoveFixture,
+  slug: string,
+): Promise<void> {
+  const trigger = fixture.triggerUrl(slug);
+  await refreshPage(page, trigger);
+  await expectPageServed(page, fixture, slug);
+
+  const removed = await removeTrigger(page, trigger, "?remove=1");
+  expect(removed, JSON.stringify(removed)).toMatchObject({
+    ok: true,
+    path: "on-demand",
+    status: "removed",
+    tags: [],
+  });
+  await expectPageRemoved(page, fixture, slug);
+  // Permanent: a sweep finds the marker and renders nothing.
+  const swept = await removeTrigger(page, trigger, "?onlyIfStale=1");
+  expect(swept, JSON.stringify(swept)).toMatchObject({
+    ok: true,
+    status: "removed",
+  });
+  await expectPageRemoved(page, fixture, slug);
+
+  await refreshPage(page, trigger);
+  await expectPageServed(page, fixture, slug);
+}
+
+/**
+ * A refresh whose handler calls `notFound()` removes the page. It stays a 404
+ * when the data is back and nothing refreshed it (the marker answers, not a
+ * render), and a refresh brings it back.
+ *
+ * With `recheck`, the way back is the one a transient not-found takes: the
+ * marker has the route's ttl and tags, so a sweep (`onlyIfStale`) leaves it
+ * while it is fresh and renders the page again once it is stale. Only for a
+ * slug no other run shares: a tag marked stale is seen by the dev and the
+ * preview server alike where they share a store.
+ */
+async function removeThroughNotFound(
+  page: Page,
+  fixture: PrerenderRemoveFixture,
+  slug: string,
+  recheck = false,
+): Promise<void> {
+  const trigger = fixture.triggerUrl(slug);
+  await refreshPage(page, trigger);
+  await expectPageServed(page, fixture, slug);
+
+  try {
+    await removeTrigger(page, trigger, "?gone=1");
+    const removed = await removeTrigger(page, trigger);
+    expect(removed, JSON.stringify(removed)).toMatchObject({
+      ok: true,
+      path: "on-demand",
+      status: "removed",
+      tags: [fixture.tag(slug)],
+    });
+    await expectPageRemoved(page, fixture, slug);
+  } finally {
+    await removeTrigger(page, trigger, "?gone=0");
+  }
+  await expectPageRemoved(page, fixture, slug);
+
+  if (!recheck) {
+    await refreshPage(page, trigger);
+    await expectPageServed(page, fixture, slug);
+    return;
+  }
+  // Fresh: the sweep leaves the marker, and the page stays a 404.
+  const left = await removeTrigger(page, trigger, "?onlyIfStale=1");
+  expect(left, JSON.stringify(left)).toMatchObject({
+    ok: true,
+    status: "removed",
+  });
+  await expectPageRemoved(page, fixture, slug);
+  // Stale: the sweep renders, and the page is back.
+  await removeTrigger(
+    page,
+    trigger,
+    `?markStale=${encodeURIComponent(fixture.tag(slug))}`,
+  );
+  const rechecked = await removeTrigger(page, trigger, "?onlyIfStale=1");
+  expect(rechecked, JSON.stringify(rechecked)).toMatchObject({
+    ok: true,
+    status: "rendered",
+  });
+  await expectPageServed(page, fixture, slug);
+}
+
+/**
+ * A server action submitted from a page that was removed while it was open:
+ * the action's re-render of the route is the 404, not the page the marker
+ * replaced. Ends with the page refreshed again.
+ */
+async function actionOnRemovedPage(
+  page: Page,
+  fixture: PrerenderRemoveFixture,
+  slug: string,
+): Promise<void> {
+  const trigger = fixture.triggerUrl(slug);
+  await refreshPage(page, trigger);
+  await expectPageServed(page, fixture, slug);
+
+  await removeTrigger(page, trigger, "?remove=1");
+  await byTestId(page, fixture.actionTestId).click();
+  await expect(byTestId(page, fixture.slugTestId)).toHaveCount(0);
+
+  await refreshPage(page, trigger);
+  await expectPageServed(page, fixture, slug);
+}
+
+/**
+ * A param the build baked: once removed, by `prerender.remove()` and then by
+ * a refresh that hits `notFound()`, the page answers 404, to a document
+ * request and to a server action's re-render. The build-time entry under the
+ * prerender store does not come back.
+ */
+export async function expectRemovedBakedPageAnswers404(
+  page: Page,
+  fixture: PrerenderRemoveFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  await removeThroughRunner(page, fixture, fixture.bakedSlug);
+  await removeThroughNotFound(page, fixture, fixture.bakedSlug);
+  await actionOnRemovedPage(page, fixture, fixture.bakedSlug);
+}
+
+/** The same for a param only a refresh ever produced. */
+export async function expectRemovedUnbakedPageAnswers404(
+  page: Page,
+  fixture: PrerenderRemoveFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  await removeThroughRunner(page, fixture, pushProbe("removed"));
+  await removeThroughNotFound(page, fixture, pushProbe("gone"), true);
+  await actionOnRemovedPage(page, fixture, pushProbe("action"));
+}
+
+/**
+ * A `Passthrough` route's removed page is answered by its live handler, for
+ * a param the build baked: not by the build-time entry, which a missing
+ * entry would fall back to. A refresh stores the page again.
+ */
+export async function expectRemovedPassthroughPageRunsLiveHandler(
+  page: Page,
+  fixture: PrerenderRemoveFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const { pageUrl, triggerUrl, sourceTestId } = fixture.passthrough;
+  const slug = fixture.passthrough.bakedSlug;
+  const source = byTestId(page, sourceTestId);
+
+  await refreshPage(page, triggerUrl(slug));
+  await page.goto(pageUrl(slug));
+  await expect(source).toHaveText("prerender");
+
+  const removed = await removeTrigger(page, triggerUrl(slug), "?remove=1");
+  expect(removed, JSON.stringify(removed)).toMatchObject({
+    ok: true,
+    path: "on-demand",
+    status: "removed",
+  });
+  const response = await page.goto(pageUrl(slug));
+  expect(response?.status()).toBe(200);
+  await expect(source).toHaveText("live");
+
+  await refreshPage(page, triggerUrl(slug));
+  await page.goto(pageUrl(slug));
+  await expect(source).toHaveText("prerender");
+}
+
+// ---------------------------------------------------------------------------
+// Result statuses of on-demand prerender that have no page to show for them
+// (issue #1060): `prerender.many()` over a mix of targets, a refresh whose
+// handler fails, and a Passthrough build handler that declines a param.
+// Shared by the same two suites as the removal helpers above.
+// ---------------------------------------------------------------------------
+
+/**
+ * What the removal fixture has, plus what these cases need. Each app fills one
+ * object for all the on-demand helpers.
+ * - `path(slug)`: the pathname of the plain `Prerender(..., { onDemand })`
+ *   route for `slug`: what `prerender.many()` is given as a target.
+ * - `triggerUrl(slug)`: GET with repeated `?target=<path>` answers
+ *   `prerender.many(targets)` as a JSON array in target order;
+ *   `?fail=1` makes the plain handler throw (not `notFound()`) for `slug` on
+ *   its next refresh and `?fail=0` restores it.
+ * - `stampTestId` renders a value captured once per render, and
+ *   `onDemandTestId` reads `true` for a page the on-demand producer rendered.
+ * - `passthrough.triggerUrl(slug)` also takes `?decline=1` / `?decline=0`: the
+ *   build handler calls `ctx.passthrough()` for `slug` while it is set. It
+ *   always does for a slug that starts with `declined-`. `declineBakedSlug` is
+ *   a slug the build bakes on that route, requested by no other test.
+ */
+export interface PrerenderOutcomesFixture extends PrerenderRemoveFixture {
+  path: (slug: string) => string;
+  stampTestId: string;
+  onDemandTestId: string;
+  passthrough: PrerenderRemoveFixture["passthrough"] & {
+    declineBakedSlug: string;
+  };
+}
+
+/** The page serves from the store (200, rendered on demand); its render stamp. */
+async function readStoredStamp(
+  page: Page,
+  fixture: PrerenderOutcomesFixture,
+  slug: string,
+): Promise<string> {
+  const response = await page.goto(fixture.pageUrl(slug));
+  expect(response?.status()).toBe(200);
+  await waitForShellHydration(page);
+  await expect(byTestId(page, fixture.slugTestId)).toHaveText(slug);
+  await expect(byTestId(page, fixture.onDemandTestId)).toHaveText("true");
+  return (await byTestId(page, fixture.stampTestId).textContent()) ?? "";
+}
+
+/**
+ * `prerender.many([...])` over a mix of targets returns one result per target,
+ * in the order given, and each page it rendered then serves from the store: a
+ * second request replays the stamp the refresh captured.
+ */
+export async function expectManyReturnsOneResultPerTargetInOrder(
+  page: Page,
+  fixture: PrerenderOutcomesFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const first = pushProbe("many-a");
+  const second = pushProbe("many-b");
+  const targets = [
+    fixture.path(first),
+    `${fixture.path(second)}#top`,
+    fixture.path(second),
+    `${fixture.path(first)}?preview=1`,
+  ];
+  const query = targets.map((t) => `target=${encodeURIComponent(t)}`).join("&");
+
+  const results = (await removeTrigger(
+    page,
+    fixture.triggerUrl("many"),
+    `?${query}`,
+  )) as { ok: boolean; status: string; target: string }[];
+  expect(results, JSON.stringify(results)).toHaveLength(targets.length);
+  expect(
+    results.map((r) => [r.ok, r.status, r.target]),
+    JSON.stringify(results),
+  ).toEqual([
+    [true, "rendered", fixture.path(first)],
+    [false, "skipped-unsupported-target", fixture.path(second)],
+    [true, "rendered", fixture.path(second)],
+    [false, "skipped-unsupported-target", fixture.path(first)],
+  ]);
+
+  for (const slug of [first, second]) {
+    const stamp = await readStoredStamp(page, fixture, slug);
+    expect(await readStoredStamp(page, fixture, slug)).toBe(stamp);
+  }
+}
+
+/**
+ * A refresh whose handler throws something other than `notFound()` is
+ * `render-failed`, and the page stored before it keeps serving: same stamp,
+ * not a 404 and not a re-render. A refresh once the data source is back
+ * replaces it.
+ */
+export async function expectFailedRefreshKeepsStoredPage(
+  page: Page,
+  fixture: PrerenderOutcomesFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const slug = pushProbe("failed");
+  const trigger = fixture.triggerUrl(slug);
+  await refreshPage(page, trigger);
+  const stamp = await readStoredStamp(page, fixture, slug);
+
+  await removeTrigger(page, trigger, "?fail=1");
+  try {
+    const failed = await removeTrigger(page, trigger);
+    expect(failed, JSON.stringify(failed)).toMatchObject({
+      ok: false,
+      path: "on-demand",
+      status: "render-failed",
+      error: "upstream 500",
+    });
+    expect(await readStoredStamp(page, fixture, slug)).toBe(stamp);
+  } finally {
+    await removeTrigger(page, trigger, "?fail=0");
+  }
+
+  await refreshPage(page, trigger);
+  expect(await readStoredStamp(page, fixture, slug)).not.toBe(stamp);
+}
+
+/**
+ * A `Passthrough` build handler that calls `ctx.passthrough()` for a param:
+ * the refresh is `skipped-passthrough`, the next request is served by the
+ * live handler, and a second refresh answers the same.
+ */
+export async function expectDeclinedPassthroughParamServedLive(
+  page: Page,
+  fixture: PrerenderOutcomesFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const { pageUrl, triggerUrl, sourceTestId } = fixture.passthrough;
+  const slug = `declined-${pushProbe("param")}`;
+  const source = byTestId(page, sourceTestId);
+
+  const expectDeclined = async (): Promise<void> => {
+    const declined = await removeTrigger(page, triggerUrl(slug));
+    expect(declined, JSON.stringify(declined)).toMatchObject({
+      ok: false,
+      path: "on-demand",
+      status: "skipped-passthrough",
+    });
+  };
+
+  await expectDeclined();
+  const response = await page.goto(pageUrl(slug));
+  expect(response?.status()).toBe(200);
+  await waitForShellHydration(page);
+  await expect(source).toHaveText("live");
+  await expectDeclined();
+}
+
+/**
+ * A param the build bakes, then declined: the page a refresh stored is served
+ * (`prerender`), and once the build handler declines the param the refresh is
+ * `skipped-passthrough` and the live handler answers. Neither the stored page
+ * nor the build-time entry does, so a decline stores a marker over them. A
+ * refresh once it stops declining brings the page back.
+ */
+export async function expectDeclinedBakedParamServedLive(
+  page: Page,
+  fixture: PrerenderOutcomesFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const { pageUrl, triggerUrl, sourceTestId, declineBakedSlug } =
+    fixture.passthrough;
+  const source = byTestId(page, sourceTestId);
+
+  await refreshPage(page, triggerUrl(declineBakedSlug));
+  await page.goto(pageUrl(declineBakedSlug));
+  await expect(source).toHaveText("prerender");
+
+  await removeTrigger(page, triggerUrl(declineBakedSlug), "?decline=1");
+  try {
+    const declined = await removeTrigger(page, triggerUrl(declineBakedSlug));
+    expect(declined, JSON.stringify(declined)).toMatchObject({
+      ok: false,
+      path: "on-demand",
+      status: "skipped-passthrough",
+    });
+    const response = await page.goto(pageUrl(declineBakedSlug));
+    expect(response?.status()).toBe(200);
+    await expect(source).toHaveText("live");
+  } finally {
+    await removeTrigger(page, triggerUrl(declineBakedSlug), "?decline=0");
+  }
+
+  await refreshPage(page, triggerUrl(declineBakedSlug));
+  await page.goto(pageUrl(declineBakedSlug));
+  await expect(source).toHaveText("prerender");
 }

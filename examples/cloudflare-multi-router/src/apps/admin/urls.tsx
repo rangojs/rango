@@ -35,10 +35,21 @@ function LookupPage(ctx: HandlerContext) {
   );
 }
 
+// Counterpart to site's /pricing: same path and route name, another app's
+// `ppr` shell in the same cache (src/cache.ts).
+function PricingPage() {
+  return (
+    <main data-testid="admin-pricing-page">
+      <h1 data-testid="pricing-title">Admin pricing</h1>
+    </main>
+  );
+}
+
 export const adminPatterns = urls(({ path, layout, include }) => [
   layout(<AdminLayout />, () => [
     path("/", DashboardPage, { name: "home" }),
     path("/users", UsersPage, { name: "users" }),
+    path("/pricing", PricingPage, { name: "pricing", ppr: true }),
     path("/lookup", LookupPage, {
       name: "lookup",
       search: { page: "number" },

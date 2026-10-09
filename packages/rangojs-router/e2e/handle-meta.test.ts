@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { waitForHydration, testId } from "./helper";
+import { expectConsole } from "@shared/e2e";
 
 /**
  * Meta handle tests - document metadata management across route segments
@@ -558,6 +559,10 @@ test.describe("handle-meta", () => {
     test("should show error boundary when async child pushes meta too late", async ({
       page,
     }) => {
+      // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+      expectConsole(page, {
+        allow: [/Unhandled error caught: LateHandlePushError/],
+      });
       await page.goto(f.url("/handle-passthrough-async"));
       await waitForHydration(page);
 
@@ -582,6 +587,10 @@ test.describe("handle-meta", () => {
     test("should not render the async child content once the late push errors", async ({
       page,
     }) => {
+      // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
+      expectConsole(page, {
+        allow: [/Unhandled error caught: LateHandlePushError/],
+      });
       await page.goto(f.url("/handle-passthrough-async"));
       await waitForHydration(page);
 

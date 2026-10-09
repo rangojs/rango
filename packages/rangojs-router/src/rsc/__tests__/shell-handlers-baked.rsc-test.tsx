@@ -54,6 +54,7 @@ import {
 import type { HandlerContext } from "../handler-context.js";
 import type { RscPayload, SSRModule } from "../types.js";
 import type { PartialCacheOptions } from "../../types.js";
+import { shellCacheKey } from "../../testing/shell-status.js";
 import { getStamp, source } from "./fixtures/shell-prune-data.js";
 
 const PRELUDE = "<html><body>FROZEN-PRELUDE</body></html>";
@@ -191,6 +192,8 @@ async function serve(
     tasks.push(Promise.resolve().then(task));
   };
   const ctx = makeCtx(router);
+  // As rsc/handler.ts does: the cache keys carry the serving router.
+  reqCtx._routerId = router.id;
   const response = await runWithRequestContext(reqCtx, async () => {
     const plan = await classifyRequest(request, url, {
       findMatch: (router as unknown as ClassifyRequestDeps).findMatch,
@@ -216,12 +219,13 @@ async function serve(
 }
 
 async function storedEntry(
+  router: Router,
   store: MemorySegmentCacheStore,
   path: string,
-  partition?: string,
+  partition?: Parameters<typeof shellCacheKey>[3],
 ): Promise<ShellCacheEntry | null> {
   const hit = await store.getShell(
-    `localhost${path}:shell${partition === undefined ? "" : `|${encodeURIComponent(partition)}`}`,
+    shellCacheKey(router, path, undefined, partition),
   );
   return hit ? hit.entry : null;
 }
@@ -336,8 +340,8 @@ describe("PPR handlers baked: the capture settles the handler layer and renders 
 
     const miss = await serve(router, harness.store, "/baked");
     expect(miss.response.headers.get("x-rango-shell")).toBe("MISS");
-    const entry = (await storedEntry(harness.store, "/baked"))!;
-    expect(entry.docKey).toBe("doc:localhost/baked");
+    const entry = (await storedEntry(router, harness.store, "/baked"))!;
+    expect(entry.docKey).toBe(`doc:${router.id}@localhost/baked`);
     expect(frozenInputs).toHaveLength(1);
     const frozen = frozenInputs[0]!;
 
@@ -399,7 +403,7 @@ describe("PPR handlers baked: the capture settles the handler layer and renders 
     ]);
     const harness = makeStore();
     await serve(router, harness.store, "/quick");
-    expect(await storedEntry(harness.store, "/quick")).not.toBeNull();
+    expect(await storedEntry(router, harness.store, "/quick")).not.toBeNull();
     const frozenValue = frozenInputs[0]!.match(/quick-\d+/)?.[0];
 
     const hit = await serve(router, harness.store, "/quick");
@@ -520,10 +524,10 @@ describe("PPR handlers baked: the capture settles the handler layer and renders 
       const harness = makeStore();
       const miss = await serve(router, harness.store, "/slow");
       expect(miss.response.headers.get("x-rango-shell")).toBe("MISS");
-      expect(await storedEntry(harness.store, "/slow")).toBeNull();
+      expect(await storedEntry(router, harness.store, "/slow")).toBeNull();
       const warning = warn.mock.calls
         .map(([message]) => String(message))
-        .find((message) => message.includes('"localhost/slow:shell"'));
+        .find((message) => message.includes('@localhost/slow:shell"'));
       expect(warning).toContain("did not settle within ppr.captureTimeout");
     } finally {
       warn.mockRestore();
@@ -552,10 +556,12 @@ describe("PPR handlers baked: the capture settles the handler layer and renders 
       const harness = makeStore();
       const miss = await serve(router, harness.store, "/slow-handler");
       expect(miss.response.headers.get("x-rango-shell")).toBe("MISS");
-      expect(await storedEntry(harness.store, "/slow-handler")).toBeNull();
+      expect(
+        await storedEntry(router, harness.store, "/slow-handler"),
+      ).toBeNull();
       const warning = warn.mock.calls
         .map(([message]) => String(message))
-        .find((message) => message.includes('"localhost/slow-handler:shell"'));
+        .find((message) => message.includes('@localhost/slow-handler:shell"'));
       expect(warning).toContain("did not return within ppr.captureTimeout");
       // The foreground and one capture attempt: the in-place retry would
       // start a second match beside the one still running.
@@ -595,7 +601,7 @@ describe("PPR handlers baked: the capture settles the handler layer and renders 
       ]);
       const harness = makeStore();
       await serve(router, harness.store, "/jsx-push");
-      const entry = await storedEntry(harness.store, "/jsx-push");
+      const entry = await storedEntry(router, harness.store, "/jsx-push");
       expect(entry).not.toBeNull();
       const record = entry!.snapshot?.find(
         (r) => r.family === "segment" && r.key === entry!.docKey,
@@ -633,10 +639,10 @@ describe("PPR handlers baked: the capture settles the handler layer and renders 
       ]);
       const harness = makeStore();
       await serve(router, harness.store, "/map-push");
-      expect(await storedEntry(harness.store, "/map-push")).toBeNull();
+      expect(await storedEntry(router, harness.store, "/map-push")).toBeNull();
       const warning = warn.mock.calls
         .map(([message]) => String(message))
-        .find((message) => message.includes('"localhost/map-push:shell"'));
+        .find((message) => message.includes('@localhost/map-push:shell"'));
       expect(warning).toContain("did not finish encoding");
     } finally {
       warn.mockRestore();
@@ -682,7 +688,7 @@ describe("PPR handlers baked: the capture settles the handler layer and renders 
       ]);
       const harness = makeStore();
       await serve(router, harness.store, "/slow-push");
-      const entry = await storedEntry(harness.store, "/slow-push");
+      const entry = await storedEntry(router, harness.store, "/slow-push");
       expect(entry).not.toBeNull();
       const record = entry!.snapshot?.find(
         (r) => r.family === "segment" && r.key === entry!.docKey,
@@ -690,7 +696,7 @@ describe("PPR handlers baked: the capture settles the handler layer and renders 
       expect(JSON.stringify(record)).toContain("SLOW-PUSH");
       expect(
         warn.mock.calls.some(([message]) =>
-          String(message).includes('"localhost/slow-push:shell"'),
+          String(message).includes('@localhost/slow-push:shell"'),
         ),
       ).toBe(false);
     } finally {
@@ -783,7 +789,7 @@ describe("PPR handlers baked: no HIT runs a handler", () => {
       expect(served.response.headers.get("x-rango-shell")).toBeNull();
       expect(served.body).toBe("<html><body>AXIS-1</body></html>");
     }
-    expect(await storedEntry(harness.store, "/optout")).toBeNull();
+    expect(await storedEntry(router, harness.store, "/optout")).toBeNull();
     expect(frozenInputs).toHaveLength(0);
   });
 });
@@ -836,10 +842,10 @@ describe("PPR handlers baked: request-partitioned shells", () => {
     const goldMiss = await serve(router, harness.store, "/tiered", gold);
     expect(goldMiss.response.headers.get("x-rango-shell")).toBe("MISS");
     expect(
-      await storedEntry(harness.store, "/tiered", "key:tier%3Agold"),
+      await storedEntry(router, harness.store, "/tiered", "tier:gold"),
     ).not.toBe(null);
     // No unpartitioned shell exists for a partitioned route.
-    expect(await storedEntry(harness.store, "/tiered")).toBeNull();
+    expect(await storedEntry(router, harness.store, "/tiered")).toBeNull();
 
     const silverMiss = await serve(router, harness.store, "/tiered", silver);
     expect(silverMiss.response.headers.get("x-rango-shell")).toBe("MISS");
@@ -871,10 +877,10 @@ describe("PPR handlers baked: request-partitioned shells", () => {
     // updateTag() of a tag every partition carries evicts every partition.
     await harness.store.invalidateTags(["tiered"]);
     expect(
-      await storedEntry(harness.store, "/tiered", "key:tier%3Agold"),
+      await storedEntry(router, harness.store, "/tiered", "tier:gold"),
     ).toBeNull();
     expect(
-      await storedEntry(harness.store, "/tiered", "key:tier%3Asilver"),
+      await storedEntry(router, harness.store, "/tiered", "tier:silver"),
     ).toBeNull();
   });
 
@@ -919,7 +925,7 @@ describe("PPR handlers baked: request-partitioned shells", () => {
         headers: { "x-tier": "gold" },
       });
       expect(
-        await storedEntry(harness.store, "/tiered", "key:tier%3Agold"),
+        await storedEntry(router, harness.store, "/tiered", "tier:gold"),
       ).not.toBeNull();
 
       fail = true;
@@ -965,11 +971,9 @@ describe("PPR handlers baked: request-partitioned shells", () => {
     expect(deHit.body).toContain("locale-de");
     expect(deHit.body).not.toContain("locale-en");
     expect(
-      await storedEntry(
-        harness.store,
-        "/localized",
-        "doc:localhost/localized|en",
-      ),
+      await storedEntry(router, harness.store, "/localized", {
+        generated: [`doc:${router.id}@localhost/localized|en`],
+      }),
     ).not.toBeNull();
   });
 });
@@ -998,10 +1002,10 @@ describe("PPR handlers baked: request-scoped reads inside what the capture waits
       expect(miss.response.headers.get("x-rango-shell")).toBe("MISS");
       expect(miss.response.status).toBe(200);
       // Nothing was stored, and the refusal names the read.
-      expect(await storedEntry(harness.store, path)).toBeNull();
+      expect(await storedEntry(router, harness.store, path)).toBeNull();
       const warning = warn.mock.calls
         .map(([message]) => String(message))
-        .find((message) => message.includes(`"localhost${path}:shell"`));
+        .find((message) => message.includes(`@localhost${path}:shell"`));
       expect(warning).toContain("was refused");
       expect(warning).toContain(fnName);
     } finally {

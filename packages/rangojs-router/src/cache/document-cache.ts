@@ -22,7 +22,7 @@ import {
   type RequestContext,
 } from "../server/request-context.js";
 import { mayNeedSSR } from "../rsc/ssr-setup.js";
-import { cacheKeyBase } from "./cache-key-utils.js";
+import { requestKeyBase } from "./cache-key-utils.js";
 import { runBackground } from "./background-task.js";
 import {
   isWarmReplace,
@@ -30,7 +30,11 @@ import {
   noteWarmWrite,
 } from "../prerender/warm-request.js";
 import { reportCacheError } from "./cache-error.js";
-import { executionStart, predatesInvalidation } from "./tag-invalidation.js";
+import {
+  executionStart,
+  markResponseStart,
+  predatesInvalidation,
+} from "./tag-invalidation.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import {
   SEGMENT_FRAGMENT_CAPABILITY_HEADER,
@@ -244,11 +248,14 @@ export interface DocumentCacheOptions<TEnv = any> {
   /**
    * Custom cache key generator.
    *
-   * Replaces the default `host + pathname + search` key entirely. On a
-   * multi-domain deployment served by one function you MUST include `url.host`
-   * (or an equivalent tenant discriminator) yourself — the default key is
-   * host-namespaced, but a custom generator's output is used verbatim, so
-   * omitting host bleeds one hostname's cached response to another.
+   * Replaces the default `router id + host + pathname + search` key entirely.
+   * On a multi-domain deployment served by one function you MUST include
+   * `url.host` (or an equivalent tenant discriminator) yourself — the default
+   * key is host-namespaced, but a custom generator's output is used verbatim,
+   * so omitting host bleeds one hostname's cached response to another. The
+   * same goes for the router: two routers that share a cache store and can
+   * serve one host and path (a `hostOverride` cookie) need a generator that
+   * tells them apart.
    */
   keyGenerator?: (url: URL) => string;
 
@@ -352,7 +359,8 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       return next();
     }
 
-    // The write gate's start (#977): the request's, not this middleware's. A
+    // The write gate's start (#977) and the entry's stamp (#1068): the
+    // request's, not this middleware's, also for a stale refresh. A
     // middleware ahead of this one can read tagged data the document bakes,
     // and a stale refresh re-runs the handler over what they set.
     const start = requestCtx._requestStart ?? executionStart();
@@ -397,7 +405,8 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       // existing keys and double any host they already include).
       const cacheKey = keyGenerator
         ? keyGenerator(url) + segmentHash + fragmentSuffix + typeSuffix
-        : cacheKeyBase(
+        : requestKeyBase(
+            requestCtx,
             url.host,
             url.pathname,
             url.searchParams,
@@ -469,7 +478,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
                   if (await predatesInvalidation(store, tags, start)) return;
                   await store.putResponse!(
                     cacheKey,
-                    new Response(body, fresh),
+                    markResponseStart(new Response(body, fresh), start),
                     directives.sMaxAge!,
                     directives.staleWhileRevalidate,
                     tags,
@@ -540,7 +549,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
             if (await predatesInvalidation(store, tags, start)) return;
             await store.putResponse!(
               cacheKey,
-              new Response(body, originalResponse),
+              markResponseStart(new Response(body, originalResponse), start),
               directives.sMaxAge!,
               directives.staleWhileRevalidate,
               tags,

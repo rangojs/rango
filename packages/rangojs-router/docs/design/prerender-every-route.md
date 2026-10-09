@@ -139,7 +139,10 @@ it, because the route decides which rules apply (an on-demand key carries no
 search, a warm's keys do).
 
 #640's `skipped-not-on-demand` is gone: that branch is now the warm path. #640
-is not released yet, so the status is removed, not deprecated.
+is not released yet, so the status is removed, not deprecated. (#1060 gave the
+name to `prerender.remove()` on a route that is not on-demand, which must
+never turn into a warm; a refresh still never returns it. See
+`ondemand-prerender.md`, "Removing A Page".)
 
 ## Path table
 
@@ -204,7 +207,7 @@ first, so `cache(false)` and a refusing `condition()` still answer `bypass`
 resolving the key or reading the store. The miss lets `withCacheStore`
 (`router/match-middleware/cache-store.ts`) run its write path unchanged:
 `cacheRoute` resolves the same key a visitor would (`getDefaultRouteCacheKey`:
-`doc:` + `cacheKeyBase(host, pathname, search, params, filter)`, then the
+`doc:` + `cacheKeyBase(routerId, host, pathname, search, params, filter)`, then the
 `key()` / `keyGenerator` chain) and calls `store.set`, which replaces. Every
 shipped store's `set` is a replace (Cache API `put`, KV `put`, Vercel
 `cache.set`, `Map.set`).
@@ -230,7 +233,8 @@ shipped store's `set` is a replace (Cache API `put`, KV `put`, Vercel
 
 `executeLoaderData` hands `readThroughItem` a `getItem` that answers `null` in
 replace mode, so the read-through takes its miss path: the body runs, the value
-is served, and `setItem` replaces the entry (`loader:{id}:{host}{path}:{params}`,
+is served, and `setItem` replaces the entry
+(`loader:{id}:{routerId}@{host}{path}:{params}`,
 or the loader's own namespaced `key()` result). The identity rule (#972: an
 undeclared key fails on an identity read) and the `predatesInvalidation` gate in
 the `setItem` closure are unchanged. No SWR path runs.
@@ -306,8 +310,11 @@ into a new shell is exactly what a warm must not produce.
   `caches.shell: "refused"` with `refusal: "invalidated"`.
 - **Versions:** the store prefixes the document version; the entry's
   `buildVersion` is the handler's version, as on any capture.
-- **`cache.searchParams`:** the key is `buildShellKey(url, filter)`, the
-  search seed `shellSearchSeed(url, filter)`; both come from the warm's URL.
+- **`cache.searchParams`:** the key is `buildShellKey(routerId, url, filter)`,
+  the search seed `shellSearchSeed(url, filter)`; the URL is the warm's, the
+  router the one whose runner was called. A warm under another router's host
+  writes the warming router's shell, which the host's own router never reads
+  (#1065).
 - **Partitions:** `resolveRequestShellKey` runs the route's `key()` /
   `keyGenerator` against the header-less request, so only that partition is
   warmed.
@@ -550,10 +557,17 @@ local one is wasted work, not a wrong one. Nothing else reads it in v1.
 | `VercelCacheStore`                 | `"regional"` | Vercel: "Runtime cache is a regional, ephemeral cache ... within a Vercel region"; "Each region has its own cache". Functions "execute in Washington, D.C., USA (`iad1`) for all new projects"; Hobby runs one region, Pro up to 5, Enterprise all; entries can be evicted early (LRU at the storage limit). Decided: allowed for single-region deployments, by documentation only, no runtime region detection.                                                                                                                           |
 | A custom store                     | its own      | Only if it declares itself. A store without the field is treated as `"local"` and refused.                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
-No knob on the shipped stores (decided). A single-process Node deployment whose
-memory store really is the only copy can subclass it and declare `"global"`
-(the e2e test-app does exactly that, which is what lets its production
-describe warm); that is a custom store declaring itself.
+The memory store stays `"local"` and refused by default in production
+(decided). It is per process, and the router cannot tell one long-running
+server from several replicas or serverless instances: counting it as shared
+would report `warmed` while most visitors hit cold instances. An author who
+does run one process opts in with
+`new MemorySegmentCacheStore({ scope: "global" })`
+(`MemorySegmentCacheStoreOptions.scope`, default `"local"`; the e2e test-app
+does this, which is what lets its production describe warm). Instances sharing
+a `name` share their maps, but `scope` is per instance, as `defaults` and
+`keyGenerator` already are (see the option's JSDoc): the store does not
+reconcile them, and the author keeps them identical.
 
 **The memory store in dev (decided).** Refusing it everywhere would leave an
 author on the Node preset with nothing to try: every warm in local dev would
@@ -819,8 +833,7 @@ What is written, and the contract each suite pins.
 
 ### Userland: through `router.prerender()` and `serveShellRequest`
 
-On real Flight, with a `SharedMemoryStore` (a `MemorySegmentCacheStore`
-subclass declaring `"global"`).
+On real Flight, with `new MemorySegmentCacheStore({ scope: "global" })`.
 
 `src/testing/__tests__/prerender-warm.rsc-test.tsx` (the 10 tests written red
 with this design, unchanged):
@@ -928,8 +941,8 @@ and fixtures whose stamp carries a per-`?probe=` generation a test moves on.
   an on-demand and a plain target in one batch;
 - `onlyIfStale` leaves a warmed shell alone (`already-fresh`).
 
-The test-app runs one process with a memory store; its `cacheStore` is a
-subclass declaring `scope = "global"`, which is what lets the production
+The test-app runs one process with a memory store; its `cacheStore` is
+`new MemorySegmentCacheStore({ scope: "global" })`, which is what lets the production
 describe warm. The edge-only refusal suite the plan had
 (`edge-only-prerender-warm.test.ts`) was not built: the refusal renders
 nothing, so a browser adds nothing to the unit and userland coverage.

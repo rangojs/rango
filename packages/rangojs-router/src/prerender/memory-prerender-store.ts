@@ -16,7 +16,7 @@ import {
 
 export interface MemoryPrerenderStore extends WritablePrerenderStore {
   delete(key: PrerenderKey): Promise<void>;
-  markStale(tags: string[]): Promise<void>;
+  markStale(routerId: string, tags: string[]): Promise<void>;
   /** Synchronous read by structured key (tests). */
   peek(key: PrerenderKey): PrerenderStoredEntry | null;
   /** All stored [serializedKey, entry] pairs (tests). */
@@ -40,42 +40,72 @@ export function createMemoryPrerenderStore(
   options: MemoryPrerenderStoreOptions = {},
 ): MemoryPrerenderStore {
   const now = options.now ?? (() => Date.now());
-  const map = new Map<string, PrerenderStoredEntry>();
+  // The owning router per entry: the serialized key cannot be split back.
+  const map = new Map<
+    string,
+    { routerId: string; stored: PrerenderStoredEntry }
+  >();
+
+  // routerId -> tag -> when markStale() last named it. A held entry is marked
+  // in place; this covers a write that was rendered before the mark and set
+  // after it.
+  const marks = new Map<string, Map<string, number>>();
 
   return {
     async get(key: PrerenderKey): Promise<PrerenderStoredEntry | null> {
-      return map.get(serializePrerenderKey(key)) ?? null;
+      return map.get(serializePrerenderKey(key))?.stored ?? null;
     },
 
     async set(key: PrerenderKey, stored: PrerenderStoredEntry): Promise<void> {
-      map.set(serializePrerenderKey(key), stored);
+      // Strictly after storedAt, unlike the KV read (cloudflare.ts, `>=`): in
+      // one process a mark and a render start can share a millisecond with the
+      // mark first, which `>=` would read as invalidating that render. KV's
+      // marker write is I/O, so a same-millisecond marker there is ambiguous.
+      // Marks, never refuses: a stale entry keeps serving.
+      const routerMarks = marks.get(key.routerId);
+      if (routerMarks) {
+        for (const tag of stored.meta.tags) {
+          const at = routerMarks.get(tag);
+          if (at != null && at > stored.meta.storedAt) {
+            lowerStoredEntryStaleAt(stored, at);
+          }
+        }
+      }
+      map.set(serializePrerenderKey(key), { routerId: key.routerId, stored });
     },
 
     async delete(key: PrerenderKey): Promise<void> {
       map.delete(serializePrerenderKey(key));
     },
 
-    async markStale(tags: string[]): Promise<void> {
+    async markStale(routerId: string, tags: string[]): Promise<void> {
       if (tags.length === 0) return;
       const tagSet = new Set(tags);
       const at = now();
-      for (const stored of map.values()) {
-        if (stored.meta.tags.some((t) => tagSet.has(t))) {
-          lowerStoredEntryStaleAt(stored, at);
+      let routerMarks = marks.get(routerId);
+      if (!routerMarks) marks.set(routerId, (routerMarks = new Map()));
+      for (const tag of tags) routerMarks.set(tag, at);
+      for (const entry of map.values()) {
+        if (
+          entry.routerId === routerId &&
+          entry.stored.meta.tags.some((t) => tagSet.has(t))
+        ) {
+          lowerStoredEntryStaleAt(entry.stored, at);
         }
       }
     },
 
     peek(key: PrerenderKey): PrerenderStoredEntry | null {
-      return map.get(serializePrerenderKey(key)) ?? null;
+      return map.get(serializePrerenderKey(key))?.stored ?? null;
     },
 
     entries(): [string, PrerenderStoredEntry][] {
-      return [...map.entries()];
+      return [...map].map(([k, v]) => [k, v.stored]);
     },
 
     clear(): void {
       map.clear();
+      marks.clear();
     },
 
     get size(): number {

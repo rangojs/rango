@@ -16,13 +16,14 @@ import { useFixture } from "./fixture";
  *   store. Before, the inner record was keyed by the default key alone, so
  *   a `de` visitor received the record an `en` request wrote.
  * - /test/raw-key* (issue #975): a key() returns a request header as is.
- *   Before, the header value `json:<host>/test/raw-key-victim?...` named the
- *   victim's default-keyed entry, so the victim served the other route's
- *   body.
+ *   Before, a header value spelling the victim's default key
+ *   (`json:<router>@<host>/test/raw-key-victim?...`) named the victim's
+ *   entry, so the victim served the other route's body.
  * - /test/loader-key-* (issue #1009): a loader's own key() returns a request
- *   header as is. Before, the header value
- *   `loader:<victim id>:<host>/test/loader-key-victim/<probe>:...` read the
- *   victim loader's entry, and on a miss wrote over it.
+ *   header as is. Before, a header value spelling the victim loader's
+ *   default key
+ *   (`loader:<victim id>:<router>@<host>/test/loader-key-victim/<probe>:...`)
+ *   read the victim loader's entry, and on a miss wrote over it.
  */
 
 async function renderOf(
@@ -39,6 +40,27 @@ async function renderOf(
   );
   expect(rendered).not.toBeNull();
   return rendered![1];
+}
+
+/**
+ * The router part of the app's default cache keys, `{routerId}@`, from the
+ * loader-key victim page, which shows the router's id.
+ */
+function routerKeyPartIn(victimHtml: string): string {
+  const id = /data-testid="cache-key-router-id"[^>]*>([^<]*)</.exec(
+    victimHtml,
+  )![1];
+  return `${encodeURIComponent(id)}@`;
+}
+
+async function victimPageHtml(
+  request: APIRequestContext,
+  url: (path: string) => string,
+): Promise<string> {
+  const res = await request.get(url("/test/loader-key-victim/id"), {
+    headers: { Accept: "text/html" },
+  });
+  return res.text();
 }
 
 /** Poll `read` until two consecutive results match: the second is a HIT. */
@@ -118,7 +140,7 @@ async function expectRawKeyCannotNameVictim(
   const host = new URL(url("/")).host;
   const victim = url(`/test/raw-key-victim?probe=${probe}`);
   const crafted = {
-    "x-raw-key": `json:${host}/test/raw-key-victim?probe=${probe}`,
+    "x-raw-key": `json:${routerKeyPartIn(await victimPageHtml(request, url))}${host}/test/raw-key-victim?probe=${probe}`,
   };
   const readJson = async (
     target: string,
@@ -144,17 +166,16 @@ async function loaderKeyFixture(
 ) {
   const host = new URL(url("/")).host;
   const victim = (probe: string) => url(`/test/loader-key-victim/${probe}`);
-  const html = await (
-    await request.get(victim("id"), { headers: { Accept: "text/html" } })
-  ).text();
+  const html = await victimPageHtml(request, url);
   const victimId = /data-testid="loader-key-victim-id"[^>]*>([^<]*)</.exec(
     html,
   )![1];
+  const router = routerKeyPartIn(html);
   return {
     victim,
     crafted: url("/test/loader-key-crafted"),
     victimKey: (probe: string) => ({
-      "x-loader-key": `loader:${victimId}:${host}/test/loader-key-victim/${probe}:probe=${probe}`,
+      "x-loader-key": `loader:${victimId}:${router}${host}/test/loader-key-victim/${probe}:probe=${probe}`,
     }),
   };
 }

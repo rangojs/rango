@@ -271,6 +271,17 @@ export function createErrorInfo(
   };
 }
 
+/** Invoke an errorBoundary() fallback that may be a handler or a plain node. */
+export function renderErrorFallback(
+  fallback: ReactNode | ErrorBoundaryHandler,
+  errorInfo: ErrorInfo,
+): ReactNode {
+  if (typeof fallback === "function") {
+    return fallback({ error: errorInfo } satisfies ErrorBoundaryFallbackProps);
+  }
+  return fallback;
+}
+
 /**
  * Create an error segment with the fallback component
  * Renders the fallback with error info and reset function
@@ -281,23 +292,12 @@ export function createErrorSegment(
   entry: EntryData,
   params: Record<string, string>,
 ): ResolvedSegment {
-  let component: ReactNode;
-
-  if (typeof fallback === "function") {
-    const props: ErrorBoundaryFallbackProps = {
-      error: errorInfo,
-    };
-    component = fallback(props);
-  } else {
-    component = fallback;
-  }
-
   return {
     id: entry.shortCode,
     namespace: entry.id,
     type: "error",
     index: 0,
-    component,
+    component: renderErrorFallback(fallback, errorInfo),
     params,
     error: errorInfo,
   };

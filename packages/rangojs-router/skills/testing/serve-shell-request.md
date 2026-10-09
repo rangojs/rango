@@ -14,7 +14,7 @@ The one stub is the HTML step (the SSR module), because `react-dom/server` does 
 
 So `prelude` is the shell as captured (Flight text, not HTML): a value the shell froze appears there, and a hole (a live loader under `loading()`) does not.
 
-A `Prerender` route is served as in production: from the artifact `router.matchForPrerender` bakes for the URL (on its first request, kept until `resetShellTestState()`), through the production prerender store, so its handler runs once, at the bake, and never on a request. Its first `ppr` request is a MISS with a runtime capture, as a URL without a build-time shell is in production. The shell `vite build` bakes (served first in production for a URL without a query string) is not reproduced: keep that in e2e. The `env` option doubles as the bake's `buildEnv`.
+A `Prerender` route is served as in production: from the artifact `router.matchForPrerender` bakes for the URL (on its first request, kept until `resetShellTestState()`), through the production prerender store, so its handler runs once, at the bake, and never on a request. Its first `ppr` request is a MISS with a runtime capture, as a URL without a build-time shell is in production. The shell `vite build` bakes (served first in production for a URL without a query string) is not reproduced: keep that in e2e. The `env` option doubles as the bake's `buildEnv`. An on-demand route (`Prerender(..., { onDemand })`) is baked only when it is wrapped in `Passthrough()` and its `getParams()` lists the param, as a build bakes it; a plain on-demand route is not baked here, so its pages come from the prerender store alone (`router.prerender()`), and "a removed page the build baked" is a case for a `Passthrough` route or for e2e.
 
 ## API
 
@@ -166,9 +166,12 @@ const silver = await serveShellRequest(router, "/pricing", tier("silver"));
 expect(silver.shellStatus).toBe("MISS"); // its own capture, never gold's shell
 const gold = await serveShellRequest(router, "/pricing", tier("gold"));
 expect(gold.shellStatus).toBe("HIT");
-expect(gold.key).toBe(shellCacheKey("/pricing", undefined, "tier:gold"));
-// "localhost/pricing:shell|key%3Atier%253Agold": the key() result is
-// namespaced as production stores it (issue #975).
+expect(gold.key).toBe(
+  shellCacheKey(router, "/pricing", undefined, "tier:gold"),
+);
+// "{router.id}@localhost/pricing:shell|key%3Atier%253Agold": the router the
+// shell belongs to, then the key() result namespaced as production stores it
+// (issue #975).
 expect(await gold.readEntry()).not.toBeNull();
 ```
 
@@ -181,7 +184,7 @@ Under nested keyed `cache()` boundaries the partition is their `key()` results c
 //   ]),
 // ])
 expect(result.key).toBe(
-  shellCacheKey("/plans", undefined, ["tier:gold", "v:a"]),
+  shellCacheKey(router, "/plans", undefined, ["tier:gold", "v:a"]),
 );
 ```
 
@@ -191,13 +194,32 @@ A store `keyGenerator` result that partitions the record partitions the shell to
 // createRouter({ cache: { store: localeStore } }), where localeStore's
 // keyGenerator returns `${defaultKey}|${locale}`
 expect(result.key).toBe(
-  shellCacheKey("/pricing", undefined, {
-    generated: ["doc:localhost/pricing|de"],
+  shellCacheKey(router, "/pricing", undefined, {
+    generated: [`doc:${router.id}@localhost/pricing|de`],
   }),
 );
 ```
 
 A partial request has no HTML step, so its `key` is the URL's key without a partition: read a partitioned route's entry from a document request's result.
+
+## Two routers on one cache store
+
+A shell's key starts with its router's id (`shellCacheKey(router, url)`), so two routers that share a store and serve the same host and path each read and write their own (why and when: `/host-router`, "Shared cache store"). Serve both against one store to pin it:
+
+```ts
+const store = new MemorySegmentCacheStore();
+// appA and appB: createRouter({ id: "app-a" | "app-b", cache: { store } }),
+// each with path("/pricing", ..., { ppr: true })
+const url = "http://preview.dev/pricing";
+
+await serveShellRequest(appA, url); // MISS + capture
+const fromB = await serveShellRequest(appB, url);
+expect(fromB.shellStatus).toBe("MISS"); // never app A's shell
+expect((await serveShellRequest(appA, url)).shellStatus).toBe("HIT");
+expect((await serveShellRequest(appB, url)).shellStatus).toBe("HIT");
+```
+
+Vitest runs no Vite id transform, so give each router an explicit `id` when a test builds more than one, and do not reuse one `id` for routers with different routes in the same file: the route manifest is registered per id.
 
 ## Handles and loader data
 
