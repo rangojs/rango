@@ -528,13 +528,14 @@ function HydratedMarker(): null {
 }
 
 /**
- * Applies `lateHandles` from an effect after the tree's: where production's
- * root effect releases the document's late handle channel
- * (browser/rsc-router.tsx hydrationCommitted). A boundary that hydrates in a
- * later pass finds the update applied.
+ * Runs `run` from an effect after the tree's. That is where production's late
+ * handle channel writes a push that arrives after the root hydrated (the store
+ * holds it while the hydration window is open, EventController.lockHydration),
+ * and where the document has been revealed (browser/rsc-router.tsx
+ * documentRevealed).
  */
-function LateHandles({ apply }: { apply: () => void }): null {
-  useEffect(apply, [apply]);
+function AfterTree({ run }: { run: () => void }): null {
+  useEffect(run, [run]);
   return null;
 }
 
@@ -750,8 +751,15 @@ export async function renderRoute(
   const resolvedSeed = await resolveDeferredHandleValues(handleSeed);
   const initialSegmentIds = initialSegments.map((s) => s.id);
   eventController.setHandleData(resolvedSeed, initialSegmentIds);
-  // As initBrowserApp before hydrateRoot: what a hydrating reader reads.
-  eventController.freezeHydrationHandleState();
+  // As initBrowserApp before hydrateRoot: until the provider's barrier commit,
+  // handle reads return this state and later writes wait.
+  if (options.hydrate) eventController.lockHydration();
+  let resolveDocumentRevealed: (() => void) | undefined;
+  const documentRevealed = options.hydrate
+    ? new Promise<void>((resolve) => {
+        resolveDocumentRevealed = resolve;
+      })
+    : undefined;
   // A late update carries the full state: the seed with these handles' values
   // replaced, resolved as the browser resolves a late yield before applying.
   let applyLateHandles: (() => void) | undefined;
@@ -941,11 +949,13 @@ export async function renderRoute(
           options.theme === undefined ? null : resolveThemeConfig(options.theme)
         }
         nonce={options.nonce}
+        hydration={documentRevealed ? { settled: documentRevealed } : undefined}
       />
       <DelegatedPrefetchRegistration bridge={bridge} />
       <LinkInterceptionRegistration bridge={bridge} />
       {options.hydrate && <HydratedMarker />}
-      {applyLateHandles && <LateHandles apply={applyLateHandles} />}
+      {applyLateHandles && <AfterTree run={applyLateHandles} />}
+      {resolveDocumentRevealed && <AfterTree run={resolveDocumentRevealed} />}
     </>
   );
 

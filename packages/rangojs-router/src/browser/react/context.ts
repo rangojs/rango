@@ -86,3 +86,13 @@ export const NavigationStoreContext: Context<NavigationStoreContextValue | null>
  */
 export const LocationStateContext: Context<LocationStateSnapshot> =
   createContext<LocationStateSnapshot>(undefined);
+
+/**
+ * Read by no component. NavigationProvider changes its value in a transition so
+ * that React hydrates every boundary still dehydrated beneath it before that
+ * commit: React hydrates a dehydrated boundary first when a provider above it
+ * changes, and nothing re-renders for a value nobody reads. See
+ * NavigationProviderProps.hydration.
+ */
+export const HydrationBarrierContext: Context<number> =
+  createContext<number>(0);

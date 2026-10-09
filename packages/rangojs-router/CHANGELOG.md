@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Fixed: a component that hydrates late renders what the server rendered
+
+On a document load, a component in a `<Suspense>` or `loading()` boundary that
+streams in after the rest of the page hydrates with the document's state from
+every router hook: pathname, params, search params and segments, an idle
+`useNavigation()` and `useAction()`, a `useLinkStatus()` that is not pending, the
+handle data the HTML was rendered from, and `undefined` location state. Before,
+`usePathname`, `useParams`, `useSearchParams`, `useSegments`, `useNavigation`,
+`useLinkStatus` and `useAction` read the live state in that render, so a
+navigation or an action started while the page was still streaming made React
+report a hydration mismatch and render the boundary on the client.
+
+- Navigation state, params and action state show their live value right after
+  the component hydrates.
+- Late loader pushes and the entry's location state now reach readers once the
+  whole document has streamed and every boundary has hydrated, in one transition;
+  a reader re-renders only when its selection changes. Before, each reader took
+  them right after its own hydration.
+- A navigation that commits while the page is still streaming mounts its page
+  with the destination's values from its first render.
+- `useHandle` and `useLocationState` no longer use `useSyncExternalStore`.
+
 ### Changed: router hooks read only the router store
 
 The router store (the per-router `NavigationStore` and `EventController`, reached

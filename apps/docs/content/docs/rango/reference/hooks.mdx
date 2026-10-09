@@ -33,6 +33,10 @@ Data fetching happens in server-side [loaders](/docs/rango/features/loaders). Cl
 | `useNonce()`              | CSP nonce during SSR                          | `string \| undefined`                                                           |
 | `invalidateClientCache()` | Force client caches to miss (function)        | `void`                                                                          |
 
+### Hydration
+
+On a document load every router hook renders what the server rendered until the document has finished streaming. A component in a `<Suspense>` or `loading()` boundary that streams in after the rest of the page hydrates with the document's pathname, params, search params and segments, an idle navigation and action state, the handle data the HTML was rendered from, and `undefined` location state, even when a navigation or an action has started meanwhile. Navigation state, params and action state show their live value right after it hydrates. Late loader pushes and the entry's location state reach every reader once the whole document has streamed and hydrated. A navigation that commits before then mounts its page with the destination's values from its first render.
+
 ## Navigation
 
 ### useNavigation()

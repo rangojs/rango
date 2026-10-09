@@ -77,7 +77,9 @@ export function useSegments<T>(
       const fallbackState = buildSegmentsState(fallbackLocation, []);
       return selector ? selector(fallbackState) : fallbackState;
     }
-    const location = ctx.eventController.getLocation();
+    const location =
+      ctx.eventController.getHydrationSnapshot()?.state.location ??
+      ctx.eventController.getLocation();
     const handleState = ctx.eventController.getHandleState();
     const segmentsState = buildSegmentsState(
       location as URL,

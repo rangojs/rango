@@ -88,7 +88,9 @@ export function useLinkStatus(): LinkStatus {
     if (!ctx || linkTo === null) {
       return false;
     }
-    const state = ctx.eventController.getState();
+    const state =
+      ctx.eventController.getHydrationSnapshot()?.state ??
+      ctx.eventController.getState();
     return isPendingFor(linkTo, state.pendingUrl, origin);
   });
 

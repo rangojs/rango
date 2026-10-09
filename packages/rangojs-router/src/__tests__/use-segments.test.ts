@@ -63,6 +63,7 @@ function createMockEventController() {
     getState: () => ({ location }),
     getLocation: vi.fn(() => location),
     getHandleState: vi.fn(() => ({ segmentOrder, routeSegmentIds })),
+    getHydrationSnapshot: vi.fn(() => undefined),
     subscribe: vi.fn((_listener: () => void) => vi.fn()),
     subscribeToHandles: vi.fn((_listener: () => void) => vi.fn()),
   };
@@ -203,6 +204,7 @@ describe("useSegments", () => {
         segmentOrder: ["L0", "L0.@panel", "R0", "R0.@meta"],
         routeSegmentIds: ["L0", "R0"],
       }),
+      getHydrationSnapshot: vi.fn(() => undefined),
       subscribe: vi.fn(() => vi.fn()),
       subscribeToHandles: vi.fn(() => vi.fn()),
     };

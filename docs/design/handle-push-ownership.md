@@ -747,14 +747,14 @@ the view follows the tag.
 
 Nothing in the second half knows what a deferred push is. It does not ask
 who pushed or why: whatever changes the store after the freeze is late. The
-client did not change either: it already drains `metadata.handles` before
-`hydrateRoot` and applies `metadata.handlesLate` after the root commits
-(`browser/rsc-router.tsx`).
+client did not change either: it drains `metadata.handles` before
+`hydrateRoot` and writes `metadata.handlesLate` to the store as it arrives,
+where it waits while the hydration window is open (below).
 
 **A reader hydrates with the document's handle data** (rule 4):
 
-Rules 1 to 3 say what arrives "after hydration". That means after the ROOT
-hydrates (`hydrationCommitted`, `browser/rsc-router.tsx`). A `useHandle`
+Rules 1 to 3 say what arrives "after hydration". The late channel used to
+wait until the ROOT hydrated. A `useHandle`
 reader inside a boundary that hydrates later, a PPR hole or any streamed
 `<Suspense>`, used to initialize from the controller's live state. When the
 late channel had applied an update by then, the reader rendered elements
@@ -771,34 +771,33 @@ loader a running ssr false loader awaits keeps its live push on a HIT" went
 red on the first two pieces alone. It is green again with this one,
 unchanged.
 
-- `EventController.freezeHydrationHandleState()`
-  (`browser/event-controller.ts`) keeps the handle state the document was
-  rendered with; `initBrowserApp` calls it before `hydrateRoot`.
-  `getHydrationHandleState()` returns it once the live state has moved on,
-  and `undefined` while the live state is still that state. A partial
-  update merges into a copy of the containers, always, so no object the
-  controller handed out is ever written to: not the frozen state, and not a
+- The hydration window. `initBrowserApp` calls
+  `EventController.lockHydration()` before `hydrateRoot`. Until
+  `releaseHydrationLock()`, `getHandleState()` returns the handle state the
+  document was rendered with, and `setHandleData` / `setRouteSegmentIds`
+  wait in order; the late channel writes on arrival and its writes wait
+  there. A partial update merges into a copy of the containers, always, so
+  no object the controller handed out is ever written to, including a
   history entry's data, which a back/forward restore installs by reference.
-- `useHandle` (`browser/react/use-handle.ts`) reads it in a hydrating
-  render. It tells one from a client render the way `useLocationState` does
-  since #992: `useSyncExternalStore`, for its server snapshot. The mount
-  effect, which was already there, moves the reader on to the live state.
-- The server snapshot is the frozen state itself (`undefined` while the
-  live state is still it), and the client snapshot is a constant
-  `undefined`. The reader's initial state is
-  `hydrationState ?? getHandleState()`. React re-renders a reader after it
-  hydrated only when the two snapshots differ, which is exactly when
-  something arrived late: a reader that hydrated with nothing late is not
-  rendered again (the `hook-render-stability` pins did not move: 8 dev and
-  8 production in the router app, 4 and 4 in cloudflare-basic).
-- Because the client snapshot never changes and its function has one
-  identity, the store is constant as far as React can tell. No handle
-  update, a navigation's included, is a store mutation to it: there is no
-  per-render store effect, and no transition render is redone
-  synchronously because of this hook. An earlier version used "has the
-  live state moved on" as the client snapshot, which flipped once per
-  document and cost one such redo; do not go back to a snapshot that reads
-  the controller on the client.
+- `useHandle` (`browser/react/use-handle.ts`) initializes from
+  `getHandleState()`, so a reader that hydrates while the window is open,
+  however late its boundary, renders the document's values.
+- `NavigationProvider` closes the window. Once `documentRevealed`
+  (`browser/rsc-router.tsx`) resolves, after DOMContentLoaded and once no
+  `$?` or `$~` boundary is left (Fizz reveals streamed boundaries up to
+  300 ms after parsing ends), it changes `HydrationBarrierContext` in a
+  transition. No component reads that context: React hydrates a dehydrated
+  boundary first when a provider above it changes. After that commit the
+  provider releases the store; the waiting writes apply in order and one
+  notification reaches the readers, so a reader re-renders only when its
+  selection changed. A navigation committed before the reveal releases the
+  store before its update, so the page it mounts reads the live store. A
+  boundary of the document that persists across that navigation and is
+  still dehydrated then hydrates against the live store, and React reports
+  a mismatch where that differs from its HTML.
+- The first version told a hydrating render from a client render with
+  `useSyncExternalStore`'s server snapshot. External stores are forbidden in
+  this repo (AGENTS.md Hard rule 8); the window above replaced it.
 
 ### Options decided against
 

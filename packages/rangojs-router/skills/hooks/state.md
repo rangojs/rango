@@ -251,9 +251,9 @@ function FlashBanner() {
 ```
 
 Flash behavior is determined by the definition (`{ flash: true }`), not by which
-hook reads it. `useLocationState` reads the value during render (on the
-hydration render it returns `undefined` and reads in a post-mount effect, so
-SSR and hydration agree), then clears it from `history.state` via
+hook reads it. `useLocationState` reads the value during render (on a
+document load it returns `undefined` until the document has finished streaming
+and hydrating, so SSR and hydration agree), then clears it from `history.state` via
 `replaceState` in a `useEffect`. Every component reading the same flash
 definition sees the value, whenever it mounts, until the next navigation or
 back/forward commits its entry's state: an entry that carries no flash shows
@@ -342,7 +342,8 @@ development.
 
 Location state lives in the browser, so the server renders a document without
 it. `useLocationState` therefore hydrates as `undefined` and applies the stored
-value right after. For most state that is invisible. For state that decides
+value once the document has finished streaming and every boundary has
+hydrated. For most state that is invisible. For state that decides
 how much content is on the page, it is a layout shift on every refresh.
 
 The case this option exists for is a "load more" list. `?page=6` loads that
