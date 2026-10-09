@@ -1883,6 +1883,7 @@ export async function expectAdoptedClickBuildsThePageOnce(
   page: Page,
   fixture: PrefetchFalseFixture,
   name: string,
+  production: boolean,
 ): Promise<void> {
   const hub = await openHub(page, fixture);
   const requests = recordPartials(page, hub.pathname(name));
@@ -1901,41 +1902,42 @@ export async function expectAdoptedClickBuildsThePageOnce(
   expect(seen.hidden, "the layout the page keeps stayed").toEqual([]);
   expect(seen.blank, "the page was never blank").toBe(false);
 
-  // Dev only: the suspense audit (src/suspense-audit.ts) counts the trees
-  // React is handed. The click's is the one; the fill resolves gates.
-  // The audit reports two microtasks after a mount.
+  // Dev only (a build carries no audit): the suspense audit
+  // (src/suspense-audit.ts) counts the trees React is handed. The click's is
+  // the one; the fill resolves gates. The audit reports two microtasks after
+  // a mount.
+  if (production) return;
   await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)));
   const audit = await readSuspenseAudit(page);
-  if (audit) {
-    expect(
-      audit.treeUpdates,
-      "one tree update, the click's: the fill hands React none",
-    ).toEqual({ navigation: 1 });
-    const { swaps, untracked, idleFallbacks, resuspended } = audit;
-    const { remounts, drifts, uncaused, mutations } = audit;
-    expect(
-      {
-        swaps,
-        untracked,
-        idleFallbacks,
-        resuspended,
-        remounts,
-        drifts,
-        uncaused,
-        mutations,
-      },
-      JSON.stringify(audit.events),
-    ).toEqual({
-      swaps: 0,
-      untracked: 0,
-      idleFallbacks: 0,
-      resuspended: 0,
-      remounts: 0,
-      drifts: 0,
-      uncaused: 0,
-      mutations: 0,
-    });
-  }
+  expect(audit, "a dev build exposes the suspense audit").not.toBeNull();
+  expect(
+    audit!.treeUpdates,
+    "one tree update, the click's: the fill hands React none",
+  ).toEqual({ navigation: 1 });
+  const { swaps, untracked, idleFallbacks, resuspended } = audit!;
+  const { remounts, drifts, uncaused, mutations } = audit!;
+  expect(
+    {
+      swaps,
+      untracked,
+      idleFallbacks,
+      resuspended,
+      remounts,
+      drifts,
+      uncaused,
+      mutations,
+    },
+    JSON.stringify(audit!.events),
+  ).toEqual({
+    swaps: 0,
+    untracked: 0,
+    idleFallbacks: 0,
+    resuspended: 0,
+    remounts: 0,
+    drifts: 0,
+    uncaused: 0,
+    mutations: 0,
+  });
 }
 
 /**
@@ -3296,6 +3298,11 @@ export interface PrefetchFalseSuite {
   fixture: () => PrefetchFalseFixture;
   /** The app's guard: fails the test on an uncaught page error. */
   expectNoPageError: (page: Page) => { [Symbol.dispose]: () => void };
+  /**
+   * The describe runs against a build. A dev build must expose the suspense
+   * audit, and the cases that read it fail when it is missing.
+   */
+  production: boolean;
 }
 
 /**
@@ -3441,7 +3448,12 @@ export function definePrefetchFalseTests(
     "outer",
   ]) {
     it(`a click that adopts a prefetch builds the page once: ${name}`, (page, fixture) =>
-      expectAdoptedClickBuildsThePageOnce(page, fixture, name));
+      expectAdoptedClickBuildsThePageOnce(
+        page,
+        fixture,
+        name,
+        suite.production,
+      ));
   }
 
   it("a deferred loader shows its own fallback at once, beside what the prefetch ran", (page, fixture) =>

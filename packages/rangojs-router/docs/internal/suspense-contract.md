@@ -65,6 +65,12 @@ aggregate per set of loader references while it is pending; the per-loader strea
 `buildLoaderStreams` passes through untouched (`src/segment-system.tsx`). The three
 places that read them are `Suspender` (`src/route-content-wrapper.tsx:178`),
 `LoaderResolver` (`:334`) and the `useLoader` read site (`src/use-loader.tsx:226`).
+`armGates` (`src/browser/partial-update.ts:384`) is a producer too: for a click that
+adopts a `prefetch: false` prefetch it makes one new thenable per placeholder and writes
+it to the placeholder's `loaderData` or `component`, where `check:suspense-contract` does
+not look. A gate stays the same promise from the click to its fill: the fill resolves it,
+and an answer that replaces the page hands a content boundary that same gate, stamped
+`status: "fulfilled"`.
 
 A navigation to another URL hands new values, and that is not a violation: it is new
 data. So is a replacement that is already settled in a form React can read (rule 2).

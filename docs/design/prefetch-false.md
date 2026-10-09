@@ -652,9 +652,12 @@ and resolves what that tree is waiting for.** The fill hands React no tree.
 
 That follows a rule the client already kept everywhere else. An update that
 hands React a tree (`onUpdate`) belongs to a navigation or an action. Anything
-else that changes on a page goes through a store its readers subscribe to
-(loader refreshes through `loaderStore`, handle data through the event
-controller), or resolves a promise a boundary is already reading. The fill
+else that changes on a page reaches its readers as React state: the
+subscription of the store that received it dispatches the new value into the
+reading hook's state with `setState` inside `startTransition` (loader
+refreshes from `loaderStore` in `use-loader.tsx`, handle data from the event
+controller in `browser/react/use-handle.ts`), or it resolves a promise a
+boundary is already reading. The fill
 used to be the one exception: it rendered a second tree and committed it, and
 most of the parity gaps this document used to list came from the differences
 between that tree and the first.
