@@ -779,6 +779,12 @@ unchanged.
   there. A partial update merges into a copy of the containers, always, so
   no object the controller handed out is ever written to, including a
   history entry's data, which a back/forward restore installs by reference.
+  A late push is written to the page's history entry on arrival, so while
+  the window is open every writer that re-caches the page on screen (the
+  navigation bridge before it leaves, a server action, HMR, an action
+  refetch) takes `liveHandleDataForCache`, the entry's own data; writing
+  `getHandleState()` there would put the snapshot over the push, and Back
+  would restore the page without it.
 - `useHandle` (`browser/react/use-handle.ts`) initializes from
   `getHandleState()`, so a reader that hydrates while the window is open,
   however late its boundary, renders the document's values.

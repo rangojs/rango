@@ -77,6 +77,8 @@ export const NamedRoutes = {
   "interceptWhenShape.item": "/intercept-when-shape/item/:id",
   "interceptWhenShape.list": "/intercept-when-shape/list/:section",
   itemDetail: "/item/:itemId/detail",
+  lateHistoryOther: "/late-history/other",
+  lateHistoryPage: "/late-history/page",
   loaderCacheDep: "/loader-cache-dep",
   loaderCacheIdentityKeyed: "/loader-cache-identity/keyed",
   loaderCacheIdentityReaderFirst: "/loader-cache-identity/reader-first",

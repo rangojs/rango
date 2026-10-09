@@ -620,7 +620,11 @@ Server action execution pipeline, `useAction()` state tracking, action ID extrac
   `HydrationBarrierContext` in a transition once `documentRevealed` resolves
   (no `$?`/`$~` boundary left), which makes React hydrate every boundary
   still dehydrated, and releases the store after that commit. A navigation
-  committed earlier releases it before its update. Nav/action lanes:
+  committed earlier releases it before its update. While the window is open,
+  a history-cache write for the page on screen takes
+  `liveHandleDataForCache` (`browser/navigation-store.ts`), the entry's own
+  data with the late pushes, never `getHandleState()`, which would write the
+  snapshot over them. Nav/action lanes:
   the payload `handles` generator now streams to `fullySettled`, applied
   progressively by `processHandles`. `loader(Def, { ssr: false })` upgrades
   a loader's handles to guaranteed-SSR: document renders await it before first

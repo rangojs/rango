@@ -35,7 +35,10 @@ import {
   shouldStartViewTransition,
 } from "./partial-update.js";
 import { decideCommitGatedOff, mergeSegmentParams } from "./transition-when.js";
-import { generateHistoryKey } from "./navigation-store.js";
+import {
+  generateHistoryKey,
+  liveHandleDataForCache,
+} from "./navigation-store.js";
 import type { EventController } from "./event-controller.js";
 import { isInterceptOnlyCache } from "./intercept-utils.js";
 import {
@@ -248,7 +251,11 @@ export function createNavigationBridge(
         const currentKey = store.getHistoryKey();
         const currentCache = store.getCachedSegments(currentKey);
         if (currentCache?.segments) {
-          const currentHandleData = eventController.getHandleState().data;
+          const currentHandleData = liveHandleDataForCache(
+            eventController,
+            store,
+            currentKey,
+          );
           store.cacheSegmentsForHistory(
             historyKey,
             currentCache.segments,
@@ -326,7 +333,11 @@ export function createNavigationBridge(
       const sourceHistoryKey = store.getHistoryKey();
       const sourceCached = store.getCachedSegments(sourceHistoryKey);
       if (sourceCached?.segments && sourceCached.segments.length > 0) {
-        const currentHandleData = eventController.getHandleState().data;
+        const currentHandleData = liveHandleDataForCache(
+          eventController,
+          store,
+          sourceHistoryKey,
+        );
         store.updateCacheHandleData(sourceHistoryKey, currentHandleData);
       }
 

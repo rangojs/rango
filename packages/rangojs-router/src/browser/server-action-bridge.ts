@@ -13,6 +13,7 @@ import {
   reconcileErrorSegments,
 } from "./segment-reconciler.js";
 import { startTransition } from "react";
+import { liveHandleDataForCache } from "./navigation-store.js";
 import type { EventController, ActionHandle } from "./event-controller.js";
 import {
   toNetworkError,
@@ -649,7 +650,11 @@ export function createServerActionBridge(
         // handle pushed by the error-boundary render still applies — see the
         // "normal" case below for why caching after onUpdate dropped it.
         store.setSegmentIds(segmentIdsAfterError);
-        const currentHandleData = eventController.getHandleState().data;
+        const currentHandleData = liveHandleDataForCache(
+          eventController,
+          store,
+          currentKey,
+        );
         store.cacheSegmentsForHistory(
           currentKey,
           errorResult.segments,
@@ -852,7 +857,11 @@ export function createServerActionBridge(
             // Location state already applied above (pre-switch); this action's
             // UI render is skipped because a later sibling consolidates.
             store.setSegmentIds(matched);
-            const currentHandleData = eventController.getHandleState().data;
+            const currentHandleData = liveHandleDataForCache(
+              eventController,
+              store,
+              currentKey,
+            );
             store.cacheSegmentsForHistory(
               currentKey,
               fullSegments,
@@ -916,7 +925,11 @@ export function createServerActionBridge(
           //
           // Location state already applied above (pre-switch). Update store.
           store.setSegmentIds(matched);
-          const currentHandleData = eventController.getHandleState().data;
+          const currentHandleData = liveHandleDataForCache(
+            eventController,
+            store,
+            currentKey,
+          );
           store.cacheSegmentsForHistory(
             currentKey,
             fullSegments,

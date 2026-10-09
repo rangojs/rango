@@ -4,7 +4,10 @@ import type {
   ResolvedSegment,
   StreamingToken,
 } from "./types.js";
-import { generateHistoryKey } from "./navigation-store.js";
+import {
+  generateHistoryKey,
+  liveHandleDataForCache,
+} from "./navigation-store.js";
 import {
   handleNavigationStart,
   ensureHistoryKey,
@@ -180,7 +183,11 @@ export function createNavigationTransaction(
 
     store.setHistoryKey(historyKey);
 
-    const currentHandleData = eventController.getHandleState().data;
+    // storeOnly re-caches the page on screen (an action refetch), which can
+    // commit with no tree and so never release the hydration window.
+    const currentHandleData = storeOnly
+      ? liveHandleDataForCache(eventController, store, historyKey)
+      : eventController.getHandleState().data;
     store.cacheSegmentsForHistory(historyKey, segments, currentHandleData);
 
     if (storeOnly) {
