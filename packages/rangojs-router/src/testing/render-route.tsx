@@ -110,7 +110,6 @@ import type { ThemeConfig } from "../theme/types.js";
 import { resolveThemeConfig } from "../theme/constants.js";
 import { isUnderTestRunner } from "../runtime-env.js";
 import { setupNavigationBridgeDelegatedPrefetch } from "../browser/navigation-bridge.js";
-import { resetAdaptiveStrategyForTesting } from "../browser/prefetch/default-strategy.js";
 import { resetPrefetchObserverForTesting } from "../browser/prefetch/observer.js";
 import type { PrefetchStrategy } from "../router/prefetch-default.js";
 import { auditTreeCause } from "../suspense-audit.js";
@@ -492,7 +491,6 @@ function DelegatedPrefetchRegistration({
             }
             pendingPrefetchReset = undefined;
             resetPrefetchObserverForTesting();
-            resetAdaptiveStrategyForTesting();
           });
         }
       }
@@ -873,7 +871,9 @@ export async function renderRoute(
       // same-structure / fully-prefetched / optimistic hold lanes are not
       // modeled: without transition() the commit stays urgent.
       if (shouldStartViewTransition(segments, gatedOff)) {
-        commitInTransition(emit, segments, { root, metadata }, ["navigation"]);
+        commitInTransition(store.loaders, emit, segments, { root, metadata }, [
+          "navigation",
+        ]);
       } else {
         emit({ root, metadata });
       }

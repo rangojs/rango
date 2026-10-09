@@ -7,7 +7,6 @@ import React, {
   useEffect,
   useMemo,
   useRef,
-  useSyncExternalStore,
   type ForwardRefExoticComponent,
   type RefAttributes,
 } from "react";
@@ -20,7 +19,6 @@ import {
   subscribeToPrefetchScopeChange,
 } from "../link-interceptor.js";
 import { subscribeToLocationChange } from "../event-controller.js";
-import { subscribeToNothing } from "./subscribe-to-nothing.js";
 import { isLocationStateDefinition } from "./location-state-shared.js";
 
 export type StateOrGetter<T = unknown> = T | (() => T);
@@ -39,7 +37,7 @@ import {
 } from "../prefetch/loader.js";
 import { observeForPrefetch } from "../prefetch/observer.js";
 import {
-  getDefaultPrefetchStrategy,
+  ENVIRONMENT_DEFAULT_PREFETCH,
   resolveAdaptiveStrategy,
   subscribeToAdaptiveStrategyChange,
 } from "../prefetch/default-strategy.js";
@@ -240,19 +238,11 @@ export const Link: ForwardRefExoticComponent<
   ref,
 ) {
   const ctx = useContext(NavigationStoreContext);
-  // Origin from the store location — the same both-sides source
-  // useSearchParams seeds from (SSR: the live request's URL; browser:
-  // window.location), so data-external agrees across hydration. Origin is
-  // immutable per document, so the inline getState() read cannot tear.
-  // window is the provider-less browser fallback (tests, portals outside
-  // the app root); provider-less SSR has no origin and keeps links internal.
-  const storeLocation = ctx?.eventController.getState().location as
-    | URL
-    | undefined;
-  const origin =
-    storeLocation?.origin ??
-    (typeof window !== "undefined" ? window.location.origin : undefined);
-  const isExternal = isExternalUrl(to, origin);
+  // The document's origin from the router store, the same on both sides
+  // (SSR: the live request's URL; browser: the store location), so
+  // data-external agrees across hydration. Without a provider there is no
+  // store and no origin: links stay internal.
+  const isExternal = isExternalUrl(to, ctx?.origin);
 
   // Auto-prefix with basename for app-local paths.
   // Skip if external, already prefixed, or not a root-relative path.
@@ -264,19 +254,11 @@ export const Link: ForwardRefExoticComponent<
     return to === "/" ? bn : bn + to;
   }, [to, isExternal, ctx?.basename]);
 
-  // No explicit `prefetch` prop: fall back to the router-wide default
-  // (server-resolved, applied at browser init — before hydration, so this
-  // render-time read never races the metadata). Adaptive reads the current
-  // input capability rather than a module-load snapshot.
+  // No explicit `prefetch` prop: fall back to the router-wide default from
+  // the router store. Adaptive is resolved against the input capability when a
+  // prefetch is armed or triggered, never during render.
   const configuredStrategy =
-    prefetch ?? ctx?.defaultPrefetch ?? getDefaultPrefetchStrategy();
-  const resolvedStrategy = useSyncExternalStore(
-    configuredStrategy === "adaptive"
-      ? subscribeToAdaptiveStrategyChange
-      : subscribeToNothing,
-    () => resolveAdaptiveStrategy(configuredStrategy),
-    () => (configuredStrategy === "adaptive" ? "hover" : configuredStrategy),
-  );
+    prefetch ?? ctx?.defaultPrefetch ?? ENVIRONMENT_DEFAULT_PREFETCH;
 
   // Internal ref for viewport observation; merge with forwarded ref
   const internalRef = useRef<HTMLAnchorElement | null>(null);
@@ -375,8 +357,9 @@ export const Link: ForwardRefExoticComponent<
 
   const handleMouseEnter = useCallback(() => {
     const element = internalRef.current;
+    const strategy = resolveAdaptiveStrategy(configuredStrategy);
     if (
-      (resolvedStrategy === "hover" || resolvedStrategy === "viewport") &&
+      (strategy === "hover" || strategy === "viewport") &&
       !isExternal &&
       ctx?.store &&
       (!element ||
@@ -395,17 +378,26 @@ export const Link: ForwardRefExoticComponent<
         prefetchKey,
       );
     }
-  }, [resolvedStrategy, resolvedTo, isExternal, ctx, prefetchKey]);
+  }, [configuredStrategy, resolvedTo, isExternal, ctx, prefetchKey]);
 
   // Viewport/render prefetch: waits for idle before starting,
   // uses concurrency-limited queue to avoid flooding.
   useEffect(() => {
     if (isExternal || !ctx?.store) return;
-    const isViewport = resolvedStrategy === "viewport";
-    const isRender = resolvedStrategy === "render";
-    if (!isViewport && !isRender) return;
+    if (
+      configuredStrategy !== "viewport" &&
+      configuredStrategy !== "render" &&
+      configuredStrategy !== "adaptive"
+    ) {
+      return;
+    }
 
     const armPrefetch = (): (() => void) => {
+      const strategy = resolveAdaptiveStrategy(configuredStrategy);
+      const isViewport = strategy === "viewport";
+      const isRender = strategy === "render";
+      if (!isViewport && !isRender) return () => {};
+
       const element = internalRef.current;
       if (
         element &&
@@ -457,27 +449,30 @@ export const Link: ForwardRefExoticComponent<
     };
 
     let disarmPrefetch = armPrefetch();
+    const rearm = () => {
+      disarmPrefetch();
+      disarmPrefetch = armPrefetch();
+    };
     const element = internalRef.current;
     const unsubscribeScope = element
-      ? subscribeToPrefetchScopeChange(element, () => {
-          disarmPrefetch();
-          disarmPrefetch = armPrefetch();
-        })
+      ? subscribeToPrefetchScopeChange(element, rearm)
       : undefined;
     const unsubscribeLocation = subscribeToLocationChange(
       ctx.eventController,
-      () => {
-        disarmPrefetch();
-        disarmPrefetch = armPrefetch();
-      },
+      rearm,
     );
+    const unsubscribeAdaptive =
+      configuredStrategy === "adaptive"
+        ? subscribeToAdaptiveStrategyChange(rearm)
+        : undefined;
 
     return () => {
       unsubscribeScope?.();
       unsubscribeLocation();
+      unsubscribeAdaptive?.();
       disarmPrefetch();
     };
-  }, [resolvedStrategy, resolvedTo, isExternal, ctx, prefetchKey]);
+  }, [configuredStrategy, resolvedTo, isExternal, ctx, prefetchKey]);
 
   return (
     <a

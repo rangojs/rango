@@ -29,9 +29,10 @@
  *     reclaim a bucket that is about to be reused, and is held until any
  *     in-flight load settles.
  *
- * The store is intentionally module-level: each browser tab is its own JS
- * realm, so there is no cross-request pollution. Server renders never mutate
- * the store — the hook falls back to `OutletContext.loaderData`.
+ * Each router's NavigationStore owns one (navigation-store.ts), and hooks reach
+ * it through NavigationStoreContext: the router store is the single source of
+ * truth. Server renders have no store — the hook falls back to
+ * `OutletContext.loaderData`.
  */
 
 import { unwrapsSynchronously } from "./thenable-status.js";
@@ -596,11 +597,5 @@ export class LoaderStore {
     this.pendingStreams.clear();
   }
 }
-
-/**
- * Module-level singleton. Each browser tab gets its own; SSR never mutates it.
- * The hook falls through to `OutletContext.loaderData` during the server render.
- */
-export const loaderStore: LoaderStore = new LoaderStore();
 
 export const EMPTY_LOADER_SNAPSHOT: LoaderEntry = EMPTY_SNAPSHOT;

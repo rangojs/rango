@@ -357,6 +357,8 @@ export function NavigationProvider({
       navigate,
       refresh,
       defaultPrefetch: initialPayload.metadata.defaultPrefetch,
+      // Fixed for the document: read once, with the stable value.
+      origin: (eventController.getState().location as URL | undefined)?.origin,
     } as NavigationStoreContextValue;
     Object.defineProperty(value, "basename", {
       configurable: true,

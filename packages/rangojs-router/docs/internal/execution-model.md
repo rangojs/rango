@@ -818,7 +818,8 @@ This is a **client-only** contract: which mounted `useLoader` / `useFetchLoader`
 reads observe the result of a `load()`. It is independent of the server
 execution model above and of `cache()` / `revalidate()`; it never changes the
 request sent to the server. Owned by `src/use-loader.tsx` + `src/loader-store.ts`
-(the per-tab module-level `loaderStore`). The store is partitioned into buckets;
+(a `LoaderStore` per router: the `NavigationStore` owns it as `store.loaders`, and
+hooks reach it through `NavigationStoreContext`). The store is partitioned into buckets;
 each bucket key is `loader.$$id`, or `loader.$$id + key` when the hook is given
 an explicit client refresh `key`. Buckets of one loader form a family (indexed
 by `$$id`) so a route-context reset can clear them together.
@@ -836,7 +837,7 @@ a route-context reader whose content is HELD on screen by a transition commit
 `isLoading: true` until that commit lands. Every transition commit goes through
 `commitInTransition` (browser/partial-update.ts; `renderRoute`'s navigate() in
 testing/render-route.tsx reuses it for a `transition()` chain), which calls
-`loaderStore.announcePendingStreams(segments)` INSIDE its `startTransition`:
+`store.loaders.announcePendingStreams(segments)` INSIDE its `startTransition`:
 that registers each loader segment whose data is still a pending promise
 (settled Flight chunks — cached/reused segments, forceAwait lanes — are skipped
 via `unwrapsSynchronously`, thenable-status.ts) and fires each route-context

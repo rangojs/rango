@@ -158,9 +158,10 @@ receives the update and calls `setPayload`.
 
 What a new feature that needs a late update uses instead:
 
-- **A store its readers subscribe to.** Loader refreshes go through `loaderStore.subscribe`
-  (`src/use-loader.tsx:308`), handle updates through `eventController.subscribeToHandles`
-  (`src/browser/react/use-handle.ts:110`). The reader re-renders where it sits.
+- **The router store, through its subscription.** Loader refreshes go through
+  `store.loaders.subscribe` (`src/use-loader.tsx`), handle updates through
+  `eventController.subscribeToHandles` (`src/browser/react/use-handle.ts`). The value is
+  dispatched into the reader's React state, and the reader re-renders where it sits.
 - **A pending promise read with `use()`.** Hand the reader one stable promise when the
   page commits (rule 1); when it settles, React reveals the reader. That is how a
   streamed loader reaches its reader with no second tree update.

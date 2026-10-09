@@ -57,6 +57,13 @@ export interface NavigationStoreContextValue {
 
   /** Router default from this instance's initial payload. */
   defaultPrefetch?: PrefetchStrategy;
+
+  /**
+   * The document's origin, fixed for its lifetime. Link compares absolute
+   * hrefs against it (data-external) and useLinkStatus resolves link targets
+   * with it.
+   */
+  origin: string | undefined;
 }
 
 /**

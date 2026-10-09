@@ -110,6 +110,8 @@ const { path, segmentIds, location } = useSegments();
 const isShopRoute = useSegments((s) => s.path[0] === "shop"); // selector
 ```
 
+The selector is applied when the router store changes (a navigation or new handle data), as with `useNavigation` and `useAction`. A new selector function on a re-render takes effect at the next change; to derive from a prop, call `useSegments()` and derive in render.
+
 ### useLinkStatus()
 
 Pending state inside a `<Link>`: `pending` is `true` while a navigation to that link's `to` is in flight. The component calling it must render inside a `Link`.

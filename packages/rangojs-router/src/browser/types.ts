@@ -556,6 +556,9 @@ export type StateListener = () => void;
  * EventController owns the public navigation lifecycle exposed by hooks.
  */
 export interface NavigationStore {
+  /** Client loader data for useLoader / useFetchLoader (loader-store.ts). */
+  readonly loaders: import("../loader-store.js").LoaderStore;
+
   // Internal segment state (for bridges)
   getSegmentState(): SegmentState;
   setPath(path: string): void;

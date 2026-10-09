@@ -35,7 +35,6 @@ import {
   setPrefetchConcurrency,
   setPrefetchDecoder,
 } from "./prefetch/loader.js";
-import { setDefaultPrefetchStrategy } from "./prefetch/default-strategy.js";
 import { setAppVersion } from "./app-version.js";
 import {
   isInterceptSegment,
@@ -378,13 +377,10 @@ export async function initBrowserApp(
   if (prefetchConcurrency !== undefined) {
     setPrefetchConcurrency(prefetchConcurrency);
   }
-  // Apply the router-wide default Link prefetch strategy. Undefined (older
-  // server payload) keeps the module's environment-aware default, which equals
-  // the server resolver's default by contract — see default-strategy.ts.
+  // The router-wide default Link prefetch strategy, for delegated plain
+  // anchors (navigation bridge). Undefined falls back to the environment
+  // default (default-strategy.ts).
   const defaultPrefetch = initialPayload.metadata?.defaultPrefetch;
-  if (defaultPrefetch !== undefined) {
-    setDefaultPrefetchStrategy(defaultPrefetch);
-  }
 
   // Wire the RSC decoder so prefetches decode eagerly and warm the route's
   // client chunks (same createFromFetch the navigation client uses). Fragment

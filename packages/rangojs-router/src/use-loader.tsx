@@ -14,7 +14,12 @@ import {
   type ReactNode,
 } from "react";
 import { OutletContext, type OutletContextValue } from "./outlet-context.js";
-import { loaderStore, type LoaderEntry } from "./loader-store.js";
+import {
+  EMPTY_LOADER_SNAPSHOT,
+  type LoaderEntry,
+  type LoaderStore,
+} from "./loader-store.js";
+import { NavigationStoreContext } from "./browser/react/context.js";
 import { decodeLoaderEntry } from "./decode-loader-results.js";
 import { warnAwaitedSsrSuspension } from "./ssr-suspension-warning.js";
 import { SETTLED_THENABLE } from "./thenable-status.js";
@@ -255,10 +260,15 @@ function useLoaderInternal<T>(
   const bucketKey =
     effectiveKey === undefined ? loaderId : `${loaderId}::${effectiveKey}`;
 
+  // The router store's loader data (loader-store.ts). None on the server,
+  // where the hook reads the route's loader data only.
+  const loaders: LoaderStore | undefined = useContext(NavigationStoreContext)
+    ?.store?.loaders;
+
   const groupRefetch = useCallback(async (): Promise<void> => {
-    if (!loaderId) return;
-    const requestId = loaderStore.reserveRequestId(bucketKey);
-    loaderStore.beginRequest(bucketKey, requestId);
+    if (!loaderId || !loaders) return;
+    const requestId = loaders.reserveRequestId(bucketKey);
+    loaders.beginRequest(bucketKey, requestId);
     try {
       const url = new URL(window.location.href);
       url.searchParams.set("_rsc_loader", loaderId);
@@ -271,15 +281,15 @@ function useLoaderInternal<T>(
       if (payload.loaderError) {
         throw new Error(payload.loaderError.message);
       }
-      loaderStore.finishData(bucketKey, requestId, payload.loaderResult);
+      loaders.finishData(bucketKey, requestId, payload.loaderResult);
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e));
-      loaderStore.finishError(bucketKey, requestId, err);
+      loaders.finishError(bucketKey, requestId, err);
       throw err;
     } finally {
-      loaderStore.setLoading(bucketKey, requestId, false);
+      loaders.setLoading(bucketKey, requestId, false);
     }
-  }, [loaderId, bucketKey]);
+  }, [loaderId, bucketKey, loaders]);
 
   // Held-navigation pin: a transition commit whose stream for this loader is
   // still pending announces it (loader-store.ts announcePendingStreams, which
@@ -293,14 +303,17 @@ function useLoaderInternal<T>(
     snapshot: LoaderEntry;
   }>(() => ({
     bucketKey,
-    snapshot: loaderStore.getSnapshot(bucketKey),
+    snapshot: loaders?.getSnapshot(bucketKey) ?? EMPTY_LOADER_SNAPSHOT,
   }));
+  // A new bucket (its key changed) reads nothing from the store during
+  // render: it renders empty until the effect below delivers its snapshot.
   const sharedSnapshot =
     sharedState.bucketKey === bucketKey
       ? sharedState.snapshot
-      : loaderStore.getSnapshot(bucketKey);
+      : EMPTY_LOADER_SNAPSHOT;
   useEffect(() => {
-    const initial = loaderStore.getSnapshot(bucketKey);
+    if (!loaders) return;
+    const initial = loaders.getSnapshot(bucketKey);
     if (initial !== sharedSnapshot) {
       startTransition(() => {
         setSharedState({ bucketKey, snapshot: initial });
@@ -309,10 +322,10 @@ function useLoaderInternal<T>(
     // ephemeral: a reader with no route context has no route-context reset
     // trigger, so its keyed bucket is reference-counted by the store. A
     // route-registered reader makes the bucket sticky (reset via clearFamily).
-    return loaderStore.subscribe(
+    return loaders.subscribe(
       bucketKey,
       () => {
-        const next = loaderStore.getSnapshot(bucketKey);
+        const next = loaders.getSnapshot(bucketKey);
         startTransition(() => {
           setSharedState({ bucketKey, snapshot: next });
         });
@@ -333,7 +346,7 @@ function useLoaderInternal<T>(
     // groupKey, and groupRefetch are the only inputs that require a fresh
     // subscription (groupList is memoized on groupKey; groupRefetch is stable
     // per bucketKey).
-  }, [bucketKey, hasContextData, groupKey, groupRefetch]);
+  }, [bucketKey, hasContextData, groupKey, groupRefetch, loaders]);
 
   // Local state holds the result of:
   //   - parameterized / mutation `load()` calls (load({ params }), POST,
@@ -379,10 +392,10 @@ function useLoaderInternal<T>(
       lastSharedRequestIdRef.current = null;
       // Reset every sticky bucket of this loader (keyed or not). Ephemeral
       // (unregistered keyed) buckets are left to their refcount lifecycle.
-      loaderStore.clearFamily(loaderId);
+      loaders?.clearFamily(loaderId);
       prevContextDataRef.current = contextData;
     }
-  }, [contextData, loaderId]);
+  }, [contextData, loaderId, loaders]);
 
   // Read priority: a committed parameterized load() result overrides the shared
   // snapshot; a committed shared snapshot overrides the server-seeded context.
@@ -418,15 +431,17 @@ function useLoaderInternal<T>(
       const bucket = bucketKeyRef.current;
       const hasDedicatedBucket = bucket !== id;
 
-      const shared = hasDedicatedBucket
-        ? isShareableGet(loadOptions)
-        : isPlainRefetch(loadOptions) && hasContextDataRef.current;
+      const shared =
+        loaders !== undefined &&
+        (hasDedicatedBucket
+          ? isShareableGet(loadOptions)
+          : isPlainRefetch(loadOptions) && hasContextDataRef.current);
       let sharedRequestId = -1;
       let localRequestId = -1;
       if (shared) {
-        sharedRequestId = loaderStore.reserveRequestId(bucket);
+        sharedRequestId = loaders.reserveRequestId(bucket);
         lastSharedRequestIdRef.current = sharedRequestId;
-        loaderStore.beginRequest(bucket, sharedRequestId);
+        loaders.beginRequest(bucket, sharedRequestId);
       } else {
         localRequestId = ++localRequestIdRef.current;
         setLocalIsLoading(true);
@@ -513,7 +528,7 @@ function useLoaderInternal<T>(
 
         const result = payload.loaderResult;
         if (shared) {
-          loaderStore.finishData(bucket, sharedRequestId, result);
+          loaders.finishData(bucket, sharedRequestId, result);
         } else if (localRequestId === localRequestIdRef.current) {
           startTransition(() => {
             setLocalFetchedData({ has: true, value: result });
@@ -524,7 +539,7 @@ function useLoaderInternal<T>(
       } catch (e) {
         const err = e instanceof Error ? e : new Error(String(e));
         if (shared) {
-          loaderStore.finishError(bucket, sharedRequestId, err);
+          loaders.finishError(bucket, sharedRequestId, err);
         } else if (localRequestId === localRequestIdRef.current) {
           setLocalError(err);
           setLocalIsLoading(false);
@@ -535,11 +550,11 @@ function useLoaderInternal<T>(
         return dataRef.current as T;
       } finally {
         if (shared) {
-          loaderStore.setLoading(bucket, sharedRequestId, false);
+          loaders.setLoading(bucket, sharedRequestId, false);
         }
       }
     },
-    [throwOnError],
+    [throwOnError, loaders],
   );
 
   if (throwOnError) {
@@ -718,8 +733,10 @@ export function useFetchLoader<T>(
 export function useRefreshLoaders(): (
   groups: string | string[],
 ) => Promise<void> {
+  const loaders = useContext(NavigationStoreContext)?.store?.loaders;
   return useCallback(
-    (groups: string | string[]) => loaderStore.refreshGroups(groups),
-    [],
+    (groups: string | string[]) =>
+      loaders ? loaders.refreshGroups(groups) : Promise.resolve(),
+    [loaders],
   );
 }

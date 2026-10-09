@@ -291,9 +291,11 @@ Public API (`Rango` interface):
   identifies an application route and skips resource decoding/classification
   entirely. Extensionless unsafe GET links still need an explicit opt-out.
   The server resolves the strategy in `router/prefetch-default.ts`, ships it in
-  initial payload metadata, and threads it through `navigation-bridge.ts` so
-  Link and delegated resolution cannot diverge. `Link` reads it at render and
-  subscribes to adaptive capability changes; after hydration,
+  initial payload metadata, and threads it through the router store
+  (`NavigationStoreContext.defaultPrefetch`) and `navigation-bridge.ts` so
+  Link and delegated resolution cannot diverge. `Link` resolves adaptive when it
+  arms or is hovered, never during render, and re-arms on capability changes;
+  after hydration,
   `browser/link-interceptor.ts` observes current and dynamically inserted
   eligible anchors. Scope lookup is one ancestor `closest()` check when a link
   arms. Scope mutations notify only descendant delegated anchors and subscribed
@@ -303,9 +305,8 @@ Public API (`Rango` interface):
   stay armed or completed instead of being parsed and prefetched again after
   every navigation. A completed local prefetch-cache invalidation separately
   re-arms tracked viewport/render anchors under the new Rango-state key without
-  scanning rejected anchors or the document. `observer.ts` and adaptive strategy
-  caching expose test-only resets instead of carrying test-global identity
-  branches in production.
+  scanning rejected anchors or the document. `observer.ts` exposes a test-only
+  reset instead of carrying test-global identity branches in production.
   Per-Link `prefetch` wins over the router default unless an ancestor scope
   disables the entire subtree.
 - Named cache profiles via `cacheProfiles`, nonce provider, version tracking

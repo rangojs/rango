@@ -4,7 +4,6 @@ import { act, cleanup, render } from "@testing-library/react";
 import { Suspense, useDeferredValue, useState, type ReactNode } from "react";
 import { OutletProvider } from "../outlet-provider.js";
 import { useFetchLoader, useLoader } from "../use-loader.js";
-import { loaderStore } from "../loader-store.js";
 import type { LoaderDefinition } from "../types.js";
 
 // Why every read with route context calls use(): see use-loader.tsx.
@@ -30,7 +29,6 @@ function Harness({ initial }: { initial: ReactNode }) {
 
 afterEach(() => {
   cleanup();
-  loaderStore.reset();
   vi.restoreAllMocks();
 });
 

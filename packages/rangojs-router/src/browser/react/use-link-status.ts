@@ -82,8 +82,7 @@ export function useLinkStatus(): LinkStatus {
   const linkTo = useContext(LinkContext);
   const ctx = useContext(NavigationStoreContext);
 
-  const origin =
-    typeof window !== "undefined" ? window.location.origin : "http://localhost";
+  const origin = ctx?.origin ?? "http://localhost";
 
   const [basePending, setBasePending] = useState<boolean>(() => {
     if (!ctx || linkTo === null) {

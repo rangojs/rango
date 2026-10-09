@@ -31,7 +31,7 @@ import {
 } from "./validate-redirect-origin.js";
 import type { NavigationUpdate } from "./types.js";
 import { OPTIMISTIC_COMMIT_TRANSITION_TYPE } from "./optimistic-commit.js";
-import { loaderStore } from "../loader-store.js";
+import type { LoaderStore } from "../loader-store.js";
 import {
   collectClientRevalidationDecisions,
   setActiveInterceptTargets,
@@ -87,13 +87,14 @@ function treeCause(mode: UpdateMode, traversal?: boolean): TreeUpdateCause {
  * its fallback. Also used by renderRoute's navigate() (testing/render-route.tsx).
  */
 export function commitInTransition(
+  loaders: LoaderStore,
   onUpdate: UpdateSubscriber,
   segments: readonly ResolvedSegment[],
   update: NavigationUpdate,
   transitionTypes: readonly string[],
 ): void {
   startTransition(() => {
-    loaderStore.announcePendingStreams(segments);
+    loaders.announcePendingStreams(segments);
     if (addTransitionType) {
       for (const type of transitionTypes) addTransitionType(type);
     }
@@ -476,9 +477,13 @@ export function createPartialUpdater(
             auditTreeCause(treeCause(mode, tx.traversal));
           }
           if (shouldStartViewTransition(existingSegments, cachedGatedOff)) {
-            commitInTransition(onUpdate, existingSegments, cachedUpdate, [
-              "navigation",
-            ]);
+            commitInTransition(
+              store.loaders,
+              onUpdate,
+              existingSegments,
+              cachedUpdate,
+              ["navigation"],
+            );
           } else {
             onUpdate(cachedUpdate);
           }
@@ -740,6 +745,7 @@ export function createPartialUpdater(
         (mode.type === "action" || mode.type === "stale-revalidation")
       ) {
         commitInTransition(
+          store.loaders,
           onUpdate,
           reconciled.mainSegments,
           update,
@@ -747,6 +753,7 @@ export function createPartialUpdater(
         );
       } else if (hasTransition) {
         commitInTransition(
+          store.loaders,
           onUpdate,
           reconciled.mainSegments,
           update,
@@ -781,6 +788,7 @@ export function createPartialUpdater(
         // segment reconciles in place (clientGroup key), so a read that still
         // suspends must hold the presented content, not flash a fallback.
         commitInTransition(
+          store.loaders,
           onUpdate,
           reconciled.mainSegments,
           update,
@@ -863,6 +871,7 @@ export function createPartialUpdater(
         if (fullGatedOff) onUpdate(fullUpdate);
         else {
           commitInTransition(
+            store.loaders,
             onUpdate,
             segments,
             fullUpdate,
@@ -871,13 +880,16 @@ export function createPartialUpdater(
         }
       } else if (mode.type === "action" && !fullGatedOff) {
         commitInTransition(
+          store.loaders,
           onUpdate,
           segments,
           fullUpdate,
           fullHasTransition ? ["action"] : [],
         );
       } else if (fullHasTransition) {
-        commitInTransition(onUpdate, segments, fullUpdate, ["navigation"]);
+        commitInTransition(store.loaders, onUpdate, segments, fullUpdate, [
+          "navigation",
+        ]);
       } else {
         onUpdate(fullUpdate);
       }
