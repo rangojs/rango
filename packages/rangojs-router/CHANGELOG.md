@@ -25,6 +25,16 @@ screen or after you left it. An entry re-rendered since (an action on it, an
 HMR update) no longer shares the page's segments and does not receive later
 pushes.
 
+### Fixed: late handle pushes and location state reach a tab you switch away from while the page is still streaming, without waiting for you to come back
+
+Before: if you switched away from a tab after it had painted but before the
+page finished streaming, `useHandle` data pushed late by a loader and the
+entry's `useLocationState` value waited until you returned, because the router
+polled for the document's boundaries to be revealed on an animation frame,
+which hidden tabs do not run. After: the poll uses a timer, so both land while
+the tab is hidden. A tab opened in the background still settles when it is
+first shown: React reveals streamed content only after the tab paints.
+
 ## 0.22.1 (2026-10-10)
 
 ### Fixed: a fresh install builds again with `@vitejs/plugin-rsc` 0.5.36

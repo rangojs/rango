@@ -288,8 +288,11 @@ export interface NavigationProviderProps {
    * `settled` resolves once the stream has ended and React has revealed every
    * boundary. Until then location state is `undefined`, as SSR rendered it;
    * then one transition gives the entry's state and changes
-   * HydrationBarrierContext, and the store is released after that commit. A
-   * navigation committed earlier releases the store before its update.
+   * HydrationBarrierContext, and the store is released after that commit
+   * (handle data lands in that release notification). A navigation committed
+   * earlier releases the store before its update, for the whole hold when the
+   * navigation is held: an old-page boundary hydrating meanwhile reads
+   * the destination's values and can mismatch.
    * Absent for a provider mounted on the client.
    */
   hydration?: { settled: Promise<void> };
