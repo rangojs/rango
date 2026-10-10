@@ -35,6 +35,26 @@ which hidden tabs do not run. After: the poll uses a timer, so both land while
 the tab is hidden. A tab opened in the background still settles when it is
 first shown: React reveals streamed content only after the tab paints.
 
+### Fixed: the dev server no longer stays broken after route discovery races a module reload
+
+Before: when `vite dev` reloaded its server modules while route discovery was
+running at startup (for example because a watched file changed during boot),
+discovery could fail with:
+
+```
+[rango] Router discovery failed: Error: [@rangojs/router] Failed to resolve include at prefix "/your-prefix" during route discovery: include() could not resolve the server projection for clientUrls() module "/src/urls/client-urls.tsx#default" ...
+```
+
+Every request then returned a 500 until you restarted the dev server, even
+though nothing in your app was wrong. Apps that mount a `clientUrls()` module
+with `include()` hit this.
+
+Now: discovery notices the reload and runs again, so the dev server starts
+normally. If discovery fails at startup for another reason, such as a syntax
+error you then fix, the next save of a source file runs it again, as it already
+did after a failed hot update, instead of leaving the server broken until a
+restart. Nothing changes in your code or in production builds.
+
 ## 0.22.1 (2026-10-10)
 
 ### Fixed: a fresh install builds again with `@vitejs/plugin-rsc` 0.5.36

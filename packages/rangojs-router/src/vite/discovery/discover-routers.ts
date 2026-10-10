@@ -42,6 +42,30 @@ import {
 
 const debug = createRangoDebugger(NS.discovery);
 
+const SERVER_MODULE_ID = "@rangojs/router/server";
+
+/** Passes discoverRouters runs before giving up on a runner that keeps reloading. */
+const MAX_DISCOVERY_PASSES = 3;
+
+/** A discovery pass result: the runner reloaded mid-pass, redo it. */
+const RUNNER_RELOADED = Symbol("rango.discovery.runnerReloaded");
+
+/**
+ * Whether the runner's `@rangojs/router/server` is no longer `serverMod`. A
+ * Vite module runner full reload clears its evaluated-module cache, so the
+ * next import evaluates a fresh copy with empty module-level registries.
+ */
+async function runnerReloadedSince(
+  rscEnv: any,
+  serverMod: unknown,
+): Promise<boolean> {
+  try {
+    return (await rscEnv.runner.import(SERVER_MODULE_ID)) !== serverMod;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Import the user's entry via RSC runner, generate manifests for each
  * discovered router, build route tries, and optionally run prerender
@@ -49,25 +73,70 @@ const debug = createRangoDebugger(NS.discovery);
  *
  * Returns the imported `@rangojs/router/server` module so the caller
  * can access the RouterRegistry and manifest setters.
+ *
+ * A pass reads the router registry and installs clientUrls projections on ONE
+ * `@rangojs/router/server` instance, and checks that the runner still serves
+ * it. A runner full reload during the pass (a watched-file change at boot)
+ * splits the realm: a router module bound to the old instance registers there
+ * while urls modules re-evaluate against a fresh one, so include() looks its
+ * projection up in the fresh, empty Map ("include() could not resolve the
+ * server projection"). Such a pass is redone, at most
+ * MAX_DISCOVERY_PASSES times; the redo evaluates the entry in one realm.
  */
 export async function discoverRouters(
   state: DiscoveryState,
   rscEnv: any,
   ssrEnv?: any,
 ): Promise<any> {
-  if (!state.resolvedEntryPath) return;
+  const entryPath = state.resolvedEntryPath;
+  if (!entryPath) return;
 
-  // Import the router package FIRST (leaf module, no side effects on user
-  // code) so recorded clientUrls projections can be refreshed BEFORE the entry
-  // import: routers re-created by that import call `.routes(reference)` at
-  // module scope and materialize whatever projection is installed at that
-  // moment. On HMR re-discovery that must be the CURRENT module contents, not
-  // the previous pass's snapshot (see refreshRecordedClientUrlProjections).
-  const serverMod = await timed(
-    debug,
-    "inner: import @rangojs/router/server",
-    () => rscEnv.runner.import("@rangojs/router/server"),
-  );
+  for (let pass = 1; ; pass++) {
+    // Imported BEFORE the entry so recorded clientUrls projections can be
+    // refreshed first: routers re-created by the entry import materialize
+    // whatever projection is installed at that moment, which on HMR
+    // re-discovery must be the CURRENT module contents, not the previous
+    // pass's snapshot (see refreshRecordedClientUrlProjections). It is also
+    // the realm baseline of the reload checks; #637 read the registry off a
+    // pre-entry copy without one.
+    const serverMod = await timed(
+      debug,
+      "inner: import @rangojs/router/server",
+      () => rscEnv.runner.import(SERVER_MODULE_ID),
+    );
+    let result: unknown;
+    try {
+      result = await discoverRoutersPass(
+        state,
+        rscEnv,
+        ssrEnv,
+        entryPath,
+        serverMod,
+      );
+    } catch (error) {
+      if (!(await runnerReloadedSince(rscEnv, serverMod))) throw error;
+      result = RUNNER_RELOADED;
+    }
+    if (result !== RUNNER_RELOADED) return result;
+    if (pass === MAX_DISCOVERY_PASSES) {
+      throw new Error(
+        `[rango] Route discovery did not settle: the RSC module runner reloaded during ${MAX_DISCOVERY_PASSES} consecutive discovery passes.`,
+      );
+    }
+    debug?.(
+      "inner: module runner reloaded mid-pass, redoing discovery (pass %d)",
+      pass + 1,
+    );
+  }
+}
+
+async function discoverRoutersPass(
+  state: DiscoveryState,
+  rscEnv: any,
+  ssrEnv: any,
+  entryPath: string,
+  serverMod: any,
+): Promise<any> {
   await timed(debug, "inner: refresh recorded client URL projections", () =>
     refreshRecordedClientUrlProjections(state, ssrEnv, serverMod),
   );
@@ -76,10 +145,11 @@ export async function discoverRouters(
   // For node preset: this is the router file (createRouter() registers in RouterRegistry).
   // For cloudflare preset: this is the worker entry (which imports the router).
   await timed(debug, "inner: import entry", () =>
-    rscEnv.runner.import(state.resolvedEntryPath),
+    rscEnv.runner.import(entryPath),
   );
+  if (await runnerReloadedSince(rscEnv, serverMod)) return RUNNER_RELOADED;
 
-  let registry: Map<string, any> = serverMod.RouterRegistry;
+  const registry: Map<string, any> = serverMod.RouterRegistry;
 
   if (!registry || registry.size === 0) {
     // No RSC routers found directly. Check for host routers with lazy handlers
@@ -105,16 +175,10 @@ export async function discoverRouters(
           debug?.("caught error while resolving %s: %O", context, error);
         }
 
-        // Re-read RouterRegistry - sub-app createRouter() calls should have populated it
-        const freshServerMod = await rscEnv.runner.import(
-          "@rangojs/router/server",
-        );
-        const freshRegistry: Map<string, any> = freshServerMod.RouterRegistry;
-
-        if (freshRegistry && freshRegistry.size > 0) {
-          // Update references so the manifest generation below uses the fresh data
-          Object.assign(serverMod, freshServerMod);
-          registry = freshRegistry;
+        // Sub-app createRouter() calls populate the same live registry, unless
+        // a reload moved them to a fresh realm.
+        if (await runnerReloadedSince(rscEnv, serverMod)) {
+          return RUNNER_RELOADED;
         }
       }
     } catch (error) {
@@ -125,7 +189,7 @@ export async function discoverRouters(
 
     // If still no routers after host router resolution, fail
     if (!registry || registry.size === 0) {
-      throw new DiscoveryError(state.resolvedEntryPath, discoveryErrors);
+      throw new DiscoveryError(entryPath, discoveryErrors);
     }
   }
 
@@ -350,6 +414,10 @@ export async function discoverRouters(
       }
     }
   }
+
+  // A reload after the entry import leaves this pass's projections and
+  // manifests on a realm the runner no longer serves.
+  if (await runnerReloadedSince(rscEnv, serverMod)) return RUNNER_RELOADED;
 
   // Commit all local state to the shared discovery state atomically.
   // This ensures a failed re-discovery (e.g. from a transient module

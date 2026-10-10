@@ -283,33 +283,50 @@ rango({
 Both modes produce the same virtual module output. The `import` from gen file works in both:
 Vite resolves it in dev, Rolldown (Vite 8) bundles it in build.
 
-### Dev-boot dependency re-optimization race (why we discover entry-first)
+### Dev-boot module reload races (why discovery checks its realm)
 
-Boot discovery in `configureServer` must **import the router entry before it reads
-`RouterRegistry`**, and it must not import `@rangojs/router/server` beforehand. This
-started as a bug: on a cold dev boot that also triggers a Vite dependency
-re-optimization (first boot after a lockfile change, or `vite dev --force`), any module
-imported through the RSC runner _before_ the entry resolves to the **pre-optimize** copy
-of the runner's module graph, while the entry import — which awaits the in-flight
-re-optimization — resolves to the **post-optimize** copy. `createRouter()` then populates
-`RouterRegistry` on the fresh copy, but a server module read from the stale copy sees an
-empty `Map`, so discovery throws a spurious `No routers found in registry after importing
-<entry>` even though the app is configured correctly.
+Boot discovery reads `RouterRegistry` and installs clientUrls projections on one
+`@rangojs/router/server` instance, and that has to be the instance the RSC runner serves
+once the entry is imported. Two bugs taught us this:
 
-`discoverRouters()` imports the entry first and reads the registry off the same instance,
-so the read and write stay on one copy. The Node dev path therefore arms
-`manifestReadyPromise` **after** `discoverRouters()` (using the server module it returns)
-rather than pre-importing `@rangojs/router/server` to arm it early — the virtual manifest
-module's own `s.discoveryDone` gate already blocks early requests during discovery. Do not
-reintroduce a pre-discovery `runner.import("@rangojs/router/server")`; it re-opens this
-race.
+- **Dependency re-optimization (#637).** On a cold dev boot that also triggers a Vite
+  dependency re-optimization (first boot after a lockfile change, or `vite dev --force`),
+  a module imported through the RSC runner _before_ the entry could resolve to the
+  **pre-optimize** copy of the runner's module graph, while the entry import, which awaits
+  the in-flight re-optimization, resolves to the **post-optimize** copy. `createRouter()`
+  populated `RouterRegistry` on the fresh copy, the stale copy read an empty `Map`, and
+  discovery threw a spurious `No routers found in registry after importing <entry>`.
+- **Runner full reload mid-pass.** A full reload clears the runner's
+  evaluated-module cache. One that lands while the entry is importing splits the realm:
+  the router module, already bound to the old copy, registers there, while `urls.tsx`
+  re-evaluates against a fresh copy whose clientUrls projection `Map` is empty. Discovery
+  had installed the projections on the old copy, so `include()` of a clientUrls module
+  threw `include() could not resolve the server projection`, and every request returned a
+  500 until a restart.
 
-Two backstops make the failure non-fatal even if it ever recurs: the per-request self-heal
-in `handler.ts` builds the trie from the router's live `urlpatterns` when the manifest is
-missing, and `describeDiscoveryFailure()` (discovery-errors.ts) downgrades the terminal
-message to an informational warning when the dep optimizer's `browserHash` changed across
-the attempt (a re-optimization landed mid-flight), reserving the loud, actionable error for
-a genuinely empty registry.
+`discoverRouters()` imports `@rangojs/router/server` before the entry, because the pre-entry
+clientUrls refresh needs it (`refreshRecordedClientUrlProjections`), and treats that
+instance as the pass's realm baseline. After the entry import, after host-router
+resolution, before it commits, and on any error, it re-imports `@rangojs/router/server`;
+if the runner now serves a different instance, it redoes the pass (`runnerReloadedSince`,
+at most `MAX_DISCOVERY_PASSES` = 3). The redo evaluates the entry in one realm, since the
+reload dropped the half-evaluated graph. The Node dev path arms `manifestReadyPromise`
+**after** `discoverRouters()` on the instance it returns; the virtual manifest module's own
+`s.discoveryDone` gate already blocks early requests during discovery. Never read the
+registry or install projections on an instance the pass has not verified; that re-opens
+both races.
+
+Backstops for a cold discovery that still fails: the per-request self-heal in `handler.ts`
+builds the trie from the router's live `urlpatterns` when the manifest is missing, and
+`describeDiscoveryFailure()` (discovery-errors.ts) downgrades the terminal message to an
+informational warning when the dep optimizer's `browserHash` changed across the attempt,
+reserving the loud, actionable error for a genuinely empty registry. A failed cold
+discovery commits nothing, so the routes-manifest module's no-manifest branch still replays
+`state.clientUrlProjectionMap` (the projections the failed pass computed), and the failure
+sets `lastDiscoveryError`: `canRefreshRuntimeDiscovery()` (discovery/state.ts) then lets the
+route-file watcher re-run discovery on a main runner, the recovery mode a failed HMR
+rediscovery already had. Before, the watcher required a committed manifest, so only a
+restart recovered.
 
 ## Runtime Storage
 
