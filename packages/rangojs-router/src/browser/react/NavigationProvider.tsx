@@ -368,6 +368,11 @@ export function NavigationProvider({
   }
   const shellRef = appShellRef ?? fallbackShellRef.current;
 
+  // Fixed for the document: read once on mount.
+  const [origin] = useState(
+    () => (eventController.getState().location as URL | undefined)?.origin,
+  );
+
   const contextValue = useMemo<NavigationStoreContextValue>(() => {
     const value = {
       store,
@@ -375,8 +380,7 @@ export function NavigationProvider({
       navigate,
       refresh,
       defaultPrefetch: initialPayload.metadata.defaultPrefetch,
-      // Fixed for the document: read once, with the stable value.
-      origin: (eventController.getState().location as URL | undefined)?.origin,
+      origin,
     } as NavigationStoreContextValue;
     Object.defineProperty(value, "basename", {
       configurable: true,
