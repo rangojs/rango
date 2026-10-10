@@ -1,20 +1,19 @@
 // @vitest-environment happy-dom
-import {
-  StrictMode,
-  startTransition,
-  useEffect,
-  useState,
-  type ReactNode,
-} from "react";
+import { StrictMode, useState, type ReactNode } from "react";
 import { createRoot, hydrateRoot, type Root } from "react-dom/client";
 import { act, cleanup } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { createLocationState, useLocationState } from "../../client.js";
 import {
-  createEventController,
-  type EventController,
-} from "../../browser/event-controller.js";
-import { LocationStateContext } from "../../browser/react/context.js";
+  initBrowserApp,
+  resetBrowserAppContext,
+  type BrowserAppContext,
+} from "../../browser/rsc-router.js";
+import { NavigationProvider } from "../../browser/react/NavigationProvider.js";
+import type {
+  RscBrowserDependencies,
+  RscPayload,
+} from "../../browser/types.js";
 import { withLocationStateKey } from "../index.js";
 
 // #992: a reader that hydrates after the root must still render the server
@@ -23,12 +22,11 @@ import { withLocationStateKey } from "../index.js";
 // primitive (`renderRoute({ hydrate: true })`, which produces the server HTML
 // itself) is in render-route-hydrate.test.tsx.
 //
-// A reader takes the entry's state from LocationStateContext (#1029). `Entry`
-// provides it the way NavigationProvider does: while hydrating, `undefined`
-// first and the entry's state in a transition after it, and for a commit
-// without a payload with the commit's notification (the provider itself is
-// covered through renderRoute). `commitEntry` does what such a commit site
-// does: write history, commit that entry, flush.
+// The provider is the production NavigationProvider on a document loaded by
+// initBrowserApp, hydrating with `hydration={{ settled }}` as Rango does. A
+// reader takes the entry's state from it (#1029). `commitEntry` does what a
+// commit site without a payload does: write history, commit that entry, flush.
+// `show` swaps the tree through the store, as a navigation would.
 
 const GridState = withLocationStateKey(
   createLocationState<{ count: number }>(),
@@ -42,53 +40,44 @@ const FlashCount = withLocationStateKey(
 type CountSample = { count: number | undefined; stored: number | undefined };
 
 let root: Root | undefined;
-let controller: EventController;
+let app: BrowserAppContext;
 
-beforeEach(() => {
-  controller = createEventController({
-    initialLocation: new URL("http://localhost/"),
+/** A document load of the entry history currently holds. */
+async function loadDocument(): Promise<void> {
+  resetBrowserAppContext();
+  const payload = {
+    metadata: { pathname: "/", segments: [], matched: [], params: {} },
+  } as unknown as RscPayload;
+  app = await initBrowserApp({
+    rscStream: new ReadableStream<Uint8Array>(),
+    deps: {
+      createFromReadableStream: async () => payload,
+      createFromFetch: async () => payload,
+      setServerCallback: () => {},
+      encodeReply: async () => "",
+      createTemporaryReferenceSet: () => ({}),
+    } as unknown as RscBrowserDependencies,
+    linkInterception: false,
   });
-});
+}
 
 /** Without `state` the entry is committed as history holds it. */
 async function commitEntry(state?: object): Promise<void> {
   await act(async () => {
     if (state) window.history.replaceState(state, "");
-    controller.commitLocationState(window.history.state, true);
-    controller.flushRouteState();
+    app.eventController.commitLocationState(window.history.state, true);
+    app.eventController.flushRouteState();
   });
 }
 
-function Entry({
-  children,
-  hydrating,
-}: {
-  children: ReactNode;
-  hydrating: boolean;
-}): ReactNode {
-  const [state, setState] = useState(() =>
-    hydrating ? undefined : controller.getLocationState(),
-  );
-  // NavigationProvider's barrier transition, once the document is revealed.
-  useEffect(() => {
-    if (hydrating) {
-      startTransition(() => setState(controller.getLocationState()));
-    }
-  }, []);
-  useEffect(
-    () =>
-      controller.subscribe(() => {
-        if (controller.takeTreelessLocationState()) {
-          setState(controller.getLocationState());
-        }
-      }),
-    [],
-  );
-  return (
-    <LocationStateContext.Provider value={state}>
-      {children}
-    </LocationStateContext.Provider>
-  );
+/** Swaps the provider's tree through the store, as a navigation does. */
+async function show(node: ReactNode): Promise<void> {
+  await act(async () => {
+    app.store.emitUpdate({
+      root: node,
+      metadata: app.initialPayload.metadata!,
+    });
+  });
 }
 
 afterEach(async () => {
@@ -105,20 +94,42 @@ afterEach(async () => {
   document.body.replaceChildren();
 });
 
-function tree(node: ReactNode, strict = false, hydrating = false): ReactNode {
-  const routed = <Entry hydrating={hydrating}>{node}</Entry>;
+function provider(
+  node: ReactNode,
+  strict: boolean,
+  hydrating: boolean,
+): ReactNode {
+  const routed = (
+    <NavigationProvider
+      store={app.store}
+      eventController={app.eventController}
+      bridge={app.bridge}
+      initialPayload={{ root: node, metadata: app.initialPayload.metadata! }}
+      hydration={hydrating ? { settled: app.documentRevealed } : undefined}
+    />
+  );
   return strict ? <StrictMode>{routed}</StrictMode> : routed;
 }
 
 /** The entry a document load starts on (initBrowserApp commits it). */
-function seedEntry(state: unknown): void {
+async function seedEntry(state: unknown): Promise<void> {
   window.history.replaceState(state, "");
-  controller.commitLocationState(window.history.state);
+  await loadDocument();
 }
 
-function seedHydrated(state: unknown): void {
+async function seedHydrated(state: unknown): Promise<void> {
   document.documentElement.setAttribute("data-hydrated", "");
-  seedEntry(state);
+  await seedEntry(state);
+}
+
+async function mount(node: ReactNode, strict = false): Promise<HTMLDivElement> {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  await act(async () => {
+    root = createRoot(container);
+    root.render(provider(node, strict, false));
+  });
+  return container;
 }
 
 async function hydrate(
@@ -131,7 +142,7 @@ async function hydrate(
   document.body.appendChild(container);
   const recoverable: string[] = [];
   await act(async () => {
-    root = hydrateRoot(container, tree(node, strict, true), {
+    root = hydrateRoot(container, provider(node, strict, true), {
       onRecoverableError(error: unknown) {
         recoverable.push(
           error instanceof Error ? error.message : String(error),
@@ -139,8 +150,11 @@ async function hydrate(
       },
     });
   });
-  // The entry's state is applied from a passive effect. Flush that update
-  // inside act so the assertion sees the settled value, not the server paint.
+  // The document is revealed, then the barrier transition applies the entry's
+  // state; flush both inside act so the assertion sees the settled value.
+  await act(async () => {
+    await app.documentRevealed;
+  });
   await act(async () => {});
   return { container, recoverable };
 }
@@ -164,7 +178,7 @@ describe("useLocationState late hydration (#992)", () => {
         return <p data-testid="count">{state?.count ?? 0}</p>;
       }
 
-      seedHydrated({ [GridState.__rsc_ls_key]: { count: 3 }, idx: 2 });
+      await seedHydrated({ [GridState.__rsc_ls_key]: { count: 3 }, idx: 2 });
       const { container, recoverable } = await hydrate(
         <Count />,
         '<p data-testid="count">0</p>',
@@ -204,7 +218,7 @@ describe("useLocationState late hydration (#992)", () => {
         return <p data-testid="count">{state?.count ?? 0}</p>;
       }
 
-      seedHydrated({ [FlashCount.__rsc_ls_key]: { count: 3 }, idx: 4 });
+      await seedHydrated({ [FlashCount.__rsc_ls_key]: { count: 3 }, idx: 4 });
       const { container, recoverable } = await hydrate(
         <Count />,
         '<p data-testid="count">0</p>',
@@ -233,13 +247,8 @@ describe("useLocationState late hydration (#992)", () => {
       return <p data-testid="count">{state?.count ?? 0}</p>;
     }
 
-    seedHydrated({ [GridState.__rsc_ls_key]: { count: 4 } });
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    await act(async () => {
-      root = createRoot(container);
-      root.render(tree(<Count />));
-    });
+    await seedHydrated({ [GridState.__rsc_ls_key]: { count: 4 } });
+    const container = await mount(<Count />);
 
     expect(seen[0]).toBe(4);
     expect(container.textContent).toBe("4");
@@ -250,19 +259,14 @@ describe("useLocationState late hydration (#992)", () => {
       const state = useLocationState(FlashCount);
       return <p data-testid="count">{state?.count ?? 0}</p>;
     }
-    seedEntry({ [FlashCount.__rsc_ls_key]: { count: 2 } });
-    const flashHost = document.createElement("div");
-    document.body.appendChild(flashHost);
-    await act(async () => {
-      root = createRoot(flashHost);
-      root.render(tree(<Flash />, true));
-    });
+    await seedEntry({ [FlashCount.__rsc_ls_key]: { count: 2 } });
+    const flashHost = await mount(<Flash />, true);
     expect(flashHost.textContent).toBe("2");
     // Cleared from the entry: a reload or a return to it shows nothing.
     expect(window.history.state).not.toHaveProperty(FlashCount.__rsc_ls_key);
 
     // An unrelated re-render keeps it: the clear changed history only.
-    await act(async () => root?.render(tree(<Flash />, true)));
+    await show(<Flash />);
     expect(flashHost.textContent).toBe("2");
 
     await commitEntry({ [FlashCount.__rsc_ls_key]: { count: 8 } });
@@ -287,7 +291,7 @@ describe("useLocationState late hydration (#992)", () => {
       return <p data-testid="from">{state?.from ?? "none"}</p>;
     }
 
-    seedHydrated({ state: { from: "checkout" }, idx: 1 });
+    await seedHydrated({ state: { from: "checkout" }, idx: 1 });
     const { container, recoverable } = await hydrate(
       <Plain />,
       '<p data-testid="from">none</p>',
@@ -316,13 +320,8 @@ describe("useLocationState late hydration (#992)", () => {
       );
     }
 
-    seedEntry({});
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    await act(async () => {
-      root = createRoot(container);
-      root.render(tree(<Count />));
-    });
+    await seedEntry({});
+    const container = await mount(<Count />);
     expect(container.querySelector("[data-testid='count']")?.textContent).toBe(
       "0",
     );
@@ -353,19 +352,14 @@ describe("useLocationState late hydration (#992)", () => {
       seen.push(`${flash ? "flash" : "grid"}:${state?.count ?? "none"}`);
       return <p data-testid="count">{state?.count ?? 0}</p>;
     }
-    seedEntry({
+    await seedEntry({
       [GridState.__rsc_ls_key]: { count: 4 },
       [FlashCount.__rsc_ls_key]: { count: 7 },
     });
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    await act(async () => {
-      root = createRoot(container);
-      root.render(tree(<Count flash={false} />));
-    });
+    const container = await mount(<Count flash={false} />);
     expect(container.textContent).toBe("4");
 
-    await act(async () => root?.render(tree(<Count flash />)));
+    await show(<Count flash />);
     expect(container.textContent).toBe("7");
     expect(seen).not.toContain("flash:4");
     // The new slot is a flash one: read once, then cleared.
@@ -374,7 +368,7 @@ describe("useLocationState late hydration (#992)", () => {
     await commitEntry({
       [GridState.__rsc_ls_key]: { count: 5 },
     });
-    await act(async () => root?.render(tree(<Count flash={false} />)));
+    await show(<Count flash={false} />);
     expect(container.textContent).toBe("5");
     expect(seen).not.toContain("grid:7");
   });

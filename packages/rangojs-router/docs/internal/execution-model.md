@@ -283,11 +283,22 @@ global middleware
     moves `HydrationBarrierContext` in a transition once the document has
     been revealed (`documentRevealed`: no `$?`/`$~` boundary left), so React
     hydrates every boundary still dehydrated before that commit, then
-    releases the store: the waiting writes apply in order and readers whose
-    selection changed re-render once. A navigation committed before the
-    reveal releases the store before its update, so its page mounts against
-    the live store. Before #1035 the reader took the live state, late updates
-    included, and mismatched its HTML: a loader push after an `await` on any
+    releases the store. Two steps, not one: location state lands in the
+    barrier commit (`LocationStateContext`, so `useLocationState` readers
+    re-render when the entry's state object changes); handle data lands in the
+    release notification right after it (the waiting writes apply in order and
+    `useHandle` readers whose selection changed re-render). A navigation
+    committed before the reveal releases the store before its update, so its
+    page mounts against the live store. Trade-off: a held navigation whose
+    history entry commits during the window releases the store for the whole
+    hold, so an old-page boundary that hydrates during the hold reads the
+    destination's values and can mismatch (React client-renders it).
+    `documentRevealed` (`browser/document-revealed.ts`) polls with
+    `setTimeout`, not rAF, so a tab hidden after its first paint settles
+    while hidden. A tab hidden from load still waits until it is shown: Fizz
+    reveals a streamed boundary from a rAF-gated script, so the boundaries
+    stay `$~` until the tab paints. Before #1035 the reader took the live
+    state, late updates included, and mismatched its HTML: a loader push after an `await` on any
     document. The first render of the navigation-state hooks reads the
     document's state the same way (`getHydrationSnapshot()`). Pinned by
     `use-handle-hydration.test.tsx`, `router-hooks-hydration.test.tsx`,

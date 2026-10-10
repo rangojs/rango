@@ -111,11 +111,19 @@ cannot mismatch its server HTML.
 
 - Navigation state, params and action state: the component shows the live
   value right after it hydrates.
-- Handle data a loader pushed late, and the entry's location state: every
-  reader gets them once the whole document has streamed and hydrated, in one
-  transition. A reader re-renders only when its selection changes.
+- Handle data a loader pushed late, and the entry's location state: both wait
+  until the whole document has streamed and been revealed. Location state
+  lands in the barrier commit (one transition that also hydrates every
+  boundary still dehydrated); handle data lands in the release notification
+  right after that commit. `useLocationState` readers re-render when the
+  entry's state object changes; `useHandle` readers when their selection
+  changes.
 - A navigation that commits before then mounts its page with the live values
   from its first render. A boundary of the document that persists across that
   navigation and has not hydrated yet then hydrates against the live values;
   where they differ from its HTML, React reports the mismatch and renders that
   boundary on the client.
+- A held navigation whose history entry commits during that window releases
+  the store for the whole hold. A boundary of the old page that hydrates during
+  the hold reads the destination's values and can mismatch its HTML; React
+  then renders that boundary on the client.
