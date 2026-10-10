@@ -118,6 +118,19 @@ followed by the KV read's own event: `kv-fresh` or `kv-stale` when it served
 the rebuilt entry, a second `tag-invalidated` when KV held the old one,
 `kv-miss`, `kv-timeout` or `error` otherwise.
 
+### Fixed: `href()`, `reverse()` and `Rango.Path` accepted any name or path when a layout's children included `transition(...)`
+
+Before: `layout(L, () => [transition({}), path("/a", A, { name: "a" })])` (also
+`transition()` and `transition({ when })`, in any position, plus the globally
+imported `transition`, `cache` and `layout` and factories typed as a use item)
+typed the app's route map as `Record<string, any> & { a: "/a" }`. That turned
+route checking off: `router.reverse("not-a-route")` and `href("/typo")`
+compiled. After: these items contribute no routes, the siblings keep their
+names, and unknown names and paths are type errors again. A loosely typed
+`include()` (routes typed `Record<string, string>`) no longer turns off
+checking for its named siblings either. The response map had
+the same problem and is fixed the same way.
+
 ## 0.22.1 (2026-10-10)
 
 ### Fixed: a fresh install builds again with `@vitejs/plugin-rsc` 0.5.36
