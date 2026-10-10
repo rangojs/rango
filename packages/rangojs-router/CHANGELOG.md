@@ -55,6 +55,69 @@ error you then fix, the next save of a source file runs it again, as it already
 did after a failed hot update, instead of leaving the server broken until a
 restart. Nothing changes in your code or in production builds.
 
+### Added: `kvFallThrough` lets a Cloudflare location serve the entry another location rebuilt after `updateTag()`
+
+On `CFCacheStore` with `kv`, every edge location keeps its own copy of an
+entry it has served. After `updateTag(tag)` or `revalidateTag(tag)`, each
+location that held a copy renders the page again on its next request, even
+when another location already rebuilt the entry and wrote it to KV, by a
+visitor's render there or by a `router.prerender()` warm. Only a location with
+no copy of its own, or a store using `tagPurge`, reads the rebuilt entry. That
+is still the default.
+
+`kvFallThrough: true` makes a location whose copy the invalidation rejected
+read the entry from KV, the way a location with no copy does. An entry written
+after the invalidation is served and kept, and nothing renders. It covers
+`cache()` records, `"use cache"` results, cached responses and `ppr` shells.
+
+```ts
+const store = new CFCacheStore({ ctx, kv: env.KV, kvFallThrough: true });
+
+await updateTag(`product:${id}`); // once the marker reaches a location, it refuses its old copy
+await router.prerender({ env, ctx })(`/products/${id}`); // one render, written to KV
+
+// Default (off): every location that had served the page renders it once more.
+// kvFallThrough: they read the warmed entry from KV.
+```
+
+What it costs, and when to turn it on. The cost is per cached read, not per
+request: one KV get for each rejected copy, in each location, after each
+invalidation. A `ppr` document reads its shell, then its record, then each
+`"use cache"` result; with every copy rejected and the newer entry in KV, each
+read pays one get before it can serve. Measured in #1069 (local, 50 ms per KV
+read; not on a deployed worker) on a document with a shell, a record and one
+`"use cache"` result, every copy rejected and the newer entry in KV: 150 ms of
+added wait, and 510 ms when each read runs to the 170 ms budget
+(`kvReadTimeoutMs`); with the option off the wait is 0, because the location
+renders at once. A partial
+navigation reads two shell keys in series, and a rejected memoized shell adds a
+Cache API lookup and a frame read first. Two cases pay more or always: an entry
+that nothing rewrites (the route now errors or answers 404, so nothing is
+stored) pays one KV read per cached read on every request until the old copy's
+max-age ends, and an entry with ttl + swr under 60 s has no KV twin, so its
+read always misses. Turn it on for apps
+served from many locations where a render costs more than a KV read; leave it
+off for one or few locations or cheap renders.
+
+What stays the same with it on:
+
+- **No location serves an entry from before the invalidation, once the marker
+  has reached it.** The marker is a KV entry too, so a location the marker has
+  not reached yet (Cloudflare documents up to 60 seconds for a KV write to
+  spread) can still serve its old copy. The KV entry passes the same tag check
+  as the location's own copy; a location that KV still hands the old entry
+  refuses it and renders.
+- **A valid copy costs what it did.** The KV read happens only where the
+  location's copy was invalidated.
+- **The request that called `updateTag()`** renders its own entries without
+  that read.
+- **A store without `kv`** ignores the option: it has no second tier to read.
+
+With `debug` on, a `tag-invalidated` event for the location's own copy is
+followed by the KV read's own event: `kv-fresh` or `kv-stale` when it served
+the rebuilt entry, a second `tag-invalidated` when KV held the old one,
+`kv-miss`, `kv-timeout` or `error` otherwise.
+
 ## 0.22.1 (2026-10-10)
 
 ### Fixed: a fresh install builds again with `@vitejs/plugin-rsc` 0.5.36

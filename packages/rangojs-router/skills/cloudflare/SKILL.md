@@ -292,20 +292,25 @@ traffic"). On Workers:
   the request it is called from.
 
 - **A warm fills the colo it runs in, and KV.** Another colo that already
-  holds its own Cache API copy keeps serving it until it expires; an L1 hit
-  never consults KV. After a deploy no colo holds a copy, so the warm's KV
-  entry is what each one reads next. For a content change, invalidate and then
-  warm, in this order:
+  holds its own Cache API copy keeps serving it until it expires or a tag
+  invalidation rejects it; a hit on a valid copy never consults KV. After a
+  deploy no colo holds a copy, so the warm's KV entry is what each one reads
+  next. For a content change, invalidate and then warm, in this order:
 
   ```typescript
-  await updateTag(`product:${id}`); // no colo serves the old copy any more
+  await updateTag(`product:${id}`); // a colo the marker has reached refuses its old copy
   await router.prerender({ env, ctx })(`/products/${id}`); // writes the new one
   ```
 
-  A colo with no copy of its own reads the warmed entry from KV. A colo that
-  was still holding the old copy treats it as a miss and renders once for
-  itself (it does not read the fresher KV entry). With `tagPurge` the purge
-  evicts every colo's copy, so they all read the warmed entry.
+  A colo with no copy of its own then reads the warmed entry from KV and
+  renders nothing. A colo that was still holding the old copy renders once for
+  itself by default; with `kvFallThrough: true` on the store it reads KV as if
+  it held none and renders nothing (with `tagPurge` the purge evicts the copy
+  first). That option costs one KV get per rejected copy per colo after each
+  invalidation, so turn it on where a render costs more than that. The KV
+  entry is checked against the same tag markers as
+  the colo's own copy, so a colo that KV still hands the entry from before
+  the invalidation refuses it and renders for itself.
 
 - **Entries under 60 seconds stay in one colo.** KV's minimum `expirationTtl`
   is 60 s, so a segment, item or response entry whose `ttl + swr` is shorter

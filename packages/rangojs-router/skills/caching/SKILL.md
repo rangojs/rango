@@ -621,11 +621,26 @@ const router = createRouter<AppBindings>({
 
 **How the two layers work:**
 
-| Scenario     | L1 (Cache API) | L2 (KV) | Result                        |
-| ------------ | -------------- | ------- | ----------------------------- |
-| Hot request  | HIT            | —       | Serve from L1 (fast)          |
-| Cold colo    | MISS           | HIT     | Serve from KV, promote to L1  |
-| First render | MISS           | MISS    | Render, write to both L1 + KV |
+| Scenario                             | L1 (Cache API)   | L2 (KV)                     | Result                        |
+| ------------------------------------ | ---------------- | --------------------------- | ----------------------------- |
+| Hot request                          | HIT              | —                           | Serve from L1 (fast)          |
+| Cold colo                            | MISS             | HIT                         | Serve from KV, promote to L1  |
+| First render                         | MISS             | MISS                        | Render, write to both L1 + KV |
+| After `updateTag`, `kvFallThrough`   | copy invalidated | HIT, written after the call | Serve from KV, promote to L1  |
+| After `updateTag`, `kvFallThrough`   | copy invalidated | MISS, or the old entry      | Render, write to both L1 + KV |
+| After `updateTag`, the default (off) | copy invalidated | not read                    | Render, write to both L1 + KV |
+
+By default a copy a tag invalidation rejected is a miss and the colo renders.
+`new CFCacheStore({ ctx, kv, kvFallThrough: true })` makes it read KV like a
+cold colo, so the colo serves the entry another colo already rebuilt (a
+visitor's render there, or a `router.prerender()` warm) instead of rebuilding
+it. The KV entry passes the same tag check: one written before the invalidation
+is never served. The cost is one KV get per rejected copy per colo after each
+invalidation (a `ppr` document reads a shell, a record and each `"use cache"`
+result, every copy rejected and the newer entry in KV: 150 ms added, measured
+in #1069 at 50 ms per KV read locally, not on a deployed worker).
+Turn it on for several locations where a render costs more than a KV read;
+leave it off otherwise. It needs `kv`.
 
 KV entries require `expirationTtl >= 60s`. Short-lived data entries (< 60s total
 TTL) are only cached in L1. A PPR shell is always written to KV, a short one
