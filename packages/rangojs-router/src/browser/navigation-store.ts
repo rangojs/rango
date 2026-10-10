@@ -657,6 +657,19 @@ export function createNavigationStore(
     },
 
     /**
+     * Entries that show the same page as `historyKey`'s. A shallow navigation
+     * (navigation-bridge.ts) caches the page's segments array under the new
+     * key; every other commit caches a new array, so identity is the page.
+     */
+    getPageHistoryKeys(historyKey: string): string[] {
+      const segments = historyCache.find(([key]) => key === historyKey)?.[1];
+      if (!segments) return [historyKey];
+      return historyCache
+        .filter((entry) => entry[1] === segments)
+        .map(([key]) => key);
+    },
+
+    /**
      * Mark every history entry stale WITHOUT clearing the prefetch caches or
      * rotating the rango state. The jar-divergence observer calls this after an
      * external rotation has already changed the state value, so re-rotating

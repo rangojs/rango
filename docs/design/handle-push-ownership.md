@@ -785,6 +785,16 @@ unchanged.
   refetch) takes `liveHandleDataForCache`, the entry's own data; writing
   `getHandleState()` there would put the snapshot over the push, and Back
   would restore the page without it.
+- A late push belongs to the document's page, not to whatever is on
+  screen when it arrives. It is written to every entry that shows that
+  page, `NavigationStore.getPageHistoryKeys`: the document's entry and the
+  copies a shallow navigation made of it, which share its segments array
+  (a shallow navigation does not commit, so the window stays open across
+  it). It reaches the live store only while one of those entries is on
+  screen. The channel used to apply every push as a full replace with the
+  document's `matched` and write it to the document's entry alone: a push
+  that arrived after a navigation to another page replaced that page's
+  handle state, and Back to a shallow entry restored it without the push.
 - `useHandle` (`browser/react/use-handle.ts`) initializes from
   `getHandleState()`, so a reader that hydrates while the window is open,
   however late its boundary, renders the document's values.

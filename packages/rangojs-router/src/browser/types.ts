@@ -637,6 +637,12 @@ export interface NavigationStore {
     stale?: boolean,
     handlesPending?: boolean,
   ): void;
+  /**
+   * The history keys whose entries show the page `historyKey`'s entry shows:
+   * that entry and the copies a shallow navigation made of it, which share its
+   * segments array. `[historyKey]` when it has no entry.
+   */
+  getPageHistoryKeys(historyKey: string): string[];
   markHistoryCacheStale(): void;
   markCacheAsStaleAndBroadcast(): void;
   clearHistoryCache(): void;

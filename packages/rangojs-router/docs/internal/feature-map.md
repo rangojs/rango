@@ -624,7 +624,11 @@ Server action execution pipeline, `useAction()` state tracking, action ID extrac
   a history-cache write for the page on screen takes
   `liveHandleDataForCache` (`browser/navigation-store.ts`), the entry's own
   data with the late pushes, never `getHandleState()`, which would write the
-  snapshot over them. Nav/action lanes:
+  snapshot over them. A late push belongs to the document's page: it is
+  written to that page's entries (`NavigationStore.getPageHistoryKeys`: the
+  document's entry and the shallow-navigation copies that share its segments
+  array) and applied to the live store only while one of them is on screen,
+  so another page's handle state is never replaced with it. Nav/action lanes:
   the payload `handles` generator now streams to `fullySettled`, applied
   progressively by `processHandles`. `loader(Def, { ssr: false })` upgrades
   a loader's handles to guaranteed-SSR: document renders await it before first

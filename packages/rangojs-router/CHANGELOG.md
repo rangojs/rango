@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a loader's late handle push no longer shows on the page you navigated to
+
+On a document load, a loader that calls `ctx.use(handle)(value)` after an await
+sends that push after the HTML. If you clicked a link before it arrived, the push
+replaced the handle data of the page you landed on: its `useHandle` readers
+(breadcrumbs, meta, a notes list) showed the first page's values in place of
+their own, until the next navigation. Now the push stays with the page that
+made it: the new page keeps its own values, and Back to the first page shows the
+push. A fresh link navigation back to the first page's URL before the push
+arrives still receives it, as before.
+
+### Fixed: Back to a search-param change made while the page loads keeps late handle pushes
+
+A shallow navigation, `<Link revalidate={false}>` or
+`router.push(url, { revalidate: false })` to the same path with other search params,
+made while the document was still streaming, created a history entry that never
+received the loader pushes that arrived later. After you navigated on, Back to
+that entry restored the page without them. Now the shallow entries made while
+the page streams receive the push too, whether it arrives while that entry is on
+screen or after you left it. An entry re-rendered since (an action on it, an
+HMR update) no longer shares the page's segments and does not receive later
+pushes.
+
 ## 0.22.1 (2026-10-10)
 
 ### Fixed: a fresh install builds again with `@vitejs/plugin-rsc` 0.5.36
