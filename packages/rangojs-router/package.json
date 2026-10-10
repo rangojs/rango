@@ -208,7 +208,7 @@
   },
   "dependencies": {
     "@types/debug": "^4.1.12",
-    "@vitejs/plugin-rsc": "^0.5.35",
+    "@vitejs/plugin-rsc": "^0.5.36",
     "debug": "^4.4.1",
     "magic-string": "^0.30.17",
     "picomatch": "^4.0.4",
