@@ -1283,8 +1283,8 @@ fresh.
 A warm replaces the entry where it runs, and on a shared store that is the
 entry other locations read on their next miss. It does not reach a copy
 another location already holds: on `CFCacheStore`, each colo keeps serving its
-own Cache API copy until it expires, and an entry whose `ttl + swr` is under
-60 seconds never reaches KV at all.
+own Cache API copy until it expires or a tag invalidation rejects it, and an
+entry whose `ttl + swr` is under 60 seconds never reaches KV at all.
 
 So after a deploy (new keys: no location holds a copy) a warm alone makes
 the route ready everywhere. For a content change, invalidate first, then
@@ -1306,12 +1306,16 @@ path.json("/hooks/product-changed", async (ctx) => {
 
 The invalidation makes every location's copy unservable, so no visitor is
 served the old content, and the warm writes the new entry where it runs and
-to the shared store. A location with no copy of its own reads that entry on
-its next request and renders nothing. On `CFCacheStore`, a colo that was
-still holding its own (now invalidated) copy renders once for itself instead
-of reading the warmed entry, unless the store uses `tagPurge`, which evicts
-those copies. Await `updateTag()` before the warm: a write that started
-before an invalidation of one of its tags is refused.
+to the shared store. Every other location reads that entry on its next
+request and renders nothing: a location with no copy of its own, and, on
+`CFCacheStore` with `kvFallThrough: true` (default false), a colo that was
+still holding its own (now invalidated) copy, which reads KV as if it held
+none. Without the option such a colo renders once for itself, unless the store
+uses `tagPurge`, which evicts those copies. With the option, a colo renders
+for itself only while KV still hands it the entry from before the invalidation,
+which it refuses: Cloudflare documents up to 60
+seconds for a KV write to spread. Await `updateTag()` before the warm: a
+write that started before an invalidation of one of its tags is refused.
 
 ### Limits worth knowing
 

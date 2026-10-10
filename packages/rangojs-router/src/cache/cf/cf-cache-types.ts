@@ -66,8 +66,11 @@ export interface CFCacheReadDebugEvent {
    * - kv-timeout: the L2/KV read budget fired (read abandoned, NOT a genuine
    *   absence -- distinct from kv-miss so a degradation signal is separable)
    * - tag-invalidated: a live L1/KV entry whose cache tags were invalidated
-   *   after it was written -- treated as a miss so the next render re-populates
-   *   it (the tag-invalidation read path, distinct from a plain miss)
+   *   after it was written -- never served (the tag-invalidation read path,
+   *   distinct from a plain miss). With `kvFallThrough` on, an L1 copy then
+   *   reads L2/KV, so a kv-* event follows unless the request invalidated the
+   *   tag itself; from L2/KV it is a miss and the next render re-populates
+   *   the entry
    * - error: the read threw
    */
   outcome:
@@ -382,6 +385,25 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
    * <= 0) to disable and always await KV.
    */
   kvReadTimeoutMs?: number;
+
+  /**
+   * After `updateTag()`/`revalidateTag()`, a location whose own L1 copy a tag
+   * marker rejects reads KV next, and serves the entry another location (or a
+   * `router.prerender()` warm) wrote after the invalidation, instead of
+   * rendering again. Covers `cache()` records, `"use cache"` results, cached
+   * responses and `ppr` shells. The request that invalidated the tag still
+   * re-renders its own entries without the read.
+   *
+   * Cost: one KV get per rejected copy per location after each invalidation
+   * (150 ms added wait, measured in #1069 locally at 50 ms per KV read on a
+   * document with a shell, a record and one `"use cache"` result, every copy
+   * rejected; not measured on a deployed worker), paid even when KV holds only
+   * the old twin. Worth it where re-rendering costs more than a KV read
+   * (several locations, expensive renders). Needs `kv`; ignored without it.
+   *
+   * Defaults to false: a rejected L1 copy is a miss and the location renders.
+   */
+  kvFallThrough?: boolean;
 
   /**
    * Per-isolate memos ({@link StoreMemoOptions}), one set per isolate and
