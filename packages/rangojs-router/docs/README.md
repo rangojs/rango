@@ -173,6 +173,23 @@ historical.
   updates that skip server RSC revalidation, via `revalidate: false` on
   `<Link>` / `navigate()` (implemented)
 
+## Scaffold check (consumer-style build)
+
+Repo CI builds from the monorepo lockfile, so a dependency release that breaks
+fresh installs (plugin-rsc 0.5.36 vs router 0.21.0/0.22.0) passes CI while
+consumers fail. `.github/workflows/scaffold-check.yml` runs daily at 06:00 UTC,
+on `workflow_dispatch`, and on pull requests that touch the script or the
+workflow, in two jobs: the published `latest`, and main's
+router packed as a tarball. Each scaffolds every `create-rango` template
+without a lockfile, runs `npm install` and `npm run build`, then starts the dev
+server and expects `GET /` to return 200. A failure is a red run.
+
+Run it locally with `node tools/scaffold-check.mjs`. Options: `--templates
+cloudflare,basic,vercel,basic-js` (`basic-js` is `basic --js`), `--router
+<path.tgz>` (from `pnpm --filter @rangojs/router build` then `pnpm --filter
+@rangojs/router pack`), `--router-version <semver>` to pin a published router,
+`--keep` to keep the temp dir.
+
 ## Internal reference (`internal/`)
 
 Implementation maps and review checklists for contributors, not consumer-facing
