@@ -336,6 +336,10 @@ the block's work, its loaders included, out of prefetches. See `/caching`,
   the prefetch. That is the price of keeping expensive or slow work out of
   every prefetch, which is what the flag is for. See `/loader` →
   "`prefetch: false`".
+- A navigation started before the fill answers cancels it, and `navigate()`
+  resolves only once the fill has answered. A newer navigation that ends
+  without replacing the page leaves the fallback up until the next one. See
+  `/loader` → "`prefetch: false`".
 - It needs a renderable fallback. `loading(false)` has nothing to show, so the
   flag does nothing there. The last `loading()` on an entry wins, flag
   included.

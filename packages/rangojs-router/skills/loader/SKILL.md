@@ -1176,6 +1176,17 @@ The limits:
   lands, and can complete later than a click with no prefetch, by up to what
   was left of the prefetch. That is the price of keeping the work out of the
   prefetch.
+- **A navigation started before the fill answers cancels it.** It is
+  cancelled when the newer navigation starts, not when that one commits. If
+  the newer navigation then ends without replacing the page (a redirect the
+  client refuses, an action refetch that drops its response), the deferred
+  part keeps its fallback until the next navigation. Every other ending
+  replaces the page anyway.
+- **`navigate()` resolves after the fill has answered.** The click's
+  navigation fills the deferred part itself, so `await navigate(url)` (and a
+  `router.push()` you await) settles a round trip after the page committed.
+  `useNavigation()` reads `idle` from the commit, with `isStreaming` true
+  until the fill has streamed in.
 - **A boundary is required for a fallback.** With no `loading()` on the entry
   and no `<Suspense>` around the read, nothing can show a fallback, so React
   holds the page being left on screen until the fill returns.

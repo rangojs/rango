@@ -77,6 +77,16 @@ might click; the later deferred part is the price the app chose. The
 exception is asserted with a bound, so it
 cannot grow ("A click before its prefetch has answered").
 
+Two trade-offs of the navigation filling its own holes are the maintainer's
+call as well, accepted rather than fixed. A newer navigation cancels the
+fill when it starts, not when it commits, so a navigation that then ends
+without replacing the page (a redirect the client refuses, an action refetch
+that drops its response) leaves the deferred part's fallbacks up with nobody
+to fill them ("Abort"). And `navigate()` resolves once the fill has
+answered, not when the page commits: the navigation that commits the tree is
+the one that fills it ("Adoption"). `useNavigation()` is idle from the
+commit, with `isStreaming` true until the fill has streamed.
+
 What a deferred loader does to the click follows from one sentence: **a
 deferred loader never blocks the navigation, and behaves like a loader that
 is still streaming.** React then decides what shows, as it does for any
@@ -1701,6 +1711,14 @@ segments. A fill refuses `rendered()` outright for the same reason R12 exists.
   (`pf-inner-late-fallback`, `pf-nested-late-fallback`) that the plain click
   never shows. Those two parity cells fail in the shared suite; they are not
   marked open.
+- A newer navigation cancels a pending fill when it starts, not when it
+  commits. One that then ends without replacing the page leaves the deferred
+  part's fallbacks up, unfilled, until the next navigation ("Abort"). The
+  maintainer's call: the signal is the one thing that cancels a fill.
+- `navigate()` resolves once the fill has answered, a round trip after the
+  page committed, because the navigation that adopts the prefetch fills its
+  holes itself. `useNavigation()` reads idle from the commit, with
+  `isStreaming` true until the fill has streamed. The maintainer's call.
 - A loader that lands within a few milliseconds of React's 300 ms is a coin
   flip for a plain click too: the value either makes the throttled reveal or
   waits 300 ms for the next one. The parity matrix keeps its mid-duration
