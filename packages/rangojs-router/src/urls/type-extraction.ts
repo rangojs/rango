@@ -12,6 +12,11 @@ import type { LocalOnlyInclude, UnnamedRoute } from "./pattern-types.js";
 // Route Type Extraction Utilities
 // ============================================================================
 
+/** Drops string index signatures, keeping literal and template keys. */
+type StripStringIndex<T> = {
+  [K in keyof T as string extends K ? never : K]: T[K];
+};
+
 /**
  * Prefix route names with a given prefix (e.g., "blog" + "post" = "blog.post")
  *
@@ -117,15 +122,21 @@ type ExtractRoutesFromItem<T> =
           : TUrlPrefix extends string
             ? PrefixPatterns<TRoutes, TUrlPrefix>
             : TRoutes
-      : // TypedLayoutItem: extract child routes from phantom type
+      : // Phantom-less items (global transition/cache/layout, factories typed
+        // as a use item) match the Typed* shapes with the child map inferred
+        // as the Record<string, any> constraint; the string index signature
+        // turns route-name checking off for the whole map. Strip only the
+        // index and keep literal keys, so a loosely typed include() beside
+        // named routes still contributes those names.
+        // TypedLayoutItem: extract child routes from phantom type
         T extends TypedLayoutItem<infer TChildRoutes>
-        ? TChildRoutes
+        ? StripStringIndex<TChildRoutes>
         : // TypedCacheItem: extract child routes from phantom type
           T extends TypedCacheItem<infer TChildRoutes>
-          ? TChildRoutes
+          ? StripStringIndex<TChildRoutes>
           : // TypedTransitionItem: extract child routes from phantom type
             T extends TypedTransitionItem<infer TChildRoutes>
-            ? TChildRoutes
+            ? StripStringIndex<TChildRoutes>
             : // Fallback (won't extract routes)
               {};
 
@@ -206,16 +217,25 @@ type ExtractResponsesFromItem<T> =
             ? TResponses
             : {}
       : T extends TypedLayoutItem<any, infer TChildResponses>
-        ? TChildResponses extends Record<string, unknown>
-          ? TChildResponses
+        ? StripStringIndex<TChildResponses> extends infer R extends Record<
+            string,
+            unknown
+          >
+          ? R
           : {}
         : T extends TypedCacheItem<any, infer TChildResponses>
-          ? TChildResponses extends Record<string, unknown>
-            ? TChildResponses
+          ? StripStringIndex<TChildResponses> extends infer R extends Record<
+              string,
+              unknown
+            >
+            ? R
             : {}
           : T extends TypedTransitionItem<any, infer TChildResponses>
-            ? TChildResponses extends Record<string, unknown>
-              ? TChildResponses
+            ? StripStringIndex<TChildResponses> extends infer R extends Record<
+                string,
+                unknown
+              >
+              ? R
               : {}
             : {};
 

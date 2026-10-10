@@ -30,7 +30,6 @@ import type {
   InterceptUseItem,
   LoaderUseItem,
   TypedCacheItem,
-  TransitionItem,
   TypedTransitionItem,
   TypedRouteItem,
   TypedIncludeItem,
@@ -422,8 +421,11 @@ export type PathHelpers<TEnv> = {
    * the browser (never on the server); see TransitionWhenFn.
    */
   transition: {
-    (): TransitionItem;
-    (config: TransitionConfig): TransitionItem;
+    // Typed {} phantoms, not bare TransitionItem: a phantom-less item matches
+    // `TypedTransitionItem<infer R>` with R inferred as Record<string, any>,
+    // which disables route-name checking for the sibling map.
+    (): TypedTransitionItem<{}, {}>;
+    (config: TransitionConfig): TypedTransitionItem<{}, {}>;
     <const TChildren extends readonly (AllUseItems | readonly AllUseItems[])[]>(
       children: () => TChildren,
     ): TypedTransitionItem<
