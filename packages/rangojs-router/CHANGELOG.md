@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.22.1 (2026-10-10)
 
 ### Fixed: a fresh install builds again with `@vitejs/plugin-rsc` 0.5.36
 
