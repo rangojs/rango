@@ -331,14 +331,23 @@ export async function initBrowserApp(
             // deferred values here exactly like the nav lane's processHandles
             // does before applying.
             const lateData = await resolveDeferredHandleValues(rawLateData);
-            bootLog("handles: late push applied", {
+            // Live store only while the document's page is on screen: a full
+            // replace with its `matched` would overwrite another page's handles.
+            const pageKeys = store.getPageHistoryKeys(initialHistoryKey);
+            const onScreen = pageKeys.includes(store.getHistoryKey());
+            bootLog("handles: late push", {
               segments: Object.keys(lateData),
+              onScreen,
             });
-            eventController.setHandleData(
-              lateData,
-              initialPayload.metadata?.matched,
-            );
-            store.updateCacheHandleData(initialHistoryKey, lateData);
+            if (onScreen) {
+              eventController.setHandleData(
+                lateData,
+                initialPayload.metadata?.matched,
+              );
+            }
+            for (const key of pageKeys) {
+              store.updateCacheHandleData(key, lateData);
+            }
           }
         } catch (err) {
           console.error("[rsc-router] Error consuming late handles:", err);

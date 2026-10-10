@@ -247,7 +247,9 @@ export function createNavigationBridge(
 
         const historyKey = generateHistoryKey(url, { intercept: isIntercept });
 
-        // Copy current segments to the new history key so back/forward restores instantly
+        // Copy current segments to the new history key so back/forward restores instantly.
+        // The array itself, not a clone: getPageHistoryKeys reads a shared
+        // array as the same page (the document's late handle pushes).
         const currentKey = store.getHistoryKey();
         const currentCache = store.getCachedSegments(currentKey);
         if (currentCache?.segments) {
