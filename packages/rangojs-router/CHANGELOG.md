@@ -1,5 +1,48 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a fresh install builds again with `@vitejs/plugin-rsc` 0.5.36
+
+Before: a new app, or any install that resolved `@vitejs/plugin-rsc` 0.5.36
+(published 2026-10-07; the router allows `^0.5.35`), failed `vite build` with:
+
+```
+[UNRESOLVED_IMPORT] Could not resolve '/*' in node_modules/@rangojs/router/src/server/loader-registry.ts
+```
+
+plugin-rsc 0.5.36 parses imports with es-module-lexer 3, which reports an
+`import()` of a template literal such as `` `/${path}` `` as the specifier
+`"/*"`. Its client-reference scan build rewrites every import to
+`import "<specifier>"`, so the build tried to resolve `"/*"`. The router had one
+such import, in the dev fallback that loads a loader by file path.
+
+Now: that import takes a variable, so the build passes on 0.5.36. The router
+requires `@vitejs/plugin-rsc` `^0.5.36`. If you pinned plugin-rsc 0.5.35 as a
+workaround, you can remove the pin.
+
+Your own code can hit the same failure on plugin-rsc 0.5.36, but only where
+Vite leaves a template-literal `import()` as written: one marked
+`/* @vite-ignore */`, or one whose path does not start with `./` or `../`. For
+those, build the path in a variable first; the result is the same import:
+
+```ts
+// fails on plugin-rsc 0.5.36: Could not resolve '/plugins/*.js'
+await import(/* @vite-ignore */ `/plugins/${name}.js`);
+// builds
+const modulePath = `/plugins/${name}.js`;
+await import(/* @vite-ignore */ modulePath);
+```
+
+A relative template without `/* @vite-ignore */`, such as
+``import(`./pages/${name}.js`)``, keeps building: Vite turns it into an
+`import.meta.glob` and bundles the matching files. Do not rewrite it into a
+variable import, or those files are no longer bundled.
+
+plugin-rsc 0.5.36 also renders its stylesheet `<link>` and `preinit` with
+`crossOrigin="anonymous"`. Stylesheets served from another origin (a CDN
+`base`) need CORS headers.
+
 ## 0.22.0 (2026-10-09)
 
 ### Added: on-demand prerender: refresh a prerendered page without a deploy ([#640](https://github.com/rangojs/rango/pull/640))
