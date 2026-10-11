@@ -20,11 +20,17 @@ function prefetchFalseSuite(
 }
 
 test.describe("prefetch-false (dev)", () => {
+  // Every case is independent (its own run id), and with the server 300 ms
+  // away the file outgrows one shard: parallel mode lets --shard split it.
+  test.describe.configure({ mode: "parallel" });
   const f = useFixture({ root: ".", mode: "dev" });
   prefetchFalseSuite(f, false);
 });
 
 test.describe("prefetch-false (production)", () => {
+  // Every case is independent (its own run id), and with the server 300 ms
+  // away the file outgrows one shard: parallel mode lets --shard split it.
+  test.describe.configure({ mode: "parallel" });
   const f = useFixture({ root: ".", mode: "build" });
   prefetchFalseSuite(f, true);
 });

@@ -49,7 +49,9 @@ export default defineConfig({
   // test suite to run"). 14m playwright budget + ~3-4m of job setup (install,
   // router build, browser deps) fits inside the workflow job's
   // timeout-minutes: 20 cap (.github/workflows/e2e.yml).
-  globalTimeout: process.env.CI ? 14 * 60 * 1000 : undefined,
+  // 18 (was 14): the prefetch: false parity cases run against a 300-500 ms
+  // server; the shards below the job's 25-minute cap.
+  globalTimeout: process.env.CI ? 18 * 60 * 1000 : undefined,
   timeout: process.env.CI ? 60000 : 30000,
   use: {
     trace: "on-first-retry",

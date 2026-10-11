@@ -558,13 +558,21 @@ jobs:
           - project: dev
             shard: 5
             shardTotal: 5
-          # Production tests sharded across 2 jobs
+          # Production tests sharded across 4 jobs (was 2): the prefetch: false
+          # parity cases run against a 300-500 ms server and outgrew a 10-minute
+          # shard.
           - project: production
             shard: 1
-            shardTotal: 2
+            shardTotal: 4
           - project: production
             shard: 2
-            shardTotal: 2
+            shardTotal: 4
+          - project: production
+            shard: 3
+            shardTotal: 4
+          - project: production
+            shard: 4
+            shardTotal: 4
           - project: preload-dev
             config: playwright.preload.config.ts
           - project: preload-production
@@ -665,33 +673,62 @@ jobs:
     # ~3-4m of setup (install, router build, browser deps). Tightening the cap
     # is a data-driven follow-up once the sharded run times are measured — do
     # NOT pre-optimize.
-    timeout-minutes: 20
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Dev tests sharded across 2 jobs, WITHOUT --no-deps: the dev project
+          # Dev tests sharded across 6 jobs (was 2), WITHOUT --no-deps: the dev project
           # depends on the dev-warmup setup project (the #659 cold-miniflare
           # warmup), and Playwright runs a project's dependencies fully in every
           # shard — so keeping deps preserves the warmup on each runner.
           - project: dev
             shard: 1
-            shardTotal: 2
+            shardTotal: 6
           - project: dev
             shard: 2
-            shardTotal: 2
-          # Production tests sharded across 2 jobs WITH --no-deps: the production
+            shardTotal: 6
+          - project: dev
+            shard: 3
+            shardTotal: 6
+          - project: dev
+            shard: 4
+            shardTotal: 6
+          - project: dev
+            shard: 5
+            shardTotal: 6
+          - project: dev
+            shard: 6
+            shardTotal: 6
+          # Production tests sharded across 6 jobs (was 2; prefetch: false parity
+          # cases at a 300-500 ms server, split by test via parallel mode) WITH --no-deps: the production
           # project depends on the FULL dev project (~284 tests), so without
           # --no-deps every production shard would also drag the entire dev suite
           # (the 208-vs-1 blowup documented in AGENTS.md). --no-deps severs that;
           # the production webServer still builds dist/ and serves preview.
           - project: production
             shard: 1
-            shardTotal: 2
+            shardTotal: 6
             noDeps: true
           - project: production
             shard: 2
-            shardTotal: 2
+            shardTotal: 6
+            noDeps: true
+          - project: production
+            shard: 3
+            shardTotal: 6
+            noDeps: true
+          - project: production
+            shard: 4
+            shardTotal: 6
+            noDeps: true
+          - project: production
+            shard: 5
+            shardTotal: 6
+            noDeps: true
+          - project: production
+            shard: 6
+            shardTotal: 6
             noDeps: true
           - project: preload-dev
             config: playwright.preload.config.ts
