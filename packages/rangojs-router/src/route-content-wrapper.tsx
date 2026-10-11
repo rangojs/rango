@@ -17,6 +17,7 @@ import {
   useBoundaryAudit,
   useRevealAudit,
 } from "./suspense-audit-react.js";
+import { SETTLED_THENABLE } from "./thenable-status.js";
 
 /**
  * Router-owned error boundary for read-site loader errors. segment-system
@@ -336,10 +337,14 @@ function LoaderResolver({
     );
   }
 
+  // A slot's aggregate can be a pending promise on one render and its arrived
+  // array on the next (segment-loader-promise.ts): use() at this place on
+  // every render, or React reports a component that suspended in use() and
+  // then finished without it (the useLoader pattern, use-loader.tsx).
   const resolvedData =
     loaderDataPromise instanceof Promise
       ? use(loaderDataPromise)
-      : loaderDataPromise;
+      : (use(SETTLED_THENABLE), loaderDataPromise);
 
   const { loaderData, errorFallback } = decodeLoaderResults(
     resolvedData,
