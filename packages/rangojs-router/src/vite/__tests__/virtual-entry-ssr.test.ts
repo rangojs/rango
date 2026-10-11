@@ -14,6 +14,19 @@ describe("virtual browser entry", () => {
       'await import(\n      "@rangojs/router/internal/browser/dev-discovery"',
     );
   });
+
+  it("hands the payload's form state to hydrateRoot, and nothing on a GET", () => {
+    // #1087: without it a useActionState result a no-JS POST rendered resets.
+    expect(VIRTUAL_ENTRY_BROWSER).toContain(
+      "await Promise.resolve(initialPayload.formState).catch(",
+    );
+    expect(VIRTUAL_ENTRY_BROWSER).toContain(
+      "formState ? { formState } : undefined",
+    );
+    expect(VIRTUAL_ENTRY_BROWSER).toContain(
+      "strictMode === false ? app : createElement(StrictMode, null, app)",
+    );
+  });
 });
 
 describe("getVirtualEntrySSR headScripts wiring", () => {

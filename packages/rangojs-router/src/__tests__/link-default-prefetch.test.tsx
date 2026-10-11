@@ -31,12 +31,8 @@ import { prefetchDirect, prefetchQueued } from "../browser/prefetch/loader.js";
 import { Link } from "../browser/react/Link.js";
 import { NavigationStoreContext } from "../browser/react/context.js";
 import type { NavigationStoreContextValue } from "../browser/react/context.js";
-import {
-  setDefaultPrefetchStrategy,
-  getDefaultPrefetchStrategy,
-} from "../browser/prefetch/default-strategy.js";
+import { ENVIRONMENT_DEFAULT_PREFETCH } from "../browser/prefetch/default-strategy.js";
 import { subscribeToPrefetchScopeChange } from "../browser/link-interceptor.js";
-import { DEFAULT_PREFETCH_STRATEGY } from "../router/prefetch-default.js";
 
 let location: URL;
 let stateListeners: Set<() => void>;
@@ -90,19 +86,18 @@ describe("Link default prefetch fallback", () => {
   afterEach(() => {
     if (rootMounted) act(() => root.unmount());
     container.remove();
-    setDefaultPrefetchStrategy(DEFAULT_PREFETCH_STRATEGY);
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
   it("a bare Link stays quiet under the built-in development default", () => {
-    expect(getDefaultPrefetchStrategy()).toBe("none");
+    expect(ENVIRONMENT_DEFAULT_PREFETCH).toBe("none");
     renderLink({ to: "/target" });
     expect(prefetchQueued).not.toHaveBeenCalled();
   });
 
   it("a bare Link viewport-prefetches under an explicit production strategy", () => {
-    setDefaultPrefetchStrategy("viewport");
+    ctxValue.defaultPrefetch = "viewport";
     renderLink({ to: "/target" });
     expect(prefetchQueued).toHaveBeenCalledTimes(1);
     expect(vi.mocked(prefetchQueued).mock.calls[0][0]).toBe("/target");
@@ -315,12 +310,11 @@ describe("Link default prefetch fallback", () => {
     expect(secondListener).toHaveBeenCalledOnce();
   });
 
-  it("uses an instance default without mutating the module default", () => {
+  it("uses the router store's default", () => {
     ctxValue.defaultPrefetch = "viewport";
     renderLink({ to: "/target" });
 
     expect(prefetchQueued).toHaveBeenCalledOnce();
-    expect(getDefaultPrefetchStrategy()).toBe("none");
   });
 
   it.each(["viewport", "render"] as const)(
@@ -339,11 +333,12 @@ describe("Link default prefetch fallback", () => {
 
   it("an explicit prefetch prop wins over the router default in both directions", () => {
     // Opt OUT of an aggressive default.
+    ctxValue.defaultPrefetch = "viewport";
     renderLink({ to: "/target", prefetch: "none" });
     expect(prefetchQueued).not.toHaveBeenCalled();
 
     // Opt IN under manual mode.
-    setDefaultPrefetchStrategy("none");
+    ctxValue.defaultPrefetch = "none";
     renderLink({ to: "/other", prefetch: "viewport" });
     expect(prefetchQueued).toHaveBeenCalledTimes(1);
     expect(vi.mocked(prefetchQueued).mock.calls[0][0]).toBe("/other");

@@ -32,7 +32,7 @@ vi.mock("../browser/segment-structure-assert.js", () => ({
 }));
 
 import { createPartialUpdater } from "../browser/partial-update";
-import { loaderStore } from "../loader-store";
+import { LoaderStore } from "../loader-store";
 
 const URL_PAGE = "http://localhost/product";
 
@@ -79,6 +79,7 @@ function createStore(cachedSegments: ResolvedSegment[]) {
   let historyKey = "/";
   let segmentIds = cachedSegments.map((s) => s.id);
   return {
+    loaders: new LoaderStore(),
     cache,
     getHistoryKey: () => historyKey,
     setHistoryKey: (key: string) => {
@@ -259,7 +260,6 @@ function setup(
 }
 
 afterEach(() => {
-  loaderStore.reset();
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -1035,7 +1035,7 @@ describe("a fill whose segments are not the ones the tree was built for", () => 
     });
     const { navigation } = await adopt();
     const holes = adoption.placeholders.map(holeOf);
-    loaderStore.trackPendingStream("page", holes[3]);
+    store.loaders.trackPendingStream("page", holes[3]);
 
     const { matched, response } = failedRoute(adoption);
     fill.resolve(response);
@@ -1066,7 +1066,7 @@ describe("a fill whose segments are not the ones the tree was built for", () => 
       const id = adoption.placeholders[index]!.id;
       expect(rendered.find((s) => s.id === id)!.component).toBe(hole);
     }
-    expect(loaderStore.isStreamPending("page")).toBe(false);
+    expect(store.loaders.isStreamPending("page")).toBe(false);
     expect(store.cache.get("/product")!.segments.map((s) => s.id)).toEqual(
       matched,
     );
@@ -1109,8 +1109,8 @@ describe("a fill its navigation is left before it lands", () => {
     const controller = new AbortController();
     const { navigation } = await adopt(controller.signal);
     const hole = adoption.reviews.loaderData as Promise<unknown>;
-    loaderStore.trackPendingStream("reviews", hole);
-    expect(loaderStore.isStreamPending("reviews")).toBe(true);
+    store.loaders.trackPendingStream("reviews", hole);
+    expect(store.loaders.isStreamPending("reviews")).toBe(true);
 
     controller.abort();
     await navigation;
@@ -1119,7 +1119,7 @@ describe("a fill its navigation is left before it lands", () => {
     expect(calls[1].signal?.aborted).toBe(true);
     expect(await settled(hole)).toBe(false);
     expect(onUpdate).toHaveBeenCalledTimes(1);
-    expect(loaderStore.isStreamPending("reviews")).toBe(false);
+    expect(store.loaders.isStreamPending("reviews")).toBe(false);
     // The streaming token is not left open by a fill that never lands.
     expect(end).toHaveBeenCalledTimes(1);
     // The placeholder stays: history treats the entry as a miss.
@@ -1220,10 +1220,10 @@ describe("a fill that does not land", () => {
   it("shows a response it cannot use as an error, and settles no deferred", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const adoption = loaderAdoption();
-    const { adopt, fill, onUpdate } = setup(adoption);
+    const { adopt, fill, onUpdate, store } = setup(adoption);
     const { navigation } = await adopt();
     const hole = adoption.reviews.loaderData as Promise<unknown>;
-    loaderStore.trackPendingStream("reviews", hole);
+    store.loaders.trackPendingStream("reviews", hole);
 
     // Lists a segment the client does not hold and does not send it.
     fill.resolve(fillPayload([], [...adoption.matched, "L0R0D2.extra"]));
@@ -1233,7 +1233,7 @@ describe("a fill that does not land", () => {
       "[rango] fill: missing segments [L0R0D1.reviews, L0R0D2.extra]",
     );
     expect(await settled(hole)).toBe(false);
-    expect(loaderStore.isStreamPending("reviews")).toBe(false);
+    expect(store.loaders.isStreamPending("reviews")).toBe(false);
   });
 
   // Checked before anything is handed over: the adoption's `matched`, the

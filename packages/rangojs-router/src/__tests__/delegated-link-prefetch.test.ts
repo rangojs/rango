@@ -32,14 +32,13 @@ import {
   setupDelegatedLinkPrefetch,
   setupLinkInterception,
 } from "../browser/link-interceptor.js";
-import { setDefaultPrefetchStrategy } from "../browser/prefetch/default-strategy.js";
 
 let location: URL;
 let stateListeners: Set<() => void>;
 
 function setupPrefetch(
   onPrefetch: DelegatedPrefetchCallback,
-  defaultPrefetch?: "hover" | "none" | "render" | "viewport",
+  defaultPrefetch?: "hover" | "none" | "render" | "viewport" | "adaptive",
   basename?: string,
   shouldPrefetch?: (link: HTMLAnchorElement) => boolean,
 ): () => void {
@@ -72,13 +71,11 @@ describe("delegated plain-anchor prefetch", () => {
   });
 
   afterEach(() => {
-    setDefaultPrefetchStrategy("none");
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
   it("does not start prefetch observation with click interception", () => {
-    setDefaultPrefetchStrategy("viewport");
     document.body.innerHTML = `<a href="/target">target</a>`;
 
     const cleanup = setupLinkInterception(vi.fn());
@@ -88,7 +85,6 @@ describe("delegated plain-anchor prefetch", () => {
   });
 
   it("observes eligible anchors except explicit opt-outs", () => {
-    setDefaultPrefetchStrategy("viewport");
     document.body.innerHTML = `
       <a href="/target" data-testid="plain">plain</a>
       <a href="/side-effect" data-prefetch="false">opted-out side effect</a>
@@ -101,7 +97,7 @@ describe("delegated plain-anchor prefetch", () => {
     )!;
     const onPrefetch = vi.fn<DelegatedPrefetchCallback>();
 
-    const cleanup = setupPrefetch(onPrefetch);
+    const cleanup = setupPrefetch(onPrefetch, "viewport");
 
     expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledTimes(1);
     expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledWith(
@@ -115,8 +111,7 @@ describe("delegated plain-anchor prefetch", () => {
     cleanup();
   });
 
-  it("uses an instance strategy without reading the module default", () => {
-    setDefaultPrefetchStrategy("none");
+  it("uses the instance strategy", () => {
     const link = document.createElement("a");
     link.href = "/target";
     document.body.appendChild(link);
@@ -507,9 +502,8 @@ describe("delegated plain-anchor prefetch", () => {
   });
 
   it("observes plain anchors inserted after prefetch is registered", async () => {
-    setDefaultPrefetchStrategy("viewport");
     const onPrefetch = vi.fn<DelegatedPrefetchCallback>();
-    const cleanup = setupPrefetch(onPrefetch);
+    const cleanup = setupPrefetch(onPrefetch, "viewport");
     const link = document.createElement("a");
     link.href = "/dynamic";
 
@@ -525,8 +519,10 @@ describe("delegated plain-anchor prefetch", () => {
   });
 
   it("does not re-register an anchor discovered for the next location", async () => {
-    setDefaultPrefetchStrategy("viewport");
-    const cleanup = setupPrefetch(vi.fn<DelegatedPrefetchCallback>());
+    const cleanup = setupPrefetch(
+      vi.fn<DelegatedPrefetchCallback>(),
+      "viewport",
+    );
     location = new URL("/another-page", location);
     const link = document.createElement("a");
     link.href = "/dynamic";
@@ -542,7 +538,6 @@ describe("delegated plain-anchor prefetch", () => {
   });
 
   it("upgrades a pending viewport prefetch when the pointer enters", () => {
-    setDefaultPrefetchStrategy("viewport");
     const link = document.createElement("a");
     link.href = "/target";
     document.body.appendChild(link);
@@ -551,7 +546,7 @@ describe("delegated plain-anchor prefetch", () => {
       .fn<DelegatedPrefetchCallback>()
       .mockReturnValueOnce(cancelPending)
       .mockReturnValueOnce(undefined);
-    const cleanup = setupPrefetch(onPrefetch);
+    const cleanup = setupPrefetch(onPrefetch, "viewport");
 
     prefetchObserver.callbacks.get(link)!();
     link.dispatchEvent(
@@ -568,14 +563,13 @@ describe("delegated plain-anchor prefetch", () => {
   });
 
   it("does not re-observe or re-trigger eligible anchors after navigation", () => {
-    setDefaultPrefetchStrategy("viewport");
     const visible = document.createElement("a");
     visible.href = "/visible-target";
     const pending = document.createElement("a");
     pending.href = "/pending-target";
     document.body.append(visible, pending);
     const onPrefetch = vi.fn<DelegatedPrefetchCallback>();
-    const cleanup = setupPrefetch(onPrefetch);
+    const cleanup = setupPrefetch(onPrefetch, "viewport");
 
     expect(prefetchObserver.observeForPrefetch).toHaveBeenCalledTimes(2);
     prefetchObserver.callbacks.get(visible)!();
@@ -590,12 +584,11 @@ describe("delegated plain-anchor prefetch", () => {
   });
 
   it("does not re-run render prefetch after SPA navigation", () => {
-    setDefaultPrefetchStrategy("render");
     const link = document.createElement("a");
     link.href = "/persistent-target";
     document.body.appendChild(link);
     const onPrefetch = vi.fn<DelegatedPrefetchCallback>();
-    const cleanup = setupPrefetch(onPrefetch);
+    const cleanup = setupPrefetch(onPrefetch, "render");
 
     expect(onPrefetch).toHaveBeenCalledOnce();
 
@@ -663,11 +656,13 @@ describe("delegated plain-anchor prefetch", () => {
           removeEventListener: vi.fn(),
         }) as unknown as MediaQueryList,
     );
-    setDefaultPrefetchStrategy("adaptive");
     const link = document.createElement("a");
     link.href = "/target";
     document.body.appendChild(link);
-    const cleanup = setupPrefetch(vi.fn<DelegatedPrefetchCallback>());
+    const cleanup = setupPrefetch(
+      vi.fn<DelegatedPrefetchCallback>(),
+      "adaptive",
+    );
 
     expect(prefetchObserver.observeForPrefetch).not.toHaveBeenCalled();
     expect(observeMutations).not.toHaveBeenCalled();

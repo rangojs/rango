@@ -1,0 +1,69 @@
+name: Scaffold check
+
+# Builds create-rango apps without a lockfile, like a consumer. CI elsewhere
+# builds from the monorepo lockfile and cannot see a dependency release that
+# breaks fresh installs. A failing job is a red run. Failure emails for
+# scheduled runs go to the user who last modified the cron line, if they have
+# Actions notifications on; there is no auto-issue.
+on:
+  pull_request:
+    paths:
+      - tools/scaffold-check.mjs
+      - .github/workflows/scaffold-check.yml
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * *"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  published:
+    name: published latest
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          # v5 caches the root packageManager (pnpm), which this job never
+          # installs; the scaffolds use npm without a lockfile.
+          package-manager-cache: false
+
+      - name: Scaffold, install, build and serve every template
+        run: node tools/scaffold-check.mjs
+
+  main:
+    name: main router tarball
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build router
+        run: pnpm --filter @rangojs/router build
+
+      - name: Pack router
+        run: pnpm --filter @rangojs/router pack --pack-destination "$RUNNER_TEMP/pack"
+
+      - name: Scaffold, install, build and serve every template
+        run: node tools/scaffold-check.mjs --router "$(ls "$RUNNER_TEMP"/pack/rangojs-router-*.tgz)"

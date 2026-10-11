@@ -438,6 +438,11 @@ function renderPeResponse<TEnv>(
       strictMode: ctx.router.strictMode,
       initialTheme: payloadInitialTheme(getRequestContext()),
     },
+    // The same decoded value the SSR render receives, never a second decode:
+    // hydrateRoot needs it on the client or useActionState resets. A promise,
+    // so a state Flight cannot serialize (a class instance) rejects only this
+    // slot instead of failing the payload root and the whole document.
+    ...(reactFormState ? { formState: Promise.resolve(reactFormState) } : {}),
   };
 
   const trace = getRequestContext()._activeRoutine;
@@ -470,7 +475,6 @@ function renderPeResponse<TEnv>(
     {
       // metricsStore=undefined is safe: the handler already stashed the early
       // SSR setup promise, so this reuses it instead of starting setup again.
-      // reactFormState travels through the SSR option, not RscPayload.
       html: createSsrHtmlStage({
         ctx,
         request,

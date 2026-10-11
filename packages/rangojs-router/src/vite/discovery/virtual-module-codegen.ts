@@ -46,6 +46,22 @@ function devDiscoveryBootstrap(state: DiscoveryState): string[] {
   return [`globalThis.__RANGO_DEV_DISCOVERY_EPOCH = ${epoch};`];
 }
 
+/** Clear, then install every projection in state.clientUrlProjectionMap. */
+function clientUrlProjectionReplay(state: DiscoveryState): string[] {
+  // Sorted: the map fills in transform order, which varies between runs,
+  // and this module's bytes feed cache versions (build-versions.ts).
+  const projections = [...(state.clientUrlProjectionMap ?? [])].sort(
+    ([a], [b]) => compareStrings(a, b),
+  );
+  return [
+    `clearClientUrlProjections();`,
+    ...projections.map(
+      ([referenceId, projection]) =>
+        `setClientUrlProjection(${JSON.stringify(referenceId)}, ${jsonParseExpression(projection)});`,
+    ),
+  ];
+}
+
 /**
  * Generate the code for the main virtual:rsc-router/routes-manifest module.
  */
@@ -110,19 +126,7 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
       TRANSITION_WHEN_VALIDATION,
     ];
 
-    if (hasClientUrlModules) {
-      lines.push(`clearClientUrlProjections();`);
-      // Sorted: the map fills in transform order, which varies between runs,
-      // and this module's bytes feed cache versions (build-versions.ts).
-      const projections = [...(state.clientUrlProjectionMap ?? [])].sort(
-        ([a], [b]) => compareStrings(a, b),
-      );
-      for (const [referenceId, projection] of projections) {
-        lines.push(
-          `setClientUrlProjection(${JSON.stringify(referenceId)}, ${jsonParseExpression(projection)});`,
-        );
-      }
-    }
+    if (hasClientUrlModules) lines.push(...clientUrlProjectionReplay(state));
 
     if (varIdx > 0) {
       lines.push(
@@ -197,13 +201,14 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
     return lines.join("\n");
   }
 
+  // No manifest: discovery has not committed one (a failed cold pass commits
+  // nothing). The projections the failed pass computed still replay, so the
+  // realm serving requests can resolve include()s of clientUrls() modules.
   const lines: string[] = [
-    `import { ${hasClientUrlModules ? "clearClientUrlProjections, " : ""}enableTransitionWhenValidation } from "@rangojs/router/server";`,
+    `import { ${hasClientUrlModules ? "clearClientUrlProjections, setClientUrlProjection, " : ""}enableTransitionWhenValidation } from "@rangojs/router/server";`,
     TRANSITION_WHEN_VALIDATION,
   ];
-  if (hasClientUrlModules) {
-    lines.push(`clearClientUrlProjections();`);
-  }
+  if (hasClientUrlModules) lines.push(...clientUrlProjectionReplay(state));
   if (!state.isBuildMode) {
     const origin =
       state.devServerOrigin ||

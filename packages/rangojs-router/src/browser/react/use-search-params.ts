@@ -119,9 +119,11 @@ export function useSearchParams(): [ReadonlyURLSearchParams, SetSearchParams] {
   // (no provider) seeds empty.
   const [searchParams, setSearchParamsState] =
     useState<ReadonlyURLSearchParams>(() => {
-      const location = ctx?.eventController.getState().location as
-        | URL
-        | undefined;
+      const state = ctx
+        ? (ctx.eventController.getHydrationSnapshot()?.state ??
+          ctx.eventController.getState())
+        : undefined;
+      const location = state?.location as URL | undefined;
       return new URLSearchParams(location?.searchParams);
     });
 

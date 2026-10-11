@@ -167,6 +167,16 @@ wildcard`, with backtracking. The regex fallback matches in definition order, wh
   doesn't do is canonicalize the _pattern-implicit_ slash (the regex fallback does) — but
   since the trie is the live matcher, behavior is consistent, and adding it would be
   optional polish (a `tts` leaf flag), not a fix.
+- **A discovery pass reads one realm.** Discovery is only as right as the module
+  instances it read. `discoverRouters` reads `RouterRegistry` and installs clientUrls
+  projections on one `@rangojs/router/server` instance, checks that the RSC runner still
+  serves it, and redoes the pass when a runner full reload split it. A split pass used to
+  install the projections on the old copy while `urls.tsx` read a fresh, empty one, so
+  every `include()` of a clientUrls module failed and the dev server returned 500s until a
+  restart. A failed cold discovery now recovers too: the routes-manifest module replays the
+  projections it computed, and the route-file watcher re-runs discovery. The full story is
+  in [manifests.md](../manifests.md) ("Dev-boot module reload races"). Pinned by
+  `discover-routers-reload.test.ts`.
 
 ## Lazy `include()` — is it actually pulling its weight?
 
@@ -232,6 +242,8 @@ is the list:
 - `lazy-include-perf.test.ts` — the lazy-by-default guarantees and the LP1/LP3/LP4
   run-count sentinels.
 - `lazy-include-cost.bench.ts` — the LP1/LP3/LP4 timing benchmark.
+- `discover-routers-reload.test.ts` — a discovery pass split by a runner reload is redone,
+  and a failed cold discovery recovers.
 - `semantic-matrix.test.ts` — the router's core execution guarantees (middleware scope,
   handler-first ordering, PE/JS parity). If you change matching or discovery, keep this
   one green above all.

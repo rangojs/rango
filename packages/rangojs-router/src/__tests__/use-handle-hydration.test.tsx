@@ -15,12 +15,12 @@ import {
 import { useHandle } from "../browser/react/use-handle.js";
 
 // Issue #1035: a render React is hydrating reads the handle state the
-// document's HTML was rendered with, whenever its boundary hydrates. The
-// late handle channel (rsc-router.tsx) is released when the ROOT hydrates,
-// so a boundary that hydrates after it used to read values its HTML did not
-// have. A hydrateRoot call made after the late update was applied is that
-// late hydration render. The server HTML is hand-written to isolate the
-// hook; the same contract through the public primitive
+// document's HTML was rendered with, whenever its boundary hydrates. While
+// the hydration window is open (EventController.lockHydration) the store
+// holds that state and a late handle push waits; NavigationProvider releases
+// it once every boundary has hydrated. A hydrateRoot call made after the late
+// push arrived is that late hydration render. The server HTML is hand-written
+// to isolate the hook; the same contract through the public primitive
 // (renderRoute({ hydrate: true, lateHandles })) is in
 // testing/__tests__/render-route-hydrate.test.tsx.
 
@@ -42,9 +42,10 @@ beforeEach(() => {
   controller = createEventController({
     initialLocation: new URL("http://localhost/"),
   });
-  // initBrowserApp: the document's snapshot, frozen before hydrateRoot.
+  // initBrowserApp: the document's snapshot, then the lock, before
+  // hydrateRoot.
   controller.setHandleData(DOCUMENT, MATCHED);
-  controller.freezeHydrationHandleState();
+  controller.lockHydration();
 });
 
 afterEach(async () => {
@@ -110,8 +111,13 @@ function applyLate(): void {
   controller.flushRouteState();
 }
 
+/** NavigationProvider's release, after the barrier's commit. */
+async function release(): Promise<void> {
+  await act(async () => controller.releaseHydrationLock());
+}
+
 describe("useHandle: a hydrating render reads the document's handle state", () => {
-  it("a reader that hydrates after a late update hydrates with the document's values, then shows the update", async () => {
+  it("a reader that hydrates after a late push hydrates with the document's values, then shows the push at release", async () => {
     applyLate();
 
     const { container, recoverable } = await hydrate(
@@ -120,8 +126,16 @@ describe("useHandle: a hydrating render reads the document's handle state", () =
     );
 
     expect(recoverable).toEqual([]);
-    // The hydrating render, then one render on the live state.
-    expect(renders).toEqual([["document"], ["document", "late"]]);
+    expect(renders).toEqual([["document"]]);
+
+    await release();
+
+    // The update's optimistic pass and its transition.
+    expect(renders).toEqual([
+      ["document"],
+      ["document", "late"],
+      ["document", "late"],
+    ]);
     expect(container.innerHTML).toBe("<ul><li>document</li><li>late</li></ul>");
   });
 
@@ -131,6 +145,8 @@ describe("useHandle: a hydrating render reads the document's handle state", () =
     const { container, recoverable } = await hydrate(<Count />, "<p>1</p>");
 
     expect(recoverable).toEqual([]);
+    expect(container.innerHTML).toBe("<p>1</p>");
+    await release();
     expect(container.innerHTML).toBe("<p>2</p>");
   });
 
@@ -139,18 +155,21 @@ describe("useHandle: a hydrating render reads the document's handle state", () =
       <Rows />,
       "<ul><li>document</li></ul>",
     );
+    await release();
 
     expect(recoverable).toEqual([]);
     expect(renders).toEqual([["document"]]);
     expect(container.innerHTML).toBe("<ul><li>document</li></ul>");
   });
 
-  it("a reader that hydrated before the late update gets it through its subscription, with no extra render", async () => {
+  it("a reader that hydrated before the late push gets it at release, through its subscription", async () => {
     const { container } = await hydrate(<Rows />, "<ul><li>document</li></ul>");
 
     await act(async () => applyLate());
+    expect(renders).toEqual([["document"]]);
 
-    // The update's optimistic pass and its transition, as without a freeze.
+    await release();
+
     expect(renders).toEqual([
       ["document"],
       ["document", "late"],
@@ -159,8 +178,25 @@ describe("useHandle: a hydrating render reads the document's handle state", () =
     expect(container.innerHTML).toBe("<ul><li>document</li><li>late</li></ul>");
   });
 
-  it("a reader that mounts after the late update reads the live state", async () => {
+  it("a reader that mounts while the window is open reads the document's values until release", async () => {
     applyLate();
+    const container = document.body.appendChild(document.createElement("div"));
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(tree(<Rows />));
+    });
+    expect(renders).toEqual([["document"]]);
+
+    await release();
+
+    expect(renders.at(-1)).toEqual(["document", "late"]);
+    expect(container.innerHTML).toBe("<ul><li>document</li><li>late</li></ul>");
+  });
+
+  it("a reader that mounts after the window closed reads the live state", async () => {
+    applyLate();
+    await release();
     const container = document.body.appendChild(document.createElement("div"));
 
     await act(async () => {

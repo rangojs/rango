@@ -164,6 +164,35 @@ describe("generateRoutesManifestModule — client URL projections", () => {
     expect(code).not.toContain('setClientUrlProjection("');
   });
 
+  // A failed cold dev discovery commits no manifest, but the projections it
+  // computed are good: without them every include() of a clientUrls() module
+  // threw in the request realm until a restart.
+  it("replays the last projections when no manifest is committed", () => {
+    const s = makeManifestState(false);
+    const referenceId = "/src/urls/client-urls.tsx#default";
+    s.clientUrlSourceByReferenceId = new Map([
+      [referenceId, "/src/urls/client-urls.tsx"],
+    ]);
+    s.clientUrlProjectionMap = new Map([
+      [referenceId, { version: 1 as const, routes: [] }],
+    ]);
+    s.mergedRouteManifest = null;
+    s.perRouterManifests = [];
+
+    const code = generateRoutesManifestModule(s);
+
+    expect(code).toContain(
+      'import { clearClientUrlProjections, setClientUrlProjection, enableTransitionWhenValidation } from "@rangojs/router/server";',
+    );
+    const clear = code.indexOf("clearClientUrlProjections();");
+    const set = code.indexOf(
+      `setClientUrlProjection(${JSON.stringify(referenceId)}, `,
+    );
+    expect(clear).toBeGreaterThan(-1);
+    expect(set).toBeGreaterThan(clear);
+    expect(code).not.toContain("setCachedManifest");
+  });
+
   // The map fills in transform order, which differs between two builds of the
   // same source, and this module's bytes feed the cache version of every
   // router bundled with it (build-versions.ts).

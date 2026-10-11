@@ -10,7 +10,6 @@ import { consumeHandles } from "../../browser/react/NavigationProvider.js";
 import { useNavigation } from "../../browser/react/use-navigation.js";
 import type { NavigationUpdate } from "../../browser/types.js";
 import type { ResolvedSegment } from "../../types.js";
-import { loaderStore } from "../../loader-store.js";
 import { renderRoute } from "../render-route.js";
 
 // A click that adopts a payload with deferred segments (`prefetch: false`),
@@ -21,7 +20,6 @@ import { renderRoute } from "../render-route.js";
 // the fill (the navigation's signal).
 
 afterEach(() => {
-  loaderStore.reset();
   cleanup();
 });
 
@@ -598,7 +596,7 @@ describe("a click that adopts a prefetch, and its fill", () => {
       const signal = page.fillSignal()!;
       expect(signal.aborted, "the commit leaves the fill running").toBe(false);
       const hole = loaderSegment.loaderData as Promise<unknown>;
-      loaderStore.trackPendingStream("data", hole);
+      page.router.store.loaders.trackPendingStream("data", hole);
 
       await act(async () => leave(page.router.eventController));
       await page.navigation;
@@ -615,7 +613,7 @@ describe("a click that adopts a prefetch, and its fill", () => {
       void hole.then(() => (settled = true));
       await act(async () => tick());
       expect(settled).toBe(false);
-      expect(loaderStore.isStreamPending("data")).toBe(false);
+      expect(page.router.store.loaders.isStreamPending("data")).toBe(false);
       expect(page.shown(), "the newer navigation has not committed").toBe(
         "skeleton",
       );

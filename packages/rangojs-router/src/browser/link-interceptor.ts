@@ -4,7 +4,7 @@ import {
   type EventController,
 } from "./event-controller.js";
 import {
-  getDefaultPrefetchStrategy,
+  ENVIRONMENT_DEFAULT_PREFETCH,
   resolveAdaptiveStrategy,
   subscribeToAdaptiveStrategyChange,
 } from "./prefetch/default-strategy.js";
@@ -383,7 +383,7 @@ export function setupDelegatedLinkPrefetch(
   options: DelegatedPrefetchOptions,
 ): () => void {
   const defaultStrategy =
-    options.defaultPrefetch ?? getDefaultPrefetchStrategy();
+    options.defaultPrefetch ?? ENVIRONMENT_DEFAULT_PREFETCH;
   if (defaultStrategy === "none") return () => {};
 
   const basename = canonicalizeBasenamePathname(options.basename);

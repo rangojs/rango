@@ -1,9 +1,9 @@
 /**
  * Resolve the router-wide default Link prefetch strategy once, at router init.
- * The resolved value ships to the client in payload metadata; the browser
- * entry applies it via `setDefaultPrefetchStrategy` (browser/prefetch/
- * default-strategy.ts) and every `<Link>` without an explicit `prefetch` prop
- * falls back to it.
+ * The resolved value ships to the client in payload metadata; the router
+ * store carries it (`NavigationStoreContext.defaultPrefetch`, see
+ * browser/prefetch/default-strategy.ts) and every `<Link>` without an explicit
+ * `prefetch` prop falls back to it.
  *
  * The type lives HERE (not in browser/react/Link.tsx) because both seats need
  * it: this server-side resolver and the client Link/default-strategy modules.

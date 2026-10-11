@@ -8,6 +8,7 @@ import {
 import { ThemeProvider } from "../theme/ThemeProvider.js";
 import { NonceContext } from "../browser/react/nonce-context.js";
 import {
+  HydrationBarrierContext,
   LocationStateContext,
   NavigationStoreContext,
 } from "../browser/react/context.js";
@@ -122,9 +123,9 @@ function createSsrEventController(opts: {
     flushRouteState: () => {},
     setHandleData: () => {},
     getHandleState: () => handleState,
-    freezeHydrationHandleState: () => {},
-    // The server render is the state the document is rendered with.
-    getHydrationHandleState: () => undefined,
+    lockHydration: () => {},
+    getHydrationSnapshot: () => undefined,
+    releaseHydrationLock: () => {},
     setRouteSegmentIds: () => {},
     setParams: (nextParams) => {
       params = nextParams;
@@ -286,21 +287,25 @@ export function createSsrRootComponent(opts: SsrRootOptions): React.FC {
     }
 
     // Create SSR context with request-local pathname/params/handles.
-    ssrContextValue ??= {
-      store: null as any,
-      eventController: createSsrEventController({
+    if (!ssrContextValue) {
+      const eventController = createSsrEventController({
         pathname,
         search,
         origin,
         params: resolved.metadata?.params,
         handleData,
         matched: resolved.metadata?.matched,
-      }),
-      navigate: async () => {},
-      refresh: async () => {},
-      version: resolved.metadata?.version,
-      basename: resolved.metadata?.basename,
-    };
+      });
+      ssrContextValue = {
+        store: null as any,
+        eventController,
+        navigate: async () => {},
+        refresh: async () => {},
+        version: resolved.metadata?.version,
+        basename: resolved.metadata?.basename,
+        origin: (eventController.getState().location as URL).origin,
+      };
+    }
 
     // Build content tree from segments.
     // Order must match NavigationProvider: NavigationStoreContext > LocationStateContext > NonceContext > ThemeProvider > content
@@ -338,7 +343,9 @@ export function createSsrRootComponent(opts: SsrRootOptions): React.FC {
     return (
       <NavigationStoreContext.Provider value={ssrContextValue!}>
         <LocationStateContext.Provider value={undefined}>
-          {content}
+          <HydrationBarrierContext.Provider value={0}>
+            {content}
+          </HydrationBarrierContext.Provider>
         </LocationStateContext.Provider>
       </NavigationStoreContext.Provider>
     );

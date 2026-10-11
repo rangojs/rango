@@ -196,12 +196,28 @@ export interface DiscoveryState {
   buildEnvDispose?: (() => Promise<void> | void) | null;
 
   /**
-   * Set when the most recent HMR re-discovery threw. Cleared on the next
-   * successful discovery. Surfaced via debug logs so we can detect "manifest
-   * frozen at last-good after error → user fix in non-route file → no
-   * rediscovery trigger" scenarios.
+   * Set when the most recent discovery threw: an HMR re-discovery, or the
+   * cold dev discovery on a main RSC runner. Cleared on the next successful
+   * discovery. While set, the route-file watcher treats any in-scan source
+   * change as a rediscovery trigger (recovery mode).
    */
   lastDiscoveryError?: { message: string; at: number } | null;
+}
+
+/**
+ * Whether the route-file watcher can re-run runtime discovery. A committed
+ * manifest is the usual precondition. A failed cold discovery commits none,
+ * so on a main RSC runner its recorded failure qualifies too; without that
+ * the dev server stayed broken until a restart.
+ */
+export function canRefreshRuntimeDiscovery(
+  state: Pick<DiscoveryState, "perRouterManifests" | "lastDiscoveryError">,
+  hasMainRunner: boolean,
+): boolean {
+  return (
+    state.perRouterManifests.length > 0 ||
+    (hasMainRunner && !!state.lastDiscoveryError)
+  );
 }
 
 export function createDiscoveryState(

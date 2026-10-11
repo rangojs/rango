@@ -117,6 +117,9 @@ export function RootLayout({ children }: { children: ReactNode }) {
           <Link to={href("/gtm")} prefetch="hover">
             GTM
           </Link>
+          <Link to={href("/hydration")} prefetch="hover">
+            Hydration
+          </Link>
         </nav>
         <BreadcrumbNav />
         <DebugSegmentWrapper type="layout" name="Root">

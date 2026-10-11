@@ -667,7 +667,7 @@ hands React a tree (`onUpdate`) belongs to a navigation or an action. Anything
 else that changes on a page reaches its readers as React state: the
 subscription of the store that received it dispatches the new value into the
 reading hook's state with `setState` inside `startTransition` (loader
-refreshes from `loaderStore` in `use-loader.tsx`, handle data from the event
+refreshes from the router store's `loaders` in `use-loader.tsx`, handle data from the event
 controller in `browser/react/use-handle.ts`), or it resolves a promise a
 boundary is already reading. The fill
 used to be the one exception: it rendered a second tree and committed it, and
@@ -1350,7 +1350,7 @@ until the fill answers. Left before that, it leaves nothing behind.
 A deferred is resolved by its fill or never settled at all. Resolving an
 abandoned one with nothing would show up in a tree that may still be mounted
 for a moment, and a deferred is never rejected (see "Failure"). It is only
-released: `loaderStore.releasePendingStream()` removes it from the
+released: `store.loaders.releasePendingStream()` removes it from the
 pending streams, so `useLoader().isLoading` and the streaming indicators do
 not wait on it forever.
 

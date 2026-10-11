@@ -64,16 +64,22 @@ export function useSegments<T>(
 ): T | SegmentsState {
   const ctx = useContext(NavigationStoreContext);
 
-  // Build initial state from event controller when context exists.
-  // Inlined rather than calling recompute() because the segmentsCache ref
-  // is not yet initialized during the useState initializer.
+  // The selector is applied when the store changes, never during render, as in
+  // useNavigation and useAction: the hook renders its own state only. A new
+  // selector identity is not a reactive input; it applies from the next store
+  // change.
+  const selectorRef = useRef(selector);
+  selectorRef.current = selector;
+
   const [state, setState] = useState<T | SegmentsState>(() => {
     if (!ctx) {
       const fallbackLocation = new URL("/", "http://localhost");
       const fallbackState = buildSegmentsState(fallbackLocation, []);
       return selector ? selector(fallbackState) : fallbackState;
     }
-    const location = ctx.eventController.getLocation();
+    const location =
+      ctx.eventController.getHydrationSnapshot()?.state.location ??
+      ctx.eventController.getLocation();
     const handleState = ctx.eventController.getHandleState();
     const segmentsState = buildSegmentsState(
       location as URL,
@@ -83,68 +89,44 @@ export function useSegments<T>(
   });
 
   const prevState = useRef(state);
-  const selectorRef = useRef(selector);
-  selectorRef.current = selector;
 
-  const prevSelectorIdentity = useRef(selector);
-
-  const segmentsCache = useRef<{
-    location: URL;
-    routeSegmentIds: string[];
-    state: SegmentsState;
-  } | null>(null);
-
-  function recompute(
-    sel: ((state: SegmentsState) => T) | undefined,
-  ): T | SegmentsState {
-    const location = ctx!.eventController.getLocation();
-    const handleState = ctx!.eventController.getHandleState();
-
-    const cache = segmentsCache.current;
-    let segmentsState: SegmentsState;
-    if (
-      cache &&
-      cache.location === location &&
-      cache.routeSegmentIds === handleState.routeSegmentIds
-    ) {
-      segmentsState = cache.state;
-    } else {
-      segmentsState = buildSegmentsState(
-        location as URL,
-        handleState.routeSegmentIds,
-      );
-      segmentsCache.current = {
-        location: location as URL,
-        routeSegmentIds: handleState.routeSegmentIds,
-        state: segmentsState,
-      };
-    }
-    return sel ? sel(segmentsState) : segmentsState;
-  }
-
-  if (ctx && selector !== prevSelectorIdentity.current) {
-    prevSelectorIdentity.current = selector;
-    const nextSelected = recompute(selector);
-    if (!shallowEqual(nextSelected, prevState.current)) {
-      prevState.current = nextSelected;
-      setState(nextSelected);
-    }
-  }
-
-  // Subscribe to store changes. The eager block above handles selector
-  // changes and SSR drift, so no initial updateState() call is needed.
   useEffect(() => {
     if (!ctx) {
       return;
     }
 
+    // Reused while the location and route segments are unchanged, so a
+    // selector returning part of it keeps the same references.
+    let cache: {
+      location: URL;
+      routeSegmentIds: string[];
+      state: SegmentsState;
+    } | null = null;
+
     const updateState = () => {
-      const nextSelected = recompute(selectorRef.current);
+      const location = ctx.eventController.getLocation() as URL;
+      const { routeSegmentIds } = ctx.eventController.getHandleState();
+      if (
+        !cache ||
+        cache.location !== location ||
+        cache.routeSegmentIds !== routeSegmentIds
+      ) {
+        cache = {
+          location,
+          routeSegmentIds,
+          state: buildSegmentsState(location, routeSegmentIds),
+        };
+      }
+      const sel = selectorRef.current;
+      const nextSelected = sel ? sel(cache.state) : cache.state;
       if (!shallowEqual(nextSelected, prevState.current)) {
         prevState.current = nextSelected;
         setState(nextSelected);
       }
     };
+
+    // Catch up with a change between the seeding render and this effect.
+    updateState();
 
     const unsubscribeNav = ctx.eventController.subscribe(updateState);
     const unsubscribeHandles =

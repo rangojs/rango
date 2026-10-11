@@ -27,7 +27,11 @@ export type {
   StreamedBoundaryScenariosOptions,
 } from "./streamed-boundary-scenarios.js";
 export { runHeldBoundaryTests } from "./held-boundary-scenario.js";
+export { runLateHandleHistoryTests } from "./late-handle-history-scenario.js";
+export type { LateHandleHistoryScenarioOptions } from "./late-handle-history-scenario.js";
 export type { HeldBoundaryScenarioOptions } from "./held-boundary-scenario.js";
+export { runPeFormStateTests } from "./pe-form-state-scenario.js";
+export type { PeFormStateScenarioOptions } from "./pe-form-state-scenario.js";
 export { runUseLoaderSettledReadTests } from "./use-loader-settled-read-scenario.js";
 export type { UseLoaderSettledReadScenarioOptions } from "./use-loader-settled-read-scenario.js";
 export { readFlash, readProbe, watchFlash } from "./flash-probe.js";

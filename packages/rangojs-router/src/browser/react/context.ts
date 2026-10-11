@@ -57,6 +57,13 @@ export interface NavigationStoreContextValue {
 
   /** Router default from this instance's initial payload. */
   defaultPrefetch?: PrefetchStrategy;
+
+  /**
+   * The document's origin, fixed for its lifetime. Link compares absolute
+   * hrefs against it (data-external) and useLinkStatus resolves link targets
+   * with it.
+   */
+  origin: string | undefined;
 }
 
 /**
@@ -79,3 +86,13 @@ export const NavigationStoreContext: Context<NavigationStoreContextValue | null>
  */
 export const LocationStateContext: Context<LocationStateSnapshot> =
   createContext<LocationStateSnapshot>(undefined);
+
+/**
+ * Read by no component. NavigationProvider changes its value in a transition so
+ * that React hydrates every boundary still dehydrated beneath it before that
+ * commit: React hydrates a dehydrated boundary first when a provider above it
+ * changes, and nothing re-renders for a value nobody reads. See
+ * NavigationProviderProps.hydration.
+ */
+export const HydrationBarrierContext: Context<number> =
+  createContext<number>(0);

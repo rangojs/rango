@@ -6,7 +6,9 @@ import { createFactoryHmrPatterns } from "./urls/factory-hmr.js";
 import { slowPatternsWithoutDetail } from "./urls/slow.js";
 import { suspenseStreamPatterns } from "./urls/suspense-stream.js";
 import { clientSuspensePatterns } from "./urls/client-suspense.js";
+import { lateHistoryPatterns } from "./urls/late-history.js";
 import { heldBoundaryPatterns } from "./urls/held-boundary.js";
+import { peFormStatePatterns } from "./urls/pe-form-state.js";
 import { suspenseCasesPatterns } from "./urls/suspense-cases.js";
 import { deferredHandleNavPatterns } from "./urls/deferred-handle-nav.js";
 import { conditionalTransitionPatterns } from "./urls/conditional-transition.js";
@@ -1000,6 +1002,8 @@ export const urlpatterns = urls(
       // #622 follow-up (HIGH): shared layout + client-mount-suspense children
       include("/", clientSuspensePatterns, { name: "" }),
       include("/", heldBoundaryPatterns, { name: "" }),
+      include("/", lateHistoryPatterns, { name: "" }),
+      include("/", peFormStatePatterns, { name: "" }),
       include("/", suspenseCasesPatterns, { name: "sc" }),
 
       // Deferred-handle navigation contract + history-cache fixes (#622 follow-ups)

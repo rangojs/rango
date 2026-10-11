@@ -37,8 +37,7 @@ function installWindow(getHoverNone: () => boolean): ReturnType<typeof vi.fn> {
   return matchMedia;
 }
 
-// resolveAdaptiveStrategy caches the MediaQueryList at module scope, so each test
-// re-imports the module fresh (resetModules) to start from an empty cache.
+// Each test re-imports the module fresh (resetModules) after stubbing matchMedia.
 async function freshResolve(): Promise<typeof ResolveAdaptiveStrategy> {
   vi.resetModules();
   const mod = await import("../browser/react/Link.js");
@@ -74,14 +73,11 @@ describe("resolveAdaptiveStrategy (F5)", () => {
 
   /**
    * The core F5 regression: touch capability is read at the point of use, not
-   * captured once. Caching the MediaQueryList must NOT freeze the value — the
-   * MQL's `.matches` is live, so a capability flip (hybrid device, SSR ->
-   * hydrate) is still reflected. This asserts BOTH the live re-read AND that the
-   * query object itself is created only once and reused across renders.
+   * captured once, so a capability flip (hybrid device) is reflected.
    */
-  it("caches the MediaQueryList once yet still reflects a live capability flip", async () => {
+  it("reflects a live capability flip", async () => {
     let hoverNone = false; // start as a pointer device
-    const matchMedia = installWindow(() => hoverNone);
+    installWindow(() => hoverNone);
     const resolveAdaptiveStrategy = await freshResolve();
 
     // First evaluation: pointer device -> hover.
@@ -90,12 +86,9 @@ describe("resolveAdaptiveStrategy (F5)", () => {
     // Capability flips to touch (e.g. keyboard/mouse detached).
     hoverNone = true;
 
-    // Second evaluation reflects the new capability through the same cached MQL.
+    // Resolved when a prefetch is armed or triggered, never during render, so
+    // each resolve reads the current capability.
     expect(resolveAdaptiveStrategy("adaptive")).toBe("viewport");
-
-    // matchMedia is invoked exactly once despite two resolves — the query is
-    // cached, not re-created per render.
-    expect(matchMedia).toHaveBeenCalledTimes(1);
   });
 
   it("returns a stable hover default when window is undefined (SSR guard)", async () => {

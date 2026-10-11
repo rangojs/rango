@@ -736,9 +736,9 @@ cause is usually a missing `mount` seed, not an auto-fill gap.)
 Everything above mounts with `createRoot`. That is the right default, and it has
 one blind spot: a component never runs its **hydration** render. On a document
 load React renders the component on the server, then renders it again in the
-browser against that HTML, and the two must agree. `useSyncExternalStore` reads
-`getServerSnapshot` for both, and only then switches to the client snapshot. A
-fresh mount skips all of that, so a hook can be correct under `renderRoute` and
+browser against that HTML, and the two must agree: React adopts the server DOM
+nodes, and anything the hydration render reads that the server render did not
+see is a mismatch. A fresh mount skips all of that, so a hook can be correct under `renderRoute` and
 still mismatch in production. That is how #992 got through: `useLocationState`
 inside a `<Suspense>` boundary hydrated after the root had marked the page
 hydrated, read `history.state` during that hydration render, and disagreed with
@@ -1414,6 +1414,19 @@ waits one deadline: give such a route a short `captureTimeout` in a test.
 A HIT runs no handler: it replays the handler output the capture baked. Count
 a handler's runs across the MISS and the HITs after it to pin that; only a
 loader under `loading()` runs again.
+
+#### A form submitted before hydration
+
+`serveShellRequest(router, url, { form })` POSTs the form a browser sends before
+the page hydrates, through the production no-JS path (action, re-render, the
+document payload). Build the body with `createActionForm(action, { id })`; it
+writes React's `$ACTION_REF_` fields (or `$ACTION_ID_` with
+`useActionState: false`) and registers `action` where the Flight stub's
+`decodeAction` resolves it. `result.formState` is what the SSR render received
+and `await result.readPayloadFormState()` is the payload's `formState`, the
+value the browser entry hands `hydrateRoot` so a hydrated `useActionState` does
+not reset (#1087). A GET, a plain-form POST and a redirecting action carry none. A state Flight cannot serialize leaves the document intact and makes `readPayloadFormState()` reject. `fields` carries the form's own fields to the action.
+The hydration itself stays e2e.
 
 ## E2E with dev/prod and PE parity
 

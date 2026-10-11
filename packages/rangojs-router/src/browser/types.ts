@@ -1,4 +1,5 @@
 import type { ReactNode, ComponentType } from "react";
+import type { ReactFormState } from "react-dom/client";
 import type { ResolvedSegment, SlotState } from "../types.js";
 import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
 import type { RenderSegmentsOptions } from "../segment-system.js";
@@ -14,6 +15,11 @@ import type { RenderSegmentsOptions } from "../segment-system.js";
 export interface RscPayload<TMetadata = RscMetadata> {
   metadata?: TMetadata;
   returnValue?: ActionResult;
+  /**
+   * Form state of a PE POST document, for hydrateRoot's `formState` option.
+   * Rejects when the action's state is not Flight-serializable.
+   */
+  formState?: Promise<ReactFormState>;
 }
 
 /**
@@ -561,6 +567,9 @@ export type StateListener = () => void;
  * EventController owns the public navigation lifecycle exposed by hooks.
  */
 export interface NavigationStore {
+  /** Client loader data for useLoader / useFetchLoader (loader-store.ts). */
+  readonly loaders: import("../loader-store.js").LoaderStore;
+
   // Internal segment state (for bridges)
   getSegmentState(): SegmentState;
   setPath(path: string): void;
@@ -633,6 +642,12 @@ export interface NavigationStore {
     stale?: boolean,
     handlesPending?: boolean,
   ): void;
+  /**
+   * The history keys whose entries show the page `historyKey`'s entry shows:
+   * that entry and the copies a shallow navigation made of it, which share its
+   * segments array. `[historyKey]` when it has no entry.
+   */
+  getPageHistoryKeys(historyKey: string): string[];
   markHistoryCacheStale(): void;
   markCacheAsStaleAndBroadcast(): void;
   clearHistoryCache(): void;

@@ -109,6 +109,12 @@ jobs:
       - name: Check suspense contract (tree update emitters, boundary producers)
         run: pnpm check:suspense-contract
 
+      - name: Check no external stores (useSyncExternalStore, store libraries, render-time store reads)
+        run: pnpm check:no-external-store
+
+      - name: Test repo check tools
+        run: pnpm test:tools
+
       - name: Check internal doc links
         run: pnpm check:doc-links
 

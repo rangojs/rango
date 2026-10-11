@@ -339,18 +339,35 @@ The decisions live in `router/segment-resolution/revalidation.ts` and ask
     every document.** "After hydration" above is after the ROOT hydrates.
     A reader in a boundary that hydrates later (a live loader's `loading()`,
     a streamed `<Suspense>`) reads, in its hydrating render, the handle state
-    `initBrowserApp` froze before `hydrateRoot`
-    (`EventController.freezeHydrationHandleState` /
-    `getHydrationHandleState`), and its mount effect moves it on to the live
-    state. `useHandle` gets it as `useSyncExternalStore`'s server snapshot;
-    it is `undefined` while the live state is still the frozen one, and the
-    client snapshot is a constant `undefined`, so a reader that hydrated
-    with nothing late renders once and no handle update is a store change to
-    React. Before, the reader took the live state, late updates included, and
-    mismatched its HTML: a loader push after an `await` on any document.
-    Pinned by `use-handle-hydration.test.tsx`,
-    `render-route-hydrate.test.tsx` (`lateHandles`), and
-    `expectLateBoundaryHandleReaderHydratesClean` in both apps (#1035).
+    the document was rendered with: `initBrowserApp` locks the store before
+    `hydrateRoot` (`EventController.lockHydration`), `getHandleState()`
+    returns that state and late handle writes wait. `NavigationProvider`
+    moves `HydrationBarrierContext` in a transition once the document has
+    been revealed (`documentRevealed`: no `$?`/`$~` boundary left), so React
+    hydrates every boundary still dehydrated before that commit, then
+    releases the store. Two steps, not one: location state lands in the
+    barrier commit (`LocationStateContext`, so `useLocationState` readers
+    re-render when the entry's state object changes); handle data lands in the
+    release notification right after it (the waiting writes apply in order and
+    `useHandle` readers whose selection changed re-render). A navigation
+    committed before the reveal releases the store before its update, so its
+    page mounts against the live store. Trade-off: a held navigation whose
+    history entry commits during the window releases the store for the whole
+    hold, so an old-page boundary that hydrates during the hold reads the
+    destination's values and can mismatch (React client-renders it).
+    `documentRevealed` (`browser/document-revealed.ts`) polls with
+    `setTimeout`, not rAF, so a tab hidden after its first paint settles
+    while hidden. A tab hidden from load still waits until it is shown: Fizz
+    reveals a streamed boundary from a rAF-gated script, so the boundaries
+    stay `$~` until the tab paints. Before #1035 the reader took the live
+    state, late updates included, and mismatched its HTML: a loader push after an `await` on any
+    document. The first render of the navigation-state hooks reads the
+    document's state the same way (`getHydrationSnapshot()`). Pinned by
+    `use-handle-hydration.test.tsx`, `router-hooks-hydration.test.tsx`,
+    `navigation-provider-hydration.test.tsx`,
+    `render-route-hydrate.test.tsx` (`lateHandles`),
+    `expectLateBoundaryHandleReaderHydratesClean` in both apps (#1035), and
+    `hydration-demo.test.ts` in vite-rsc-demo.
   - **`ctx.dynamic()` is the request-level opt-out on this axis.** Runtime
     middleware calls it BEFORE the commit point, so it forces the request onto
     axis 1 — the shell lookup/HIT/MISS-capture is skipped even when a valid
@@ -880,7 +897,8 @@ This is a **client-only** contract: which mounted `useLoader` / `useFetchLoader`
 reads observe the result of a `load()`. It is independent of the server
 execution model above and of `cache()` / `revalidate()`; it never changes the
 request sent to the server. Owned by `src/use-loader.tsx` + `src/loader-store.ts`
-(the per-tab module-level `loaderStore`). The store is partitioned into buckets;
+(a `LoaderStore` per router: the `NavigationStore` owns it as `store.loaders`, and
+hooks reach it through `NavigationStoreContext`). The store is partitioned into buckets;
 each bucket key is `loader.$$id`, or `loader.$$id + key` when the hook is given
 an explicit client refresh `key`. Buckets of one loader form a family (indexed
 by `$$id`) so a route-context reset can clear them together.
@@ -898,7 +916,7 @@ a route-context reader whose content is HELD on screen by a transition commit
 `isLoading: true` until that commit lands. Every transition commit goes through
 `commitInTransition` (browser/partial-update.ts; `renderRoute`'s navigate() in
 testing/render-route.tsx reuses it for a `transition()` chain), which calls
-`loaderStore.announcePendingStreams(segments)` INSIDE its `startTransition`:
+`store.loaders.announcePendingStreams(segments)` INSIDE its `startTransition`:
 that registers each loader segment whose data is still a pending promise
 (settled Flight chunks — cached/reused segments, forceAwait lanes — are skipped
 via `unwrapsSynchronously`, thenable-status.ts) and fires each route-context

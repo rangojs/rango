@@ -97,6 +97,14 @@ export interface RscPayload {
     locationState?: Record<string, unknown>;
   };
   returnValue?: { ok: boolean; data: unknown };
+  /**
+   * useActionState form state of a progressive-enhancement POST re-render
+   * (the value the SSR render received). Present only on that document; the
+   * browser entry passes it to hydrateRoot so the hydrated hook matches the
+   * server HTML instead of resetting to its initial state. A promise so a
+   * state Flight cannot serialize rejects this slot alone.
+   */
+  formState?: Promise<ReactFormState>;
 }
 
 /**

@@ -50,6 +50,7 @@ import { hashServerRefs } from "./plugins/server-ref-hashing.js";
 import { defineEncryptionKeyExpr } from "./encryption-key.js";
 import { extractHandlerExportsFromChunk } from "./utils/bundle-analysis.js";
 import {
+  canRefreshRuntimeDiscovery,
   createDiscoveryState,
   VIRTUAL_ROUTES_MANIFEST_ID,
   type DiscoveryState,
@@ -1066,20 +1067,17 @@ export function createRouterDiscoveryPlugin(
           // Discover routers FIRST, then arm the manifest-readiness gate on the
           // server module discovery actually read the registry from.
           //
-          // We deliberately do NOT pre-import "@rangojs/router/server" before the
-          // entry to arm the gate early. During a Vite dependency re-optimization
-          // (dev boot after a lockfile change, or `vite dev --force`), a module
-          // imported here before the entry resolves to the pre-optimize copy of
-          // the runner's module graph, while discoverRouters' entry import — which
-          // awaits the in-flight re-optimization — resolves to the post-optimize
-          // copy. createRouter() then populates RouterRegistry on the fresh copy,
-          // but a stale pre-imported "@rangojs/router/server" reads the other
-          // copy's empty Map and discovery throws a spurious "No routers found"
-          // even though the app is configured correctly. discoverRouters imports
-          // the entry first and reads the registry off the same instance, keeping
-          // read and write on one copy. The virtual manifest module's own gate
-          // (s.discoveryDone, armed by beginDiscoveryGate) already blocks early
-          // requests during discovery on the Node path, so arming
+          // We deliberately do NOT pre-import "@rangojs/router/server" here to
+          // arm the gate early. During a Vite dependency re-optimization (dev
+          // boot after a lockfile change, or `vite dev --force`) or any runner
+          // full reload, a module imported before the entry can be a stale copy
+          // of the runner's module graph: createRouter() populates RouterRegistry
+          // on the fresh copy and the stale one reads an empty Map, a spurious
+          // "No routers found" (#637). discoverRouters returns the instance it
+          // read the registry from and verified the runner still serves (it
+          // redoes a pass that a reload split). The virtual manifest module's
+          // own gate (s.discoveryDone, armed by beginDiscoveryGate) already
+          // blocks early requests during discovery on the Node path, so arming
           // manifestReadyPromise after discovery is sufficient here.
           const serverMod = await timed(debugDiscovery, "discoverRouters", () =>
             discoverRouters(s, rscEnv, (server.environments as any)?.ssr),
@@ -1105,6 +1103,12 @@ export function createRouterDiscoveryPlugin(
             propagateDiscoveryState(rscEnv),
           );
         } catch (err: any) {
+          // Recovery mode: the next in-scan source change re-runs discovery
+          // (canRefreshRuntimeDiscovery) instead of waiting for a restart.
+          s.lastDiscoveryError = {
+            message: err?.message ?? String(err),
+            at: Date.now(),
+          };
           emitDiscoveryFailure(
             err,
             optimizerHashBefore,
@@ -1676,6 +1680,18 @@ export function createRouterDiscoveryPlugin(
         // only the expensive regeneration is debounced.
         let routeChangeTimer: ReturnType<typeof setTimeout> | undefined;
 
+        // Drop the routes-manifest virtual module's cached transform so the
+        // next runner evaluation regenerates it from current state.
+        const invalidateRoutesManifestModule = (rscEnv: any) => {
+          for (const virtualId of [
+            VIRTUAL_ROUTES_MANIFEST_ID,
+            `\0${VIRTUAL_ROUTES_MANIFEST_ID}`,
+          ]) {
+            const virtualMod = rscEnv.moduleGraph?.getModuleById?.(virtualId);
+            if (virtualMod) rscEnv.moduleGraph.invalidateModule(virtualMod);
+          }
+        };
+
         // Re-run runtime discovery so factory-generated routes that the
         // static parser cannot see are refreshed after source changes.
         // The state-machine concerns (queued/pending/gatePending) are
@@ -1696,6 +1712,7 @@ export function createRouterDiscoveryPlugin(
             const hmrStart = performance.now();
             try {
               if (hasMainRunner) {
+                const recoveringColdStart = s.perRouterManifests.length === 0;
                 await timed(debugDiscovery, "hmr discoverRouters", () =>
                   discoverRouters(s, rscEnv, (server.environments as any)?.ssr),
                 );
@@ -1705,6 +1722,9 @@ export function createRouterDiscoveryPlugin(
                 await timed(debugDiscovery, "hmr propagateDiscoveryState", () =>
                   propagateDiscoveryState(rscEnv),
                 );
+                // The manifest module emitted after a failed cold discovery has
+                // no gen-file import, so no gen write ever invalidates it.
+                if (recoveringColdStart) invalidateRoutesManifestModule(rscEnv);
               } else {
                 // Cloudflare HMR: invalidate the temp server's RSC module
                 // graph (or close+recreate as a fallback) so the runner
@@ -1924,16 +1944,7 @@ export function createRouterDiscoveryPlugin(
                 // stale replay after propagateDiscoveryState would clobber
                 // the refreshed registry as the realm's last write and the
                 // next router evaluation would materialize the old mount.
-                for (const virtualId of [
-                  VIRTUAL_ROUTES_MANIFEST_ID,
-                  `\0${VIRTUAL_ROUTES_MANIFEST_ID}`,
-                ]) {
-                  const virtualMod =
-                    rscEnv.moduleGraph?.getModuleById?.(virtualId);
-                  if (virtualMod) {
-                    rscEnv.moduleGraph.invalidateModule(virtualMod);
-                  }
-                }
+                invalidateRoutesManifestModule(rscEnv);
               } catch (err: any) {
                 debugDiscovery?.(
                   "watcher: clientUrls projection pre-refresh failed: %s",
@@ -1970,7 +1981,7 @@ export function createRouterDiscoveryPlugin(
             // Async: re-run runtime discovery to refresh factory-generated
             // routes that the static parser cannot resolve. Resolves the
             // discovery gate when complete.
-            if (s.perRouterManifests.length > 0) {
+            if (canRefreshRuntimeDiscovery(s, !!rscEnv?.runner)) {
               // The cloudflare workerd reload fires inside refreshRuntimeDiscovery
               // on the successful cycle (see forceCloudflareWorkerReload call
               // there) so queued follow-up cycles also trigger it.
@@ -2166,8 +2177,9 @@ export function createRouterDiscoveryPlugin(
             // and resets `discoveryDone` to a fresh pending promise (so
             // workerd reloads triggered by the same source change can't
             // observe a stale resolved gate from cold-start). Resolved
-            // by the trailing refreshRuntimeDiscovery() cycle.
-            if (s.perRouterManifests.length > 0) {
+            // by the trailing refreshRuntimeDiscovery() cycle, which runs
+            // under the same predicate.
+            if (canRefreshRuntimeDiscovery(s, !!mainRscEnv?.runner)) {
               gate.noteRouteEvent();
             }
             scheduleRouteRegeneration();

@@ -22,6 +22,33 @@ declare module "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge" {
   /** Server-side temporary-reference set (a WeakMap). */
   export function createTemporaryReferenceSet(): unknown;
 
+  /** Resolve a no-JS form POST to its action, bound to the form data; null for a plain form. */
+  export function decodeAction(
+    body: FormData,
+    serverManifest: unknown,
+  ): Promise<unknown> | null;
+
+  /** Decode an action's encoded arguments; rejects for a raw form body. */
+  export function decodeReply(
+    body: string | FormData,
+    serverManifest: unknown,
+    options?: object,
+  ): Promise<unknown>;
+
+  /** The useActionState form state of a no-JS POST, or null. */
+  export function decodeFormState(
+    actionResult: unknown,
+    body: FormData,
+    serverManifest: unknown,
+  ): Promise<unknown>;
+
+  /** Tag a function as a server reference; `$$id` becomes `${id}#${exportName}`. */
+  export function registerServerReference<T>(
+    reference: T,
+    id: string,
+    exportName: string,
+  ): T;
+
   /**
    * Tag a value as a client reference. Mutates `impl` in place (defining
    * `$$typeof`/`$$id`/`$$async`) and returns it, so a server tree that imports

@@ -40,7 +40,10 @@ import {
   shouldStartViewTransition,
 } from "./partial-update.js";
 import { decideCommitGatedOff, mergeSegmentParams } from "./transition-when.js";
-import { generateHistoryKey } from "./navigation-store.js";
+import {
+  generateHistoryKey,
+  liveHandleDataForCache,
+} from "./navigation-store.js";
 import type { EventController } from "./event-controller.js";
 import { isInterceptOnlyCache } from "./intercept-utils.js";
 import {
@@ -278,11 +281,17 @@ export function createNavigationBridge(
 
         const historyKey = generateHistoryKey(url, { intercept: isIntercept });
 
-        // Copy current segments to the new history key so back/forward restores instantly
+        // Copy current segments to the new history key so back/forward restores instantly.
+        // The array itself, not a clone: getPageHistoryKeys reads a shared
+        // array as the same page (the document's late handle pushes).
         const currentKey = store.getHistoryKey();
         const currentCache = store.getCachedSegments(currentKey);
         if (currentCache?.segments) {
-          const currentHandleData = eventController.getHandleState().data;
+          const currentHandleData = liveHandleDataForCache(
+            eventController,
+            store,
+            currentKey,
+          );
           store.cacheSegmentsForHistory(
             historyKey,
             currentCache.segments,
@@ -360,7 +369,11 @@ export function createNavigationBridge(
       const sourceHistoryKey = store.getHistoryKey();
       const sourceCached = store.getCachedSegments(sourceHistoryKey);
       if (sourceCached?.segments && sourceCached.segments.length > 0) {
-        const currentHandleData = eventController.getHandleState().data;
+        const currentHandleData = liveHandleDataForCache(
+          eventController,
+          store,
+          sourceHistoryKey,
+        );
         store.updateCacheHandleData(sourceHistoryKey, currentHandleData);
       }
 

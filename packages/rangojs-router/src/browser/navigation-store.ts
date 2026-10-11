@@ -8,7 +8,9 @@ import type {
   ResolvedSegment,
   HandleData,
 } from "./types.js";
+import type { EventController } from "./event-controller.js";
 import { clearPrefetchCache } from "./prefetch/cache.js";
+import { LoaderStore } from "../loader-store.js";
 import {
   adoptRangoState,
   getRangoState,
@@ -71,6 +73,28 @@ export function cloneHandleData(handleData: HandleData): HandleData {
     cloned[handleKey] = clonedMap;
   }
   return cloned;
+}
+
+/**
+ * Handle data to write into the history cache for the page on screen. During
+ * the hydration window getHandleState() is the document snapshot while late
+ * pushes sit queued in the controller (they are already in the cache entry,
+ * written by rsc-router), so writing the snapshot back would drop them; the
+ * entry's own data is the live view then.
+ */
+export function liveHandleDataForCache(
+  eventController: Pick<
+    EventController,
+    "getHandleState" | "getHydrationSnapshot"
+  >,
+  store: Pick<NavigationStore, "getCachedSegments">,
+  historyKey: string,
+): HandleData {
+  if (eventController.getHydrationSnapshot()) {
+    const cached = store.getCachedSegments(historyKey)?.handleData;
+    if (cached) return cached;
+  }
+  return eventController.getHandleState().data;
 }
 
 // BroadcastChannel for cross-tab cache invalidation
@@ -390,6 +414,8 @@ export function createNavigationStore(
   }
 
   const store: NavigationStore = {
+    loaders: new LoaderStore(),
+
     // ========================================================================
     // Internal Segment State (for bridges)
     // ========================================================================
@@ -628,6 +654,19 @@ export function createNavigationStore(
         entry[5],
         handlesPending ?? entry[6],
       ];
+    },
+
+    /**
+     * Entries that show the same page as `historyKey`'s. A shallow navigation
+     * (navigation-bridge.ts) caches the page's segments array under the new
+     * key; every other commit caches a new array, so identity is the page.
+     */
+    getPageHistoryKeys(historyKey: string): string[] {
+      const segments = historyCache.find(([key]) => key === historyKey)?.[1];
+      if (!segments) return [historyKey];
+      return historyCache
+        .filter((entry) => entry[1] === segments)
+        .map(([key]) => key);
     },
 
     /**

@@ -71,6 +71,7 @@ function createMockEventController(overrides?: {
     getInflightActions: vi.fn(
       () => new Map(overrides?.inflightSize ? [["a", {}]] : []),
     ),
+    getHydrationSnapshot: vi.fn(() => undefined),
     subscribe: vi.fn((_cb: () => void) => vi.fn()),
   };
 }
@@ -164,6 +165,7 @@ describe("useNavigation", () => {
         inflightActions: new Map(),
       })),
       getInflightActions: vi.fn(() => inflight),
+      getHydrationSnapshot: vi.fn(() => undefined),
       subscribe: vi.fn((_cb: () => void) => vi.fn()),
     };
     mockedUseContext.mockReturnValue({ eventController: ec } as any);

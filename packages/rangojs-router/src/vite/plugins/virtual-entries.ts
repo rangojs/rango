@@ -28,6 +28,12 @@ async function initializeApp() {
   // is the default; createRouter({ strictMode: false }) ships the opt-out in the
   // payload metadata. StrictMode emits no DOM, so toggling never changes markup.
   const { strictMode, initialPayload } = await initBrowserApp({ rscStream, deps });
+  // Set only on a document a no-JS useActionState POST rendered: React needs
+  // the server's form state to hydrate the hook without resetting it. A state
+  // Flight could not carry rejects: hydrate without it, as before.
+  const formState = await Promise.resolve(initialPayload.formState).catch(
+    () => undefined
+  );
 
   if (import.meta.hot) {
     const { startDevDiscoveryHandshake } = await import(
@@ -42,7 +48,8 @@ async function initializeApp() {
   const app = createElement(Rango);
   hydrateRoot(
     document,
-    strictMode === false ? app : createElement(StrictMode, null, app)
+    strictMode === false ? app : createElement(StrictMode, null, app),
+    formState ? { formState } : undefined
   );
 }
 

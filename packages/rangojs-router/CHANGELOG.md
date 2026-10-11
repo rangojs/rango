@@ -105,6 +105,391 @@ What to know before you use it:
 fill } })` and `result.readDeferred()` to test it. See `/loader`, `/route` and
 the design note `docs/design/prefetch-false.md`.
 
+### Fixed: a server action that lands while a navigation commits no longer costs the navigation its scroll
+
+A navigation scrolls to the top (or restores a position) when React commits
+its page, and React can take a moment to do that, or hold the commit while a
+transition waits. A server action that finished in that window cancelled the
+scroll: its update reached the page first and was read as "do not scroll", so
+the visitor stayed at the old scroll position on the new page. An action
+update, an action's refetch of the route and an error update now say nothing
+about scroll and leave a pending navigation's decision alone. A navigation
+that asks not to scroll (`<Link scroll={false}>`, an intercept) is honoured
+as before.
+
+### Fixed: a loader's late handle push no longer shows on the page you navigated to
+
+On a document load, a loader that calls `ctx.use(handle)(value)` after an await
+sends that push after the HTML. If you clicked a link before it arrived, the push
+replaced the handle data of the page you landed on: its `useHandle` readers
+(breadcrumbs, meta, a notes list) showed the first page's values in place of
+their own, until the next navigation. Now the push stays with the page that
+made it: the new page keeps its own values, and Back to the first page shows the
+push. A fresh link navigation back to the first page's URL before the push
+arrives still receives it, as before.
+
+### Fixed: Back to a search-param change made while the page loads keeps late handle pushes
+
+A shallow navigation, `<Link revalidate={false}>` or
+`router.push(url, { revalidate: false })` to the same path with other search params,
+made while the document was still streaming, created a history entry that never
+received the loader pushes that arrived later. After you navigated on, Back to
+that entry restored the page without them. Now the shallow entries made while
+the page streams receive the push too, whether it arrives while that entry is on
+screen or after you left it. An entry re-rendered since (an action on it, an
+HMR update) no longer shares the page's segments and does not receive later
+pushes.
+
+### Fixed: late handle pushes and location state reach a tab you switch away from while the page is still streaming, without waiting for you to come back
+
+Before: if you switched away from a tab after it had painted but before the
+page finished streaming, `useHandle` data pushed late by a loader and the
+entry's `useLocationState` value waited until you returned, because the router
+polled for the document's boundaries to be revealed on an animation frame,
+which hidden tabs do not run. After: the poll uses a timer, so both land while
+the tab is hidden. A tab opened in the background still settles when it is
+first shown: React reveals streamed content only after the tab paints.
+
+### Fixed: the dev server no longer stays broken after route discovery races a module reload
+
+Before: when `vite dev` reloaded its server modules while route discovery was
+running at startup (for example because a watched file changed during boot),
+discovery could fail with:
+
+```
+[rango] Router discovery failed: Error: [@rangojs/router] Failed to resolve include at prefix "/your-prefix" during route discovery: include() could not resolve the server projection for clientUrls() module "/src/urls/client-urls.tsx#default" ...
+```
+
+Every request then returned a 500 until you restarted the dev server, even
+though nothing in your app was wrong. Apps that mount a `clientUrls()` module
+with `include()` hit this.
+
+Now: discovery notices the reload and runs again, so the dev server starts
+normally. If discovery fails at startup for another reason, such as a syntax
+error you then fix, the next save of a source file runs it again, as it already
+did after a failed hot update, instead of leaving the server broken until a
+restart. Nothing changes in your code or in production builds.
+
+### Added: `kvFallThrough` lets a Cloudflare location serve the entry another location rebuilt after `updateTag()`
+
+On `CFCacheStore` with `kv`, every edge location keeps its own copy of an
+entry it has served. After `updateTag(tag)` or `revalidateTag(tag)`, each
+location that held a copy renders the page again on its next request, even
+when another location already rebuilt the entry and wrote it to KV, by a
+visitor's render there or by a `router.prerender()` warm. Only a location with
+no copy of its own, or a store using `tagPurge`, reads the rebuilt entry. That
+is still the default.
+
+`kvFallThrough: true` makes a location whose copy the invalidation rejected
+read the entry from KV, the way a location with no copy does. An entry written
+after the invalidation is served and kept, and nothing renders. It covers
+`cache()` records, `"use cache"` results, cached responses and `ppr` shells.
+
+```ts
+const store = new CFCacheStore({ ctx, kv: env.KV, kvFallThrough: true });
+
+await updateTag(`product:${id}`); // once the marker reaches a location, it refuses its old copy
+await router.prerender({ env, ctx })(`/products/${id}`); // one render, written to KV
+
+// Default (off): every location that had served the page renders it once more.
+// kvFallThrough: they read the warmed entry from KV.
+```
+
+What it costs, and when to turn it on. The cost is per cached read, not per
+request: one KV get for each rejected copy, in each location, after each
+invalidation. A `ppr` document reads its shell, then its record, then each
+`"use cache"` result; with every copy rejected and the newer entry in KV, each
+read pays one get before it can serve. Measured in #1069 (local, 50 ms per KV
+read; not on a deployed worker) on a document with a shell, a record and one
+`"use cache"` result, every copy rejected and the newer entry in KV: 150 ms of
+added wait, and 510 ms when each read runs to the 170 ms budget
+(`kvReadTimeoutMs`); with the option off the wait is 0, because the location
+renders at once. A partial
+navigation reads two shell keys in series, and a rejected memoized shell adds a
+Cache API lookup and a frame read first. Two cases pay more or always: an entry
+that nothing rewrites (the route now errors or answers 404, so nothing is
+stored) pays one KV read per cached read on every request until the old copy's
+max-age ends, and an entry with ttl + swr under 60 s has no KV twin, so its
+read always misses. Turn it on for apps
+served from many locations where a render costs more than a KV read; leave it
+off for one or few locations or cheap renders.
+
+What stays the same with it on:
+
+- **No location serves an entry from before the invalidation, once the marker
+  has reached it.** The marker is a KV entry too, so a location the marker has
+  not reached yet (Cloudflare documents up to 60 seconds for a KV write to
+  spread) can still serve its old copy. The KV entry passes the same tag check
+  as the location's own copy; a location that KV still hands the old entry
+  refuses it and renders.
+- **A valid copy costs what it did.** The KV read happens only where the
+  location's copy was invalidated.
+- **The request that called `updateTag()`** renders its own entries without
+  that read.
+- **A store without `kv`** ignores the option: it has no second tier to read.
+
+With `debug` on, a `tag-invalidated` event for the location's own copy is
+followed by the KV read's own event: `kv-fresh` or `kv-stale` when it served
+the rebuilt entry, a second `tag-invalidated` when KV held the old one,
+`kv-miss`, `kv-timeout` or `error` otherwise.
+
+### Fixed: `href()`, `reverse()` and `Rango.Path` accepted any name or path when a layout's children included `transition(...)`
+
+Before: `layout(L, () => [transition({}), path("/a", A, { name: "a" })])` (also
+`transition()` and `transition({ when })`, in any position, plus the globally
+imported `transition`, `cache` and `layout` and factories typed as a use item)
+typed the app's route map as `Record<string, any> & { a: "/a" }`. That turned
+route checking off: `router.reverse("not-a-route")` and `href("/typo")`
+compiled. After: these items contribute no routes, the siblings keep their
+names, and unknown names and paths are type errors again. A loosely typed
+`include()` (routes typed `Record<string, string>`) no longer turns off
+checking for its named siblings either. The response map had
+the same problem and is fixed the same way.
+
+## 0.22.1 (2026-10-10)
+
+### Fixed: a fresh install builds again with `@vitejs/plugin-rsc` 0.5.36
+
+Before: a new app, or any install that resolved `@vitejs/plugin-rsc` 0.5.36
+(published 2026-10-07; the router allows `^0.5.35`), failed `vite build` with:
+
+```
+[UNRESOLVED_IMPORT] Could not resolve '/*' in node_modules/@rangojs/router/src/server/loader-registry.ts
+```
+
+plugin-rsc 0.5.36 parses imports with es-module-lexer 3, which reports an
+`import()` of a template literal such as `` `/${path}` `` as the specifier
+`"/*"`. Its client-reference scan build rewrites every import to
+`import "<specifier>"`, so the build tried to resolve `"/*"`. The router had one
+such import, in the dev fallback that loads a loader by file path.
+
+Now: that import takes a variable, so the build passes on 0.5.36. The router
+requires `@vitejs/plugin-rsc` `^0.5.36`. If you pinned plugin-rsc 0.5.35 as a
+workaround, you can remove the pin.
+
+Your own code can hit the same failure on plugin-rsc 0.5.36, but only where
+Vite leaves a template-literal `import()` as written: one marked
+`/* @vite-ignore */`, or one whose path does not start with `./` or `../`. For
+those, build the path in a variable first; the result is the same import:
+
+```ts
+// fails on plugin-rsc 0.5.36: Could not resolve '/plugins/*.js'
+await import(/* @vite-ignore */ `/plugins/${name}.js`);
+// builds
+const modulePath = `/plugins/${name}.js`;
+await import(/* @vite-ignore */ modulePath);
+```
+
+A relative template without `/* @vite-ignore */`, such as
+``import(`./pages/${name}.js`)``, keeps building: Vite turns it into an
+`import.meta.glob` and bundles the matching files. Do not rewrite it into a
+variable import, or those files are no longer bundled.
+
+plugin-rsc 0.5.36 also renders its stylesheet `<link>` and `preinit` with
+`crossOrigin="anonymous"`. Stylesheets served from another origin (a CDN
+`base`) need CORS headers.
+
+## 0.22.0 (2026-10-09)
+
+### Added: on-demand prerender: refresh a prerendered page without a deploy ([#640](https://github.com/rangojs/rango/pull/640))
+
+Prerendering was build-time only: a CMS edit or a price change could not
+update one prerendered page without rebuilding and redeploying the app. A
+`Prerender` route can now opt in to being re-rendered at runtime, from a
+webhook, a queue, a cron or a server action, and every visitor gets the new
+page.
+
+Opt a route in, and give the router a store to write to:
+
+```tsx
+export const ProductPage = Prerender(
+  async () => [{ id: "featured" }],
+  async (ctx) => <Product data={await ctx.env.PRODUCTS.get(ctx.params.id)} />,
+  { onDemand: { ttl: 3600, tags: ({ params }) => [`product:${params.id}`] } },
+);
+```
+
+```ts
+import { createKVPrerenderStore } from "@rangojs/router/prerender/cloudflare";
+
+export const router = createRouter<Env>({
+  prerender: (env) => ({
+    store: createKVPrerenderStore(env.PRERENDER_KV),
+    ttl: 3600,
+    // optional: its presence turns on stale-while-revalidate
+    onRevalidate: (target, liveEnv) => liveEnv.PRERENDER_QUEUE.send({ target }),
+  }),
+});
+```
+
+Refresh from anywhere:
+
+```ts
+const prerender = router.prerender({ env, ctx }); // binds once, no work yet
+await prerender("/products/42");
+await prerender({ route: "products.detail", params: { id: "42" } });
+await prerender.many(targets, { concurrency: 4, onlyIfStale: true });
+await prerender.markStale(["product:42"]);
+```
+
+What to know before you use it:
+
+- **It needs a writable store.** The build-time output is part of the bundle
+  and cannot be written at runtime; a refresh goes to `prerender.store`, which
+  a request reads before the build-time entry. `createKVPrerenderStore`
+  (`@rangojs/router/prerender/cloudflare`) is durable and shared;
+  `createMemoryPrerenderStore` (`@rangojs/router/prerender`) is one process
+  (a single Node server, tests). A custom store is a plain `get` / `set` (the
+  router builds and checks the stored entry). Without a store a refresh
+  returns `{ ok: false, status: "no-store" }` and the build-time entry keeps
+  serving; the dev server uses an in-memory store when none is configured.
+- **A request never renders the page.** It serves the refreshed entry, else
+  the build-time entry. A plain `Prerender(..., { onDemand })` route answers
+  **404** in production for a param that was neither baked at build
+  (`getParams()`) nor refreshed yet; `Passthrough` runs the live handler
+  instead. The dev server renders any param, so that 404 does not show in dev.
+- **`ttl` is soft.** Entries never expire: a stale entry still serves. Staleness
+  only decides whether `onRevalidate` is scheduled, and whether
+  `{ onlyIfStale: true }` re-renders.
+- **`onRevalidate(target, env, ctx)`** runs once per stale key per isolate
+  while one is in flight. Point it at a queue, or on a single process call the
+  runner directly: `(target, env, ctx) => router.prerender({ env, ctx })(target)`.
+- **A refresh has no request.** No cookies, no headers: a page that reads them
+  is not stored (`skipped-personalized`), as at build time. `ctx.env` is the
+  live env.
+- **Prerender tags are their own namespace.** `markStale()` marks entries
+  stale and keeps serving them; it never reaches the runtime cache, and
+  `updateTag()` / `revalidateTag()` never reach the prerender store.
+- **Server actions** on an on-demand page re-render from the refreshed entry,
+  so an action that calls `router.prerender()` for its page shows the new one.
+- **`.many()` renders one target at a time by default** (`concurrency: 1`),
+  returns one result per target in input order, and stops at the first failure
+  only with `throwOnError`. A large list belongs in a queue, one message per
+  batch: one invocation runs under the platform's time and CPU limits.
+- **Not combinable with `ppr`:** a route with both `onDemand` and the `ppr`
+  path option throws when it is defined. Intercept variants are not refreshed.
+- **Deploys keep refreshed pages** whose router code did not change: entries
+  are keyed by the router's data version (per-app cache versions, 0.21.0).
+
+Testing: `serveShellRequest` (`@rangojs/router/testing`) serves a refreshed
+entry through the production handler, and `createMemoryPrerenderStore` is
+re-exported from `@rangojs/router/testing`. See the `prerender` skill,
+"On-demand refresh (ISR)". Follow-ups are tracked in
+[#1060](https://github.com/rangojs/rango/issues/1060).
+
+### Changed: `cache({ tags })` drops duplicate tags
+
+A tag listed twice in `cache({ tags })` is stored once. Invalidation is
+unchanged: `updateTag()` of that tag drops the entry as before.
+
+### Fixed: a component that hydrates late renders what the server rendered
+
+On a document load, a component in a `<Suspense>` or `loading()` boundary that
+streams in after the rest of the page hydrates with the document's state from
+every router hook: pathname, params, search params and segments, an idle
+`useNavigation()` and `useAction()`, a `useLinkStatus()` that is not pending, the
+handle data the HTML was rendered from, and `undefined` location state. Before,
+`usePathname`, `useParams`, `useSearchParams`, `useSegments`, `useNavigation`,
+`useLinkStatus` and `useAction` read the live state in that render, so a
+navigation or an action started while the page was still streaming made React
+report a hydration mismatch and render the boundary on the client.
+
+- Navigation state, params and action state show their live value right after
+  the component hydrates.
+- Late loader pushes and the entry's location state now reach readers once the
+  whole document has streamed and every boundary has hydrated, in one transition;
+  a reader re-renders only when its selection changes. Before, each reader took
+  them right after its own hydration.
+- A navigation that commits while the page is still streaming mounts its page
+  with the destination's values from its first render.
+- `useHandle` and `useLocationState` no longer use `useSyncExternalStore`.
+
+### Changed: router hooks read only the router store
+
+The router store (the per-router `NavigationStore` and `EventController`, reached
+through `NavigationStoreContext`) is now the only source these hooks read, and none
+of them reads it during render. What you can notice:
+
+- `useSegments(selector)` applies the selector when the router store changes (a
+  navigation or new handle data), as `useNavigation` and `useAction` already do. A
+  new selector function on a re-render takes effect at the next change. Before, the
+  hook re-read the store during render whenever the selector function changed, and
+  an inline selector changes on every render: a component inside a page React was
+  still holding could show the next page's path. To derive from a prop, call
+  `useSegments()` and derive in render.
+- `useLoader`, `useFetchLoader` and `useRefreshLoaders` keep client loader data in
+  each router's store instead of one module-level store per browser tab. A reader
+  whose `key` changes renders without the new key's shared data until its effect
+  delivers it, on the next render. Outside a router, `load()` keeps its result in
+  the calling hook and `useRefreshLoaders()` does nothing.
+- `<Link>` resolves `prefetch="adaptive"` when it arms or is hovered, and still
+  re-arms when the input capability changes. It reads the document origin from the
+  router store. A `<Link>` rendered outside a router no longer sets `data-external`
+  on an absolute URL to another origin; its click still navigates natively.
+
+### Fixed: a `useActionState` result from a form submitted before hydration survives hydration
+
+Before: a form using `useActionState` that was submitted before the page hydrated
+(a slow connection, a cold start) posted natively, and the server rendered the
+page with the action's result. Then the client hydrated, `useActionState` started
+again from its initial state, and the result disappeared. For a value shown once
+(a fresh API token, an invite link) the person never saw it and could not get it
+back.
+
+Now: the result is still on screen after hydration. The progressive-enhancement
+re-render carries the decoded form state in the document payload
+(`RscPayload.formState`, a promise, only for a `useActionState` submit, so a
+GET adds no bytes), and the generated browser entry hands it to React:
+`hydrateRoot(document, app, formState ? { formState } : undefined)`.
+
+Nothing changes for an app on the generated entry. An app with a custom browser
+entry (one that calls `initBrowserApp` and `hydrateRoot` itself) passes the same
+option:
+
+```tsx
+const { initialPayload } = await initBrowserApp({ rscStream, deps });
+// Rejects when the action's state is not Flight-serializable.
+const formState = await Promise.resolve(initialPayload.formState).catch(
+  () => undefined,
+);
+hydrateRoot(document, app, formState ? { formState } : undefined);
+```
+
+As on the JS path, the state an action returns must be Flight-serializable to
+survive hydration. A state that is not (a class instance, a function) still
+renders in the HTML with status 200, and the page hydrates and resets the hook
+to its initial state, as before this change. One thing is new for that case: the
+payload's form state slot rejects, so your `onError` now receives a `rendering`
+phase error ("Only plain objects... can be passed to Client Components") for the
+POST. Before, the state only reached the server-side HTML render, so nothing
+reported it.
+
+What does not change: a normal GET, a POST whose action redirects, and a POST
+whose action throws into an `errorBoundary()` render and hydrate as before. A
+throw with no boundary re-renders with status 500 and the hook hydrates as
+`undefined`, what the server rendered, instead of mismatching and resetting to
+its initial state.
+
+### Added: test a form submitted before hydration with `createActionForm` and `serveShellRequest({ form })`
+
+`@rangojs/router/testing/flight` builds the POST a form sends before hydration
+and serves it through the production no-JS path, so a unit test can pin what a
+person sees after it:
+
+```tsx
+const form = createActionForm(makeToken, { id: "actions/token#makeToken" });
+const result = await serveShellRequest(router, "/token", { form });
+expect(result.formState).toEqual([
+  { token: "tok-1" },
+  "k0",
+  "actions/token#makeToken",
+  0,
+]);
+expect(await result.readPayloadFormState()).toEqual(result.formState);
+```
+
+`useActionState: false` builds a plain `<form action={fn}>` POST instead.
+
 ### Fixed: `useLoader` no longer makes React log a conditional `use()` in development
 
 A `useLoader` read that mounted while its loader was still streaming, and that a
@@ -510,18 +895,6 @@ imported (a Playwright test). `searchParams` and `partition` follow as
 before. TypeScript reports every call that still passes the URL first.
 `serveShellRequest()` is unchanged: its `result.key` is the key the serve
 path resolved.
-
-### Fixed: a server action that lands while a navigation commits no longer costs the navigation its scroll
-
-A navigation scrolls to the top (or restores a position) when React commits
-its page, and React can take a moment to do that, or hold the commit while a
-transition waits. A server action that finished in that window cancelled the
-scroll: its update reached the page first and was read as "do not scroll", so
-the visitor stayed at the old scroll position on the new page. An action
-update, an action's refetch of the route and an error update now say nothing
-about scroll and leave a pending navigation's decision alone. A navigation
-that asks not to scroll (`<Link scroll={false}>`, an intercept) is honoured
-as before.
 
 ### Fixed: a superseded link click no longer follows its server redirect ([#1047](https://github.com/rangojs/rango/issues/1047))
 

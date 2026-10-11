@@ -68,6 +68,7 @@ function createMockEventController() {
       location: new URL("http://localhost/products/123"),
     })),
     getParams: vi.fn(() => params),
+    getHydrationSnapshot: vi.fn(() => undefined),
     subscribe: vi.fn((_cb: () => void) => vi.fn()),
   };
 }

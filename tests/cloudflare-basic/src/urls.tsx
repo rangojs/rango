@@ -50,6 +50,7 @@ import {
 import { setOverlayCookie } from "./middleware/cookie-overlay.js";
 import { apiPatterns } from "./api/urls.js";
 import { purgeModeStore, purgeLog, clearPurgeLog } from "./purge-store.js";
+import { locationStore, locationRenders } from "./location-store.js";
 import { slowMarkerStore } from "./slow-marker-store.js";
 import { RyowLoader } from "./loaders/ryow.js";
 import type { AppBindings } from "./env.js";
@@ -312,7 +313,9 @@ import { buildEnvDirectPatterns } from "./pages/build-env-direct-handler.js";
 import { ActionLocationStatePage } from "./pages/action-location-state.js";
 import { renderedBarrierPatterns } from "./pages/rendered-barrier.js";
 import { prefetchTransitionPatterns } from "./pages/prefetch-transition.js";
+import { lateHistoryPatterns } from "./pages/late-history.js";
 import { heldBoundaryPatterns } from "./pages/held-boundary.js";
+import { peFormStatePatterns } from "./pages/pe-form-state.js";
 import { suspenseCasesPatterns } from "./pages/suspense-cases.js";
 import { txWhenPatterns } from "./pages/tx-when.js";
 import { interceptWhenShapePatterns } from "./pages/intercept-when-shape.js";
@@ -856,6 +859,56 @@ export const urlpatterns = urls(
         return { cleared: true };
       },
       { name: "testClearPurgeLog" },
+    ),
+
+    // Cross-location KV fall-through (location-kv-fall-through.test.ts): a
+    // cached response whose store is "the location the request names" (see
+    // location-store.ts), over the one KV every location reads. The handler
+    // counts its renders per run id so the e2e can tell a served entry from a
+    // render. Cache keys carry the query, so each run id is its own entry.
+    cache(
+      { ttl: 600, tags: ["cf-location-items"], store: locationStore },
+      () => [
+        path.json(
+          "/test/location-tagged",
+          (ctx) => {
+            const run = new URL(ctx.request.url).searchParams.get("run") ?? "";
+            const renders = (locationRenders.get(run) ?? 0) + 1;
+            locationRenders.set(run, renders);
+            return { run, renders };
+          },
+          { name: "testLocationTagged" },
+        ),
+      ],
+    ),
+    // The bodies of a run id's response entries in KV (the envelope's base64
+    // `b` field), so the e2e knows a write has landed before it reads.
+    path.json(
+      "/__test/location-kv",
+      async (ctx) => {
+        const run = new URL(ctx.request.url).searchParams.get("run") ?? "";
+        const values: string[] = [];
+        let cursor: string | undefined;
+        do {
+          const listed = await ctx.env.KV.list({ cursor });
+          for (const { name } of listed.keys) {
+            if (!run || !name.includes(`run=${run}`)) continue;
+            const value = await ctx.env.KV.get(name);
+            if (value) values.push(atob(JSON.parse(value).b));
+          }
+          cursor = listed.list_complete ? undefined : listed.cursor;
+        } while (cursor);
+        return { values };
+      },
+      { name: "testLocationKv" },
+    ),
+    path.json(
+      "/__test/location-renders",
+      (ctx) => {
+        const run = new URL(ctx.request.url).searchParams.get("run") ?? "";
+        return { renders: locationRenders.get(run) ?? 0 };
+      },
+      { name: "testLocationRenders" },
     ),
 
     // Cached response routes: test cache() with CFCacheStore across MIME types
@@ -2824,6 +2877,8 @@ export const urlpatterns = urls(
         // layout-hold contract (mirrors the router e2e app).
         include("/", prefetchTransitionPatterns, { name: "" }),
         include("/", heldBoundaryPatterns, { name: "" }),
+        include("/", lateHistoryPatterns, { name: "" }),
+        include("/", peFormStatePatterns, { name: "" }),
         include("/", suspenseCasesPatterns, { name: "sc" }),
         // prefetch: false on loader() and loading(): one page per case with
         // server-side run counters (mirrors the router e2e app).

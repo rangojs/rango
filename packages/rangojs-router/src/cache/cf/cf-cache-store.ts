@@ -15,6 +15,9 @@ declare global {
  * L2 (KV): Global, persistent, ~50ms reads. Auto-warms cold colos.
  *
  * Read flow:  L1 hit → serve | L1 miss → L2 hit → serve + promote to L1 | both miss → render
+ *             With `kvFallThrough`, an L1 copy a tag marker rejects reads as
+ *             an L1 miss: L2 is checked against the same markers (see get(),
+ *             "Tag invalidation"). Off by default: the rejected copy is a miss.
  * Write flow: L1 write + L2 write (both via waitUntil)
  *
  * Features:
@@ -388,7 +391,7 @@ type OpenedShellFrame =
   | { status: "corrupt"; error: Error; head?: undefined }
   | { status: "expired"; head: ShellFrameHead }
   | { status: "timeout"; head?: undefined }
-  | { status: "invalidated"; head?: undefined };
+  | { status: "invalidated"; head: ShellFrameHead };
 
 /** The `[CFCacheStore][shell]` trace's timings, from a read's stats. */
 function debugTimings(
@@ -531,6 +534,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private readonly tagPurge?: (cacheTags: string[]) => Promise<void>;
   private readonly tagInvalidationTtl?: number;
   private readonly tagCacheTtl: number;
+  private readonly kvFallThrough: boolean;
 
   constructor(options: CFCacheStoreOptions<TEnv>) {
     if (!options.ctx) {
@@ -605,6 +609,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     this.keyGenerator = options.keyGenerator;
     this.waitUntil = (fn) => options.ctx.waitUntil(fn());
     this.kv = options.kv;
+    this.kvFallThrough = options.kvFallThrough === true && !!options.kv;
     // Without KV, isTagsInvalidatedSince has no durable history — it answers
     // from the per-request mask at best. Runtime shells tolerate that (purge
     // eviction + ttl/swr bound the staleness), but an immutable TAGGED
@@ -1210,16 +1215,17 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         return this.kvGetSegment(key, { suppressRevalidate: true });
       }
 
-      // Tag invalidation: an entry whose tags were invalidated after it was
-      // cached is treated as a miss, so the next render re-populates it. We
-      // return null (re-render locally) rather than falling through to KV. In
-      // the common case the L1 entry and its KV twin were written together with
-      // the same taggedAt, so kvGetSegment's own tag check would miss too and a
-      // fall-through is pure cost. The tiers CAN diverge -- another colo may have
-      // already re-rendered and written a fresher KV envelope -- in which case a
-      // fall-through could serve that copy instead of re-rendering here.
-      // Capturing that cross-colo optimization is a deferred follow-up, not a
-      // correctness gap: this colo's next read after its own re-render self-heals.
+      // Tag invalidation: a copy whose tags were invalidated after it was
+      // cached is never served. Without `kvFallThrough` it is a miss and this
+      // colo re-renders. With it, it reads as an L1 miss, because the tiers can
+      // diverge: another colo may have written KV after the marker (its own
+      // re-render, or a router.prerender() warm after updateTag()), and this
+      // colo then serves that entry instead of rendering it again.
+      // kvGetSegment checks the KV entry against the same markers (this
+      // request's memo: no second marker read) and promotes a valid one over
+      // this copy. When KV still holds the twin written with this copy, the
+      // read costs one KV get and misses as before. The request that
+      // invalidated the tag itself keeps the plain miss (declinesKvFallThrough).
       const tagInfo = this.readTagInfo(response.headers);
       // Measure the marker-resolution tail (memo -> L1 marker cache -> KV) only
       // when debug is on, so the hot path pays nothing. It is the serial read
@@ -1241,7 +1247,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
             matchMs,
             markerMs,
           });
-        return null;
+        return this.declinesKvFallThrough(tagInfo.tags, tagInfo.taggedAt)
+          ? null
+          : this.kvGetSegment(key);
       }
 
       // Read status headers
@@ -1524,7 +1532,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         return this.kvGetResponse(key);
       }
 
-      // Tag invalidation check (treat invalidated entry as a miss).
+      // Tag invalidation check: a rejected copy reads as an L1 miss (see get()).
       const tagInfo = this.readTagInfo(response.headers);
       if (
         await this.isL1Invalidated(
@@ -1533,7 +1541,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           response.headers,
         )
       ) {
-        return null;
+        return this.declinesKvFallThrough(tagInfo.tags, tagInfo.taggedAt)
+          ? null
+          : this.kvGetResponse(key);
       }
 
       // Check staleness
@@ -1801,8 +1811,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         return this.kvGetItem(key, { suppressRevalidate: true });
       }
 
-      // Tag invalidation check (treat invalidated entry as a miss). Measure the
-      // marker-resolution tail only under debug (see get()).
+      // Tag invalidation check: a rejected copy reads as an L1 miss (see
+      // get()). Measure the marker-resolution tail only under debug.
       const tagInfo = this.readTagInfo(response.headers);
       const markerStart = this.debug ? Date.now() : 0;
       const invalidated = await this.isL1Invalidated(
@@ -1821,7 +1831,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
             matchMs,
             markerMs,
           });
-        return null;
+        return this.declinesKvFallThrough(tagInfo.tags, tagInfo.taggedAt)
+          ? null
+          : this.kvGetItem(key);
       }
 
       const staleAt = Number(
@@ -2233,7 +2245,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           tier: "l1",
           stats,
         });
-        return null;
+        // As get(): KV may hold a capture from after the marker.
+        return this.declinesKvFallThrough(opened.head.t, opened.head.ta)
+          ? null
+          : kvFallback("invalidated");
       }
       const read = this.shellDocumentRead(
         key,
@@ -2325,7 +2340,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * dropped and read from the store (SWR recapture scheduling and each mode's
    * invalidation semantics stay with the store read). That read keeps the
    * caller's `tagHints`: cfTagHints may have evicted the key while the memo
-   * still holds it.
+   * still holds it. A shell a tag marker rejects is dropped and read from
+   * the store too, which may hold a capture from after the marker (see
+   * get(), "Tag invalidation"), unless the request's own mask rejected it
+   * (declinesKvFallThrough).
    */
   private async readMemoizedShell(
     key: string,
@@ -2360,7 +2378,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         tier: "memo",
         stats,
       });
-      return null;
+      return this.declinesKvFallThrough(head.t, head.ta)
+        ? null
+        : this.readShellDocumentWithin(key, options, snapshotBudget);
     }
     if (stats) stats.memo = { hit: true, bytes: cfShellMemo.size };
     this.recordShellHit(key, head.t, stats);
@@ -2472,7 +2492,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     }
     if (invalidated) {
       reader.cancel();
-      return { status: "invalidated" };
+      return { status: "invalidated", head: value.head };
     }
     return value;
   }
@@ -3339,6 +3359,24 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       if (marker != null && marker >= taggedAt) return true;
     }
     return false;
+  }
+
+  /**
+   * Whether a rejected L1 copy skips the KV read: always unless the
+   * `kvFallThrough` option is on, and with it on when this request's own
+   * updateTag()/revalidateTag() (its mask, request-tag-mask.ts) rejects an
+   * entry tagged at `taggedAt`. KV holds a newer entry only if something
+   * rendered after this request's invalidation, while the request re-renders
+   * every entry it masked, so the read would add one KV get per masked entry
+   * to that re-render.
+   * @internal
+   */
+  private declinesKvFallThrough(
+    tags: string[] | undefined,
+    taggedAt: number | undefined,
+  ): boolean {
+    if (!this.kvFallThrough) return true;
+    return maskedForRequest(_getRequestContext(), this, tags, taggedAt ?? 0);
   }
 
   /**

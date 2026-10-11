@@ -108,6 +108,14 @@ export interface ServeShellRequestOptions<TEnv = any> {
         prefetch?: boolean;
         fill?: boolean;
       };
+  /**
+   * POST this form as a submit before hydration: the no-JS request the
+   * progressive-enhancement path runs the action for and re-renders the page
+   * after. Build it with `createActionForm`. The response is the document
+   * (`flight` is its payload, `formState` what the SSR render received).
+   * Not with `partial`.
+   */
+  form?: FormData;
 }
 
 /** A response's handle data, as the browser consumes it. */
@@ -173,6 +181,19 @@ export interface ServeShellRequestResult {
    * nothing was deferred, undefined when no Flight was rendered.
    */
   readDeferred(): Promise<string[] | undefined>;
+  /**
+   * The form state the SSR render received (the `formState` render option),
+   * or undefined when it received none.
+   */
+  formState: unknown;
+  /**
+   * The payload's `formState` as the browser reads it, the value the entry
+   * hands `hydrateRoot`. Undefined when the payload carries none (or no
+   * Flight was rendered). Rejects when the action's state is not
+   * Flight-serializable: the document still renders, and the entry
+   * hydrates without it.
+   */
+  readPayloadFormState(): Promise<unknown>;
 }
 
 type ShellHandler = ReturnType<typeof createRSCHandler>;
@@ -186,6 +207,8 @@ interface Recorder {
   rendered?: boolean;
   /** The HIT tail's Flight text. */
   tail?: string;
+  /** The formState render option of the document render. */
+  formState?: unknown;
 }
 
 const recorders = new AsyncLocalStorage<Recorder>();
@@ -205,9 +228,12 @@ function recordShellKey(recorder: Recorder | undefined): void {
 }
 
 const SSR_STUB: SSRModule = {
-  async renderHTML(rscStream) {
+  async renderHTML(rscStream, options) {
     const recorder = recorders.getStore();
-    if (recorder) recorder.rendered = true;
+    if (recorder) {
+      recorder.rendered = true;
+      recorder.formState = options?.formState ?? undefined;
+    }
     recordShellKey(recorder);
     return rscStream;
   },
@@ -275,6 +301,12 @@ setDefaultSSRModuleLoaderForTests(async () => SSR_STUB);
 
 type HandleChannel = AsyncIterable<HandleData> | undefined;
 
+/** Decode a Flight payload as the browser does. */
+async function decodePayload<T>(flight: string): Promise<T> {
+  const { deserializeResult } = await import("../cache/segment-codec.js");
+  return deserializeResult<T>(flight);
+}
+
 /**
  * Read a payload's two handle channels as browser/rsc-router.tsx does:
  * `handles` to its end, then every `handlesLate` state.
@@ -282,8 +314,7 @@ type HandleChannel = AsyncIterable<HandleData> | undefined;
 async function decodePayloadHandles(
   flight: string,
 ): Promise<ShellRequestHandles> {
-  const { deserializeResult } = await import("../cache/segment-codec.js");
-  const { metadata } = await deserializeResult<{
+  const { metadata } = await decodePayload<{
     metadata?: { handles?: HandleChannel; handlesLate?: HandleChannel };
   }>(flight);
   let hydration: HandleData = {};
@@ -297,8 +328,7 @@ async function decodePayloadHandles(
 
 /** The ids of the segments a payload marks deferred. */
 async function decodeDeferredIds(flight: string): Promise<string[]> {
-  const { deserializeResult } = await import("../cache/segment-codec.js");
-  const { metadata } = await deserializeResult<{
+  const { metadata } = await decodePayload<{
     metadata?: { segments?: Array<{ id: string; deferred?: boolean }> };
   }>(flight);
   return (metadata?.segments ?? [])
@@ -442,6 +472,18 @@ async function getHandler(
 function buildRequest(url: URL, options: ServeShellRequestOptions): Request {
   const headers = new Headers(options.headers);
   const partial = options.partial;
+  if (options.form) {
+    if (partial) {
+      throw new Error(
+        "serveShellRequest: form cannot be combined with partial",
+      );
+    }
+    return new Request(url, {
+      method: "POST",
+      headers,
+      body: options.form,
+    });
+  }
   if (!partial) {
     if (!headers.has("accept")) headers.set("accept", "text/html");
     return new Request(url, { headers });
@@ -599,6 +641,14 @@ export async function serveShellRequest<TEnv = any>(
     },
     async readDeferred() {
       return flight ? decodeDeferredIds(flight) : undefined;
+    },
+    formState: recorder.formState,
+    async readPayloadFormState() {
+      if (!flight) return undefined;
+      const payload = await decodePayload<{
+        formState?: Promise<unknown>;
+      }>(flight);
+      return payload.formState;
     },
   };
 }

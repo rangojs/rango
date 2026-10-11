@@ -279,6 +279,24 @@ describe("navigation-store", () => {
       expect(cached!.stale).toBe(true);
       expect(cached!.handlesPending).toBe(true);
     });
+
+    it("getPageHistoryKeys returns the entry and the shallow copies that share its segments", () => {
+      const store = createTestStore();
+      const page = [{ id: "R0" }] as any;
+      store.cacheSegmentsForHistory("/page", page);
+      store.cacheSegmentsForHistory("/page?tab=1", page);
+      store.cacheSegmentsForHistory("/page?tab=2", page);
+      store.cacheSegmentsForHistory("/other", [{ id: "R1" }] as any);
+      // A commit under the same key with a new render: another page.
+      store.cacheSegmentsForHistory("/page?tab=2", [{ id: "R0" }] as any);
+
+      expect(store.getPageHistoryKeys("/page")).toEqual([
+        "/page",
+        "/page?tab=1",
+      ]);
+      expect(store.getPageHistoryKeys("/other")).toEqual(["/other"]);
+      expect(store.getPageHistoryKeys("/missing")).toEqual(["/missing"]);
+    });
   });
 
   // --------------------------------------------------------------------------

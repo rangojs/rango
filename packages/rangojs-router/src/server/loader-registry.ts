@@ -86,7 +86,12 @@ export async function getLoaderLazy(
 
     // Same as the lazy branch: a thrown import is a server error, not a
     // not-found. Let it propagate to the caller for a 500 + onError.
-    await import(/* @vite-ignore */ `/${filePath}`);
+    // Not a template literal: es-module-lexer 3 reports `/${x}` as the
+    // specifier "/*", and plugin-rsc's client-reference scan build rewrites
+    // every import to `import "<specifier>"`, so the build fails to resolve
+    // "/*" (dynamic-import-specifiers.test.ts).
+    const modulePath = "/" + filePath;
+    await import(/* @vite-ignore */ modulePath);
 
     const registered = getFetchableLoader(id);
     if (registered) {

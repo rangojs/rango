@@ -56,6 +56,9 @@ export type {
   StateCookieSeed,
 } from "./render-handler.js";
 
+export { createActionForm } from "./action-form.js";
+export type { CreateActionFormOptions } from "./action-form.js";
+
 export {
   serveShellRequest,
   resetShellTestState,

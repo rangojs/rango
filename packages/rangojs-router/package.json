@@ -1,6 +1,6 @@
 {
   "name": "@rangojs/router",
-  "version": "0.21.0",
+  "version": "0.22.1",
   "description": "Django-inspired RSC router with composable URL patterns",
   "keywords": [
     "react",
@@ -208,7 +208,7 @@
   },
   "dependencies": {
     "@types/debug": "^4.1.12",
-    "@vitejs/plugin-rsc": "^0.5.35",
+    "@vitejs/plugin-rsc": "^0.5.36",
     "debug": "^4.4.1",
     "magic-string": "^0.30.17",
     "picomatch": "^4.0.4",

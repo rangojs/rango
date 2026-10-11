@@ -419,6 +419,38 @@ describe("createNavigationTransaction", () => {
   });
 });
 
+describe("createNavigationTransaction during the hydration window", () => {
+  it("an action refetch keeps the late pushes the page's history entry holds", async () => {
+    const { generateHistoryKey } = await import("../browser/navigation-store");
+    const { store, eventController } = createTestContext();
+    const key = generateHistoryKey("http://localhost/start");
+    const documentData = { notes: { M0R0: ["document"] } };
+    const latePush = { notes: { M0R0: ["document", "late"] } };
+
+    eventController.setHandleData(documentData, ["M0R0"]);
+    eventController.lockHydration();
+    // rsc-router writes a late push to the entry; the controller queues it.
+    store.cacheSegmentsForHistory(key, [], latePush);
+    eventController.setHandleData(latePush, ["M0R0"]);
+
+    const tx = createNavigationTransaction(
+      store,
+      eventController,
+      "http://localhost/start",
+      { skipLoadingState: true, replace: true },
+    );
+    tx.commit({
+      url: "http://localhost/start",
+      segmentIds: ["M0R0"],
+      segments: [],
+      storeOnly: true,
+    });
+    tx[Symbol.dispose]();
+
+    expect(store.getCachedSegments(key)?.handleData).toEqual(latePush);
+  });
+});
+
 describe("createNavigationTransaction traversal commit", () => {
   let handleNavigationStart: ReturnType<typeof vi.fn>;
 
