@@ -12,6 +12,12 @@ export const ClientUrlsIsActionNsLoader = createLoader(async () => {
   return { runs: isActionNsRuns };
 });
 
+let resultRuns = 0;
+export const ClientUrlsResultLoader = createLoader(async () => {
+  resultRuns += 1;
+  return { runs: resultRuns };
+});
+
 export const ClientUrlsDetailLoader = createLoader(
   async (ctx): Promise<{ slug: string }> => {
     await new Promise((resolve) => setTimeout(resolve, 800));
