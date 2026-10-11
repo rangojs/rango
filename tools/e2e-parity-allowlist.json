@@ -255,6 +255,11 @@
     "reason": "Dev-server cold-start readiness; intentional dev-only"
   },
   {
+    "base": "dev cold start beside another app's router files",
+    "file": "tests/cloudflare-basic/e2e/dev-cold-start.test.ts",
+    "reason": "Dev-server cold start and route-file watcher; a production build has no watcher and no module runner to reload"
+  },
+  {
     "base": "prerender",
     "file": "tests/cloudflare-basic/e2e/prerender-dev.test.ts",
     "reason": "Dev-only title marker (dev mode); production twins live in prerender*.test.ts siblings under production describes"

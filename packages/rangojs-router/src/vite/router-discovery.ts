@@ -7,7 +7,7 @@
  */
 
 import type { Plugin, ViteDevServer } from "vite";
-import { createServer as createViteServer } from "vite";
+import { createServer as createViteServer, normalizePath } from "vite";
 import { dirname, join, resolve } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire, register } from "node:module";
@@ -17,6 +17,7 @@ import {
   findNestedRouterConflict,
   findRouterFiles,
   createScanFilter,
+  isInSkippedScanDir,
 } from "../build/generate-route-types.js";
 import { firstCodeMatchIndex } from "../build/route-types/source-scan.js";
 import {
@@ -107,6 +108,35 @@ const debugBuild = createRangoDebugger(NS.build);
 const debugDev = createRangoDebugger(NS.dev);
 
 export { VIRTUAL_ROUTES_MANIFEST_ID };
+
+/** The slice of a Vite environment module graph the route-file watcher reads. */
+interface ModulesByFileGraph {
+  getModulesByFile(file: string): ReadonlySet<unknown> | undefined;
+}
+
+/** Modules a Vite graph holds for `file`; Vite keys its file index by normalized path. */
+function modulesForFile(
+  graph: ModulesByFileGraph,
+  file: string,
+): ReadonlySet<unknown> | undefined {
+  return graph.getModulesByFile(normalizePath(file));
+}
+
+/**
+ * Whether the dev route-file watcher ignores `file`: it sits in a directory
+ * every discovery scan skips (isInSkippedScanDir) and the RSC graph has not
+ * loaded it. See docs/manifests.md, "A reload no file of the app asked for".
+ */
+export function isFileOutsideApp(
+  root: string,
+  file: string,
+  rscGraph: ModulesByFileGraph | undefined,
+): boolean {
+  return (
+    isInSkippedScanDir(root, file) &&
+    !(rscGraph && modulesForFile(rscGraph, file)?.size)
+  );
+}
 
 // ============================================================================
 // Node ESM Loader Hook Registration
@@ -1639,6 +1669,15 @@ export function createRouterDiscoveryPlugin(
           (filePath.includes("named-routes.gen.ts") ||
             filePath.includes("urls.gen.ts"));
 
+        // Files no discovery scan reaches are ignored unless the RSC graph
+        // loaded them (docs/manifests.md, "A reload no file of the app asked for").
+        const isOutsideApp = (filePath: string): boolean =>
+          isFileOutsideApp(
+            s.projectRoot,
+            filePath,
+            (server.environments as any)?.rsc?.moduleGraph,
+          );
+
         const regenerateGeneratedRouteFiles = () => {
           if (s.perRouterManifests.length > 0) {
             writeRouteTypesFiles(s);
@@ -2003,6 +2042,13 @@ export function createRouterDiscoveryPlugin(
         };
 
         const handleRouteFileChange = (filePath: string) => {
+          if (isOutsideApp(filePath)) {
+            debugDiscovery?.(
+              "watcher: skip %s (outside the discovery scan)",
+              filePath,
+            );
+            return;
+          }
           if (maybeHandleGeneratedRouteFileMutation(filePath)) return;
           if (
             !filePath.endsWith(".ts") &&
@@ -2140,9 +2186,7 @@ export function createRouterDiscoveryPlugin(
                 }
                 const seen = new Set<any>();
                 for (const file of routerSourceFiles) {
-                  const mods = rscGraph.getModulesByFile(
-                    file.replaceAll("\\", "/"),
-                  );
+                  const mods = modulesForFile(rscGraph, file);
                   if (!mods) {
                     debugDiscovery?.(
                       "watcher: clientUrls invalidation found no rsc modules for %s",
@@ -2211,7 +2255,7 @@ export function createRouterDiscoveryPlugin(
         // Same no-runner guard as change/add: stale perRouterManifests would
         // reintroduce reverted content.
         server.watcher.on("unlink", (filePath) => {
-          if (!isGeneratedRouteFile(filePath)) return;
+          if (!isGeneratedRouteFile(filePath) || isOutsideApp(filePath)) return;
           const hasRunner = !!(server.environments as any)?.rsc?.runner;
           if (!hasRunner) return;
           regenerateGeneratedRouteFiles();

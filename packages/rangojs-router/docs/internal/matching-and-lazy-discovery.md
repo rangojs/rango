@@ -176,7 +176,11 @@ wildcard`, with backtracking. The regex fallback matches in definition order, wh
   restart. A failed cold discovery now recovers too: the routes-manifest module replays the
   projections it computed, and the route-file watcher re-runs discovery. The full story is
   in [manifests.md](../manifests.md) ("Dev-boot module reload races"). Pinned by
-  `discover-routers-reload.test.ts`.
+  `discover-routers-reload.test.ts`. The route-file watcher ignores files in the
+  directories every scan skips (dot-directories, `node_modules`, `dist`, `coverage`) unless
+  the RSC graph loaded them: a re-discovery reloads the Cloudflare worker, and a reload
+  during a request splits that request across two module graphs (manifests.md, "A reload
+  no file of the app asked for").
 
 ## Lazy `include()` — is it actually pulling its weight?
 

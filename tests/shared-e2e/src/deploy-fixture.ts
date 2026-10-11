@@ -28,7 +28,12 @@ import path from "node:path";
 export interface DeployFixtureOptions {
   /** Directory of the fixture to copy (contains vite.config.ts and src/). */
   source: string;
-  /** Where the working copy goes. Removed first, and again by cleanup(). */
+  /**
+   * Where the working copy goes. Written on first use (edit, build or start),
+   * not when the fixture is created: Playwright collects every test file on
+   * every run, and the copy is a whole app dropped into the root of whatever
+   * dev server is up. Removed first, and again by cleanup().
+   */
   workDir: string;
   /** The app directory whose node_modules/.bin/vite builds and serves it. */
   appDir: string;
@@ -43,6 +48,7 @@ export interface DeployFixtureOptions {
 }
 
 export interface DeployFixture {
+  /** The working copy; it exists once edit(), build() or start() has run. */
   readonly root: string;
   /** Rewrite one source file of the working copy. */
   edit(file: string, change: (source: string) => string): void;
@@ -76,12 +82,18 @@ export function createDeployFixture(
   let server: ChildProcess | undefined;
   let serverOutput = "";
 
-  rmSync(workDir, { recursive: true, force: true });
-  cpSync(source, workDir, {
-    recursive: true,
-    filter: (entry) =>
-      !COPY_SKIP.has(path.basename(entry)) && !entry.endsWith(".gen.ts"),
-  });
+  let prepared = false;
+
+  function prepare(): void {
+    if (prepared) return;
+    prepared = true;
+    rmSync(workDir, { recursive: true, force: true });
+    cpSync(source, workDir, {
+      recursive: true,
+      filter: (entry) =>
+        !COPY_SKIP.has(path.basename(entry)) && !entry.endsWith(".gen.ts"),
+    });
+  }
 
   const origin = `http://localhost:${port}`;
 
@@ -117,6 +129,7 @@ export function createDeployFixture(
   const fixture: DeployFixture = {
     root: workDir,
     edit(file, change) {
+      prepare();
       const target = path.join(workDir, file);
       const before = readFileSync(target, "utf-8");
       const after = change(before);
@@ -126,6 +139,7 @@ export function createDeployFixture(
       writeFileSync(target, after);
     },
     build() {
+      prepare();
       return new Promise((resolve, reject) => {
         const child = spawn(vite, ["build", "--config", config], {
           cwd: appDir,
@@ -143,6 +157,7 @@ export function createDeployFixture(
       });
     },
     async start() {
+      prepare();
       if (await isUp()) {
         throw new Error(
           `deploy fixture: something already answers on ${origin}; ` +
@@ -182,6 +197,7 @@ export function createDeployFixture(
     url: (pathname) => origin + pathname,
     async cleanup() {
       await stop();
+      prepared = false;
       if (existsSync(workDir))
         rmSync(workDir, { recursive: true, force: true });
     },

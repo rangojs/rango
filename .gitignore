@@ -17,3 +17,5 @@ MIDDLEWARE_RESEARCH.md
 
 # Working copies of the cache-version e2e fixtures
 .cache-version-work
+# The nested app copy tests/cloudflare-basic/e2e/dev-cold-start.test.ts writes
+.rango-e2e-nested-app
