@@ -155,7 +155,7 @@ async function elideNested(
     for (const key of Object.keys(props)) {
       const r = await elideNested(props[key], seen);
       if (r.state === "rejected") return r;
-      if (r.value !== props[key]) assignOwn((changed ??= {}), key, r.value);
+      if (r.value !== props[key]) (changed ??= {})[key] = r.value;
       result.hasHole ||= r.hasHole;
     }
     if (changed) result.value = cloneElementWithProps(value, changed);
@@ -356,7 +356,7 @@ function overlayProps(
         : undefined,
       props[key],
     );
-    if (next !== props[key]) assignOwn((changed ??= {}), key, next);
+    if (next !== props[key]) (changed ??= {})[key] = next;
   }
   return changed ? cloneElementWithProps(recorded, changed) : recorded;
 }

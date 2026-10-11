@@ -14,13 +14,14 @@ What you can notice:
   neither. Now `has()`, `get()` and `getAll(name)` see only the cookies the
   request sent, and a cookie named `__proto__` reads like any other (before, it
   was dropped). `getRequestContext().cookies()` still returns a plain object.
-- A route with a path segment named `constructor`, `toString` or `__proto__`
-  (`path("/constructor", ...)`) was left out of the production route trie and
-  404'd. Building the trie for a `__proto__` segment wrote that route onto
-  `Object.prototype`, so in development requests for other routes, such as
-  `/blog/1` for a `/blog/:id` route, failed with a 500. Now each such segment
-  matches its own route, and a request for one with no route of its own
-  matches your param routes or 404s as any other segment does.
+- A route with a path segment named `constructor` or `toString`
+  (`path("/constructor", ...)`) was left out of the production route trie, so
+  it 404'd or reached your catch-all route. A `__proto__` segment was worse:
+  building the trie wrote that route onto `Object.prototype`, so `vite build`
+  failed, and in development requests for other routes, such as `/blog/1` for
+  a `/blog/:id` route, failed with a 500. Now each such segment matches its
+  own route, and a request for one with no route of its own matches your
+  param routes or 404s as any other segment does.
 - A fetchable loader ran with whatever params the request sent in
   `ctx.params`: numbers, objects, or the keys `__proto__`, `constructor` and
   `prototype` from a hand-built `_rsc_loader_params` or untyped code. Now

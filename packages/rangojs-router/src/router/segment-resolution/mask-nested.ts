@@ -54,7 +54,8 @@ type KeyValidated = { _store?: { validated?: unknown } };
  * keyless child of a static children list (validated at creation) would warn
  * "Each child in a list should have a unique key" once cloned. Pass only the
  * props that change: cloneElement re-parents the element (owner) when its
- * config carries `ref`.
+ * config carries `ref`. cloneElement copies props by assignment, so a prop
+ * key named `__proto__` can't survive a clone; prop copies don't use assignOwn.
  */
 export function cloneElementWithProps(
   element: ReactElement,
@@ -191,7 +192,7 @@ export function maskNestedContainerThenables(
     let maskedProps: Record<string, unknown> | undefined;
     for (const key of Object.keys(props)) {
       const masked = maskNestedContainerThenables(props[key], seen, report);
-      if (masked !== props[key]) assignOwn((maskedProps ??= {}), key, masked);
+      if (masked !== props[key]) (maskedProps ??= {})[key] = masked;
     }
     if (!maskedProps) return value;
     const clone = cloneElementWithProps(value, maskedProps);
