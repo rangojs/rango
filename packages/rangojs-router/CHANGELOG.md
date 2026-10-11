@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.23.0 (2026-10-11)
 
 ### Breaking: a `clientUrls()` loader's `revalidate()` runs on the server, with the same arguments as in `urls()`
 
@@ -362,6 +362,23 @@ normally. If discovery fails at startup for another reason, such as a syntax
 error you then fix, the next save of a source file runs it again, as it already
 did after a failed hot update, instead of leaving the server broken until a
 restart. Nothing changes in your code or in production builds.
+
+### Fixed: a file written outside your app no longer reloads the dev server
+
+Before: when a file named like a route file (`router.tsx`, `urls.tsx`) was
+added, changed or deleted in a directory route discovery never scans (a
+dot-directory such as `.cache/`, `node_modules/`, `dist/` or `coverage/`), the
+dev server ran discovery again and reloaded its server modules. A tool that
+wrote such files while the server was up caused reloads nothing in your app
+asked for. On Cloudflare, a reload during a cold server's first request could
+return a 500 with `getRequestContext() called outside of a request context` or
+`include() could not resolve the server projection`, and the page then failed
+to hydrate.
+
+Now: the dev server skips route-looking files in those directories, unless
+your app has already loaded the file. Edits in your source directories, `build/`,
+`__tests__/` and `__mocks__/` trigger discovery as before. Nothing changes in
+your code or in production builds.
 
 ### Added: `kvFallThrough` lets a Cloudflare location serve the entry another location rebuilt after `updateTag()`
 
