@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { validateRedirectOrigin } from "../browser/validate-redirect-origin";
+import {
+  validatePayloadRedirect,
+  validateRedirectOrigin,
+} from "../browser/validate-redirect-origin";
 
 describe("validateRedirectOrigin", () => {
   afterEach(() => {
@@ -62,5 +65,28 @@ describe("validateRedirectOrigin", () => {
     expect(
       validateRedirectOrigin("http://example.com/page", "https://example.com"),
     ).toBeNull();
+  });
+});
+
+// A payload redirect: an external one is scheme-validated only, any other one
+// must stay on the page's origin.
+describe("validatePayloadRedirect", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    [{ url: "/next" }, "http://localhost:3000/next"],
+    [{ url: "https://evil.com/phish" }, null],
+    [
+      { url: "https://other.com/page", external: true },
+      "https://other.com/page",
+    ],
+    [{ url: "javascript:alert(1)", external: true }, null],
+  ])("%o -> %s", (redirect, expected) => {
+    vi.stubGlobal("window", { location: { origin: "http://localhost:3000" } });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(validatePayloadRedirect(redirect)).toBe(expected);
   });
 });

@@ -54,3 +54,19 @@ export function validateExternalRedirect(
   }
   return resolved;
 }
+
+/**
+ * The target of a redirect a Flight payload carries (`metadata.redirect`), or
+ * null when the client refuses it. An explicit off-host one
+ * (`redirect(url, { external: true })`) is scheme-validated only:
+ * `external` waives the same-origin check the app opted out of, not scheme
+ * safety. Every other one must stay on this origin.
+ */
+export function validatePayloadRedirect(redirect: {
+  url: string;
+  external?: boolean;
+}): string | null {
+  return redirect.external
+    ? validateExternalRedirect(redirect.url, window.location.origin)
+    : validateRedirectOrigin(redirect.url, window.location.origin);
+}

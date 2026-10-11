@@ -26,8 +26,8 @@ import {
   startBrowserTransaction,
 } from "./logging.js";
 import {
+  validatePayloadRedirect,
   validateRedirectOrigin,
-  validateExternalRedirect,
 } from "./validate-redirect-origin.js";
 import {
   extractRscHeaderUrl,
@@ -489,41 +489,26 @@ export function createServerActionBridge(
       // Check handle.signal.aborted to avoid redirecting from a stale action
       // when the user has already navigated away.
       if (metadata?.redirect && !handle.signal.aborted) {
-        // Explicit off-host redirect (redirect(url, { external: true })):
-        // hard-navigate, but still scheme-validate (http/https only). external
-        // waives the same-origin check, NOT scheme safety, so a forged payload
-        // carrying a javascript:/data: URL cannot script via location.assign.
-        if (metadata.redirect.external) {
-          const externalUrl = validateExternalRedirect(
-            metadata.redirect.url,
-            window.location.origin,
-          );
-          if (!externalUrl) {
-            log("blocked external action redirect payload", {
-              url: metadata.redirect.url,
-            });
-            handle.complete(returnValue?.data);
-            return returnValue?.data;
-          }
-          log("external action redirect", { url: externalUrl });
-          handle.complete(returnValue?.data);
-          window.location.assign(externalUrl);
-          return returnValue?.data;
-        }
-        const redirectUrl = validateRedirectOrigin(
-          metadata.redirect.url,
-          window.location.origin,
-        );
-        if (!redirectUrl) {
-          log("blocked action redirect payload", {
-            url: metadata.redirect.url,
-          });
-          handle.complete(returnValue?.data);
-          return returnValue?.data;
-        }
-        log("action redirect", { url: redirectUrl });
+        // An explicit off-host redirect is a hard navigation, still
+        // scheme-validated: a forged payload carrying a javascript:/data: URL
+        // cannot script via location.assign (validatePayloadRedirect).
+        const { redirect } = metadata;
+        const target = validatePayloadRedirect(redirect);
         handle.complete(returnValue?.data);
-        await dispatchRedirect(redirectUrl, metadata.locationState);
+        if (!target) {
+          log(
+            redirect.external
+              ? "blocked external action redirect payload"
+              : "blocked action redirect payload",
+            { url: redirect.url },
+          );
+        } else if (redirect.external) {
+          log("external action redirect", { url: target });
+          window.location.assign(target);
+        } else {
+          log("action redirect", { url: target });
+          await dispatchRedirect(target, metadata.locationState);
+        }
         return returnValue?.data;
       }
 

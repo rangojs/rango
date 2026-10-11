@@ -94,7 +94,7 @@ import {
   type DevShellLookup,
 } from "./shell-build-manifest.js";
 import { contextGet } from "../context-var.js";
-import { PREFETCH_HEADER } from "../router/segment-resolution/prefetch-deferral.js";
+import { PREFETCH_HEADER } from "../prefetch-markers.js";
 import {
   isWarmReplace,
   noteWarmShellEvent,

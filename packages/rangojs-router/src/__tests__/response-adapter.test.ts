@@ -17,6 +17,7 @@ let extractRscHeaderUrl: typeof import("../browser/response-adapter").extractRsc
 let emptyResponse: typeof import("../browser/response-adapter").emptyResponse;
 let teeWithCompletion: typeof import("../browser/response-adapter").teeWithCompletion;
 let isForeignRouterId: typeof import("../browser/response-adapter").isForeignRouterId;
+let abortUntilResponse: typeof import("../browser/response-adapter").abortUntilResponse;
 
 beforeEach(async () => {
   const mod = await import("../browser/response-adapter");
@@ -24,6 +25,64 @@ beforeEach(async () => {
   emptyResponse = mod.emptyResponse;
   teeWithCompletion = mod.teeWithCompletion;
   isForeignRouterId = mod.isForeignRouterId;
+  abortUntilResponse = mod.abortUntilResponse;
+});
+
+// A navigation's signal cancels its request until the response arrives, and
+// never after: aborting a Flight body mid-read errors the stream.
+describe("abortUntilResponse", () => {
+  const settleable = () => {
+    let settle!: (value: string) => void;
+    let seen: AbortSignal | undefined;
+    const request = (signal: AbortSignal | undefined) => {
+      seen = signal;
+      return new Promise<string>((resolve, reject) => {
+        settle = resolve;
+        // As fetch() does.
+        if (signal?.aborted) reject(signal.reason);
+        signal?.addEventListener("abort", () => reject(signal.reason));
+      });
+    };
+    return { request, settle: (v: string) => settle(v), seen: () => seen };
+  };
+
+  it("hands the request no signal when there is none", async () => {
+    const { request, settle, seen } = settleable();
+    const response = abortUntilResponse(undefined, request);
+    settle("response");
+    await expect(response).resolves.toBe("response");
+    expect(seen()).toBeUndefined();
+  });
+
+  it("aborts the request with the signal's reason before its response arrives", async () => {
+    const outer = new AbortController();
+    const { request, seen } = settleable();
+    const response = abortUntilResponse(outer.signal, request);
+    const reason = new Error("left");
+    outer.abort(reason);
+    await expect(response).rejects.toBe(reason);
+    expect(seen()!.aborted).toBe(true);
+  });
+
+  it("aborts at once when the signal is already aborted", async () => {
+    const outer = new AbortController();
+    outer.abort("gone");
+    const { request, seen } = settleable();
+    await expect(abortUntilResponse(outer.signal, request)).rejects.toBe(
+      "gone",
+    );
+    expect(seen()!.aborted).toBe(true);
+  });
+
+  it("leaves the request alone once its response has arrived", async () => {
+    const outer = new AbortController();
+    const { request, settle, seen } = settleable();
+    const response = abortUntilResponse(outer.signal, request);
+    settle("response");
+    await expect(response).resolves.toBe("response");
+    outer.abort();
+    expect(seen()!.aborted).toBe(false);
+  });
 });
 
 describe("isForeignRouterId", () => {

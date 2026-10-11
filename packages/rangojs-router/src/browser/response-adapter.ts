@@ -27,6 +27,26 @@ export function extractRscHeaderUrl(
 }
 
 /**
+ * Run `request` with a signal that `signal` aborts until the request settles,
+ * and only until then. A response that has arrived streams to its end:
+ * aborting a Flight body mid-read rejects every chunk a mounted tree may be
+ * reading. Aborted, the request rejects with `signal.reason`.
+ */
+export function abortUntilResponse<T>(
+  signal: AbortSignal | undefined,
+  request: (signal: AbortSignal | undefined) => Promise<T>,
+): Promise<T> {
+  if (!signal) return request(undefined);
+  const controller = new AbortController();
+  const cancel = (): void => controller.abort(signal.reason);
+  if (signal.aborted) cancel();
+  else signal.addEventListener("abort", cancel, { once: true });
+  return request(controller.signal).finally(() =>
+    signal.removeEventListener("abort", cancel),
+  );
+}
+
+/**
  * Empty 200 response that won't choke Flight parsing.
  * Used when a header URL is blocked by origin validation.
  */

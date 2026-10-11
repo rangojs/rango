@@ -21,6 +21,7 @@ import {
   SegmentFragmentDecodeError,
 } from "../segment-fragments.js";
 import {
+  abortUntilResponse,
   extractRscHeaderUrl,
   emptyResponse,
   handleReloadHeader,
@@ -37,6 +38,7 @@ import {
   type DecodedPrefetch,
 } from "./prefetch/cache.js";
 import { cancelAllPrefetches } from "./prefetch/loader.js";
+import { FILL_PARAM } from "../prefetch-markers.js";
 
 /**
  * Create a navigation client for fetching RSC payloads
@@ -117,7 +119,7 @@ export function createNavigationClient(
       // (cache/document-cache.ts), and it keeps the fill out of every
       // prefetch key below.
       if (fill) {
-        fetchUrl.searchParams.set("_rsc_fill", "1");
+        fetchUrl.searchParams.set(FILL_PARAM, "1");
       }
 
       // If the lazy prefetch runtime has not loaded yet, prevent a deferred
@@ -249,65 +251,58 @@ export function createNavigationClient(
           });
         }
 
-        // `signal` cancels the request until its response arrives. A response
-        // that has arrived streams to its end: aborting a Flight body
-        // mid-read rejects every chunk a mounted tree may be reading, as
-        // server-action-bridge.ts notes for actions. A prefetch: false fill
-        // passes its navigation's signal, which stays abortable after the
-        // commit (event-controller.ts streamingNavigation).
-        const request = signal ? new AbortController() : undefined;
-        const cancel = (): void => request!.abort(signal!.reason);
-        if (signal?.aborted) cancel();
-        else signal?.addEventListener("abort", cancel, { once: true });
-
-        const responsePromise = fetch(fetchUrl, {
-          // During an action's flight the state is not rotated, so the old
-          // X-Rango-State still matches the Vary-keyed HTTP-cache entry; bypass
-          // it so a genuine mid-action navigation fetches fresh instead of being
-          // served the stale prefetched bytes. Fragment recovery also bypasses
-          // HTTP caches so it reaches the server's decode-and-evict path.
-          ...((isActionFenceActive() || fragmentRecovery || fill) && {
-            cache: "no-store" as RequestCache,
+        // `signal` cancels the request until its response arrives
+        // (abortUntilResponse). A prefetch: false fill passes its
+        // navigation's signal, which stays abortable after the commit
+        // (event-controller.ts streamingNavigation).
+        const responsePromise = abortUntilResponse(signal, (requestSignal) =>
+          fetch(fetchUrl, {
+            // During an action's flight the state is not rotated, so the old
+            // X-Rango-State still matches the Vary-keyed HTTP-cache entry; bypass
+            // it so a genuine mid-action navigation fetches fresh instead of being
+            // served the stale prefetched bytes. Fragment recovery also bypasses
+            // HTTP caches so it reaches the server's decode-and-evict path.
+            ...((isActionFenceActive() || fragmentRecovery || fill) && {
+              cache: "no-store" as RequestCache,
+            }),
+            headers: {
+              "X-RSC-Router-Client-Path": previousUrl,
+              // Reuse the single per-operation read (see rangoState above): the
+              // cache-key lookup and this header must agree on one value, and the
+              // cookie read has side effects (external-rotation notify) we do not
+              // want to fire twice per navigation.
+              "X-Rango-State": rangoState,
+              ...(fragmentPassthrough && {
+                [SEGMENT_FRAGMENT_CAPABILITY_HEADER]: "1",
+              }),
+              ...(fragmentRecovery && {
+                [SEGMENT_FRAGMENT_RECOVERY_HEADER]: "1",
+              }),
+              ...(tx && { "X-RSC-Router-Request-Id": tx.requestId }),
+              ...(interceptSourceUrl && {
+                "X-RSC-Router-Intercept-Source": interceptSourceUrl,
+              }),
+              ...(hmr && { "X-RSC-HMR": "1" }),
+            },
+            signal: requestSignal,
           }),
-          headers: {
-            "X-RSC-Router-Client-Path": previousUrl,
-            // Reuse the single per-operation read (see rangoState above): the
-            // cache-key lookup and this header must agree on one value, and the
-            // cookie read has side effects (external-rotation notify) we do not
-            // want to fire twice per navigation.
-            "X-Rango-State": rangoState,
-            ...(fragmentPassthrough && {
-              [SEGMENT_FRAGMENT_CAPABILITY_HEADER]: "1",
-            }),
-            ...(fragmentRecovery && {
-              [SEGMENT_FRAGMENT_RECOVERY_HEADER]: "1",
-            }),
-            ...(tx && { "X-RSC-Router-Request-Id": tx.requestId }),
-            ...(interceptSourceUrl && {
-              "X-RSC-Router-Intercept-Source": interceptSourceUrl,
-            }),
-            ...(hmr && { "X-RSC-HMR": "1" }),
-          },
-          signal: request?.signal,
-        })
-          .finally(() => signal?.removeEventListener("abort", cancel))
-          .then((response) => {
-            const validated = validateRscHeaders(
-              response,
-              "fetch",
-              resolveStreamComplete,
-            );
-            if (validated instanceof Promise) return validated;
+        ).then((response) => {
+          const validated = validateRscHeaders(
+            response,
+            "fetch",
+            resolveStreamComplete,
+          );
+          if (validated instanceof Promise) return validated;
 
-            return teeWithCompletion(
-              validated,
-              () => {
-                if (tx) browserDebugLog(tx, "stream complete");
-                resolveStreamComplete();
-              },
-              signal,
-            );
-          });
+          return teeWithCompletion(
+            validated,
+            () => {
+              if (tx) browserDebugLog(tx, "stream complete");
+              resolveStreamComplete();
+            },
+            signal,
+          );
+        });
 
         return {
           payload: deps.createFromFetch<RscPayload>(responsePromise),

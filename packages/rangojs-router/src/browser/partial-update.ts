@@ -31,10 +31,7 @@ import {
   isBrowserDebugEnabled,
   IS_BROWSER_DEBUG,
 } from "./logging.js";
-import {
-  validateRedirectOrigin,
-  validateExternalRedirect,
-} from "./validate-redirect-origin.js";
+import { validatePayloadRedirect } from "./validate-redirect-origin.js";
 import type { NavigationUpdate, RscMetadata } from "./types.js";
 import { OPTIMISTIC_COMMIT_TRANSITION_TYPE } from "./optimistic-commit.js";
 import type { LoaderStore } from "../loader-store.js";
@@ -310,16 +307,6 @@ export function createPartialUpdater(
     return store.getCachedSegments(store.getHistoryKey())?.segments;
   }
 
-  /** A payload redirect's target, or null when the client refuses it. */
-  function redirectTarget(redirect: {
-    url: string;
-    external?: boolean;
-  }): string | null {
-    return redirect.external
-      ? validateExternalRedirect(redirect.url, window.location.origin)
-      : validateRedirectOrigin(redirect.url, window.location.origin);
-  }
-
   /**
    * Act on the redirect a navigation was answered with. True when `metadata`
    * carried one: the navigation is done here. A target in the app is thrown
@@ -333,7 +320,7 @@ export function createPartialUpdater(
   function redirected(metadata: RscMetadata | undefined): boolean {
     const redirect = metadata?.redirect;
     if (!redirect) return false;
-    const target = redirectTarget(redirect);
+    const target = validatePayloadRedirect(redirect);
     if (!target) {
       debugLog("[Browser] Ignoring blocked redirect payload");
     } else if (redirect.external) {
@@ -354,7 +341,7 @@ export function createPartialUpdater(
     redirect: { url: string; external?: boolean },
     state: Record<string, unknown> | undefined,
   ): boolean {
-    const target = redirectTarget(redirect);
+    const target = validatePayloadRedirect(redirect);
     if (!target) return false;
     if (redirect.external || !config.fill) window.location.assign(target);
     else config.fill.redirect(target, state);

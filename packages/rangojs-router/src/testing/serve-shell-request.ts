@@ -57,10 +57,7 @@ import {
   SHELL_CAPTURE_MAX_WAIT_MS,
 } from "../rsc/shell-capture-constants.js";
 import { SEGMENT_FRAGMENT_CAPABILITY_HEADER } from "../segment-fragments.js";
-import {
-  FILL_PARAM,
-  PREFETCH_HEADER,
-} from "../router/segment-resolution/prefetch-deferral.js";
+import { FILL_PARAM, PREFETCH_HEADER } from "../prefetch-markers.js";
 import { resolveDeferredHandleValues } from "../handles/deferred-resolution.js";
 import { withoutPushedBy } from "../handles/pushed-by.js";
 import type { HandleData } from "../server/handle-store.js";

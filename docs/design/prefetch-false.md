@@ -427,12 +427,15 @@ the request is a fill:
   their `$$id`s, unit candidates).
 - `mode`: `"prefetch"` for a GET partial request with `X-Rango-Prefetch` that
   is not an action, not a shell capture and resolves no intercept; `"fill"`
-  when the raw URL carries `_rsc_fill`; otherwise unset. The header and the
-  param are read once, when the request context is created (`requestKind()`,
-  kept as `RequestContext._requestKind`; the names are `PREFETCH_HEADER` and
-  `FILL_PARAM`). The decision is one function, `partialDeferralMode()`, with a
-  truth table beside it: an action is always a POST and a capture always runs
-  the full match, so no real request can show those conditions apart.
+  when a GET's raw URL carries `_rsc_fill`; otherwise unset. A request of
+  another method that carries either marker is a normal request. The header
+  and the param are read once, when the request context is created
+  (`requestKind()`, kept as `RequestContext._requestKind`; the names are
+  `PREFETCH_HEADER` and `FILL_PARAM`, in the dependency-free
+  `src/prefetch-markers.ts` the browser imports too). The decision is one
+  function, `partialDeferralMode()`, with a truth table beside it: an action
+  is always a POST and a capture always runs the full match, so no real
+  request can show those conditions apart.
 - `held`: the client's segment ids as the request listed them in
   `_rsc_segments`. Deferral reads this set and no other. It is the set
   `buildMatchResult` filters the response with, and it is not the set

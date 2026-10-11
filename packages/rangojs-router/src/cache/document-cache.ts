@@ -14,7 +14,7 @@
  */
 
 import { requestHeaders } from "../server/request-headers.js";
-import { FILL_PARAM } from "../router/segment-resolution/prefetch-deferral.js";
+import { FILL_PARAM } from "../prefetch-markers.js";
 import type { MiddlewareFn, MiddlewareContext } from "../router/middleware.js";
 import { hasPerClientSignal } from "../browser/cookie-name.js";
 import {

@@ -274,7 +274,9 @@ The public DOM seam is
   [browser/event-controller.ts](../../src/browser/event-controller.ts) (a
   committed navigation stays abortable while its stream is open) and
   [browser/navigation-client.ts](../../src/browser/navigation-client.ts) (the
-  signal cancels any partial request until its response arrives),
+  signal cancels any partial request until its response arrives, through
+  `abortUntilResponse` in
+  [browser/response-adapter.ts](../../src/browser/response-adapter.ts)),
   and the user-facing options in
   [route-definition/dsl-helpers.ts](../../src/route-definition/dsl-helpers.ts)
   (`loader()`, `loading()`). On `clientUrls()` routes the option is recorded

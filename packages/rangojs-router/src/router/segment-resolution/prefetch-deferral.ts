@@ -35,11 +35,7 @@ import {
 import { requestHeaders } from "../../server/request-headers.js";
 import type { HandlerContext, InternalHandlerContext } from "../../types.js";
 import type { CacheScope } from "../../cache/cache-scope.js";
-
-/** Request header of a `<Link>` prefetch (browser/prefetch/fetch.ts). */
-export const PREFETCH_HEADER = "X-Rango-Prefetch";
-/** Query param of a fill request (browser/navigation-client.ts). */
-export const FILL_PARAM = "_rsc_fill";
+import { FILL_PARAM, PREFETCH_HEADER } from "../../prefetch-markers.js";
 
 /**
  * What a request says it is, read once when its context is created
