@@ -8,6 +8,8 @@ export {
   writeFileBumpMtime,
   captureHmrEvents,
   ROUTE_REDISCOVERY_PATTERN,
+  countViewTransitions,
+  viewTransitions,
 } from "@shared/e2e";
 export type { HmrEvent } from "@shared/e2e";
 

@@ -33,6 +33,12 @@ export type { HeldHandlesScenarioOptions } from "./held-handles-scenario.js";
 export type { LateHandleHistoryScenarioOptions } from "./late-handle-history-scenario.js";
 export type { HeldBoundaryScenarioOptions } from "./held-boundary-scenario.js";
 export { runPeFormStateTests } from "./pe-form-state-scenario.js";
+export { runTxIdleViewTransitionTests } from "./tx-idle-view-transition-scenario.js";
+export type { TxIdleViewTransitionScenarioOptions } from "./tx-idle-view-transition-scenario.js";
+export {
+  countViewTransitions,
+  viewTransitions,
+} from "./view-transition-probe.js";
 export type { PeFormStateScenarioOptions } from "./pe-form-state-scenario.js";
 export { runUseLoaderSettledReadTests } from "./use-loader-settled-read-scenario.js";
 export type { UseLoaderSettledReadScenarioOptions } from "./use-loader-settled-read-scenario.js";

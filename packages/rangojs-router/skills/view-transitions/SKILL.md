@@ -433,6 +433,8 @@ function ProductPage() {
 
 This is the rango analogue of the "router triggers, you place the names" model used by React Router / TanStack: rango guarantees navigations run inside a React transition; you own the boundaries.
 
+On a route with `loading()` and slow loaders, `viewTransition: false` is also what removes the view transition that changes nothing; see [A view transition that changes nothing under `loading()`](#a-view-transition-that-changes-nothing-under-loading).
+
 **App-wide default.** Flip the default for every `transition()` segment at the router level. A per-segment `viewTransition` still overrides it.
 
 ```ts
@@ -462,6 +464,30 @@ On React 19.2 (no `<ViewTransition>` export) the "VT" column is a no-op, so ever
 | global `viewTransition: false`, route `transition()` | none             | yes                                         | fires alone                        |
 
 > On React 19.2 there is no `<ViewTransition>` at all, so `viewTransition: false` is visually a no-op there — but the startTransition driving and content-hold still apply, identical to `transition({})`.
+
+## A view transition that changes nothing under `loading()`
+
+On a cold click, a route with `transition()` and `loading()` can start a view transition that changes nothing on screen, and its content shows only after that transition ends ([#1078](https://github.com/rangojs/rango/issues/1078)). React causes it, not a router update, and the router does not steer or cancel it. Two shapes hit it:
+
+- **One loader slower than about 320 ms, on a navigation where the route's client component module is still loading when the navigation first renders.** In a production build that is the first navigation to that module; in dev it is every navigation, because the dev server resolves each response's client references asynchronously.
+- **Two or more loaders under one `loading()` whose data lands at different times, the last one later than about 320 ms.** Module state does not matter.
+
+Not affected: a fully prefetched click (it commits complete), and a loader that lands before the fallback has been up for 300 ms (the 100 ms and 280 ms cells in #1078 ran two view transitions, the navigation's and the reveal's).
+
+The cost is the browser's view-transition duration before the content shows: Chromium's default animation is 250 ms, and the idle transitions measured took 265 to 285 ms from `ready` to `finished`. The View Transitions guide on the docs site ("When a view transition changes nothing") has the start counts and content times per shape, in dev and in production.
+
+**Why.** When the first thing the route's `loading()` boundary waits on lands (the client module, or the first loader), React retries the boundary. The retry suspends again on the slower loader and commits with the fallback still in place, throttled to 300 ms after the fallback committed. That commit is view-transition eligible and the router's `<ViewTransition>` is on its path, so React calls `document.startViewTransition`; nothing changes on screen, the browser still runs its default animation, and the slower loader's reveal waits: React holds the next view-transition commit until the running transition's `finished` resolves. React 19.3.0 and the canary and experimental builds of 2026-10-06 behave the same.
+
+### Escape hatches
+
+Two options remove it, in dev and in production:
+
+- **`transition({ viewTransition: false })`** places no router `<ViewTransition>` for the segment that declares it, so React has nothing of that segment's to animate on the retry commit. The navigation still commits through `startTransition`, so same-route content is still held; what you give up is the router's cross-fade. It only covers the segment it is set on: a layout above that declares its own `transition()` still wraps the route's outlet content in a router `<ViewTransition>` (`wrapDefaultOutletContent` in [segment-system.tsx](../../src/segment-system.tsx)), and the idle transition stays. Set it on every segment in the matched chain that declares `transition()`, or app-wide with `createRouter({ viewTransition: false })`.
+- **`transition({ when })` returning `false`** commits the navigation urgently and renders every router `<ViewTransition>` of the navigation with every class `"none"` (`GATED_OFF_CLASSES` in [segment-system.tsx](../../src/segment-system.tsx)); React starts no transition for it. One `when` on one segment is enough, because a `false` gates the whole navigation off: on a same-route navigation the `loading()` skeleton streams instead of the previous content being held, and nothing animates. Use it when `kind`, `from` and `to` tell you which navigations hit the shape.
+
+### Your own `<ViewTransition>`
+
+A `<ViewTransition>` that you place and that stays on screen across the navigation (for example around a layout's `<Outlet />`) takes part in the same commits and starts the same idle transition, whichever router option is set. The router only controls its own boundaries, so this one is yours to configure. `update="none"` on it started no view transition for the click, but the boundary then no longer animates the real navigation's update either (no cross-fade of the outlet). Measured in Chromium only; other engines were not measured.
 
 ## Testing a transition() route
 

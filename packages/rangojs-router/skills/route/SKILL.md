@@ -375,6 +375,8 @@ the block's work, its loaders included, out of prefetches. See `/caching`,
 To defer a single loader and keep the handler in the prefetch, use
 `loader(Def, { prefetch: false })` instead (see `/loader`).
 
+A `loading()` skeleton that has appeared stays at least about 300 ms before React reveals what replaces it (React's fallback throttle, [#1078](https://github.com/rangojs/rango/issues/1078)); see "Streaming with Suspense" in [loader](../loader/SKILL.md).
+
 ## Handler Data Ownership
 
 When a route has children (orphan layouts, parallels), the handler executes

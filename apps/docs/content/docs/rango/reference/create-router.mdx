@@ -307,7 +307,7 @@ Values below 1 for the size and concurrency options fall back to the defaults.
 
 ### viewTransition
 
-The default for whether the router wraps `transition()` segments in its own React `<ViewTransition>` (experimental React only). `"auto"` (default) gives every route or layout that opts in via `transition()` a router-owned cross-fade. `false` never places a router boundary: `transition()` still drives navigation through `startTransition` and lets your own `<ViewTransition>` elements animate. A per-segment `transition({ viewTransition })` overrides it. See [View Transitions](/docs/rango/guides/view-transitions).
+The default for whether the router wraps `transition()` segments in its own React `<ViewTransition>` (experimental React only). `"auto"` (default) gives every route or layout that opts in via `transition()` a router-owned cross-fade. `false` never places a router boundary: `transition()` still drives navigation through `startTransition` and lets your own `<ViewTransition>` elements animate. A per-segment `transition({ viewTransition })` overrides it. On routes with `loading()` and slow loaders, `false` also removes a view transition that changes nothing ([#1078](https://github.com/rangojs/rango/issues/1078)). See [View Transitions](/docs/rango/guides/view-transitions).
 
 ### warmup
 
