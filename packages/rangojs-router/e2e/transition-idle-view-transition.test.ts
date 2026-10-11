@@ -1,67 +1,22 @@
-import { expect, test } from "@playwright/test";
+import { test } from "@playwright/test";
+import { runTxIdleViewTransitionTests } from "@shared/e2e";
 import { useFixture } from "./fixture";
-import {
-  countViewTransitions,
-  expectNoPageError,
-  testId,
-  viewTransitions,
-  waitForHydration,
-} from "./helper";
+import { waitForHydration } from "./helper";
 
 /**
- * #1078: under transition() + loading(), React's Suspense retry after the
- * first of two loaders commits with the fallback still in place and runs a
- * view transition that changes nothing; the real reveal waits for it. The two
- * escape hatches documented in skills/view-transitions start no view
- * transition at all on the same click.
- *
- * Fixture: test-app/src/urls/conditional-transition.tsx (/tx-idle/*). Counts
- * document.startViewTransition calls, not milliseconds: the count is
- * deterministic, the timing is not.
+ * The escape hatches for the idle view transition under transition() +
+ * loading() (#1078). Body: tests/shared-e2e/src/tx-idle-view-transition-scenario.ts.
+ * Fixture: test-app/src/urls/conditional-transition.tsx (/tx-idle/*).
  */
-
 function idleViewTransitionTests(mode: "dev" | "build") {
   const label = mode === "build" ? "production" : mode;
 
   test.describe(`transition idle view transition (${label})`, () => {
     const f = useFixture({ root: "./e2e/test-app", mode });
     test.setTimeout(60000);
-
-    test("transition({ when: () => false }) and transition({ viewTransition: false }) start no view transition on a cold click to loading() with two loaders", async ({
-      page,
-    }) => {
-      using _ = expectNoPageError(page);
-      await countViewTransitions(page);
-
-      // A fresh document per variant: cold click, nothing prefetched.
-      const clickCount = async (variant: "default" | "when" | "off") => {
-        await page.goto(f.url("/tx-idle"));
-        await waitForHydration(page);
-        await expect(testId(page, "tx-idle-index").last()).toBeVisible();
-        await testId(page, `tx-idle-to-${variant}`).click();
-        await expect(testId(page, "tx-idle-slow").last()).toHaveText("v:400", {
-          timeout: 8000,
-        });
-        // A late transition would start after the content lands.
-        await page.waitForTimeout(800);
-        return viewTransitions(page);
-      };
-
-      // Control: the default transition() runs at least the navigation's and
-      // the reveal's transition, so a zero below is the hatch, not a page
-      // that never animates.
-      expect(
-        await clickCount("default"),
-        "transition() starts view transitions here",
-      ).toBeGreaterThanOrEqual(2);
-      expect(
-        await clickCount("when"),
-        "transition({ when: () => false }) gates every router <ViewTransition> off",
-      ).toBe(0);
-      expect(
-        await clickCount("off"),
-        "transition({ viewTransition: false }) places no router <ViewTransition>",
-      ).toBe(0);
+    runTxIdleViewTransitionTests({
+      url: (pathname) => f.url(pathname),
+      waitForHydration,
     });
   });
 }

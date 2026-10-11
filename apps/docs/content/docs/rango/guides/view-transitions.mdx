@@ -180,7 +180,7 @@ function ProductPage() {
 }
 ```
 
-Flip the default app-wide with `createRouter<AppEnv>({ viewTransition: false })`; re-enable one route with `transition({ viewTransition: "auto" })`. A bare `transition({})` inherits the router default; an explicit per-route value always wins. The flag only toggles the boundary — `startTransition` driving and content-hold are on whenever `transition()` is present.
+On a route with `loading()` and slow loaders, `viewTransition: false` is also what removes the view transition that changes nothing; see [When a view transition changes nothing](#when-a-view-transition-changes-nothing). Flip the default app-wide with `createRouter<AppEnv>({ viewTransition: false })`; re-enable one route with `transition({ viewTransition: "auto" })`. A bare `transition({})` inherits the router default; an explicit per-route value always wins. The flag only toggles the boundary — `startTransition` driving and content-hold are on whenever `transition()` is present.
 
 ## Conditional transitions with `when`
 
@@ -279,7 +279,7 @@ With the route's client module already loaded, the one-loader shape in productio
 
 ### Getting rid of it
 
-Two options remove it, and both start no view transition in the measured shapes (a route with no other `transition()` in its chain), in dev and in production:
+Two options remove it, in dev and in production:
 
 - **`transition({ viewTransition: false })`** places no router `<ViewTransition>` for the segment that declares it, so React has nothing of that segment's to animate on the retry commit. The navigation still commits through `startTransition`, so same-route content is still held. You give up the router's cross-fade there. It only covers the segment it is set on: a layout above the route that declares its own `transition()` still wraps the route in a router `<ViewTransition>`, and the idle transition stays. Set it on every segment in the chain that declares `transition()`, or app-wide with `createRouter({ viewTransition: false })`.
 - **`transition({ when })` returning `false`** commits the navigation urgently, with every router `<ViewTransition>` of the navigation rendered with every class `"none"`, and React starts no transition for it. One `when` on one segment is enough, because a `false` gates the whole navigation off. On a same-route navigation the `loading()` skeleton streams instead of the previous content being held, and nothing animates. Use it when `kind`, `from` and `to` tell you which navigations hit the shape.
