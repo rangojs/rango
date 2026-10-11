@@ -257,7 +257,7 @@ The public DOM seam is
   [browser/event-controller.ts](../../src/browser/event-controller.ts) (a
   committed navigation stays abortable while its stream is open) and
   [browser/navigation-client.ts](../../src/browser/navigation-client.ts) (the
-  signal cancels a request until its response arrives),
+  signal cancels any partial request until its response arrives),
   and the user-facing options in
   [route-definition/dsl-helpers.ts](../../src/route-definition/dsl-helpers.ts)
   (`loader()`, `loading()`). Design: [prefetch-false.md](../../../../docs/design/prefetch-false.md).

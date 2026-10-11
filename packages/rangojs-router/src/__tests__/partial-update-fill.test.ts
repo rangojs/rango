@@ -1120,8 +1120,9 @@ describe("a fill its navigation is left before it lands", () => {
     expect(await settled(hole)).toBe(false);
     expect(onUpdate).toHaveBeenCalledTimes(1);
     expect(store.loaders.isStreamPending("reviews")).toBe(false);
-    // The streaming token is not left open by a fill that never lands.
-    expect(end).toHaveBeenCalledTimes(1);
+    // The streaming token is not left open by a fill that never lands (it
+    // ends at the abort; StreamingToken counts the first end()).
+    expect(end).toHaveBeenCalled();
     // The placeholder stays: history treats the entry as a miss.
     expect(store.cache.get("/product")!.segments).toContain(adoption.reviews);
     expect(store.setSegmentIds).toHaveBeenCalledTimes(1);
@@ -1338,6 +1339,52 @@ describe("a fill that does not land", () => {
     expect(update.metadata.isError).toBe(true);
     expect(update.root.props.error).toBeInstanceOf(NetworkError);
   });
+
+  // An action refetch already rendered what the placeholders stand for: the
+  // page no longer waits for this fill, and a redirect it answers with is
+  // nobody's to follow, as its failure is nobody's to show.
+  it.each([
+    [
+      "of the whole response",
+      (fill: ReturnType<typeof setup>["fill"]) =>
+        fill.reject(new ServerRedirect("/login", undefined)),
+    ],
+    [
+      "carried in the payload",
+      (fill: ReturnType<typeof setup>["fill"]) =>
+        fill.resolve({
+          payload: { metadata: { redirect: { url: "/login" } } },
+          streamComplete: Promise.resolve(),
+        }),
+    ],
+  ])(
+    "follows no redirect %s on a page that no longer waits for the fill",
+    async (_label, answer) => {
+      const assign = stubLocation();
+      const adoption = loaderAdoption();
+      const hooks = bridge();
+      const { adopt, fill, store, onUpdate } = setup(adoption, {
+        fill: hooks,
+      });
+      const { navigation } = await adopt();
+      store.cache.set("/product", {
+        segments: [
+          adoption.layout,
+          adoption.route,
+          adoption.price,
+          loaderSeg("L0R0D1.reviews", "reviews", { reviews: 9 }),
+        ],
+        stale: false,
+      });
+
+      answer(fill);
+      await navigation;
+
+      expect(hooks.redirect).not.toHaveBeenCalled();
+      expect(assign).not.toHaveBeenCalled();
+      expect(onUpdate).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("follows a redirect of the whole response through the bridge", async () => {
     stubLocation();

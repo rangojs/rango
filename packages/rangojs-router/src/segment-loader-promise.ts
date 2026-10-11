@@ -9,7 +9,8 @@ import { INTERNAL_RANGO_DEBUG } from "./internal-debug.js";
  * calls return that same array; until then (and when it rejects) they return
  * the promise. A boundary with no loaders gets one shared empty array. An
  * aggregate whose sources are all streams that have fulfilled (React's
- * `status` on the thenable, which Flight sets itself) is known on its first
+ * `status` on the thenable, which Flight sets itself; a plain value is not a
+ * stream, whatever fields it carries) is known on its first
  * call and is the array from the start: the sources of a page whose entry was
  * rewritten without a render (browser/partial-update.ts fillHoles) are
  * first aggregated by the next navigation that keeps them.
@@ -142,7 +143,13 @@ export function getMemoizedLoaderPromise(
   }
 
   const newEntry: LoaderCacheEntry = { sources };
-  if (sources.every((source) => source?.status === "fulfilled")) {
+  if (
+    sources.every(
+      (source) =>
+        source instanceof Promise &&
+        (source as { status?: string }).status === "fulfilled",
+    )
+  ) {
     newEntry.value = sources.map((source) => source.value);
   } else {
     newEntry.promise = buildLoaderPromise(loaders).then((values) => {

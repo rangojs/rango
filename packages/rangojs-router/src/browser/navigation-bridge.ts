@@ -392,8 +392,10 @@ export function createNavigationBridge(
         );
         cachedSegments = cachedSegments.map((targetSeg) => {
           const sourceSeg = sourceSegmentMap.get(targetSeg.id);
-          // Use source (current page) version for shared segments - it's fresher
-          return sourceSeg || targetSeg;
+          // Use source (current page) version for shared segments - it's
+          // fresher. A placeholder waiting for its fill (prefetch: false) is
+          // not a copy of the segment: the target keeps its own.
+          return sourceSeg && !sourceSeg.deferred ? sourceSeg : targetSeg;
         });
       }
 
@@ -855,8 +857,12 @@ export function createNavigationBridge(
               ? { type: "leave-intercept" }
               : undefined,
         );
-        // Restore scroll position after fetch completes
-        handleNavigationEnd({ restore: true, isStreaming });
+        // Restore scroll position after fetch completes. A traversal that
+        // was left returns here too, its response ignored: it restores
+        // nothing.
+        if (!tx.handle.signal.aborted) {
+          handleNavigationEnd({ restore: true, isStreaming });
+        }
       } catch (error) {
         // Aborted or superseded by a newer navigation: bail without clobbering
         // content with a boundary (see navigate()).
@@ -925,13 +931,16 @@ export function createNavigationBridge(
       // 3. The user presses back and the browser restores from bfcache
       // At that point, currentNavigation is still set from step 1, so
       // getState() returns "loading" and the progress bar shows.
-      // Abort the stale navigation to reset state to idle.
+      // Abort the stale navigation to reset state to idle. Only that one: the
+      // page restored is not being left, so a committed navigation's
+      // prefetch: false fill keeps its signal, and fails as a navigation if
+      // the browser dropped its request while the page was frozen.
       const handlePageShow = (event: PageTransitionEvent) => {
         if (event.persisted) {
           debugLog(
             "[Browser] Page restored from bfcache, resetting navigation state",
           );
-          eventController.abortNavigation();
+          eventController.abortNavigation(true);
         }
       };
 

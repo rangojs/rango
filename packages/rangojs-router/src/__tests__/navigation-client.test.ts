@@ -137,14 +137,20 @@ describe("navigation-client", () => {
     await expect(result.streamComplete).resolves.toBeUndefined();
   });
 
-  // The signal cancels the request until its response arrives. A response
-  // that has arrived streams to its end: aborting a Flight body mid-read
-  // rejects every chunk a mounted tree may be reading. A prefetch: false fill
-  // passes its navigation's signal, which a newer navigation aborts after the
-  // fill's deferreds were resolved with the response's streams.
-  describe("the signal", () => {
+  // The signal cancels the request until its response arrives, for every
+  // partial request. A response that has arrived is never cancelled: aborting
+  // a Flight body mid-read errors every chunk a mounted tree may be reading.
+  // It streams to its end, and whoever sent it ignores it (partial-update.ts
+  // checks the signal before it commits). A prefetch: false fill passes its
+  // navigation's signal, which a newer navigation aborts after the fill's
+  // deferreds were resolved with the response's streams.
+  describe.each([
+    ["a fill", true],
+    ["any other partial request", undefined],
+  ])("the signal of %s", (_label, fill) => {
+    let decoded: Response | undefined;
     const decode = vi.fn(async (responsePromise: Promise<Response>) => {
-      await responsePromise;
+      decoded = await responsePromise;
       return { metadata: { matched: [], diff: [], isPartial: true } };
     });
 
@@ -170,7 +176,7 @@ describe("navigation-client", () => {
         targetUrl: "/products",
         previousUrl: "/current",
         segmentIds: [],
-        fill: true,
+        fill,
         signal: controller.signal,
       });
       await Promise.resolve();
@@ -180,7 +186,7 @@ describe("navigation-client", () => {
       expect(init!.signal!.aborted).toBe(true);
     });
 
-    it("leaves a response that has arrived to stream to its end", async () => {
+    it("leaves a response that has arrived to stream to its end, read whole", async () => {
       let init: RequestInit | undefined;
       let body!: ReadableStreamDefaultController<Uint8Array>;
       vi.stubGlobal(
@@ -201,17 +207,24 @@ describe("navigation-client", () => {
         createFromFetch: decode,
       } as any);
       const controller = new AbortController();
-      await client.fetchPartial({
+      const result = await client.fetchPartial({
         targetUrl: "/products",
         previousUrl: "/current",
         segmentIds: [],
-        fill: true,
+        fill,
         signal: controller.signal,
       });
 
+      body.enqueue(new TextEncoder().encode("a"));
       controller.abort();
       expect(init!.signal!.aborted).toBe(false);
+      body.enqueue(new TextEncoder().encode("b"));
       body.close();
+      // The decoder's branch of the body: the abort cancelled only the branch
+      // that tracks the end of the stream (response-adapter.ts
+      // teeWithCompletion), which ends streamComplete at the abort.
+      expect(await decoded!.text()).toBe("ab");
+      await expect(result.streamComplete).resolves.toBeUndefined();
     });
   });
 

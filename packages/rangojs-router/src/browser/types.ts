@@ -802,7 +802,7 @@ export type { ResolvedSegment };
 
 /**
  * Token for tracking an active stream.
- * Call end() when the stream completes.
+ * Call end() when the stream completes. Only the first call counts.
  */
 export interface StreamingToken {
   end(): void;

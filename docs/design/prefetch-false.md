@@ -257,6 +257,27 @@ also does one document-cache read per request and answers with the `vary` and
 `cache-control` it has on main (`prefetch-false.rsc-test.tsx`, "a route with
 no flag answers a prefetch and a navigation as it does without the feature").
 
+One client rule is the same for every navigation, flag or not: a partial
+request is cancelled by its signal only until its response arrives, and a
+response that has arrived is never aborted. Aborting a Flight body
+mid-stream errors every chunk a mounted tree may be reading, so the response
+streams to its end and the navigation that sent it ignores it: it commits
+nothing, writes no history entry, store or handle data, restores no scroll
+position, reloads nothing and stops counting toward
+`useNavigation().isStreaming` at the abort
+(`src/__tests__/navigation-ignored-response.test.ts`, and "a navigation left
+after its response arrived" in `partial-update.test.ts`). The cost is that
+the server renders an ignored response to its end. That is not new for a
+navigation: `fetchPartialUpdate` (`src/browser/partial-update.ts`) never
+handed the navigation's own request its signal, on main either, so a
+superseded navigation and the stale entry's revalidation on back/forward
+were always ignored rather than cancelled. The request whose cancellation
+changed is the development HMR refetch (`src/browser/rsc-router.tsx`), which
+a newer HMR update used to cut mid-stream. The event controller also aborts
+a committed navigation whose stream is still open when a newer navigation or
+a back/forward starts ("Abort"); for a navigation with no fill that only ends
+its streaming token.
+
 **R10. Context limitation.** Deferred work runs in the fill request.
 Middleware runs there as on any render pass. Handlers outside the deferred
 unit do not, so values they would have set with `ctx.set()` are not visible to
@@ -726,8 +747,8 @@ builds: the same router elements with the same keys around every segment
 ("No remount"). What is missing is what the boundaries are handed.
 
 `armHoles()` fills that in. Each placeholder gets a **deferred**: a promise
-the browser created, with the functions that settle it (`defer()` in
-`src/browser/defer.ts`). A deferred loader's promise becomes its
+the browser created, with the function that resolves it (`defer()` in
+`src/browser/defer.ts`; a deferred is never rejected, "Failure"). A deferred loader's promise becomes its
 `loaderData`; any other placeholder's becomes its `component`. To the rest of
 the client it is a stream that has not arrived yet, which is something it
 already knows how to show. This happens before the reconcile, on the
@@ -846,9 +867,11 @@ aggregate over streams that have all arrived is still a promise React has not
 read. Moving between two pages that keep the slot then replaced the slot,
 which was on screen, with its fallback: seven browser cases failed with
 `content on screen was detached or hidden: pf-slot-side`. So an aggregate
-whose sources have all fulfilled (React's `status` on the thenable, which
-Flight sets itself) is known on its first call and is returned as the array,
-never as a promise. `src/__tests__/segment-loader-promise.test.ts` pins it
+whose sources are all promises that have fulfilled (React's `status` on the
+thenable, which Flight sets itself) is known on its first call and is
+returned as the array, never as a promise. A plain value is not a stream,
+whatever fields it carries: `renderRoute` seeds loader values as they are,
+and `{ status: "fulfilled", total: 10 }` is data. `src/__tests__/segment-loader-promise.test.ts` pins it
 ("returns the array at once when every source is a stream that has
 fulfilled").
 
@@ -1401,7 +1424,11 @@ If the user leaves first, the fill is cancelled and the entry keeps its
 placeholders. Both readers of the history cache treat such an entry as a miss:
 `handlePopstate` falls through to the fetch path, and `navigate()` does not
 offer it as `targetCacheSegments` (`hasUsableCache` in
-`src/browser/navigation-bridge.ts`). So returning to the entry fetches what
+`src/browser/navigation-bridge.ts`). The other way round holds too: while
+the page on screen waits for its fill, `navigate()` never copies one of its
+placeholders over the target entry's segment of the same id (it copies the
+page's other shared segments, which are fresher), so the target keeps its
+cache hit. So returning to the entry fetches what
 is missing; it never restores a tree suspended on a deferred nobody will
 resolve.
 
@@ -1433,13 +1460,24 @@ controller now keeps the navigation that committed last abortable while its
 stream is open: `complete()` records it when a streaming token is still out,
 and the token's `end()` forgets it (`streamingNavigation` in
 `src/browser/event-controller.ts`). A navigation whose stream has ended is
-left alone.
+left alone. This holds for every navigation, fill or not, and it cancels no
+response that has arrived (below and R9): what the abort stops is the
+navigation reading it.
+
+A page restored from the back/forward cache is not left. `handlePageShow`
+(`src/browser/navigation-bridge.ts`) resets a navigation that had not
+committed, as on main, and leaves the committed one alone
+(`abortNavigation(true)`), so a fill in flight keeps its signal. If the
+browser dropped the request while the page was frozen, the fill fails as a
+navigation does and the network error boundary shows ("Failure"). Aborted
+there, the failure would be dropped and the fallbacks left up for good,
+whichever of the two the browser delivered first.
 
 What an abort does depends on how far the fill got:
 
 - **Before its response.** The request is cancelled. The navigation client
-  links a request to the signal only until its response arrives
-  (`src/browser/navigation-client.ts`): aborting a Flight body mid-read
+  links every partial request to its signal only until its response arrives
+  (`src/browser/navigation-client.ts`, R9): aborting a Flight body mid-read
   rejects every chunk a mounted tree may be reading, and after the abort that
   tree is still the page until the newer navigation commits. Actions keep the
   same rule (`src/browser/server-action-bridge.ts`).
@@ -1454,8 +1492,9 @@ Either way the deferreds are released and the entry keeps its placeholders
 
 What does not cancel the fill: a commit that is not a navigation's (an
 action's store-only refetch, a cache-only commit), which does not start a
-navigation; a shallow navigation, which starts none either; and an action,
-which runs beside navigations. After an action the identity check decides.
+navigation; a shallow navigation, which starts none either; an action,
+which runs beside navigations; and a page restored from the back/forward
+cache (above). After an action the identity check decides.
 If the action's refetch replaced the entry's segments the fill finds none of
 its placeholders and drops its response; if the entry is untouched the fill
 lands. An action that refetches through a navigation transaction of its own
@@ -1476,7 +1515,8 @@ running, and nothing reads its answer.
 
 While a fill is in flight the click's streaming token stays open, so
 `useNavigation().isStreaming` is true until the deferred work has streamed in,
-and idle-time prefetching waits for it.
+and idle-time prefetching waits for it. A navigation that is left ends its
+token at the abort, as every navigation does (R9).
 
 ### Failure
 
@@ -1508,7 +1548,17 @@ that suspended on its deferred while it mounted is handed that promise again, it
 node itself, it was a component that called `use()` and then finished
 without it at the same place, and React logged in development: "This
 library called use() to suspend in a previous render but did not call use()
-when it finished". The other deferreds, loaders' and those with no segment of
+when it finished". The `status` is the router's own write, and it stays for
+a second reason. A deferred React never read (the route below a flagged
+layout: the layout's read suspended first) suspends that urgent update at
+once if it is handed only resolved (R-sync), and the layout's fallback
+shows inside the layout, held React's 300 ms, where the plain click shows
+the error with the layout. Removing the write was tried on 2026-10-11 under
+the rule that the router does not lean on React internals: the outlet's
+fallback mounted once on the adopted click and never on the plain one
+(`navigation-adoption-loading.test.tsx`, "a failed route's error"). It is
+the one write of React's thenable fields in the client, on this failure
+ending only. The other deferreds, loaders' and those with no segment of
 their id in the answer, are released: the tree that read them is gone. The
 tree's
 `matched` array is rewritten in place first, because the click payload's
@@ -1545,7 +1595,8 @@ error shown then would be replaced a moment later by the click's own commit,
 whose fallback would wait for a fill that already failed. It is shown only on
 a page that still holds this tree's placeholders, the same identity check the
 routine makes first: after an action refetch rendered the missing segments, a
-late failure of the fill is nobody's problem. And it is not shown once the
+late failure of the fill is nobody's problem, and neither is a redirect it
+answers with. And it is not shown once the
 navigation's signal was aborted: the page is being left ("Abort").
 
 A response is checked before anything of it is written, so a failure that is
@@ -1579,8 +1630,9 @@ nothing, so the fill now takes the navigation's path. The cost is where the
 error shows: at the page's error boundary, not at the one nearest the read.
 
 A redirect for the whole response (middleware, say, because the session
-expired between prefetch and click) is not a failure. It is followed as a
-replace navigation through `PartialUpdateConfig.fill.redirect`; an external
+expired between prefetch and click) is not a failure. On a page that still
+waits for the fill it is followed as a replace navigation through
+`PartialUpdateConfig.fill.redirect`; an external
 redirect, or a client built without the hook, is a document navigation.
 
 ### Reuse within `prefetchCacheTTL`
@@ -1865,7 +1917,10 @@ segments. A fill refuses `rendered()` outright for the same reason R12 exists.
 - Values a held handler would have set with `ctx.set()` are not visible to
   deferred work (R10).
 - A page restored from the back/forward cache with a fill in flight shows the
-  network error boundary if the browser dropped the request.
+  network error boundary if the browser dropped the request: the restore
+  does not abort the fill ("Abort"), so the dropped request fails as a
+  navigation does. Pinned by unit tests (`navigation-bridge-fill.test.ts`,
+  `partial-update-fill.test.ts`); not run in a browser.
 
 ### The parity cases
 

@@ -329,16 +329,9 @@ export function createPartialUpdater(
    * carrying a javascript: or data: URL cannot script via location.assign. A
    * target the client refuses is dropped.
    */
-  function redirected(
-    metadata: RscMetadata | undefined,
-    signal: AbortSignal | undefined,
-  ): boolean {
+  function redirected(metadata: RscMetadata | undefined): boolean {
     const redirect = metadata?.redirect;
     if (!redirect) return false;
-    if (signal?.aborted) {
-      debugLog("[Browser] Ignoring stale redirect (aborted)");
-      return true;
-    }
     const target = redirectTarget(redirect);
     if (!target) {
       debugLog("[Browser] Ignoring blocked redirect payload");
@@ -403,7 +396,11 @@ export function createPartialUpdater(
     let filled = false;
     try {
       const result = await answer;
-      if (signal?.aborted) return;
+      // A page that no longer waits for the answer (an action refetch
+      // rendered what the placeholders stand for) takes nothing of it, its
+      // redirect included.
+      const live = entryToFill(holes);
+      if (signal?.aborted || !live) return;
 
       const metadata = result.payload.metadata;
       if (metadata?.redirect) {
@@ -415,9 +412,6 @@ export function createPartialUpdater(
       if (!metadata?.isPartial) {
         throw new Error("[rango] fill: not a partial payload");
       }
-
-      const live = entryToFill(holes);
-      if (!live) return;
 
       const matched = metadata.matched || [];
       const reconciled = reconcileSegments({
@@ -460,7 +454,11 @@ export function createPartialUpdater(
         // place. Handed the node, it is a component that called use() and
         // then finished without it at the same place, which React reports in
         // development ("This library called use() to suspend in a previous
-        // render but did not call use() when it finished").
+        // render but did not call use() when it finished"). Settled here, not
+        // only resolved: a deferred React never read (one below another
+        // hole) suspends this urgent update at once and shows its boundary's
+        // fallback, which the plain click does not show
+        // (navigation-adoption-loading.test.tsx, "a failed route's error").
         const settled = new Map<ResolvedSegment, ResolvedSegment>();
         for (const [placeholder, hole] of holes.deferreds) {
           const next = reconciled.mainSegments.find(
@@ -527,7 +525,8 @@ export function createPartialUpdater(
       store.setSegmentIds(matched);
       filled = true;
     } catch (thrown) {
-      if (signal?.aborted) return;
+      // Only on a page that still waits for this answer.
+      if (signal?.aborted || !entryToFill(holes)) return;
       let error = thrown;
       if (error instanceof ServerRedirect) {
         if (followFillRedirect({ url: error.url }, error.state)) return;
@@ -536,9 +535,7 @@ export function createPartialUpdater(
       console.error("[rango] fill failed:", error);
       // Shown the way a navigation the client cannot process is
       // (navigation-bridge.ts): the error replaces the page, so an error
-      // boundary takes over and no fallback is left waiting. Only on a page
-      // that still waits for this answer.
-      if (!entryToFill(holes)) return;
+      // boundary takes over and no fallback is left waiting.
       emitNavigationError(
         onUpdate,
         toNetworkError(error, { url, operation: "navigation" }) ?? error,
@@ -710,14 +707,25 @@ export function createPartialUpdater(
     // The wrapped promise was never read as a value; only the .end() matters.
     // The .catch keeps an unhandled rejection from leaking if the stream errors.
     // A payload with deferred segments is still streaming until its fill has
-    // (`filled` is set below, before this function first awaits).
+    // (`filled` is set below, before this function first awaits). A
+    // navigation that is left ignores its response, which is never cancelled
+    // (navigation-client.ts): it streams to its end, and stops counting as
+    // streaming at the abort.
     let filled: Promise<unknown> | undefined;
+    const endStream = (): void => {
+      signal?.removeEventListener("abort", endStream);
+      streamingToken.end();
+    };
+    signal?.addEventListener("abort", endStream);
     rawStreamComplete
-      .then(() => {
-        if (!filled) return streamingToken.end();
-        return filled.then(() => streamingToken.end());
-      })
+      .then(() => (filled ? filled.then(endStream) : endStream()))
       .catch(() => {});
+
+    if (signal?.aborted) {
+      endStream();
+      debugLog("[Browser] Ignoring stale navigation (aborted)");
+      return;
+    }
 
     const currentRouterId = store.getRouterId?.();
     if (
@@ -733,18 +741,12 @@ export function createPartialUpdater(
       return;
     }
 
-    if (redirected(payload.metadata, signal)) return;
+    if (redirected(payload.metadata)) return;
 
     if (payload.metadata?.isPartial) {
       const { segments: newSegments, matched, diff } = payload.metadata;
       let serverSegments = newSegments || [];
       let sent = diff || [];
-
-      // Check if this navigation is stale (a newer one started)
-      if (signal?.aborted) {
-        debugLog("[Browser] Ignoring stale navigation (aborted)");
-        return;
-      }
 
       if (IS_BROWSER_DEBUG) {
         debugLog(`[Browser] Partial update - matched: ${matched?.join(", ")}`);
@@ -771,6 +773,7 @@ export function createPartialUpdater(
             forceAwait: true,
             transitionGatedOff: cachedGatedOff,
           });
+          if (signal?.aborted) return;
 
           const { scroll: commitScroll } = tx.commit(
             matchedIds,
@@ -823,6 +826,7 @@ export function createPartialUpdater(
           const newTree = await renderSegments(existingSegments, {
             forceAwait: true,
           });
+          if (signal?.aborted) return;
 
           const { scroll: leaveScroll } = tx.commit(
             matchedIds,
@@ -971,7 +975,7 @@ export function createPartialUpdater(
         // prefetched segments and the fill's, with no hole in it.
         holes = undefined;
         waited = (await fill).payload.metadata;
-        if (signal?.aborted || redirected(waited, signal)) return;
+        if (signal?.aborted || redirected(waited)) return;
         if (waited?.isPartial) {
           matchedIds = heldIds = waited.matched || [];
           serverSegments = [
@@ -1236,12 +1240,6 @@ export function createPartialUpdater(
       console.warn(`[Browser] Full update (fallback)`);
 
       const segments = payload.metadata?.segments || [];
-
-      if (signal?.aborted) {
-        debugLog("[Browser] Ignoring stale navigation (aborted)");
-        return;
-      }
-
       const segmentIds = segments.map((s: ResolvedSegment) => s.id);
 
       const fullGatedOff = decideGatedOff(segments, payload.metadata ?? {});

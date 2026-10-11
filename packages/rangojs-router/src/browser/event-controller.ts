@@ -223,7 +223,13 @@ export interface EventController {
     url: string,
     options?: NavigateOptionsInternal & { skipLoadingState?: boolean },
   ): NavigationHandle;
-  abortNavigation(): void;
+  /**
+   * Abort the pending navigation, and the committed one whose stream is
+   * still open. `pendingOnly` leaves the committed one alone: a page
+   * restored from the back/forward cache is not being left
+   * (navigation-bridge.ts handlePageShow).
+   */
+  abortNavigation(pendingOnly?: boolean): void;
 
   // Action operations
   startAction(
@@ -480,6 +486,9 @@ export function createEventController(
   // newer navigation or a back/forward aborts it as it aborts one that has
   // not committed: what a navigation does after its commit (the fill of a
   // prefetch: false adoption, partial-update.ts fillHoles) reads its signal.
+  // The abort never cancels a response that has arrived (navigation-client.ts
+  // links a request to its signal only until then): the navigation stops
+  // reading it, and it streams to its end.
   let streamingNavigation: AbortController | null = null;
 
   const inflightActions = new Map<string, ActionEntry>();
@@ -782,8 +791,8 @@ export function createEventController(
     streaming?.abort();
   }
 
-  function abortNavigation() {
-    abortStreamingNavigation();
+  function abortNavigation(pendingOnly?: boolean) {
+    if (!pendingOnly) abortStreamingNavigation();
     if (currentNavigation) {
       currentNavigation.abort.abort();
       currentNavigation = null;

@@ -166,6 +166,24 @@ describe("navigation-bridge: an entry left before its fill landed", () => {
     expect(mode.targetCacheSegments).toBeUndefined();
   });
 
+  // The page on screen waits for its fill and holds a placeholder whose id
+  // the target's entry holds filled (a section's layout, a route's loader on
+  // another product). A placeholder is not a copy of the segment: the target
+  // keeps its own, and its cache hit.
+  it("navigate() keeps the target's segment where the page on screen holds a placeholder of it", async () => {
+    const { bridge, store } = setup(filled());
+    store.cacheSegmentsForHistory(store.getHistoryKey(), [
+      seg("R0"),
+      ...withPlaceholder().slice(1),
+    ]);
+    await bridge.navigate(PRODUCT);
+
+    const [, segmentIds, , , , mode] = fetchPartialUpdateMock.mock
+      .calls[0] as unknown as [string, unknown, unknown, unknown, any, any];
+    expect(segmentIds).toEqual(["R1", "R1D0.reviews"]);
+    expect(mode.targetCacheSegments).toEqual(filled());
+  });
+
   it("control: navigate() offers a filled entry", async () => {
     const { bridge } = setup(filled());
     await bridge.navigate(PRODUCT);
@@ -213,6 +231,48 @@ describe("navigation-bridge: a fill in flight", () => {
     const signal = committedAndStreaming(eventController);
     await bridge.navigate(PRODUCT);
     expect(signal.aborted).toBe(true);
+  });
+
+  // A page restored from the back/forward cache is not left: its fill keeps
+  // its signal. If the browser dropped the request while the page was
+  // frozen, the fill fails as a navigation does and the network error
+  // boundary shows (partial-update.ts fillHoles); aborted here, that failure
+  // would be dropped and the fallbacks left up for good.
+  describe("a page restored from the back/forward cache", () => {
+    function restored() {
+      const page = setup(filled(), PRODUCT);
+      const listeners = new Map<string, (event: unknown) => void>();
+      vi.mocked(window.addEventListener).mockImplementation(((
+        type: string,
+        listener: (event: unknown) => void,
+      ) => listeners.set(type, listener)) as any);
+      vi.stubGlobal("document", {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      });
+      const cleanup = page.bridge.registerLinkInterception();
+      const pageshow = () => {
+        listeners.get("pageshow")!({ persisted: true });
+        cleanup();
+      };
+      return { ...page, pageshow };
+    }
+
+    it("does not abort the fill", () => {
+      const { eventController, pageshow } = restored();
+      const signal = committedAndStreaming(eventController);
+      pageshow();
+      expect(signal.aborted).toBe(false);
+    });
+
+    it("control: aborts a navigation that has not committed, and reads idle", () => {
+      const { eventController, pageshow } = restored();
+      const pending = eventController.startNavigation(PRODUCT);
+      expect(eventController.getState().state).toBe("loading");
+      pageshow();
+      expect(pending.signal.aborted).toBe(true);
+      expect(eventController.getState().state).toBe("idle");
+    });
   });
 });
 

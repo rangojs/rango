@@ -218,6 +218,17 @@ describe("getMemoizedLoaderPromise", () => {
       expect(getMemoizedLoaderPromise(loaders)).toBe(first);
     });
 
+    // renderRoute seeds a loader's value as it is (testing/render-route.tsx),
+    // and a value can carry `status` and `value` fields of its own: only a
+    // promise is a stream.
+    it("reads a plain value as the value, whatever fields it carries", async () => {
+      const data = { status: "fulfilled", total: 10 };
+
+      expect(await getMemoizedLoaderPromise([loaderSeg("D0.a", data)])).toEqual(
+        [data],
+      );
+    });
+
     it("returns the promise while one source is a stream that has not", () => {
       const fulfilled = Object.assign(Promise.resolve(1), {
         status: "fulfilled",

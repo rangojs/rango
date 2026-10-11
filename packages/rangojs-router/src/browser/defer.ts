@@ -1,17 +1,18 @@
-/** A promise and the functions that settle it. */
+/**
+ * A promise and the function that resolves it. Never rejected: a hole of a
+ * `prefetch: false` adoption is resolved by its fill or released
+ * (browser/partial-update.ts releaseHoles).
+ */
 export interface Deferred<T> {
   promise: Promise<T>;
   resolve(value: T): void;
-  reject(reason: unknown): void;
 }
 
-/** A promise settled from outside (Promise.withResolvers). */
+/** A promise resolved from outside. */
 export function defer<T>(): Deferred<T> {
   let resolve!: (value: T) => void;
-  let reject!: (reason: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
+  const promise = new Promise<T>((res) => {
     resolve = res;
-    reject = rej;
   });
-  return { promise, resolve, reject };
+  return { promise, resolve };
 }

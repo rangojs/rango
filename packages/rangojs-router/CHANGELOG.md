@@ -105,6 +105,19 @@ What to know before you use it:
 fill } })` and `result.readDeferred()` to test it. See `/loader`, `/route` and
 the design note `docs/design/prefetch-false.md`.
 
+### Fixed: a navigation you leave before it renders no longer reaches the page you went to
+
+A navigation that is superseded (another click, Back/Forward) ignores its
+response, which streams to its end: aborting a response mid-stream would error
+the content still reading it. Four things of such a response still reached the
+page. `useNavigation().isStreaming` stayed `true`, and idle-time prefetching
+waited, until the ignored response had finished streaming. A Back/Forward that
+was left restored its saved scroll position over the page in between. A
+response from another router (a multi-app host) reloaded the URL you had left.
+And a click to a page the browser still had cached, answered with nothing new,
+or one that closed an intercept, could commit after the newer navigation had
+started. None of them happens now.
+
 ### Fixed: a server action that lands while a navigation commits no longer costs the navigation its scroll
 
 A navigation scrolls to the top (or restores a position) when React commits

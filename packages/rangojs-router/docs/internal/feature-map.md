@@ -396,8 +396,10 @@ server projection.
   stores (`PartialUpdateConfig.fill`, `consumeHandles`). The fill hands React
   no tree, and its stream keeps the navigation's streaming token open. A
   newer navigation or a back/forward aborts the navigation's signal, also
-  after its commit while its stream is open (`event-controller.ts`), which
-  cancels the fill request until it has answered (`navigation-client.ts`)
+  after its commit while its stream is open (`event-controller.ts`; a page
+  restored from the back/forward cache does not), which cancels the fill
+  request until it has answered (`navigation-client.ts`, the rule for every
+  partial request: a response that has arrived is ignored, never aborted)
   and drops an answer that arrives later; the deferreds are released. A
   flagged layout entered from outside shows its skeleton with the click
   (the one place the page differs from a plain click's). A click on a

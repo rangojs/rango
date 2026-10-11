@@ -2342,10 +2342,11 @@ describe("partial-update", () => {
         tx,
       );
 
-      // The race registered exactly one abort listener and removed it after
-      // render won — no dangling listener.
-      expect(spy.addCalls()).toBe(1);
-      expect(spy.removeCalls()).toBe(1);
+      // The race and the streaming token each registered one abort listener,
+      // removed once render won and once the stream ended: no dangling
+      // listener.
+      expect(spy.addCalls()).toBe(2);
+      expect(spy.removeCalls()).toBe(2);
     });
   });
 
@@ -2692,5 +2693,233 @@ describe("partial-update transition({ when })", () => {
     expect(nav.renderSegments.mock.calls[0]![1]).toMatchObject({
       transitionGatedOff: true,
     });
+  });
+});
+
+// A navigation that is left after its response arrived. The response is
+// never cancelled: aborting a Flight body mid-read errors every chunk a tree
+// may be reading (navigation-client.ts), so it streams to its end and the
+// navigation ignores it. Ignored means nothing of it reaches the page or the
+// stores, and it stops counting as streaming at the abort
+// (docs/design/prefetch-false.md, R9).
+describe("partial-update: a navigation left after its response arrived", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((res) => {
+      resolve = res;
+    });
+    return { promise, resolve };
+  }
+
+  /**
+   * A navigation whose response has arrived and whose body is still
+   * streaming; its tree is built by `render`, which the test settles.
+   */
+  function left(
+    metadata: Record<string, unknown>,
+    options: {
+      cachedSegments?: ResolvedSegment[];
+      mode?: Parameters<ReturnType<typeof createPartialUpdater>>[5];
+    } = {},
+  ) {
+    const store = createMockStore({
+      cachedSegments: options.cachedSegments ?? [seg("L0", { type: "layout" })],
+    });
+    const { client } = createMockClient(
+      { metadata: { isPartial: true, ...metadata } },
+      { hangStream: true },
+    );
+    const render = deferred<string>();
+    const renderSegments = vi.fn(() => render.promise);
+    const onUpdate = vi.fn();
+    const end = vi.fn();
+    const tx = createMockTx();
+    tx.startStreaming.mockReturnValue({ end });
+    const controller = new AbortController();
+    const consoleError = vi.spyOn(console, "error");
+    const updater = createPartialUpdater({
+      getVersion: () => undefined,
+      store: store as any,
+      client: client as any,
+      onUpdate,
+      renderSegments,
+    });
+    const navigation = updater(
+      "http://localhost/page",
+      undefined,
+      false,
+      controller.signal,
+      tx,
+      options.mode,
+    ).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    return {
+      store,
+      client,
+      render,
+      renderSegments,
+      onUpdate,
+      end,
+      tx,
+      controller,
+      consoleError,
+      navigation,
+    };
+  }
+
+  const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+  /** Nothing of the response reached the page, the history or the stores. */
+  function expectIgnored(nav: ReturnType<typeof left>) {
+    expect(nav.tx.commit).not.toHaveBeenCalled();
+    expect(nav.onUpdate).not.toHaveBeenCalled();
+    expect(nav.store.setSegmentIds).not.toHaveBeenCalled();
+    expect(nav.store.cacheSegmentsForHistory).not.toHaveBeenCalled();
+    expect(nav.store.setInterceptSourceUrl).not.toHaveBeenCalled();
+    expect(nav.consoleError).not.toHaveBeenCalled();
+  }
+
+  it("sends the navigation's own request without its signal: the response is ignored, never cancelled", async () => {
+    const nav = left({
+      segments: [seg("L0R0")],
+      matched: ["L0", "L0R0"],
+      diff: ["L0R0"],
+    });
+    await flush();
+    expect(nav.client.fetchPartial).toHaveBeenCalledTimes(1);
+    expect(nav.client.fetchPartial.mock.calls[0]).not.toHaveProperty(
+      "0.signal",
+    );
+    nav.render.resolve("tree");
+    await nav.navigation;
+  });
+
+  it("commits nothing when left while its tree is built, and stops counting as streaming at the abort", async () => {
+    const nav = left({
+      segments: [seg("L0R0")],
+      matched: ["L0", "L0R0"],
+      diff: ["L0R0"],
+    });
+    await flush();
+    expect(nav.renderSegments).toHaveBeenCalledTimes(1);
+    expect(nav.end).not.toHaveBeenCalled();
+
+    nav.controller.abort();
+    expect(
+      nav.end,
+      "the body still streams; nobody waits on it",
+    ).toHaveBeenCalled();
+    nav.render.resolve("tree");
+    const thrown = await nav.navigation;
+
+    // The bridge treats an AbortError as a navigation that was left.
+    expect(thrown).toMatchObject({ name: "AbortError" });
+    expectIgnored(nav);
+  });
+
+  it("commits nothing for a cached target with nothing new when left while its tree is built", async () => {
+    const target = [seg("L0", { type: "layout" }), seg("L0R0")];
+    const nav = left(
+      { segments: [], matched: ["L0", "L0R0"], diff: [] },
+      { mode: { type: "navigate", targetCacheSegments: target } },
+    );
+    await flush();
+    expect(nav.renderSegments).toHaveBeenCalledTimes(1);
+
+    nav.controller.abort();
+    nav.render.resolve("cached-tree");
+    expect(await nav.navigation).toBeUndefined();
+    expectIgnored(nav);
+  });
+
+  it("commits nothing when leaving an intercept and left while its tree is built", async () => {
+    const nav = left(
+      { segments: [], matched: ["L0"], diff: [] },
+      {
+        cachedSegments: [
+          seg("L0", { type: "layout" }),
+          seg("L0.@modal", { type: "parallel", namespace: "intercept:modal" }),
+        ],
+        mode: { type: "leave-intercept" },
+      },
+    );
+    await flush();
+    expect(nav.renderSegments).toHaveBeenCalledTimes(1);
+
+    nav.controller.abort();
+    nav.render.resolve("tree-no-modal");
+    expect(await nav.navigation).toBeUndefined();
+    expectIgnored(nav);
+  });
+
+  it("reloads nothing for a response from another router once left", async () => {
+    vi.stubGlobal("window", {
+      location: { origin: "http://localhost", href: "http://localhost/" },
+    });
+    const store = createMockStore({ cachedSegments: [seg("R0")] });
+    (store as any).getRouterId = vi.fn(() => "client-app");
+    const response = deferred<unknown>();
+    const controller = new AbortController();
+    const onUpdate = vi.fn();
+    const updater = createPartialUpdater({
+      getVersion: () => undefined,
+      store: store as any,
+      client: {
+        fetchPartial: vi.fn(() => response.promise),
+      } as any,
+      onUpdate,
+      renderSegments: vi.fn(async () => "tree"),
+    });
+    const navigation = updater(
+      "http://localhost/page",
+      ["R0"],
+      false,
+      controller.signal,
+      createMockTx(),
+    );
+
+    controller.abort();
+    response.resolve({
+      payload: {
+        metadata: {
+          isPartial: true,
+          routerId: "other-app",
+          segments: [seg("R0", { component: "foreign" })],
+          matched: ["R0"],
+          diff: ["R0"],
+        },
+      },
+      streamComplete: Promise.resolve(),
+    });
+    await navigation;
+
+    expect((window as any).location.href).toBe("http://localhost/");
+    expect(onUpdate).not.toHaveBeenCalled();
+  });
+
+  it("leaves a committed navigation's tree as it is when left, and it stops counting as streaming", async () => {
+    const nav = left({
+      segments: [seg("L0R0")],
+      matched: ["L0", "L0R0"],
+      diff: ["L0R0"],
+    });
+    nav.render.resolve("tree");
+    await nav.navigation;
+    expect(nav.tx.commit).toHaveBeenCalledTimes(1);
+    expect(nav.onUpdate).toHaveBeenCalledTimes(1);
+    expect(nav.end).not.toHaveBeenCalled();
+
+    // A newer navigation (event-controller.ts startNavigation).
+    nav.controller.abort();
+    await flush();
+    expect(nav.end).toHaveBeenCalled();
+    expect(nav.onUpdate).toHaveBeenCalledTimes(1);
   });
 });

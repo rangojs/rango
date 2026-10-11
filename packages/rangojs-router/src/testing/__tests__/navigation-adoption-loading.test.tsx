@@ -179,7 +179,7 @@ describe("a click that adopts a prefetch, and its fill", () => {
 
   const segment = (
     id: string,
-    type: "layout" | "route" | "loader" | "parallel",
+    type: "layout" | "route" | "loader" | "parallel" | "error",
     extra: Partial<ResolvedSegment>,
   ): ResolvedSegment =>
     ({
@@ -483,6 +483,66 @@ describe("a click that adopts a prefetch, and its fill", () => {
     expect(mounts.fallback).toBe(1);
     expect(inner).toBe(1);
   });
+
+  // The route below a flagged layout failed in the fill (its handler threw:
+  // an error segment in its place), so the fill hands React the answer's
+  // tree ("Failure"). The route's deferred was never read: the layout's
+  // suspended first. Handed to the outlet's boundary in an urgent update, a
+  // promise React has not read suspends there at once, and the layout's
+  // fallback would show inside the layout, held React's 300 ms, where the
+  // plain click shows the error with the layout. So each deferred is handed
+  // over already settled (partial-update.ts fillHoles).
+  it.each([
+    ["the adopted click", false],
+    ["control: the plain click", true],
+  ])(
+    "%s shows a failed route's error with the layout, no fallback inside it",
+    async (_label, plain) => {
+      let outlet = 0;
+      function OutletFallback(): ReactNode {
+        useEffect(() => {
+          outlet++;
+        }, []);
+        return <p data-testid="page">skeleton</p>;
+      }
+      function Section({ find }: { find: (id: string) => ResolvedSegment }) {
+        return (
+          <section>
+            {read(find(UNIT).component)}
+            <Suspense fallback={<OutletFallback />}>
+              <Unit content={find(ROUTE).component} />
+            </Suspense>
+          </section>
+        );
+      }
+      const { shown, fill, updates } = await adopt({
+        adopted: [
+          segment(UNIT, "layout", { loading: "skeleton", deferred: true }),
+          segment(ROUTE, "route", { deferred: true }),
+        ],
+        filled: [
+          segment(UNIT, "layout", {
+            loading: "skeleton",
+            component: "layout ",
+          }),
+          segment(ROUTE, "error", { component: "error" }),
+        ],
+        plain,
+        render: (find) => (
+          <Suspense fallback={<Fallback />}>
+            <Section find={find} />
+          </Suspense>
+        ),
+      });
+      if (!plain) {
+        expect(shown()).toBe("skeleton");
+        await fill(0);
+        expect(updates(), "the click's tree and the answer's").toBe(2);
+      }
+      expect(shown()).toBe("error");
+      expect(outlet, "no fallback inside the layout").toBe(0);
+    },
+  );
 
   // A layout above the unit reads the route's loader, with no boundary: the
   // read is above the unit's fallback, so React holds the click on that
