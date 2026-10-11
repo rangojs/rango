@@ -167,7 +167,17 @@ export async function rerenderAndCacheRoute<TEnv>(
   });
   const renderCtx: RequestContext<TEnv> = Object.assign(
     Object.create(requestCtx, {
-      res: Object.getOwnPropertyDescriptor(sink, "res")!,
+      // Delegates to the sink: the context's res accessor is shared and reads
+      // its receiver (#1109), so copying its descriptor here would read the
+      // live request's stub. The setter throws the sink's read-only error.
+      res: {
+        get: (): Response => sink.res,
+        set(value: Response) {
+          (sink as { res: Response }).res = value;
+        },
+        enumerable: true,
+        configurable: true,
+      },
     }),
     {
       _handleStore: handleStore,

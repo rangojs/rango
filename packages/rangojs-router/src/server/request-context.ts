@@ -1088,6 +1088,82 @@ export const UNTRACKED_BACKGROUND_TASK: unique symbol = Symbol.for(
 const requestContextStorage = new AsyncLocalStorage<RequestContext<any>>();
 
 /**
+ * The request context's accessors are module-level descriptors (#1109). V8
+ * keeps an object in dictionary mode, where every property read is a hash
+ * lookup, when a literal declares a get/set member, when a data property is
+ * redefined as an accessor, or when an accessor is defined with a function
+ * that shape has not seen before: a per-request closure is a new function on
+ * every request. So each getter is shared and delegates to a per-context
+ * closure held in a non-enumerable symbol slot, which a derived context
+ * (Object.create(ctx)) reads through its prototype as it read the closure.
+ * A descriptor copied onto another object reads that object's slot instead
+ * (match-middleware/background-revalidation.ts delegates instead).
+ */
+const RES_SLOT: unique symbol = Symbol("rango.requestContext.res");
+const RENDER_BARRIER_SLOT: unique symbol = Symbol(
+  "rango.requestContext.renderBarrier",
+);
+
+type AccessorSlots = {
+  [RES_SLOT]: () => Response;
+  [RENDER_BARRIER_SLOT]: () => Promise<void>;
+};
+
+const RES_DESCRIPTOR: PropertyDescriptor = {
+  get(this: AccessorSlots): Response {
+    return this[RES_SLOT]();
+  },
+  set(_: Response): void {
+    throw new Error(
+      "ctx.res is read-only. Use ctx.header() to set response headers, or cookies() for cookie mutations.",
+    );
+  },
+  enumerable: true,
+  configurable: true,
+};
+
+// getRequestContext().theme is the visitor's cookie, guarded like cookies()
+// (#971); before it was a plain read that a ppr shell, a cache() entry or a
+// "use cache" entry stored for every visitor. Non-enumerable like the
+// handler ctx.theme (handler-context.ts THEME_DESCRIPTOR): serializing the
+// context (React dev debug info) must not count as a read. The guard reads
+// the ambient context, as cookies() does, and falls back to the receiver.
+const REQUEST_THEME_DESCRIPTOR: PropertyDescriptor = {
+  get(this: RequestContext<any>): Theme | undefined {
+    return readGuardedTheme(this, "getRequestContext().theme");
+  },
+  enumerable: false,
+  configurable: true,
+};
+
+// A fresh context enumerates _renderBarrier like its other fields (the
+// fetchable-loader ctx spreads it, loader-fetch.ts); a derived one never did.
+const RENDER_BARRIER_DESCRIPTOR: PropertyDescriptor = {
+  get(this: AccessorSlots): Promise<void> {
+    return this[RENDER_BARRIER_SLOT]();
+  },
+  enumerable: true,
+  configurable: true,
+};
+const DERIVED_RENDER_BARRIER_DESCRIPTOR: PropertyDescriptor = {
+  ...RENDER_BARRIER_DESCRIPTOR,
+  enumerable: false,
+};
+
+function defineSlot(target: object, slot: symbol, value: unknown): void {
+  Object.defineProperty(target, slot, { value, configurable: true });
+}
+
+function defineHidden(target: object, key: string, value: unknown): void {
+  Object.defineProperty(target, key, {
+    value,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+}
+
+/**
  * Capture the current async context (RequestContext._runAtRequestEntry), taken
  * on handler entry before any router scope, so a nested dispatch (a
  * router.prerender() warm called from a handler, loader or action) does not
@@ -1465,7 +1541,12 @@ export function createRequestContext<TEnv>(
   const cleanUrl = stripInternalParams(url);
   const originalUrl = new URL(request.url);
 
-  const ctx: RequestContext<TEnv> = {
+  // Data members only: the accessors are defined after this literal (#1109,
+  // RES_DESCRIPTOR).
+  const fields: Omit<
+    RequestContext<TEnv>,
+    "res" | "_renderBarrier" | "_readTheme" | "_readCookie" | "_readCookies"
+  > = {
     env,
     request,
     url: cleanUrl,
@@ -1496,14 +1577,7 @@ export function createRequestContext<TEnv>(
     }) as RequestContext<TEnv>["set"],
     params: {} as Record<string, string>,
 
-    get res(): Response {
-      return stubResponse;
-    },
-    set res(_: Response) {
-      throw new Error(
-        "ctx.res is read-only. Use ctx.header() to set response headers, or cookies() for cookie mutations.",
-      );
-    },
+    // res: RES_DESCRIPTOR, defined after this literal.
 
     // The visitor's cookies, guarded like cookies() (#976): before, a plain
     // read that a ppr shell, a cache() entry or a "use cache" entry stored
@@ -1518,9 +1592,7 @@ export function createRequestContext<TEnv>(
       return effectiveCookies();
     },
 
-    // Non-enumerable, defined after this literal.
-    _readCookie: effectiveCookie,
-    _readCookies: effectiveCookies,
+    // _readCookie, _readCookies: non-enumerable, defined after this literal.
 
     setCookie(name: string, value: string, options?: CookieOptions): void {
       assertNotInsideCacheExec(ctx, "setCookie");
@@ -1710,8 +1782,7 @@ export function createRequestContext<TEnv>(
       this._onResponseCallbacks.push(callback);
     },
 
-    // theme: a guarded, non-enumerable getter defined after this literal.
-    _readTheme: getTheme,
+    // theme, _readTheme: non-enumerable, defined after this literal.
     setTheme: themeConfig
       ? (theme: Theme) => {
           assertNotInsideCacheExec(ctx, "setTheme");
@@ -1737,14 +1808,17 @@ export function createRequestContext<TEnv>(
     _renderDiagnosticsEnabled: undefined,
     _handlerStart: undefined,
 
-    _renderBarrier: null as any,
+    // _renderBarrier: RENDER_BARRIER_DESCRIPTOR, defined by installRenderBarrier.
     _resolveRenderBarrier: null as any,
     _renderBarrierSegmentOrder: undefined,
 
     reverse: createReverseFunction(getGlobalRouteMap(), undefined, {}),
   };
+  const ctx = fields as RequestContext<TEnv>;
 
-  wireRenderBarrier(ctx, handleStore);
+  defineSlot(ctx, RES_SLOT, () => stubResponse);
+  Object.defineProperty(ctx, "res", RES_DESCRIPTOR);
+  installRenderBarrier(ctx, handleStore, RENDER_BARRIER_DESCRIPTOR);
 
   ctx.use = createUseFunction({
     handleStore,
@@ -1752,37 +1826,20 @@ export function createRequestContext<TEnv>(
     getContext: () => ctx,
   });
 
-  // getRequestContext().theme is the visitor's cookie, guarded like cookies()
-  // (#971); before it was a plain read that a ppr shell, a cache() entry or a
-  // "use cache" entry stored for every visitor. Non-enumerable like the
-  // handler ctx.theme (handler-context.ts THEME_DESCRIPTOR): serializing the
-  // context (React dev debug info) must not count as a read. The guard reads
-  // the ambient context, as cookies() does, and falls back to the receiver.
-  // _readTheme is the unguarded read: non-enumerable too, so a spread copy of
-  // the context (the fetchable-loader ctx, loader-fetch.ts) cannot carry it.
-  // The same holds for the unguarded cookie reads (#976).
-  Object.defineProperties(ctx, {
-    theme: {
-      get(this: RequestContext<TEnv>): Theme | undefined {
-        return readGuardedTheme(this, "getRequestContext().theme");
-      },
-      enumerable: false,
-      configurable: true,
-    },
-    _readTheme: { enumerable: false },
-    _readCookie: { enumerable: false },
-    _readCookies: { enumerable: false },
-  });
+  // theme: REQUEST_THEME_DESCRIPTOR. _readTheme is the unguarded read:
+  // non-enumerable too, so a spread copy of the context (the fetchable-loader
+  // ctx, loader-fetch.ts) cannot carry it. The same holds for the unguarded
+  // cookie reads (#976). Added here, not flipped from enumerable: changing an
+  // existing property's attributes costs V8 a map copy per request.
+  Object.defineProperty(ctx, "theme", REQUEST_THEME_DESCRIPTOR);
+  defineHidden(ctx, "_readTheme", getTheme);
+  defineHidden(ctx, "_readCookie", effectiveCookie);
+  defineHidden(ctx, "_readCookies", effectiveCookies);
 
   (ctx as any)[NOCACHE_SYMBOL] = true;
   // Non-enumerable: a self-reference would make the context circular for
   // JSON.stringify, spreads and React's dev debug-info serialization of props.
-  Object.defineProperty(ctx, "_requestRoot", {
-    value: ctx,
-    enumerable: false,
-    configurable: true,
-    writable: true,
-  });
+  defineHidden(ctx, "_requestRoot", ctx);
   ctx._requestStart = executionStart();
   return ctx;
 }
@@ -1807,6 +1864,14 @@ export function createRequestContext<TEnv>(
 export function wireRenderBarrier(
   ctx: RequestContext<any, any>,
   handleStore: HandleStore,
+): void {
+  installRenderBarrier(ctx, handleStore, DERIVED_RENDER_BARRIER_DESCRIPTOR);
+}
+
+function installRenderBarrier(
+  ctx: RequestContext<any, any>,
+  handleStore: HandleStore,
+  descriptor: PropertyDescriptor,
 ): void {
   // Reset the whole barrier family as OWN properties. No-op for a fresh
   // context; for the derived capture context this shadows the foreground's
@@ -1853,25 +1918,23 @@ export function wireRenderBarrier(
     }
     if (resolveBarrier) resolveBarrier();
   };
+  defineSlot(ctx, RENDER_BARRIER_SLOT, (): Promise<void> => {
+    const p = barrierResolved
+      ? Promise.resolve()
+      : new Promise<void>((resolve) => {
+          resolveBarrier = resolve;
+        });
+    Object.defineProperty(ctx, "_renderBarrier", {
+      value: p,
+      writable: false,
+      configurable: false,
+    });
+    return p;
+  });
   // defineProperty, not assignment: on a derived context the prototype's
   // _renderBarrier may already be a non-writable data property (the getter
   // pins it after first access), which would reject a plain assignment.
-  Object.defineProperty(ctx, "_renderBarrier", {
-    get() {
-      const p = barrierResolved
-        ? Promise.resolve()
-        : new Promise<void>((resolve) => {
-            resolveBarrier = resolve;
-          });
-      Object.defineProperty(ctx, "_renderBarrier", {
-        value: p,
-        writable: false,
-        configurable: false,
-      });
-      return p;
-    },
-    configurable: true,
-  });
+  Object.defineProperty(ctx, "_renderBarrier", descriptor);
 }
 
 // Capture the Max-Age value so it can be parsed numerically. A leading zero
