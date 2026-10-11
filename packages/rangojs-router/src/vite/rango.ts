@@ -14,6 +14,7 @@ import {
 } from "./plugins/expose-internal-ids.js";
 import { useCacheTransform } from "./plugins/use-cache-transform.js";
 import { transitionWhenHoistPlugin } from "./plugins/transition-when-hoist.js";
+import { clientUrlsRevalidateHoistPlugin } from "./plugins/client-urls-revalidate-hoist.js";
 import { clientRefDedup } from "./plugins/client-ref-dedup.js";
 import { stableRscOutput } from "./plugins/stable-rsc-output.js";
 import { VIRTUAL_IDS } from "./plugins/virtual-entries.js";
@@ -592,6 +593,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
 
   plugins.push(createLoaderDirectiveGuardPlugin());
   plugins.push(transitionWhenHoistPlugin());
+  plugins.push(...clientUrlsRevalidateHoistPlugin());
   plugins.push(createLoaderScanStubPlugin());
   plugins.push(exposeActionId());
   plugins.push(

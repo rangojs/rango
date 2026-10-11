@@ -58,3 +58,7 @@ export {
   setClientUrlProjection,
   type ClientUrlProjection,
 } from "./client-urls/server-projection.js";
+
+// Hoisted clientUrls() revalidate() predicates: the generated
+// `<file>?rango-revalidate` modules register them in the RSC realm.
+export { registerClientUrlRevalidators } from "./client-urls/revalidate-registry.js";

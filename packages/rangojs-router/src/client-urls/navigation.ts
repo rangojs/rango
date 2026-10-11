@@ -1,12 +1,6 @@
 "use client";
 
 import { startTransition } from "react";
-import { makeIsAction } from "../router/is-action.js";
-import {
-  lockedClientDefault,
-  runClientRevalidateChain,
-} from "./revalidate-chain.js";
-import { encodeClientRevalidationDecisions } from "./revalidation-protocol.js";
 import type { ClientUrlPatterns } from "./types.js";
 import type { TransitionWhenFn } from "../types/segments.js";
 
@@ -208,96 +202,6 @@ export function beginClientUrlNavigation(
       clear();
     },
   };
-}
-
-/**
- * Run the held clientUrls route's per-loader revalidate() predicates and
- * encode their decisions for the request header. Predicates are CLIENT code
- * (declared in the "use client" definition module); only decisions cross the
- * wire — the synthesized per-loader revalidate() on every materialized stub
- * (server-projection.ts) reads them back by loader $$id.
- *
- * Decisions exist only for the loaders the client currently HOLDS: the local
- * match of currentUrl. They matter when the server would re-evaluate those
- * held loader segments — same-route param/search navs, actions, and stale
- * restores. Cross-route targets render new segments unconditionally, so a
- * decision would be ignored; we still compute against the current route since
- * only its held segments are addressable.
- *
- * Returns null when no group is active, the current location is not a client
- * route, or no predicate produced a decision that differs from the locked
- * default — the server then applies defaults, which is also the behavior for
- * requests that cannot carry decisions (no-JS, PE, prefetch, document loads).
- */
-export function collectClientRevalidationDecisions(options: {
-  currentUrl: URL;
-  nextUrl: URL;
-  /**
-   * True only when the decisions ride the action POST itself — the one
-   * request the server evaluates with actionContext (locked default true).
-   * Action-triggered refetch GETs (partial-update terminals) pass false:
-   * the server gives those navigation defaults, and the delta gate below
-   * must diff against the default the SERVER will use, or a force decision
-   * on the refetch would be silently swallowed as "equals default".
-   */
-  actionRequest: boolean;
-  /** Action TRUTH for the predicates' isAction() matcher; may be true on
-   * refetch GETs where actionRequest is false. */
-  isAction: boolean;
-  actionId?: string;
-  stale: boolean;
-}): string | null {
-  const group = activeGroup;
-  if (!group) return null;
-
-  const { currentUrl, nextUrl, actionRequest, isAction, actionId, stale } =
-    options;
-  const currentLocal = stripMountPrefix(currentUrl.pathname, group.mount);
-  if (currentLocal === null) return null;
-  const currentMatch = group.definition.match(currentLocal);
-  if (!currentMatch || currentMatch.redirectTo) return null;
-  const record = group.definition.routes.find(
-    (candidate) => candidate.id === currentMatch.routeKey,
-  );
-  if (!record) return null;
-
-  const nextLocal = stripMountPrefix(nextUrl.pathname, group.mount);
-  const nextMatch =
-    nextLocal === null ? null : group.definition.match(nextLocal);
-  const nextParams = nextMatch?.params ?? {};
-
-  const defaultShouldRevalidate = lockedClientDefault({
-    actionRequest,
-    currentParams: currentMatch.params,
-    nextParams,
-    currentUrl,
-    nextUrl,
-  });
-
-  const baseArgs = {
-    currentUrl,
-    nextUrl,
-    currentParams: currentMatch.params,
-    nextParams,
-    stale,
-    isAction: makeIsAction(actionId, isAction),
-    ...(actionId !== undefined ? { actionId } : {}),
-  };
-  const skip: string[] = [];
-  const force: string[] = [];
-  for (const { loader, revalidate } of record.loaders) {
-    if (revalidate.length === 0) continue;
-    const decision = runClientRevalidateChain(
-      revalidate,
-      baseArgs,
-      defaultShouldRevalidate,
-      `loader "${loader.$$id}"`,
-    );
-    if (decision === defaultShouldRevalidate) continue;
-    (decision ? force : skip).push(loader.$$id);
-  }
-
-  return encodeClientRevalidationDecisions({ skip, force });
 }
 
 export function clearClientUrlNavigationRegistry(): void {

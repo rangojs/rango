@@ -117,6 +117,13 @@ export type EntryPropDatas = {
  */
 export type EntryPropRender = {
   loading?: ReactNode | false;
+  /**
+   * loading(fallback, { prefetch: false }) with a renderable fallback: a
+   * prefetch defers what the fallback covers while the entry's segment is
+   * new to the client (router/segment-resolution/prefetch-deferral.ts). Set
+   * on both DSL evaluations, whatever `ssr` did to `loading`.
+   */
+  loadingPrefetch?: false;
   transition?: TransitionConfig;
 };
 
@@ -150,6 +157,12 @@ export type LoaderEntry = {
    * navigation evaluation never has it.
    */
   bake?: true;
+  /**
+   * loader(Def, { prefetch: false }): a prefetch defers this registration
+   * while its segment is new to the client
+   * (router/segment-resolution/prefetch-deferral.ts).
+   */
+  prefetch?: false;
 };
 
 /**
@@ -867,9 +880,14 @@ export function track(label: string, depth?: number): () => void {
  * nested RangoContext.run() calls in Vite's module runner.
  */
 const LOADER_SCOPE_KEY = Symbol.for("rangojs-router:loader-scope");
-const loaderScopeALS: AsyncLocalStorage<{ active: true }> = ((
-  globalThis as any
-)[LOADER_SCOPE_KEY] ??= new AsyncLocalStorage<{ active: true }>());
+interface LoaderScope {
+  active: true;
+  /** $$id of the DSL loader this scope resolves (runInsideLoaderScope). */
+  loaderId?: string;
+}
+const loaderScopeALS: AsyncLocalStorage<LoaderScope> = ((globalThis as any)[
+  LOADER_SCOPE_KEY
+] ??= new AsyncLocalStorage<LoaderScope>());
 
 // Purity-only scope: marks that a loader FUNCTION BODY is executing, regardless
 // of how the loader was invoked (DSL via runInsideLoaderScope, or handler-
@@ -1429,8 +1447,24 @@ export function assertCachedHeaderWriteAllowed(
  * are bypassed because loaders are always fresh (never cached) and
  * their side effects (setCookie, header, etc.) are safe.
  */
-export function runInsideLoaderScope<T>(fn: () => T): T {
-  return loaderScopeALS.run({ active: true }, fn);
+export function runInsideLoaderScope<T>(fn: () => T, loaderId?: string): T {
+  return loaderScopeALS.run({ active: true, loaderId }, fn);
+}
+
+/**
+ * The loader whose run a handle push here belongs to, for the browser's
+ * merge of a partial response (handles/pushed-by.ts): the DSL loader
+ * this scope resolves, else the outermost loader body around the push (a
+ * loader a handler reads with ctx.use). Undefined for a handler's own push.
+ */
+export function getHandlePushOwner(): string | undefined {
+  const dsl = loaderScopeALS.getStore()?.loaderId;
+  if (dsl !== undefined) return dsl;
+  let outermost: string | undefined;
+  for (let s = loaderBodyScopeALS.getStore(); s; s = s.parent) {
+    if (s.loaderId !== undefined) outermost = s.loaderId;
+  }
+  return outermost;
 }
 
 /**

@@ -26,8 +26,8 @@ import {
   startBrowserTransaction,
 } from "./logging.js";
 import {
+  validatePayloadRedirect,
   validateRedirectOrigin,
-  validateExternalRedirect,
 } from "./validate-redirect-origin.js";
 import {
   extractRscHeaderUrl,
@@ -40,13 +40,11 @@ import { mergeLocationState } from "./history-state.js";
 import { stampLocationState } from "./react/location-state-shared.js";
 import { classifyActionOutcome } from "./action-coordinator.js";
 import { getAppVersion } from "./app-version.js";
-import { collectClientRevalidationDecisions } from "../client-urls/navigation.js";
 import {
   decideCommitGatedOff,
   findActionFormData,
   type TransitionWhenActionInput,
 } from "./transition-when.js";
-import { CLIENT_REVALIDATION_HEADER } from "../client-urls/revalidation-protocol.js";
 import { auditTreeCause } from "../suspense-audit.js";
 
 // Polyfill Symbol.dispose/asyncDispose for Safari and older browsers
@@ -335,39 +333,12 @@ export function createServerActionBridge(
       const onHandleAbort = () => fetchAbort.abort();
       handle.signal.addEventListener("abort", onHandleAbort, { once: true });
 
-      // Client-run per-loader revalidation for the action follow-up render:
-      // run the held clientUrls route's revalidate() predicates with the
-      // action context and ship their decisions. Fails soft to null (locked
-      // server defaults).
-      let clientRevalidation: string | null = null;
-      try {
-        const actionPageUrl = new URL(
-          segmentState.currentUrl,
-          window.location.origin,
-        );
-        clientRevalidation = collectClientRevalidationDecisions({
-          currentUrl: actionPageUrl,
-          nextUrl: actionPageUrl,
-          // Decisions ride the action POST itself — the server evaluates it
-          // with actionContext, so the locked default is the action default.
-          actionRequest: true,
-          isAction: true,
-          actionId: id,
-          stale: false,
-        });
-      } catch {
-        clientRevalidation = null;
-      }
-
       // Send action request with stream tracking
       const responsePromise = fetch(url, {
         method: "POST",
         headers: {
           "rsc-action": id,
           "X-RSC-Router-Client-Path": segmentState.currentUrl,
-          ...(clientRevalidation && {
-            [CLIENT_REVALIDATION_HEADER]: clientRevalidation,
-          }),
           ...(tx && { "X-RSC-Router-Request-Id": tx.requestId }),
           ...(interceptSourceUrl && {
             "X-RSC-Router-Intercept-Source": interceptSourceUrl,
@@ -518,41 +489,26 @@ export function createServerActionBridge(
       // Check handle.signal.aborted to avoid redirecting from a stale action
       // when the user has already navigated away.
       if (metadata?.redirect && !handle.signal.aborted) {
-        // Explicit off-host redirect (redirect(url, { external: true })):
-        // hard-navigate, but still scheme-validate (http/https only). external
-        // waives the same-origin check, NOT scheme safety, so a forged payload
-        // carrying a javascript:/data: URL cannot script via location.assign.
-        if (metadata.redirect.external) {
-          const externalUrl = validateExternalRedirect(
-            metadata.redirect.url,
-            window.location.origin,
-          );
-          if (!externalUrl) {
-            log("blocked external action redirect payload", {
-              url: metadata.redirect.url,
-            });
-            handle.complete(returnValue?.data);
-            return returnValue?.data;
-          }
-          log("external action redirect", { url: externalUrl });
-          handle.complete(returnValue?.data);
-          window.location.assign(externalUrl);
-          return returnValue?.data;
-        }
-        const redirectUrl = validateRedirectOrigin(
-          metadata.redirect.url,
-          window.location.origin,
-        );
-        if (!redirectUrl) {
-          log("blocked action redirect payload", {
-            url: metadata.redirect.url,
-          });
-          handle.complete(returnValue?.data);
-          return returnValue?.data;
-        }
-        log("action redirect", { url: redirectUrl });
+        // An explicit off-host redirect is a hard navigation, still
+        // scheme-validated: a forged payload carrying a javascript:/data: URL
+        // cannot script via location.assign (validatePayloadRedirect).
+        const { redirect } = metadata;
+        const target = validatePayloadRedirect(redirect);
         handle.complete(returnValue?.data);
-        await dispatchRedirect(redirectUrl, metadata.locationState);
+        if (!target) {
+          log(
+            redirect.external
+              ? "blocked external action redirect payload"
+              : "blocked action redirect payload",
+            { url: redirect.url },
+          );
+        } else if (redirect.external) {
+          log("external action redirect", { url: target });
+          window.location.assign(target);
+        } else {
+          log("action redirect", { url: target });
+          await dispatchRedirect(target, metadata.locationState);
+        }
         return returnValue?.data;
       }
 

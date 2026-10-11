@@ -36,6 +36,7 @@
  */
 
 import { unwrapsSynchronously } from "./thenable-status.js";
+import { asStream } from "./browser/defer.js";
 
 /** The loader-segment shape announcePendingStreams reads (ResolvedSegment). */
 export interface PendingStreamSource {
@@ -538,12 +539,21 @@ export class LoaderStore {
       this.pendingStreams.set(loaderId, set);
     }
     set.add(stream);
-    const release = () => {
-      const current = this.pendingStreams.get(loaderId);
-      if (!current || !current.delete(stream)) return;
-      if (current.size === 0) this.pendingStreams.delete(loaderId);
-    };
+    const release = () => this.releasePendingStream(loaderId, stream);
     stream.then(release, release);
+  }
+
+  /**
+   * Stop tracking a stream. trackPendingStream does it as the stream settles;
+   * an abandoned fill's hole (browser/partial-update.ts releaseHoles) never
+   * settles, and
+   * left tracked it would pin the family's held readers on every later
+   * transition.
+   */
+  releasePendingStream(loaderId: string, stream: Promise<unknown>): void {
+    const current = this.pendingStreams.get(loaderId);
+    if (!current || !current.delete(stream)) return;
+    if (current.size === 0) this.pendingStreams.delete(loaderId);
   }
 
   /** True while any navigation stream for `loaderId` is still pending. */
@@ -566,12 +576,13 @@ export class LoaderStore {
    */
   announcePendingStreams(segments: readonly PendingStreamSource[]): void {
     for (const segment of segments) {
+      const data = asStream(segment.loaderData);
       if (
         segment.type === "loader" &&
         segment.loaderId &&
-        segment.loaderData instanceof Promise
+        data instanceof Promise
       ) {
-        this.trackPendingStream(segment.loaderId, segment.loaderData);
+        this.trackPendingStream(segment.loaderId, data);
       }
     }
     for (const loaderId of this.pendingStreams.keys()) {

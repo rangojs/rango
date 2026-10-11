@@ -308,7 +308,12 @@ export interface HistoryEntryMemory {
 export interface NavigationUpdate {
   root: ReactNode | Promise<ReactNode>;
   metadata: RscMetadata;
-  /** Scroll behavior to apply after React commits this update */
+  /**
+   * The scroll decision of the navigation transaction this update commits,
+   * applied after React commits it. Absent on every update that is not a
+   * navigation's (server action, error, `prefetch: false` fill): such an
+   * update says nothing about scroll, and leaves a pending decision alone.
+   */
   scroll?: {
     /** For back/forward: restore saved position */
     restore?: boolean;
@@ -677,13 +682,6 @@ export interface FetchPartialOptions {
   signal?: AbortSignal;
   /** If true, this is a stale cache revalidation request - server should force revalidators */
   staleRevalidation?: boolean;
-  /**
-   * Encoded client-run per-loader revalidation decisions
-   * (clientUrls revalidate() predicates executed in the browser); sent as
-   * X-Rango-Client-Reval and honored only by materialized client-urls loader
-   * stubs. Null/absent = locked server defaults.
-   */
-  clientRevalidation?: string | null;
   interceptSourceUrl?: string;
   /** RSC version for cache invalidation detection */
   version?: string;
@@ -691,6 +689,12 @@ export interface FetchPartialOptions {
   routerId?: string;
   /** If true, this is an HMR refetch - server should invalidate manifest cache */
   hmr?: boolean;
+  /**
+   * The fill request of an adopted prefetch that carried deferred segments
+   * (`prefetch: false`): marked `_rsc_fill`, never answered from or written
+   * to a prefetch cache or the HTTP cache, and it cancels no prefetch.
+   */
+  fill?: boolean;
 }
 
 /**
@@ -791,7 +795,7 @@ export type { ResolvedSegment };
 
 /**
  * Token for tracking an active stream.
- * Call end() when the stream completes.
+ * Call end() when the stream completes. Only the first call counts.
  */
 export interface StreamingToken {
   end(): void;

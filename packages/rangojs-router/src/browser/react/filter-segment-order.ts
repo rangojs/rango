@@ -1,4 +1,15 @@
 /**
+ * A loader sub-id carries a `D${index}.` marker ("M0L0D1.user"). Non-global,
+ * so `.test` and `.replace` are stateless.
+ */
+export const LOADER_SEGMENT_ID: RegExp = /D\d+\./;
+
+/** True for a loader sub-id ("M0L0D1.user"), false for a layout/route/slot id. */
+export function isLoaderSegmentId(id: string): boolean {
+  return LOADER_SEGMENT_ID.test(id);
+}
+
+/**
  * Build the handle-collection segment order from a raw `matched` list.
  *
  * Two responsibilities:
@@ -24,7 +35,7 @@ export function filterSegmentOrder(matched: string[]): string[] {
   const nonSlotSet = new Set<string>();
 
   for (const id of matched) {
-    if (/D\d+\./.test(id)) continue;
+    if (isLoaderSegmentId(id)) continue;
     const slotIdx = id.indexOf(".@");
     if (slotIdx >= 0) {
       const parent = id.slice(0, slotIdx);
@@ -66,5 +77,5 @@ export function filterSegmentOrder(matched: string[]): string[] {
  * and React reports a hydration mismatch.
  */
 export function filterRouteSegmentIds(matched: string[]): string[] {
-  return matched.filter((id) => !id.includes(".@") && !/D\d+\./.test(id));
+  return matched.filter((id) => !id.includes(".@") && !isLoaderSegmentId(id));
 }

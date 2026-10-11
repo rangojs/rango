@@ -3,9 +3,9 @@ import { validateUserRouteName } from "../route-name.js";
 import { buildRouteTrie } from "../router/route-trie-builder.js";
 import { tryTrieMatch } from "../router/trie-matching.js";
 import type { LoaderDefinition } from "../types.js";
+import { isHoistedRevalidateRef } from "./hoisted-revalidate.js";
 import type {
   ClientPathOptions,
-  ClientRevalidateFn,
   ClientTransitionConfig,
   ClientUrlBuilder,
   ClientUrlHelpers,
@@ -137,13 +137,14 @@ interface TransitionItem extends ItemBase {
 interface LoaderItem extends ItemBase {
   readonly type: "loader";
   readonly definition: LoaderDefinition<any, any>;
-  readonly revalidate: readonly ClientRevalidateFn[];
+  readonly revalidate: ClientUrlLoaderRecord["revalidate"];
   readonly ssr?: false;
+  readonly prefetch?: false;
 }
 
 interface RevalidateItem extends ItemBase {
   readonly type: "revalidate";
-  readonly fn: ClientRevalidateFn;
+  readonly fn: ClientUrlLoaderRecord["revalidate"][number];
 }
 
 interface LoadingItem extends ItemBase {
@@ -386,9 +387,20 @@ function createHelpers(): ClientUrlHelpers {
         "clientUrls() loader() stream was replaced: use loader(Def, { ssr: false }) — the same knob as loading(fallback, { ssr: false }) — to await the loader before first flush on document requests.",
       );
     }
+    // Inline, not errors.ts assertBooleanOption: this module is in the
+    // client router chunk, where the helper costs 20 B gzip.
     if (options?.ssr !== undefined && typeof options.ssr !== "boolean") {
       throw new Error(
         `clientUrls() loader() ssr must be a boolean (got ${JSON.stringify(options.ssr)}). Omit it (or pass true) to stream on every render.`,
+      );
+    }
+    if (
+      process.env.NODE_ENV !== "production" &&
+      options?.prefetch !== undefined &&
+      typeof options.prefetch !== "boolean"
+    ) {
+      throw new Error(
+        `clientUrls() loader() prefetch must be a boolean (got ${JSON.stringify(options.prefetch)}). Omit it (or pass true) to run the loader in prefetches.`,
       );
     }
     const items = use ? runUse(use, "loader use") : [];
@@ -404,11 +416,14 @@ function createHelpers(): ClientUrlHelpers {
         )
         .map((item) => item.fn),
       ...(options?.ssr === false ? { ssr: false as const } : {}),
+      ...(options?.prefetch === false ? { prefetch: false as const } : {}),
     });
   };
 
   const revalidate: ClientUrlHelpers["revalidate"] = (fn) => {
-    if (typeof fn !== "function") {
+    // The build leaves a marker in place of the predicate it moved to the
+    // server (vite/plugins/client-urls-revalidate-hoist.ts).
+    if (typeof fn !== "function" && !isHoistedRevalidateRef(fn)) {
       throw new Error("clientUrls() revalidate() expects a predicate function");
     }
     return toPublicItem({
@@ -563,6 +578,7 @@ function applyConfig(
           loader: item.definition,
           revalidate: Object.freeze([...item.revalidate]),
           ...(item.ssr === false ? { ssr: false as const } : {}),
+          ...(item.prefetch === false ? { prefetch: false as const } : {}),
         }),
       );
     } else if (item.type === "loading") {
@@ -675,6 +691,8 @@ function collectIntercepts(
       let loading: ReactNode | undefined;
       for (const useItem of item.use) {
         if (useItem.type === "loader") {
+          // `prefetch` is not carried: an intercept prefetch defers nothing,
+          // so the flag is accepted and ignored, as on a urls() intercept().
           loaders.push(
             Object.freeze({
               loader: useItem.definition,
@@ -762,8 +780,6 @@ export function clientUrls<const TItems extends ClientUrlItems>(
 }
 
 export type {
-  ClientRevalidateArgs,
-  ClientRevalidateFn,
   ClientTransitionConfig,
   ClientUrlBuilder,
   ClientUrlHelpers,

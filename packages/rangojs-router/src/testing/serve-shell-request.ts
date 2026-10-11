@@ -57,7 +57,9 @@ import {
   SHELL_CAPTURE_MAX_WAIT_MS,
 } from "../rsc/shell-capture-constants.js";
 import { SEGMENT_FRAGMENT_CAPABILITY_HEADER } from "../segment-fragments.js";
+import { FILL_PARAM, PREFETCH_HEADER } from "../prefetch-markers.js";
 import { resolveDeferredHandleValues } from "../handles/deferred-resolution.js";
+import { withoutPushedBy } from "../handles/pushed-by.js";
 import type { HandleData } from "../server/handle-store.js";
 import { _getRequestContext } from "../server/request-context.js";
 import {
@@ -88,8 +90,22 @@ export interface ServeShellRequestOptions<TEnv = any> {
    * of a document GET: from `from` (default `/`) with `segments` mounted
    * (default none), advertising fragment passthrough. The replay decision is
    * `result.replayStatus`.
+   *
+   * `prefetch: true` sends it as a `<Link>` prefetch does (the
+   * `X-Rango-Prefetch` header), so `prefetch: false` loaders and `loading()`
+   * entries are deferred: `result.readDeferred()` lists them. `fill: true`
+   * sends the request the browser follows an adopted prefetch with
+   * (`_rsc_fill`): pass the ids the prefetch delivered, without the deferred
+   * ones, as `segments`, and the same URL as `from`.
    */
-  partial?: true | { from?: string; segments?: readonly string[] };
+  partial?:
+    | true
+    | {
+        from?: string;
+        segments?: readonly string[];
+        prefetch?: boolean;
+        fill?: boolean;
+      };
   /**
    * POST this form as a submit before hydration: the no-JS request the
    * progressive-enhancement path runs the action for and re-renders the page
@@ -98,6 +114,30 @@ export interface ServeShellRequestOptions<TEnv = any> {
    * Not with `partial`.
    */
   form?: FormData;
+  /**
+   * Send the request a JS server action call makes from the page at `url`:
+   * a POST of `args` (encoded as the browser encodes them) for `ref`, with
+   * the page's mounted `segments` (default none), as
+   * browser/server-action-bridge.ts sends it. The response is the action's
+   * Flight payload (its return value and the re-rendered segments).
+   * Not with `partial` or `form`.
+   */
+  action?: ServeShellRequestAction;
+}
+
+/** The JS server action call of {@link ServeShellRequestOptions.action}. */
+export interface ServeShellRequestAction {
+  /** The server action. */
+  ref: (...args: any[]) => unknown;
+  /**
+   * Its reference id, `<module id>#<export name>`, as the build gives a
+   * "use server" export; registered so the handler loads `ref` by it.
+   */
+  id: string;
+  /** The arguments the page calls it with. */
+  args?: readonly unknown[];
+  /** The segment ids the page holds (`_rsc_segments`). */
+  segments?: readonly string[];
 }
 
 /** A response's handle data, as the browser consumes it. */
@@ -157,6 +197,12 @@ export interface ServeShellRequestResult {
    * values resolved. Undefined when no Flight was rendered.
    */
   readHandles(): Promise<ShellRequestHandles | undefined>;
+  /**
+   * The ids of the segments `flight` marks deferred (a prefetch skipped
+   * them; the fill request renders them), in payload order. Empty when
+   * nothing was deferred, undefined when no Flight was rendered.
+   */
+  readDeferred(): Promise<string[] | undefined>;
   /**
    * The form state the SSR render received (the `formState` render option),
    * or undefined when it received none.
@@ -297,9 +343,22 @@ async function decodePayloadHandles(
   for await (const data of metadata?.handles ?? []) hydration = data;
   const late: HandleData[] = [];
   for await (const data of metadata?.handlesLate ?? []) {
-    late.push(await resolveDeferredHandleValues(data));
+    late.push(withoutPushedBy(await resolveDeferredHandleValues(data)));
   }
-  return { hydration: await resolveDeferredHandleValues(hydration), late };
+  return {
+    hydration: withoutPushedBy(await resolveDeferredHandleValues(hydration)),
+    late,
+  };
+}
+
+/** The ids of the segments a payload marks deferred. */
+async function decodeDeferredIds(flight: string): Promise<string[]> {
+  const { metadata } = await decodePayload<{
+    metadata?: { segments?: Array<{ id: string; deferred?: boolean }> };
+  }>(flight);
+  return (metadata?.segments ?? [])
+    .filter((segment) => segment.deferred === true)
+    .map((segment) => segment.id);
 }
 
 /**
@@ -435,9 +494,46 @@ async function getHandler(
   return handler;
 }
 
-function buildRequest(url: URL, options: ServeShellRequestOptions): Request {
+async function buildActionRequest(
+  url: URL,
+  headers: Headers,
+  action: ServeShellRequestAction,
+): Promise<Request> {
+  const [{ registerTestAction }] = await Promise.all([
+    import("./internal/test-action.js"),
+    import("./internal/flight-client-globals.js"),
+  ]);
+  const { encodeReply } =
+    await import("@vitejs/plugin-rsc/vendor/react-server-dom/client.edge");
+  registerTestAction(action.ref, action.id, "serveShellRequest");
+  const target = new URL(url);
+  target.searchParams.set("_rsc_action", action.id);
+  target.searchParams.set("_rsc_segments", (action.segments ?? []).join(","));
+  headers.set("rsc-action", action.id);
+  if (!headers.has("X-RSC-Router-Client-Path")) {
+    headers.set("X-RSC-Router-Client-Path", url.href);
+  }
+  return new Request(target, {
+    method: "POST",
+    headers,
+    body: await encodeReply([...(action.args ?? [])]),
+  });
+}
+
+async function buildRequest(
+  url: URL,
+  options: ServeShellRequestOptions,
+): Promise<Request> {
   const headers = new Headers(options.headers);
   const partial = options.partial;
+  if (options.action) {
+    if (partial || options.form) {
+      throw new Error(
+        "serveShellRequest: action cannot be combined with partial or form",
+      );
+    }
+    return buildActionRequest(url, headers, options.action);
+  }
   if (options.form) {
     if (partial) {
       throw new Error(
@@ -454,10 +550,21 @@ function buildRequest(url: URL, options: ServeShellRequestOptions): Request {
     if (!headers.has("accept")) headers.set("accept", "text/html");
     return new Request(url, { headers });
   }
-  const { from = "/", segments = [] } = partial === true ? {} : partial;
+  const {
+    from = "/",
+    segments = [],
+    prefetch = false,
+    fill = false,
+  } = partial === true ? {} : partial;
   const target = new URL(url);
   target.searchParams.set("_rsc_partial", "true");
   target.searchParams.set("_rsc_segments", segments.join(","));
+  // As the browser sends them: browser/navigation-client.ts (fill) and
+  // browser/prefetch/fetch.ts (prefetch).
+  if (fill) target.searchParams.set(FILL_PARAM, "1");
+  if (prefetch && !headers.has(PREFETCH_HEADER)) {
+    headers.set(PREFETCH_HEADER, "1");
+  }
   if (!headers.has("X-RSC-Router-Client-Path")) {
     headers.set("X-RSC-Router-Client-Path", new URL(from, url).href);
   }
@@ -536,7 +643,7 @@ export async function serveShellRequest<TEnv = any>(
   const target = new URL(url, "http://localhost");
   await ensureRouterManifest(router.id);
   const handler = await getHandler(router, options.cacheStore);
-  const request = buildRequest(target, options);
+  const request = await buildRequest(target, options);
   const executionContext = createCollectingExecutionContext();
   const { tasks } = executionContext;
   const recorder: Recorder = {};
@@ -593,6 +700,9 @@ export async function serveShellRequest<TEnv = any>(
     },
     async readHandles() {
       return flight ? decodePayloadHandles(flight) : undefined;
+    },
+    async readDeferred() {
+      return flight ? decodeDeferredIds(flight) : undefined;
     },
     formState: recorder.formState,
     async readPayloadFormState() {

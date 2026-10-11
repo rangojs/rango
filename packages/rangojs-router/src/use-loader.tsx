@@ -20,6 +20,7 @@ import {
   type LoaderStore,
 } from "./loader-store.js";
 import { NavigationStoreContext } from "./browser/react/context.js";
+import { Defer, readDefer } from "./browser/defer.js";
 import { decodeLoaderEntry } from "./decode-loader-results.js";
 import { warnAwaitedSsrSuspension } from "./ssr-suspension-warning.js";
 import { SETTLED_THENABLE } from "./thenable-status.js";
@@ -51,12 +52,14 @@ const NOT_FOUND = Symbol("not-found");
  * available value from a still-streaming per-loader promise. A pending stream
  * is `use()`d at the read site (implicit suspension); the promise identity is
  * stable per commit (it comes from the provider's memoized context value /
- * element props), which use() requires across replays.
+ * element props), which use() requires across replays. A `prefetch: false`
+ * hole is a Defer (browser/defer.ts), read by its rule: every reader of the
+ * loader reads the one defer.
  */
 type LoaderLookup =
   | typeof NOT_FOUND
   | { value: unknown }
-  | { stream: Promise<unknown> };
+  | { stream: Promise<unknown> | Defer<unknown> };
 
 function lookupLoaderStreams(
   loaderStreams: Record<string, unknown> | undefined,
@@ -64,9 +67,9 @@ function lookupLoaderStreams(
 ): LoaderLookup {
   if (!loaderStreams || !(loaderId in loaderStreams)) return NOT_FOUND;
   const entry = loaderStreams[loaderId];
-  // Within the loaderStreams channel a Promise always means "still streaming";
-  // settled entries are undecoded result values, never promises.
-  return entry instanceof Promise
+  // Within the loaderStreams channel a Promise or a Defer always means "still
+  // streaming"; settled entries are undecoded result values, never promises.
+  return entry instanceof Promise || entry instanceof Defer
     ? { stream: entry }
     : { value: decodeLoaderEntry(entry) };
 }
@@ -163,7 +166,7 @@ function useLoaderInternal<T>(
   const walk = useMemo((): {
     contextData: T | undefined;
     hasContextData: boolean;
-    pendingStream?: Promise<unknown>;
+    pendingStream?: Promise<unknown> | Defer<unknown>;
     /** { ssr: false } loader ids seen on the chain up to (and including) the
      *  level that owned the read — input for the dev SSR suspension warning. */
     awaitedLoaderIds?: string[];
@@ -217,18 +220,20 @@ function useLoaderInternal<T>(
   // every COMPLETED render.
   const { hasContextData } = walk;
   let contextData = walk.contextData;
+  const stream = walk.pendingStream;
   // Dev only (suspense-audit.ts): the stream this reader is handed. The test
   // is a build-time constant, so the hook is called on every render or never.
   if (process.env.NODE_ENV !== "production" && INTERNAL_RANGO_SUSPENSE_AUDIT) {
-    useReadAudit(loader.$$id, walk.pendingStream);
-  }
-  if (walk.pendingStream) {
-    warnAwaitedSsrSuspension(
+    useReadAudit(
       loader.$$id,
-      walk.awaitedLoaderIds,
-      walk.pendingStream,
+      stream instanceof Defer ? stream.promise : stream,
     );
-    contextData = decodeLoaderEntry(use(walk.pendingStream)) as T;
+  }
+  if (stream instanceof Defer) {
+    contextData = decodeLoaderEntry(readDefer(stream)) as T;
+  } else if (stream) {
+    warnAwaitedSsrSuspension(loader.$$id, walk.awaitedLoaderIds, stream);
+    contextData = decodeLoaderEntry(use(stream)) as T;
   } else if (hasContextData) {
     // React logs a render that finishes without use() at a place whose reader
     // suspended in use() on mount, so every read with route context calls it.

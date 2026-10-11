@@ -215,6 +215,35 @@ const matrixRows: SemanticMatrixRow[] = [
     },
   },
   {
+    id: "R2",
+    contract:
+      "a clientUrls() group loader's revalidate() runs on the server on the action follow-up and sees ctx.actionResult",
+    transport: "js",
+    execution: "action-followup",
+    scope: "in-scope-child",
+    url: "/client-urls-action",
+    assert: async ({ page }) => {
+      // revalidate(({ isAction, actionResult }) => isAction(resultAction) ?
+      // actionResult?.ok === true : undefined) in client-urls-action.tsx.
+      const readRuns = async (): Promise<number> =>
+        Number(await readTestIdText(page, "ca-result-runs"));
+      const readCount = async (): Promise<number> =>
+        Number((await readTestIdText(page, "ca-loader")).replace(/\D/g, ""));
+      const before = await readRuns();
+
+      await testId(page, "ca-result-ok").click();
+      await expect.poll(readRuns).toBeGreaterThan(before);
+      const afterOk = await readRuns();
+
+      // The action bumps the counter loader's value: its re-run marks the
+      // fail action's commit.
+      const countBefore = await readCount();
+      await testId(page, "ca-result-fail").click();
+      await expect.poll(readCount).toBeGreaterThan(countBefore);
+      await expect(testId(page, "ca-result-runs")).toHaveText(String(afterOk));
+    },
+  },
+  {
     id: "S4",
     contract:
       "PE action follow-up keeps in-scope child visibility to handler data",

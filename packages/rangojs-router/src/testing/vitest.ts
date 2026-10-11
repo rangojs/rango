@@ -139,6 +139,37 @@ function resolveFromRouter(spec: string): string | undefined {
 const rsdServerEdgePath: string | undefined =
   resolveFromRouter(RSD_SERVER_EDGE_SPEC);
 
+/** Marks the import of a clientUrls() module's untransformed source. */
+const CLIENT_URLS_SOURCE_QUERY = "rango-client-urls-source";
+
+/** `@rangojs/router/client` under the react-server condition. */
+const CLIENT_ENTRY_RSC_PATH: string = here("src/client.rsc.tsx").replaceAll(
+  "\\",
+  "/",
+);
+
+/**
+ * Imported by absolute path so it shares the registry instance the router
+ * source under test materializes include() from.
+ */
+const CLIENT_URLS_INSTALLER_PATH: string = here(
+  "src/testing/internal/client-urls-projection.ts",
+).replaceAll("\\", "/");
+
+/**
+ * Appended to a transformed `"use client"` clientUrls() module: install the
+ * projection of its own source under its default export's reference id
+ * (`<id>#default`, as registerClientReference composes it).
+ */
+function clientUrlsProjectionInstall(id: string): string {
+  const source = `${id}${id.includes("?") ? "&" : "?"}${CLIENT_URLS_SOURCE_QUERY}`;
+  return (
+    `\nimport * as $$RangoClientUrlsSource from ${JSON.stringify(source)};\n` +
+    `import { installClientUrlsProjection as $$rangoInstallClientUrlsProjection } from ${JSON.stringify(CLIENT_URLS_INSTALLER_PATH)};\n` +
+    `$$rangoInstallClientUrlsProjection(${JSON.stringify(`${id}#default`)}, $$RangoClientUrlsSource);\n`
+  );
+}
+
 /**
  * Build the `resolve.alias` entries a consumer's node/DOM Vitest project needs to
  * import a real @rangojs/router app's router/loaders/middleware. Spread into a
@@ -241,6 +272,10 @@ export function rangoTestConfig(
 /** A minimal Vite plugin shape (avoids a hard dependency on Vite's types). */
 interface FlightTransformPlugin {
   name: string;
+  resolveId: {
+    order: "pre";
+    handler(source: string, importer: string | undefined): string | undefined;
+  };
   transform(
     code: string,
     id: string,
@@ -298,12 +333,39 @@ interface FlightTransformPlugin {
  * by the module's absolute path (the boundary id), the export name becoming the
  * boundary name. Modules without the directive (server components) are untouched,
  * so `renderToFlightString` of pure leaf trees is unaffected.
+ *
+ * A `"use client"` module whose default export is a `clientUrls()` definition
+ * also installs its server projection, as the rango plugin's discovery does for
+ * an app: the module imports its own source without this transform and projects
+ * it under its client reference. A router that mounts the group
+ * (`include("/shop", shopUrls)` or `.routes(shopUrls)`) then serves its routes
+ * through `serveShellRequest` and `dispatch` with no setup.
  */
 export function rangoUseClientTransform(): FlightTransformPlugin {
   return {
     name: "rango:testing-use-client",
+    resolveId: {
+      // Before Vite's resolver, which resolves the bare specifier first.
+      order: "pre",
+      handler(source, importer) {
+        // A clientUrls() module's source resolves the router's client entry
+        // as the RSC environment does (the react-server condition): this
+        // project resolves it to client.tsx, a "use client" module whose
+        // clientUrls is a client reference here. Both entries export the
+        // same clientUrls.
+        if (
+          source === "@rangojs/router/client" &&
+          importer?.includes(CLIENT_URLS_SOURCE_QUERY)
+        ) {
+          return CLIENT_ENTRY_RSC_PATH;
+        }
+        return undefined;
+      },
+    },
     async transform(code, id) {
       if (id.includes("/node_modules/")) return undefined;
+      // A clientUrls() module's own source, imported by its transformed copy.
+      if (id.includes(CLIENT_URLS_SOURCE_QUERY)) return undefined;
       // Fast path: only parse modules that mention the directive.
       if (!code.includes("use client")) return undefined;
       const { parseAstAsync } = await import("vite");
@@ -329,7 +391,7 @@ export function rangoUseClientTransform(): FlightTransformPlugin {
           `${JSON.stringify(id)}, ${JSON.stringify(name)})`,
       });
       if (!result) return undefined;
-      const { output } = result;
+      const { output, exportNames } = result;
       // Absolute file URL, not the bare specifier: the consumer's "use client"
       // module cannot resolve @vitejs/plugin-rsc (it is a router dependency).
       const rsdHref = rsdServerEdgePath
@@ -338,6 +400,10 @@ export function rangoUseClientTransform(): FlightTransformPlugin {
       output.prepend(
         `import * as $$RangoRSD from ${JSON.stringify(rsdHref)};\n`,
       );
+      // The modules discovery records (recordClientUrlsModule).
+      if (code.includes("clientUrls(") && exportNames.includes("default")) {
+        output.append(clientUrlsProjectionInstall(id));
+      }
       return {
         code: output.toString(),
         map: output.generateMap({ hires: true }),

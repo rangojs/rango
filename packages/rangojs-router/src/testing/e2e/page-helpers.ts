@@ -3,6 +3,7 @@
 // returned from `createPageHelpers(expect)`; the rest are standalone.
 
 import type { ConsoleMessage, Expect, Locator, Page } from "@playwright/test";
+import { PREFETCH_HEADER } from "../../prefetch-markers.js";
 
 // ============================================================================
 //  Standalone helpers (need only a page/locator)
@@ -170,7 +171,8 @@ export async function measureTime<T>(
 export function isPrefetchRequest(req: {
   headers: () => Record<string, string>;
 }): boolean {
-  return !!req.headers()["x-rango-prefetch"];
+  // Playwright lowercases header names.
+  return !!req.headers()[PREFETCH_HEADER.toLowerCase()];
 }
 
 // Module-level matcher + handler so blockPrefetch/unblockPrefetch share

@@ -76,6 +76,7 @@ import {
 import { describeDiscoveryFailure } from "./discovery/discovery-errors.js";
 import { findTransitionWhenError } from "../transition-when-ref.js";
 import { transitionWhenHoistPlugin } from "./plugins/transition-when-hoist.js";
+import { clientUrlsRevalidateHoistPlugin } from "./plugins/client-urls-revalidate-hoist.js";
 import {
   createDevPrerenderCache,
   devPrerenderCacheKey,
@@ -300,6 +301,10 @@ export async function createTempRscServer(
       // Inline transition({ when }) literals become client references here
       // too, or discovery would see (and reject) the plain function.
       transitionWhenHoistPlugin(),
+      // clientUrls() revalidate() predicates move to the server here too:
+      // discovery serializes the SSR copy's markers and the RSC realm
+      // registers the predicates the materialized stubs call.
+      ...clientUrlsRevalidateHoistPlugin(),
       // Dev prerender must use dev-mode IDs (path-based) to match the workerd
       // runtime. forceBuild produces hashed IDs for production bundle consistency.
       exposeInternalIds(options.forceBuild ? { forceBuild: true } : undefined),

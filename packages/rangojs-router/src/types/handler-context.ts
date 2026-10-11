@@ -492,6 +492,20 @@ export type InternalHandlerContext<
    * setupLoaderAccess.
    */
   _bindLoaderCacheTags?: (loaderId: string, tags: Set<string>) => void;
+  /**
+   * @internal This match's `prefetch: false` plan: what a prefetch defers,
+   * whether the request is a fill, and the loaders that cannot call
+   * ctx.rendered(). Set by match-api.ts when the tree declares a flag or the
+   * request is a fill. See router/segment-resolution/prefetch-deferral.ts.
+   */
+  _prefetchDeferral?: import("../router/segment-resolution/prefetch-deferral.js").PrefetchDeferral;
+  /**
+   * @internal Whether a loader was started in this request: a run of it (a
+   * handler's or another loader's ctx.use()) or its cache() binding. A
+   * prefetch delivers such a loader instead of deferring it. See
+   * setupLoaderAccess.
+   */
+  _loaderStarted?: (loaderId: string) => boolean;
 };
 
 /**

@@ -22,7 +22,7 @@ import {
   type InterceptConfig,
   type LoaderEntry,
 } from "../server/context";
-import { invariant } from "../errors";
+import { assertBooleanOption, invariant } from "../errors";
 import { validateUserRouteName } from "../route-name.js";
 import { isCachedFunction } from "../cache/taint.js";
 import { RangoContext } from "../server/context";
@@ -44,6 +44,7 @@ import type {
   TransitionItem,
   UseItems,
 } from "../route-types.js";
+import { isRenderableLoading } from "../types/boundaries.js";
 import type { RouteHelpers } from "./helpers-types.js";
 import {
   resolveHandlerUse,
@@ -899,9 +900,15 @@ const loader: RouteHelpers<any, any>["loader"] = (
     (optionsGiven as { stream?: unknown } | undefined)?.stream === undefined,
     "loader() stream was replaced: use loader(Def, { ssr: false }) — the same knob as loading(fallback, { ssr: false }) — to await the loader before first flush on document requests.",
   );
-  invariant(
-    optionsGiven?.ssr === undefined || typeof optionsGiven.ssr === "boolean",
-    `loader() ssr must be a boolean (got ${JSON.stringify(optionsGiven?.ssr)}). Omit it (or pass true) to stream on every render.`,
+  assertBooleanOption(
+    optionsGiven?.ssr,
+    "loader() ssr",
+    "stream on every render",
+  );
+  assertBooleanOption(
+    optionsGiven?.prefetch,
+    "loader() prefetch",
+    "run the loader in prefetches",
   );
 
   const name = `${ctx.namespace}.$${store.getNextIndex("loader")}`;
@@ -917,6 +924,7 @@ const loader: RouteHelpers<any, any>["loader"] = (
     ...(optionsGiven?.ssr === false && { bake: true as const }),
     ...(optionsGiven?.ssr === false &&
       ctx.isSSR && { awaitBeforeFlush: true as const }),
+    ...(optionsGiven?.prefetch === false && { prefetch: false as const }),
   };
 
   // Merge handler.use defaults (attached to the loader definition) with explicit use
@@ -969,6 +977,12 @@ const loading: RouteHelpers<any, any>["loading"] = (component, options) => {
     invariant(false, "No parent entry available for loading()");
   }
 
+  assertBooleanOption(
+    options?.prefetch,
+    "loading() prefetch",
+    "render what the fallback covers in prefetches",
+  );
+
   // Unwrap function form: loading(() => <Skeleton />) → loading(<Skeleton />)
   const resolved =
     typeof component === "function" ? (component as () => any)() : component;
@@ -979,6 +993,15 @@ const loading: RouteHelpers<any, any>["loading"] = (component, options) => {
   } else {
     parent.loading = resolved;
   }
+
+  // The flag means "what this fallback covers": without a fallback to show
+  // there is nothing to defer behind. Recorded from `resolved`, not
+  // `parent.loading`, so the document evaluation (ssr: false) agrees with
+  // the navigation one. Last loading() wins, like `loading` itself.
+  parent.loadingPrefetch =
+    options?.prefetch === false && isRenderableLoading(resolved)
+      ? false
+      : undefined;
 
   const name = `$${store.getNextIndex("loading")}`;
   return { name, type: "loading" } as LoadingItem;

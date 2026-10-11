@@ -122,7 +122,8 @@ describe("navigation-client", () => {
     expect(String(fetchUrl)).toContain(
       "/products?_rsc_partial=true&_rsc_segments=root%2Cproducts&_rsc_stale=true&_rsc_v=v7",
     );
-    expect(init.signal).toBe(signal);
+    // Linked to `signal` until the response arrives (next tests).
+    expect(init.signal).toBeInstanceOf(AbortSignal);
     expect(
       (init.headers as Record<string, string>)["X-RSC-Router-Client-Path"],
     ).toBe("/current");
@@ -134,6 +135,97 @@ describe("navigation-client", () => {
     ).toBe("1");
 
     await expect(result.streamComplete).resolves.toBeUndefined();
+  });
+
+  // The signal cancels the request until its response arrives, for every
+  // partial request. A response that has arrived is never cancelled: aborting
+  // a Flight body mid-read errors every chunk a mounted tree may be reading.
+  // It streams to its end, and whoever sent it ignores it (partial-update.ts
+  // checks the signal before it commits). A prefetch: false fill passes its
+  // navigation's signal, which a newer navigation aborts after the fill's
+  // deferreds were resolved with the response's streams.
+  describe.each([
+    ["a fill", true],
+    ["any other partial request", undefined],
+  ])("the signal of %s", (_label, fill) => {
+    let decoded: Response | undefined;
+    const decode = vi.fn(async (responsePromise: Promise<Response>) => {
+      decoded = await responsePromise;
+      return { metadata: { matched: [], diff: [], isPartial: true } };
+    });
+
+    it("cancels the request while it waits for its response", async () => {
+      let init: RequestInit | undefined;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          (_input: RequestInfo | URL, requestInit?: RequestInit) =>
+            new Promise<Response>((_resolve, reject) => {
+              init = requestInit;
+              requestInit!.signal!.addEventListener("abort", () =>
+                reject(requestInit!.signal!.reason),
+              );
+            }),
+        ) as unknown as typeof fetch,
+      );
+      const client = createNavigationClient({
+        createFromFetch: decode,
+      } as any);
+      const controller = new AbortController();
+      const request = client.fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/current",
+        segmentIds: [],
+        fill,
+        signal: controller.signal,
+      });
+      await Promise.resolve();
+      controller.abort();
+
+      await expect(request).rejects.toMatchObject({ name: "AbortError" });
+      expect(init!.signal!.aborted).toBe(true);
+    });
+
+    it("leaves a response that has arrived to stream to its end, read whole", async () => {
+      let init: RequestInit | undefined;
+      let body!: ReadableStreamDefaultController<Uint8Array>;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (_input: RequestInfo | URL, requestInit?: RequestInit) => {
+          init = requestInit;
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                body = controller;
+              },
+            }),
+            { status: 200 },
+          );
+        }) as unknown as typeof fetch,
+      );
+      const client = createNavigationClient({
+        createFromFetch: decode,
+      } as any);
+      const controller = new AbortController();
+      const result = await client.fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/current",
+        segmentIds: [],
+        fill,
+        signal: controller.signal,
+      });
+
+      body.enqueue(new TextEncoder().encode("a"));
+      controller.abort();
+      expect(init!.signal!.aborted).toBe(false);
+      body.enqueue(new TextEncoder().encode("b"));
+      body.close();
+      // The decoder's branch of the body: the abort cancelled only the branch
+      // that tracks the end of the stream (response-adapter.ts
+      // teeWithCompletion), which ends streamComplete at the abort.
+      expect(await decoded!.text()).toBe("ab");
+      await expect(result.streamComplete).resolves.toBeUndefined();
+    });
   });
 
   it("keeps fragment passthrough disabled after this document observed corruption", async () => {
@@ -834,6 +926,67 @@ describe("navigation-client", () => {
     it("does not override the cache mode when no action fence is active", async () => {
       const init = await freshFetchInit();
       expect(init.cache).toBeUndefined();
+    });
+  });
+
+  // prefetch: false (docs/design/prefetch-false.md, R5 and R7): the request
+  // that follows an adopted prefetch with deferred segments.
+  describe("fill request", () => {
+    async function fill() {
+      const fetchMock = vi.fn(
+        async (_url: string | URL, _init?: RequestInit) =>
+          new Response(null, { status: 200 }),
+      );
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+      // A prefetch of the same page is in the cache, complete.
+      consumePrefetchMock.mockReturnValue(makeEntry({}, "wildcard", true));
+      const client = createNavigationClient({
+        createFromFetch: async (responsePromise: Promise<Response>) => {
+          await responsePromise;
+          return { metadata: { matched: [], diff: [], isPartial: true } };
+        },
+      } as any);
+      const result = await client.fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/products",
+        segmentIds: ["root", "route"],
+        fill: true,
+      });
+      const [url, init] = fetchMock.mock.calls[0]!;
+      return {
+        url: new URL(String(url)),
+        init: init as RequestInit,
+        fetchMock,
+        result,
+      };
+    }
+
+    it("marks the URL and lists the segments the client holds", async () => {
+      const { url } = await fill();
+      expect(url.searchParams.get("_rsc_fill")).toBe("1");
+      expect(url.searchParams.get("_rsc_partial")).toBe("true");
+      expect(url.searchParams.get("_rsc_segments")).toBe("root,route");
+    });
+
+    it("is never answered from a prefetch, in memory or in flight", async () => {
+      const { fetchMock, result } = await fill();
+      expect(consumePrefetchMock).not.toHaveBeenCalled();
+      expect(consumeInflightPrefetchMock).not.toHaveBeenCalled();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(result.fullyPrefetched).toBe(false);
+    });
+
+    it("bypasses the HTTP cache and is not a prefetch", async () => {
+      const { init } = await fill();
+      expect(init.cache).toBe("no-store");
+      expect(
+        (init.headers as Record<string, string>)["X-Rango-Prefetch"],
+      ).toBeUndefined();
+    });
+
+    it("cancels no prefetch: the page it completes keeps its links warm", async () => {
+      await fill();
+      expect(cancelAllPrefetchesMock).not.toHaveBeenCalled();
     });
   });
 });

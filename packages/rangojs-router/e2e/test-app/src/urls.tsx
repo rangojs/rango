@@ -66,6 +66,7 @@ import { buildSkipPatterns } from "./urls/prerender-build-skip.js";
 import { prerenderCtxPatterns } from "./urls/prerender-ctx.js";
 import { prerenderLoadingPatterns } from "./urls/prerender-loading.js";
 import { loadingRedirectPatterns } from "./urls/loading-redirect.js";
+import { prefetchFalsePatterns } from "./urls/prefetch-false.js";
 import { redirectGuardPatterns } from "./urls/redirect-guard.js";
 import { suffixOverlapPatterns } from "./urls/suffix-overlap.js";
 import { reverseAutofillPatterns } from "./urls/reverse-autofill.js";
@@ -133,6 +134,8 @@ import { clientUrlsVarsMiddleware } from "./urls/client-urls-vars-shared.js";
 import clientUrlsInterceptPatterns from "./urls/client-urls-intercept.js";
 import clientUrlsTransitionPatterns from "./urls/client-urls-transition.js";
 import clientUrlsActionPatterns from "./urls/client-urls-action.js";
+import heldHandlesClientPatterns from "./urls/held-handles.client-urls.js";
+import { heldHandlesPatterns } from "./urls/held-handles.js";
 import clientUrlsSlowPatterns, { SlowChrome } from "./urls/client-urls-slow.js";
 import { getClientUrlsActionCount } from "./urls/client-urls-action.store.js";
 import { ClientUrlsItemLoader } from "./urls/client-urls.loader.js";
@@ -972,6 +975,12 @@ export const urlpatterns = urls(
           name: "clientAction",
         }),
       ]),
+      // A loader whose rerun an action skips keeps its handle pushes (#1103):
+      // clientUrls() group and the ordinary urls() twin.
+      include("/held-handles-client", heldHandlesClientPatterns, {
+        name: "heldHandlesClient",
+      }),
+      include("/", heldHandlesPatterns, { name: "" }),
       intercept(
         "@modal",
         ".clientIntercept.item",
@@ -1221,6 +1230,12 @@ export const urlpatterns = urls(
       // a real HTTP redirect before the streamed loading() boundary takes over.
       include("/loading-redirect", loadingRedirectPatterns, {
         name: "loadingRedirect",
+      }),
+
+      // prefetch: false on loader() and loading(): one page per case, with
+      // server-side run counters (docs/design/prefetch-false.md).
+      include("/prefetch-false", prefetchFalsePatterns, {
+        name: "prefetchFalse",
       }),
 
       // Suffix-param longest-wins (#568): overlapping suffixes resolve by

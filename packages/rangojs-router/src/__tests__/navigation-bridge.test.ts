@@ -751,10 +751,10 @@ describe("navigation-bridge handlePopstate intercept exit", () => {
     });
 
     createNavigationTransactionMock.mockReturnValue({
-      handle: { signal: undefined },
+      handle: { signal: new AbortController().signal },
       with: (overrides: Record<string, unknown>) => ({
         ...overrides,
-        handle: { signal: undefined },
+        handle: { signal: new AbortController().signal },
       }),
       [Symbol.dispose]: vi.fn(),
     });
@@ -798,10 +798,10 @@ describe("navigation-bridge handlePopstate intercept exit", () => {
     });
 
     createNavigationTransactionMock.mockReturnValue({
-      handle: { signal: undefined },
+      handle: { signal: new AbortController().signal },
       with: (overrides: Record<string, unknown>) => ({
         ...overrides,
-        handle: { signal: undefined },
+        handle: { signal: new AbortController().signal },
       }),
       [Symbol.dispose]: vi.fn(),
     });

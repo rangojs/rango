@@ -238,6 +238,143 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 ])
 ```
 
+### `loading()` options
+
+`loading(fallback, options?)` takes two options:
+
+| Option            | Effect                                                                                                                      |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `ssr: false`      | Skip the fallback on document requests; it shows on client navigations only.                                                |
+| `prefetch: false` | Keep everything behind this fallback out of `<Link>` prefetches; the click shows the fallback and fetches that part itself. |
+
+```tsx
+path("/orders", OrdersPage, { name: "orders" }, () => [
+  loader(OrdersLoader),
+  loading(<OrdersSkeleton />, { prefetch: false }),
+]),
+```
+
+**What `prefetch: false` defers.** The flag applies when the entry is new to
+the browser: the page the prefetch is sent from does not show it. A prefetch
+then skips the entry's handler, its loaders, its orphan layouts and its
+parallel slots. On a `layout()` the fallback covers the whole outlet, so every
+deeper entry is skipped with it. A parallel slot with its own flagged
+`loading()` is a separate unit: the route beside it still renders in the
+prefetch. The prefetch payload carries a placeholder for each skipped piece,
+marked deferred, with its fallback: the page's skeleton.
+
+**An entry the browser already holds is never deferred.** Inside a section
+whose `layout()` has a flagged `loading()`, the layout is on screen, so its
+flag has no say: a prefetch of a sibling route renders that route's handler
+and loaders as usual, and the click sends no second request. The same goes for
+a same-route navigation (`/product/a` to `/product/b`). The rule behind it:
+a click that adopts a prefetch is never worse than the same click with no
+prefetch at all (two exceptions, under "Limits": a click before its
+prefetch has answered, and a flagged `layout()` entered from outside). It
+shows the next page, or its skeleton, at the click and never later than that
+plain navigation, the router adds no wait of its own, and it never replaces
+content that is on screen with a fallback. The deferred part arrives after
+the click and React reveals it as it reveals any streaming content: a read
+inside it can show its own fallback where the plain navigation showed the
+whole page a little later. For
+the same reason a prefetch that deferred something is used only on the page
+that made it: a page that already shows the entry makes its own prefetch,
+which defers nothing for it. To keep navigation _inside_ a section out of
+prefetches, flag the `loading()` of the routes in it:
+
+```tsx
+layout(AccountLayout, () => [
+  // From outside /account: the layout and the route below wait together.
+  loading(<AccountSkeleton />, { prefetch: false }),
+  // From another /account page: prefetched whole, the layout is on screen.
+  path("/account/profile", ProfilePage, { name: "account.profile" }),
+  // From another /account page: still deferred, by its own flag.
+  path("/account/orders", OrdersPage, { name: "account.orders" }, () => [
+    loader(OrdersLoader),
+    loading(<OrdersSkeleton />, { prefetch: false }),
+  ]),
+]),
+```
+
+**What the click looks like.** The click that adopts the prefetch commits at
+once: the URL changes, the prefetched content shows, and the fallback shows
+where the deferred part goes. The browser sends one second request (the fill)
+that runs only the deferred work. The page is built once, from the skeleton:
+the fill resolves what it is waiting for, and nothing on it is mounted a
+second time. The fill reads `cache()` and `"use cache"`
+as any request does; the prefetch read neither for the work it skipped. A hard
+load, a navigation with nothing prefetched, an action and back/forward run
+everything as before.
+
+**Under `transition()` the click commits with the fill.** A route with
+`transition()` commits in a transition: with no prefetch, React keeps the page
+being left until the response starts and then shows the new page with its
+fallback. A prefetched click to a flagged `loading()` on such a route does the
+same with its fill: the fallback shows with the fill's first chunk, as a plain
+click's shows with its response, not at the click. The same holds when the
+`transition()` is on something the fallback covers, such as a route under a
+flagged layout. Nothing changes at the click: `useNavigation()` reads
+`loading`, and the URL, the URL hooks and the page change together, fallback
+included, when the fill starts answering. So the click is the plain click's equal
+there, not ahead of it; what the prefetch saves is the rest of the page,
+which is not fetched again.
+(Shown with the click, the content could only arrive in a second commit,
+which under a `<ViewTransition>` runs a view transition of its own and delays
+the reveal.) `loader(Def, { prefetch: false })` on a `transition()` route is
+not affected: the page shows with the click.
+
+**Stored output is still served.** Under `cache()`, on a `ppr` route and for a
+`Prerender`/`Static` handler, the handler output is stored, so the prefetch
+looks it up, renders it and writes it exactly as before, hit or miss. Only the
+loaders behind the fallback are deferred: for a flagged `layout()` that is
+every loader below it, although the stored layout is served. The flag keeps
+the block's work, its loaders included, out of prefetches. See `/caching`,
+`/ppr` and `/prerender`.
+
+**Limits.**
+
+- A click before its prefetch has answered reuses that prefetch, waits for
+  it and then fetches the deferred part. The page shows no later than with no
+  prefetch; the deferred part can complete later, by up to what was left of
+  the prefetch. That is the price of keeping expensive or slow work out of
+  every prefetch, which is what the flag is for. See `/loader` →
+  "`prefetch: false`".
+- A navigation started before the fill answers cancels it, and `navigate()`
+  resolves only once the fill has answered. A newer navigation that ends
+  without replacing the page leaves the fallback up until the next one. See
+  `/loader` → "`prefetch: false`".
+- It needs a renderable fallback. `loading(false)` has nothing to show, so the
+  flag does nothing there. The last `loading()` on an entry wins, flag
+  included.
+- A loader behind the fallback cannot call `ctx.rendered()`; it throws on every
+  request kind. See `/loader` → "`prefetch: false`" for this and the other
+  loader limits (`ctx.set()` values, late `redirect()`/`notFound()`, a loader a
+  handler awaits).
+- A layout the client already holds is not deferred (its fallback would not
+  show). To keep navigation inside it out of prefetches, flag the route's own
+  `loading()`.
+- On a `layout()` entered from a page without it, the prefetch skips the
+  layout's own handler too. This is the one place where a prefetched click
+  shows a different page from a click with no prefetch, by design: it shows
+  the skeleton at once, over the layout's whole area, and the layout appears
+  once what its own `loading()` covers has arrived (the layout, its own
+  loaders, and the components below it with no `loading()` of their own), at
+  least React's 300 ms after the skeleton. A click with no prefetch, in a
+  production build, shows the layout with its first chunk and the fallback
+  inside it. The covered content is no later with the prefetch. A loader
+  below the layout streams as with no prefetch, and what is still pending
+  shows its fallback inside the layout: a route's own `loading()`, a
+  `<Suspense>` in its content, or, for a read with no boundary of its own,
+  the layout's own fallback a second time. React keeps that fallback up at
+  least 300 ms and holds the page's other reveals as long, so content that
+  would have shown sooner shows up to 300 ms later than with no prefetch.
+- An orphan layout's flagged `loading()` defers its loaders but not its
+  handler: the route's handler has already run by then.
+- `clientUrls()` routes and `intercept()` ignore the flag.
+
+To defer a single loader and keep the handler in the prefetch, use
+`loader(Def, { prefetch: false })` instead (see `/loader`).
+
 A `loading()` skeleton that has appeared stays at least about 300 ms before React reveals what replaces it (React's fallback throttle, [#1078](https://github.com/rangojs/rango/issues/1078)); see "Streaming with Suspense" in [loader](../loader/SKILL.md).
 
 ## Handler Data Ownership

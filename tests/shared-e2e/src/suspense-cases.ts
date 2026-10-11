@@ -105,8 +105,12 @@ export const SUSPENSE_CASES_OPEN_DEV: Record<string, string> = {
   "a clientUrls() same-route navigation is one commit": ONE_COMMIT,
 };
 // A build only: in dev the fallback shows while a client reference loads.
+// The loading() case is not open in a build: the prefetched clientUrls()
+// destination commits once there (prefetch: false review fixes).
 export const SUSPENSE_CASES_OPEN_PRODUCTION: Record<string, string> = {
-  ...SUSPENSE_CASES_OPEN_DEV,
+  "a clientUrls() navigation to a route with an inline boundary is one commit":
+    ONE_COMMIT,
+  "a clientUrls() same-route navigation is one commit": ONE_COMMIT,
   "a client component directly in a route's content does not show the route's loading() on a cold click":
     "#1079: the click is the first use of the client component's module in the document; its chunk is already fetched, but the Flight client waits for the module's import() (3 to 6 ms) and the route's loading() is the nearest boundary: 300 ms. Likely fix, not built: #1084 candidate a (src/browser/settle-client-references.ts on experiment/vt-idle-transition), which settles a payload's client references before its first commit",
 };

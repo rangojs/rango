@@ -822,6 +822,49 @@ describe("createDocumentCacheMiddleware", () => {
       expect(response.headers.has("x-document-cache-status")).toBe(false);
     });
 
+    // prefetch: false (R7): a fill is the second half of one adoption,
+    // rendered against what that client holds.
+    it("should neither store nor serve a fill request", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      const middleware = createDocumentCacheMiddleware();
+      const fillUrl =
+        "http://localhost/page?_rsc_partial=true&_rsc_segments=root&_rsc_fill=1";
+      const cacheable = (body: string) =>
+        vi
+          .fn()
+          .mockResolvedValue(
+            new Response(body, { headers: { "Cache-Control": "s-maxage=60" } }),
+          );
+
+      // A navigation with the same segment list is stored first.
+      await middleware(
+        createMockMiddlewareContext(
+          "http://localhost/page?_rsc_partial=true&_rsc_segments=root",
+        ),
+        cacheable("navigation"),
+      );
+      await vi.runAllTimersAsync();
+      expect(mockStore.cache.size).toBe(1);
+
+      const next = cacheable("fill");
+      const response = (await middleware(
+        createMockMiddlewareContext(fillUrl),
+        next,
+      )) as Response;
+      await vi.runAllTimersAsync();
+
+      expect(next).toHaveBeenCalledTimes(1);
+      expect(await response.text()).toBe("fill");
+      expect(response.headers.has("x-document-cache-status")).toBe(false);
+      expect(mockStore.cache.size).toBe(1);
+    });
+
     it("should skip configured paths", async () => {
       const { createDocumentCacheMiddleware } =
         await import("../document-cache.js");
@@ -1101,6 +1144,196 @@ describe("createDocumentCacheMiddleware", () => {
       expect(probeNext).toHaveBeenCalledTimes(1);
       expect(probeResponse.headers.get("x-document-cache-status")).toBe("MISS");
       expect(await probeResponse.text()).toBe("decoded elements");
+    });
+
+    // prefetch: false (docs/design/prefetch-false.md, R7). One slot per key,
+    // read once, as without the feature: a response that carries deferred
+    // units is never written, so every stored body is complete and answers a
+    // navigation and a prefetch alike.
+    describe("a prefetch and a navigation share one slot", () => {
+      const url =
+        "http://localhost/page?_rsc_partial=true&_rsc_segments=root,layout";
+      const PREFETCH = { "X-Rango-Prefetch": "1" };
+
+      async function slot() {
+        const { createDocumentCacheMiddleware } =
+          await import("../document-cache.js");
+        const middleware = createDocumentCacheMiddleware();
+        const originalModule = await import("../../server/request-context.js");
+        const reads = vi.spyOn(mockStore, "getResponse");
+        const writes = vi.spyOn(mockStore, "putResponse");
+        const serve = async (
+          body: string,
+          options: {
+            prefetch?: boolean;
+            /** The render marks its payload as carrying deferred units. */
+            deferring?: boolean;
+            cacheControl?: string;
+            at?: string;
+          } = {},
+        ) => {
+          // One request context per request, as in production.
+          mockRequestCtx = createMockRequestContext(mockStore);
+          vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+            mockRequestCtx as any,
+          );
+          reads.mockClear();
+          writes.mockClear();
+          const requestCtx = mockRequestCtx as any;
+          const next = vi.fn(async () => {
+            if (options.deferring) requestCtx._payloadDeferred = true;
+            return new Response(body, {
+              headers: {
+                "Cache-Control":
+                  options.cacheControl ??
+                  "s-maxage=60, stale-while-revalidate=600",
+              },
+            });
+          });
+          const response = (await middleware(
+            createMockMiddlewareContext(options.at ?? url, {
+              headers: options.prefetch ? PREFETCH : undefined,
+            }),
+            next,
+          )) as Response;
+          const status = response.headers.get("x-document-cache-status");
+          const text = await response.text();
+          await vi.runAllTimersAsync();
+          return {
+            status,
+            body: text,
+            reads: reads.mock.calls.length,
+            writes: writes.mock.calls.length,
+          };
+        };
+        return { serve, keys: () => [...mockStore.cache.keys()] };
+      }
+
+      it("reads the store once per request, whatever its kind", async () => {
+        const { serve, keys } = await slot();
+        expect(await serve("page", { prefetch: true })).toEqual({
+          status: "MISS",
+          body: "page",
+          reads: 1,
+          writes: 1,
+        });
+        expect(await serve("unused")).toEqual({
+          status: "HIT",
+          body: "page",
+          reads: 1,
+          writes: 0,
+        });
+        expect(await serve("unused", { prefetch: true })).toEqual({
+          status: "HIT",
+          body: "page",
+          reads: 1,
+          writes: 0,
+        });
+        expect(
+          await serve("<html>", { at: "http://localhost/page" }),
+        ).toMatchObject({ status: "MISS", reads: 1, writes: 1 });
+        // The partial key and the document key: no slot of its own for a
+        // prefetch.
+        expect(keys()).toHaveLength(2);
+      });
+
+      it("a navigation warms what a prefetch reads", async () => {
+        const { serve } = await slot();
+        expect((await serve("page")).status).toBe("MISS");
+        expect(await serve("unused", { prefetch: true })).toEqual({
+          status: "HIT",
+          body: "page",
+          reads: 1,
+          writes: 0,
+        });
+      });
+
+      it("a response that carries deferred units is not written", async () => {
+        const { serve, keys } = await slot();
+        const deferring = { prefetch: true, deferring: true };
+        for (const body of ["deferred", "deferred again"]) {
+          // No status: the response is not one this cache stores.
+          expect(await serve(body, deferring)).toEqual({
+            status: null,
+            body,
+            reads: 1,
+            writes: 0,
+          });
+        }
+        expect(keys()).toEqual([]);
+        // So a navigation with the same key renders its own body.
+        expect(await serve("complete")).toMatchObject({
+          status: "MISS",
+          body: "complete",
+          writes: 1,
+        });
+        expect((await serve("unused")).body).toBe("complete");
+      });
+
+      // rsc-rendering.ts answers such a response with `private, no-cache`,
+      // which this cache refuses on its own. The marker holds when an app
+      // middleware writes Cache-Control after next().
+      it("refuses it whatever Cache-Control the response ends up with", async () => {
+        const { serve, keys } = await slot();
+        await serve("deferred", {
+          prefetch: true,
+          deferring: true,
+          cacheControl: "public, s-maxage=3600",
+        });
+        expect(keys()).toEqual([]);
+      });
+
+      it("a stored complete body answers the prefetch that would have deferred", async () => {
+        const { serve } = await slot();
+        await serve("complete");
+        // Complete, so the click that adopts it sends no fill.
+        expect(
+          await serve("unused", { prefetch: true, deferring: true }),
+        ).toEqual({ status: "HIT", body: "complete", reads: 1, writes: 0 });
+      });
+
+      it("a stale complete body is served to a prefetch whose refresh defers, and is left for a navigation to refresh", async () => {
+        const { serve } = await slot();
+        await serve("complete");
+        vi.advanceTimersByTime(61_000);
+
+        const deferring = { prefetch: true, deferring: true };
+        for (let i = 0; i < 2; i++) {
+          // The refresh rendered the prefetch: nothing to store.
+          expect(await serve("deferred", deferring)).toEqual({
+            status: "STALE",
+            body: "complete",
+            reads: 1,
+            writes: 0,
+          });
+        }
+        expect(await serve("complete again")).toEqual({
+          status: "STALE",
+          body: "complete",
+          reads: 1,
+          writes: 1,
+        });
+        expect(await serve("unused", { prefetch: true })).toEqual({
+          status: "HIT",
+          body: "complete again",
+          reads: 1,
+          writes: 0,
+        });
+      });
+
+      it("a stale body is refreshed by a prefetch that defers nothing", async () => {
+        const { serve } = await slot();
+        await serve("page");
+        vi.advanceTimersByTime(61_000);
+
+        expect(await serve("page again", { prefetch: true })).toEqual({
+          status: "STALE",
+          body: "page",
+          reads: 1,
+          writes: 1,
+        });
+        expect((await serve("unused")).body).toBe("page again");
+      });
     });
 
     it("bypasses an existing response-cache hit during fragment recovery", async () => {

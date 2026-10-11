@@ -2,7 +2,7 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
-import { useEffect, useState, type ReactNode } from "react";
+import { Suspense, useEffect, useState, type ReactNode } from "react";
 import {
   createLocationState,
   Outlet,
@@ -34,11 +34,9 @@ import { clientUrls } from "../client-urls.js";
 import {
   beginClientUrlNavigation,
   clearClientUrlNavigationRegistry,
-  collectClientRevalidationDecisions,
   registerClientUrlGroup,
   setActiveInterceptTargets,
 } from "../navigation.js";
-import { decodeClientRevalidationDecisions } from "../revalidation-protocol.js";
 
 afterEach(() => {
   cleanup();
@@ -303,6 +301,97 @@ describe("ClientUrlsRoot", () => {
       (result.getByTestId("account-input") as HTMLInputElement).value,
     ).toBe("typed while pending");
     expect(accountMounts).toBe(1);
+  });
+
+  // prefetch: false (docs/design/prefetch-false.md, "`clientUrls()` routes"):
+  // the canonical commit of an adopted prefetch hands the group segment a
+  // deferred for each flagged loader, where the plain click hands it the
+  // response's stream. The destination is the same instance, and a read in
+  // its own boundary stays on that fallback until the fill resolves it.
+  it("keeps the destination and a flagged read's fallback across a commit whose loader is a hole, until it resolves", async () => {
+    const ReviewsLoader = {
+      __brand: "loader",
+      $$id: "loaders/reviews#ReviewsLoader",
+    } as LoaderDefinition<{ count: number }>;
+    let mounts = 0;
+    function Reviews(): ReactNode {
+      const { data } = useLoader(ReviewsLoader);
+      return <p>Reviews {data.count}</p>;
+    }
+    function ProductPage(): ReactNode {
+      const [text, setText] = useState("");
+      useEffect(() => {
+        mounts += 1;
+      }, []);
+      return (
+        <>
+          <input
+            data-testid="note"
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+          />
+          <Suspense fallback={<p>Loading reviews</p>}>
+            <Reviews />
+          </Suspense>
+        </>
+      );
+    }
+    const definition = clientUrls(({ layout, path, loader, loading }) => [
+      layout(AppLayout, () => [
+        path("/", HomePage),
+        path("/product", ProductPage, () => [
+          loader(ReviewsLoader, { prefetch: false }),
+          loading(<p>Loading product</p>),
+        ]),
+      ]),
+    ]);
+    // The group segment's provider (segment-system.tsx): its loader streams
+    // are what the canonical tree hands the group.
+    const segment = (routeId: string, streams?: Record<string, unknown>) => (
+      <OutletProvider content={null} loaderStreams={streams}>
+        <ClientUrlsRoot definition={definition} routeId={routeId} />
+      </OutletProvider>
+    );
+    const result = render(segment("client-route-0"));
+    const abort = new AbortController();
+    let presentation: ReturnType<typeof beginClientUrlNavigation> = null;
+    await act(async () => {
+      presentation = beginClientUrlNavigation(
+        new URL("http://localhost/product"),
+        abort.signal,
+      );
+    });
+    const input = result.getByTestId("note") as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "typed at the click" } });
+    });
+    expect(result.getByText("Loading reviews")).toBeDefined();
+
+    let resolveHole!: (value: { count: number }) => void;
+    const hole = new Promise<{ count: number }>((resolve) => {
+      resolveHole = resolve;
+    });
+    await act(async () => {
+      result.rerender(
+        segment("client-route-1", { [ReviewsLoader.$$id]: hole }),
+      );
+      presentation?.clear();
+    });
+    expect((result.getByTestId("note") as HTMLInputElement).value).toBe(
+      "typed at the click",
+    );
+    expect(result.getByText("Loading reviews")).toBeDefined();
+    expect(result.queryByText("Loading product")).toBeNull();
+    expect(result.container.querySelector("main")?.dataset.pending).toBe(
+      "false",
+    );
+
+    await act(async () => resolveHole({ count: 5 }));
+    expect(result.getByText("Reviews 5")).toBeDefined();
+    expect((result.getByTestId("note") as HTMLInputElement).value).toBe(
+      "typed at the click",
+    );
+    expect(mounts).toBe(1);
   });
 
   it("scopes route hooks to the optimistic branch", async () => {
@@ -779,208 +868,6 @@ describe("client-declared intercept rendering", () => {
     );
     expect(result.getByTestId("group-child")).toBeDefined();
     expect(result.getByTestId("group-slot")).toBeDefined();
-  });
-});
-
-describe("client revalidation decisions", () => {
-  function Page(): null {
-    return null;
-  }
-
-  const SessionLoader = {
-    __brand: "loader",
-    $$id: "loaders#session",
-  } as LoaderDefinition<unknown>;
-  const ItemLoader = {
-    __brand: "loader",
-    $$id: "loaders#item",
-  } as LoaderDefinition<unknown>;
-
-  it("runs per-loader predicates on the held route and encodes only non-default verdicts", () => {
-    // Session skips action revalidation; item follows defaults (no predicate).
-    const definition = clientUrls(({ path, loader, revalidate }) => [
-      path("/items/:itemId", Page, { name: "item" }, () => [
-        loader(SessionLoader, () => [
-          revalidate(({ isAction, defaultShouldRevalidate }) =>
-            isAction() ? false : defaultShouldRevalidate,
-          ),
-        ]),
-        loader(ItemLoader),
-      ]),
-    ]);
-    registerClientUrlGroup(definition, "/shop", "shop", () => {});
-
-    // Action on the held route: default true, session predicate says false.
-    const action = collectClientRevalidationDecisions({
-      currentUrl: new URL("http://localhost/shop/items/a"),
-      nextUrl: new URL("http://localhost/shop/items/a"),
-      actionRequest: true,
-      isAction: true,
-      actionId: "actions#bump",
-      stale: false,
-    });
-    expect(decodeClientRevalidationDecisions(action)).toEqual({
-      skip: ["loaders#session"],
-      force: [],
-    });
-
-    // Same-route param nav: default true (params changed), predicate returns
-    // the default — every verdict matches, so no header at all.
-    const paramNav = collectClientRevalidationDecisions({
-      currentUrl: new URL("http://localhost/shop/items/a"),
-      nextUrl: new URL("http://localhost/shop/items/b"),
-      actionRequest: false,
-      isAction: false,
-      stale: false,
-    });
-    expect(paramNav).toBeNull();
-  });
-
-  it("supports forcing revalidation against a false default (stale restores)", () => {
-    const definition = clientUrls(({ path, loader, revalidate }) => [
-      path("/", Page, { name: "index" }, () => [
-        loader(SessionLoader, () => [
-          revalidate(({ stale, defaultShouldRevalidate }) =>
-            stale ? true : defaultShouldRevalidate,
-          ),
-        ]),
-      ]),
-    ]);
-    registerClientUrlGroup(definition, "/", "", () => {});
-
-    const decisions = collectClientRevalidationDecisions({
-      currentUrl: new URL("http://localhost/"),
-      nextUrl: new URL("http://localhost/"),
-      actionRequest: false,
-      isAction: false,
-      stale: true,
-    });
-    expect(decodeClientRevalidationDecisions(decisions)).toEqual({
-      skip: [],
-      force: ["loaders#session"],
-    });
-  });
-
-  it("returns null without an active group or off-mount current location", () => {
-    expect(
-      collectClientRevalidationDecisions({
-        currentUrl: new URL("http://localhost/anywhere"),
-        nextUrl: new URL("http://localhost/anywhere"),
-        actionRequest: true,
-        isAction: true,
-        stale: false,
-      }),
-    ).toBeNull();
-
-    const definition = clientUrls(({ path, loader, revalidate }) => [
-      path("/", Page, { name: "index" }, () => [
-        loader(SessionLoader, () => [revalidate(() => false)]),
-      ]),
-    ]);
-    registerClientUrlGroup(definition, "/shop", "shop", () => {});
-    expect(
-      collectClientRevalidationDecisions({
-        currentUrl: new URL("http://localhost/elsewhere"),
-        nextUrl: new URL("http://localhost/shop"),
-        actionRequest: false,
-        isAction: false,
-        stale: false,
-      }),
-    ).toBeNull();
-  });
-
-  it("fails open to the default when a predicate throws", () => {
-    const definition = clientUrls(({ path, loader, revalidate }) => [
-      path("/", Page, { name: "index" }, () => [
-        loader(SessionLoader, () => [
-          revalidate(() => {
-            throw new Error("boom");
-          }),
-        ]),
-      ]),
-    ]);
-    registerClientUrlGroup(definition, "/", "", () => {});
-
-    // Action default is true; the throwing predicate keeps it — no header.
-    expect(
-      collectClientRevalidationDecisions({
-        currentUrl: new URL("http://localhost/"),
-        nextUrl: new URL("http://localhost/"),
-        actionRequest: true,
-        isAction: true,
-        stale: false,
-      }),
-    ).toBeNull();
-  });
-
-  it("wires makeIsAction into predicates so a matching ref can skip", () => {
-    const ACTION_ID = "src/actions/cart.ts#addToCart";
-    const addToCart = Object.assign(() => {}, { $id: ACTION_ID });
-    const definition = clientUrls(({ path, loader, revalidate }) => [
-      path("/", Page, { name: "index" }, () => [
-        loader(SessionLoader, () => [
-          revalidate(({ isAction }) => !isAction(addToCart)),
-        ]),
-      ]),
-    ]);
-    registerClientUrlGroup(definition, "/", "", () => {});
-
-    expect(
-      decodeClientRevalidationDecisions(
-        collectClientRevalidationDecisions({
-          currentUrl: new URL("http://localhost/"),
-          nextUrl: new URL("http://localhost/"),
-          actionRequest: true,
-          isAction: true,
-          actionId: ACTION_ID,
-          stale: false,
-        }),
-      ),
-    ).toEqual({ skip: ["loaders#session"], force: [] });
-    expect(
-      collectClientRevalidationDecisions({
-        currentUrl: new URL("http://localhost/"),
-        nextUrl: new URL("http://localhost/"),
-        actionRequest: true,
-        isAction: true,
-        actionId: "src/actions/other.ts#x",
-        stale: false,
-      }),
-    ).toBeNull();
-  });
-
-  it("action-triggered refetch GET: nav-default baseline, isAction() still true", () => {
-    // The refetch after an action is a GET the server evaluates WITHOUT
-    // actionContext (default false on a same-URL request). A predicate
-    // forcing on the matching action must therefore be ENCODED as force —
-    // with an action-default baseline (true) it would compare equal to the
-    // default and be silently dropped (server-action-bridge consolidation
-    // terminal, partial-update.ts).
-    const ACTION_ID = "src/actions/cart.ts#addToCart";
-    const addToCart = Object.assign(() => {}, { $id: ACTION_ID });
-    const definition = clientUrls(({ path, loader, revalidate }) => [
-      path("/", Page, { name: "index" }, () => [
-        loader(SessionLoader, () => [
-          revalidate(({ isAction }) =>
-            isAction(addToCart) ? true : undefined,
-          ),
-        ]),
-      ]),
-    ]);
-    registerClientUrlGroup(definition, "/", "", () => {});
-
-    expect(
-      decodeClientRevalidationDecisions(
-        collectClientRevalidationDecisions({
-          currentUrl: new URL("http://localhost/"),
-          nextUrl: new URL("http://localhost/"),
-          actionRequest: false,
-          isAction: true,
-          actionId: ACTION_ID,
-          stale: false,
-        }),
-      ),
-    ).toEqual({ skip: [], force: ["loaders#session"] });
   });
 });
 

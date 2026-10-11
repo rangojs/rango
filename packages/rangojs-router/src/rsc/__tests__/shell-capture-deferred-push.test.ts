@@ -17,6 +17,7 @@ import {
   type RequestContext,
 } from "../../server/request-context.js";
 import type { HandleData } from "../../server/handle-store.js";
+import { pushedByKey } from "../../handles/pushed-by.js";
 
 // Issue #1035: what a PPR shell capture does with a deferred (thenable)
 // handle push by a loader. Its record leaves the push out, so the capture's
@@ -106,6 +107,7 @@ describe("shell capture: a deferred loader push", () => {
 
     expect(await payloadHandles(derivedCtx, freshHandleStore)).toEqual({
       notes: { seg1: ["handler", "settled"] },
+      [pushedByKey("notes")]: { seg1: [null, "Loader"] },
     });
     // The payload renders what the record keeps, value for value.
     expect(freshHandleStore.getDataForSegment("seg1", true)).toEqual({
@@ -125,6 +127,7 @@ describe("shell capture: a deferred loader push", () => {
 
     expect(await payloadHandles(reqCtx, store)).toEqual({
       notes: { seg1: ["settled", "deferred"] },
+      [pushedByKey("notes")]: { seg1: ["Loader", "Loader"] },
     });
   });
 });

@@ -346,6 +346,21 @@ export function invariant(condition: any, message: string): asserts condition {
 }
 
 /**
+ * Rejects a boolean-only DSL option that holds anything else (undefined
+ * passes), as an invariant.
+ */
+export function assertBooleanOption(
+  value: unknown,
+  option: string,
+  effect: string,
+): void {
+  invariant(
+    value === undefined || typeof value === "boolean",
+    `${option} must be a boolean (got ${JSON.stringify(value)}). Omit it (or pass true) to ${effect}.`,
+  );
+}
+
+/**
  * Sanitize errors for production - prevents leaking sensitive information
  *
  * SECURITY CRITICAL:

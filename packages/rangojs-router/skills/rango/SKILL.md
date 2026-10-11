@@ -168,13 +168,16 @@ stated, greppable contract.
   only applies when the enclosing cache recomputes; put a value in a loader if it
   must be fresher. See `/cache-guide` → "Combining Both".
 - **A predicate runs where its effect lands.** A server-tree `revalidate()`
-  decides what the server re-sends, so it runs on the server; an `intercept({
+  and a `clientUrls()` loader's `revalidate()` decide what the server re-sends,
+  so they run on the server (the build hoists a group's predicate out of its
+  `"use client"` module and passes it the `urls()` arguments: `/client-urls`);
+  an `intercept({
 when })` selector decides what the server renders, so it runs on the server;
-  a `clientUrls()` `revalidate()` and `transition({ when })` decide a browser
-  commit, so they run in the browser. A browser predicate sees URLs, params,
-  route names, history state and action data, never `get()`, `env` or handler
-  state; in a server `urls()` it is written inline (the build hoists it into a
-  client module) or imported from a `"use client"` module (`/view-transitions`).
+  `transition({ when })` decides a browser commit, so it runs in the browser.
+  A `transition({ when })` predicate sees URLs, params, route names, history
+  state and action data, never `get()`, `env` or handler state; in a server
+  `urls()` it is written inline (the build hoists it into a client module) or
+  imported from a `"use client"` module (`/view-transitions`).
 - **Vocabulary.** `revalidate()` keeps React Router's `shouldRevalidate`
   dialect (`currentUrl`/`nextUrl`, `currentParams`/`nextParams`). Navigation
   selectors (`intercept({ when })`, `transition({ when })`) use `from`/`to`
@@ -269,6 +272,9 @@ the `path()` re-run; layouts and parallels above the route are skipped.
 // checkout succeeded; defer to the default otherwise
 revalidate((ctx) => (ctx.isAction(checkout) && ctx.actionResult?.ok) || undefined),
 ```
+
+The same `actionResult` idiom works in a `clientUrls()` group's loader
+`revalidate()`, which runs on the server with these arguments.
 
 **The source is the source of truth.** Structure, types, and update policy are
 visible and local in the tree — read top-down, no hidden global model to hold in

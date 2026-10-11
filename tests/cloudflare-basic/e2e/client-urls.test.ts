@@ -81,7 +81,7 @@ function runClientUrlsSpec(f: Fixture): void {
     await expect(page).toHaveURL(f.url("/__client-urls"));
   });
 
-  test("client revalidate() isAction() matches a target action and a namespace import", async ({
+  test("a group loader's revalidate() isAction() matches a target action and a namespace import", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
@@ -108,6 +108,32 @@ function runClientUrlsSpec(f: Fixture): void {
     await expect(testId(page, "cu-is-action-target-runs")).toHaveText(
       String(afterTarget),
     );
+  });
+
+  test("a group loader's revalidate() sees the action result: re-runs after ok, holds after fail", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(f.url("/__client-urls"));
+    await waitForHydration(page);
+    await using __ = await expectNoReload(page);
+
+    const readResult = (): Promise<number> =>
+      getNumericContent(testId(page, "cu-result-runs"));
+    const readNs = (): Promise<number> =>
+      getNumericContent(testId(page, "cu-is-action-ns-runs"));
+
+    const before = await readResult();
+    await testId(page, "cu-result-ok").click();
+    await expect.poll(readResult).toBeGreaterThan(before);
+    const afterOk = await readResult();
+
+    // The namespace-gated loader re-runs on every action of that module:
+    // once it advanced, the fail action's commit landed.
+    const nsBefore = await readNs();
+    await testId(page, "cu-result-fail").click();
+    await expect.poll(readNs).toBeGreaterThan(nsBefore);
+    await expect(testId(page, "cu-result-runs")).toHaveText(String(afterOk));
   });
 
   test("ssr:false document render keeps the large awaited grid in-place (no outlining)", async ({

@@ -1,5 +1,10 @@
-import { findEnclosingLoaderBody, isInsideLoaderScope } from "./context.js";
+import {
+  findEnclosingLoaderBody,
+  getHandlePushOwner,
+  isInsideLoaderScope,
+} from "./context.js";
 import { holdsThenable } from "../router/segment-resolution/mask-nested.js";
+import { pushedByKey } from "../handles/pushed-by.js";
 
 /**
  * Handle data structure: handleName -> segmentId -> entries[]
@@ -75,6 +80,12 @@ interface SlotTag {
   restoredOf?: string;
   /** A restored slot a dropped settled push of its loader stood in for. */
   matched?: true;
+  /**
+   * The loader whose run made the push, for the browser (pushed-by.ts): the
+   * DSL loader or loader body it is made in (getHandlePushOwner), else the
+   * loader a copy stands for. Unset for a handler's push.
+   */
+  by?: string;
 }
 
 // Shared by every plain DSL-loader push; tags are never mutated in place.
@@ -109,6 +120,24 @@ function cloneHandleData(data: HandleData): HandleData {
     }
   }
   return clone;
+}
+
+// SlotTag.by of each value, index-aligned; undefined when no value has one.
+function pushedByOf(
+  values: unknown[],
+  tags: (SlotTag | undefined)[] | undefined,
+  keep?: (i: number) => boolean,
+): (string | null)[] | undefined {
+  if (!tags) return undefined;
+  const by: (string | null)[] = [];
+  let any = false;
+  for (let i = 0; i < values.length; i++) {
+    if (keep && !keep(i)) continue;
+    const run = tags[i]?.by ?? null;
+    if (run !== null) any = true;
+    by.push(run);
+  }
+  return any ? by : undefined;
 }
 
 /**
@@ -297,7 +326,8 @@ export interface HandleStore {
    * nav/action payloads, whose consumer applies each yield progressively) or
    * "settled" (the document lane, whose consumers drain to completion in
    * blocking positions and must not wait on loader bodies).
-   * Each yield contains the full accumulated state (not just the delta).
+   * Each yield contains the full accumulated state (not just the delta),
+   * with the pushedBy records of its buckets (handles/pushed-by.ts).
    * Safe for concurrent consumers (per-consumer version cursor).
    * The "settled" lane of a frozen store (freezeDocumentSnapshot) yields the
    * frozen state once, at once, and ends. That yield is the store's own
@@ -330,6 +360,17 @@ export interface HandleStore {
     segmentId: string,
     excludeLoaderPushes?: boolean,
   ): Record<string, unknown[]>;
+
+  /**
+   * The loader whose run pushed each value in getDataForSegment(segmentId,
+   * excludeLoaderPushes), index-aligned per handle (null: the handler's).
+   * Handles without such a value are omitted; undefined when none has one.
+   * The browser's pushedBy record (handles/pushed-by.ts).
+   */
+  getPushedBy(
+    segmentId: string,
+    excludeLoaderPushes?: boolean,
+  ): Record<string, (string | null)[]> | undefined;
 
   /**
    * The push `owner` of each value in getDataForSegment(segmentId, true),
@@ -379,6 +420,14 @@ export function createHandleStore(): HandleStore {
   // (not value identity) so primitive values are covered too.
   // replaySegmentData installs fresh arrays, so restored values are untagged.
   const slotTags = new WeakMap<unknown[], (SlotTag | undefined)[]>();
+  // Frozen tags of plain pushes made by a run (SlotTag.by), one per loader.
+  const pushedBySlots = new Map<string, SlotTag>();
+  const pushedBySlot = (loader: true | undefined, by: string): SlotTag => {
+    const key = loader ? `L${by}` : `H${by}`;
+    let tag = pushedBySlots.get(key);
+    if (!tag) pushedBySlots.set(key, (tag = Object.freeze({ loader, by })));
+    return tag;
+  };
   // Copies standing in for a loader that has not pushed live yet: loaderId ->
   // the arrays holding them. Kept apart by kind: only a placeholder gives way
   // to a run that ends without a push, or to a cached unit's delivery.
@@ -602,6 +651,25 @@ export function createHandleStore(): HandleStore {
     }
   }
 
+  // What a stream yields: a copy of the data, with each bucket's pushedBy
+  // record (pushed-by.ts) for the browser's merge.
+  function snapshot(): HandleData {
+    const out: HandleData = {};
+    for (const handleName in data) {
+      const buckets: Record<string, unknown[]> = {};
+      let pushedBy: Record<string, (string | null)[]> | undefined;
+      for (const segmentId in data[handleName]) {
+        const values = data[handleName][segmentId];
+        buckets[segmentId] = [...values];
+        const by = pushedByOf(values, slotTags.get(values));
+        if (by) (pushedBy ??= {})[segmentId] = by;
+      }
+      out[handleName] = buckets;
+      if (pushedBy) out[pushedByKey(handleName)] = pushedBy;
+    }
+    return out;
+  }
+
   // Settlement barriers: `settled` (handler lane) resolves when sealed AND
   // handler inflight === 0. `fullySettled` additionally waits for the
   // auxiliary (loader) lane. seal() signals "no more track() calls"; each
@@ -812,6 +880,12 @@ export function createHandleStore(): HandleStore {
         at = restoredInsertIndex(values, restoredBy);
         if (replayOf === undefined) liveOf = restoredBy;
       }
+      const by =
+        getHandlePushOwner() ??
+        replayOf ??
+        restoredOf ??
+        placeholderOf ??
+        owner;
       insertSlot(
         values,
         at,
@@ -829,10 +903,13 @@ export function createHandleStore(): HandleStore {
               liveOf,
               under,
               owner,
+              by,
             }
-          : loader
-            ? LOADER_SLOT
-            : undefined,
+          : by !== undefined
+            ? pushedBySlot(loader, by)
+            : loader
+              ? LOADER_SLOT
+              : undefined,
       );
       if (replayOf !== undefined) {
         addPending(pendingReplays, replayOf, values);
@@ -958,7 +1035,7 @@ export function createHandleStore(): HandleStore {
         if (this.onError) this.onError(error);
         else console.error(error);
       }
-      documentSnapshot = { version, data: cloneHandleData(data) };
+      documentSnapshot = { version, data: snapshot() };
     },
 
     async *stream(
@@ -1005,7 +1082,7 @@ export function createHandleStore(): HandleStore {
       while (true) {
         if (version > seen && Object.keys(data).length > 0) {
           seen = version;
-          yield cloneHandleData(data);
+          yield snapshot();
         }
         if (done) break;
         await waitForEmission(seen, () => done);
@@ -1043,7 +1120,7 @@ export function createHandleStore(): HandleStore {
       while (true) {
         if (version > seen) {
           seen = version;
-          yield cloneHandleData(data);
+          yield snapshot();
         }
         if (done) break;
         await waitForEmission(seen, () => done);
@@ -1065,6 +1142,25 @@ export function createHandleStore(): HandleStore {
         }
         const kept = values.filter((_, i) => !tags[i]?.loader);
         if (kept.length > 0) result[handleName] = kept;
+      }
+      return result;
+    },
+
+    getPushedBy(
+      segmentId: string,
+      excludeLoaderPushes?: boolean,
+    ): Record<string, (string | null)[]> | undefined {
+      let result: Record<string, (string | null)[]> | undefined;
+      for (const handleName in data) {
+        const values = data[handleName][segmentId];
+        if (!values) continue;
+        const tags = slotTags.get(values);
+        const by = pushedByOf(
+          values,
+          tags,
+          excludeLoaderPushes ? (i) => !tags?.[i]?.loader : undefined,
+        );
+        if (by) (result ??= {})[handleName] = by;
       }
       return result;
     },

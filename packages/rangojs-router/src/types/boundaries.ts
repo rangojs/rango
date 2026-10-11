@@ -104,6 +104,18 @@ export function isLoaderDataResult(value: unknown): value is LoaderDataResult {
   );
 }
 
+/**
+ * A loading skeleton is renderable only when it is a real ReactNode value;
+ * `false` counts as "not renderable". This is the three-term gate. The
+ * distinct two-term gate at the LoaderBoundary site (segment-system.tsx)
+ * deliberately treats `false` as "create a boundary without a
+ * RouteContentWrapper" (tree-structure.md), so it must NOT use this helper.
+ * Leaf module: shared by client (segment-system) and server (DSL, resolution).
+ */
+export function isRenderableLoading(loading: unknown): boolean {
+  return loading !== undefined && loading !== null && loading !== false;
+}
+
 export interface NotFoundInfo {
   message: string;
   segmentId: string;

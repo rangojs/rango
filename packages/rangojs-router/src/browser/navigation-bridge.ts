@@ -5,6 +5,7 @@ import type {
   NavigateOptionsInternal,
   ResolvedSegment,
 } from "./types.js";
+import { isPlaceholder } from "../types/segments.js";
 import { setAppVersion } from "./app-version.js";
 import { isActionFenceActive } from "./action-fence.js";
 import { getRangoState } from "./rango-state.js";
@@ -14,7 +15,12 @@ import {
   createNavigationTransaction,
   resolveNavigationState,
 } from "./navigation-transaction.js";
-import { buildHistoryState, pushHistoryWithIdx } from "./history-state.js";
+import {
+  buildHistoryState,
+  mergeLocationState,
+  pushHistoryWithIdx,
+} from "./history-state.js";
+import { consumeHandles } from "./react/NavigationProvider.js";
 import {
   handleNavigationStart,
   handleNavigationEnd,
@@ -121,6 +127,21 @@ export function setupNavigationBridgeDelegatedPrefetch(
 }
 
 /**
+ * A history entry's segments, when they can be shown. An entry left before
+ * its fill landed (`prefetch: false`) holds placeholders, not segments:
+ * restoring it would suspend on holes nobody resolves, so it is fetched.
+ */
+function isRestorable(
+  segments: ResolvedSegment[] | undefined,
+): segments is ResolvedSegment[] {
+  return (
+    segments !== undefined &&
+    segments.length > 0 &&
+    !segments.some(isPlaceholder)
+  );
+}
+
+/**
  * Create a navigation bridge for handling client-side navigation
  *
  * The bridge coordinates all navigation operations:
@@ -154,6 +175,20 @@ export function createNavigationBridge(
     onUpdate,
     renderSegments,
     getVersion: () => version,
+    fill: {
+      // A fill follows a redirect as a navigation (`bridge` is below).
+      redirect: (url, state) =>
+        void bridge.navigate(url, { state, replace: true, _skipCache: true }),
+      // No payload follows (`treeless`): the entry's readers are told now.
+      locationState: (state) => {
+        eventController.commitLocationState(mergeLocationState(state), true);
+        eventController.flushRouteState();
+      },
+      handles: (metadata) => {
+        if (metadata.handles) consumeHandles(metadata, eventController, store);
+      },
+      flush: eventController.flushRouteState,
+    },
   });
 
   /**
@@ -195,7 +230,7 @@ export function createNavigationBridge(
     });
   }
 
-  return {
+  const bridge: NavigationBridge = {
     /**
      * Navigate to a URL
      * Uses cached segments for SWR revalidation when available
@@ -358,8 +393,10 @@ export function createNavigationBridge(
         );
         cachedSegments = cachedSegments.map((targetSeg) => {
           const sourceSeg = sourceSegmentMap.get(targetSeg.id);
-          // Use source (current page) version for shared segments - it's fresher
-          return sourceSeg || targetSeg;
+          // Use source (current page) version for shared segments - it's
+          // fresher. A placeholder waiting for its fill (prefetch: false) is
+          // not a copy of the segment: the target keeps its own.
+          return sourceSeg && !isPlaceholder(sourceSeg) ? sourceSeg : targetSeg;
         });
       }
 
@@ -376,8 +413,7 @@ export function createNavigationBridge(
       // 4. redirect-with-state - force re-render so hooks read fresh state
       // 5. stale cache - server action invalidated it, need fresh data with loading state
       const hasUsableCache =
-        cachedSegments &&
-        cachedSegments.length > 0 &&
+        isRestorable(cachedSegments) &&
         !isInterceptOnlyCache(cachedSegments) &&
         !hasInterceptCache &&
         !isLeavingIntercept &&
@@ -465,7 +501,9 @@ export function createNavigationBridge(
                       targetCacheHandleData: cachedHandleData,
                     }
                   : {}),
-                optimisticPresented: clientUrlPresentation !== null,
+                ...(clientUrlPresentation && {
+                  presentation: clientUrlPresentation,
+                }),
               },
         );
       } catch (error) {
@@ -582,7 +620,9 @@ export function createNavigationBridge(
      * Uses cached segments when available for instant restoration
      */
     async handlePopstate(): Promise<void> {
-      // Abort any pending navigation to prevent race conditions
+      // Abort any pending navigation to prevent race conditions, and the
+      // fill of the page being left (prefetch: false), which its committed
+      // navigation still owns.
       eventController.abortNavigation();
       handleTraversalStart();
 
@@ -650,7 +690,7 @@ export function createNavigationBridge(
       // revalidates (SWR) instead of serving it as fresh.
       const isStale = (cached?.stale ?? false) || isActionFenceActive();
 
-      if (cachedSegments && cachedSegments.length > 0) {
+      if (isRestorable(cachedSegments)) {
         // transition({ when }) decides the restore (kind "pop") against the
         // entry being left, so before the store moves to the restored entry.
         // The decision the entry was committed with is not reused: it was
@@ -820,8 +860,12 @@ export function createNavigationBridge(
               ? { type: "leave-intercept" }
               : undefined,
         );
-        // Restore scroll position after fetch completes
-        handleNavigationEnd({ restore: true, isStreaming });
+        // Restore scroll position after fetch completes. A traversal that
+        // was left returns here too, its response ignored: it restores
+        // nothing.
+        if (!tx.handle.signal.aborted) {
+          handleNavigationEnd({ restore: true, isStreaming });
+        }
       } catch (error) {
         // Aborted or superseded by a newer navigation: bail without clobbering
         // content with a boundary (see navigate()).
@@ -890,13 +934,16 @@ export function createNavigationBridge(
       // 3. The user presses back and the browser restores from bfcache
       // At that point, currentNavigation is still set from step 1, so
       // getState() returns "loading" and the progress bar shows.
-      // Abort the stale navigation to reset state to idle.
+      // Abort the stale navigation to reset state to idle. Only that one: the
+      // page restored is not being left, so a committed navigation's
+      // prefetch: false fill keeps its signal, and fails as a navigation if
+      // the browser dropped its request while the page was frozen.
       const handlePageShow = (event: PageTransitionEvent) => {
         if (event.persisted) {
           debugLog(
             "[Browser] Page restored from bfcache, resetting navigation state",
           );
-          eventController.abortNavigation();
+          eventController.abortNavigation(true);
         }
       };
 
@@ -935,6 +982,7 @@ export function createNavigationBridge(
       store.clearHistoryCache();
     },
   };
+  return bridge;
 }
 
 export { createNavigationBridge as default };

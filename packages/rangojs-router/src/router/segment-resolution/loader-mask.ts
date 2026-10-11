@@ -18,6 +18,7 @@ import {
   _getRequestContext,
   type RequestContext,
 } from "../../server/request-context.js";
+import { isRenderableLoading } from "../../types/boundaries.js";
 
 /**
  * True when the current render is the active PPR shell capture and route loaders
@@ -38,12 +39,13 @@ export function isShellCaptureActive(
 export { createMaskedLoaderPromise } from "./mask-nested.js";
 
 /**
- * True when the entry's loading() is renderable (mirrors segment-system's
- * isRenderableLoading). Not the lane decision (lane rule: see
+ * True when the entry's loading() is renderable (the shared
+ * isRenderableLoading, types/boundaries.ts, that segment-system gates on).
+ * Not the lane decision (lane rule: see
  * resolveLoaderData, loader-cache.ts): callers only use it to decide whether
  * an unflagged loader's segment key rides as the bake/seed key, which is inert
  * at capture.
  */
 export function entryLoadingMasksLoaders(loading: unknown): boolean {
-  return loading !== undefined && loading !== null && loading !== false;
+  return isRenderableLoading(loading);
 }

@@ -603,6 +603,11 @@ export const pageMeta: PageMeta[] = [
         "text": "Not-found handling"
       },
       {
+        "depth": 3,
+        "id": "errors-and-notfound-in-a-streamed-handler",
+        "text": "Errors and notFound() in a streamed handler"
+      },
+      {
         "depth": 2,
         "id": "dev-and-production-agree",
         "text": "Dev and production agree"
@@ -934,13 +939,18 @@ export const pageMeta: PageMeta[] = [
       },
       {
         "depth": 3,
-        "id": "revalidation-runs-in-the-browser",
-        "text": "Revalidation runs in the browser"
+        "id": "revalidation-runs-on-the-server",
+        "text": "Revalidation runs on the server"
       },
       {
         "depth": 3,
         "id": "ssr-false",
         "text": "ssr: false"
+      },
+      {
+        "depth": 3,
+        "id": "prefetch-false",
+        "text": "prefetch: false"
       },
       {
         "depth": 3,
@@ -1331,6 +1341,11 @@ export const pageMeta: PageMeta[] = [
         "depth": 2,
         "id": "dev-cookie-based-host-override",
         "text": "Dev: cookie-based host override"
+      },
+      {
+        "depth": 2,
+        "id": "sharing-one-cache-store",
+        "text": "Sharing one cache store"
       },
       {
         "depth": 2,
@@ -2862,6 +2877,11 @@ export const pageMeta: PageMeta[] = [
         "text": "Summary"
       },
       {
+        "depth": 3,
+        "id": "hydration",
+        "text": "Hydration"
+      },
+      {
         "depth": 2,
         "id": "navigation",
         "text": "Navigation"
@@ -2925,6 +2945,11 @@ export const pageMeta: PageMeta[] = [
         "depth": 3,
         "id": "usesearchparams",
         "text": "useSearchParams()"
+      },
+      {
+        "depth": 3,
+        "id": "when-the-url-hooks-change",
+        "text": "When the URL hooks change"
       },
       {
         "depth": 3,

@@ -15,7 +15,7 @@ import {
   filterRouteSegmentIds,
 } from "./react/filter-segment-order.js";
 import { notifyListeners } from "./notify-listeners.js";
-import { cloneHandleData } from "./navigation-store.js";
+import { mergePartialHandleData } from "../handles/pushed-by.js";
 import {
   locationStateSnapshot,
   type LocationStateSnapshot,
@@ -223,7 +223,13 @@ export interface EventController {
     url: string,
     options?: NavigateOptionsInternal & { skipLoadingState?: boolean },
   ): NavigationHandle;
-  abortNavigation(): void;
+  /**
+   * Abort the pending navigation, and the committed one whose stream is
+   * still open. `pendingOnly` leaves the committed one alone: a page
+   * restored from the back/forward cache is not being left
+   * (navigation-bridge.ts handlePageShow).
+   */
+  abortNavigation(pendingOnly?: boolean): void;
 
   // Action operations
   startAction(
@@ -476,6 +482,14 @@ export function createEventController(
   config?: EventControllerConfig,
 ): EventController {
   let currentNavigation: NavigationEntry | null = null;
+  // The navigation that committed last, while its stream is still open. A
+  // newer navigation or a back/forward aborts it as it aborts one that has
+  // not committed: what a navigation does after its commit (the fill of a
+  // prefetch: false adoption, partial-update.ts fillHoles) reads its signal.
+  // The abort never cancels a response that has arrived (navigation-client.ts
+  // links a request to its signal only until then): the navigation stops
+  // reading it, and it streams to its end.
+  let streamingNavigation: AbortController | null = null;
 
   const inflightActions = new Map<string, ActionEntry>();
 
@@ -698,6 +712,7 @@ export function createEventController(
     options?: NavigateOptionsInternal & { skipLoadingState?: boolean },
   ): NavigationHandle {
     // Cancel existing navigation (switchMap semantics)
+    abortStreamingNavigation();
     if (currentNavigation) {
       currentNavigation.abort.abort();
       currentNavigation = null;
@@ -716,6 +731,7 @@ export function createEventController(
     notify();
 
     let completed = false;
+    let openStreams = 0;
 
     return {
       abort,
@@ -729,6 +745,7 @@ export function createEventController(
         let ended = false;
         entry.phase = "streaming";
         activeStreamCount++;
+        openStreams++;
         notify();
 
         return {
@@ -736,6 +753,9 @@ export function createEventController(
             if (ended) return;
             ended = true;
             activeStreamCount = Math.max(0, activeStreamCount - 1);
+            if (--openStreams === 0 && streamingNavigation === abort) {
+              streamingNavigation = null;
+            }
             notify();
           },
         };
@@ -746,6 +766,7 @@ export function createEventController(
           completed = true;
           location = newLocation;
           currentNavigation = null;
+          if (openStreams > 0) streamingNavigation = abort;
           notify();
         }
       },
@@ -764,7 +785,14 @@ export function createEventController(
     };
   }
 
-  function abortNavigation() {
+  function abortStreamingNavigation(): void {
+    const streaming = streamingNavigation;
+    streamingNavigation = null;
+    streaming?.abort();
+  }
+
+  function abortNavigation(pendingOnly?: boolean) {
+    if (!pendingOnly) abortStreamingNavigation();
     if (currentNavigation) {
       currentNavigation.abort.abort();
       currentNavigation = null;
@@ -1061,35 +1089,18 @@ export function createEventController(
     const newRouteSegmentIds = filterRouteSegmentIds(rawMatched);
 
     if (isPartial && newSegmentOrder.length > 0) {
-      // Partial update: merge new data with existing, into a copy of the
-      // containers. The object a reader was handed is never written to: a
-      // history entry restored from the store's cache can be that object.
-      handleData = cloneHandleData(handleData);
-      for (const handleName of Object.keys(data)) {
-        if (!handleData[handleName]) {
-          handleData[handleName] = {};
-        }
-        for (const segmentId of Object.keys(data[handleName])) {
-          handleData[handleName][segmentId] = data[handleName][segmentId];
-        }
-      }
-      const resolvedIdSet =
-        resolvedIds && resolvedIds.length > 0 ? new Set(resolvedIds) : null;
-      // Cleanup pass:
-      //   a) segment dropped from the match list — delete its bucket.
-      //   b) segment was re-resolved this request but pushed nothing for
-      //      this handle — its previous bucket is stale.
-      // (a) is the existing behavior; (b) requires resolvedIds.
-      for (const handleName of Object.keys(handleData)) {
-        for (const segmentId of Object.keys(handleData[handleName])) {
-          const droppedFromMatch = !newSegmentOrder.includes(segmentId);
-          const reresolvedWithoutPush =
-            resolvedIdSet?.has(segmentId) && !data[handleName]?.[segmentId];
-          if (droppedFromMatch || reresolvedWithoutPush) {
-            delete handleData[handleName][segmentId];
-          }
-        }
-      }
+      // Partial update: a segment dropped from the match loses its buckets,
+      // and in each other bucket only the handler and loaders that ran for
+      // the response replace their pushes (#1103). Into new containers: a
+      // history entry restored from the store's cache can be the object a
+      // reader was handed.
+      handleData = mergePartialHandleData(
+        handleData,
+        data,
+        newSegmentOrder,
+        rawMatched,
+        resolvedIds,
+      );
     } else {
       // Full update: replace all data
       handleData = data;

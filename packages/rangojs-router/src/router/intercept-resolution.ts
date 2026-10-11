@@ -331,8 +331,9 @@ export async function resolveInterceptEntry<TEnv>(
       deps.wrapLoaderPromise(
         // The DSL binding's funnel, as for route loaders: a loader's own
         // cache() applies here too.
-        runInsideLoaderScope(() =>
-          resolveLoaderData(loaderEntry, context, context.pathname),
+        runInsideLoaderScope(
+          () => resolveLoaderData(loaderEntry, context, context.pathname),
+          loader.$$id,
         ),
         parentEntry,
         segmentId,
@@ -564,8 +565,9 @@ export async function resolveInterceptLoadersOnly<TEnv>(
       deps.wrapLoaderPromise(
         // The DSL binding's funnel, as for route loaders: a loader's own
         // cache() applies here too.
-        runInsideLoaderScope(() =>
-          resolveLoaderData(loaderEntry, context, context.pathname),
+        runInsideLoaderScope(
+          () => resolveLoaderData(loaderEntry, context, context.pathname),
+          loader.$$id,
         ),
         parentEntry,
         segmentId,

@@ -84,21 +84,24 @@ per app (both compose in one `urls()` tree via `include()`):
   | component (client, hooks)        | stays a client component — no conversion                 |
   | `loader` (throws `redirect`/404) | `createLoader()` — thrown `redirect()`/`notFound()` kept |
   | `useLoaderData()`                | `useLoader(Loader)` at the read site, under `<Suspense>` |
-  | `shouldRevalidate` (runs client) | `revalidate()` predicate — ALSO runs in the browser      |
+  | `shouldRevalidate` (runs client) | `revalidate()` predicate — runs on the server            |
   | `meta({ data })`                 | `ctx.use(Meta)` push from the loader body                |
   | `defer` / `Await`                | loaders stream; `<Suspense>` above each read             |
 
-  Note the `shouldRevalidate` row: a server-tree `revalidate()` runs on the
-  server, but a `clientUrls()` predicate runs in the browser with
-  client-computable args — the exact RR semantics. A group ported this way can
-  still be re-migrated to server handlers later, route by route.
+  Note the `shouldRevalidate` row: RR runs it in the browser, but a
+  `clientUrls()` loader's predicate runs on the server like a server-tree
+  `revalidate()`, with the same arguments (`actionResult` and `formData`
+  included). The build moves it out of the `"use client"` module, so it may
+  reference imports and globals only: move a predicate that captures
+  module-local values into its own module and import it. A group ported this
+  way can still be re-migrated to server handlers later, route by route.
 
 Start with server handlers; reach for `clientUrls()` when a route group's
 conversion cost is dominated by rewriting interactive components rather than
 by moving data fetching — or when the group is a **high-navigation-speed
 surface** (dashboard, admin panel, settings): browser-local matching gives
-instant optimistic pending, and browser-run predicates hold data across
-tab/param switches, so transitions are the fastest Rango offers. See
+instant optimistic pending, and per-loader `revalidate()` predicates (run on
+the server) hold data across tab/param switches, so transitions are the fastest Rango offers. See
 `/client-urls`.
 
 ## Migration Strategy

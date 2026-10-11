@@ -246,5 +246,5 @@ changes nothing, so narrow with the ternary above. Avoid a bare
 the reference the same way the router derives `actionId` (`$id ?? $$id`: the
 file-path `$id` injected in a production RSC build, otherwise React's `$$id`),
 so matching works in dev and production. `actionId` stays available for
-advanced cases. In `clientUrls()` groups the predicate runs in the browser,
-where `actionId` is the hashed form (see `/client-urls`).
+advanced cases. In `clientUrls()` groups the loader's predicate runs on the
+server too, with these same arguments (see `/client-urls`).

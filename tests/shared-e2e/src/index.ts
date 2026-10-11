@@ -28,6 +28,8 @@ export type {
 } from "./streamed-boundary-scenarios.js";
 export { runHeldBoundaryTests } from "./held-boundary-scenario.js";
 export { runLateHandleHistoryTests } from "./late-handle-history-scenario.js";
+export { runHeldHandlesTests } from "./held-handles-scenario.js";
+export type { HeldHandlesScenarioOptions } from "./held-handles-scenario.js";
 export type { LateHandleHistoryScenarioOptions } from "./late-handle-history-scenario.js";
 export type { HeldBoundaryScenarioOptions } from "./held-boundary-scenario.js";
 export { runPeFormStateTests } from "./pe-form-state-scenario.js";
@@ -66,6 +68,61 @@ export type {
   ConsoleRule,
   SuspenseAuditCounters,
 } from "./console-guard.js";
+export {
+  expectBackAndForwardDuringAFillEndOnTheFilledPage,
+  expectBackAndForwardKeepTheFilledPage,
+  expectStaleFilledEntryShowsAtOnceThenRevalidates,
+  expectClickDuringThePrefetchStaysWithinItsBound,
+  describeInFlightPair,
+  expectClickFromAScrolledPageEndsAtTheTop,
+  expectDeferredOutcomeArrivesWithTheFill,
+  expectDeferringPrefetchTheBrowserKeptIsHarmless,
+  expectDocumentAwaitsLoaderThatPrefetchSkips,
+  expectDoubleClickEndsOnTheLastRequest,
+  expectRevisitUsesWhatTheClientHolds,
+  expectFailedFillReachesTheNetworkErrorBoundary,
+  expectLeavingAHeldAdoptionAbortsItsFill,
+  expectLeavingBeforeTheFillAbortsItAndBackRefetches,
+  expectNoBoundaryHoldsThePageLeftUntilTheFillReturns,
+  expectPrefetchSkipsFlaggedWorkAndClickFillsIt,
+  expectUnflaggedRouteIsPrefetchedWhole,
+  expectUnitUnderTransitionCommitsWithItsFill,
+  expectUnusableFillReachesTheErrorBoundary,
+  expectAdoptedClickIsNeverWorseThanAPlainClick,
+  recordPlainAndAdoptedClick,
+  expectCachedRouteUnderHeldFlaggedLayoutUsesItsRecord,
+  expectHandlerReadFlaggedLoaderUsesItsCache,
+  expectHeldFlaggedLayoutLeavesRoutesToTheirOwnFlags,
+  expectPendingFillReadsLikeAStreamingNavigation,
+  expectPrefetchThatDeferredStaysWithItsPage,
+  expectDeferredLoaderShowsItsOwnFallbackAtOnce,
+  definePrefetchFalseTests,
+  prefetchFalseParityTitle,
+  PREFETCH_FALSE_PARITY_CASES,
+  expectSameRouteNavigationIsNeverDeferred,
+  expectGroupClickCommitsThePrefetchAndFillsItsFlaggedLoader,
+  expectPlainGroupClickSendsNoFill,
+  expectGroupEntryDefersTheFlaggedLoaderAboveTheGroup,
+  expectGroupBackAndForwardKeepTheFilledPage,
+  expectNewerNavigationDuringAGroupFill,
+  expectActionDuringAGroupFill,
+  PREFETCH_FALSE_CLIENT_URLS_PARITY_CASES,
+} from "./prefetch-false.js";
+export type {
+  PrefetchFalseCase,
+  PrefetchFalseClick,
+  PrefetchFalseElsewhereCase,
+  PrefetchFalseFixture,
+  PrefetchFalseFlags,
+  PrefetchFalseInFlightCase,
+  PrefetchFalseInFlightPair,
+  PrefetchFalseObservation,
+  PrefetchFalsePair,
+  PrefetchFalseParityCase,
+  PrefetchFalseRequestKind,
+  PrefetchFalseScrollCase,
+  PrefetchFalseSuite,
+} from "./prefetch-false.js";
 
 /**
  * Shared end-to-end test utilities for HMR-driven tests across apps.
