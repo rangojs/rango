@@ -1,14 +1,36 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  beforeAll,
+  afterAll,
+  beforeEach,
+  vi,
+} from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { normalizePath, transformWithOxc } from "vite";
+import { normalizePath, parseAst, transformWithOxc } from "vite";
+import { hasUseClientDirective } from "../utils/directive-prologue.js";
 import {
   clientUrlsRevalidateHoistPlugin,
   hoistClientUrlsRevalidates,
   parseHoistedRevalidateId,
   revalidateKey,
 } from "../plugins/client-urls-revalidate-hoist.js";
+
+vi.mock("vite", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("vite")>();
+  return { ...actual, parseAst: vi.fn(actual.parseAst) };
+});
+vi.mock("../utils/directive-prologue.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../utils/directive-prologue.js")>();
+  return {
+    ...actual,
+    hasUseClientDirective: vi.fn(actual.hasUseClientDirective),
+  };
+});
 
 const ROOT = "/app";
 const FILE = "/app/src/urls/shop.client.tsx";
@@ -379,6 +401,66 @@ export default clientUrls(({ path, loader, revalidate }) => [
     });
   });
 
+  describe("pre-filter", () => {
+    beforeEach(() => {
+      vi.mocked(parseAst).mockClear();
+    });
+
+    it("does not parse a module that never mentions clientUrls", async () => {
+      const code = `"use client";
+import { useNavigation } from "@rangojs/router/client";
+export const revalidate = () => useNavigation();
+`;
+      expect(await hoist(code)).toBeNull();
+      expect(parseAst).not.toHaveBeenCalled();
+    });
+
+    it("does not parse a module without a use client directive text", async () => {
+      const code = group("() => true").replace('"use client";\n', "");
+      expect(code).not.toContain("use client");
+      expect(await hoist(code)).toBeNull();
+      expect(parseAst).not.toHaveBeenCalled();
+    });
+
+    it("parses a candidate and hoists it", async () => {
+      expect(await hoist(group("() => true"))).not.toBeNull();
+      expect(parseAst).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("imports checked concurrently", () => {
+    const code = group(
+      "() => a && b",
+      'import { a } from "./one";\nimport { b } from "./two";\n',
+    );
+
+    it("starts every import's check before any settles", async () => {
+      let inFlight = 0;
+      let peak = 0;
+      await hoist(code, {
+        isClientModule: async () => {
+          peak = Math.max(peak, ++inFlight);
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          inFlight--;
+          return false;
+        },
+      });
+      expect(peak).toBe(2);
+    });
+
+    it("reports the first offending import in source order", async () => {
+      const slowFirst = await hoistError(code, {
+        isClientModule: async (source) => {
+          await new Promise((resolve) =>
+            setTimeout(resolve, source === "./one" ? 10 : 0),
+          );
+          return true;
+        },
+      });
+      expect(slowFirst.message).toContain('`a` is imported from "./one"');
+    });
+  });
+
   it("parses a ?rango-revalidate id", () => {
     expect(parseHoistedRevalidateId(`${FILE}?rango-revalidate`)).toBe(FILE);
     expect(parseHoistedRevalidateId(`${FILE}?v=1&rango-revalidate`)).toBe(FILE);
@@ -390,14 +472,42 @@ export default clientUrls(({ path, loader, revalidate }) => [
 describe("clientUrlsRevalidateHoistPlugin", () => {
   let dir: string;
   type Hook = (this: unknown, ...args: any[]) => any;
+  interface IdFilter {
+    include?: RegExp;
+    exclude?: RegExp[];
+  }
+  interface ObjectHook {
+    filter: { id?: RegExp | IdFilter; code?: RegExp | string };
+    handler: Hook;
+  }
   function hooks(root: string) {
     const [pre, post] = clientUrlsRevalidateHoistPlugin();
     (pre!.configResolved as Hook).call({}, { root });
     return {
-      transform: pre!.transform as Hook,
-      load: pre!.load as Hook,
-      register: post!.transform as Hook,
+      post: post!,
+      transformHook: pre!.transform as unknown as ObjectHook,
+      loadHook: pre!.load as unknown as ObjectHook,
+      registerHook: post!.transform as unknown as ObjectHook,
+      transform: (pre!.transform as unknown as ObjectHook).handler,
+      load: (pre!.load as unknown as ObjectHook).handler,
+      register: (post!.transform as unknown as ObjectHook).handler,
+      buildStart: pre!.buildStart as Hook,
+      watchChange: pre!.watchChange as Hook,
     };
+  }
+  /** What Vite's hook filter accepts: include (if any) and no exclude. */
+  function accepts(
+    filter: ObjectHook["filter"],
+    id: string,
+    code: string,
+  ): boolean {
+    const idFilter =
+      filter.id instanceof RegExp ? { include: filter.id } : filter.id;
+    if (idFilter?.exclude?.some((re) => re.test(id))) return false;
+    if (idFilter?.include && !idFilter.include.test(id)) return false;
+    const { code: codeFilter } = filter;
+    if (typeof codeFilter === "string") return code.includes(codeFilter);
+    return codeFilter ? codeFilter.test(code) : true;
   }
   const env = (name: string, resolve?: (source: string) => string) => ({
     environment: { name },
@@ -455,7 +565,6 @@ describe("clientUrlsRevalidateHoistPlugin", () => {
     expect(out.code).toBe(
       `${proxy}\nimport ${JSON.stringify(`${id}?rango-revalidate`)};\n`,
     );
-    expect(await register.call(env("client"), proxy, id)).toBeUndefined();
 
     const plain = `${dir}/plain.client.tsx`;
     await transform.call(
@@ -464,6 +573,73 @@ describe("clientUrlsRevalidateHoistPlugin", () => {
       plain,
     );
     expect(await register.call(env("rsc"), proxy, plain)).toBeUndefined();
+  });
+
+  it("registers its post transform in the rsc environment only", () => {
+    const { post, registerHook } = hooks(dir);
+    const applies = post.applyToEnvironment as unknown as (env: {
+      name: string;
+    }) => boolean;
+    expect(applies({ name: "rsc" })).toBe(true);
+    expect(applies({ name: "ssr" })).toBe(false);
+    expect(applies({ name: "client" })).toBe(false);
+    expect(registerHook.filter.code).toBe("registerClientReference");
+  });
+
+  it("drops the emitted entry of a changed file", async () => {
+    const { transform, register, watchChange } = hooks(dir);
+    const id = `${dir}/changed.client.tsx`;
+    const proxy =
+      'import * as $$ReactServer from "x";\nexport default $$ReactServer.registerClientReference(() => {}, "/changed.client.tsx", "default");\n';
+    await transform.call(env("rsc"), group("() => true"), id);
+    expect(await register.call(env("rsc"), proxy, id)).toBeDefined();
+    await watchChange.call({}, id, { event: "update" });
+    expect(await register.call(env("rsc"), proxy, id)).toBeUndefined();
+  });
+
+  describe("hook filters", () => {
+    it("accept every id and code the handlers would hoist or serve", async () => {
+      const { transform, transformHook, loadHook } = hooks(dir);
+      const code = group("() => true");
+      const ids = [
+        `${dir}/a.client.tsx`,
+        `${dir}/a.client.ts`,
+        `${dir}/a.client.jsx`,
+        `${dir}/a.client.mjs`,
+        `${dir}/a.client.tsx?v=123`,
+        `${dir}/a.client.tsx?t=1&import`,
+        `${dir}/a.client.css`,
+        `${dir}/a.client.tsx.map`,
+        `${dir}/a.client.tsx?rango-revalidate`,
+        `${dir}/a.client.tsx?v=1&rango-revalidate`,
+        "/app/node_modules/lib/a.client.tsx",
+      ];
+      for (const id of ids) {
+        const out = await transform.call(env("rsc"), code, id);
+        if (out !== undefined) {
+          expect(accepts(transformHook.filter, id, code), id).toBe(true);
+        }
+      }
+      expect(accepts(transformHook.filter, ids[0]!, code)).toBe(true);
+      expect(accepts(transformHook.filter, ids[4]!, code)).toBe(true);
+      expect(accepts(transformHook.filter, ids[6]!, code)).toBe(false);
+      expect(accepts(transformHook.filter, ids[8]!, code)).toBe(false);
+      expect(accepts(transformHook.filter, ids[10]!, code)).toBe(false);
+      expect(
+        accepts(
+          transformHook.filter,
+          ids[0]!,
+          'export const x = "use client";',
+        ),
+      ).toBe(false);
+
+      expect(accepts(loadHook.filter, ids[8]!, "")).toBe(true);
+      expect(accepts(loadHook.filter, ids[9]!, "")).toBe(true);
+      expect(accepts(loadHook.filter, ids[0]!, "")).toBe(false);
+      expect(
+        accepts(loadHook.filter, `${dir}/a.tsx?rango-revalidated`, ""),
+      ).toBe(false);
+    });
   });
 
   it("rejects in the RSC environment an import that resolves to a use client module", async () => {
@@ -486,6 +662,68 @@ describe("clientUrlsRevalidateHoistPlugin", () => {
       `${dir}/good.client.tsx`,
     )) as { code: string };
     expect(out.code).toContain("$$rangoRevalidate");
+  });
+
+  describe("isClientModule", () => {
+    const resolveTo = (source: string) =>
+      join(dir, `${source.replace(/^\.\//, "")}.ts`);
+    const imports = 'import { flag } from "./memo-dep";\n';
+    const usesFlag = group("() => flag", imports);
+    const dep = () => join(dir, "memo-dep.ts");
+
+    beforeEach(() => {
+      vi.mocked(hasUseClientDirective).mockClear();
+    });
+
+    it("parses only a dependency that contains the directive text", async () => {
+      const { transform } = hooks(dir);
+      await writeFile(dep(), "export const flag = true;\n");
+      await transform.call(
+        env("rsc", resolveTo),
+        usesFlag,
+        `${dir}/guard.client.tsx`,
+      );
+      expect(hasUseClientDirective).not.toHaveBeenCalled();
+
+      await writeFile(
+        join(dir, "memo-dep.ts"),
+        '// "use client" in a comment only\nexport const flag = true;\n',
+      );
+      const { transform: fresh } = hooks(dir);
+      await fresh.call(
+        env("rsc", resolveTo),
+        usesFlag,
+        `${dir}/guard.client.tsx`,
+      );
+      expect(hasUseClientDirective).toHaveBeenCalledTimes(1);
+    });
+
+    it("remembers a dependency until buildStart or a change to it", async () => {
+      const { transform, buildStart, watchChange } = hooks(dir);
+      const run = () =>
+        transform.call(
+          env("rsc", resolveTo),
+          usesFlag,
+          `${dir}/memo.client.tsx`,
+        );
+      await writeFile(dep(), "export const flag = true;\n");
+      expect(await run()).toBeDefined();
+
+      await writeFile(dep(), '"use client";\nexport const flag = true;\n');
+      expect(await run()).toBeDefined();
+
+      await buildStart.call({});
+      await expect(run()).rejects.toThrow(
+        '`flag` is imported from "./memo-dep"',
+      );
+
+      await writeFile(dep(), "export const flag = true;\n");
+      await expect(run()).rejects.toThrow(
+        '`flag` is imported from "./memo-dep"',
+      );
+      await watchChange.call({}, dep(), { event: "update" });
+      expect(await run()).toBeDefined();
+    });
   });
 
   it("load serves the RSC transform's module, re-hoists an edited file from disk, and an empty module without predicates", async () => {

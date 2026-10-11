@@ -120,10 +120,21 @@ const CAPTURE_MESSAGES: LexicalCaptureMessages = {
     "loads a module at run time, which the build cannot check is server-safe.",
 };
 
-// Cheap pre-filter: every site needs clientUrls imported from the router and
-// a `revalidate` helper. The AST walk is the authority.
+// Cheap pre-filter: every site needs a "use client" module (the directive's
+// text), clientUrls imported from the router, and a `revalidate` helper. The
+// AST walk is the authority.
+const CLIENT_URLS_RE = /\bclientUrls\b/;
 const CLIENT_IMPORT_RE = /["']@rangojs\/router\/client["']/;
 const REVALIDATE_RE = /\brevalidate\b/;
+
+function mayHoist(code: string): boolean {
+  return (
+    code.includes("use client") &&
+    CLIENT_URLS_RE.test(code) &&
+    CLIENT_IMPORT_RE.test(code) &&
+    REVALIDATE_RE.test(code)
+  );
+}
 
 function revalidateError(
   file: string,
@@ -247,7 +258,7 @@ export async function hoistClientUrlsRevalidates(
   id: string,
   deps: HoistClientUrlsRevalidateDeps,
 ): Promise<HoistClientUrlsRevalidateResult | null> {
-  if (!CLIENT_IMPORT_RE.test(code) || !REVALIDATE_RE.test(code)) return null;
+  if (!mayHoist(code)) return null;
   const file = normalizePath(id.split("?", 1)[0]!);
   let program: Node;
   try {
@@ -343,12 +354,26 @@ export async function hoistClientUrlsRevalidates(
       );
     }
 
+    const unchecked = [...free.imports].filter(
+      ([local, valueUse]) => valueUse && !used.get(local),
+    );
+    const clientOnly = await Promise.all(
+      unchecked.map(([local]) => isClientOnly(imports.get(local)!, deps)),
+    );
+    const offender = unchecked.find((_, i) => clientOnly[i]);
+    if (offender) {
+      const [local] = offender;
+      throw revalidateError(
+        file,
+        code,
+        value,
+        `\`${local}\` is imported from "${imports.get(local)!.source}", a ` +
+          'client-only module: on the server a "use client" module\'s ' +
+          "exports are client references and cannot be called. Import the " +
+          'predicate\'s inputs from a module without "use client".',
+      );
+    }
     for (const [local, valueUse] of free.imports) {
-      if (valueUse && !used.get(local)) {
-        await checkServerSafe(local, imports.get(local)!, deps, (detail) =>
-          revalidateError(file, code, value, detail),
-        );
-      }
       used.set(local, (used.get(local) ?? false) || valueUse);
     }
 
@@ -382,23 +407,14 @@ export async function hoistClientUrlsRevalidates(
   };
 }
 
-async function checkServerSafe(
-  local: string,
+async function isClientOnly(
   binding: ImportBinding,
   deps: HoistClientUrlsRevalidateDeps,
-  fail: (detail: string) => Error,
-): Promise<void> {
-  if (
+): Promise<boolean> {
+  return (
     binding.source === "client-only" ||
-    (await deps.isClientModule?.(binding.source))
-  ) {
-    throw fail(
-      `\`${local}\` is imported from "${binding.source}", a client-only ` +
-        'module: on the server a "use client" module\'s exports are client ' +
-        "references and cannot be called. Import the predicate's inputs " +
-        'from a module without "use client".',
-    );
-  }
+    Boolean(await deps.isClientModule?.(binding.source))
+  );
 }
 
 /** The file a `?rango-revalidate` id names, or null. */
@@ -409,6 +425,14 @@ export function parseHoistedRevalidateId(id: string): string | null {
   return params.has(CLIENT_URLS_REVALIDATE_QUERY) ? id.slice(0, q) : null;
 }
 
+// The hook filters below are conservative screens (a superset of what the
+// handlers accept): the handlers keep their exact checks.
+const HOISTED_ID_RE = new RegExp(
+  `[?&]${CLIENT_URLS_REVALIDATE_QUERY}(?:[=&]|$)`,
+);
+const SOURCE_ID_RE = /\.[cm]?[jt]sx?(?:\?|$)/;
+const NODE_MODULES_RE = /\/node_modules\//;
+
 /**
  * The plugins: a pre transform that hoists in every environment (markers in
  * the client and SSR copies, the server module recorded from the RSC
@@ -417,13 +441,34 @@ export function parseHoistedRevalidateId(id: string): string | null {
  *
  * `load` serves the module the RSC transform emitted, which hoisted the
  * pipeline code; the disk source is re-hoisted only when the transform has
- * not seen the current file (an edit the RSC environment has not
- * re-transformed yet). A file whose edit removed every predicate serves an
- * empty module to a proxy that still imports it.
+ * not seen the current file (loadEmittedOrDisk). A file whose edit removed
+ * every predicate serves an empty module to a proxy that still imports it.
+ *
+ * The transform's code filter skips a module that never mentions clientUrls,
+ * so a file that stops doing so would keep its `emitted` entry: watchChange
+ * drops it, together with the cached "use client" answer for an edited
+ * dependency (isClientModule memoizes per resolved file; buildStart resets
+ * it).
  */
 export function clientUrlsRevalidateHoistPlugin(): Plugin[] {
   const emitted = new Map<string, EmittedEntry<string>>();
+  const clientModules = new Map<string, Promise<boolean>>();
   let root = process.cwd();
+
+  const isClientFile = (file: string): Promise<boolean> => {
+    let known = clientModules.get(file);
+    if (!known) {
+      known = readSource(file).then(
+        (text) =>
+          text !== null &&
+          text.includes("use client") &&
+          hasUseClientDirective(text),
+      );
+      clientModules.set(file, known);
+    }
+    return known;
+  };
+
   return [
     {
       name: "@rangojs/router:client-urls-revalidate-hoist",
@@ -433,60 +478,82 @@ export function clientUrlsRevalidateHoistPlugin(): Plugin[] {
         root = config.root;
       },
 
-      async load(id) {
-        const hoistedFile = parseHoistedRevalidateId(id);
-        if (hoistedFile === null) return;
-        const module = await loadEmittedOrDisk(
-          emitted,
-          hoistedFile,
-          async (disk) =>
-            (await hoistClientUrlsRevalidates(disk, hoistedFile, { root }))
-              ?.module,
-        );
-        return module ?? "export {};\n";
+      buildStart() {
+        clientModules.clear();
       },
 
-      async transform(code, id) {
-        if (id.includes("/node_modules/") || parseHoistedRevalidateId(id)) {
-          return;
-        }
-        const file = normalizePath(id.split("?", 1)[0]!);
-        if (!SOURCE_FILE_RE.test(file)) return;
-        const rsc = this.environment?.name === "rsc";
-        if (rsc) emitted.delete(file);
-        const result = await hoistClientUrlsRevalidates(code, id, {
-          root,
-          isClientModule: rsc
-            ? async (source) => {
-                const target = await resolveSourceTarget(this, source, id, {
-                  skipNodeModules: false,
-                });
-                if (target === null) return false;
-                const text = await readSource(target);
-                return text !== null && hasUseClientDirective(text);
-              }
-            : undefined,
-        });
-        if (!result) return;
-        if (rsc) await recordEmitted(emitted, file, result.module);
-        return { code: result.code, map: result.map };
+      watchChange(id) {
+        const file = normalizePath(id);
+        clientModules.delete(file);
+        emitted.delete(file);
+      },
+
+      load: {
+        filter: { id: HOISTED_ID_RE },
+        async handler(id) {
+          const hoistedFile = parseHoistedRevalidateId(id);
+          if (hoistedFile === null) return;
+          const module = await loadEmittedOrDisk(
+            emitted,
+            hoistedFile,
+            async (disk) =>
+              (await hoistClientUrlsRevalidates(disk, hoistedFile, { root }))
+                ?.module,
+          );
+          return module ?? "export {};\n";
+        },
+      },
+
+      transform: {
+        filter: {
+          id: {
+            include: SOURCE_ID_RE,
+            exclude: [NODE_MODULES_RE, HOISTED_ID_RE],
+          },
+          code: CLIENT_URLS_RE,
+        },
+        async handler(code, id) {
+          if (id.includes("/node_modules/") || parseHoistedRevalidateId(id)) {
+            return;
+          }
+          const file = normalizePath(id.split("?", 1)[0]!);
+          if (!SOURCE_FILE_RE.test(file)) return;
+          const rsc = this.environment?.name === "rsc";
+          if (rsc) emitted.delete(file);
+          const result = await hoistClientUrlsRevalidates(code, id, {
+            root,
+            isClientModule: rsc
+              ? async (source) => {
+                  const target = await resolveSourceTarget(this, source, id, {
+                    skipNodeModules: false,
+                  });
+                  return target !== null && (await isClientFile(target));
+                }
+              : undefined,
+          });
+          if (!result) return;
+          if (rsc) await recordEmitted(emitted, file, result.module);
+          return { code: result.code, map: result.map };
+        },
       },
     },
     {
       name: "@rangojs/router:client-urls-revalidate-register",
       enforce: "post",
-      transform(code, id) {
-        if (this.environment?.name !== "rsc") return;
-        if (parseHoistedRevalidateId(id)) return;
-        const file = normalizePath(id.split("?", 1)[0]!);
-        if (!emitted.has(file) || !code.includes("registerClientReference")) {
-          return;
-        }
-        const s = new MagicString(code);
-        s.append(
-          `\nimport ${JSON.stringify(`${file}?${CLIENT_URLS_REVALIDATE_QUERY}`)};\n`,
-        );
-        return { code: s.toString(), map: s.generateMap({ hires: true }) };
+      applyToEnvironment: (env) => env.name === "rsc",
+
+      transform: {
+        filter: { code: "registerClientReference" },
+        handler(code, id) {
+          if (parseHoistedRevalidateId(id)) return;
+          const file = normalizePath(id.split("?", 1)[0]!);
+          if (!emitted.has(file)) return;
+          const s = new MagicString(code);
+          s.append(
+            `\nimport ${JSON.stringify(`${file}?${CLIENT_URLS_REVALIDATE_QUERY}`)};\n`,
+          );
+          return { code: s.toString(), map: s.generateMap({ hires: true }) };
+        },
       },
     },
   ];
