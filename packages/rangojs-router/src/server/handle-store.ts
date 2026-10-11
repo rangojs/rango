@@ -5,6 +5,7 @@ import {
 } from "./context.js";
 import { holdsThenable } from "../router/segment-resolution/mask-nested.js";
 import { pushedByKey } from "../handles/pushed-by.js";
+import { defineSlot } from "./slot-accessors.js";
 
 /**
  * Handle data structure: handleName -> segmentId -> entries[]
@@ -395,18 +396,17 @@ export interface HandleStore {
 }
 
 /**
- * settled and fullySettled are shared accessors that delegate to the store's
- * closure in SETTLEMENT_SLOT (#1109). V8 keeps an object in dictionary mode,
- * where every property read is a hash lookup, when a literal declares a
- * get/set member or when an accessor is defined with a function that shape
- * has not seen before: a per-store closure is a new function per request.
- * Enumerable and configurable, as the literal's getters were.
+ * settled and fullySettled: shared descriptors (slot-accessors.ts) that call
+ * the store's closure in SETTLEMENT_SLOT with the lane they wait for.
  */
 const SETTLEMENT_SLOT: unique symbol = Symbol("rango.handleStore.settlement");
 
 type SettlementSlot = { [SETTLEMENT_SLOT]: (full: boolean) => Promise<void> };
 
-const SETTLEMENT_ACCESSORS: PropertyDescriptorMap = {
+const SETTLEMENT_ACCESSORS: Record<
+  "settled" | "fullySettled",
+  PropertyDescriptor
+> = {
   settled: {
     get(this: SettlementSlot): Promise<void> {
       return this[SETTLEMENT_SLOT](false);
@@ -803,7 +803,7 @@ export function createHandleStore(): HandleStore {
     });
   }
 
-  // Data members only: settled and fullySettled are SETTLEMENT_ACCESSORS.
+  // Data members only: the accessors are SETTLEMENT_ACCESSORS.
   const store: Omit<HandleStore, "settled" | "fullySettled"> &
     ThisType<HandleStore> = {
     track<T>(promise: Promise<T>): Promise<T> {
@@ -1229,17 +1229,19 @@ export function createHandleStore(): HandleStore {
     },
   };
   // settled: the handler lane drained; fullySettled: the auxiliary lane too.
-  Object.defineProperty(store, SETTLEMENT_SLOT, {
-    value: (full: boolean): Promise<void> => {
-      if (sealed && inflightCount === 0 && (!full || auxInflightCount === 0)) {
-        return Promise.resolve();
-      }
-      return new Promise<void>((resolve) => {
-        (full ? fullDrainWaiters : drainWaiters).push(resolve);
-      });
-    },
-    configurable: true,
+  defineSlot(store, SETTLEMENT_SLOT, (full: boolean): Promise<void> => {
+    if (sealed && inflightCount === 0 && (!full || auxInflightCount === 0)) {
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+      (full ? fullDrainWaiters : drainWaiters).push(resolve);
+    });
   });
-  Object.defineProperties(store, SETTLEMENT_ACCESSORS);
+  Object.defineProperty(store, "settled", SETTLEMENT_ACCESSORS.settled);
+  Object.defineProperty(
+    store,
+    "fullySettled",
+    SETTLEMENT_ACCESSORS.fullySettled,
+  );
   return store as HandleStore;
 }

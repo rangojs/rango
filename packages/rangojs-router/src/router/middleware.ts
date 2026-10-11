@@ -32,6 +32,7 @@ import {
 import { getCacheExecScope } from "../cache/cache-exec-scope.js";
 import { assertNonCacheableReadAllowed } from "../server/context.js";
 import { readGuardedTheme } from "../server/cookie-store.js";
+import { defineSlot, slotAccessor } from "../server/slot-accessors.js";
 import type { Theme } from "../theme/types.js";
 
 // Re-export types consumed through this module's path.
@@ -43,33 +44,16 @@ export type {
 } from "./middleware-types.js";
 
 /**
- * Middleware ctx.theme: the visitor's theme cookie, guarded like the handler
- * ctx.theme and cookies() (#971, #946), so a read inside a "use cache"
- * function the middleware calls throws. Non-enumerable like the handler and
- * request-context getters: a spread of the ctx (inside a "use cache"
- * function, say) does not read it. One shared descriptor, so every ctx keeps
- * the same property shape.
- */
-const MIDDLEWARE_THEME_DESCRIPTOR: PropertyDescriptor = {
-  get(): Theme | undefined {
-    return readGuardedTheme(_getRequestContext(), "ctx.theme");
-  },
-  enumerable: false,
-  configurable: true,
-};
-
-/**
- * The middleware ctx's other accessors, shared by every ctx (#1109). V8 keeps
- * an object in dictionary mode, where every property read is a hash lookup,
- * when a literal declares a get/set member or when an accessor is defined with
- * a function that shape has not seen before (a per-call closure). routeName,
- * _routeName and setTheme read only the request context; headers delegates to
- * the per-ctx closure in HEADERS_SLOT. Enumerable and configurable, as the
- * literal's getters were.
+ * The middleware ctx's accessors: shared descriptors (slot-accessors.ts).
+ * routeName, _routeName, theme and setTheme read only the request context;
+ * headers calls the per-ctx closure in HEADERS_SLOT.
  */
 const HEADERS_SLOT: unique symbol = Symbol("rango.middlewareContext.headers");
 
-const MIDDLEWARE_ACCESSORS: PropertyDescriptorMap = {
+const MIDDLEWARE_ACCESSORS: Record<
+  "routeName" | "_routeName" | "headers" | "setTheme" | "theme",
+  PropertyDescriptor
+> = {
   // Re-derived from the request context on each access, so global middleware
   // sees the matched route name after await next().
   routeName: {
@@ -89,18 +73,23 @@ const MIDDLEWARE_ACCESSORS: PropertyDescriptorMap = {
     enumerable: true,
     configurable: true,
   },
-  headers: {
-    get(this: { [HEADERS_SLOT]: () => Headers }): Headers {
-      return this[HEADERS_SLOT]();
-    },
-    enumerable: true,
-    configurable: true,
-  },
+  headers: slotAccessor(HEADERS_SLOT, true),
   setTheme: {
     get(): MiddlewareContext<unknown>["setTheme"] {
       return _getRequestContext()?.setTheme;
     },
     enumerable: true,
+    configurable: true,
+  },
+  // The visitor's theme cookie, guarded like the handler ctx.theme and
+  // cookies() (#971, #946), so a read inside a "use cache" function the
+  // middleware calls throws. Non-enumerable like the handler and
+  // request-context getters: a spread of the ctx does not read it.
+  theme: {
+    get(): Theme | undefined {
+      return readGuardedTheme(_getRequestContext(), "ctx.theme");
+    },
+    enumerable: false,
     configurable: true,
   },
 };
@@ -299,15 +288,16 @@ export function createMiddlewareContext<TEnv>(
 
   // reqCtx captured once above: the request-scoped platform fields
   // (originalUrl, executionContext, waitUntil) are immutable per request,
-  // so snapshotting beats re-reading ALS on every access. The lazy getters
-  // below (routeName, theme, setTheme) stay lazy because those can change
-  // during `await next()`.
+  // so snapshotting beats re-reading ALS on every access. The accessors
+  // (routeName, _routeName, theme, setTheme: MIDDLEWARE_ACCESSORS) read the
+  // request context on each access because those can change during
+  // `await next()`.
   //
   // Request-scoped like the handler ctx (issue #940): the NOCACHE_SYMBOL brand
   // below makes a "use cache" function taking it key by host, _routeName,
   // pathname, params and search; set/header/headers throw inside that
   // function, and non-cacheable get reads run the shared guard.
-  // Data members only: the accessors are MIDDLEWARE_ACCESSORS (#1109).
+  // Data members only: the accessors are MIDDLEWARE_ACCESSORS.
   const fields: Omit<
     MiddlewareContext<TEnv>,
     "routeName" | "headers" | "setTheme"
@@ -325,8 +315,6 @@ export function createMiddlewareContext<TEnv>(
     },
     executionContext: reqCtx?.executionContext,
     waitUntil: reqCtx ? reqCtx.waitUntil.bind(reqCtx) : fireAndForgetWaitUntil,
-    // routeName, _routeName, headers: MIDDLEWARE_ACCESSORS, defined after
-    // this literal.
 
     get: ((keyOrVar: any) => {
       // "use cache" only: intercept middleware runs inside a cache()
@@ -362,8 +350,6 @@ export function createMiddlewareContext<TEnv>(
       }
       responseHolder.response.headers.set(name, value);
     },
-
-    // theme: MIDDLEWARE_THEME_DESCRIPTOR; setTheme: MIDDLEWARE_ACCESSORS.
 
     setLocationState(entries) {
       const reqCtx = _getRequestContext();
@@ -402,20 +388,20 @@ export function createMiddlewareContext<TEnv>(
   // Guarded only inside a "use cache" body: the stamp covers a miss that
   // took this ctx as an argument, the exec scope a stale refresh (which does
   // not stamp its args, cache-runtime.ts). A write there is lost on a hit.
-  Object.defineProperty(ctx, HEADERS_SLOT, {
-    value: (): Headers => {
-      const headers = getResponse().headers;
-      return (INSIDE_CACHE_EXEC as symbol) in ctx ||
-        getCacheExecScope() !== undefined
-        ? guardHeaderWrites(headers, () =>
-            assertNotInsideCacheExec(ctx, "headers"),
-          )
-        : headers;
-    },
-    configurable: true,
+  defineSlot(ctx, HEADERS_SLOT, (): Headers => {
+    const headers = getResponse().headers;
+    return (INSIDE_CACHE_EXEC as symbol) in ctx ||
+      getCacheExecScope() !== undefined
+      ? guardHeaderWrites(headers, () =>
+          assertNotInsideCacheExec(ctx, "headers"),
+        )
+      : headers;
   });
-  Object.defineProperties(ctx, MIDDLEWARE_ACCESSORS);
-  Object.defineProperty(ctx, "theme", MIDDLEWARE_THEME_DESCRIPTOR);
+  Object.defineProperty(ctx, "routeName", MIDDLEWARE_ACCESSORS.routeName);
+  Object.defineProperty(ctx, "_routeName", MIDDLEWARE_ACCESSORS._routeName);
+  Object.defineProperty(ctx, "headers", MIDDLEWARE_ACCESSORS.headers);
+  Object.defineProperty(ctx, "setTheme", MIDDLEWARE_ACCESSORS.setTheme);
+  Object.defineProperty(ctx, "theme", MIDDLEWARE_ACCESSORS.theme);
   (ctx as any)[NOCACHE_SYMBOL] = true;
   return ctx;
 }

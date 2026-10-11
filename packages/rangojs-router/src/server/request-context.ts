@@ -12,7 +12,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { parseCookiesFromHeader } from "./cookie-parse.js";
-import { assignOwn } from "../router/segment-resolution/mask-nested.js";
+import { defineHidden, defineSlot, slotAccessor } from "./slot-accessors.js";
 import type { CacheErrorCategory } from "../cache/cache-error.js";
 import type { CookieOptions } from "../router/middleware.js";
 import {
@@ -32,6 +32,7 @@ import type {
 import type { Handle } from "../handle.js";
 import {
   type ContextVar,
+  assignOwn,
   contextGet,
   contextSet,
   isNonCacheable,
@@ -1088,39 +1089,19 @@ export const UNTRACKED_BACKGROUND_TASK: unique symbol = Symbol.for(
 // AsyncLocalStorage instance for request context
 const requestContextStorage = new AsyncLocalStorage<RequestContext<any>>();
 
-/**
- * The request context's accessors are module-level descriptors (#1109). V8
- * keeps an object in dictionary mode, where every property read is a hash
- * lookup, when a literal declares a get/set member, when a data property is
- * redefined as an accessor, or when an accessor is defined with a function
- * that shape has not seen before: a per-request closure is a new function on
- * every request. So each getter is shared and delegates to a per-context
- * closure held in a non-enumerable symbol slot, which a derived context
- * (Object.create(ctx)) reads through its prototype as it read the closure.
- * A descriptor copied onto another object reads that object's slot instead
- * (match-middleware/background-revalidation.ts delegates instead).
- */
+// The request context's accessors: shared descriptors (slot-accessors.ts).
 const RES_SLOT: unique symbol = Symbol("rango.requestContext.res");
 const RENDER_BARRIER_SLOT: unique symbol = Symbol(
   "rango.requestContext.renderBarrier",
 );
 
-type AccessorSlots = {
-  [RES_SLOT]: () => Response;
-  [RENDER_BARRIER_SLOT]: () => Promise<void>;
-};
-
 const RES_DESCRIPTOR: PropertyDescriptor = {
-  get(this: AccessorSlots): Response {
-    return this[RES_SLOT]();
-  },
+  ...slotAccessor(RES_SLOT, true),
   set(_: Response): void {
     throw new Error(
       "ctx.res is read-only. Use ctx.header() to set response headers, or cookies() for cookie mutations.",
     );
   },
-  enumerable: true,
-  configurable: true,
 };
 
 // getRequestContext().theme is the visitor's cookie, guarded like cookies()
@@ -1139,29 +1120,27 @@ const REQUEST_THEME_DESCRIPTOR: PropertyDescriptor = {
 
 // A fresh context enumerates _renderBarrier like its other fields (the
 // fetchable-loader ctx spreads it, loader-fetch.ts); a derived one never did.
-const RENDER_BARRIER_DESCRIPTOR: PropertyDescriptor = {
-  get(this: AccessorSlots): Promise<void> {
-    return this[RENDER_BARRIER_SLOT]();
-  },
-  enumerable: true,
-  configurable: true,
-};
+const RENDER_BARRIER_DESCRIPTOR: PropertyDescriptor = slotAccessor(
+  RENDER_BARRIER_SLOT,
+  true,
+);
 const DERIVED_RENDER_BARRIER_DESCRIPTOR: PropertyDescriptor = {
   ...RENDER_BARRIER_DESCRIPTOR,
   enumerable: false,
 };
 
-function defineSlot(target: object, slot: symbol, value: unknown): void {
-  Object.defineProperty(target, slot, { value, configurable: true });
-}
-
-function defineHidden(target: object, key: string, value: unknown): void {
-  Object.defineProperty(target, key, {
-    value,
-    writable: true,
-    enumerable: false,
-    configurable: true,
-  });
+/**
+ * Define `ctx.res` as an own accessor that reads `get`. Assigning it throws
+ * the read-only error. A context derived from another (Object.create) gets
+ * its own response this way; copying the descriptor would read the
+ * prototype's slot.
+ */
+export function bindRes(
+  ctx: RequestContext<any, any>,
+  get: () => Response,
+): void {
+  defineSlot(ctx, RES_SLOT, get);
+  Object.defineProperty(ctx, "res", RES_DESCRIPTOR);
 }
 
 /**
@@ -1542,8 +1521,7 @@ export function createRequestContext<TEnv>(
   const cleanUrl = stripInternalParams(url);
   const originalUrl = new URL(request.url);
 
-  // Data members only: the accessors are defined after this literal (#1109,
-  // RES_DESCRIPTOR).
+  // Data members only: the accessors and hidden members are defined after it.
   const fields: Omit<
     RequestContext<TEnv>,
     "res" | "_renderBarrier" | "_readTheme" | "_readCookie" | "_readCookies"
@@ -1578,8 +1556,6 @@ export function createRequestContext<TEnv>(
     }) as RequestContext<TEnv>["set"],
     params: {} as Record<string, string>,
 
-    // res: RES_DESCRIPTOR, defined after this literal.
-
     // The visitor's cookies, guarded like cookies() (#976): before, a plain
     // read that a ppr shell, a cache() entry or a "use cache" entry stored
     // for every visitor.
@@ -1592,8 +1568,6 @@ export function createRequestContext<TEnv>(
       guardRawCookieRead(ctx, "getRequestContext().cookies()");
       return effectiveCookies();
     },
-
-    // _readCookie, _readCookies: non-enumerable, defined after this literal.
 
     setCookie(name: string, value: string, options?: CookieOptions): void {
       assertNotInsideCacheExec(ctx, "setCookie");
@@ -1783,7 +1757,6 @@ export function createRequestContext<TEnv>(
       this._onResponseCallbacks.push(callback);
     },
 
-    // theme, _readTheme: non-enumerable, defined after this literal.
     setTheme: themeConfig
       ? (theme: Theme) => {
           assertNotInsideCacheExec(ctx, "setTheme");
@@ -1809,7 +1782,6 @@ export function createRequestContext<TEnv>(
     _renderDiagnosticsEnabled: undefined,
     _handlerStart: undefined,
 
-    // _renderBarrier: RENDER_BARRIER_DESCRIPTOR, defined by installRenderBarrier.
     _resolveRenderBarrier: null as any,
     _renderBarrierSegmentOrder: undefined,
 
@@ -1817,9 +1789,8 @@ export function createRequestContext<TEnv>(
   };
   const ctx = fields as RequestContext<TEnv>;
 
-  defineSlot(ctx, RES_SLOT, () => stubResponse);
-  Object.defineProperty(ctx, "res", RES_DESCRIPTOR);
-  installRenderBarrier(ctx, handleStore, RENDER_BARRIER_DESCRIPTOR);
+  bindRes(ctx, () => stubResponse);
+  wireRenderBarrier(ctx, handleStore, RENDER_BARRIER_DESCRIPTOR);
 
   ctx.use = createUseFunction({
     handleStore,
@@ -1861,18 +1832,14 @@ export function createRequestContext<TEnv>(
  * read the foreground's handle snapshot; the capture's fresh `_handleStore`
  * was invisible, so foreground per-request handle data could bake into the
  * shared shell.
+ *
+ * A derived context's `_renderBarrier` is non-enumerable (the default
+ * descriptor); a fresh context's is enumerable like its other fields.
  */
 export function wireRenderBarrier(
   ctx: RequestContext<any, any>,
   handleStore: HandleStore,
-): void {
-  installRenderBarrier(ctx, handleStore, DERIVED_RENDER_BARRIER_DESCRIPTOR);
-}
-
-function installRenderBarrier(
-  ctx: RequestContext<any, any>,
-  handleStore: HandleStore,
-  descriptor: PropertyDescriptor,
+  descriptor: PropertyDescriptor = DERIVED_RENDER_BARRIER_DESCRIPTOR,
 ): void {
   // Reset the whole barrier family as OWN properties. No-op for a fresh
   // context; for the derived capture context this shadows the foreground's

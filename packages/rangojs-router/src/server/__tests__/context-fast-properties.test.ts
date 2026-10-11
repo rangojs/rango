@@ -1,6 +1,6 @@
 /**
- * The request context, the middleware ctx and the handle store keep V8 fast
- * properties (#1109). A get/set member in an object literal, a data property
+ * The request context, the middleware ctx, the handle store and a parsed
+ * cookie jar keep V8 fast properties (#1109). A get/set member in an object literal, a data property
  * redefined as an accessor, or an accessor defined with a per-call closure
  * puts the object in dictionary mode, where every property read is a hash
  * lookup for the object's whole lifetime. Each accessor is a shared
@@ -19,6 +19,7 @@ import {
   type RequestContext,
 } from "../request-context.js";
 import { createHandleStore } from "../handle-store.js";
+import { parseCookiesFromHeader } from "../cookie-parse.js";
 import { createMiddlewareContext } from "../../router/middleware.js";
 import { NOCACHE_SYMBOL } from "../../cache/taint.js";
 
@@ -256,5 +257,21 @@ describe("handle store", () => {
     release();
     await new Promise((r) => setTimeout(r, 0));
     expect(fullySettled).toBe(true);
+  });
+});
+
+describe("parsed cookie jar", () => {
+  itFast("keeps fast properties with a null prototype", () => {
+    const jar = parseCookiesFromHeader(
+      "a=1; constructor=c; __proto__=p; toString=t",
+    );
+    expect(Object.getPrototypeOf(jar)).toBeNull();
+    expect(hasFastProperties!(jar)).toBe(true);
+    expect(Object.entries(jar)).toEqual([
+      ["a", "1"],
+      ["constructor", "c"],
+      ["__proto__", "p"],
+      ["toString", "t"],
+    ]);
   });
 });

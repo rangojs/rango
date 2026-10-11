@@ -8,10 +8,12 @@
  *
  * Deliberately a LEAF module: loader-mask (the other natural home) imports
  * request-context, so any funnel importing the mask from there inherits that
- * graph. This module imports only is-thenable and react.
+ * graph. This module imports only react and two leaves, is-thenable and
+ * context-var.
  */
 
 import { cloneElement, isValidElement, type ReactElement } from "react";
+import { assignOwn } from "../../context-var.js";
 import { isThenable } from "../../handles/is-thenable.js";
 
 /**
@@ -42,29 +44,6 @@ export function isPlainDataObject(
   const proto = Object.getPrototypeOf(value);
   if (proto !== Object.prototype && proto !== null) return false;
   return typeof (value as { $$typeof?: unknown }).$$typeof !== "symbol";
-}
-
-/**
- * `target[key] = value` as an own data property, `__proto__` included: that
- * assignment would call Object.prototype's setter and replace the target's
- * prototype, which Flight refuses to serialize (#1109). Loader data parsed
- * from JSON, cookie names and the like can carry the key.
- */
-export function assignOwn(
-  target: Record<string, unknown>,
-  key: string,
-  value: unknown,
-): void {
-  if (key === "__proto__") {
-    Object.defineProperty(target, key, {
-      value,
-      writable: true,
-      enumerable: true,
-      configurable: true,
-    });
-  } else {
-    target[key] = value;
-  }
 }
 
 type KeyValidated = { _store?: { validated?: unknown } };
@@ -212,7 +191,7 @@ export function maskNestedContainerThenables(
     let maskedProps: Record<string, unknown> | undefined;
     for (const key of Object.keys(props)) {
       const masked = maskNestedContainerThenables(props[key], seen, report);
-      if (masked !== props[key]) (maskedProps ??= {})[key] = masked;
+      if (masked !== props[key]) assignOwn((maskedProps ??= {}), key, masked);
     }
     if (!maskedProps) return value;
     const clone = cloneElementWithProps(value, maskedProps);
@@ -229,12 +208,9 @@ export function maskNestedContainerThenables(
     seen.set(value, out);
     let changed = false;
     for (const key of Object.keys(source)) {
-      assignOwn(
-        out,
-        key,
-        maskNestedContainerThenables(source[key], seen, report),
-      );
-      if (out[key] !== source[key]) changed = true;
+      const masked = maskNestedContainerThenables(source[key], seen, report);
+      assignOwn(out, key, masked);
+      if (masked !== source[key]) changed = true;
     }
     if (changed) return out;
     seen.set(value, value);

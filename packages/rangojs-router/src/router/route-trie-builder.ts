@@ -154,6 +154,31 @@ function sortSuffixParams(node: TrieNode): void {
 }
 
 /**
+ * Give every static-children map in the trie a null prototype, in place, and
+ * return the trie (#1109). The walker indexes `node.s` with raw URL segments,
+ * so a map with Object.prototype would answer `/constructor` or `/__proto__`
+ * with an inherited member. The builder creates null-prototype maps; a trie
+ * that arrives as JSON (the build manifest) or across the dev runner boundary
+ * gets them here. Object.setPrototypeOf keeps a JSON-parsed map's fast
+ * properties, where Object.create(null) starts in dictionary mode.
+ */
+export function nullPrototypeStaticChildren(node: TrieNode): TrieNode {
+  if (node.s) {
+    Object.setPrototypeOf(node.s, null);
+    for (const child of Object.values(node.s)) {
+      nullPrototypeStaticChildren(child);
+    }
+  }
+  if (node.xp) {
+    for (const child of Object.values(node.xp)) {
+      nullPrototypeStaticChildren(child.c);
+    }
+  }
+  if (node.p) nullPrototypeStaticChildren(node.p.c);
+  return node;
+}
+
+/**
  * Insert a route into the trie. Optional params expand into two branches at
  * registration time (skip-first, then present), so each terminal lives at the
  * correct depth for its number of bound params and carries a branch-local

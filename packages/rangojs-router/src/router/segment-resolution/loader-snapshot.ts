@@ -26,8 +26,8 @@
 
 import { isValidElement, type ReactElement } from "react";
 import { isThenable } from "../../handles/is-thenable.js";
+import { assignOwn } from "../../context-var.js";
 import {
-  assignOwn,
   cloneElementWithProps,
   isPlainDataObject,
   maskNestedContainerThenables,
@@ -155,7 +155,7 @@ async function elideNested(
     for (const key of Object.keys(props)) {
       const r = await elideNested(props[key], seen);
       if (r.state === "rejected") return r;
-      if (r.value !== props[key]) (changed ??= {})[key] = r.value;
+      if (r.value !== props[key]) assignOwn((changed ??= {}), key, r.value);
       result.hasHole ||= r.hasHole;
     }
     if (changed) result.value = cloneElementWithProps(value, changed);
@@ -350,8 +350,13 @@ function overlayProps(
   const props = recorded.props;
   let changed: Record<string, unknown> | undefined;
   for (const key of Object.keys(props)) {
-    const next = overlayLoaderContainer(freshProps?.[key], props[key]);
-    if (next !== props[key]) (changed ??= {})[key] = next;
+    const next = overlayLoaderContainer(
+      freshProps && Object.hasOwn(freshProps, key)
+        ? freshProps[key]
+        : undefined,
+      props[key],
+    );
+    if (next !== props[key]) assignOwn((changed ??= {}), key, next);
   }
   return changed ? cloneElementWithProps(recorded, changed) : recorded;
 }
