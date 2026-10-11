@@ -1,4 +1,4 @@
-import { join, relative } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import { readdirSync } from "node:fs";
 // @ts-ignore -- picomatch ships no .d.ts; types are trivial
 import picomatch from "picomatch";
@@ -44,8 +44,40 @@ export function createScanFilter(
 }
 
 /**
- * Recursively find .ts/.tsx files under a directory, skipping node_modules
- * and .gen. files.
+ * Directory names no discovery scan enters: findTsFiles() and the router scans
+ * (findRouterFiles/findHostRouterFiles, router-processing.ts) all build their
+ * skip rule on this, so a file below one is never discovered. Dot-directories
+ * cover a nested git worktree, a tool cache, or a test's working copy of
+ * another app.
+ */
+export function isUniversallySkippedScanDir(name: string): boolean {
+  return (
+    name === "node_modules" ||
+    name === "dist" ||
+    name === "coverage" ||
+    name.startsWith(".")
+  );
+}
+
+/**
+ * Whether a file under `root` sits in a directory every discovery scan skips
+ * (isUniversallySkippedScanDir). The dev route-file watcher uses it to ignore
+ * files discovery would never find. A path outside `root` is false.
+ */
+export function isInSkippedScanDir(
+  root: string,
+  absolutePath: string,
+): boolean {
+  const rel = relative(root, absolutePath);
+  if (isAbsolute(rel)) return false;
+  const dirs = rel.split(/[\\/]/).slice(0, -1);
+  if (dirs[0] === "..") return false;
+  return dirs.some(isUniversallySkippedScanDir);
+}
+
+/**
+ * Recursively find .ts/.tsx files under a directory, skipping the directories
+ * isUniversallySkippedScanDir() names, `build`, and .gen. files.
  */
 export function findTsFiles(dir: string, filter?: ScanFilter): string[] {
   const results: string[] = [];
@@ -61,14 +93,9 @@ export function findTsFiles(dir: string, filter?: ScanFilter): string[] {
   for (const entry of entries) {
     const fullPath = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (
-        entry.name === "node_modules" ||
-        entry.name.startsWith(".") ||
-        entry.name === "dist" ||
-        entry.name === "build" ||
-        entry.name === "coverage"
-      )
+      if (isUniversallySkippedScanDir(entry.name) || entry.name === "build") {
         continue;
+      }
       results.push(...findTsFiles(fullPath, filter));
     } else if (
       (entry.name.endsWith(".ts") ||

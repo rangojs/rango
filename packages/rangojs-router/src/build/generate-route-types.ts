@@ -13,6 +13,7 @@ export {
   type ScanFilter,
   createScanFilter,
   findTsFiles,
+  isInSkippedScanDir,
 } from "./route-types/scan-filter.js";
 export {
   writePerModuleRouteTypes,

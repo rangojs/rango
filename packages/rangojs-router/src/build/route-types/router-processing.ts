@@ -14,7 +14,7 @@ import {
 } from "node:path";
 import ts from "typescript";
 import { generateRouteTypesSource } from "./codegen.js";
-import type { ScanFilter } from "./scan-filter.js";
+import { isUniversallySkippedScanDir, type ScanFilter } from "./scan-filter.js";
 import { firstCodeMatchIndex } from "./source-scan.js";
 import {
   resolveImportedVariable,
@@ -58,12 +58,9 @@ function isRoutableSourceFile(name: string): boolean {
 
 function isExcludedScanDir(name: string): boolean {
   return (
-    name === "node_modules" ||
-    name === "dist" ||
-    name === "coverage" ||
+    isUniversallySkippedScanDir(name) ||
     name === "__tests__" ||
-    name === "__mocks__" ||
-    name.startsWith(".")
+    name === "__mocks__"
   );
 }
 

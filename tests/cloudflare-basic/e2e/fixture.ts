@@ -149,14 +149,23 @@ export function useFixture(options: {
   buildCommand?: string;
   cliOptions?: SpawnOptions;
   isolatedServer?: boolean;
-  /** Response-route readiness path; use this to avoid warming document SSR. */
-  readyPath?: string;
+  /**
+   * Response-route readiness path; use this to avoid warming document SSR.
+   * `false` waits for the listening port only, so the test's first request is
+   * the server's first.
+   */
+  readyPath?: string | false;
 }) {
   let cleanup: (() => Promise<void>) | undefined;
   let baseURL!: string;
 
   const cwd = path.resolve(options.root);
   let proc!: ReturnType<typeof runCli>;
+
+  const awaitReady = async (): Promise<void> => {
+    if (options.readyPath === false) return;
+    await waitForReady(new URL(options.readyPath ?? "/", baseURL).href);
+  };
 
   // Every dev test runs under the console guard (@shared/e2e console-guard.ts).
   // A record run also covers builds, to read the router's own messages there.
@@ -178,7 +187,7 @@ export function useFixture(options: {
         });
         const port = await proc.findPort();
         baseURL = `http://localhost:${port}`;
-        await waitForReady(new URL(options.readyPath ?? "/", baseURL).href);
+        await awaitReady();
         cleanup = async () => {
           proc.kill();
           await proc.done;
@@ -209,7 +218,7 @@ export function useFixture(options: {
         });
         const port = await proc.findPort();
         baseURL = `http://localhost:${port}`;
-        await waitForReady(new URL(options.readyPath ?? "/", baseURL).href);
+        await awaitReady();
         cleanup = async () => {
           proc.kill();
           await proc.done;

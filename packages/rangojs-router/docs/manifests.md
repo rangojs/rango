@@ -328,6 +328,41 @@ route-file watcher re-run discovery on a main runner, the recovery mode a failed
 rediscovery already had. Before, the watcher required a committed manifest, so only a
 restart recovered.
 
+### A reload no file of the app asked for (why the watcher skips some directories)
+
+The realm check above protects discovery. It cannot protect a request that is already
+running in the Cloudflare worker when a re-discovery reloads it: the reload clears the
+runner's evaluated-module cache, and every dynamic import the request makes afterwards
+(`buildRouterTrieFromUrlpatterns`'s `import("../build/generate-manifest.js")`, an async
+`include()`, a lazy loader) evaluates a second copy of the router with empty registries.
+That request then fails with `include() could not resolve the server projection`,
+`Projected loader … was not found in the server loader registry`, or
+`getRequestContext() called outside of a request context`, because each registry and the
+request-context `AsyncLocalStorage` live in module scope.
+
+A real route edit pays that once, and the next request is fine. What made it a bug was a
+reload nothing in the app asked for: the cache-version e2e copied a whole app (its own
+`router.tsx` and `urls.tsx`) into `.cache-version-work/` inside the cloudflare-basic root
+whenever Playwright collected tests. The route-file watcher matched those files, re-ran
+discovery, and the reload landed during a cold dev server's first request, so a single
+clientUrls test failed 9 of 10 cold runs.
+
+So the watcher ignores a file in a directory every discovery scan skips, unless the RSC
+module graph has loaded it (`isFileOutsideApp` in `router-discovery.ts`). "Every scan" is
+literal: `isUniversallySkippedScanDir` in `scan-filter.ts` is the one predicate
+`findTsFiles`, `findRouterFiles` and `findHostRouterFiles` all build on, so the watcher
+and the scans cannot drift apart. It names dot-directories, `node_modules`, `dist` and
+`coverage`. `build`, `__tests__` and `__mocks__` are not in the set: each is skipped by
+only one of the scans (`findTsFiles` skips `build`; the router scans skip the other two),
+and on Cloudflare the worker's module graph is empty until the first request, so an edit
+to a router or `urls()` module under one of them must still re-run discovery.
+
+A nested checkout under `.claude/worktrees/` or a tool's working copy can no longer reload
+your dev worker; a route module that does live in a dot-directory re-runs discovery once the
+app imports it. Pinned by `tests/cloudflare-basic/e2e/dev-cold-start.test.ts`, the
+`isFileOutsideApp` tests in `src/vite/__tests__/route-watcher-scope.test.ts`, and the
+`isInSkippedScanDir` table in `src/build/__tests__/generate-route-types.test.ts`.
+
 ## Runtime Storage
 
 Three tiers in `route-map-builder.ts`:

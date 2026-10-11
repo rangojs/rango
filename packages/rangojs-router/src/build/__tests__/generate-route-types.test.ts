@@ -25,7 +25,10 @@ import {
   extractBasenameFromRouter,
   findNestedRouterConflict,
   findRouterFiles,
+  findHostRouterFiles,
   createScanFilter,
+  findTsFiles,
+  isInSkippedScanDir,
 } from "../generate-route-types";
 
 // Helper: create a minimal urls module that the static parser can extract routes from.
@@ -1671,4 +1674,58 @@ describe("extractBasenameFromRouter", () => {
   it.todo(
     "extracts basename from variable reference (e.g. basename: BASENAME)",
   );
+});
+
+// The dev route-file watcher skips files isInSkippedScanDir() flags (router-discovery.ts),
+// so it may only name files no discovery scan reaches: findTsFiles() skips
+// `build`, the router scans enter it, and each of the three skips the rest alike.
+describe("isInSkippedScanDir", () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "rango-skipped-scan-dir-"));
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it.each<[string, boolean]>([
+    [".cache-version-work/src/apps/a/router.tsx", true],
+    [".claude/worktrees/feature/src/urls.tsx", true],
+    ["src/.generated/urls.tsx", true],
+    ["node_modules/pkg/urls.js", true],
+    ["dist/rsc/index.js", true],
+    ["coverage/lcov-report/urls.js", true],
+    ["src/build/urls.tsx", false],
+    ["src/__tests__/urls.tsx", false],
+    ["src/urls.tsx", false],
+    ["router.tsx", false],
+    [".eslintrc.js", false],
+  ])("%s: skipped=%s, and no scan reaches a skipped file", (rel, skipped) => {
+    const file = join(root, rel);
+    mkdirSync(join(file, ".."), { recursive: true });
+    writeFileSync(file, "createRouter({});\ncreateHostRouter({});\n");
+
+    const reached = [
+      findTsFiles(root),
+      findRouterFiles(root),
+      findHostRouterFiles(root),
+    ].some((files) => files.includes(file));
+
+    expect(isInSkippedScanDir(root, file)).toBe(skipped);
+    expect(reached).toBe(!skipped);
+  });
+
+  it("is false for a path outside the root", () => {
+    expect(
+      isInSkippedScanDir(join(root, "app"), join(root, "shared", "urls.tsx")),
+    ).toBe(false);
+    expect(
+      isInSkippedScanDir(
+        join(root, "apps", "web"),
+        join(root, ".claude", "worktrees", "x", "urls.tsx"),
+      ),
+    ).toBe(false);
+  });
 });
