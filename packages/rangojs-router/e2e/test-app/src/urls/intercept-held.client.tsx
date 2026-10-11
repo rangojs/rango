@@ -1,0 +1,57 @@
+"use client";
+
+import { useHandle, useLoader } from "@rangojs/router/client";
+import type { LoaderDefinition } from "@rangojs/router";
+import { Modal } from "../components/Modal.js";
+import { interceptHeldAction } from "./intercept-held.actions.js";
+import {
+  InterceptHeldCrumbs,
+  InterceptPushLoader,
+} from "./intercept-held.defs.js";
+
+export function InterceptHeldCrumbsBar() {
+  const crumbs = useHandle(InterceptHeldCrumbs) ?? [];
+  return (
+    <ul data-testid="ih-crumbs">
+      {crumbs.map((crumb, index) => (
+        <li key={index} data-testid="ih-crumb">
+          {crumb}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+export function InterceptHeldLoaderModal({
+  id,
+  renders,
+  loader,
+}: {
+  id: string;
+  renders: number;
+  loader: LoaderDefinition<{ runs: number }>;
+}) {
+  const { data } = useLoader(loader);
+  return (
+    <Modal testId="ih-modal">
+      <p data-testid="ih-modal-id">{id}</p>
+      <p data-testid="ih-modal-renders">{renders}</p>
+      <p data-testid="ih-modal-runs">{data.runs}</p>
+      <button
+        data-testid="ih-modal-action"
+        onClick={() => void interceptHeldAction()}
+      >
+        Call action
+      </button>
+    </Modal>
+  );
+}
+
+export function InterceptPushModal({ id }: { id: string }) {
+  const { data } = useLoader(InterceptPushLoader);
+  return (
+    <Modal testId="ih-push-modal">
+      <p data-testid="ih-push-modal-id">{data.id ?? id}</p>
+    </Modal>
+  );
+}
