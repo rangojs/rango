@@ -15,19 +15,6 @@ import {
   type Scope,
 } from "./scope.js";
 
-export function hasDirective(program: Node, directive: string): boolean {
-  for (const statement of program.body) {
-    if (
-      statement.type !== "ExpressionStatement" ||
-      typeof statement.directive !== "string"
-    ) {
-      return false;
-    }
-    if (statement.directive === directive) return true;
-  }
-  return false;
-}
-
 /** The offset after the directive prologue (0 when there is none). */
 export function directivePrologueEnd(program: Node): number {
   let end = 0;
@@ -41,20 +28,6 @@ export function directivePrologueEnd(program: Node): number {
     end = statement.end;
   }
   return end;
-}
-
-export function lineColumn(code: string, offset: number): string {
-  let line = 1;
-  let column = 1;
-  for (let i = 0; i < offset && i < code.length; i++) {
-    if (code[i] === "\n") {
-      line++;
-      column = 1;
-    } else {
-      column++;
-    }
-  }
-  return `${line}:${column}`;
 }
 
 export function parseLang(file: string): "ts" | "tsx" | "jsx" {
@@ -94,7 +67,7 @@ export function propertyKeyIs(prop: Node, name: string): boolean {
 }
 
 /** Which helper calls {@link findHelperCalls} looks for. */
-export interface HelperCallSpec {
+interface HelperCallSpec {
   /** Module specifiers the builder (and a direct helper import) come from. */
   readonly sources: ReadonlySet<string>;
   /** The builder export whose callback's first parameter hands out `helper`. */
@@ -104,7 +77,7 @@ export interface HelperCallSpec {
   readonly directImport: boolean;
 }
 
-export interface HelperCall {
+interface HelperCall {
   readonly call: Node;
   readonly scope: Scope;
 }
@@ -358,7 +331,7 @@ export function findLexicalCapture(
 }
 
 /** The free references of a literal, by what they resolve to. */
-export interface FreeReferences {
+interface FreeReferences {
   /** Import local name -> whether any use is a value use. */
   readonly imports: Map<string, boolean>;
   /** Value references to a binding declared outside the literal that is not an import. */

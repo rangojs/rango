@@ -2,10 +2,11 @@ import type { Plugin } from "vite";
 import { normalizePath, parseAst } from "vite";
 import MagicString from "magic-string";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import { relative } from "node:path";
+import { hasDirective } from "@vitejs/plugin-rsc/transforms";
 import { HOISTED_REVALIDATE_KEY } from "../../client-urls/hoisted-revalidate.js";
 import { hasUseClientDirective } from "../utils/directive-prologue.js";
+import { offsetToLineColumn } from "./expose-ids/export-analysis.js";
 import {
   analyzeScopes,
   collectImports,
@@ -18,13 +19,19 @@ import {
   emitImports,
   findHelperCalls,
   findLexicalCapture,
-  hasDirective,
   isFunctionLiteral,
-  lineColumn,
   parseLang,
   unwrapExpression,
   type LexicalCaptureMessages,
 } from "./hoist/literal.js";
+import {
+  loadEmittedOrDisk,
+  readSource,
+  recordEmitted,
+  resolveSourceTarget,
+  SOURCE_FILE_RE,
+  type EmittedEntry,
+} from "./hoist/source.js";
 
 /**
  * clientUrls() loader `revalidate()` runs on the server, with the arguments a
@@ -73,7 +80,7 @@ import {
  * predicate stays a plain function.
  */
 
-export const CLIENT_URLS_REVALIDATE_QUERY = "rango-revalidate";
+const CLIENT_URLS_REVALIDATE_QUERY = "rango-revalidate";
 const REGISTER = "__rango_registerClientUrlRevalidators";
 
 const CLIENT_SOURCES: ReadonlySet<string> = new Set(["@rangojs/router/client"]);
@@ -124,8 +131,9 @@ function revalidateError(
   node: Node,
   detail: string,
 ): Error {
+  const { line, column } = offsetToLineColumn(code, node.start);
   return new Error(
-    `[rango] clientUrls() revalidate() at ${file}:${lineColumn(code, node.start)}: ` +
+    `[rango] clientUrls() revalidate() at ${file}:${line}:${column}: ` +
       `revalidate() runs on the server; ${detail}`,
   );
 }
@@ -209,7 +217,7 @@ export function revalidateKey(relativeFile: string, source: string): string {
   return keyOf(relativeFile, unwrapExpression(program.body[0].expression));
 }
 
-export interface HoistClientUrlsRevalidateDeps {
+interface HoistClientUrlsRevalidateDeps {
   /** Project root: keys hash the file relative to it. */
   readonly root: string;
   /**
@@ -219,7 +227,7 @@ export interface HoistClientUrlsRevalidateDeps {
   isClientModule?(source: string): Promise<boolean> | boolean;
 }
 
-export interface HoistClientUrlsRevalidateResult {
+interface HoistClientUrlsRevalidateResult {
   /** The module with each predicate replaced by its marker. */
   readonly code: string;
   readonly map: ReturnType<MagicString["generateMap"]>;
@@ -247,7 +255,7 @@ export async function hoistClientUrlsRevalidates(
   } catch {
     return null;
   }
-  if (!hasDirective(program, "use client")) return null;
+  if (!hasDirective(program.body, "use client")) return null;
 
   const { moduleScope, references, scopeOf } = analyzeScopes(program);
   const imports = collectImports(program);
@@ -401,20 +409,6 @@ export function parseHoistedRevalidateId(id: string): string | null {
   return params.has(CLIENT_URLS_REVALIDATE_QUERY) ? id.slice(0, q) : null;
 }
 
-async function readSource(file: string): Promise<string | null> {
-  try {
-    return await readFile(file, "utf-8");
-  } catch {
-    return null;
-  }
-}
-
-/** What the RSC transform emitted for a file, and the disk source it saw. */
-interface EmittedRevalidates {
-  readonly disk: string | null;
-  readonly module: string;
-}
-
 /**
  * The plugins: a pre transform that hoists in every environment (markers in
  * the client and SSR copies, the server module recorded from the RSC
@@ -428,7 +422,7 @@ interface EmittedRevalidates {
  * empty module to a proxy that still imports it.
  */
 export function clientUrlsRevalidateHoistPlugin(): Plugin[] {
-  const emitted = new Map<string, EmittedRevalidates>();
+  const emitted = new Map<string, EmittedEntry<string>>();
   let root = process.cwd();
   return [
     {
@@ -442,17 +436,14 @@ export function clientUrlsRevalidateHoistPlugin(): Plugin[] {
       async load(id) {
         const hoistedFile = parseHoistedRevalidateId(id);
         if (hoistedFile === null) return;
-        const file = normalizePath(hoistedFile);
-        const disk = await readSource(hoistedFile);
-        const entry = emitted.get(file);
-        if (entry && (disk === null || entry.disk === disk)) {
-          return entry.module;
-        }
-        const result =
-          disk === null
-            ? null
-            : await hoistClientUrlsRevalidates(disk, hoistedFile, { root });
-        return result?.module ?? "export {};\n";
+        const module = await loadEmittedOrDisk(
+          emitted,
+          hoistedFile,
+          async (disk) =>
+            (await hoistClientUrlsRevalidates(disk, hoistedFile, { root }))
+              ?.module,
+        );
+        return module ?? "export {};\n";
       },
 
       async transform(code, id) {
@@ -460,29 +451,24 @@ export function clientUrlsRevalidateHoistPlugin(): Plugin[] {
           return;
         }
         const file = normalizePath(id.split("?", 1)[0]!);
-        if (!/\.[cm]?[jt]sx?$/.test(file)) return;
+        if (!SOURCE_FILE_RE.test(file)) return;
         const rsc = this.environment?.name === "rsc";
         if (rsc) emitted.delete(file);
         const result = await hoistClientUrlsRevalidates(code, id, {
           root,
           isClientModule: rsc
             ? async (source) => {
-                const resolved = await this.resolve(source, id);
-                if (!resolved || resolved.external) return false;
-                const target = resolved.id.split("?", 1)[0]!;
-                if (target.startsWith("\0")) return false;
+                const target = await resolveSourceTarget(this, source, id, {
+                  skipNodeModules: false,
+                });
+                if (target === null) return false;
                 const text = await readSource(target);
                 return text !== null && hasUseClientDirective(text);
               }
             : undefined,
         });
         if (!result) return;
-        if (rsc) {
-          emitted.set(file, {
-            disk: await readSource(file),
-            module: result.module,
-          });
-        }
+        if (rsc) await recordEmitted(emitted, file, result.module);
         return { code: result.code, map: result.map };
       },
     },

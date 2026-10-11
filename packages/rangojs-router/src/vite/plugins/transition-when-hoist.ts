@@ -2,7 +2,8 @@ import type { Plugin } from "vite";
 import { normalizePath, parseAst } from "vite";
 import MagicString from "magic-string";
 import { builtinModules } from "node:module";
-import { readFile } from "node:fs/promises";
+import { hasDirective } from "@vitejs/plugin-rsc/transforms";
+import { offsetToLineColumn } from "./expose-ids/export-analysis.js";
 import { TransitionWhenError } from "../../transition-when-ref.js";
 import {
   analyzeScopes,
@@ -17,14 +18,20 @@ import {
   emitImports,
   findHelperCalls,
   findLexicalCapture,
-  hasDirective,
   isFunctionLiteral,
-  lineColumn,
   parseLang,
   propertyKeyIs,
   unwrapExpression,
   type LexicalCaptureMessages,
 } from "./hoist/literal.js";
+import {
+  loadEmittedOrDisk,
+  readSource,
+  recordEmitted,
+  resolveSourceTarget,
+  SOURCE_FILE_RE,
+  type EmittedEntry,
+} from "./hoist/source.js";
 
 /**
  * Inline transition({ when }) in urls(): the build hoists the function
@@ -149,7 +156,7 @@ export function isServerOnlySpecifier(source: string): boolean {
   );
 }
 
-export interface HoistTransitionWhenDeps {
+interface HoistTransitionWhenDeps {
   /**
    * Whether an import the literal re-emits is server-only beyond its
    * specifier (the plugin resolves it and looks for `import "server-only"`).
@@ -157,7 +164,7 @@ export interface HoistTransitionWhenDeps {
   isServerOnlyImport?(source: string): Promise<boolean> | boolean;
 }
 
-export interface HoistTransitionWhenResult {
+interface HoistTransitionWhenResult {
   readonly code: string;
   readonly map: ReturnType<MagicString["generateMap"]>;
   /** Virtual module source per hoisted literal, by index. */
@@ -173,8 +180,9 @@ const ROUTER_IMPORT_RE = /["']@rangojs\/router["']/;
 const WHEN_RE = /\bwhen\b/;
 
 function whenError(file: string, code: string, node: Node, detail: string) {
+  const { line, column } = offsetToLineColumn(code, node.start);
   return new TransitionWhenError(
-    `[rango] transition({ when }) at ${file}:${lineColumn(code, node.start)}: ` +
+    `[rango] transition({ when }) at ${file}:${line}:${column}: ` +
       `\`when\` runs in the browser; ${detail}`,
   );
 }
@@ -198,7 +206,7 @@ export async function hoistTransitionWhens(
   } catch {
     return null;
   }
-  if (hasDirective(program, "use client")) return null;
+  if (hasDirective(program.body, "use client")) return null;
 
   const { moduleScope, references, scopeOf } = analyzeScopes(program);
   const imports = collectImports(program);
@@ -331,37 +339,19 @@ export function parseHoistedWhenId(
 
 const SERVER_ONLY_IMPORT_RE = /\bimport\s+["']server-only["']/;
 
-async function readSource(file: string): Promise<string | null> {
-  try {
-    return await readFile(file, "utf-8");
-  } catch {
-    return null;
-  }
-}
-
-/** What the RSC transform emitted for a urls file, and the disk source it saw. */
-interface EmittedWhens {
-  readonly disk: string | null;
-  readonly modules: readonly string[];
-}
-
 /**
  * The plugin: hoists in the RSC environment (where urls() modules are
  * evaluated) and serves the `?rango-when=N` modules in every environment
  * (RSC, SSR and client all load them).
  *
- * `load` serves the modules the transform emitted, not a re-hoist of the file
- * on disk: the transform hoists the pipeline code, which an earlier plugin
- * may have changed, so re-hoisting the disk source can number the literals
- * differently and serve the wrong one for index N. The disk source is the
- * fallback only when the transform has not seen the current file: an
- * environment loading before the RSC transform ran (the order environments
- * ask in is not fixed), or an edit the RSC environment has not re-transformed
- * yet (serving the last transform would then be stale). The map is per
- * plugin instance, so every environment of one dev server or build shares it.
+ * `load` serves the modules the transform emitted (loadEmittedOrDisk), not a
+ * re-hoist of the file on disk: re-hoisting a disk source an earlier plugin
+ * changed can number the literals differently and serve the wrong one for
+ * index N. The map is per plugin instance, so every environment of one dev
+ * server or build shares it.
  */
 export function transitionWhenHoistPlugin(): Plugin {
-  const emitted = new Map<string, EmittedWhens>();
+  const emitted = new Map<string, EmittedEntry<readonly string[]>>();
   return {
     name: "@rangojs/router:transition-when-hoist",
     enforce: "pre",
@@ -369,15 +359,12 @@ export function transitionWhenHoistPlugin(): Plugin {
     async load(id) {
       const hoisted = parseHoistedWhenId(id);
       if (!hoisted) return;
-      const file = normalizePath(hoisted.file);
-      const disk = await readSource(hoisted.file);
-      const entry = emitted.get(file);
-      const modules =
-        entry && (disk === null || entry.disk === disk)
-          ? entry.modules
-          : disk === null
-            ? undefined
-            : (await hoistTransitionWhens(disk, hoisted.file))?.modules;
+      const modules = await loadEmittedOrDisk(
+        emitted,
+        hoisted.file,
+        async (disk) =>
+          (await hoistTransitionWhens(disk, hoisted.file))?.modules,
+      );
       const module = modules?.[hoisted.index];
       if (module === undefined) {
         throw new TransitionWhenError(
@@ -391,25 +378,20 @@ export function transitionWhenHoistPlugin(): Plugin {
       if (this.environment?.name !== "rsc") return;
       if (id.includes("/node_modules/") || parseHoistedWhenId(id)) return;
       const file = normalizePath(id.split("?", 1)[0]!);
-      if (!/\.[cm]?[jt]sx?$/.test(file)) return;
+      if (!SOURCE_FILE_RE.test(file)) return;
       emitted.delete(file);
       const result = await hoistTransitionWhens(code, id, {
         isServerOnlyImport: async (source) => {
-          const resolved = await this.resolve(source, id);
-          if (!resolved || resolved.external) return false;
-          const target = resolved.id.split("?", 1)[0]!;
-          if (target.includes("/node_modules/") || target.startsWith("\0")) {
-            return false;
-          }
+          const target = await resolveSourceTarget(this, source, id, {
+            skipNodeModules: true,
+          });
+          if (target === null) return false;
           const text = await readSource(target);
           return text !== null && SERVER_ONLY_IMPORT_RE.test(text);
         },
       });
       if (!result) return;
-      emitted.set(file, {
-        disk: await readSource(file),
-        modules: result.modules,
-      });
+      await recordEmitted(emitted, file, result.modules);
       return { code: result.code, map: result.map };
     },
   };

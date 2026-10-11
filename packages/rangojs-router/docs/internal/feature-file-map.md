@@ -173,10 +173,12 @@ The client descriptor and both runtime projections are owned by:
   the build transform: moves each `revalidate()` argument into the server-only
   `<file>?rango-revalidate` module, leaves the marker, appends the import to the
   RSC client-reference proxy, and rejects what cannot run on the server.
-- [`vite/plugins/hoist/scope.ts`](../../src/vite/plugins/hoist/scope.ts) and
-  [`vite/plugins/hoist/literal.ts`](../../src/vite/plugins/hoist/literal.ts) -
-  scope, capture and import analysis shared by this hoist and
-  `transition-when-hoist.ts`.
+- [`vite/plugins/hoist/scope.ts`](../../src/vite/plugins/hoist/scope.ts),
+  [`vite/plugins/hoist/literal.ts`](../../src/vite/plugins/hoist/literal.ts) and
+  [`vite/plugins/hoist/source.ts`](../../src/vite/plugins/hoist/source.ts) -
+  scope, capture and import analysis, and the source reading (resolve an
+  import to its file, the emitted-or-disk `load` lookup), shared by this hoist
+  and `transition-when-hoist.ts`.
 
 Public entry and router integration are owned by
 [`client.tsx`](../../src/client.tsx),
