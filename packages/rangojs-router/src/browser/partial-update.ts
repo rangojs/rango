@@ -43,7 +43,7 @@ import {
 } from "./transition-when.js";
 import { buildHistoryState } from "./history-state.js";
 import { addLocationState } from "./react/location-state-shared.js";
-import type { TransitionWhenKind } from "../types/segments.js";
+import { isPlaceholder, type TransitionWhenKind } from "../types/segments.js";
 import { auditTreeCause, type TreeUpdateCause } from "../suspense-audit.js";
 
 /**
@@ -167,6 +167,8 @@ interface Holes {
   defers: Map<ResolvedSegment, Defer<unknown>>;
   /** The `matched` the tree was built for. */
   matched: string[];
+  /** The answer to the fill request this navigation sent for them. */
+  answer: ReturnType<NavigationClient["fetchPartial"]>;
 }
 
 /**
@@ -258,7 +260,7 @@ export function createPartialUpdater(
    * leaves it out of the store's ids).
    */
   function getCurrentCachedSegments(): ResolvedSegment[] {
-    return (entryOnScreen() || []).filter((s) => !s.deferred);
+    return (entryOnScreen() || []).filter((s) => !isPlaceholder(s));
   }
 
   /**
@@ -268,7 +270,9 @@ export function createPartialUpdater(
    * stream that has not arrived yet, and all of them wait on its one promise
    * (browser/defer.ts readDefer, asStream).
    */
-  function armHoles(placeholders: ResolvedSegment[], matched: string[]): Holes {
+  function armHoles(
+    placeholders: ResolvedSegment[],
+  ): Map<ResolvedSegment, Defer<unknown>> {
     const defers = new Map<ResolvedSegment, Defer<unknown>>();
     for (const segment of placeholders) {
       const hole = new Defer<unknown>();
@@ -276,7 +280,7 @@ export function createPartialUpdater(
       else segment.component = hole as unknown as ReactNode;
       defers.set(segment, hole);
     }
-    return { defers, matched };
+    return defers;
   }
 
   /**
@@ -301,6 +305,12 @@ export function createPartialUpdater(
   function entryToFill(holes: Holes): ResolvedSegment[] | undefined {
     const live = entryOnScreen();
     return live?.some((s) => holes.defers.has(s)) ? live : undefined;
+  }
+
+  /** The page on screen holds every one of `segments` (by id). */
+  function holdsAll(segments: ResolvedSegment[]): boolean {
+    const onScreenIds = new Set(getCurrentCachedSegments().map((s) => s.id));
+    return segments.every((s) => onScreenIds.has(s.id));
   }
 
   function entryOnScreen(): ResolvedSegment[] | undefined {
@@ -350,7 +360,7 @@ export function createPartialUpdater(
 
   /**
    * Fill the holes of the tree this navigation committed with its fill's
-   * `answer`: a partial payload that carries the segment each placeholder
+   * answer (`holes.answer`): a partial payload that carries the segment each placeholder
    * stands for. Each defer resolves with that segment's value, the stored
    * entry is rewritten with the segments themselves, and what the answer's
    * handlers pushed and the location state they set go to the stores their
@@ -376,14 +386,13 @@ export function createPartialUpdater(
    */
   async function fillHoles(
     holes: Holes,
-    answer: ReturnType<NavigationClient["fetchPartial"]>,
     signal: AbortSignal | undefined,
     url: string,
     gatedOff: boolean,
   ): Promise<void> {
     let filled = false;
     try {
-      const result = await answer;
+      const result = await holes.answer;
       // A page that no longer waits for the answer (an action refetch
       // rendered what the placeholders stand for) takes nothing of it, its
       // redirect included.
@@ -407,7 +416,7 @@ export function createPartialUpdater(
         matched,
         diff: metadata.diff || [],
         serverSegments: metadata.segments || [],
-        cachedSegments: live.filter((s) => !s.deferred),
+        cachedSegments: live.filter((s) => !isPlaceholder(s)),
         insertMissingDiff: true,
       });
       const missing = missingIds(matched, reconciled.segments);
@@ -446,14 +455,12 @@ export function createPartialUpdater(
         // (navigation-adoption-loading.test.tsx, "a failed route's error").
         const settled = new Map<ResolvedSegment, ResolvedSegment>();
         for (const [placeholder, hole] of holes.defers) {
+          if (placeholder.type === "loader") continue;
+          // By id alone: an error segment takes its route's place.
           const next = reconciled.mainSegments.find(
-            (s) => s.id === placeholder.id && s.type !== "loader",
+            (s) => s.id === placeholder.id,
           );
-          if (
-            placeholder.type !== "loader" &&
-            next &&
-            !(next.component instanceof Promise)
-          ) {
+          if (next && !(next.component instanceof Promise)) {
             hole.resolve(next.component);
             settled.set(next, {
               ...next,
@@ -827,11 +834,11 @@ export function createPartialUpdater(
       // wrapper chain is built from. The tree is built once, with a deferred
       // in place of each missing value, and this navigation fills them from
       // one fill request once it has committed the tree.
-      let holes: Holes | undefined;
+      let defers: Holes["defers"] | undefined;
       let heldIds = matchedIds;
-      const placeholders = serverSegments.filter((s) => s.deferred);
+      const placeholders = serverSegments.filter(isPlaceholder);
       if (placeholders.length > 0) {
-        holes = armHoles(placeholders, matchedIds);
+        defers = armHoles(placeholders);
         // A placeholder is not held: every later request from this page
         // leaves its id out, so the server renders it.
         const deferredIds = new Set(placeholders.map((s) => s.id));
@@ -897,25 +904,31 @@ export function createPartialUpdater(
       // The fill: one request for what the prefetch deferred, listing what
       // the client holds once this payload commits. It leaves now, before
       // the tree is rendered, with this navigation's signal.
-      let fill: ReturnType<NavigationClient["fetchPartial"]> | undefined;
-      if (holes) {
-        fill = client.fetchPartial({
-          targetUrl: url,
-          segmentIds: heldIds,
-          // The page the fill completes is the page it is on.
-          previousUrl: url,
-          fill: true,
-          signal,
-          version: getVersion(),
-          routerId: store.getRouterId?.(),
-        });
-        filled = fill.then((answer) => answer.streamComplete).catch(() => {});
+      let holes: Holes | undefined;
+      if (defers) {
+        holes = {
+          defers,
+          matched: matchedIds,
+          answer: client.fetchPartial({
+            targetUrl: url,
+            segmentIds: heldIds,
+            // The page the fill completes is the page it is on.
+            previousUrl: url,
+            fill: true,
+            signal,
+            version: getVersion(),
+            routerId: store.getRouterId?.(),
+          }),
+        };
+        filled = holes.answer
+          .then((answer) => answer.streamComplete)
+          .catch(() => {});
       }
 
       // What a fill brought for a page that waited for it (below).
       let waited: RscMetadata | undefined;
       if (
-        fill &&
+        holes &&
         placeholders.some((s) => s.type !== "loader") &&
         shouldStartViewTransition(reconciled.segments, gatedOff)
       ) {
@@ -930,13 +943,14 @@ export function createPartialUpdater(
         // navigation that waits for its fill: nothing commits until the
         // fill's first chunk, and then the page commits once, from the
         // prefetched segments and the fill's, with no hole in it.
+        const { answer } = holes;
         holes = undefined;
-        waited = (await fill).payload.metadata;
+        waited = (await answer).payload.metadata;
         if (signal?.aborted || redirected(waited)) return;
         if (waited?.isPartial) {
           matchedIds = heldIds = waited.matched || [];
           serverSegments = [
-            ...serverSegments.filter((s) => !s.deferred),
+            ...serverSegments.filter((s) => !isPlaceholder(s)),
             ...(waited.segments || []),
           ];
           sent = [...sent, ...(waited.diff || [])];
@@ -1027,10 +1041,8 @@ export function createPartialUpdater(
       // cache, which says nothing about what is visible now. Restricted to
       // plain navigations — leave-intercept must close its modal urgently,
       // and action/stale modes have their own transition branch.
-      const onScreenIds = new Set(getCurrentCachedSegments().map((s) => s.id));
       const isSameStructureNav =
-        mode.type === "navigate" &&
-        reconciled.segments.every((s) => onScreenIds.has(s.id));
+        mode.type === "navigate" && holdsAll(reconciled.segments);
 
       const effectiveInterceptSource =
         interceptSourceUrl || segmentState.currentUrl;
@@ -1193,7 +1205,7 @@ export function createPartialUpdater(
       // The tree is committed and handed to React, which may hold it on a
       // hole read with no boundary: this navigation fills it now, from the
       // request that left before the render.
-      if (holes && fill) await fillHoles(holes, fill, signal, url, gatedOff);
+      if (holes) await fillHoles(holes, signal, url, gatedOff);
 
       debugLog("[Browser] Navigation complete");
       return;

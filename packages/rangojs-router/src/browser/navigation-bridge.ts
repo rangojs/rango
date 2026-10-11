@@ -5,6 +5,7 @@ import type {
   NavigateOptionsInternal,
   ResolvedSegment,
 } from "./types.js";
+import { isPlaceholder } from "../types/segments.js";
 import { setAppVersion } from "./app-version.js";
 import { isActionFenceActive } from "./action-fence.js";
 import { getRangoState } from "./rango-state.js";
@@ -136,7 +137,7 @@ function isRestorable(
   return (
     segments !== undefined &&
     segments.length > 0 &&
-    !segments.some((s) => s.deferred)
+    !segments.some(isPlaceholder)
   );
 }
 
@@ -395,7 +396,7 @@ export function createNavigationBridge(
           // Use source (current page) version for shared segments - it's
           // fresher. A placeholder waiting for its fill (prefetch: false) is
           // not a copy of the segment: the target keeps its own.
-          return sourceSeg && !sourceSeg.deferred ? sourceSeg : targetSeg;
+          return sourceSeg && !isPlaceholder(sourceSeg) ? sourceSeg : targetSeg;
         });
       }
 

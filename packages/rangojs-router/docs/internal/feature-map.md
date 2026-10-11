@@ -435,7 +435,8 @@ server projection.
   reload, and the click completes it.
   Server plan and decisions:
   `router/segment-resolution/prefetch-deferral.ts` (`resolveDeferralScope`,
-  `PrefetchDeferral` on `InternalHandlerContext._prefetchDeferral`),
+  `PrefetchDeferral` on `InternalHandlerContext._prefetchDeferral`,
+  `deferUnit`), wire markers in `prefetch-markers.ts`,
   `segment-resolution/revalidation.ts`; stored routes (`cache()`, `ppr`,
   `Prerender`) defer loaders only. Browser: `browser/partial-update.ts`
   (`armHoles`, `fillHoles`), `browser/defer.ts` (`Defer`, `readDefer`,

@@ -108,6 +108,7 @@
  *   4. Render slot content if slots present
  */
 import type { MatchResult, ResolvedSegment } from "../types.js";
+import { isPlaceholder } from "../types/segments.js";
 import type { MatchContext, MatchPipelineState } from "./match-context.js";
 import { debugLog } from "./logging.js";
 import { appendMetric } from "./metrics.js";
@@ -239,7 +240,7 @@ export function buildMatchResult<TEnv>(
     for (const s of allSegments) {
       // A deferred loader (prefetch: false) did not run in this response:
       // its pushes arrive with the fill, which lists it then.
-      if (s._handlerRan || (s.type === "loader" && !s.deferred)) {
+      if (s._handlerRan || (s.type === "loader" && !isPlaceholder(s))) {
         resolvedIds.push(s.id);
       }
       // A deferred unit (prefetch: false) has a null component and is sent:

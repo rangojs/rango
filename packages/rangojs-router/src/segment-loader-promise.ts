@@ -29,10 +29,10 @@ const IS_BROWSER = typeof window !== "undefined";
 
 interface LoaderCacheEntry {
   sources: any[];
-  // Resolves to the same array it records in `value`; a rejection passes
-  // through untouched. Not built for sources that have all fulfilled.
-  promise?: Promise<any[]>;
-  value?: any[];
+  // The aggregate while it is pending (a rejection passes through untouched),
+  // then the array it fulfilled with. The array from the start for sources
+  // that have all fulfilled.
+  result: Promise<any[]> | any[];
 }
 
 // Cap the per-key entries array. A stable first-ref (e.g. a layout loader whose
@@ -132,26 +132,19 @@ export function getMemoizedLoaderPromise(
   if (entries) {
     for (const entry of entries) {
       if (hasSameReferences(entry.sources, sources)) {
-        return (entry.value ?? entry.promise)!;
+        return entry.result;
       }
     }
   }
 
-  const newEntry: LoaderCacheEntry = { sources };
-  if (
-    sources.every(
-      (source) =>
-        source instanceof Promise &&
-        (source as { status?: string }).status === "fulfilled",
-    )
-  ) {
-    newEntry.value = sources.map((source) => source.value);
-  } else {
-    newEntry.promise = buildLoaderPromise(loaders).then((values) => {
-      newEntry.value = values;
-      return values;
-    });
-  }
+  const newEntry: LoaderCacheEntry = { sources, result: [] };
+  newEntry.result = sources.every(
+    (source) =>
+      source instanceof Promise &&
+      (source as { status?: string }).status === "fulfilled",
+  )
+    ? sources.map((source) => source.value)
+    : buildLoaderPromise(loaders).then((values) => (newEntry.result = values));
   if (entries) {
     // Bound the array: drop the oldest entry before appending when at the cap.
     if (entries.length >= MAX_ENTRIES_PER_KEY) {
@@ -163,5 +156,5 @@ export function getMemoizedLoaderPromise(
   } else {
     primitiveLoaderCache.set(first, [newEntry]);
   }
-  return (newEntry.value ?? newEntry.promise)!;
+  return newEntry.result;
 }

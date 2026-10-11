@@ -92,16 +92,21 @@ This is the rule #1079 broke, and what #1080 put in place on every lane. In the
 browser, `getBoundaryContent` (`src/segment-boundary-content.ts:20`) hands a settled
 component as the node itself; only the server wraps it, so Suspense still streams the
 fallback in the document. `getMemoizedLoaderPromise` remembers the array once its
-aggregate fulfils and from then on hands that array (`entry.value ??
-entry.promise`, `src/segment-loader-promise.ts:135`), so a later tree reads the loader
+aggregate fulfils and from then on hands that array (`entry.result`,
+`src/segment-loader-promise.ts:135`), so a later tree reads the loader
 data without suspending. An aggregate whose sources have all fulfilled (Flight sets the
 status on its chunks) is that array from its first call: the sources of a page a
 `prefetch: false` fill settled without a render are first aggregated by the next
 navigation that keeps them. A boundary may get the promise in one tree and the settled
 array in a later one: that is a different value at a different time (rule 6), not a
-switch under a render.
+switch under a render. The value path still calls `use()`: `Suspender` and
+`LoaderResolver` call `use(SETTLED_THENABLE)` when they are handed the value, as every
+`useLoader` read with route context does. Without it, a place that suspended in `use()`
+on mount and then finishes without it logs React's "This library called use() to suspend
+in a previous render but did not call use() when it finished"
+(`src/__tests__/use-loader-settled-read.test.tsx`, "router boundary read sites").
 
-One gap is left, and it is a timing one. `entry.value ?? entry.promise` is decided when
+One gap is left, and it is a timing one. `entry.result` is read when
 the tree is built. A tree built while the loader data is pending, and rendered only after
 the aggregate has settled, still hands the loader boundary a settled promise React has
 not read. Does React then suspend on it? Only where something reads the aggregate. A
@@ -121,7 +126,7 @@ aggregate already settled (I3, idle-fallback); 6 reruns and 6 runs with 8x CPU
 throttling did not repeat it. The baseline carries it as an intermittent entry.
 
 The fix direction, for a PR of its own: in `getMemoizedLoaderPromise`, the same `.then`
-that sets `entry.value` also stamps `status: "fulfilled"` and `value` on the router's
+that sets `entry.result` also stamps `status: "fulfilled"` and `value` on the router's
 promise. That is how the Flight client marks its chunks and how React's
 `trackUsedThenable` marks a thenable it has read, so any later render, concurrent or
 not, reads it synchronously, and the promise keeps its identity.

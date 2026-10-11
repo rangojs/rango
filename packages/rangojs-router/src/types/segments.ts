@@ -315,3 +315,14 @@ export interface MatchResult {
     params: Record<string, string>;
   }>;
 }
+
+/**
+ * A `prefetch: false` placeholder (ResolvedSegment.deferred): a segment whose
+ * work a prefetch skipped, waiting for its fill. Never a held copy of the
+ * segment it stands for.
+ */
+export function isPlaceholder(
+  segment: Pick<ResolvedSegment, "deferred">,
+): boolean {
+  return segment.deferred === true;
+}

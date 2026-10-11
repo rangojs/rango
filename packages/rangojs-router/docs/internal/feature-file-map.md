@@ -261,7 +261,10 @@ The public DOM seam is
   boundary for fetch, queue, and observer code.
 - `prefetch: false` is owned by
   [router/segment-resolution/prefetch-deferral.ts](../../src/router/segment-resolution/prefetch-deferral.ts)
-  (the per-route plan: which loaders and handler units a prefetch defers). The
+  (the per-route plan: which loaders and handler units a prefetch defers,
+  `deferUnit`; the wire markers `PREFETCH_HEADER` and `FILL_PARAM` live in the
+  dependency-free [prefetch-markers.ts](../../src/prefetch-markers.ts), which
+  the browser imports too). The
   decisions sit in the grouped `router/segment-resolution/*` row
   (`revalidation.ts`), the cache-skip rules in
   [cache/document-cache.ts](../../src/cache/document-cache.ts), the adoption
@@ -269,7 +272,8 @@ The public DOM seam is
   [browser/partial-update.ts](../../src/browser/partial-update.ts) (one
   defer per hole, [browser/defer.ts](../../src/browser/defer.ts): the
   `Defer`, the read rule `readDefer` that `Suspender` and `useLoader` apply,
-  and `asStream` for a hole React reads itself), what
+  and `asStream` for a hole React reads itself; a placeholder is told apart
+  by `isPlaceholder`, [types/segments.ts](../../src/types/segments.ts)), what
   cancels the fill in
   [browser/event-controller.ts](../../src/browser/event-controller.ts) (a
   committed navigation stays abortable while its stream is open) and

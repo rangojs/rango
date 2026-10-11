@@ -5,6 +5,7 @@ import {
   defersAboveRecord,
   defersLoader,
   defersUnit,
+  deferUnit,
   firstUnitCandidate,
   getPrefetchDeferral,
   isFillRequest,
@@ -702,6 +703,50 @@ describe("the decisions", () => {
     expect(defersUnit(ctx, "held")).toBe(false);
     expect(belowDeferredUnit(ctx, "held")).toBe(false);
     expect(belowDeferredUnit(ctxWith(undefined), slot)).toBe(false);
+  });
+
+  // The decision and its record in one call, as revalidation.ts makes it.
+  it("deferUnit decides, records, and hands back the segment's flag", () => {
+    const section = entry("layout", flagged);
+    const slots = entry("parallel", flagged);
+    const route = entry("route", { parallel: { "@side": slots } });
+    const slot = `${route.shortCode}.@side`;
+    const active = plan("prefetch", () => ({ chain: [section, route] }));
+    const ctx = ctxWith(active);
+
+    expect(deferUnit(ctx, route.shortCode, "below")).toBeUndefined();
+    expect(deferUnit(ctx, slot, "slot")).toEqual({ deferred: true });
+    expect(active.deferredUnit).toBe(slot);
+    expect(active.below).toBeUndefined();
+
+    expect(deferUnit(ctx, section.shortCode, "chain")).toEqual({
+      deferred: true,
+    });
+    expect(active.below).toBe(true);
+    expect(deferUnit(ctx, route.shortCode, "below")).toEqual({
+      deferred: true,
+    });
+    expect(deferUnit(ctx, "orphan-layout", "below")).toEqual({
+      deferred: true,
+    });
+    expect(deferUnit(ctxWith(undefined), section.shortCode, "chain")).toBe(
+      undefined,
+    );
+  });
+
+  it("deferUnit leaves a held unit and a slot that is not its own unit to run", () => {
+    const section = entry("layout", flagged);
+    const route = entry("route");
+    const held = ctxWith(
+      plan(
+        "prefetch",
+        () => ({ chain: [section, route] }),
+        holding(section.shortCode),
+      ),
+    );
+    expect(deferUnit(held, section.shortCode, "chain")).toBeUndefined();
+    expect(deferUnit(held, `${route.shortCode}.@side`, "slot")).toBeUndefined();
+    expect(getPrefetchDeferral(held)?.deferredUnit).toBeUndefined();
   });
 
   it("a slot that is its own unit takes nothing with it", () => {

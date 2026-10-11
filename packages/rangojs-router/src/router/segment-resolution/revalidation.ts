@@ -37,11 +37,9 @@ import { resolveLoaderData } from "./loader-cache.js";
 import { entryLoadingMasksLoaders } from "./loader-mask.js";
 import {
   defersLoader,
-  belowDeferredUnit,
-  defersUnit,
+  deferUnit,
   getPrefetchDeferral,
   isFillRequest,
-  markUnitDeferred,
 } from "./prefetch-deferral.js";
 import {
   handleHandlerResult,
@@ -686,11 +684,15 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
     // on the next request, perpetuating the staleness).
     matchedIds.push(parallelId);
 
+    // A slot below a unit a prefetch skipped goes with it, and no predicate
+    // runs: a prefetch sends what the slot declares instead of running its
+    // handler.
+    let deferred = deferUnit(context, parallelId, "below");
     let shouldResolve: boolean;
     if (isFillRequest(context)) {
       // Fill: only what the client does not hold renders, no predicate runs.
       shouldResolve = !clientSegmentIds.has(parallelId);
-    } else if (belowDeferredUnit(context, parallelId)) {
+    } else if (deferred) {
       shouldResolve = true;
     } else if (isFullRefetch) {
       // Client has nothing cached — slot MUST render. User revalidate fns are
@@ -766,12 +768,9 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
       shouldResolve,
     );
 
-    // A slot with its own flagged loading() is its own unit, and a slot
-    // below a deferred unit goes with it: a prefetch sends what the slot
-    // declares instead of running its handler.
-    const deferSlot = shouldResolve && defersUnit(context, parallelId);
-    if (deferSlot) markUnitDeferred(context, parallelId);
-    const { component, handlerRan } = deferSlot
+    // A slot with its own flagged loading() is its own unit.
+    if (shouldResolve) deferred ??= deferUnit(context, parallelId, "slot");
+    const { component, handlerRan } = deferred
       ? { component: null, handlerRan: false }
       : await resolveParallelSlotComponent({
           shouldResolve,
@@ -805,7 +804,7 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
       ...(parallelEntry.mountPath
         ? { mountPath: parallelEntry.mountPath }
         : {}),
-      ...(deferSlot ? { deferred: true as const } : {}),
+      ...deferred,
     });
 
     if (loaderOrder === "after") {
@@ -837,7 +836,7 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
   const matchedId = entry.shortCode;
 
   let handlerRan = false;
-  let deferred = false;
+  let deferred: { readonly deferred: true } | undefined;
   const component = await revalidate(
     async () => {
       const hasSegment = clientSegmentIds.has(entry.shortCode);
@@ -918,11 +917,8 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
     async () => {
       // Only an entry the client lacks (defersUnit). Its handler would
       // have run, and a prefetch sends the entry's fallback in its place.
-      if (defersUnit(context, entry.shortCode)) {
-        deferred = true;
-        markUnitDeferred(context, entry.shortCode, true);
-        return null;
-      }
+      deferred = deferUnit(context, entry.shortCode, "chain");
+      if (deferred) return null;
       handlerRan = true;
       const doneHandler = track(`handler:${entry.id}`, 2);
       (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
@@ -1025,7 +1021,7 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
       : {}),
     ...(entry.mountPath ? { mountPath: entry.mountPath } : {}),
     _handlerRan: handlerRan,
-    ...(deferred ? { deferred: true as const } : {}),
+    ...deferred,
   };
 
   return { segment, matchedId };
@@ -1279,7 +1275,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
   // so ctx.set() values are visible to parallel children.
   matchedIds.push(orphan.shortCode);
 
-  let deferred = false;
+  let deferred: { readonly deferred: true } | undefined;
   const component = await revalidate(
     async () => {
       if (!clientSegmentIds.has(orphan.shortCode)) {
@@ -1338,10 +1334,8 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
     },
     async () => {
       // Below a unit a prefetch skipped: the orphan goes with it.
-      if (defersUnit(context, orphan.shortCode)) {
-        deferred = true;
-        return null;
-      }
+      deferred = deferUnit(context, orphan.shortCode, "below");
+      if (deferred) return null;
       return resolveLayoutComponent(orphan, context);
     },
     () => null,
@@ -1362,7 +1356,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
       deps.viewTransitionDefault,
     ),
     ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
-    ...(deferred ? { deferred: true as const } : {}),
+    ...deferred,
   });
 
   // Resolve the orphan layout's parallel slots through the shared main-path

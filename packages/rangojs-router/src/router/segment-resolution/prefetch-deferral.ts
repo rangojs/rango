@@ -53,7 +53,7 @@ export function requestKind(
 }
 
 /** Static, per matched chain. */
-export interface DeferralScope {
+interface DeferralScope {
   /**
    * Loader registrations a prefetch can defer, each with what makes it so:
    * `true` for its own flag, else the segment ids of the flagged entries whose
@@ -420,4 +420,38 @@ export function markUnitDeferred(
   if (!plan) return;
   plan.deferredUnit ??= segmentId;
   if (chain) plan.below = true;
+}
+
+/** What the segment of a unit a prefetch skipped carries. */
+const DEFERRED = { deferred: true } as const;
+
+/**
+ * Whether this prefetch skips the handler of the unit whose segment is
+ * `segmentId`, recorded: the flag the segment carries
+ * (ResolvedSegment.deferred), or undefined when the handler runs.
+ * - `chain`: a chain entry, its own unit or below one (defersUnit). The walk
+ *   takes what it reaches after it (markUnitDeferred).
+ * - `slot`: a slot that is its own unit, skipped alone.
+ * - `below`: what the walk reaches below a chain unit it skipped
+ *   (belowDeferredUnit): a slot, before its predicates run, and an orphan
+ *   layout, which is never a unit of its own (resolveDeferralScope). The unit
+ *   above is recorded already.
+ */
+export function deferUnit(
+  ctx: HandlerContext<any, any>,
+  segmentId: string,
+  kind: "chain" | "slot" | "below",
+): { readonly deferred: true } | undefined {
+  if (kind === "below") {
+    return belowDeferredUnit(ctx, segmentId) ? DEFERRED : undefined;
+  }
+  if (
+    kind === "chain"
+      ? !defersUnit(ctx, segmentId)
+      : getPrefetchDeferral(ctx)?.skipped.has(segmentId) !== true
+  ) {
+    return undefined;
+  }
+  markUnitDeferred(ctx, segmentId, kind === "chain");
+  return DEFERRED;
 }
