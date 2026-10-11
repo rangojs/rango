@@ -248,6 +248,9 @@ is the list:
 - `lazy-include-cost.bench.ts` — the LP1/LP3/LP4 timing benchmark.
 - `discover-routers-reload.test.ts` — a discovery pass split by a runner reload is redone,
   and a failed cold discovery recovers.
+- `dev-discovery-recovery.test.ts` — the dev server's side of that recovery: after a failed
+  cold discovery the next source save re-runs discovery, holds the routes-manifest module
+  until the pass commits, and invalidates it once.
 - `semantic-matrix.test.ts` — the router's core execution guarantees (middleware scope,
   handler-first ordering, PE/JS parity). If you change matching or discovery, keep this
   one green above all.

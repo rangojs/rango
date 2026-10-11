@@ -326,7 +326,8 @@ discovery commits nothing, so the routes-manifest module's no-manifest branch st
 sets `lastDiscoveryError`: `canRefreshRuntimeDiscovery()` (discovery/state.ts) then lets the
 route-file watcher re-run discovery on a main runner, the recovery mode a failed HMR
 rediscovery already had. Before, the watcher required a committed manifest, so only a
-restart recovered.
+restart recovered. Pinned by `src/vite/__tests__/dev-discovery-recovery.test.ts`, which
+drives the plugin's `configureServer` against a fake dev server.
 
 ### A reload no file of the app asked for (why the watcher skips some directories)
 
