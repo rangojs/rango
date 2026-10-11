@@ -22,12 +22,17 @@ import type { LoaderDefinition } from "../types.js";
 
 /** Every value the router's read sites hand React's use(). */
 const used = vi.hoisted(() => [] as unknown[]);
+/** Runs at each use() call, before React reads the value. */
+const onUse = vi.hoisted(() => ({
+  current: undefined as ((usable: unknown) => void) | undefined,
+}));
 vi.mock("react", async () => {
   const actual = await vi.importActual<typeof import("react")>("react");
   return {
     ...actual,
     use: <T,>(usable: Promise<T>): T => {
       used.push(usable);
+      onUse.current?.(usable);
       return actual.use(usable);
     },
   };
@@ -37,6 +42,7 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   used.length = 0;
+  onUse.current = undefined;
 });
 
 const ReviewsLoader = { $$id: "reviews" } as unknown as LoaderDefinition<{
@@ -250,24 +256,18 @@ describe("reading a hole", () => {
     const wait = () => new Promise((resolve) => setTimeout(resolve, 20));
     try {
       const hole = new Defer<unknown>();
-      // Rendered before the reader: the hole resolves in the microtask
-      // after the reader suspended, before React's next slice.
-      function ResolveAfterThisRender(): ReactNode {
+      // The hole resolves in the microtask after the reader suspended,
+      // before React's next slice. Queued from the read itself: a sibling
+      // rendered first can end React's slice before the reader renders.
+      onUse.current = (usable) => {
+        if (usable !== hole.promise) return;
         queueMicrotask(() => {
           if (hole.status === "pending") hole.resolve({ count: 6 });
         });
-        return null;
-      }
+      };
       root.render(<Harness initial={null} />);
       await wait();
-      startTransition(() =>
-        setTree(
-          <>
-            <ResolveAfterThisRender />
-            {readers(hole, "a")}
-          </>,
-        ),
-      );
+      startTransition(() => setTree(readers(hole, "a")));
       await wait();
       expect(container.textContent).toBe("6");
       expect(warnings()).toEqual([]);
