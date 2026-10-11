@@ -1,9 +1,11 @@
 import {
   urls,
+  createLoader,
   type Handler,
   type TransitionWhenContext,
 } from "@rangojs/router";
 import { Link, Outlet } from "@rangojs/router/client";
+import { TxIdleValue } from "../components/TxIdleValue.js";
 import { TxMountProbe } from "../components/TxMountProbe.js";
 import { TxActionProbe, TxFailProbe } from "../components/TxActionProbe.js";
 import {
@@ -191,8 +193,49 @@ const TxActHandler: Handler<"/tx-act/:n"> = (ctx) => (
   </div>
 );
 
+/**
+ * /tx-idle/*: loading() with loaders of 100 and 400 ms (#1078). The routes
+ * differ only in transition(): default, an always-false `when`, and
+ * viewTransition: false.
+ */
+const idleDelay =
+  (ms: number): (() => Promise<{ delay: number }>) =>
+  async () => {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+    return { delay: ms };
+  };
+export const TxIdleFastLoader = createLoader(idleDelay(100));
+export const TxIdleSlowLoader = createLoader(idleDelay(400));
+
+function TxIdleShell() {
+  return (
+    <div data-testid="tx-idle-shell">
+      {(["default", "when", "off"] as const).map((variant) => (
+        <Link
+          key={variant}
+          to={`/tx-idle/${variant}`}
+          data-testid={`tx-idle-to-${variant}`}
+          prefetch="none"
+        >
+          {variant}
+        </Link>
+      ))}
+      <Outlet />
+    </div>
+  );
+}
+
+function TxIdlePage() {
+  return (
+    <div data-testid="tx-idle-page">
+      <TxIdleValue loader={TxIdleFastLoader} testId="tx-idle-fast" />
+      <TxIdleValue loader={TxIdleSlowLoader} testId="tx-idle-slow" />
+    </div>
+  );
+}
+
 export const conditionalTransitionPatterns = urls(
-  ({ path, layout, loading, transition, errorBoundary }) => [
+  ({ path, layout, loader, loading, transition, errorBoundary }) => [
     path("/tx-when/:hold/:n", TxWhenHandler, { name: "txWhen" }, () => [
       transition({ when: txHoldWhen }),
       loading(<div data-testid="tx-when-loading">tx-when-loading</div>),
@@ -226,6 +269,29 @@ export const conditionalTransitionPatterns = urls(
       transition({ when: txActWhen }),
       errorBoundary(() => <div data-testid="tx-act-error">tx-act-error</div>),
       path("/tx-act/:n", TxActHandler, { name: "txAct" }),
+    ]),
+    layout(TxIdleShell, () => [
+      path("/tx-idle", () => <div data-testid="tx-idle-index">tx-idle</div>, {
+        name: "txIdleIndex",
+      }),
+      path("/tx-idle/default", TxIdlePage, { name: "txIdleDefault" }, () => [
+        loader(TxIdleFastLoader),
+        loader(TxIdleSlowLoader),
+        loading(<div data-testid="tx-idle-loading">tx-idle-loading</div>),
+        transition(),
+      ]),
+      path("/tx-idle/when", TxIdlePage, { name: "txIdleWhen" }, () => [
+        loader(TxIdleFastLoader),
+        loader(TxIdleSlowLoader),
+        loading(<div data-testid="tx-idle-loading">tx-idle-loading</div>),
+        transition({ when: () => false }),
+      ]),
+      path("/tx-idle/off", TxIdlePage, { name: "txIdleOff" }, () => [
+        loader(TxIdleFastLoader),
+        loader(TxIdleSlowLoader),
+        loading(<div data-testid="tx-idle-loading">tx-idle-loading</div>),
+        transition({ viewTransition: false }),
+      ]),
     ]),
   ],
 );
