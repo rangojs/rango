@@ -2,6 +2,314 @@
 
 ## Unreleased
 
+### Breaking: a `clientUrls()` loader's `revalidate()` runs on the server, with the same arguments as in `urls()`
+
+**Before.** A `revalidate()` predicate in a `clientUrls()` group ran in the
+browser, before the request went out, and sent its verdict to the server in an
+`X-Rango-Client-Reval` header. It saw only the URLs, the params, `isAction()`
+and `actionId`. It could not read an action's result or form data, or anything
+the server had set on the request. A prefetched in-group navigation ignored it,
+because a prefetch carried no verdicts.
+
+**Now.** The build moves the predicate out of the `"use client"` module, and it
+runs on the server in the same code as a `urls()` loader's (`evaluateRevalidation`),
+with the same argument object and type (`ShouldRevalidateFn` from
+`@rangojs/router`): `currentParams`, `currentUrl`, `nextParams`, `nextUrl`,
+`defaultShouldRevalidate`, `context` (so `context.get(var)` works),
+`segmentType`, `actionId`, `isAction(...refs)`, `actionUrl`, `actionResult`,
+`formData`, `method`, the route names and `stale`. Nothing runs in the browser
+before the request, and the request carries no client-computed decision.
+
+```tsx
+// Before: in the browser, URLs / params / isAction / actionId only
+revalidate(({ isAction }) => isAction(checkout));
+
+// After: on the server, the full urls() argument
+revalidate((ctx) =>
+  ctx.isAction(checkout) ? ctx.actionResult?.ok === true : undefined,
+);
+```
+
+What to change:
+
+- **Write the predicate inline, or import it, and reference imports and globals
+  only.** An inline arrow, an imported predicate (`revalidate(isCartAction)`), a
+  namespace member (`P.cart`) and a call of an imported factory
+  (`makePredicate("cart")`) all work, as do globals such as `URL` and
+  `import.meta.env`.
+- **Move a predicate declared in the `"use client"` module** (a `const` next to
+  the group) into its own module without `"use client"` and import it. The build
+  names the file, line and column (`[rango] clientUrls() revalidate() at
+<file>:<line>:<col>: revalidate() runs on the server; ...`). The same error
+  covers a predicate that captures a binding of an enclosing function (read it
+  from the predicate's argument), uses `this`, `arguments`, `import()` or
+  `import.meta` other than `import.meta.env`, is `async` or a generator, takes a
+  spread, a second argument or no argument, is not a function, or imports
+  `client-only` or a module whose directive is `"use client"` (on the server its
+  exports are client references). A `"use server"` import is fine: on the
+  server it is the real action, which `isAction(ref)` matches.
+- **Read values from the argument, not from browser state.** `window`,
+  `document`, `navigator`, `localStorage`, `sessionStorage`, `location` and
+  `history` are build errors in a predicate. Put the input on the request (a
+  cookie or a search param) and read it from the argument, or refresh the
+  loader with `useRefreshLoaders`.
+- **Replace the removed types.** `ClientRevalidateArgs` and `ClientRevalidateFn`
+  are gone from `@rangojs/router/client`; use `RevalidateParams` or
+  `ShouldRevalidateFn` from `@rangojs/router` (a type-only import is fine in a
+  `"use client"` file).
+- **In tests, replace `runClientRevalidate` with `await runRevalidate(...)`**
+  from `@rangojs/router/testing` (`RunClientRevalidateOptions` is gone;
+  `RunRevalidateOptions` replaces it, see below). It runs the predicate through
+  the production `evaluateRevalidation` and serves `urls()` and `clientUrls()`
+  predicates alike. Vitest does not run the build plugin, so in a unit test the
+  predicate stays a plain function. In the Flight project,
+  `rangoUseClientTransform()` registers the plain predicates of a mounted
+  group on the server, so a `serveShellRequest` navigation or action runs them
+  there, as in your app.
+
+Notes:
+
+- `currentParams` and `nextParams` are the server's route params, which include
+  the `include()` mount's params. They used to be the definition-local params.
+- `actionId` is the server's `src/...#export` form, no longer the browser's
+  hashed id. Match actions with `isAction(ref)`, which is unchanged.
+- Document requests and no-JS form posts hold no segments, so every loader still
+  renders whatever a predicate says. On the action-triggered refetch GET,
+  `isAction()` is false, as for `urls()`.
+- A browser from before the deploy may still send `X-Rango-Client-Reval`; the
+  server ignores it.
+- A `server-only` or `node:` import in a predicate module works on the server, but
+  the import also stays in the `"use client"` module, which is not pruned for the
+  browser, so it must still load there as before.
+- `intercept()` loaders inside `clientUrls()` still do not apply their
+  `revalidate()`, but the build checks their predicates like any other: an
+  intercept predicate that captures a binding of the `"use client"` module
+  (or breaks another rule above) is a build error now, although nothing runs
+  it. Move it into an imported module, or drop it.
+- The `vite-rsc-demo` `productData` predicate moved from its `"use client"`
+  module to `tests/vite-rsc-demo/src/urls/client-shop.predicates.ts`, as the
+  example.
+
+What you gain:
+
+- **The action's `actionResult` and `formData`, `context.get()`, `method` and the
+  route names.** A group can re-run a loader only when the action succeeded.
+- **A prefetched in-group navigation honours the predicate.** The server runs it
+  for the prefetch like any other request; a stale back/forward revalidation
+  sees `stale: true`.
+- **The browser no longer runs predicates before every in-group request**, and
+  its copy of the group keeps a key in place of each predicate, so the evaluator
+  and the predicate bodies are out of the client bundle.
+
+`runRevalidate(fn | fn[], opts?)` takes `currentUrl`, `nextUrl`, `currentParams`,
+`nextParams`, `action` (an imported action, an action id string, or `{ ref,
+result, formData, url }`), `method`, `segmentType`, `belongsToRoute`, `stale`,
+`routeName`, `fromRouteName`, `env`, `vars` (what a middleware would have set,
+for `context.get()`) and `context`. Outside a built app an imported action has
+no `$id`: pass the id string, or stamp `$id` on the function in the test.
+
+```ts
+import { runRevalidate } from "@rangojs/router/testing";
+
+expect(
+  await runRevalidate(onCheckoutOk, {
+    action: { ref: "src/actions/cart.ts#checkout", result: { ok: true } },
+  }),
+).toBe(true);
+```
+
+### Added: `serveShellRequest({ action })` sends the request a JS server action call makes
+
+`serveShellRequest(router, url, { action: { ref, id, args, segments } })` from
+`@rangojs/router/testing/flight` POSTs what the browser posts when the page at
+`url` calls a server action: `args` encoded as the browser encodes them, with
+`?_rsc_action`, the `rsc-action` header, `X-RSC-Router-Client-Path` and
+`_rsc_segments` (the segment ids the page holds). `ref` is registered under `id`
+(`<module id>#<export name>`). It is how a test reaches the revalidation that
+follows an action, `actionResult` and `formData` included, through the real
+handler. It cannot be combined with `partial` or `form`.
+
+### Added: `prefetch: false` on `loader()` and `loading()` keeps expensive work out of prefetches
+
+A prefetch renders everything a click would: every handler and every loader.
+With the default `"viewport"` strategy a page with forty product links renders
+forty pages the visitor will mostly never open. Two options now keep the
+expensive part out:
+
+```tsx
+loader(ReviewsLoader, { prefetch: false }); // this loader is skipped in a prefetch
+loading(<OrdersSkeleton />, { prefetch: false }); // everything behind this fallback is skipped
+```
+
+A prefetch of the route skips the flagged work and marks it deferred. When the
+visitor clicks, the page commits at once with the prefetched content, the
+fallback shows where the deferred part goes, and one second request (the fill)
+runs only that part. The page is built once: the navigation waits for the
+fill and resolves what the page is waiting for, and nothing is mounted twice.
+Leaving the page (another click, back/forward) cancels the fill. A hard load, a
+navigation with nothing prefetched, an action and back/forward behave as
+before. Without the options nothing changes.
+
+What to know before you use it:
+
+- **Only what is new to the page is deferred.** A segment the browser already
+  holds is prefetched as usual: the layout of the section you are in, or the
+  route itself on a same-route navigation (`/product/a` to `/product/b`). So
+  content on screen is never swapped for a fallback. To defer navigation
+  inside a section, flag the `loading()` of its routes.
+- **A click before its prefetch has answered waits for it.** The click
+  reuses the prefetch that is still in flight, as it does without the flag,
+  and sends the fill when it answers. The page shows no later than with no
+  prefetch; the deferred part can complete later, by up to what was left of
+  the prefetch. That is the price of keeping expensive or slow work out of
+  every prefetch, which is what the flag is for.
+- **A deferred loader never blocks the click.** It behaves like a loader that
+  is still streaming: its own `<Suspense>` shows at once, the route's
+  `loading()` shows when that is the nearest boundary, and with no boundary
+  React holds the page being left until the fill returns
+  (`useNavigation()` reads `loading` meanwhile).
+- **`clientUrls()` routes take it on `loader()`.** `loader(Def, { prefetch:
+false })` in a `clientUrls()` definition keeps that loader out of the
+  route's prefetches; on a `layout()` of the group it applies to every route
+  below it. A click inside the group shows the destination at once, as it
+  always did; with the prefetch adopted, the URL and the other loaders' data
+  move with the click too, `useOutlet().pending` ends with that commit, and
+  the fill runs only the flagged loaders. A flagged `loader()` on a server
+  layout above the group is deferred while that layout is new to the page.
+  `loading()` in `clientUrls()` takes no options, and a flagged `loading()`
+  on a server layout above a group defers nothing for the group's routes.
+- **Under `transition()` a deferred `loading()` commits with its fill.**
+  Nothing changes at the click: the address bar, the URL hooks and the page
+  move together when the fill starts answering, as they do when a plain
+  click's response starts, and `useNavigation()` reads `loading` until then.
+  That is also the case when the `transition()` is on something the fallback
+  covers (a route under a flagged layout). Committed with the click, the
+  content could only arrive in a second commit, which under a
+  `<ViewTransition>` is a view transition of its own that the reveal then
+  waits for. A flagged `loader()` under `transition()` commits with the
+  click.
+- **A deferred loader read with no boundary moves the address bar early.**
+  React holds the page being left until the value arrives, as it does for a
+  click with no prefetch, and `useNavigation()` and the URL hooks move with
+  the page in both. The address bar moves with the click, where a click with
+  no prefetch moves it when its response starts: earlier by one round trip
+  to the server. Known, not fixed.
+- **A flagged `loading()` on a layout shows its skeleton over the whole
+  layout.** Entered from a page without the layout, the prefetch skips the
+  layout's handler too, so the click shows the skeleton at once, in place of
+  the whole layout, and the layout appears when the fill answers, at least
+  React's 300 ms after the skeleton. A click with no prefetch, in a
+  production build, shows the layout with its first chunk and the fallback
+  inside it. This is the one place where the two clicks show different
+  pages, by design. A loader below the layout streams as with no prefetch, and what
+  is still pending shows its fallback inside the layout: a route's own
+  `loading()`, a `<Suspense>` in its content, or, for a read with no boundary
+  of its own, the layout's own fallback a second time. React keeps that
+  fallback up at least 300 ms and holds the page's other reveals as long, so
+  content can show up to 300 ms later than with no prefetch.
+- **A nested deferred read can come later than with no prefetch.** The
+  adopted click shows its fallback with the click, so React may reveal the
+  deferred part a round trip sooner than a plain click; a nested read that
+  lands in between shows a fallback of its own and its content waits another
+  300 ms (with the server 100 ms away: about 605 ms against 410).
+- **A prefetch that deferred something is used only on the page that made
+  it.** A page that already shows the segment makes its own prefetch, which
+  defers nothing for it.
+- **`ctx.rendered()` is refused** in a loader a prefetch can defer, on every
+  request, and so is the handle data it unlocks.
+- **A deferred loader cannot see `ctx.set()` values** from handlers the client
+  already holds, and its `redirect()`, `notFound()` and handle pushes arrive
+  after the page is on screen.
+- **Stored routes defer loaders only.** Under `cache()`, `ppr` and `Prerender`
+  the stored handler output is served as before. A loader with its own
+  `cache()` is skipped in a prefetch even on a hit; the fill reads through
+  `cache()` and `"use cache"` as any request does.
+- A loader a handler awaits with `ctx.use()`, loaders inside `intercept()`
+  (in `urls()` and in `clientUrls()`), and a flagged `loading()` above a
+  `clientUrls()` route ignore the flag.
+- **Double runs.** A flagged loader that a handler under `loading()`, or
+  another loader, reads with `ctx.use()` after an `await` runs in the
+  prefetch for its reader and again in the fill.
+- **A response that defers is never reused** by the document cache or by a
+  shared cache in front of the app (`cache-control: private, no-cache`,
+  whatever the route set), and it never answers a navigation: its `Vary`
+  names `X-Rango-Prefetch`. The browser may keep a copy, which it reuses only
+  while it reloads a page for back/forward, for the same prefetch from the
+  same page; the client completes any payload that carries deferred work.
+  The document cache keeps one slot for a prefetch and a navigation, as
+  before, and every body in it is complete.
+
+`@rangojs/router/testing` gets `serveShellRequest(..., { partial: { prefetch,
+fill } })` and `result.readDeferred()` to test it. See `/loader`, `/route` and
+the design note `docs/design/prefetch-false.md`.
+
+### Added: Flight-project tests serve `clientUrls()` routes
+
+A test in the Flight (`react-server`) Vitest project whose router mounted a
+`clientUrls()` group threw `include() could not resolve the server projection`:
+the group is the default export of a `"use client"` module, a client reference
+there, and only the Vite plugin's route discovery installed its projection.
+`rangoUseClientTransform()` (`@rangojs/router/testing/vitest`) now installs it
+the way discovery does, so `serveShellRequest` and `dispatch` serve the group's
+routes with no setup. Mount the module itself:
+
+```tsx
+import shopUrls from "../src/shop/urls"; // "use client"; export default clientUrls(...)
+
+const router = createRouter().routes(
+  urls(({ include }) => [include("/shop", shopUrls, { name: "shop" })]),
+);
+
+// /shop/product/:id declares loader(ReviewsLoader, { prefetch: false })
+const prefetch = await serveShellRequest(router, "/shop/product/1", {
+  partial: { from: "/shop", prefetch: true },
+});
+expect(await prefetch.readDeferred()).toHaveLength(1);
+```
+
+The Flight project already lists the transform in its `plugins` (see the
+testing skill's `setup.md`); there is nothing to change. The node project
+imports the module as the definition itself and needed nothing before either.
+
+### Fixed: a navigation you leave before it renders no longer reaches the page you went to
+
+A navigation that is superseded (another click, Back/Forward) ignores its
+response, which streams to its end: aborting a response mid-stream would error
+the content still reading it. Four things of such a response still reached the
+page. `useNavigation().isStreaming` stayed `true`, and idle-time prefetching
+waited, until the ignored response had finished streaming. A Back/Forward that
+was left restored its saved scroll position over the page in between. A
+response from another router (a multi-app host) reloaded the URL you had left.
+And a click to a page the browser still had cached, answered with nothing new,
+or one that closed an intercept, could commit after the newer navigation had
+started. None of them happens now.
+
+### Fixed: a server action that lands while a navigation commits no longer costs the navigation its scroll
+
+A navigation scrolls to the top (or restores a position) when React commits
+its page, and React can take a moment to do that, or hold the commit while a
+transition waits. A server action that finished in that window cancelled the
+scroll: its update reached the page first and was read as "do not scroll", so
+the visitor stayed at the old scroll position on the new page. An action
+update, an action's refetch of the route and an error update now say nothing
+about scroll and leave a pending navigation's decision alone. A navigation
+that asks not to scroll (`<Link scroll={false}>`, an intercept) is honoured
+as before.
+
+### Fixed: a loader whose rerun an action skips keeps its handle pushes
+
+A loader can push handles: `ctx.use(Meta)({ title })`, or a custom handle such
+as a breadcrumb. When a server action skipped that loader's
+rerun (its `revalidate()` answered `false`, for example
+`({ isAction }) => (isAction() ? isAction(CartActions) : undefined)`), the page
+kept the loader's data but dropped its pushes: the title it set disappeared from
+the document, and a breadcrumb reading the handle fell back to its default.
+This happened in `clientUrls()` groups and on ordinary `urls()` routes alike,
+whenever the route's handler or another of its loaders re-ran. Now a loader's
+pushes follow its data: a skipped loader keeps the handles it pushed, and a
+loader that reruns replaces its own pushes, as before. In the same way, a route
+handler that does not rerun keeps its pushes when one of its loaders reruns.
+
 ### Fixed: a loader's late handle push no longer shows on the page you navigated to
 
 On a document load, a loader that calls `ctx.use(handle)(value)` after an await

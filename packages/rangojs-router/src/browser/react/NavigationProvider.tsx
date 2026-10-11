@@ -22,6 +22,7 @@ import type {
   NavigationUpdate,
   NavigateOptionsInternal,
   NavigationBridge,
+  RscMetadata,
 } from "../types.js";
 import type { EventController } from "../event-controller.js";
 import { RootErrorBoundary } from "../../root-error-boundary.js";
@@ -209,6 +210,30 @@ async function processHandles(
     const finalHandleData = eventController.getHandleState().data;
     store.updateCacheHandleData(historyKey, finalHandleData);
   }
+}
+
+/**
+ * Read the handle stream of `metadata` into the event controller and the
+ * entry on screen. The provider's own call for every payload it is handed,
+ * and the one write for a response that hands React nothing (a fill,
+ * browser/partial-update.ts fillHoles).
+ */
+export function consumeHandles(
+  metadata: RscMetadata,
+  eventController: EventController,
+  store: NavigationStore,
+): void {
+  processHandles(metadata.handles!, {
+    eventController,
+    store,
+    matched: metadata.matched,
+    isPartial: metadata.isPartial,
+    resolvedIds: metadata.resolvedIds,
+    // Now: by the time the stream ends the user may be elsewhere.
+    historyKey: store.getHistoryKey(),
+  }).catch((err) =>
+    console.error("[NavigationProvider] Error consuming handles:", err),
+  );
 }
 
 /**
@@ -463,7 +488,7 @@ export function NavigationProvider({
     return unsub;
   }, [eventController]);
 
-  // Pending scroll action to apply after React commits
+  // The last navigation's scroll decision, until React commits its update.
   const pendingScrollRef = useRef<NavigationUpdate["scroll"]>(undefined);
 
   // Apply scroll after React commits the new content to the DOM
@@ -485,11 +510,14 @@ export function NavigationProvider({
   useEffect(() => {
     const unsubscribe = store.onUpdate((update) => {
       if (process.env.NODE_ENV !== "production") auditTreeUpdate(update.root);
-      // Capture scroll intent — it will be applied in useLayoutEffect
-      // after React commits this state update to the DOM.
-      // Always assign (even undefined) to clear stale scroll from prior navigations,
-      // so server actions or error updates don't accidentally replay old scroll.
-      pendingScrollRef.current = update.scroll;
+      // Scroll belongs to the navigation transaction: only an update that
+      // carries one's decision sets the pending action, and the layout effect
+      // above consumes it once, after the commit that follows. An update with
+      // no decision (server action, error, prefetch: false fill) leaves a
+      // pending one alone. React can hold a navigation's commit, and whatever
+      // lands meanwhile must not cost the navigation its scroll. Nothing
+      // stale is replayed: every update commits, and that commit consumes.
+      if (update.scroll) pendingScrollRef.current = update.scroll;
 
       // Committed before the document finished hydrating: end the window
       // first, so the page this update mounts reads the live store. A
@@ -501,10 +529,7 @@ export function NavigationProvider({
         eventController.releaseHydrationLock();
       }
 
-      setPayload({
-        root: update.root,
-        metadata: update.metadata,
-      });
+      setPayload({ root: update.root, metadata: update.metadata });
       // The state of the entry this payload renders, as its commit recorded
       // it: one update, so one lane, so one React commit with the tree.
       setLocationState(eventController.getLocationState());
@@ -518,20 +543,7 @@ export function NavigationProvider({
 
       // Update handle data progressively as it streams in
       if (update.metadata.handles) {
-        // Capture historyKey now - by the time async processing completes,
-        // the user might have navigated elsewhere
-        const historyKey = store.getHistoryKey();
-
-        processHandles(update.metadata.handles, {
-          eventController,
-          store,
-          matched: update.metadata.matched,
-          isPartial: update.metadata.isPartial,
-          resolvedIds: update.metadata.resolvedIds,
-          historyKey,
-        }).catch((err) =>
-          console.error("[NavigationProvider] Error consuming handles:", err),
-        );
+        consumeHandles(update.metadata, eventController, store);
       } else if (update.metadata.matched) {
         // cachedHandleData present -> full restore (back/forward); absent ->
         // partial cleanup of segments no longer matched.

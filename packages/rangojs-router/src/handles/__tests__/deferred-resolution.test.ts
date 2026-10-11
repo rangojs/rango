@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createHandle, collectHandleData } from "../../handle.js";
 import { createHandleStore } from "../../server/handle-store.js";
+import { pushedByKey } from "../pushed-by.js";
 import {
   resolveDeferredHandleValues,
   resolveSegmentHandleValues,
@@ -101,6 +102,21 @@ describe("resolveDeferredHandleValues", () => {
       H: { seg1: [Promise.reject(new Error("boom")), "kept"] },
     });
     expect(out).toEqual({ H: { seg1: ["kept"] } });
+  });
+
+  it("keeps the pushedBy record aligned with the values it drops (#1103)", async () => {
+    const out = await resolveDeferredHandleValues({
+      H: {
+        seg1: [Promise.reject(new Error("boom")), "handler", "loader"],
+        seg2: [Promise.resolve(null)],
+      },
+      [pushedByKey("H")]: { seg1: ["L", null, "L"], seg2: ["L"] },
+    });
+    expect(out).toEqual({
+      H: { seg1: ["handler", "loader"], seg2: [] },
+      [pushedByKey("H")]: { seg1: [null, "L"], seg2: [] },
+    });
+    expect(deferredHandleNames(out)).toEqual(new Set());
   });
 
   it("drops a DEFERRED that resolves to null/undefined, but keeps a SYNC nullish push", async () => {
@@ -243,6 +259,8 @@ describe("resolvedHandleStream (full-render drop-in for handleStore.stream())", 
           seg1: ["handler", "settled-loader"],
           seg3: ["deferred-handler"],
         },
+        // The kept values' runs, aligned with the cut (#1103).
+        [pushedByKey("H")]: { seg1: [null, "Loader"] },
       });
     });
 
@@ -255,6 +273,7 @@ describe("resolvedHandleStream (full-render drop-in for handleStore.stream())", 
           seg2: ["tagged-only"],
           seg3: ["deferred-handler"],
         },
+        [pushedByKey("H")]: { seg1: [null, "Loader", null] },
       });
     });
   });

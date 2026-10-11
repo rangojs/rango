@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { createHandleStore } from "../handle-store";
 import { createElement } from "react";
 import { runInsideLoaderBodyScope, runInsideLoaderScope } from "../context.js";
+import { pushedByKey } from "../../handles/pushed-by.js";
 import {
   holdsThenable,
   maskNestedContainerThenables,
@@ -398,7 +399,10 @@ describe("HandleStore.freezeDocumentSnapshot (a shell HIT hydrates from its reco
     );
 
     expect(await drain(store.stream("settled"))).toEqual([
-      { notes: { seg1: ["bake@g1", "live@g1"] } },
+      {
+        notes: { seg1: ["bake@g1", "live@g1"] },
+        [pushedByKey("notes")]: { seg1: ["Bake", "Live"] },
+      },
     ]);
   });
 
@@ -431,6 +435,7 @@ describe("HandleStore.freezeDocumentSnapshot (a shell HIT hydrates from its reco
 
     expect((await drain(replaced.streamLate())).at(-1)).toEqual({
       notes: { seg1: ["live@g2"] },
+      [pushedByKey("notes")]: { seg1: ["Live"] },
     });
     expect((await drain(dropped.streamLate())).at(-1)).toEqual({
       notes: { seg1: ["handler"] },
@@ -472,7 +477,10 @@ describe("HandleStore.freezeDocumentSnapshot (a shell HIT hydrates from its reco
 
     expect(await drain(store.streamLate())).toEqual([]);
     expect(await drain(store.stream("settled"))).toEqual([
-      { notes: { seg1: ["bake@g1"] } },
+      {
+        notes: { seg1: ["bake@g1"] },
+        [pushedByKey("notes")]: { seg1: ["Bake"] },
+      },
     ]);
   });
 
@@ -620,6 +628,76 @@ describe("HandleStore loader-push tagging (cache() record exclusion)", () => {
     expect(store.getDataForSegment("seg1", true)).toEqual({
       crumbs: ["recorded"],
     });
+  });
+});
+
+// #1103: the browser replaces only the pushes of the runs a partial response
+// made, so each yield names the run of each value (handles/pushed-by.ts).
+describe("HandleStore pushedBy records (the run of each push)", () => {
+  async function last(store: ReturnType<typeof createHandleStore>) {
+    let data;
+    for await (const yielded of store.stream()) data = yielded;
+    return data;
+  }
+
+  it("names the DSL loader a push is made in, and null for the handler", async () => {
+    const store = createHandleStore();
+    store.push("crumbs", "R0", "handler");
+    runInsideLoaderScope(() => store.push("crumbs", "R0", "held:1"), "held");
+    runInsideLoaderScope(() => store.push("meta", "R0", "title"), "held");
+    runInsideLoaderScope(() => store.push("crumbs", "R0", "rerun:1"), "rerun");
+
+    expect(await last(store)).toEqual({
+      crumbs: { R0: ["handler", "held:1", "rerun:1"] },
+      [pushedByKey("crumbs")]: { R0: [null, "held", "rerun"] },
+      meta: { R0: ["title"] },
+      [pushedByKey("meta")]: { R0: ["held"] },
+    });
+  });
+
+  it("credits a dependency's push to the DSL loader that awaited it", async () => {
+    const store = createHandleStore();
+    runInsideLoaderScope(
+      () =>
+        runInsideLoaderBodyScope(
+          () =>
+            runInsideLoaderBodyScope(
+              () => store.push("crumbs", "R0", "dep"),
+              "dep",
+            ),
+          "page",
+        ),
+      "page",
+    );
+
+    expect((await last(store))?.[pushedByKey("crumbs")]).toEqual({
+      R0: ["page"],
+    });
+  });
+
+  it("credits a push in a loader a handler reads to that loader", async () => {
+    const store = createHandleStore();
+    runInsideLoaderBodyScope(
+      () =>
+        runInsideLoaderBodyScope(
+          () => store.push("crumbs", "R0", "inner"),
+          "inner",
+        ),
+      "outer",
+    );
+
+    expect((await last(store))?.[pushedByKey("crumbs")]).toEqual({
+      R0: ["outer"],
+    });
+    // Still a handler push for records (a route cache() keeps it).
+    expect(store.getDataForSegment("R0", true)).toEqual({ crumbs: ["inner"] });
+  });
+
+  it("carries no record for a bucket of handler pushes", async () => {
+    const store = createHandleStore();
+    store.push("crumbs", "L0", "layout");
+
+    expect(await last(store)).toEqual({ crumbs: { L0: ["layout"] } });
   });
 });
 

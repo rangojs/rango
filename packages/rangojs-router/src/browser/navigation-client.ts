@@ -14,7 +14,6 @@ import {
 } from "./logging.js";
 import { getRangoState } from "./rango-state.js";
 import { isActionFenceActive } from "./action-fence.js";
-import { CLIENT_REVALIDATION_HEADER } from "../client-urls/revalidation-protocol.js";
 import {
   expandPayloadFragments,
   SEGMENT_FRAGMENT_CAPABILITY_HEADER,
@@ -22,6 +21,7 @@ import {
   SegmentFragmentDecodeError,
 } from "../segment-fragments.js";
 import {
+  abortUntilResponse,
   extractRscHeaderUrl,
   emptyResponse,
   handleReloadHeader,
@@ -38,6 +38,7 @@ import {
   type DecodedPrefetch,
 } from "./prefetch/cache.js";
 import { cancelAllPrefetches } from "./prefetch/loader.js";
+import { FILL_PARAM } from "../prefetch-markers.js";
 
 /**
  * Create a navigation client for fetching RSC payloads
@@ -80,11 +81,11 @@ export function createNavigationClient(
         previousUrl,
         signal,
         staleRevalidation,
-        clientRevalidation,
         interceptSourceUrl,
         version,
         routerId,
         hmr,
+        fill,
       } = options;
 
       const debugEnabled = isBrowserDebugEnabled();
@@ -114,11 +115,18 @@ export function createNavigationClient(
       if (routerId) {
         fetchUrl.searchParams.set("_rsc_rid", routerId);
       }
+      // A param, not a header: the document cache decides from the raw URL
+      // (cache/document-cache.ts), and it keeps the fill out of every
+      // prefetch key below.
+      if (fill) {
+        fetchUrl.searchParams.set(FILL_PARAM, "1");
+      }
 
       // If the lazy prefetch runtime has not loaded yet, prevent a deferred
       // speculative request from starting after this navigation misses the
-      // synchronous cache lookup and begins its own fetch.
-      cancelAllPrefetches(targetUrl);
+      // synchronous cache lookup and begins its own fetch. A fill is not a
+      // navigation: the links on the page it completes stay prefetched.
+      if (!fill) cancelAllPrefetches(targetUrl);
 
       // Check completed in-memory prefetch cache before making a network
       // request. Try the source-scoped key first (populated when the server
@@ -136,6 +144,7 @@ export function createNavigationClient(
       const canUsePrefetch =
         !staleRevalidation &&
         !hmr &&
+        !fill &&
         !interceptSourceUrl &&
         !isActionFenceActive();
       const rangoState = getRangoState();
@@ -242,39 +251,42 @@ export function createNavigationClient(
           });
         }
 
-        const responsePromise = fetch(fetchUrl, {
-          // During an action's flight the state is not rotated, so the old
-          // X-Rango-State still matches the Vary-keyed HTTP-cache entry; bypass
-          // it so a genuine mid-action navigation fetches fresh instead of being
-          // served the stale prefetched bytes. Fragment recovery also bypasses
-          // HTTP caches so it reaches the server's decode-and-evict path.
-          ...((isActionFenceActive() || fragmentRecovery) && {
-            cache: "no-store" as RequestCache,
+        // `signal` cancels the request until its response arrives
+        // (abortUntilResponse). A prefetch: false fill passes its
+        // navigation's signal, which stays abortable after the commit
+        // (event-controller.ts streamingNavigation).
+        const responsePromise = abortUntilResponse(signal, (requestSignal) =>
+          fetch(fetchUrl, {
+            // During an action's flight the state is not rotated, so the old
+            // X-Rango-State still matches the Vary-keyed HTTP-cache entry; bypass
+            // it so a genuine mid-action navigation fetches fresh instead of being
+            // served the stale prefetched bytes. Fragment recovery also bypasses
+            // HTTP caches so it reaches the server's decode-and-evict path.
+            ...((isActionFenceActive() || fragmentRecovery || fill) && {
+              cache: "no-store" as RequestCache,
+            }),
+            headers: {
+              "X-RSC-Router-Client-Path": previousUrl,
+              // Reuse the single per-operation read (see rangoState above): the
+              // cache-key lookup and this header must agree on one value, and the
+              // cookie read has side effects (external-rotation notify) we do not
+              // want to fire twice per navigation.
+              "X-Rango-State": rangoState,
+              ...(fragmentPassthrough && {
+                [SEGMENT_FRAGMENT_CAPABILITY_HEADER]: "1",
+              }),
+              ...(fragmentRecovery && {
+                [SEGMENT_FRAGMENT_RECOVERY_HEADER]: "1",
+              }),
+              ...(tx && { "X-RSC-Router-Request-Id": tx.requestId }),
+              ...(interceptSourceUrl && {
+                "X-RSC-Router-Intercept-Source": interceptSourceUrl,
+              }),
+              ...(hmr && { "X-RSC-HMR": "1" }),
+            },
+            signal: requestSignal,
           }),
-          headers: {
-            "X-RSC-Router-Client-Path": previousUrl,
-            // Reuse the single per-operation read (see rangoState above): the
-            // cache-key lookup and this header must agree on one value, and the
-            // cookie read has side effects (external-rotation notify) we do not
-            // want to fire twice per navigation.
-            "X-Rango-State": rangoState,
-            ...(fragmentPassthrough && {
-              [SEGMENT_FRAGMENT_CAPABILITY_HEADER]: "1",
-            }),
-            ...(fragmentRecovery && {
-              [SEGMENT_FRAGMENT_RECOVERY_HEADER]: "1",
-            }),
-            ...(clientRevalidation && {
-              [CLIENT_REVALIDATION_HEADER]: clientRevalidation,
-            }),
-            ...(tx && { "X-RSC-Router-Request-Id": tx.requestId }),
-            ...(interceptSourceUrl && {
-              "X-RSC-Router-Intercept-Source": interceptSourceUrl,
-            }),
-            ...(hmr && { "X-RSC-HMR": "1" }),
-          },
-          signal,
-        }).then((response) => {
+        ).then((response) => {
           const validated = validateRscHeaders(
             response,
             "fetch",

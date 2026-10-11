@@ -1,6 +1,6 @@
 ---
 name: client-urls
-description: Define client-component route groups with clientUrls() in a "use client" module — no handlers, useLoader at read sites, client-run revalidate predicates, loader-thrown notFound/redirect, loader handle writes, and the ssr:false SSR-completeness opt-in. Use when a route group's pages are client components, when building high-navigation-speed UIs (dashboards, admin panels, settings) where transitions must feel instant, when moving data reads from handler ctx.use() to useLoader at consumption sites, or when asking how routes defined in a "use client" file work.
+description: Define client-component route groups with clientUrls() in a "use client" module — no handlers, useLoader at read sites, server-run revalidate predicates, loader-thrown notFound/redirect, loader handle writes, and the ssr:false SSR-completeness opt-in. Use when a route group's pages are client components, when building high-navigation-speed UIs (dashboards, admin panels, settings) where transitions must feel instant, when moving data reads from handler ctx.use() to useLoader at consumption sites, or when asking how routes defined in a "use client" file work.
 argument-hint: "[setup]"
 ---
 
@@ -10,7 +10,8 @@ argument-hint: "[setup]"
 components are client components, and there are **no handlers at all** — every
 data read is `useLoader` at the consumption site, waiting is scoped by the
 inline `<Suspense>` above each read, and per-loader `revalidate()` predicates
-run in the browser. The server shop pattern — `await ctx.use(ProductLoader)` in
+run on the server (the build moves them out of the `"use client"` module).
+The server shop pattern — `await ctx.use(ProductLoader)` in
 a handler — is pipeline-blocking by contract: no pending UI can ever cover that
 latency. `clientUrls()` makes that shape unrepresentable.
 
@@ -20,9 +21,9 @@ layout, mostly tab/param/filter switches. Three things compound: the
 definition also matches in the browser, so a soft navigation renders the
 destination component immediately (loader reads suspend into `loading()` or
 an inline `<Suspense>`; `useOutlet().pending` flips for chrome) with no server
-round-trip to start; browser-run `revalidate()` predicates HOLD data across
-navigations that don't invalidate it (a tab switch re-runs nothing — only the
-decision crosses the wire); and any read that does refresh streams behind its
+round-trip to start; per-loader `revalidate()` predicates, run on the server
+with the same arguments as in `urls()`, HOLD data across navigations that
+don't invalidate it (a tab switch re-runs nothing); and any read that does refresh streams behind its
 own inline boundary instead of gating the commit. Add per-Link prefetch
 (`/links`) and a warmed click lands the complete page instantly.
 
@@ -131,9 +132,9 @@ flow into the generated route map, so `href()`, `ctx.reverse()` and
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `path()`       | Options are `name`, `search`, `trailingSlash`, `ppr` (shell caching — see `/ppr` → The loader lane rule); no response variants. Use callback may contain `loader()`, `loading()`, `transition()` |
 | `layout()`     | `layout(Component, () => [...])` — children are required and must contain at least one `path()`; may also hold `loader()`, `loading()`, `intercept()`, nested `layout()`                         |
-| `loader()`     | `loader(Def, use?)` or `loader(Def, { ssr: false }, use?)` — see below                                                                                                                           |
+| `loader()`     | `loader(Def, use?)` or `loader(Def, { ssr: false, prefetch: false }, use?)` — see below                                                                                                          |
 | `loading()`    | Route-level boundary around the optimistic render; inline `<Suspense>` at read sites keeps the destination's chrome visible while only the reads wait                                            |
-| `revalidate()` | Valid **inside a loader() use callback only**; runs in the browser                                                                                                                               |
+| `revalidate()` | Valid **inside a loader() use callback only**; runs on the server (the build hoists it out of the `"use client"` module)                                                                         |
 | `transition()` | Inside a `path()` use callback only (at most one). ViewTransition config plus a browser-run `when` predicate (see `/view-transitions`); same-route navs in a group already hold without it       |
 | `intercept()`  | Dot-local named target in the SAME definition; use may contain `loader()`/`loading()`                                                                                                            |
 
@@ -170,7 +171,8 @@ DIFFERENT schedules:
 - **Middleware runs on EVERY canonical request**, not just the first
   encounter. Every navigation inside the group — including a tab switch whose
   loaders all hold — still sends the canonical partial request (it commits
-  URL/history and carries the revalidation decisions), and middleware wraps
+  URL/history, and the server runs each loader's `revalidate()` while it
+  handles it), and middleware wraps
   each one: `requireAdmin` re-authorizes every navigation, and its
   `ctx.set()` variables are fresh for the group's loaders on every pass. The
   instant feel comes from held data and optimistic presentation, not from
@@ -187,22 +189,62 @@ All three pinned by dev + production e2e in the router repository (a
 middleware-stamped header per request, a layout run-count stamp held across
 navigations).
 
-## Revalidation runs in the browser
+## Revalidation runs on the server
 
-A server-tree `revalidate()` predicate executes on the server. A `clientUrls()`
-predicate is client-module code, so it executes **in the browser** with
-client-computable args — `currentUrl`, `nextUrl`, `currentParams`,
-`nextParams`, `defaultShouldRevalidate`, `stale`, `isAction`, `actionId` — and
-only its _decision_ crosses the wire with the navigation request. Requests that
-carry no decisions (no-JS, progressive enhancement, prefetch, document loads)
-follow the locked server defaults.
+A `clientUrls()` loader's `revalidate()` runs only on the server, with exactly
+the arguments and type of a `urls()` loader's (`ShouldRevalidateFn` from
+`@rangojs/router`): `currentParams`, `currentUrl`, `nextParams`, `nextUrl`,
+`defaultShouldRevalidate`, `context` (the handler context, so
+`context.get(var)` works), `segmentType`, `actionId`, `isAction(...refs)`,
+`actionUrl`, `actionResult`, `formData`, `method`,
+`routeName`/`fromRouteName`/`toRouteName`, and `stale`. Nothing runs in the
+browser before the request goes out; there is no client-computed decision and
+no hybrid.
 
-`isAction` is the same callable matcher as the server predicate, not a
-boolean. Action identity is `actionId`, whose FORM differs per environment:
-file-path `$id` (`path#export`) in the RSC env, hashed `$$id` in the
-browser — which is why the matcher (resolving an imported reference's
-`$id ?? $$id`) is the supported surface and a file-path substring on
-`actionId` is not:
+You still write the predicate in the `"use client"` module. The rango Vite
+plugin hoists each `revalidate()` argument into a server-only module, leaves a
+key in the browser and SSR copies, and registers the predicate when the
+group's module loads on the server (a lazy `include()` stays lazy). The cost
+is a rule: **the argument may reference imports and globals only.** Anything
+else is a build error naming `file:line:column`, starting
+`[rango] clientUrls() revalidate() at ...: revalidate() runs on the server; ...`.
+
+- Accepted: an inline arrow or function expression, an imported predicate
+  (`revalidate(isCartAction)`), a namespace member (`P.cart`), a call of an
+  imported factory (`makePredicate("cart")`), and globals such as `URL`,
+  `Boolean` and `import.meta.env`.
+- A binding declared in the same `"use client"` module is rejected: move the
+  predicate to its own module without `"use client"` and import it, or write it
+  inline. A binding of an enclosing function is rejected: read it from the
+  predicate's argument. So are `this`, `arguments`, `super`, `new.target`,
+  `import()` and `import.meta` other than `import.meta.env`.
+- A browser-only global (`window`, `document`, `navigator`, `localStorage`,
+  `sessionStorage`, `location`, `history`) is rejected: put the input on the
+  request (a cookie or a search param) and read it from the argument, or
+  refresh with `useRefreshLoaders`.
+- An `async` or generator function, a spread, a second argument, no argument,
+  or a non-function value (object, array or string literal) is rejected.
+- An import of `client-only`, or of a module whose directive prologue is
+  `"use client"`, is rejected (on the server its exports are client
+  references). A `"use server"` import is fine: on the server it is the real
+  action, which `isAction(ref)` matches. `server-only` and `node:` imports work
+  on the server, but the import also stays in the `"use client"` module
+  (imports are not pruned from the browser bundle), so it must still load in
+  the browser.
+
+Per request: a JS action POST runs the predicate with `method: "POST"`,
+`actionId`, `actionResult` (the action's return value), `formData` (the last
+`FormData` argument) and `actionUrl`; the default is true. An in-group
+navigation GET defaults to true when params or search changed. A prefetch
+partial runs the predicate, so a prefetched in-group navigation honours it. A
+stale back/forward revalidation sees `stale: true`. Document requests and
+no-JS form posts hold no segments, so every loader renders whatever a predicate
+says. On the action-triggered refetch GET (consolidation) `isAction()` is false,
+as for `urls()`. `currentParams`/`nextParams` are the server's route params,
+including the `include()` mount's params, and `actionId` is the server's
+`src/...#export` form; match actions with `isAction(ref)` rather than a
+substring. Vitest does not run the plugin, so in unit tests the predicate stays
+a plain function: test it with `runRevalidate` (`/testing`).
 
 ```ts
 import { addToCart, removeFromCart } from "./actions/cart";
@@ -210,6 +252,11 @@ import * as CartActions from "./actions/cart";
 
 // After an action, re-run only for cart actions; on navigation, keep the default.
 revalidate(({ isAction }) => (isAction() ? isAction(CartActions) : undefined));
+
+// Decide on what the action returned (actionResult is visible on the server):
+revalidate((ctx) =>
+  ctx.isAction(checkout) ? ctx.actionResult?.ok === true : undefined,
+);
 
 // Matcher forms (each returns a boolean):
 isAction(); // any action
@@ -225,6 +272,11 @@ every action, so `isAction(refs) || undefined` changes nothing there; narrow
 with the ternary above instead (same rule as a server-tree loader). A bare
 `isAction(refs)` is a hard `false` on navigation too, so the loader stops
 refetching when params change.
+
+`intercept()` loaders inside `clientUrls()` do not apply their `revalidate()`
+yet (a known gap, left for a follow-up). The build still checks those
+predicates like any other, so one that captures a binding of the `"use client"`
+module fails the build although nothing runs it: import it, or drop it.
 
 Two scars worth copying:
 
@@ -320,6 +372,43 @@ fast (existence checks before expensive fetches) and flag the loaders that
 need it, not the route.
 
 Pinned end to end by dev + production e2e in the router repository.
+
+## `prefetch: false` — keep a loader out of prefetches
+
+A `<Link>` prefetch of a group route runs its loaders. Flag the expensive one
+and the prefetch skips it:
+
+```tsx
+path("/product/:slug", ProductPage, { name: "product" }, () => [
+  loader(PriceLoader),
+  loader(ReviewsLoader, { prefetch: false }), // kept out of prefetches
+  loading(<ProductSkeleton />),
+]),
+```
+
+A click inside the group still shows the destination at once. With the
+prefetch received, the URL and the other loaders' data move with the click
+too, `useOutlet().pending` ends with that commit, and one follow-up request
+(the fill) runs only the flagged loaders. Read the flagged loader inside its
+own `<Suspense>` to show the page and that fallback at once; with no boundary
+React holds the page being left until the fill answers, as it would with no
+prefetch. Same rules as on a server route (`/loader` → "`prefetch: false`"):
+only a segment new to the page is deferred, so a same-route click
+(`/product/a` to `/product/b`) prefetches the loader as usual.
+
+- On a `layout()` of the group the flag applies to every route below it.
+- A flagged `loader()` on a server layout above the group is deferred while
+  that layout is new to the page (entering the group from outside).
+- `loading()` in `clientUrls()` takes no options, and a flagged `loading()`
+  on a server layout above the group defers nothing for the group's routes.
+- `intercept()` loaders accept the flag and ignore it, as in `urls()`.
+- With `ssr: false` on a `ppr` group route the flag is ignored (the bake
+  lane), as on a server route.
+- Test it with `serveShellRequest` in the Flight project: mount the module
+  itself, and `rangoUseClientTransform()` installs the group's projection
+  (`/testing` → `serve-shell-request.md`, "`clientUrls()` routes"). It also
+  registers the group's `revalidate()` predicates, so the server runs them
+  there as in your app.
 
 ## Intercepts
 

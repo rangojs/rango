@@ -850,8 +850,8 @@ For **dashboard / admin / settings-shaped sections** — high navigation
 frequency inside one layout, mostly tab/param/filter switches — also consider
 porting that route group to `clientUrls()` (`/client-urls`): the definition
 matches in the browser (instant optimistic pending, no server round-trip to
-start a transition) and browser-run `revalidate()` predicates hold data across
-switches that don't invalidate it, which is the fastest transition shape Rango
+start a transition) and per-loader `revalidate()` predicates (run on the
+server) hold data across switches that don't invalidate it, which is the fastest transition shape Rango
 has. Server-component routes and `clientUrls()` groups compose in one tree.
 
 ## 7. Server Actions

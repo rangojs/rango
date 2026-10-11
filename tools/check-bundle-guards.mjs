@@ -100,7 +100,48 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // of it can load lazily: the snapshot is recorded in the commit and read
 // during render. The step is a whole KB because main sat 27B under the old
 // limit: a smaller one would leave the ratchet tripping on the next change.
-const ROUTER_CHUNK_GZIP_MAX = 47 * 1024;
+//
+// Raised 47KB -> 48KB on 2026-10-07 for `prefetch: false`
+// (docs/design/prefetch-false.md), measured 47488B -> 48837B (+1349B gzip).
+// A deliberate call: adopting a payload with deferred segments is decided
+// where every partial payload is committed, so the holes, the fill request
+// and its merge live in browser/partial-update.ts (armHoles, fillHoles,
+// releaseHoles), with the lanes of segment-system.tsx that must not await a
+// hole (hasDeferred). An app with no flag pays for it too: deferral is a
+// property of the payload, known only once one arrives. None of it can load
+// lazily: the holes are armed synchronously before the adoption renders, and
+// partial-update.ts is on the rejected-splits list (AGENTS.md, Bundle
+// hygiene).
+//
+// Raised 48KB -> 48.25KB on 2026-10-08 for the one-tree click of
+// `prefetch: false`, measured 49146B -> 49353B (+207B gzip): a layout
+// placeholder's holes wait for what its own loading() covers, and a fill
+// whose segments differ hands each boundary its hole resolved instead of a
+// node (browser/partial-update.ts fillHoles; each hole is a Defer,
+// browser/defer.ts). Only as far as needed: a
+// lazy split of the fill was measured and rejected (48532B + 1403B split,
+// against 49142B unsplit).
+//
+// Raised 48.25KB -> 48.375KB on 2026-10-08: a flagged layout's holes wait
+// apart from the holes outside it (+98B gzip; one Defer per hole since,
+// browser/defer.ts, resolved by browser/partial-update.ts fillHoles). Measured on main 8c10cc9b (#1085, #1083, #1086): 49479B,
+// against main's own 47501B.
+//
+// Raised on 2026-10-11 for issue #1103 (+313B gzip measured on main, 47925B
+// -> 48238B): a partial response re-runs a route's handler and each loader on
+// its own revalidation decision, so the browser merges handle pushes per run,
+// not per segment bucket (handles/pushed-by.ts mergePartialHandleData), and
+// resolveDeferredHandleValues keeps the pushedBy record aligned. None of it
+// can load lazily: it runs in the commit of every navigation and action.
+// Combined with `prefetch: false` it measured 49816B, so 48.75KB.
+//
+// Tightened 48.75KB -> 48.125KB on 2026-10-11: a clientUrls() loader's
+// revalidate() runs on the server, so the browser's predicate collector and
+// the X-Rango-Client-Reval header plumbing left the chunk (client-urls/
+// revalidate-chain.ts, revalidation-protocol.ts, the decision code in
+// navigation.ts and browser/partial-update.ts). Measured on
+// feat/prefetch-false-0.23 76751f37: 49815B -> 49207B (-608B gzip).
+const ROUTER_CHUNK_GZIP_MAX = 48 * 1024 + 128;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

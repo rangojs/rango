@@ -20,8 +20,9 @@
  * - `ctx.reverse()` throws unless `routeMap` is provided (it does NOT fall back
  *   to the global route map — that would leak whichever routes another test
  *   registered).
- * - `ctx.use(handle)` follows the production rule: reading a handle before
+ * - `ctx.get(handle)` follows the production rule: reading a handle before
  *   `await ctx.rendered()` throws (pass `rendered` to mock the barrier).
+ *   `ctx.use(handle)` is the push and needs no barrier.
  * - `use cache` functions only cache (and only fire their taint/profile guards)
  *   when a `cacheStore` is provided — without one, registerCachedFunction
  *   bypasses (it checks for a store first). Pass `cacheStore`/`cacheProfiles`

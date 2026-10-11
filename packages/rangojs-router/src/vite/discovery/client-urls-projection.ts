@@ -2,10 +2,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { normalizePath, parseAst } from "vite";
 import {
-  serializeClientUrlPatterns,
+  projectClientUrlsModule,
   type ClientUrlProjection,
 } from "../../client-urls/server-projection.js";
-import type { ClientUrlPatterns } from "../../client-urls/types.js";
 import {
   computeProductionHash,
   hashRefKey,
@@ -191,22 +190,19 @@ export async function refreshRecordedClientUrlProjections(
   }
 
   for (const [source, referenceIds] of referenceIdsBySource) {
-    let definition: unknown;
+    let module: Record<string, unknown>;
     try {
-      definition = (await ssrEnv.runner.import(source)).default;
+      module = await ssrEnv.runner.import(source);
     } catch {
       continue;
     }
-    if (
-      (typeof definition !== "object" && typeof definition !== "function") ||
-      definition === null ||
-      (definition as { __brand?: unknown }).__brand !== "client-urls"
-    ) {
+    let projection: ClientUrlProjection | undefined;
+    try {
+      projection = projectClientUrlsModule(module, { hoisted: true });
+    } catch {
       continue;
     }
-    const projection = serializeClientUrlPatterns(
-      definition as ClientUrlPatterns,
-    );
+    if (!projection) continue;
     debug?.(
       "pre-entry refresh %s -> [%s]",
       source,
@@ -288,21 +284,24 @@ export async function discoverClientUrlProjections(
         cause,
       );
     }
-    const definition = module.default;
-    if (
-      (typeof definition !== "object" && typeof definition !== "function") ||
-      definition === null ||
-      (definition as { __brand?: unknown }).__brand !== "client-urls"
-    ) {
+    let projection: ClientUrlProjection | undefined;
+    try {
+      projection = projectClientUrlsModule(module, { hoisted: true });
+    } catch (cause) {
+      throw projectionError(
+        referenceIds[0],
+        source,
+        cause instanceof Error ? cause.message : String(cause),
+        cause,
+      );
+    }
+    if (!projection) {
       throw projectionError(
         referenceIds[0],
         source,
         'the module default export must be created by clientUrls() and have __brand === "client-urls"',
       );
     }
-    const projection = serializeClientUrlPatterns(
-      definition as ClientUrlPatterns,
-    );
     for (const referenceId of referenceIds) {
       nextProjections.set(referenceId, projection);
     }

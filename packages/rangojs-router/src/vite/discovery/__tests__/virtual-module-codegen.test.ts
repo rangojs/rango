@@ -13,6 +13,8 @@ import {
   generateRoutesManifestModule,
 } from "../virtual-module-codegen";
 import { createDiscoveryState, type DiscoveryState } from "../state";
+import { clientUrls } from "../../../client-urls/client-urls.js";
+import { serializeClientUrlPatterns } from "../../../client-urls/server-projection.js";
 
 // A trie whose serialized form clears MANIFEST_EXTERNALIZE_THRESHOLD (512KB).
 // ~90 bytes/leaf, so 8000 leaves ~= 700KB. SMALL stays well under.
@@ -191,6 +193,37 @@ describe("generateRoutesManifestModule — client URL projections", () => {
     expect(clear).toBeGreaterThan(-1);
     expect(set).toBeGreaterThan(clear);
     expect(code).not.toContain("setCachedManifest");
+  });
+
+  // What the server materializes a group from is this replay, so every
+  // projected loader option has to survive it (prefetch: false included).
+  it("replays a projection's loader options as the server reads them", () => {
+    function ProductPage(): null {
+      return null;
+    }
+    const projection = serializeClientUrlPatterns(
+      clientUrls(({ path, loader }) => [
+        path("/product/:slug", ProductPage, () => [
+          loader({ __brand: "loader", $$id: "loaders#price" }),
+          loader(
+            { __brand: "loader", $$id: "loaders#reviews" },
+            { ssr: false, prefetch: false },
+          ),
+        ]),
+      ]),
+    );
+    const s = makeManifestState(true);
+    s.clientUrlSourceByReferenceId = new Map([["ref-a", "ref-a"]]);
+    s.clientUrlProjectionMap = new Map([["ref-a", projection]]);
+
+    const code = generateRoutesManifestModule(s);
+    const replayed = code.match(
+      /setClientUrlProjection\("ref-a", JSON\.parse\('(.*)'\)\);/,
+    );
+    expect(replayed).not.toBeNull();
+    const route = JSON.parse(replayed![1]!).routes[0];
+    expect(route.awaitedLoaderIndices).toEqual([1]);
+    expect(route.deferrableLoaderIndices).toEqual([1]);
   });
 
   // The map fills in transform order, which differs between two builds of the

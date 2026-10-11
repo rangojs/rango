@@ -118,6 +118,7 @@ import {
   isShellCaptureActive,
   createMaskedLoaderPromise,
 } from "./loader-mask.js";
+import { loaderOwner } from "./prefetch-deferral.js";
 // Lazy-loaded to avoid pulling @vitejs/plugin-rsc/rsc into modules that
 // import segment-resolution but never use loader caching.
 let _serializeResult: typeof import("../../cache/segment-codec.js").serializeResult;
@@ -658,7 +659,7 @@ function executeLoaderData<TEnv>(
   // Handle pushes: the store and the owning segment are read synchronously
   // at kickoff, as createLoaderExecutor does for the body's own pushes.
   const handleStore = _getRequestContext()?._handleStore;
-  const owningSegmentId = internal._currentSegmentId;
+  const owningSegmentId = loaderOwner(ctx, loaderId);
   // Record only pushes from THIS loader's body and the loaders it awaits via
   // ctx.use: the handler and sibling loaders push into the same store
   // concurrently. A dependency can still run on a HIT for another reader

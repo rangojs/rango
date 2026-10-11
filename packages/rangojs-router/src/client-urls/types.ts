@@ -1,10 +1,12 @@
 import type { ComponentType, ReactNode } from "react";
 import type {
-  IsActionFn,
   LoaderDefinition,
   LoaderOptions,
+  ShouldRevalidateFn,
   TransitionConfig,
 } from "../types.js";
+import type { DefaultEnv } from "../types/global-namespace.js";
+import type { HoistedRevalidateRef } from "./hoisted-revalidate.js";
 import type { TrieMatchResult } from "../router/trie-matching.js";
 import type { PathOptions } from "../urls/pattern-types.js";
 import type { SearchSchema } from "../search-params.js";
@@ -50,69 +52,17 @@ export type ClientLayoutFn = <const TItems extends ClientUrlItems>(
   children: () => TItems,
 ) => ClientUrlItem & TypedLayoutItem<ExtractRoutes<TItems>>;
 
-/**
- * Arguments a clientUrls() revalidate() predicate receives. A client-computable
- * subset of the server ShouldRevalidateFn args — the predicate RUNS IN THE
- * BROWSER (it is declared in a "use client" module and never crosses the
- * projection boundary); only its decision is sent to the server. There is no
- * `context` — no server handler context exists where this executes. `isAction`
- * is the same callable matcher as on the server, not a boolean.
- */
-export interface ClientRevalidateArgs {
-  /** Full URL of the page being navigated away from (current location). */
-  readonly currentUrl: URL;
-  /** Full URL of the navigation target (equals currentUrl for actions). */
-  readonly nextUrl: URL;
-  /** Route params of the held client route (definition-local match). */
-  readonly currentParams: Record<string, string>;
-  /** Route params for the navigation target (definition-local match). */
-  readonly nextParams: Record<string, string>;
-  /**
-   * The current default decision for this loader, computed client-side with
-   * the same rules the server applies to the request the decisions ride on:
-   * `true` when they ride the action POST itself, otherwise `true` when
-   * params/search changed. (An action-triggered refetch GET gets navigation
-   * defaults — matching the server — even though `isAction()` is true.)
-   * Earlier predicates' `{ defaultShouldRevalidate }` verdicts thread into
-   * this value, exactly like the server chain. Return it for default
-   * behavior plus your own conditions.
-   */
-  readonly defaultShouldRevalidate: boolean;
-  /** True when this is a stale history-entry background revalidation. */
-  readonly stale: boolean;
-  /**
-   * Same {@link IsActionFn} the server `revalidate()` predicate receives.
-   * In the browser the match is against the action stub's hashed `$$id`
-   * (the id the action request carries) — not the RSC file-path `$id`.
-   */
-  readonly isAction: IsActionFn;
-  /**
-   * The triggering server action's id, when this is an action. In the
-   * browser this is the hashed `hash#export` form (`$$id`), not the RSC
-   * file-path `src/...#export`. Prefer `isAction(ref)` — a substring of
-   * `path#export` will not match here in production.
-   */
-  readonly actionId?: string;
-}
-
-/**
- * Client-run per-loader predicate, with the same chain semantics as the
- * server's `revalidate()` (src/router/revalidation.ts): a boolean is a HARD
- * decision that short-circuits the rest of the chain; a
- * `{ defaultShouldRevalidate }` object updates the running suggestion, which
- * later predicates receive as their `defaultShouldRevalidate`; `void` /
- * `null` / `undefined` defers to the current suggestion — so
- * `isAction(CartActions) || undefined` defers to the locked default.
- * Predicates must be synchronous; the object form requires a boolean value.
- */
-export type ClientRevalidateFn = (
-  args: ClientRevalidateArgs,
-) => boolean | { defaultShouldRevalidate: boolean } | null | void;
-
 export interface ClientUrlLoaderRecord {
   readonly loader: LoaderDefinition<any, any>;
-  /** Client-run per-loader revalidation predicates; empty = locked defaults. */
-  readonly revalidate: readonly ClientRevalidateFn[];
+  /**
+   * Per-loader revalidate() predicates, run on the server; empty = the
+   * router's defaults. Under the rango Vite plugin the browser and SSR copies
+   * hold the marker the build left in place of each hoisted predicate.
+   */
+  readonly revalidate: readonly (
+    | ShouldRevalidateFn<any, DefaultEnv>
+    | HoistedRevalidateRef
+  )[];
   /**
    * loader(Def, { ssr: false }): document renders await this loader before
    * first flush (see {@link LoaderOptions}). Projected into the server tree,
@@ -120,6 +70,14 @@ export interface ClientUrlLoaderRecord {
    * regardless.
    */
   readonly ssr?: false;
+  /**
+   * loader(Def, { prefetch: false }): a prefetch of the route defers this
+   * loader and the click that adopts it runs it in its fill request (see
+   * {@link LoaderOptions}). Projected onto the materialized stub. Inside
+   * intercept() it is not recorded: intercept loaders ignore the flag, as in
+   * urls().
+   */
+  readonly prefetch?: false;
 }
 
 /**
@@ -172,8 +130,7 @@ export interface ClientUrlHelpers {
   readonly layout: ClientLayoutFn;
   /**
    * Attach a projected loader. The optional use callback may contain
-   * revalidate() only — a CLIENT-RUN per-loader predicate; its decision (not
-   * the function) is sent with the revalidation request.
+   * revalidate() only: a per-loader predicate the server runs, as in urls().
    *
    * Pass `{ ssr: false }` — the same knob as loading(fallback, { ssr:
    * false }) — to await this loader before first flush on DOCUMENT requests
@@ -183,22 +140,33 @@ export interface ClientUrlHelpers {
    * route the flag BAKES: the loader executes at shell capture and its
    * settled return freezes into the shell (nested promises stay live
    * holes).
+   *
+   * Pass `{ prefetch: false }` to keep this loader out of the route's
+   * prefetches (see {@link LoaderOptions}): an in-group click still shows
+   * the destination at once, commits the adopted prefetch with the other
+   * loaders' data, and runs only the flagged loaders in its one fill
+   * request. A `layout()` loader with the flag is flagged on every route
+   * below it. Inside intercept() the flag is accepted and ignored, as in
+   * urls().
    */
   readonly loader: <TData>(
     definition: LoaderDefinition<TData>,
-    optionsOrUse?: LoaderOptions | ClientUrlUse,
+    optionsOrUse?: Pick<LoaderOptions, "ssr" | "prefetch"> | ClientUrlUse,
     use?: ClientUrlUse,
   ) => ClientUrlItem;
   readonly loading: (component: ReactNode) => ClientUrlItem;
   /**
    * Per-loader revalidation predicate, valid inside a loader() use callback
-   * only. Runs IN THE BROWSER with client-computable args (including the
-   * callable `isAction(...refs)` matcher); return true to re-run the loader,
-   * false to keep held data. Absent predicates (and requests that carry no
-   * decisions: no-JS, PE, prefetch, document loads) follow the locked server
-   * defaults.
+   * only. It runs ON THE SERVER with the same arguments as a urls() loader's
+   * revalidate() (`actionResult`, `formData`, `context`, `isAction`, route
+   * names, ...): the build moves it out of this "use client" module. It may
+   * reference imports and globals only; a binding of this module, `this`,
+   * `import()`, a browser global, an `async` function or an import from a
+   * "use client" module fails the build with its file and line.
    */
-  readonly revalidate: (fn: ClientRevalidateFn) => ClientUrlItem;
+  readonly revalidate: (
+    fn: ShouldRevalidateFn<any, DefaultEnv>,
+  ) => ClientUrlItem;
   /**
    * Declare an intercept for a named route in THIS definition. The target is
    * dot-local (`.detail`); scoping is module-local — only navigations whose

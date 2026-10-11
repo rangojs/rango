@@ -4,6 +4,8 @@ import {
   subscribeToLocationChange,
   type EventController,
 } from "../browser/event-controller.js";
+import { pushedByKey } from "../handles/pushed-by.js";
+import type { HandleData } from "../browser/types.js";
 
 // All tests use fake timers because the controller debounces notifications
 // via setTimeout(0) and settles actions after 100ms.
@@ -1258,6 +1260,128 @@ describe("createEventController", () => {
       const state = ctrl.getHandleState();
       expect(state.data.Meta.L0).toEqual([{ title: "New" }]);
       expect(state.data.Breadcrumbs?.L0).toBeUndefined();
+    });
+
+    // #1103: two loaders registered on R0 push into R0's buckets; the
+    // pushedBy records name the run of each value. An action re-runs the
+    // route handler (R0 in resolvedIds) and the "rerun" loader, and skips
+    // "held" (in matched, not in resolvedIds). held keeps its data on the
+    // client, so it keeps its pushes; rerun's are replaced, not added to.
+    describe("a loader the response skipped keeps its pushes (#1103)", () => {
+      const matched = ["L0", "R0", "R0D0.held", "R0D1.rerun"];
+      const documentData = (): HandleData => ({
+        Meta: { L0: [{ title: "App" }], R0: [{ title: "Held 1" }] },
+        [pushedByKey("Meta")]: { R0: ["held"] },
+        Crumbs: { R0: ["held:1", "rerun:1"] },
+        [pushedByKey("Crumbs")]: { R0: ["held", "rerun"] },
+      });
+
+      it("keeps the skipped loader's title and crumb, replaces the rerun loader's", () => {
+        const ctrl = createController();
+        ctrl.setHandleData(documentData(), matched);
+
+        ctrl.setHandleData(
+          {
+            Crumbs: { R0: ["rerun:2"] },
+            [pushedByKey("Crumbs")]: { R0: ["rerun"] },
+          },
+          matched,
+          true,
+          ["R0", "R0D1.rerun"],
+        );
+
+        const { data } = ctrl.getHandleState();
+        expect(data.Meta.R0).toEqual([{ title: "Held 1" }]);
+        expect(data.Meta.L0).toEqual([{ title: "App" }]);
+        expect(data.Crumbs.R0).toEqual(["held:1", "rerun:2"]);
+        expect(data[pushedByKey("Crumbs")].R0).toEqual(["held", "rerun"]);
+      });
+
+      it("a loader that reruns and pushes nothing loses its pushes", () => {
+        const ctrl = createController();
+        ctrl.setHandleData(documentData(), matched);
+
+        ctrl.setHandleData({}, matched, true, ["R0", "R0D1.rerun"]);
+
+        const { data } = ctrl.getHandleState();
+        expect(data.Crumbs.R0).toEqual(["held:1"]);
+        expect(data.Meta.R0).toEqual([{ title: "Held 1" }]);
+      });
+
+      it("the held loader's rerun replaces its pushes in place", () => {
+        const ctrl = createController();
+        ctrl.setHandleData(documentData(), matched);
+
+        ctrl.setHandleData(
+          {
+            Meta: { R0: [{ title: "Held 2" }] },
+            [pushedByKey("Meta")]: { R0: ["held"] },
+            Crumbs: { R0: ["held:2", "rerun:2"] },
+            [pushedByKey("Crumbs")]: { R0: ["held", "rerun"] },
+          },
+          matched,
+          true,
+          ["R0", "R0D0.held", "R0D1.rerun"],
+        );
+
+        const { data } = ctrl.getHandleState();
+        expect(data.Meta.R0).toEqual([{ title: "Held 2" }]);
+        expect(data.Crumbs.R0).toEqual(["held:2", "rerun:2"]);
+      });
+
+      it("a loader that reruns under a handler that did not keeps the handler's pushes", () => {
+        const ctrl = createController();
+        ctrl.setHandleData(
+          {
+            Crumbs: { R0: ["handler", "rerun:1"] },
+            [pushedByKey("Crumbs")]: { R0: [null, "rerun"] },
+          },
+          matched,
+        );
+
+        ctrl.setHandleData(
+          {
+            Crumbs: { R0: ["rerun:2"] },
+            [pushedByKey("Crumbs")]: { R0: ["rerun"] },
+          },
+          matched,
+          true,
+          ["R0D1.rerun"],
+        );
+
+        expect(ctrl.getHandleState().data.Crumbs.R0).toEqual([
+          "handler",
+          "rerun:2",
+        ]);
+      });
+
+      it("a pushedBy loader the match does not register counts as the handler's", () => {
+        // A dependency a handler read: R0 registers no "dep" loader, so its
+        // push goes with the handler that re-ran.
+        const ctrl = createController();
+        ctrl.setHandleData(
+          {
+            Crumbs: { R0: ["dep:1", "held:1"] },
+            [pushedByKey("Crumbs")]: { R0: ["dep", "held"] },
+          },
+          matched,
+        );
+
+        ctrl.setHandleData(
+          {
+            Crumbs: { R0: ["dep:2"] },
+            [pushedByKey("Crumbs")]: { R0: ["dep"] },
+          },
+          matched,
+          true,
+          ["R0"],
+        );
+
+        expect(ctrl.getHandleState().data.Crumbs.R0).toEqual([
+          "dep:2",
+          "held:1",
+        ]);
+      });
     });
   });
 

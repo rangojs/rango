@@ -1,5 +1,20 @@
 import { resolveActionRefId } from "../../router/is-action.js";
 
+/** An imported server action, as a testing primitive's `action` option takes it. */
+export type ImportedAction = (...args: never[]) => unknown;
+
+/**
+ * Normalizes a testing primitive's `action` option: a bare imported action or
+ * actionId string becomes `{ ref }`; the object form passes through.
+ */
+export function normalizeTestAction<
+  T extends { ref?: ImportedAction | string },
+>(action: ImportedAction | string | T | undefined): T | undefined {
+  return typeof action === "function" || typeof action === "string"
+    ? ({ ref: action } as T)
+    : action;
+}
+
 /**
  * The id a testing primitive's `action` option names: a single imported
  * server action (its `$id ?? $$id`, as the action boundary derives it) or a
@@ -7,7 +22,7 @@ import { resolveActionRefId } from "../../router/is-action.js";
  * primitive.
  */
 export function resolveTestActionId(
-  action: ((...args: never[]) => unknown) | string | undefined,
+  action: ImportedAction | string | undefined,
   primitive: string,
 ): string | undefined {
   if (action === undefined) return undefined;

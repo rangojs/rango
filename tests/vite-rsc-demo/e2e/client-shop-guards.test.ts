@@ -11,7 +11,7 @@ import { waitForHydration, prodDescribe } from "./helper";
  *
  * - Middleware wraps EVERY canonical request into the group — the document
  *   load AND each within-group soft navigation, including a same-route tab
- *   switch whose loaders all HOLD via client-run revalidate() decisions. The
+ *   switch whose loaders all HOLD via their server-run revalidate(). The
  *   monotonic x-client-shop-mw header proves each request ran it.
  * - The outer server layout handler does NOT re-run on within-group
  *   navigations: its DOM stamp (run count) is unchanged across them —
@@ -69,7 +69,7 @@ async function assertHeldTabSwitchRoundTrips(
   const stamp = await outerStamp(page);
 
   // Tab switch: the product/related loaders HOLD (param-sensitive
-  // revalidate() predicates — the decision crosses on the request), but the
+  // revalidate() predicates, run by the server on that request), but the
   // canonical request still happens and middleware wraps it.
   const tabResponse = page.waitForResponse(
     (r) => r.url().includes("tab=reviews") && r.status() === 200,

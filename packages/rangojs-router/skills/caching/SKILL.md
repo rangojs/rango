@@ -453,6 +453,28 @@ or a non-cacheable variable fails on a miss unless the loader `cache()` has a
 a `keyGenerator`. Either one switches the check off, so it must itself include
 the value (`/loader` → "Cache Key").
 
+### Loaders and `prefetch: false`
+
+A loader registered with `{ prefetch: false }` is skipped in a `<Link>`
+prefetch, and its own `cache()` is not read either, even when it would hit:
+the fill request that the click sends afterwards reads the loader cache and
+runs the loader on a miss. A route-level `cache()` boundary is unaffected: its
+stored handler output is served and written as before, hit or miss, and
+`loading(fallback, { prefetch: false })` under it defers only the loaders
+behind the fallback, never the cached handler. A `cache()` route below a
+layout with a flagged `loading()` keeps using its record whenever the browser
+already holds that layout; only a prefetch that defers the layout itself (it
+is new to the page) leaves the record unread and unwritten. A response that
+carries deferred work is never reused: the document cache refuses it, and it
+is sent `cache-control: private, no-cache` with `X-Rango-Prefetch` added to
+`Vary`, whatever `Cache-Control` the route set, so no CDN keeps it and it
+never answers a navigation. A browser may keep a copy and answer the same
+prefetch from it while it reloads the page for back/forward; the click
+completes it like any other. A fill is never answered from a stored body.
+Every body the document cache does hold is complete, so one entry answers a
+prefetch and a navigation, as without the flag. See `/loader` →
+"`prefetch: false`".
+
 ## Global Cache Configuration
 
 Configure the app-level store on the router. `cache()` boundaries, cached

@@ -172,6 +172,15 @@ export interface ResolvedSegment {
    */
   awaitBeforeFlush?: true;
   parallelLoading?: ReactNode; // For parallel-owned loaders: the parallel's loading fallback
+  /**
+   * A prefetch skipped this segment's work (`prefetch: false`): a loader
+   * carries no `loaderData`, a layout/route/parallel unit carries
+   * `component: null` and its fallback. The browser shows the fallback and
+   * sends a fill request for it (browser/partial-update.ts); until that
+   * lands the segment is a placeholder, never a held copy. Only ever on a
+   * prefetch response: see docs/design/prefetch-false.md.
+   */
+  deferred?: true;
   // Intercept loader fields (for streaming loader data in parallel segments)
   loaderDataPromise?: Promise<any[]> | any[]; // Loader data promise or resolved array
   loaderIds?: string[]; // IDs ($$id) of loaders for this segment
@@ -253,10 +262,12 @@ export interface MatchResult {
   /**
    * Every segment id whose handler actually ran on the server this request,
    * including ones with `component === null` that get filtered out of
-   * `segments`/`diff` to avoid wasted bytes. Drives the client's handle-
-   * cleanup pass — a slot that re-resolves and pushes nothing must clear
-   * its previous handle bucket, but `diff` doesn't carry it because the
-   * segment payload doesn't either. A superset of `diff`.
+   * `segments`/`diff` to avoid wasted bytes, and every loader segment that
+   * ran. Drives the client's handle merge (handles/pushed-by.ts) — a slot
+   * that re-resolves and pushes nothing must clear its previous handle
+   * bucket, but `diff` doesn't carry it because the segment payload doesn't
+   * either; a loader that ran replaces its pushes, one that did not keeps
+   * them. A superset of `diff`.
    */
   resolvedIds: string[];
   /**
@@ -303,4 +314,15 @@ export interface MatchResult {
     handler: import("../router/middleware.js").MiddlewareFn;
     params: Record<string, string>;
   }>;
+}
+
+/**
+ * A `prefetch: false` placeholder (ResolvedSegment.deferred): a segment whose
+ * work a prefetch skipped, waiting for its fill. Never a held copy of the
+ * segment it stands for.
+ */
+export function isPlaceholder(
+  segment: Pick<ResolvedSegment, "deferred">,
+): boolean {
+  return segment.deferred === true;
 }

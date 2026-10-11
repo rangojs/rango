@@ -114,6 +114,10 @@ import { debugLog, debugWarn, getOrCreateRequestId } from "../logging.js";
 import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
 import type { GeneratorMiddleware } from "./cache-lookup.js";
 import { rerenderAndCacheRoute } from "./background-revalidation.js";
+import {
+  defersAboveRecord,
+  isFillRequest,
+} from "../segment-resolution/prefetch-deferral.js";
 
 /**
  * Creates cache store middleware
@@ -149,11 +153,15 @@ export function withCacheStore<TEnv>(
     // segments were collected into allSegments either way).
     recordShellCaptureDocRecord(ctx, state, allSegments);
 
+    // prefetch: false (prefetch-deferral.ts). A prefetch that deferred a
+    // layout above the boundary did not read the record (withCacheLookup)
+    // and could only write an incomplete one.
     if (
       !ctx.cacheScope?.enabled ||
       ctx.isAction ||
       state.cacheHit ||
-      ctx.request.method !== "GET"
+      ctx.request.method !== "GET" ||
+      defersAboveRecord(ctx.handlerContext)
     ) {
       if (ms) {
         ms.metrics.push({
@@ -191,6 +199,14 @@ export function withCacheStore<TEnv>(
         ctx.clientSegmentSet.has(s.id) &&
         cacheScope.covers(s.id, s.namespace),
     );
+
+    // A fill renders what the client is missing and nothing else. When that
+    // is everything the record covers, it writes like any other request.
+    // When the client holds part of it, the write would be partial, and the
+    // proactive re-render below would run handlers a fill must not run. The
+    // stale-hit refresh skips a fill for the same reason
+    // (withBackgroundRevalidation).
+    if (hasNullComponents && isFillRequest(ctx.handlerContext)) return;
 
     const requestCtx = getRequestContext();
     if (!requestCtx) return;

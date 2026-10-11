@@ -48,6 +48,7 @@ vi.mock("../root-error-boundary.js", () => ({
 }));
 
 import { renderSegments } from "../segment-system";
+import { Defer } from "../browser/defer";
 import { LoaderRedirect } from "../loader-redirect";
 import {
   decodeLoaderEntry,
@@ -73,6 +74,7 @@ function seg(
 interface TreeNode {
   type: string | Function;
   typeName: string;
+  key: string | null;
   props: Record<string, any>;
   children: TreeNode[];
 }
@@ -105,7 +107,13 @@ function toTreeNode(node: ReactNode): TreeNode | null {
     }
   }
 
-  return { type: el.type, typeName, props: el.props || {}, children };
+  return {
+    type: el.type,
+    typeName,
+    key: el.key,
+    props: el.props || {},
+    children,
+  };
 }
 
 // Find all nodes matching a component type in the tree
@@ -1858,6 +1866,372 @@ describe("segment-system", () => {
           MockRouteContentWrapper,
         )[0];
         expect(secondWrapper.props.content).toBe(firstContent);
+      });
+    });
+
+    // prefetch: false (docs/design/prefetch-false.md). A deferred segment's
+    // value is a hole: a defer the browser resolves when the fill request
+    // lands (browser/partial-update.ts armHoles). The tree build must never
+    // wait for one: the fill is only merged once the build has returned.
+    describe("deferred segments (prefetch: false)", () => {
+      const hole = () => new Defer<never>();
+      const fallback = createElement("div", null, "Loading...");
+
+      /** Fails instead of hanging when the build waits on a hole. */
+      function built(tree: Promise<ReactNode>): Promise<ReactNode> {
+        return Promise.race([
+          tree,
+          new Promise<never>((_, reject) =>
+            setTimeout(
+              () => reject(new Error("renderSegments waited on a hole")),
+              200,
+            ),
+          ),
+        ]);
+      }
+
+      it.each([{ forceAwait: true }, { isAction: true }])(
+        "settles the other loaders and leaves the hole to the read site under loading() (%o)",
+        async (options) => {
+          const reviews = hole();
+          const segments: ResolvedSegment[] = [
+            seg({ id: "R0", type: "route", loading: fallback }),
+            seg({
+              id: "R0D0.price",
+              type: "loader",
+              loaderId: "price",
+              loaderData: Promise.resolve({ price: 12 }),
+            }),
+            seg({
+              id: "R0D1.reviews",
+              type: "loader",
+              loaderId: "reviews",
+              loaderData: reviews,
+              deferred: true,
+            }),
+          ];
+
+          const tree = toTreeNode(
+            await built(renderSegments(segments, options)),
+          );
+          const boundary = collectByType(tree, MockLoaderBoundary)[0];
+          expect(boundary.props.loaderStreams).toEqual({
+            price: { price: 12 },
+            reviews,
+          });
+          expect(boundary.props.loaderStreams.reviews).toBe(reviews);
+          expect(boundary.props.loaderIds).toEqual(["price", "reviews"]);
+          expect(
+            collectByType(tree, MockStreamedLoaderErrorBoundary),
+          ).toHaveLength(1);
+        },
+      );
+
+      it("settles the other loaders and leaves the hole to the read site without loading()", async () => {
+        const reviews = hole();
+        const segments: ResolvedSegment[] = [
+          seg({ id: "R0", type: "route" }),
+          seg({
+            id: "R0D0.price",
+            type: "loader",
+            loaderId: "price",
+            loaderData: Promise.resolve({ price: 12 }),
+          }),
+          seg({
+            id: "R0D1.reviews",
+            type: "loader",
+            loaderId: "reviews",
+            loaderData: reviews,
+            deferred: true,
+          }),
+        ];
+
+        const tree = toTreeNode(
+          await built(renderSegments(segments, { forceAwait: true })),
+        );
+        const outlet = collectByType(tree, MockOutletProvider)[0];
+        expect(outlet.props.loaderData).toBeUndefined();
+        expect(outlet.props.loaderStreams).toEqual({
+          price: { price: 12 },
+          reviews,
+        });
+      });
+
+      it("leaves a settled sibling's unhandled error to the read site", async () => {
+        const segments: ResolvedSegment[] = [
+          seg({ id: "R0", type: "route" }),
+          seg({
+            id: "R0D0.price",
+            type: "loader",
+            loaderId: "price",
+            loaderData: Promise.resolve({
+              __loaderResult: true,
+              ok: false,
+              error: { message: "boom", name: "Error" },
+              fallback: null,
+            }),
+          }),
+          seg({
+            id: "R0D1.reviews",
+            type: "loader",
+            loaderId: "reviews",
+            loaderData: hole(),
+            deferred: true,
+          }),
+        ];
+
+        // The aggregate lane this replaces throws while the tree is built.
+        const tree = toTreeNode(
+          await built(renderSegments(segments, { forceAwait: true })),
+        );
+        const outlet = collectByType(tree, MockOutletProvider)[0];
+        expect(() =>
+          decodeLoaderEntry(outlet.props.loaderStreams.price),
+        ).toThrow("boom");
+
+        // As the plain click's streaming lane does with the same error: the
+        // tree is built and the read site throws it.
+        const plain = toTreeNode(
+          await built(renderSegments(segments.slice(0, 2))),
+        );
+        const price = await collectByType(plain, MockOutletProvider)[0].props
+          .loaderStreams.price;
+        expect(() => decodeLoaderEntry(price)).toThrow("boom");
+
+        // The aggregate lane: with no deferred loader in the set.
+        await expect(
+          renderSegments(segments.slice(0, 2), { forceAwait: true }),
+        ).rejects.toThrow("boom");
+      });
+
+      it.each([{ forceAwait: true }, { isAction: true }, {}])(
+        "passes a deferred unit's hole to its fallback boundary unawaited (%o)",
+        async (options) => {
+          const content = hole();
+          const segments: ResolvedSegment[] = [
+            seg({
+              id: "R0",
+              type: "route",
+              component: content as unknown as ReactNode,
+              loading: fallback,
+              deferred: true,
+            }),
+          ];
+
+          const tree = toTreeNode(
+            await built(renderSegments(segments, options)),
+          );
+          const wrapper = collectByType(tree, MockRouteContentWrapper)[0];
+          expect(wrapper.props.content).toBe(content);
+          expect(wrapper.props.fallback).toBe(fallback);
+        },
+      );
+
+      it("does not wait on a deferred unit that has no fallback to show", async () => {
+        const segments: ResolvedSegment[] = [
+          seg({
+            id: "R0",
+            type: "route",
+            component: hole() as unknown as ReactNode,
+            deferred: true,
+          }),
+        ];
+
+        await built(renderSegments(segments, { forceAwait: true }));
+      });
+
+      // No Suspender of the router's reads a hole with no loading(): React
+      // reads the node itself, so the filled page's node later takes the
+      // same place (browser/defer.ts asStream). A placeholder's hole is
+      // pending; the place a failed fill hands its defer again (fillHoles)
+      // holds it fulfilled.
+      const contentOf = async (segment: ResolvedSegment) => {
+        const tree = toTreeNode(await built(renderSegments([segment])));
+        // Wrapped: an async function would adopt a promise it returns.
+        return [collectByType(tree, MockOutletProvider)[0].props.children];
+      };
+
+      it("hands React a placeholder's hole with no loading() as its promise", async () => {
+        const hole = new Defer<ReactNode>();
+        const [content] = await contentOf(
+          seg({
+            id: "R0",
+            type: "route",
+            component: hole as unknown as ReactNode,
+            deferred: true,
+          }),
+        );
+        expect(content).toBe(hole.promise);
+      });
+
+      it("hands React a fulfilled hole with no loading() as its value", async () => {
+        const node = createElement("p", null, "page");
+        const hole = new Defer<ReactNode>();
+        hole.resolve(node);
+        const [content] = await contentOf(
+          seg({
+            id: "R0",
+            type: "error",
+            component: hole as unknown as ReactNode,
+          }),
+        );
+        expect(content).toBe(node);
+      });
+
+      it("does not settle a slot's aggregate that holds a hole", async () => {
+        const segments: ResolvedSegment[] = [
+          seg({ id: "L0", type: "layout" }),
+          seg({
+            id: "L0.@side",
+            type: "parallel",
+            slot: "@side",
+            namespace: "side",
+            loading: fallback,
+          }),
+          seg({
+            id: "L0D0.side",
+            type: "loader",
+            namespace: "side",
+            loaderId: "side",
+            loaderData: hole(),
+            deferred: true,
+          }),
+          seg({ id: "L0R0", type: "route" }),
+        ];
+
+        const tree = toTreeNode(
+          await built(renderSegments(segments, { forceAwait: true })),
+        );
+        const layout = collectByType(tree, MockOutletProvider).find(
+          (o) => o.props.segment.id === "L0",
+        )!;
+        expect(layout.props.parallel[0].loaderDataPromise).toBeInstanceOf(
+          Promise,
+        );
+      });
+
+      // The click builds the page's tree once, from the prefetched segments
+      // and one placeholder per segment whose work did not run, and the
+      // fill only resolves what that tree reads (browser/partial-update.ts
+      // fillHoles). So the tree has to be the one a plain click's payload
+      // builds: the same router elements, with the same keys, around every
+      // segment. What differs is what the boundaries are handed.
+      it("builds a plain click's wrapper chain from the skeleton: the same elements and keys around every segment", async () => {
+        // A flagged layout with a loader, a slot with no loading() and one
+        // with its own and a loader, a route with loading(), transition()
+        // and a loader, and an orphan layout of the route.
+        const page = (filled: boolean): ResolvedSegment[] => {
+          const value = <T,>(known: T): T =>
+            filled ? known : (hole() as unknown as T);
+          const flag = filled ? {} : { deferred: true as const };
+          const loader = (id: string, loaderId: string, namespace: string) =>
+            seg({
+              id,
+              type: "loader",
+              namespace,
+              loaderId,
+              component: null,
+              loaderData: value(Promise.resolve({ ok: true, data: loaderId })),
+              ...flag,
+            });
+          const node = (id: string) =>
+            value(createElement("div", null, id) as ReactNode);
+          return [
+            seg({ id: "L0", type: "layout" }),
+            loader("L0L1D0.section", "section", "section"),
+            seg({
+              id: "L0L1",
+              type: "layout",
+              namespace: "section",
+              loading: fallback,
+              component: node("L0L1"),
+              ...flag,
+            }),
+            seg({
+              id: "L0L1.@side",
+              type: "parallel",
+              slot: "@side",
+              namespace: "side",
+              component: node("side"),
+              ...flag,
+            }),
+            seg({
+              id: "L0L1.@panel",
+              type: "parallel",
+              slot: "@panel",
+              namespace: "panel",
+              loading: fallback,
+              component: node("panel"),
+              ...flag,
+            }),
+            loader("L0L1D0.panel", "panel", "panel"),
+            loader("L0L1R0D0.page", "page", "page"),
+            seg({
+              id: "L0L1R0L0",
+              type: "layout",
+              namespace: "orphan",
+              belongsToRoute: true,
+              component: node("orphan"),
+              ...flag,
+            }),
+            seg({
+              id: "L0L1R0",
+              type: "route",
+              namespace: "page",
+              loading: fallback,
+              transition: {},
+              params: { id: "1" },
+              component: node("page"),
+              ...flag,
+            }),
+          ];
+        };
+
+        // Every element the router places, in tree order: its type, its key,
+        // the segment it is for and the slots it carries. A segment's own
+        // content (host elements here) is not part of the chain, and a
+        // boundary's content is what the fill resolves.
+        const chain = (node: TreeNode | null): unknown[] => {
+          if (!node) return [];
+          const below =
+            node.typeName === "MockRouteContentWrapper"
+              ? []
+              : node.children.flatMap(chain);
+          if (typeof node.type === "string") return below;
+          return [
+            [
+              node.typeName,
+              node.key,
+              node.props.segment?.id ?? node.props.segmentId ?? null,
+              (node.props.parallel ?? []).map((p: ResolvedSegment) => [
+                p.id,
+                p.loaderIds ?? null,
+              ]),
+            ],
+            ...below,
+          ];
+        };
+
+        // The click commits on the forceAwait lane (its payload was
+        // prefetched), a plain click on the streams lane.
+        const click = chain(
+          toTreeNode(
+            await built(renderSegments(page(false), { forceAwait: true })),
+          ),
+        );
+        const plain = chain(toTreeNode(await renderSegments(page(true))));
+        expect(click).toEqual(plain);
+        // The fixture reaches every wrapper the chain is made of.
+        const types = new Set(click.map((entry) => (entry as unknown[])[0]));
+        for (const wrapper of [
+          "MockRootErrorBoundary",
+          "MockOutletProvider",
+          "MockLoaderBoundary",
+          "MockRouteContentWrapper",
+          "MockStreamedLoaderErrorBoundary",
+        ]) {
+          expect(types, wrapper).toContain(wrapper);
+        }
       });
     });
   });

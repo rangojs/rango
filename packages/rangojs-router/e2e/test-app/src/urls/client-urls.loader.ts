@@ -12,7 +12,7 @@ export const ClientUrlsCounterLoader = createLoader(async () => {
 });
 
 /**
- * Distinct $$id reading the SAME counter — its client-run revalidate() skips
+ * Distinct $$id reading the SAME counter — its revalidate() skips
  * action revalidation, so after an action this value diverges from
  * ClientUrlsCounterLoader in the same commit (per-loader decisions, not a
  * route-level batch).
@@ -33,6 +33,20 @@ let clientUrlsIsActionNsRuns = 0;
 export const ClientUrlsIsActionNsLoader = createLoader(async () => {
   clientUrlsIsActionNsRuns += 1;
   return { runs: clientUrlsIsActionNsRuns };
+});
+
+// Server-run revalidate() probes (client-urls-action.tsx): run counters for a
+// loader gated on the action's result and one gated on its form data.
+let clientUrlsResultRuns = 0;
+export const ClientUrlsResultLoader = createLoader(async () => {
+  clientUrlsResultRuns += 1;
+  return { runs: clientUrlsResultRuns };
+});
+
+let clientUrlsScopedRuns = 0;
+export const ClientUrlsScopedLoader = createLoader(async () => {
+  clientUrlsScopedRuns += 1;
+  return { runs: clientUrlsScopedRuns };
 });
 
 /**

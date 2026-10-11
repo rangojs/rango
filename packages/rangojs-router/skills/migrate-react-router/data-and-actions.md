@@ -55,7 +55,7 @@ Use it only when you need capabilities beyond what the handler provides:
 If the React Router loader just fetches data for its page component AND the
 component can become a server component, merge it into the handler. If the
 component stays a client component, port the whole group with `clientUrls()`
-instead — loader, `useLoader` read, and browser-run `revalidate()` keep the RR
+instead — loader, `useLoader` read, and per-loader `revalidate()` keep the RR
 route-module shape (see the "Two target shapes" section in the main skill and
 `/client-urls`). See `/loader` for when the live data layer is useful.
 

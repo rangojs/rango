@@ -14,6 +14,7 @@ import {
   getParallelEntries,
   getParallelSlotEntries,
   type EntryData,
+  type LoaderEntry,
   type ParallelEntryData,
 } from "../../server/context";
 import type {
@@ -34,6 +35,13 @@ import {
 } from "../logging.js";
 import { resolveLoaderData } from "./loader-cache.js";
 import { entryLoadingMasksLoaders } from "./loader-mask.js";
+import {
+  defersLoader,
+  deferUnit,
+  getPrefetchDeferral,
+  isFillRequest,
+  registerDeferredLoader,
+} from "./prefetch-deferral.js";
 import {
   handleHandlerResult,
   warnOnStreamedResponse,
@@ -103,6 +111,45 @@ function emitRevalidationDecision(
 }
 
 // ---------------------------------------------------------------------------
+// prefetch: false (prefetch-deferral.ts)
+// ---------------------------------------------------------------------------
+
+/**
+ * How to deliver a loader a prefetch deferred, kept so deliverStartedLoaders
+ * can deliver it after all. Keyed by the emitted segment object.
+ */
+const deferredLoaderRuns = new WeakMap<ResolvedSegment, () => unknown>();
+
+/**
+ * A deferred loader something started in this request (a handler that awaits
+ * it with ctx.use(), or another loader) ran in the prefetch whatever its flag
+ * says: deliver that run instead of having the fill run it a second time. A
+ * reader starts it through its registration (prefetch-deferral.ts
+ * startDeferredLoader), so the delivery's resolveLoaderData finds the same
+ * run or cache() binding. Called once resolution has awaited every handler it
+ * awaits; a streamed handler that reads the loader later is not seen, and
+ * that loader runs again in the fill.
+ */
+function deliverStartedLoaders<TEnv>(
+  ctx: HandlerContext<any, TEnv>,
+  segments: ResolvedSegment[],
+): void {
+  const plan = getPrefetchDeferral(ctx);
+  if (plan?.mode !== "prefetch") return;
+  const internal = ctx as InternalHandlerContext<any, TEnv>;
+  const started = (loaderId: string): boolean =>
+    plan.deferredLoaders?.get(loaderId)?.started === true ||
+    internal._loaderStarted?.(loaderId) === true;
+  for (const segment of segments) {
+    if (!segment.deferred || segment.type !== "loader") continue;
+    const run = deferredLoaderRuns.get(segment);
+    if (!run || !started(segment.loaderId!)) continue;
+    delete segment.deferred;
+    segment.loaderData = run();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Revalidation path (partial match)
 // ---------------------------------------------------------------------------
 
@@ -147,6 +194,7 @@ export async function resolveLoadersWithRevalidation<TEnv>(
   }));
 
   const matchedIds = loaderMeta.map((m) => m.segmentId);
+  const fill = isFillRequest(ctx);
 
   const revalidationChecks = await Promise.all(
     loaderMeta.map(
@@ -173,6 +221,8 @@ export async function resolveLoadersWithRevalidation<TEnv>(
               }
               return true;
             }
+            // Fill: a held segment is skipped outright, no predicate runs.
+            if (fill) return false;
 
             const dummySegment: ResolvedSegment = {
               id: segmentId,
@@ -226,35 +276,72 @@ export async function resolveLoadersWithRevalidation<TEnv>(
   // (matchPartialWithPprReplay) seeds once its doc record hits.
   const bakeLane = !entryLoadingMasksLoaders(entry.loading);
 
+  const kickoff = (
+    loaderEntry: LoaderEntry,
+    segmentId: string,
+    loaderId: string,
+  ): Promise<unknown> =>
+    runInsideLoaderScope(
+      () =>
+        resolveLoaderData(
+          loaderEntry,
+          ctx,
+          ctx.pathname,
+          // `bake`, not awaitBeforeFlush: a navigation evaluation never
+          // carries awaitBeforeFlush, and an ssr: false loader must pin
+          // here exactly as on the document HIT.
+          bakeLane || loaderEntry.bake === true ? segmentId : null,
+        ),
+      loaderId,
+    );
+  const start = (
+    loaderEntry: LoaderEntry,
+    segmentId: string,
+    loaderId: string,
+  ) =>
+    deps.wrapLoaderPromise(
+      kickoff(loaderEntry, segmentId, loaderId),
+      entry,
+      segmentId,
+      ctx.pathname,
+      errorContext,
+    );
+
   const loadersToRun = revalidationChecks.filter((c) => c.shouldRun);
   const segments: ResolvedSegment[] = loadersToRun.map(
-    ({ loaderEntry, loader, segmentId, index }) => ({
-      id: segmentId,
-      namespace: entry.id,
-      type: "loader" as const,
-      index,
-      component: null,
-      params: ctx.params,
-      loaderId: loader.$$id,
-      loaderData: deps.wrapLoaderPromise(
-        runInsideLoaderScope(() =>
-          resolveLoaderData(
-            loaderEntry,
-            ctx,
-            ctx.pathname,
-            // `bake`, not awaitBeforeFlush: a navigation evaluation never
-            // carries awaitBeforeFlush, and an ssr: false loader must pin
-            // here exactly as on the document HIT.
-            bakeLane || loaderEntry.bake === true ? segmentId : null,
-          ),
-        ),
-        entry,
-        segmentId,
-        ctx.pathname,
-        errorContext,
-      ),
-      belongsToRoute,
-    }),
+    ({ loaderEntry, loader, segmentId, index }) => {
+      const base = {
+        id: segmentId,
+        namespace: entry.id,
+        type: "loader" as const,
+        index,
+        component: null,
+        params: ctx.params,
+        loaderId: loader.$$id,
+      };
+      // Only a loader on a segment the client lacks (defersLoader). It
+      // would have run. Registered, not started: it runs, and reads its
+      // cache(), only if a reader starts it (startDeferredLoader).
+      if (defersLoader(ctx, loaderEntry, segmentId)) {
+        registerDeferredLoader(ctx, loader.$$id, shortCode, () =>
+          kickoff(loaderEntry, segmentId, loader.$$id),
+        );
+        const deferred: ResolvedSegment = {
+          ...base,
+          belongsToRoute,
+          deferred: true,
+        };
+        deferredLoaderRuns.set(deferred, () =>
+          start(loaderEntry, segmentId, loader.$$id),
+        );
+        return deferred;
+      }
+      return {
+        ...base,
+        loaderData: start(loaderEntry, segmentId, loader.$$id),
+        belongsToRoute,
+      };
+    },
   );
 
   return { segments, matchedIds };
@@ -372,6 +459,7 @@ export async function resolveLoadersOnlyWithRevalidation<TEnv>(
     await collectEntryLoaders(entry, entry.type === "route");
   }
 
+  deliverStartedLoaders(context, allLoaderSegments);
   return { segments: allLoaderSegments, matchedIds: allMatchedIds };
 }
 
@@ -612,8 +700,17 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
     // on the next request, perpetuating the staleness).
     matchedIds.push(parallelId);
 
+    // A slot below a unit a prefetch skipped goes with it, and no predicate
+    // runs: a prefetch sends what the slot declares instead of running its
+    // handler.
+    let deferred = deferUnit(context, parallelId, "below");
     let shouldResolve: boolean;
-    if (isFullRefetch) {
+    if (isFillRequest(context)) {
+      // Fill: only what the client does not hold renders, no predicate runs.
+      shouldResolve = !clientSegmentIds.has(parallelId);
+    } else if (deferred) {
+      shouldResolve = true;
+    } else if (isFullRefetch) {
       // Client has nothing cached — slot MUST render. User revalidate fns are
       // bypassed here because returning false would leave the segment blank
       // with no client-side fallback.
@@ -687,18 +784,22 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
       shouldResolve,
     );
 
-    const { component, handlerRan } = await resolveParallelSlotComponent({
-      shouldResolve,
-      parallelEntry,
-      slot,
-      parallelId,
-      handler,
-      context,
-      deps,
-      routeKey,
-      params,
-      boundaryEntry: options?.boundaryEntry ?? entry,
-    });
+    // A slot with its own flagged loading() is its own unit.
+    if (shouldResolve) deferred ??= deferUnit(context, parallelId, "slot");
+    const { component, handlerRan } = deferred
+      ? { component: null, handlerRan: false }
+      : await resolveParallelSlotComponent({
+          shouldResolve,
+          parallelEntry,
+          slot,
+          parallelId,
+          handler,
+          context,
+          deps,
+          routeKey,
+          params,
+          boundaryEntry: options?.boundaryEntry ?? entry,
+        });
 
     segments.push({
       id: parallelId,
@@ -719,6 +820,7 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
       ...(parallelEntry.mountPath
         ? { mountPath: parallelEntry.mountPath }
         : {}),
+      ...deferred,
     });
 
     if (loaderOrder === "after") {
@@ -750,6 +852,7 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
   const matchedId = entry.shortCode;
 
   let handlerRan = false;
+  let deferred: { readonly deferred: true } | undefined;
   const component = await revalidate(
     async () => {
       const hasSegment = clientSegmentIds.has(entry.shortCode);
@@ -777,6 +880,8 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
         }
         return true;
       }
+      // Fill: a held segment is skipped outright, no predicate runs.
+      if (isFillRequest(context)) return false;
 
       const dummySegment: ResolvedSegment = {
         id: entry.shortCode,
@@ -826,6 +931,10 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
       return shouldRevalidate;
     },
     async () => {
+      // Only an entry the client lacks (defersUnit). Its handler would
+      // have run, and a prefetch sends the entry's fallback in its place.
+      deferred = deferUnit(context, entry.shortCode, "chain");
+      if (deferred) return null;
       handlerRan = true;
       const doneHandler = track(`handler:${entry.id}`, 2);
       (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
@@ -928,6 +1037,7 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
       : {}),
     ...(entry.mountPath ? { mountPath: entry.mountPath } : {}),
     _handlerRan: handlerRan,
+    ...deferred,
   };
 
   return { segment, matchedId };
@@ -1020,10 +1130,8 @@ export async function resolveSegmentWithRevalidation<TEnv>(
     }
   }
 
-  if (routeHandlerResult) {
-    // Route entry: handler already executed above; resolve parallels
-    // (handler data visible) then push handler segment last for tree order.
-    const parallelResult = await resolveParallelSegmentsWithRevalidation(
+  const resolveSlots = () =>
+    resolveParallelSegmentsWithRevalidation(
       entry,
       params,
       context,
@@ -1038,6 +1146,11 @@ export async function resolveSegmentWithRevalidation<TEnv>(
       actionContext,
       stale,
     );
+
+  if (routeHandlerResult) {
+    // Route entry: handler already executed above; resolve parallels
+    // (handler data visible) then push handler segment last for tree order.
+    const parallelResult = await resolveSlots();
     segments.push(...parallelResult.segments);
     matchedIds.push(...parallelResult.matchedIds);
 
@@ -1064,21 +1177,7 @@ export async function resolveSegmentWithRevalidation<TEnv>(
     segments.push(handlerResult.segment);
     matchedIds.push(handlerResult.matchedId);
 
-    const parallelResult = await resolveParallelSegmentsWithRevalidation(
-      entry,
-      params,
-      context,
-      belongsToRoute,
-      clientSegmentIds,
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      routeKey,
-      deps,
-      actionContext,
-      stale,
-    );
+    const parallelResult = await resolveSlots();
     segments.push(...parallelResult.segments);
     matchedIds.push(...parallelResult.matchedIds);
 
@@ -1192,6 +1291,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
   // so ctx.set() values are visible to parallel children.
   matchedIds.push(orphan.shortCode);
 
+  let deferred: { readonly deferred: true } | undefined;
   const component = await revalidate(
     async () => {
       if (!clientSegmentIds.has(orphan.shortCode)) {
@@ -1208,6 +1308,8 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
         }
         return true;
       }
+      // Fill: a held segment is skipped outright, no predicate runs.
+      if (isFillRequest(context)) return false;
 
       const dummySegment: ResolvedSegment = {
         id: orphan.shortCode,
@@ -1246,7 +1348,12 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
       );
       return shouldRevalidate;
     },
-    async () => resolveLayoutComponent(orphan, context),
+    async () => {
+      // Below a unit a prefetch skipped: the orphan goes with it.
+      deferred = deferUnit(context, orphan.shortCode, "below");
+      if (deferred) return null;
+      return resolveLayoutComponent(orphan, context);
+    },
     () => null,
   );
 
@@ -1265,6 +1372,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
       deps.viewTransitionDefault,
     ),
     ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
+    ...deferred,
   });
 
   // Resolve the orphan layout's parallel slots through the shared main-path
@@ -1425,5 +1533,6 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
     }
   }
 
+  deliverStartedLoaders(context, allSegments);
   return { segments: allSegments, matchedIds };
 }

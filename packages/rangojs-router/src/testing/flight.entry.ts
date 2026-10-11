@@ -64,6 +64,7 @@ export {
   resetShellTestState,
 } from "./serve-shell-request.js";
 export type {
+  ServeShellRequestAction,
   ServeShellRequestOptions,
   ServeShellRequestResult,
   ShellRequestHandles,

@@ -1,5 +1,6 @@
 import type { HandleData, HandleStore } from "../server/handle-store.js";
 import { isThenable } from "./is-thenable.js";
+import { isPushedByKey, pushedByKey } from "./pushed-by.js";
 
 /**
  * Runtime-neutral resolution of deferred (Promise) handle values. Shared by the
@@ -39,7 +40,8 @@ export function deferredHandleNames(data: HandleData): Set<string> {
  * thenables). A rejected deferred is dropped, and a deferred that resolves to
  * `null`/`undefined` is dropped (the `.defer({ else })` skip semantics), so a
  * nullish deferred slot never reaches a collector. Sync (non-thenable) values —
- * including a legitimate sync `null` push — pass through unchanged.
+ * including a legitimate sync `null` push — pass through unchanged. A
+ * pushedBy record (pushed-by.ts) loses the entries of the dropped values.
  */
 export async function resolveDeferredHandleValues(
   data: HandleData,
@@ -47,13 +49,28 @@ export async function resolveDeferredHandleValues(
   const out: HandleData = {};
   await Promise.all(
     Object.entries(data).flatMap(([handleName, segments]) => {
+      if (isPushedByKey(handleName)) return [];
       out[handleName] = {};
+      const byName = pushedByKey(handleName);
+      const pushedBy = data[byName];
       return Object.entries(segments).map(async ([segmentId, values]) => {
-        out[handleName][segmentId] = await resolveValues(values);
+        const resolved = await resolveValues(values);
+        out[handleName][segmentId] = keptValues(resolved);
+        const by = pushedBy?.[segmentId];
+        if (by) {
+          (out[byName] ??= {})[segmentId] = by.filter(
+            (_, i) => resolved[i].keep,
+          );
+        }
       });
     }),
   );
   return out;
+}
+
+interface ResolvedValue {
+  keep: boolean;
+  value: unknown;
 }
 
 // Resolve each entry IN ORDER. A non-thenable passes through verbatim (including
@@ -61,8 +78,8 @@ export async function resolveDeferredHandleValues(
 // A thenable is awaited and dropped when it rejects OR resolves to null/undefined
 // (the `.defer({ else })` skip semantics: a forgotten resolver times out to
 // `else ?? undefined`), so a nullish deferred slot never reaches a collector.
-async function resolveValues(values: unknown[]): Promise<unknown[]> {
-  const resolved = await Promise.all(
+function resolveValues(values: unknown[]): Promise<ResolvedValue[]> {
+  return Promise.all(
     values.map(async (v) => {
       if (!isThenable(v)) return { keep: true, value: v };
       try {
@@ -73,6 +90,9 @@ async function resolveValues(values: unknown[]): Promise<unknown[]> {
       }
     }),
   );
+}
+
+function keptValues(resolved: ResolvedValue[]): unknown[] {
   return resolved.filter((r) => r.keep).map((r) => r.value);
 }
 
@@ -141,8 +161,11 @@ export function recordedHandleData(
   const recorded: HandleData = {};
   for (const segmentId of segmentIds) {
     const kept = handleStore.getDataForSegment(segmentId, true);
+    const pushedBy = handleStore.getPushedBy(segmentId, true);
     for (const handleName in kept) {
       (recorded[handleName] ??= {})[segmentId] = kept[handleName];
+      const by = pushedBy?.[handleName];
+      if (by) (recorded[pushedByKey(handleName)] ??= {})[segmentId] = by;
     }
   }
   return recorded;
@@ -163,7 +186,7 @@ export async function resolveSegmentHandleValues(
   const out: Record<string, unknown[]> = {};
   await Promise.all(
     Object.entries(segHandles).map(async ([handleName, values]) => {
-      out[handleName] = await resolveValues(values);
+      out[handleName] = keptValues(await resolveValues(values));
     }),
   );
   return out;

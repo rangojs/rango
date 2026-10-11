@@ -242,6 +242,94 @@ describe("clientUrls", () => {
     ).toThrow(/stream was replaced.*ssr: false/);
   });
 
+  // prefetch: false on a group route's loader (docs/design/prefetch-false.md,
+  // R8 and "clientUrls() routes"): recorded on the route's loader record,
+  // beside ssr, and projected onto the server stub from there.
+  it("stores prefetch: false on the loader record, beside ssr; true records nothing", () => {
+    const PriceLoader = loader("loaders#price");
+    const ReviewsLoader = loader("loaders#reviews");
+    const BothLoader = loader("loaders#both");
+    const TrueLoader = loader("loaders#true");
+
+    const patterns = clientUrls(({ path, loader: useLoader, revalidate }) => [
+      path("/product/:slug", AccountPage, () => [
+        useLoader(PriceLoader),
+        useLoader(ReviewsLoader, { prefetch: false }, () => [
+          revalidate(() => false),
+        ]),
+        useLoader(BothLoader, { ssr: false, prefetch: false }),
+        useLoader(TrueLoader, { prefetch: true }),
+      ]),
+    ]);
+
+    const [route] = patterns.routes;
+    expect(route.loaders[0]).toEqual({ loader: PriceLoader, revalidate: [] });
+    expect(route.loaders[1]).toMatchObject({
+      loader: ReviewsLoader,
+      prefetch: false,
+    });
+    expect(route.loaders[1].revalidate).toHaveLength(1);
+    expect(route.loaders[1].ssr).toBeUndefined();
+    expect(route.loaders[2]).toMatchObject({
+      loader: BothLoader,
+      ssr: false,
+      prefetch: false,
+    });
+    expect(route.loaders[3]).toEqual({ loader: TrueLoader, revalidate: [] });
+  });
+
+  it("flags a layout() loader with prefetch: false on every route below it", () => {
+    const ShellLoader = loader("loaders#shell");
+    const PageLoader = loader("loaders#page");
+
+    const patterns = clientUrls(({ path, layout, loader: useLoader }) => [
+      layout(AccountLayout, () => [
+        useLoader(ShellLoader, { prefetch: false }),
+        path("/a", AccountPage, () => [useLoader(PageLoader)]),
+        path("/b", SettingsPage),
+      ]),
+    ]);
+
+    for (const route of patterns.routes) {
+      expect(route.loaders[0]).toMatchObject({
+        loader: ShellLoader,
+        prefetch: false,
+      });
+    }
+    expect(patterns.routes[0].loaders[1]).toEqual({
+      loader: PageLoader,
+      revalidate: [],
+    });
+  });
+
+  it("rejects a prefetch value that is not a boolean", () => {
+    const AccountLoader = loader("loaders#account");
+    expect(() =>
+      clientUrls(({ path, loader: useLoader }) => [
+        path("/x", AccountPage, () => [
+          useLoader(AccountLoader, { prefetch: "never" } as never),
+        ]),
+      ]),
+    ).toThrow(/clientUrls\(\) loader\(\) prefetch must be a boolean/);
+  });
+
+  // A urls() intercept() takes loader(Def, { prefetch: false }) and ignores
+  // it: an intercept prefetch defers nothing (R8). A clientUrls() intercept()
+  // does the same: no rejection, and nothing recorded to project.
+  it("accepts prefetch: false inside intercept() and ignores it, as urls() does", () => {
+    const DetailLoader = loader("loaders#detail");
+    const patterns = clientUrls(({ path, intercept, loader: useLoader }) => [
+      path("/items/:id", AccountPage, { name: "detail" }),
+      intercept("@modal", ".detail", AccountLayout, () => [
+        useLoader(DetailLoader, { prefetch: false }),
+      ]),
+    ]);
+
+    expect(patterns.intercepts[0].loaders).toEqual([
+      { loader: DetailLoader, revalidate: [] },
+    ]);
+  });
+
   it("rejects ssr: false on intercept loaders", () => {
     const DetailLoader = loader("loaders#detail");
     expect(() =>
@@ -268,7 +356,7 @@ describe("clientUrls", () => {
       Parameters<ClientUrlHelpers["loader"]>["length"]
     >().toEqualTypeOf<1 | 2 | 3>();
     expectTypeOf<keyof ClientUrlLoaderRecord>().toEqualTypeOf<
-      "loader" | "revalidate" | "ssr"
+      "loader" | "revalidate" | "ssr" | "prefetch"
     >();
     expectTypeOf<keyof ClientUrlRouteRecord>().toEqualTypeOf<
       | "id"
@@ -577,7 +665,7 @@ describe("clientUrls", () => {
     ).toThrow("does not support path() inside intercept()");
   });
 
-  it("stores client-run revalidate predicates per loader without executing them", () => {
+  it("stores revalidate predicates per loader without executing them", () => {
     const SessionLoader = loader("loaders#session");
     const ItemLoader = loader("loaders#item");
     let predicateCalls = 0;
@@ -650,12 +738,32 @@ describe("clientUrls", () => {
     ).toThrow("revalidate() expects a predicate function");
 
     expect(() =>
+      clientUrls(({ path, loader: useLoader, revalidate }) => [
+        path("/", HomePage, () => [
+          useLoader(loader("loaders#a"), () => [
+            revalidate({ $$rangoRevalidate: 1 } as never),
+          ]),
+        ]),
+      ]),
+    ).toThrow("revalidate() expects a predicate function");
+
+    expect(() =>
       clientUrls(({ path, loader: useLoader, loading }) => [
         path("/", HomePage, () => [
           useLoader(loader("loaders#a"), () => [loading("no")]),
         ]),
       ]),
     ).toThrow("does not support loading() inside loader()");
+  });
+
+  it("keeps the marker the build leaves in place of a hoisted predicate", () => {
+    const hoisted = { $$rangoRevalidate: "k1" };
+    const patterns = clientUrls(({ path, loader: useLoader, revalidate }) => [
+      path("/", HomePage, () => [
+        useLoader(loader("loaders#a"), () => [revalidate(hoisted as never)]),
+      ]),
+    ]);
+    expect(patterns.routes[0].loaders[0].revalidate).toEqual([hoisted]);
   });
 
   it("rejects malformed values instead of executing them", () => {

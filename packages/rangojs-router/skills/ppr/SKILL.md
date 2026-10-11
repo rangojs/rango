@@ -1069,6 +1069,19 @@ Four hard edges (each e2e/unit-pinned):
   must be fresh on every serve, it belongs on the live lane (no `ssr: false`) or
   in a nested promise.
 
+### `prefetch: false` on a `ppr` route
+
+A `ppr` route's handler output is stored, so a `loading()` flagged with
+`prefetch: false` does not skip the handler in a `<Link>` prefetch: the shell
+and its partial replay are served as usual and only the live loaders behind
+the fallback are deferred. A live loader registered with `{ prefetch: false }` is
+skipped the same way, and the click that adopts the prefetch sends one fill
+request for it. An `ssr: false` loader is the bake lane and is served from the
+shell, so on a `ppr` route `prefetch: false` is ignored for it, and
+development logs a warning that the loader "is registered with ssr: false
+and prefetch: false on a ppr route"; drop one of the two options. See
+`/loader` → "`prefetch: false`".
+
 ### The layout-with-loaders playbook (the storefront case)
 
 The most common real-app shape: an app-wide layout registers per-user loaders

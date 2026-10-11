@@ -103,7 +103,7 @@ import {
   runLoader,
   runLoaderResult,
   runTransitionWhen,
-  runClientRevalidate,
+  runRevalidate,
   dispatch,
   createTestRequestContext,
   runInRequestContext,
@@ -151,7 +151,7 @@ void createSSRHandler;
 void runLoader;
 void runLoaderResult;
 void runTransitionWhen;
-void runClientRevalidate;
+void runRevalidate;
 void rangoTestAliases;
 void rangoTestConfig;
 void createTestRequestContext;

@@ -73,6 +73,7 @@ import {
 } from "../server/context.js";
 import { isThenable } from "../handles/is-thenable.js";
 import { requestHeaders } from "../server/request-headers.js";
+import { PREFETCH_HEADER } from "../prefetch-markers.js";
 import type {
   CachedEntryData,
   ShellCacheEntry,
@@ -1448,7 +1449,7 @@ function createNavigationCaptureRequest(request: Request, url: URL): Request {
   headers.set("accept", "text/html");
   for (const name of [
     "rsc-action",
-    "x-rango-prefetch",
+    PREFETCH_HEADER,
     "x-rango-state",
     "x-rsc-hmr",
     "x-rsc-router-client-path",

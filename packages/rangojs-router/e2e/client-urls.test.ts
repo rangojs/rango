@@ -6,6 +6,7 @@ import {
   expectNoPageError,
   expectNoReload,
   getNumericContent,
+  isPrefetchRequest,
   testId,
   waitForHydration,
 } from "./helper";
@@ -69,6 +70,13 @@ async function expectItem(
   await expect(testId(page, "client-urls-layout")).toHaveAttribute(
     "data-pending",
     "false",
+  );
+}
+
+/** The /client-urls-action counter loader's value (`count:N`). */
+async function readCount(page: Page): Promise<number> {
+  return Number(
+    (await testId(page, "ca-loader").textContent())?.replace("count:", ""),
   );
 }
 
@@ -408,18 +416,18 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
         ),
       )
       .toBeGreaterThanOrEqual(count + 1);
-    // Per-loader CLIENT-RUN revalidate(): the session loader's predicate
-    // opted out of action revalidation — same route, same commit, held data.
+    // Per-loader revalidate(), run on the server: the session loader's
+    // predicate opted out of action revalidation — same route, same commit,
+    // held data.
     await expect(testId(page, "ca-session")).toHaveText(`session:${count}`);
     await expect(testId(page, "ca-parent-count")).toHaveText(`parent:${count}`);
   });
 
-  test("client revalidate() isAction() matches a target action and a namespace import", async ({
+  test("a group loader's revalidate() isAction() matches a target action and a namespace import", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
 
-    // Client-run isAction() is the same matcher as the server predicate:
     // isAction(target) re-runs only the target-gated loader; isAction(* as
     // Actions) re-runs on any export of that module (target + decoy). The
     // bump action lives in a different module and matches neither.
@@ -448,7 +456,7 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
     );
   });
 
-  test("client revalidate() decisions transport on same-route param navs, not only actions", async ({
+  test("same-route param nav: the server-run revalidate() holds the session loader", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
@@ -456,9 +464,8 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
     // The session loader never revalidates (revalidate(() => false)); the
     // counter loader follows defaults. The action bump makes them diverge,
     // and the param nav is the probe: its GET re-evaluates the held route's
-    // loaders (params changed -> default true), so WITHOUT the decision
-    // header the session value would catch up to the counter. Holding proves
-    // the skip rode the navigation request.
+    // loaders (params changed -> default true), so without the predicate the
+    // session value would catch up to the counter.
     await page.goto(f.url("/client-urls-action/items/alpha"));
     await waitForHydration(page);
     const initial = await testId(page, "ca-item-count").textContent();
@@ -473,7 +480,7 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
     // The counter is process-global and other tests in this file bump it
     // (ca-bump, cu-hooks-run-action) while fullyParallel runs them on sibling
     // workers, so pin "advanced past the baseline", not an exact delta. The
-    // session value is exact: its skip decision must hold regardless.
+    // session value is exact: its skip must hold regardless.
     const readCount = async (): Promise<number> =>
       Number(
         (await testId(page, "ca-item-count").textContent())?.replace(
@@ -482,7 +489,7 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
         ),
       );
 
-    // Action: counter refreshes, session decision (skip) rides the POST.
+    // Action: counter refreshes, session holds.
     await testId(page, "ca-item-bump").click();
     await expect.poll(readCount).toBeGreaterThanOrEqual(count + 1);
     const afterAction = await readCount();
@@ -490,7 +497,7 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
       `session:${count}`,
     );
 
-    // Same-route param nav: the skip rides the partial GET.
+    // Same-route param nav: the predicate holds it on the partial GET.
     await testId(page, "ca-item-to-beta").click();
     await expect(testId(page, "ca-item-param")).toHaveText("beta");
     await expect(testId(page, "ca-item-loader")).toHaveText(
@@ -500,6 +507,149 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
     await expect(testId(page, "ca-item-session")).toHaveText(
       `session:${count}`,
     );
+  });
+
+  test("a prefetched same-route param nav holds the loader its revalidate() skips", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // The click adopts the hover prefetch, so the prefetch request is the
+    // one the server decided: it must run the session loader's predicate,
+    // not the defaults (params changed -> re-run).
+    await page.goto(f.url("/client-urls-action/items/alpha"));
+    await waitForHydration(page);
+    const initial = await testId(page, "ca-item-count").textContent();
+    const count = Number(initial?.replace("count:", ""));
+    expect(Number.isNaN(count)).toBe(false);
+
+    await using __ = await expectNoReload(page);
+
+    await testId(page, "ca-item-bump").click();
+    await expect
+      .poll(async () =>
+        Number(
+          (await testId(page, "ca-item-count").textContent())?.replace(
+            "count:",
+            "",
+          ),
+        ),
+      )
+      .toBeGreaterThanOrEqual(count + 1);
+    await expect(testId(page, "ca-item-session")).toHaveText(
+      `session:${count}`,
+    );
+
+    const isBetaPartial = (url: string): boolean =>
+      url.includes("/client-urls-action/items/beta") &&
+      url.includes("_rsc_partial");
+    const prefetched = page.waitForResponse(
+      (response) =>
+        isBetaPartial(response.url()) && isPrefetchRequest(response.request()),
+    );
+    await testId(page, "ca-item-to-beta-prefetch").hover();
+    await prefetched;
+
+    const navigations: string[] = [];
+    page.on("request", (request) => {
+      if (isBetaPartial(request.url()) && !isPrefetchRequest(request)) {
+        navigations.push(request.url());
+      }
+    });
+    await testId(page, "ca-item-to-beta-prefetch").click();
+    await expect(testId(page, "ca-item-param")).toHaveText("beta");
+    await expect(testId(page, "ca-item-loader")).toHaveText(
+      "client-urls-item:beta",
+    );
+    expect(navigations).toEqual([]);
+    await expect(testId(page, "ca-item-session")).toHaveText(
+      `session:${count}`,
+    );
+  });
+
+  test("a group loader's revalidate() sees the action result: re-runs after ok, holds after fail", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // revalidate(({ isAction, actionResult }) => isAction(resultAction) ?
+    // actionResult?.ok === true : undefined): only the server has the
+    // result, on the action request itself.
+    await page.goto(f.url("/client-urls-action"));
+    await waitForHydration(page);
+    await using __ = await expectNoReload(page);
+
+    const readRuns = (): Promise<number> =>
+      getNumericContent(testId(page, "ca-result-runs"));
+    const before = await readRuns();
+
+    await testId(page, "ca-result-ok").click();
+    await expect.poll(readRuns).toBeGreaterThan(before);
+    const afterOk = await readRuns();
+
+    // The fail action bumps the shared counter too, and the counter loader
+    // re-runs on the action default: once it advanced, the commit landed and
+    // a held value is observable, not a pending one.
+    const countBefore = await readCount(page);
+    await testId(page, "ca-result-fail").click();
+    await expect.poll(() => readCount(page)).toBeGreaterThan(countBefore);
+    await expect(testId(page, "ca-result-runs")).toHaveText(String(afterOk));
+  });
+
+  test("a group loader's revalidate() reads the action's form data", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // revalidate(({ formData }) => formData?.get("scope") === "all").
+    await page.goto(f.url("/client-urls-action"));
+    await waitForHydration(page);
+    await using __ = await expectNoReload(page);
+
+    const readRuns = (): Promise<number> =>
+      getNumericContent(testId(page, "ca-scoped-runs"));
+    const before = await readRuns();
+
+    await testId(page, "ca-scope-all").click();
+    await expect.poll(readRuns).toBeGreaterThan(before);
+    const afterAll = await readRuns();
+
+    const countBefore = await readCount(page);
+    await testId(page, "ca-scope-none").click();
+    await expect.poll(() => readCount(page)).toBeGreaterThan(countBefore);
+    await expect(testId(page, "ca-scoped-runs")).toHaveText(String(afterAll));
+  });
+
+  test.describe("without JavaScript", () => {
+    test.use({ javaScriptEnabled: false });
+
+    test("a no-JS form post renders every group loader fresh in the document", async ({
+      page,
+    }) => {
+      // A document holds no segments, so no predicate keeps anything: the
+      // session loader (revalidate(() => false)) renders the bumped count
+      // the counter loader renders, and the scoped loader runs although its
+      // predicate says no.
+      await page.goto(f.url("/client-urls-action"));
+      await expect(testId(page, "ca-index")).toBeVisible();
+      const scopedBefore = await getNumericContent(
+        testId(page, "ca-scoped-runs"),
+      );
+
+      await testId(page, "ca-scope-none").click();
+      await page.waitForLoadState("domcontentloaded");
+      await expect(testId(page, "ca-index")).toBeVisible();
+
+      const count = (await testId(page, "ca-loader").textContent())?.replace(
+        "count:",
+        "",
+      );
+      expect(Number.isNaN(Number(count))).toBe(false);
+      await expect(testId(page, "ca-session")).toHaveText(`session:${count}`);
+      expect(
+        await getNumericContent(testId(page, "ca-scoped-runs")),
+      ).toBeGreaterThan(scopedBefore);
+    });
   });
 
   test("same-route param navs hold previous content in a group, with or without transition()", async ({

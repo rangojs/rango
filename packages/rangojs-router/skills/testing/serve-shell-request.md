@@ -20,26 +20,28 @@ A `Prerender` route is served as in production: from the artifact `router.matchF
 
 ### Options — `ServeShellRequestOptions`
 
-| Field        | Type                                             | Meaning                                                                                                                                                                                                    |
-| ------------ | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cacheStore` | `SegmentCacheStore`                              | The store for this request, in place of the store your `createRouter({ cache })` config returns. The rest of that config (`enabled`, `searchParams`) still applies. Omit it to use the router's own store. |
-| `env`        | `TEnv`                                           | Bindings, as `router.fetch(request, { env })` passes them. A function `cache` config receives them.                                                                                                        |
-| `headers`    | `HeadersInit`                                    | Request headers (e.g. `cookie`). A document request defaults `accept` to `text/html`.                                                                                                                      |
-| `partial`    | `true \| { from?: string; segments?: string[] }` | Serve the navigation request the browser sends instead of a document GET: from `from` (default the site root) with `segments` mounted (default none).                                                      |
+| Field        | Type                                                                                 | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------ | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cacheStore` | `SegmentCacheStore`                                                                  | The store for this request, in place of the store your `createRouter({ cache })` config returns. The rest of that config (`enabled`, `searchParams`) still applies. Omit it to use the router's own store.                                                                                                                                                                                                                                                                         |
+| `env`        | `TEnv`                                                                               | Bindings, as `router.fetch(request, { env })` passes them. A function `cache` config receives them.                                                                                                                                                                                                                                                                                                                                                                                |
+| `headers`    | `HeadersInit`                                                                        | Request headers (e.g. `cookie`). A document request defaults `accept` to `text/html`.                                                                                                                                                                                                                                                                                                                                                                                              |
+| `partial`    | `true \| { from?: string; segments?: string[]; prefetch?: boolean; fill?: boolean }` | Serve the navigation request the browser sends instead of a document GET: from `from` (default the site root) with `segments` mounted (default none). `prefetch: true` sends it as a `<Link>` prefetch (`X-Rango-Prefetch`), so `prefetch: false` work is deferred. `fill: true` sends the follow-up request (`_rsc_fill=1`) the browser makes after adopting a prefetch; pass the prefetch's delivered ids, without the deferred ones, as `segments`, and the same URL as `from`. |
+| `action`     | `{ ref: Function; id: string; args?: unknown[]; segments?: string[] }`               | Send the request a JS server action call makes from the page at `url`: a POST of `args` (encoded as the browser encodes them) with `?_rsc_action`, the `rsc-action` header, `X-RSC-Router-Client-Path` and `_rsc_segments` (the page's mounted segment ids, default none). Registers `ref` under `id` (`<module id>#<export name>`). Not with `partial` or `form`.                                                                                                                 |
 
 ### Returns — `ServeShellRequestResult`
 
-| Field          | Type                                              | Meaning                                                                                                                                                                             |
-| -------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `shellStatus`  | `"HIT" \| "MISS" \| null`                         | `x-rango-shell`; null when the serve path did not consider the request (not a `ppr` route, a nonce'd request, a partial request).                                                   |
-| `replayStatus` | `PprReplayStatus \| null`                         | `x-rango-ppr-replay` on a partial request: `{ outcome: "HIT", freshness }` or `{ outcome: "BYPASS", reason }`.                                                                      |
-| `prelude`      | `string \| undefined`                             | The prelude a HIT served (the capture's Flight text). `undefined` unless `shellStatus` is `"HIT"`.                                                                                  |
-| `flight`       | `string \| undefined`                             | The Flight payload this request rendered: a HIT's tail, a document render, or a partial response. `undefined` when no Flight rendered (a redirect, a middleware response).          |
-| `key`          | `string`                                          | The shell key the serve path resolved for a document it read (MISS or HIT), request partition included. Otherwise (no `ppr`, a partial request) the URL's key without a partition.  |
-| `readEntry`    | `() => Promise<ShellCacheEntry \| null>`          | Reads the document entry under `key` from the request's store (a passive `getShell`). A read: on a store with a shell memo it warms the memo, so call it after the reads you count. |
-| `readHandles`  | `() => Promise<ShellRequestHandles \| undefined>` | Decodes the response's handle data as the browser reads it: `{ hydration, late }` (see "Handles and loader data"). `undefined` when no Flight rendered.                             |
-| `response`     | `Response`                                        | Status and headers. Its body is already read.                                                                                                                                       |
-| `body`         | `string`                                          | The body text.                                                                                                                                                                      |
+| Field          | Type                                              | Meaning                                                                                                                                                                                     |
+| -------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shellStatus`  | `"HIT" \| "MISS" \| null`                         | `x-rango-shell`; null when the serve path did not consider the request (not a `ppr` route, a nonce'd request, a partial request).                                                           |
+| `replayStatus` | `PprReplayStatus \| null`                         | `x-rango-ppr-replay` on a partial request: `{ outcome: "HIT", freshness }` or `{ outcome: "BYPASS", reason }`.                                                                              |
+| `prelude`      | `string \| undefined`                             | The prelude a HIT served (the capture's Flight text). `undefined` unless `shellStatus` is `"HIT"`.                                                                                          |
+| `flight`       | `string \| undefined`                             | The Flight payload this request rendered: a HIT's tail, a document render, or a partial response. `undefined` when no Flight rendered (a redirect, a middleware response).                  |
+| `key`          | `string`                                          | The shell key the serve path resolved for a document it read (MISS or HIT), request partition included. Otherwise (no `ppr`, a partial request) the URL's key without a partition.          |
+| `readEntry`    | `() => Promise<ShellCacheEntry \| null>`          | Reads the document entry under `key` from the request's store (a passive `getShell`). A read: on a store with a shell memo it warms the memo, so call it after the reads you count.         |
+| `readHandles`  | `() => Promise<ShellRequestHandles \| undefined>` | Decodes the response's handle data as the browser reads it: `{ hydration, late }` (see "Handles and loader data"). `undefined` when no Flight rendered.                                     |
+| `readDeferred` | `() => Promise<string[] \| undefined>`            | The ids of the segments the payload marks deferred (a prefetch skipped them; the fill renders them), in payload order. `[]` when nothing was deferred, `undefined` when no Flight rendered. |
+| `response`     | `Response`                                        | Status and headers. Its body is already read.                                                                                                                                               |
+| `body`         | `string`                                          | The body text.                                                                                                                                                                              |
 
 ### `resetShellTestState(): Promise<void>`
 
@@ -250,6 +252,53 @@ Loader data has no decoder: it rides the payload, so assert it as text in `prelu
 expect(hit.flight).toContain('"stock":"in stock"');
 ```
 
+## Testing `prefetch: false`
+
+Send the prefetch with `partial: { prefetch: true }` and read which segments it deferred, then send the fill the browser would send:
+
+```ts
+const prefetch = await serveShellRequest(router, "/product/1", {
+  cacheStore,
+  partial: { from: "/", prefetch: true },
+});
+// One id per skipped segment: here the flagged loader's. A flagged loading()
+// lists its entry, every entry and slot its fallback covers, and their loaders.
+expect(await prefetch.readDeferred()).toHaveLength(1);
+
+// The ids the prefetch delivered, minus the deferred ones: what the page holds.
+const held = deliveredIds.filter((id) => !deferredIds.includes(id));
+const fill = await serveShellRequest(router, "/product/1", {
+  cacheStore,
+  partial: { from: "/product/1", segments: held, fill: true },
+});
+expect(await fill.readDeferred()).toEqual([]); // a fill defers nothing
+```
+
+`deliveredIds` is the payload's `metadata.matched`, read from `prefetch.flight`. Count the loader's runs in your own fixture: the prefetch ran it zero times, the fill once.
+
+### `clientUrls()` routes
+
+A router that mounts a `clientUrls()` group serves its routes here as in your app. The group is the default export of a `"use client"` module, a client reference in this project, and `rangoUseClientTransform()` ([`./setup.md`](./setup.md)) installs its server projection as the rango plugin's discovery does. Mount the module itself:
+
+```tsx
+import shopUrls from "../src/shop/urls"; // "use client"; export default clientUrls(...)
+
+const router = createRouter().routes(
+  urls(({ include }) => [include("/shop", shopUrls, { name: "shop" })]),
+);
+
+// /shop/product/:id declares loader(PriceLoader) and
+// loader(ReviewsLoader, { prefetch: false }).
+const prefetch = await serveShellRequest(router, "/shop/product/1", {
+  partial: { from: "/shop", segments: held, prefetch: true },
+});
+expect(await prefetch.readDeferred()).toHaveLength(1); // ReviewsLoader's segment
+```
+
+`held` is the `metadata.matched` of a navigation to `/shop`. On a group route only a loader's own flag defers (the group's, and a server layout's above the group); a flagged `loading()` defers nothing there. Loaders inside the group's `intercept()` ignore the flag, as in `urls()`. `dispatch` matches the group's routes through the same projection.
+
+The transform also registers each group loader's `revalidate()` predicates, which Vitest leaves as plain functions in the module, so the server runs them as the hoisted predicates run in your app. A `partial` navigation, or an `action` with the page's `segments`, reaches them with the `urls()` arguments, `actionResult` and `formData` included.
+
 ## Warming a route: router.prerender()
 
 `router.prerender()` warms a route that is not `Prerender(..., { onDemand })`
@@ -322,6 +371,27 @@ expect(await result.readPayloadFormState()).toEqual(result.formState);
 - Request headers come from `headers`. No `Origin` is sent by default, which the origin guard allows.
 - Not with `partial`. The hydration itself (`hydrateRoot` taking the state, the hook not resetting) is e2e.
 
+## A server action called from the page
+
+`serveShellRequest(router, url, { action: { ref, id, args, segments } })` sends the request a JS server action call makes from the page at `url`, as `browser/server-action-bridge.ts` sends it: a POST of `args` with `?_rsc_action`, the `rsc-action` header, `X-RSC-Router-Client-Path` and `_rsc_segments`. `ref` is registered under `id` (`<module id>#<export name>`, any unique string of that shape in a test) so the handler loads it by id. The response is the action's Flight payload: its return value and the segments it re-rendered, `flight` as for any other request. Pass the segment ids the page holds as `segments`, so the request has segments to revalidate; without them the server holds none. Read them from the `metadata.matched` of a `partial` request's payload (`flight`), as in "Testing `prefetch: false`" above.
+
+```tsx
+const page = await serveShellRequest(router, "/shop", {
+  partial: { from: "/" },
+});
+const held: string[] = readMatched(page.flight); // your parse of metadata.matched
+const result = await serveShellRequest(router, "/shop", {
+  action: {
+    ref: checkout,
+    id: "src/actions/cart.ts#checkout",
+    args: [formData],
+    segments: held,
+  },
+});
+```
+
+This is the request a `clientUrls()` group's `revalidate()` sees on an action: the action's return value as `actionResult`, its last `FormData` argument as `formData`. The pinned example is `src/testing/__tests__/client-urls-revalidate.rsc-test.tsx`. Not with `partial` or `form`.
+
 ## Caveats
 
 What the HTML stub cannot reproduce, so keep it in e2e:
@@ -337,7 +407,7 @@ Other caveats:
 - Call `resetShellTestState()` in `beforeEach` (see above). Without it, a URL a previous test left backed off, or a shell memoized by another `CFCacheStore`, changes what the next test sees.
 - `readEntry()` reads the document entry under `key`. A partial request that finds no entry captures a navigation-only entry, which is stored apart from it.
 - `updateTag()` needs a request context with the store: call it through `runInRequestContext(fn, { cacheStore })` or your app's own endpoint (`dispatch`). A store refuses a capture that starts in the invalidation's millisecond (the invalidation wins) and backs the key off; `serveShellRequest` starts each request in a later millisecond than the call, so an invalidation made before the call cannot collide with it.
-- GET, and one POST shape: a form submitted before hydration (see "A form submitted before hydration" above). Other server action requests are not served; test their effects with `runInRequestContext`.
+- GET, and two POST shapes: a form submitted before hydration (see "A form submitted before hydration" above) and a JS server action call (`action`, see "A server action called from the page" above). Test an action's own effects (cookies, headers) with `runInRequestContext`.
 - Same setup as every Flight test: the react-server condition and `rangoTestAliases()` (see [`./setup.md`](./setup.md)).
 
 ## See also

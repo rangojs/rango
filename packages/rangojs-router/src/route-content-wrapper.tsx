@@ -10,12 +10,14 @@ import {
   LOADER_REDIRECT,
 } from "./decode-loader-results.js";
 import { LoaderRedirect } from "./loader-redirect.js";
+import { Defer, readDefer } from "./browser/defer.js";
 import type { BoundaryAudit } from "./suspense-audit.js";
 import {
   AuditedFallback,
   useBoundaryAudit,
   useRevealAudit,
 } from "./suspense-audit-react.js";
+import { SETTLED_THENABLE } from "./thenable-status.js";
 
 /**
  * Router-owned error boundary for read-site loader errors. segment-system
@@ -141,7 +143,7 @@ export function AuditedRouteContent({
   const audit = useBoundaryAudit(
     `content:${segmentId}`,
     segmentId ?? "",
-    content,
+    content instanceof Defer ? content.promise : content,
   );
   return (
     <Suspense
@@ -174,8 +176,16 @@ const Suspender = ({
   // A pending promise suspends here and the wrapping Suspense shows the
   // loading() fallback; a node renders without suspending. The wrapper tree
   // (RouteContentWrapper > Suspense > Suspender) is identical either way (see
-  // docs/tree-structure.md), like LoaderResolver's resolved-data branch.
-  return content instanceof Promise ? use(content) : content;
+  // docs/tree-structure.md), like LoaderResolver's resolved-data branch. A
+  // `prefetch: false` hole is read here, by the read rule, so the filled
+  // page's node later takes the same place. The content can be a pending
+  // promise in one tree and its node in the next: use() at this place on
+  // every render, as LoaderResolver does.
+  return content instanceof Defer
+    ? (readDefer(content) as ReactNode)
+    : content instanceof Promise
+      ? use(content)
+      : (use(SETTLED_THENABLE), content);
 };
 
 /**
@@ -329,10 +339,14 @@ function LoaderResolver({
     );
   }
 
+  // A slot's aggregate can be a pending promise on one render and its arrived
+  // array on the next (segment-loader-promise.ts): use() at this place on
+  // every render, or React reports a component that suspended in use() and
+  // then finished without it (the useLoader pattern, use-loader.tsx).
   const resolvedData =
     loaderDataPromise instanceof Promise
       ? use(loaderDataPromise)
-      : loaderDataPromise;
+      : (use(SETTLED_THENABLE), loaderDataPromise);
 
   const { loaderData, errorFallback } = decodeLoaderResults(
     resolvedData,
