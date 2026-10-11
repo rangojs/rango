@@ -91,8 +91,10 @@ export const LocationStateContext: Context<LocationStateSnapshot> =
  * Read by no component. NavigationProvider changes its value in a transition so
  * that React hydrates every boundary still dehydrated beneath it before that
  * commit: React hydrates a dehydrated boundary first when a provider above it
- * changes, and nothing re-renders for a value nobody reads. See
- * NavigationProviderProps.hydration.
+ * changes, and nothing re-renders for a value nobody reads. Keep it unread: a
+ * reader outside a boundary that cannot hydrate yet (a lazy chunk) lets React
+ * commit the transition around that boundary (NavigationProvider's reveal
+ * effect says how). See NavigationProviderProps.hydration.
  */
 export const HydrationBarrierContext: Context<number> =
   createContext<number>(0);

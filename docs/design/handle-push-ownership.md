@@ -805,8 +805,11 @@ unchanged.
   `$?` or `$~` boundary is left (Fizz reveals streamed boundaries up to
   300 ms after parsing ends), it changes `HydrationBarrierContext` in a
   transition. No component reads that context: React hydrates a dehydrated
-  boundary first when a provider above it changes. After that commit the
-  provider releases the store; the waiting writes apply in order and one
+  boundary first when a provider above it changes, and a consumer outside a
+  boundary that cannot hydrate yet (a lazy chunk) would let React commit the
+  transition around it, so the entry's location state is not in it either.
+  After that commit the provider gives the location state in a transition of
+  its own and releases the store; the waiting writes apply in order and one
   notification reaches the readers, so a reader re-renders only when its
   selection changed. A navigation committed before the reveal releases the
   store before its update, so the page it mounts reads the live store. A

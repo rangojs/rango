@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { StrictMode, useState, type ReactNode } from "react";
+import { StrictMode, Suspense, use, useState, type ReactNode } from "react";
 import { createRoot, hydrateRoot, type Root } from "react-dom/client";
 import { act, cleanup } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
@@ -236,6 +236,71 @@ describe("useLocationState late hydration (#992)", () => {
       ).toBe("3");
       expect(window.history.state).not.toHaveProperty(FlashCount.__rsc_ls_key);
       expect(window.history.state).toMatchObject({ idx: 4 });
+    },
+  );
+
+  // A boundary that suspends on the client only (a lazy chunk still loading)
+  // is dehydrated when the document is revealed. A transition that changed
+  // the location state a reader outside it reads committed without hydrating
+  // it, so it hydrated later against the entry's state.
+  it.each([
+    { strict: true, label: "StrictMode" },
+    { strict: false, label: "no StrictMode" },
+  ])(
+    "a boundary suspended on the client at reveal hydrates as rendered when a reader outside it has state ($label)",
+    async ({ strict }) => {
+      let open!: () => void;
+      const chunk = new Promise<void>((resolve) => (open = resolve));
+      function ClientChunk({ children }: { children: ReactNode }) {
+        use(chunk);
+        return children;
+      }
+      const inside: Array<number | undefined> = [];
+      function Count({ testId }: { testId: string }) {
+        const state = useLocationState(GridState);
+        if (testId === "inside") inside.push(state?.count);
+        return <p data-testid={testId}>{state?.count ?? 0}</p>;
+      }
+
+      // A component, as a route renders one. React tells a dehydrated
+      // boundary about a context change only from an ancestor that bails
+      // out: one directly under a parent that re-renders is skipped.
+      function Page() {
+        return (
+          <>
+            <Count testId="outside" />
+            <Suspense fallback={null}>
+              <ClientChunk>
+                <Count testId="inside" />
+              </ClientChunk>
+            </Suspense>
+          </>
+        );
+      }
+
+      await seedHydrated({ [GridState.__rsc_ls_key]: { count: 3 } });
+      const { container, recoverable } = await hydrate(
+        <Page />,
+        '<p data-testid="outside">0</p><!--$--><p data-testid="inside">0</p><!--/$-->',
+        strict,
+      );
+      const text = (testId: string): string | null | undefined =>
+        container.querySelector(`[data-testid='${testId}']`)?.textContent;
+      const serverNode = container.querySelector("[data-testid='inside']");
+
+      // Revealed, and the barrier waits for the boundary.
+      const beforeOpen = [text("outside"), text("inside")];
+
+      await act(async () => open());
+
+      expect(recoverable).toEqual([]);
+      expect(inside[0]).toBeUndefined();
+      expect(container.querySelector("[data-testid='inside']")).toBe(
+        serverNode,
+      );
+      expect(beforeOpen).toEqual(["0", "0"]);
+      expect(text("outside")).toBe("3");
+      expect(text("inside")).toBe("3");
     },
   );
 

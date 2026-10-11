@@ -89,6 +89,7 @@ export const NamedRoutes = {
   loaderCtxItem: "/loader-ctx/:id",
   localeInfo: "/:locale(en|fr)/info",
   locationStateAppVersion: "/location-state-app-version",
+  locationStateGatedHydration: "/location-state-gated-hydration",
   locationStateLateSuspense: "/location-state-late-suspense/:gate",
   locationStateLateSuspenseRelease: "/location-state-late-suspense/:gate/release",
   locationStateLoadMore: "/location-state-load-more",

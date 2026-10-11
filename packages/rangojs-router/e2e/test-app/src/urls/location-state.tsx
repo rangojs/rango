@@ -4,6 +4,11 @@ import {
   LateSuspenseReader,
   LateSuspenseWriter,
 } from "../components/LateSuspenseReader.js";
+import {
+  GatedHydrationInside,
+  GatedHydrationOutside,
+  GatedHydrationWriter,
+} from "../components/GatedHydration.js";
 import { Link } from "@rangojs/router/client";
 import {
   FlashMessage,
@@ -307,6 +312,22 @@ export const locationStatePatterns = urls(({ path, middleware, include }) => [
       return { releases };
     },
     { name: "lateSuspenseRelease" },
+  ),
+
+  // A reader outside a boundary whose lazy chunk the e2e holds on the client,
+  // so the boundary is dehydrated when the document is revealed.
+  path(
+    "/gated-hydration",
+    () => (
+      <div>
+        <GatedHydrationWriter />
+        <GatedHydrationOutside />
+        <Suspense fallback={<span data-testid="gated-fallback">loading</span>}>
+          <GatedHydrationInside />
+        </Suspense>
+      </div>
+    ),
+    { name: "gatedHydration" },
   ),
 
   // /load-more and /app-version, under one layout.

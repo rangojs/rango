@@ -348,12 +348,22 @@ The decisions live in `router/segment-resolution/revalidation.ts` and ask
     returns that state and late handle writes wait. `NavigationProvider`
     moves `HydrationBarrierContext` in a transition once the document has
     been revealed (`documentRevealed`: no `$?`/`$~` boundary left), so React
-    hydrates every boundary still dehydrated before that commit, then
-    releases the store. Two steps, not one: location state lands in the
-    barrier commit (`LocationStateContext`, so `useLocationState` readers
-    re-render when the entry's state object changes); handle data lands in the
-    release notification right after it (the waiting writes apply in order and
-    `useHandle` readers whose selection changed re-render). A navigation
+    hydrates every boundary still dehydrated before that commit, one a lazy
+    chunk holds included. The barrier transition changes nothing a component
+    reads. React tells a dehydrated boundary about a context change only by
+    lazy propagation from an ancestor that bails out with no work below it;
+    once its selective-hydration attempt commits the boundary still
+    dehydrated, a consumer of the changed context outside it keeps their
+    common ancestor from propagating again, and React commits the transition
+    around the boundary. Location state used to land in the barrier commit, so
+    a `useLocationState` reader outside a boundary a lazy chunk still held let
+    the barrier commit early: the boundary then hydrated against the entry's
+    state and the released store, and React client-rendered it over its HTML.
+    After the barrier commit two things land: location state in a transition
+    of its own (`LocationStateContext`, so `useLocationState` readers
+    re-render when the entry's state object changes), and handle data in the
+    release notification (the waiting writes apply in order and `useHandle`
+    readers whose selection changed re-render). A navigation
     committed before the reveal releases the store before its update, so its
     page mounts against the live store. Trade-off: a held navigation whose
     history entry commits during the window releases the store for the whole
@@ -369,7 +379,9 @@ The decisions live in `router/segment-resolution/revalidation.ts` and ask
     document's state the same way (`getHydrationSnapshot()`). Pinned by
     `use-handle-hydration.test.tsx`, `router-hooks-hydration.test.tsx`,
     `navigation-provider-hydration.test.tsx`,
-    `render-route-hydrate.test.tsx` (`lateHandles`),
+    `render-route-hydrate.test.tsx` (`lateHandles`, and a boundary
+    suspended on the client at reveal), `location-state-hydration.test.tsx`,
+    `expectGatedBoundaryHydratesWithOutsideReader` in both apps,
     `expectLateBoundaryHandleReaderHydratesClean` in both apps (#1035), and
     `hydration-demo.test.ts` in vite-rsc-demo.
   - **`ctx.dynamic()` is the request-level opt-out on this axis.** Runtime

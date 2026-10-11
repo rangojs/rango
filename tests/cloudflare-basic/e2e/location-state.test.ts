@@ -3,6 +3,7 @@ import {
   expectClearOnReloadDropsCarriedState,
   expectClearOnReloadDropsStateOnTraversalLoad,
   expectEvictedSameRouteTraversalRestoresItsPage,
+  expectGatedBoundaryHydratesWithOutsideReader,
   expectHeldLoadMoreShowsNoItemTwice,
   expectLateSuspenseReaderHydratesClean,
   expectLoadMoreTraversalRestoresEntryWithItsPage,
@@ -280,6 +281,22 @@ function describeLateSuspense(mode: "dev" | "build") {
   });
 }
 
+function describeGatedHydration(mode: "dev" | "build") {
+  const label = mode === "build" ? "production" : "dev";
+  test.describe(`location-state.gated-hydration (${label})`, () => {
+    const f = useFixture({ root: ".", mode });
+
+    test("a boundary still dehydrated at reveal hydrates as rendered with a reader outside it", async ({
+      page,
+    }) => {
+      await expectGatedBoundaryHydratesWithOutsideReader(
+        page,
+        f.url("/location-state-gated-hydration"),
+      );
+    });
+  });
+}
+
 // #994: createLocationState({ clearOnReload }) and the app version every
 // entry's location state is recorded under.
 function describeOptions(mode: "dev" | "build") {
@@ -378,6 +395,8 @@ describeLocationState("dev");
 describeLocationState("build");
 describeLateSuspense("dev");
 describeLateSuspense("build");
+describeGatedHydration("dev");
+describeGatedHydration("build");
 describeOptions("dev");
 describeOptions("build");
 describeCommit("dev");

@@ -754,6 +754,75 @@ export async function expectLateSuspenseReaderHydratesClean(
 }
 
 /**
+ * A `<Suspense>` boundary still dehydrated when the document is revealed (its
+ * lazy chunk has not loaded) hydrates as the server rendered it, with a
+ * useLocationState reader outside it and state in the entry.
+ *
+ * The fixture (both apps) renders a reader outside the boundary and one inside
+ * it, from a chunk the client loads only once this body calls
+ * `window.__openGatedHydrationChunk()`. The provider must not give the
+ * entry's state while that boundary is dehydrated: it would hydrate against
+ * it ("Hydration failed", #418 in a build) and React would replace the
+ * server's nodes. The outside reader keeps the server's value until every
+ * boundary has hydrated. Nothing on the page signals that the reveal
+ * transition has run, so the body waits a fixed time for it.
+ */
+export async function expectGatedBoundaryHydratesWithOutsideReader(
+  page: Page,
+  url: string,
+): Promise<void> {
+  await page.goto(url);
+  await waitForShellHydration(page);
+  await byTestId(page, "gated-write").click();
+
+  let outsideBeforeOpen: string | null;
+  {
+    using _ = guardHydrationErrors(page);
+    await page.reload();
+    await waitForShellHydration(page);
+    await expect(byTestId(page, "gated-inside")).toHaveText("empty");
+    // The document is revealed: parsed, and no boundary left for Fizz to
+    // reveal. The reveal transition runs within a 50 ms poll of that.
+    await page.waitForFunction(() => {
+      if (document.readyState === "loading") return false;
+      const walker = document.createTreeWalker(
+        document,
+        NodeFilter.SHOW_COMMENT,
+      );
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const data = (node as Comment).data;
+        if (data === "$?" || data === "$~") return false;
+      }
+      return true;
+    });
+    await page.waitForTimeout(500);
+    outsideBeforeOpen = await byTestId(page, "gated-outside").textContent();
+    await page.evaluate(() => {
+      const scope = window as {
+        __gatedServerNode?: Element | null;
+        __openGatedHydrationChunk?: () => void;
+      };
+      scope.__gatedServerNode = document.querySelector(
+        '[data-testid="gated-inside"]',
+      );
+      scope.__openGatedHydrationChunk!();
+    });
+    await expect(byTestId(page, "gated-inside")).toHaveText("stored-value");
+  }
+
+  // Hydrated, not client-rendered: the node is the server's.
+  expect(
+    await page.evaluate(
+      () =>
+        document.querySelector('[data-testid="gated-inside"]') ===
+        (window as { __gatedServerNode?: Element | null }).__gatedServerNode,
+    ),
+  ).toBe(true);
+  await expect(byTestId(page, "gated-outside")).toHaveText("stored-value");
+  expect(outsideBeforeOpen).toBe("empty");
+}
+
+/**
  * The entry's typed location-state slots, keyed by `<ExportName><suffix>`: the
  * tail of the injected key (`__rsc_ls_<path or hash>#<ExportName>`) that is
  * the same in dev and in a build, plus the suffix the definition's

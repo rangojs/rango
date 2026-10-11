@@ -21,6 +21,11 @@ import {
   LateSuspenseWriter,
 } from "./components/LateSuspenseReader.js";
 import {
+  GatedHydrationInside,
+  GatedHydrationOutside,
+  GatedHydrationWriter,
+} from "./components/GatedHydration.js";
+import {
   AppVersionPanel,
   LoadMoreList,
   SharedCarriedCount,
@@ -2679,6 +2684,24 @@ export const urlpatterns = urls(
             return { releases };
           },
           { name: "locationStateLateSuspenseRelease" },
+        ),
+
+        // A reader outside a boundary whose lazy chunk the e2e holds on the
+        // client, so the boundary is dehydrated when the document is revealed.
+        path(
+          "/location-state-gated-hydration",
+          () => (
+            <div>
+              <GatedHydrationWriter />
+              <GatedHydrationOutside />
+              <Suspense
+                fallback={<span data-testid="gated-fallback">loading</span>}
+              >
+                <GatedHydrationInside />
+              </Suspense>
+            </div>
+          ),
+          { name: "locationStateGatedHydration" },
         ),
 
         // The two fixtures below share a layout whose reader stays mounted
