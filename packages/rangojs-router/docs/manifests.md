@@ -342,6 +342,13 @@ it), and the worker reload that follows (`forceCloudflareWorkerReload`) invalida
 worker's whole module graph, routes-manifest module included, so the Node path's explicit
 invalidation is not needed there.
 
+That recovery has one cost we accepted: recovery mode re-runs discovery on every in-scan save
+until a pass succeeds. On Cloudflare, an app whose temp runner can never import the entry
+(an entry Node cannot evaluate) creates and closes a temp Vite server on each save while
+`lastDiscoveryError` stays set, and prints two warnings per save ("Failed to create temp
+runner", then "Runtime re-discovery failed"). It is one attempt per save, never a loop, and
+each server is closed. Such an app had no working discovery before this change either.
+
 Pinned by `src/vite/__tests__/dev-discovery-recovery.test.ts`, which drives the plugin's
 `configureServer` against fake Node and Cloudflare dev servers, and by
 `tests/cloudflare-basic/e2e/hmr-cold-discovery-recovery.test.ts` (local only, like the other

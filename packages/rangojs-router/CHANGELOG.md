@@ -19,7 +19,7 @@ saving your fix did not run it again, and only a restart recovered:
   `router.named-routes.gen.ts` lost the routes only discovery sees, such as the ones a
   factory function creates.
 
-The fix in 0.23.0 covered the Node dev server only.
+In 0.23.0, recovery on save covered the Node dev server only.
 
 Now: on Cloudflare too, the next save of a source file after a failed startup discovery
 runs it again, reloads the worker, and the server serves your routes. Nothing changes in

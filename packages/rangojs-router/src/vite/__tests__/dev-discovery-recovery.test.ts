@@ -147,6 +147,8 @@ function save(dev: DevServer, rel: string, source: string): void {
 }
 
 const HELPER_SOURCE = "export const label = 'fixed';\n";
+const USE_CLIENT_SOURCE =
+  '"use client";\nexport function Button() {\n  return null;\n}\n';
 const URLS_SOURCE =
   'import { urls } from "@rangojs/router";\nexport const urlpatterns = urls(() => []);\n';
 
@@ -207,6 +209,20 @@ describe("Node dev server: recovery after a failed cold discovery", () => {
     await plugin.loadManifestModule();
     expect(discoverRouters).toHaveBeenCalledTimes(3);
     expect(invalidateModule).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves recovery mode once a pass commits", async () => {
+    const { dev, plugin } = await bootFailed();
+    save(dev, "src/helper.ts", HELPER_SOURCE);
+    await plugin.loadManifestModule();
+    expect(discoverRouters).toHaveBeenCalledTimes(2);
+
+    // Outside recovery mode the watcher's sniff drops a "use client" module
+    // that defines no routes; in it, any save rediscovers.
+    save(dev, "src/button.tsx", USE_CLIENT_SOURCE);
+    await plugin.loadManifestModule();
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(discoverRouters).toHaveBeenCalledTimes(2);
   });
 });
 
