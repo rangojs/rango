@@ -97,12 +97,12 @@ Three things to keep in mind, because each looks like a bug the first time:
   flag, a flagged loader on a held segment runs when it revalidates, and
   nothing below a held segment is deferred because of it. A new route with its
   own flagged `loading()` under a held layout is still its own unit. The
-  invariant: a click that adopts a prefetch with deferred units is never worse
-  than the same click with no prefetch at all. It never covers more of the
-  page with a fallback than that plain navigation does, and never for longer,
-  it waits only where the plain navigation would wait, and content on screen
-  is never replaced by a fallback, blanked or remounted while a fill is
-  pending. What a prefetch defers depends on what its source page holds, so a
+  invariant: a click that adopts a prefetch with deferred units shows the
+  next page, or its skeleton, at the click, never later than the same click
+  with no prefetch at all, and adds no wait of its own: what shows after the
+  click, a fallback for the deferred part included, is React's Suspense
+  behaviour. Content on screen is never replaced by a fallback, blanked or
+  remounted while a fill is pending. What a prefetch defers depends on what its source page holds, so a
   response that defers is used only on that page (`x-rsc-prefetch-scope:
 source`) and is never reused by the document cache or a shared cache.
 - **Deferral replaces execution; it never adds a skip.** A new segment always

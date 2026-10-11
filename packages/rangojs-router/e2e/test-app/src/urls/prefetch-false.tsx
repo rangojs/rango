@@ -99,12 +99,29 @@ import { countRun, readRunCounts } from "../prefetch-false-counts.js";
 // transition for any commit made in a transition while one is mounted.
 // &vtms=<ms> makes every view transition take that long (the default is
 // about 250 ms): what a commit that waits for one waits for.
+// &server=<ms> makes every request this include serves wait that long before
+// it renders (`serverDelay` below): the document, a prefetch, a navigation, a
+// fill, an action's revalidation. It stands in for what a real server spends
+// before the first byte (middleware, a session read, a cache lookup), which a
+// local server answers in a few ms.
 // The flags ride on every link. Without them the page is quiet for a suite.
 
 const runOf = (ctx: any): string => ctx.searchParams.get("run") ?? "";
 
 const delayOf = (ctx: any): number =>
   Number(ctx.searchParams.get("delay") ?? 0) || 0;
+
+const serverOf = (ctx: any): number =>
+  Number(ctx.searchParams.get("server") ?? 0) || 0;
+
+// Route middleware wraps every render pass of the include, whatever the
+// request kind, so one wait covers them all; an action's own body runs
+// before it, its revalidation render after it.
+async function serverDelay(ctx: any, next: () => Promise<Response>) {
+  const ms = serverOf(ctx);
+  if (ms > 0) await new Promise((resolve) => setTimeout(resolve, ms));
+  return next();
+}
 
 async function work(ctx: any, name: string, delayMs: number = 0) {
   const n = countRun(runOf(ctx), name);
@@ -295,7 +312,8 @@ function PrefetchFalseLayout(ctx: any) {
   const delay = delayOf(ctx);
   const boundary = ctx.searchParams.get("boundary") === "1";
   const vtms = Number(ctx.searchParams.get("vtms") ?? 0) || 0;
-  const query = `run=${run}${manual ? "&manual=1" : ""}${tall ? "&tall=1" : ""}${slow ? "&slow=1" : ""}${delay ? `&delay=${delay}` : ""}${hslow ? "&hslow=1" : ""}${boundary ? "&boundary=1" : ""}${vtms ? `&vtms=${vtms}` : ""}`;
+  const server = serverOf(ctx);
+  const query = `run=${run}${manual ? "&manual=1" : ""}${tall ? "&tall=1" : ""}${slow ? "&slow=1" : ""}${delay ? `&delay=${delay}` : ""}${hslow ? "&hslow=1" : ""}${boundary ? "&boundary=1" : ""}${vtms ? `&vtms=${vtms}` : ""}${server ? `&server=${server}` : ""}`;
   const heading = <h2 style={{ margin: "16px 0 4px" }}>prefetch: false</h2>;
   return (
     <div
@@ -757,6 +775,7 @@ export const prefetchFalsePatterns = urls(
   ({
     path,
     layout,
+    middleware,
     loader,
     loading,
     cache,
@@ -765,6 +784,7 @@ export const prefetchFalsePatterns = urls(
     errorBoundary,
     notFoundBoundary,
   }) => [
+    middleware(serverDelay),
     path.json(
       "/__counts",
       (ctx): Record<string, number> => readRunCounts(runOf(ctx)),

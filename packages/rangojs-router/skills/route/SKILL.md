@@ -271,9 +271,12 @@ a same-route navigation (`/product/a` to `/product/b`). The rule behind it:
 a click that adopts a prefetch is never worse than the same click with no
 prefetch at all (two exceptions, under "Limits": a click before its
 prefetch has answered, and a flagged `layout()` entered from outside). It
-never covers more of the page with a fallback than that plain navigation
-does, and never for longer, it waits only where that one would, and it never
-replaces content that is on screen with a fallback. For
+shows the next page, or its skeleton, at the click and never later than that
+plain navigation, the router adds no wait of its own, and it never replaces
+content that is on screen with a fallback. The deferred part arrives after
+the click and React reveals it as it reveals any streaming content: a read
+inside it can show its own fallback where the plain navigation showed the
+whole page a little later. For
 the same reason a prefetch that deferred something is used only on the page
 that made it: a page that already shows the entry makes its own prefetch,
 which defers nothing for it. To keep navigation _inside_ a section out of

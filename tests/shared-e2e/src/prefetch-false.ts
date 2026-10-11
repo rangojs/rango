@@ -30,7 +30,9 @@ import {
  * `&delay=<ms>` that many, and `&hslow=1` makes the section layout's handler
  * take 600 ms. `&boundary=1` puts a `<ViewTransition>` of the app's own in
  * the hub layout, and `&vtms=<ms>` makes every view transition take that
- * long.
+ * long. `&server=<ms>` makes every request of the fixture wait that long on
+ * the server before it renders (a middleware): the time a real server spends
+ * before its first byte, which a local one does not.
  *
  * For a case `<c>` (a page at `/prefetch-false/<c>`):
  *
@@ -132,10 +134,15 @@ export interface PrefetchFalseFlags {
   boundary?: boolean;
   /** Every view transition takes this many ms (the default is about 250). */
   vtms?: number;
+  /**
+   * Every request the fixture serves (the document, a prefetch, a
+   * navigation, a fill) waits this many ms on the server before it renders.
+   */
+  server?: number;
 }
 
 function hubQuery(run: string, flags: PrefetchFalseFlags): string {
-  return `run=${run}${flags.slow ? "&slow=1" : ""}${flags.delay ? `&delay=${flags.delay}` : ""}${flags.hslow ? "&hslow=1" : ""}${flags.boundary ? "&boundary=1" : ""}${flags.vtms ? `&vtms=${flags.vtms}` : ""}`;
+  return `run=${run}${flags.slow ? "&slow=1" : ""}${flags.delay ? `&delay=${flags.delay}` : ""}${flags.hslow ? "&hslow=1" : ""}${flags.boundary ? "&boundary=1" : ""}${flags.vtms ? `&vtms=${flags.vtms}` : ""}${flags.server ? `&server=${flags.server}` : ""}`;
 }
 
 function hubFor(
@@ -1357,6 +1364,12 @@ export interface PrefetchFalseObservation {
   fallbackMs: number;
   /** For how long each of `fallbacks` was visible. */
   shownMs: Record<string, number>;
+  /**
+   * When a fallback showed or hid: the set of visible fallback nodes
+   * changed. React commits no Suspense retry sooner than 300 ms after the
+   * last such commit, page-wide (`reactHold`).
+   */
+  fallbackEventsAt: number[];
   /** Held elements that were detached or not visible at some point. */
   hidden: string[];
   /**
@@ -1456,6 +1469,8 @@ async function watchPage(
       const shownSince = new Map<string, number>();
       const shownMs: Record<string, number> = {};
       let blank = false;
+      const fallbackEventsAt: number[] = [];
+      let fallbackNodes = new Set<Element>();
       const viewTransitionsAt: number[] = [];
       const hookOf = (): string | null | undefined =>
         find("pf-nav")?.getAttribute("data-path");
@@ -1494,6 +1509,7 @@ async function watchPage(
         if (hookAt === null && hookOf() !== startHook) hookAt = now();
         let fallbackShowing = false;
         const showing = new Set<string>();
+        const showingNodes = new Set<Element>();
         for (const el of document.querySelectorAll('[data-testid^="pf-"]')) {
           if (!visible(el)) continue;
           const id = el.getAttribute("data-testid")!;
@@ -1514,8 +1530,18 @@ async function watchPage(
             fallbacks.add(id);
             fallbackShowing = true;
             showing.add(id);
+            showingNodes.add(el);
             if (!shownSince.has(id)) shownSince.set(id, now());
           }
+        }
+        // By node: a fallback that hides as another of the same id shows
+        // (a skeleton mounted a second time inside its layout) is a change.
+        if (
+          showingNodes.size !== fallbackNodes.size ||
+          [...showingNodes].some((node) => !fallbackNodes.has(node))
+        ) {
+          if (clicked) fallbackEventsAt.push(now());
+          fallbackNodes = showingNodes;
         }
         for (const [id, since] of shownSince) {
           if (showing.has(id)) continue;
@@ -1596,6 +1622,7 @@ async function watchPage(
           fallbackGoneAt,
           fallbackMs,
           shownMs,
+          fallbackEventsAt,
           hidden: [...hidden].sort(),
           remounted: [...nodes]
             .filter(([, seen]) => seen.size > 1)
@@ -2103,6 +2130,15 @@ export interface PrefetchFalseParityCase extends PrefetchFalseFlags {
    * click, even where the plain click shows the route's coarser `loading()`.
    */
   ownFallback?: string;
+  /**
+   * Fallbacks inside the deferred part that the adopted click may show and
+   * the plain click not. The adopted click reveals the deferred part as soon
+   * as its fill has answered, a response earlier than the plain click, so a
+   * read inside it that lands later shows its own fallback first. That is the
+   * design (the maintainer's bar, 2026-10-11): what shows after the click is
+   * React's to decide.
+   */
+  deferredFallbacks?: string[];
   /** How many view transitions the plain click starts, where a case pins it. */
   viewTransitions?: number;
   /**
@@ -2111,14 +2147,14 @@ export interface PrefetchFalseParityCase extends PrefetchFalseFlags {
    * fill and commits with the fill's first chunk, as the plain click commits
    * with its response (`expectUnitUnderTransitionCommitsWithItsFill`). Or a
    * read with no boundary, where React holds the committed tree. Default:
-   * the adopted click shows its fallback with the click.
+   * the adopted click shows the page, or its skeleton, with the click.
    */
   commitsWithFill?: boolean;
   /**
-   * The server is this many ms away for the click: every RSC request waits
-   * that long before it is sent, so a response's first chunk and everything
-   * streamed behind it arrive that much later. The prefetch is made before,
-   * with no latency: it is not part of the click.
+   * Every RSC request of the click waits this many ms in the browser before
+   * it is sent, on top of `server`, so a response's first chunk and
+   * everything streamed behind it arrive that much later. The prefetch is
+   * made before, with no such wait: it is not part of the click.
    */
   latency?: number;
   /**
@@ -2162,6 +2198,8 @@ export type PrefetchFalseParityRule =
   | "setup"
   /** Later than the plain click in every pair. */
   | "late"
+  /** The page, or its skeleton, did not show at the click in every pair. */
+  | "click"
   /** The address bar or a URL hook further ahead of the page. */
   | "url"
   /** A flagged layout's skeleton and layout, against the expectation. */
@@ -2183,13 +2221,16 @@ export interface PrefetchFalseOpenGap {
  * React, and whether the tree can show is React's to find out. A plain click
  * moves the address bar with its response, so its bar is ahead of the page
  * by the loader's time, and the adopted click's by the fill's round trip
- * more. That is inside the margin with the server near and outside it with
- * the server far. The URL hooks move with the page in both clicks.
+ * more. That is inside the margin with a server that answers in a few ms,
+ * and outside it with the server `SERVER_MS` away, where every parity case
+ * runs: every held cell (`HELD`) is open. The URL hooks move with the page
+ * in both clicks, and so does the page.
  *
  * Measured in production on `bare`, plain against adopted, how far the
  * address bar is ahead of the page: 101 against 104 ms with the server near,
- * 103 against 1108 with the fill's head held 1 s. The URL hook: 1 against 1
- * and 0 against 0.
+ * 104 against 439 with the server 300 ms away, 99 against 1417 with the
+ * requests held a second more. The URL hook: 1 against 1 in each. The page:
+ * 424 against 441 ms with the server 300 ms away.
  */
 const OPEN_HELD: PrefetchFalseOpenGap = {
   reason:
@@ -2245,6 +2286,16 @@ const READ_FALLBACK = "pf-section-read-fallback";
 const IN_SECTION = { from: "section", held: ["pf-section-layout"] };
 const BESIDE_SLOT = { held: ["pf-slot-layout", "pf-slot-side"] };
 
+/**
+ * A page React holds for a read with no boundary (R11): nothing changes at
+ * the click, the page shows with the fill's value, and the address bar moves
+ * at the click (`OPEN_HELD`).
+ */
+const HELD: Pick<PrefetchFalseParityCase, "commitsWithFill" | "open"> = {
+  commitsWithFill: true,
+  open: OPEN_HELD,
+};
+
 const PARITY_CLICKS: PrefetchFalseParityCase[] = [
   { name: "loader", ownFallback: "pf-loader-fallback" },
   { name: "unit" },
@@ -2261,7 +2312,7 @@ const PARITY_CLICKS: PrefetchFalseParityCase[] = [
   { name: "outer", ownFallback: "pf-outer-early-fallback" },
   { name: "slot" },
   { name: "slot-b" },
-  { name: "bare" },
+  { name: "bare", ...HELD },
   { name: "handle" },
   { name: "cached" },
   { name: "prerendered" },
@@ -2274,13 +2325,25 @@ const PARITY_CLICKS: PrefetchFalseParityCase[] = [
   { name: "vt-unit-off", commitsWithFill: true, viewTransitions: 0 },
   { name: "vt-unit-own", commitsWithFill: true },
   { name: "unit-own" },
-  { name: "inner" },
-  { name: "vt-inner", commitsWithFill: true },
-  { name: "nested", ownFallback: "pf-nested-outer-fallback" },
+  { name: "inner", deferredFallbacks: ["pf-inner-late-fallback"] },
+  {
+    name: "vt-inner",
+    commitsWithFill: true,
+    deferredFallbacks: ["pf-vt-inner-late-fallback"],
+  },
+  {
+    name: "nested",
+    ownFallback: "pf-nested-outer-fallback",
+    deferredFallbacks: ["pf-nested-late-fallback"],
+  },
   // The unit's loader is read above its fallback, with no boundary.
-  { name: "above" },
+  { name: "above", ...HELD },
   // A read with no boundary in a response that stays open behind it.
-  { name: "bare-inner" },
+  {
+    name: "bare-inner",
+    ...HELD,
+    deferredFallbacks: ["pf-bare-inner-late-fallback"],
+  },
   // A flagged layout whose route has transition().
   { name: "vt-below", commitsWithFill: true },
   // A read behind its own boundary, on a route with no loading().
@@ -2311,28 +2374,39 @@ const PARITY_CLICKS: PrefetchFalseParityCase[] = [
 ];
 
 /**
- * A loader this much slower lands 400 ms after the click. A reveal that has
- * to wait for a view transition a plain click does not start is late there
- * by what is left of that transition (it runs from about 280 to 560 ms), and
- * by nothing with a loader at 100 or 700 ms. Not 300 ms: that is the time
- * React keeps a fallback up, and a loader landing on it reveals a nested
- * boundary in either order, in the plain click too.
+ * How long the server takes before its first byte, for every request of
+ * every parity case: the fixture's `&server=` middleware. A local server
+ * answers in a few ms, and at that distance React's 300 ms fallback throttle
+ * is the slowest thing on the page: it holds the reveal of both clicks, and
+ * the round trip a prefetch saves cannot show. At 300 ms it shows, and that
+ * is what the cases measure.
+ */
+const SERVER_MS = 300;
+
+/**
+ * The server for `LATENCY_CLICKS`, once more: the same clicks at a second
+ * distance, with the `WINDOW_DELAY_MS` column added.
+ */
+const FAR_SERVER_MS = 500;
+
+/**
+ * A loader this much slower lands 400 ms into its response: 700 ms after
+ * the click with the server `SERVER_MS` away, 900 at `FAR_SERVER_MS`. The
+ * plain click's fallback goes up with its response, so React's first reveal
+ * of it comes 300 ms into the response: this loader misses it by 100 ms,
+ * and the 100 ms loader of the base column makes it by 200, so neither
+ * column is a coin flip. Not 200 ms: a loader that lands 300 ms into its
+ * response lands on that reveal, and a nested boundary reveals in either
+ * order, in the plain click too.
  */
 const MID_DELAY_MS = 300;
 
 /**
- * How far away the server is in the latency cases. The adopted click shows
- * its fallback with the click and the plain click with the response, this
- * much later, and React reveals nothing sooner than 300 ms after a fallback.
- * Left to React the adopted click's reveal comes this much before the plain
- * click's: a value that lands in between misses it and shows behind a second
- * fallback, 300 ms more, where the plain click shows everything at once.
- */
-const LATENCY_MS = 100;
-
-/**
- * A loader this much slower lands 250 ms into its response: with the server
- * `LATENCY_MS` away, between the two reveals.
+ * A loader this much slower lands 250 ms into its response, 50 ms before
+ * the plain click's first reveal (its fallback went up with the response,
+ * and React keeps it 300 ms). The adopted click's fallback went up with the
+ * click, so its throttle has long run out: it shows the value when it
+ * lands, the plain click 50 ms later.
  */
 const WINDOW_DELAY_MS = 150;
 
@@ -2360,7 +2434,7 @@ const OUTSIDE_SECTION: Array<
   { afterBack: true },
 ];
 
-/** The clicks from the hub that are also made with the server far away. */
+/** The clicks from the hub that are also made with the server `FAR_SERVER_MS` away. */
 const LATENCY_CLICKS = [
   "loader",
   "unit",
@@ -2399,24 +2473,20 @@ const HEAD_HELD_MS = 1000;
 /** Clicks React holds until the fill answers, with the fill a second away. */
 const HEAD_HELD_CLICKS: PrefetchFalseParityCase[] = [
   { name: "vt-unit", commitsWithFill: true, latency: HEAD_HELD_MS },
-  {
-    name: "bare",
-    commitsWithFill: true,
-    latency: HEAD_HELD_MS,
-    open: OPEN_HELD,
-  },
+  { name: "bare", ...HELD, latency: HEAD_HELD_MS },
 ];
 
 /**
  * The fixture's cases, as `expectAdoptedClickIsNeverWorseThanAPlainClick`
- * runs them: every click with fast loaders (100 ms), with loaders that land
- * mid-transition (`&delay=300`) and with slow ones (`&slow=1`); the clicks
- * inside the section and every click into it (`OUTSIDE_SECTION`) with a slow
- * layout handler (`&hslow=1`), where the plain click holds the page it is
- * on until the handler returns; and `LATENCY_CLICKS` with the server
- * `LATENCY_MS` away and loaders that land before, between and after the two
- * reveals, and long after both; `BOUNDARY_CLICKS` with both durations; and
- * `HEAD_HELD_CLICKS`.
+ * runs them, every one with the server `SERVER_MS` away: every click with
+ * fast loaders (100 ms), with loaders 300 ms slower (`MID_DELAY_MS`) and
+ * with slow ones (`&slow=1`); the clicks inside the section and every click
+ * into it (`OUTSIDE_SECTION`) with a slow layout handler (`&hslow=1`), where
+ * the plain click holds the page it is on until the handler returns;
+ * `LATENCY_CLICKS` again with the server `FAR_SERVER_MS` away and loaders
+ * that land well before the plain click's first reveal, just before it
+ * (`WINDOW_DELAY_MS`), after it and long after it; `BOUNDARY_CLICKS` with
+ * both durations; and `HEAD_HELD_CLICKS`.
  */
 export const PREFETCH_FALSE_PARITY_CASES: PrefetchFalseParityCase[] = [
   ...PARITY_CLICKS,
@@ -2458,10 +2528,10 @@ export const PREFETCH_FALSE_PARITY_CASES: PrefetchFalseParityCase[] = [
   ).flatMap((spec) => [
     ...[0, WINDOW_DELAY_MS, MID_DELAY_MS].map((delay) => ({
       ...spec,
-      latency: LATENCY_MS,
+      server: FAR_SERVER_MS,
       ...(delay > 0 && { delay }),
     })),
-    { ...spec, latency: LATENCY_MS, slow: true },
+    { ...spec, server: FAR_SERVER_MS, slow: true },
   ]),
   ...BOUNDARY_CLICKS.flatMap((spec) => [
     spec,
@@ -2470,7 +2540,7 @@ export const PREFETCH_FALSE_PARITY_CASES: PrefetchFalseParityCase[] = [
   ...HEAD_HELD_CLICKS,
 ].map((spec: PrefetchFalseParityCase) => {
   const skeleton = layoutSkeleton(spec);
-  return skeleton ? { ...spec, skeleton } : spec;
+  return { server: SERVER_MS, ...spec, ...(skeleton && { skeleton }) };
 });
 
 /** A title for one parity case: unique within `PREFETCH_FALSE_PARITY_CASES`. */
@@ -2485,7 +2555,8 @@ export function prefetchFalseParityTitle(
     spec.hslow && "slow layout",
     spec.boundary && "an app boundary on screen",
     spec.vtms && `view transitions of ${spec.vtms} ms`,
-    spec.latency && `the server ${spec.latency} ms away`,
+    spec.server && `the server ${spec.server} ms away`,
+    spec.latency && `requests held ${spec.latency} ms more`,
     spec.skeleton && "its layout with the fill",
     spec.open && "open",
   ]
@@ -2511,10 +2582,11 @@ const PARITY_MARGIN_MS = 100;
 
 /**
  * How much further ahead of the page than in the plain click the address
- * bar and the URL hooks may move. Half of `PARITY_MARGIN_MS`: where React
- * holds an adopted click the lead is the whole wait, and the shortest wait in
- * the matrix is 100 ms (a 100 ms loader, a server `LATENCY_MS` away). At the
- * full margin noise would decide those cases.
+ * bar and the URL hooks may move. Half of `PARITY_MARGIN_MS`: where the two
+ * clicks move them alike the leads differ by a few frames. Where React holds
+ * an adopted click the address bar leads by the fill's whole round trip,
+ * 400 ms and more with the server `SERVER_MS` away, outside either margin
+ * (`OPEN_HELD`).
  */
 const URL_LEAD_MARGIN_MS = PARITY_MARGIN_MS / 2;
 
@@ -2532,23 +2604,37 @@ export interface PrefetchFalsePair {
 }
 
 /**
- * The invariant: a click that adopts a prefetch is never worse than the same
- * click with no prefetch at all. The body does the click twice on fresh
- * pages, once as a plain navigation (the link is clicked without being
+ * The bar (the maintainer's, 2026-10-11): a click that adopts a prefetch
+ * shows the next page, or its skeleton, at the click; shows it no later than
+ * the same click with no prefetch at all; and adds no wait of its own. What
+ * shows after that is React's to decide. The body does the click twice on
+ * fresh pages, once as a plain navigation (the link is clicked without being
  * hovered) and once after its prefetch has been received, and records each
  * from the click until the router is idle again.
  *
- * - A fallback shows with the prefetch only where the plain navigation
- *   shows the same fallback (or it is the read's own: `ownFallback`), and
- *   the last one is gone no later. Not "for no longer": a deferred unit
- *   shows its fallback with the click, where the plain click keeps the page
- *   it is on until its response starts.
+ * - The first change of the page is within `PARITY_MARGIN_MS` of the click,
+ *   except where the page commits with its fill (`commitsWithFill`) or the
+ *   click is a plain click (`prefetchedOn`). It is never later than the
+ *   plain click's first change.
+ * - The page's first content, what the first frame with content in it
+ *   shows, is never later than the plain click shows the same elements.
+ * - Everything that shows after it is never later than the plain click
+ *   shows it, or than React's 300 ms after the last time a fallback showed
+ *   or hid on the adopted click, whichever is later (`reactHold`). React
+ *   commits no Suspense retry sooner than that, page-wide
+ *   (FALLBACK_THROTTLE_MS), so a value held to it is React's choice; a value
+ *   held past both is a wait the router added. The completed page, the last
+ *   fallback gone and the time `useNavigation()` reads idle on an incomplete
+ *   page are bounded the same way.
+ * - A fallback shows with the prefetch only where the plain navigation shows
+ *   the same fallback, or where it waits for deferred work: the read's own
+ *   (`ownFallback`), one inside the deferred part (`deferredFallbacks`), a
+ *   flagged layout's skeleton. The adopted click reveals the deferred part a
+ *   response sooner, so a read inside it that lands later shows its own
+ *   fallback first: intended, not a parity failure.
  * - Content that was on screen and belongs to the new page is never
  *   detached or hidden, the page is never blank, and nothing is unmounted
  *   and mounted again (a fallback included) that a plain click keeps.
- * - The first visible change, every element of the page and the completed
- *   page are never later.
- * - `useNavigation()` is never idle for longer while the page is incomplete.
  * - The click runs no server work a plain click does not run, starts no
  *   view transition a plain click does not start, and as many that change
  *   the page (`animatedChanges`).
@@ -2559,12 +2645,12 @@ export interface PrefetchFalsePair {
  *   layout in the same frame as the content its loading() covers
  *   (`SAME_FRAME_MS`), no sooner than `SKELETON_MIN_MS` after the skeleton.
  *   The layout's own time is compared with the plain click's covered content,
- *   or React's 300 ms after the skeleton when that is later, and the skeleton
- *   may be a fallback the plain click does not show. What shows after the
- *   layout, inside it or not, is compared with the plain click's, or
- *   React's 300 ms after the layout when that is later: the layout's reveal
- *   can commit a fallback, and React's throttle is page-wide. Everything
- *   else is compared as in any case.
+ *   or React's 300 ms after the skeleton when that is later.
+ *
+ * Every case runs with the server some way off (`server`): with a local
+ * server answering in a few ms, React's throttle, not the round trip, decides
+ * when anything shows, and the comparison says nothing about what a prefetch
+ * saves.
  *
  * Times are compared with `PARITY_MARGIN_MS` to spare. A pair that is later
  * than that is recorded again, up to `PARITY_PAIRS` pairs: the case fails
@@ -2633,13 +2719,14 @@ export async function expectAdoptedClickIsNeverWorseThanAPlainClick(
     (id) =>
       !plain.fallbacks.includes(id) &&
       id !== spec.ownFallback &&
+      !spec.deferredFallbacks?.includes(id) &&
       id !== spec.skeleton?.fallback &&
       !inside?.includes(id),
   );
   check(
     "fallback",
     added.length === 0,
-    `a fallback the plain navigation does not show: ${added.join(", ")}`,
+    `a fallback the plain navigation does not show, for work that was not deferred: ${added.join(", ")}`,
   );
   check(
     "kept",
@@ -2686,22 +2773,22 @@ export async function expectAdoptedClickIsNeverWorseThanAPlainClick(
     !spec.prefetchedOn || adopted.requests.join() === plain.requests.join(),
     "a prefetch made on another page was adopted",
   );
-  if (spec.latency) {
-    // A latency that reached neither click would pass every comparison.
+  const away = (spec.server ?? 0) + (spec.latency ?? 0);
+  // A server delay that reached neither click would pass every comparison.
+  // A click on a page's own link can change nothing at all.
+  if (away > 0 && plain.times.length > 1) {
     check(
       "setup",
-      plain.firstChangeAt >= spec.latency,
-      "the plain click showed something before its response",
+      plain.firstChangeAt >= away,
+      `the plain click showed something at ${plain.firstChangeAt} ms, before its response could (${away} ms)`,
     );
-    check(
-      "setup",
-      spec.commitsWithFill
-        ? adopted.firstChangeAt >= spec.latency
-        : adopted.firstChangeAt < spec.latency,
-      spec.commitsWithFill
-        ? "the adopted click showed something before its fill"
-        : "the adopted click did not show its fallback with the click",
-    );
+    if (spec.commitsWithFill) {
+      check(
+        "setup",
+        adopted.firstChangeAt >= away,
+        `the adopted click showed something at ${adopted.firstChangeAt} ms, before its fill could (${away} ms)`,
+      );
+    }
   }
 
   if (spec.skeleton) {
@@ -2773,7 +2860,9 @@ export async function expectAdoptedClickIsNeverWorseThanAPlainClick(
       what:
         rule === "url"
           ? "the URL further ahead of the page than in the plain click, in every pair"
-          : "later than the plain click in every pair",
+          : rule === "click"
+            ? "the page did not show at the click, in every pair"
+            : "later than the plain click, and than React's throttle explains, in every pair",
     });
   }
 
@@ -2864,8 +2953,46 @@ function skeletonInsideLayout(
 }
 
 /**
- * Where the adopted click of a pair is later than the plain one, past the
- * margin, or has the URL further ahead of the page.
+ * The earliest React commits a Suspense retry at `at` on this click:
+ * `REACT_THROTTLE_MS` after the last time before `at` that a fallback showed
+ * or hid, anywhere on the page (FALLBACK_THROTTLE_MS; `react-dom-client`
+ * marks the time whenever a boundary switches between fallback and content).
+ * `-Infinity` when no fallback changed before `at`.
+ */
+function reactHold(click: PrefetchFalseClick, at: number): number {
+  const before = click.fallbackEventsAt.filter((event) => event < at);
+  return before.length > 0
+    ? Math.max(...before) + REACT_THROTTLE_MS
+    : Number.NEGATIVE_INFINITY;
+}
+
+function isFallbackId(id: string): boolean {
+  return id.endsWith("-fallback") || id.endsWith("-loading");
+}
+
+/**
+ * When the adopted click's page box first showed content it did not show
+ * before the click: the page's first content. Infinity when it never did.
+ */
+function firstContentAt(click: PrefetchFalseClick): number {
+  const ids = (snapshot: string | undefined): string[] =>
+    (snapshot ?? "")
+      .split(" ")
+      .filter(Boolean)
+      .map((shown) => shown.split("=")[0]!)
+      .filter((id) => !isFallbackId(id));
+  const before = new Set(ids(click.timeline[0]));
+  const index = click.timeline.findIndex(
+    (snapshot, at) => at > 0 && ids(snapshot).some((id) => !before.has(id)),
+  );
+  return index < 0 ? Number.POSITIVE_INFINITY : click.times[index]!;
+}
+
+/**
+ * Where the adopted click of a pair breaks the bar past the margin: it does
+ * not show the page at the click, shows something later than the plain
+ * click does and later than React's throttle explains, or has the URL
+ * further ahead of the page.
  */
 function laterThanPlain(
   { plain, adopted }: PrefetchFalsePair,
@@ -2874,32 +3001,20 @@ function laterThanPlain(
   const late: Broken[] = [];
   const at = (click: PrefetchFalseClick, id: string): number =>
     click.seenAt[click.order.indexOf(id)] ?? Number.NaN;
-  // The layout's reveal commits a fallback inside it when anything there
-  // is still pending (a loading() of its own, an app's <Suspense>, a read
-  // with no boundary of its own: the layout's outlet), and React holds every
-  // reveal after a fallback commit REACT_THROTTLE_MS, page-wide. So a reveal
-  // after the layout's comes no sooner than that after the layout, wherever
-  // its data landed, inside the layout or not (production, `section-own`
-  // with a 400 ms loader: the layout at 303 ms, the content at 604, the plain
-  // click's at 406; `outer` with a 400 ms loader: the outer read, outside the
-  // layout, at 604 against 411).
   const shownAt = spec.skeleton ? at(adopted, spec.skeleton.layout) : NaN;
-  const afterLayout = (id: string): boolean =>
-    at(adopted, id) > shownAt + SAME_FRAME_MS;
-  const last =
-    adopted.order[adopted.seenAt.indexOf(Math.max(...adopted.seenAt))];
-  const after = last !== undefined && afterLayout(last);
-  const held = (was: number): number =>
-    after ? Math.max(was, shownAt + REACT_THROTTLE_MS) : was;
   const never = (
     what: string,
     was: number,
     is: number,
-    rule: "late" | "url" = "late",
+    rule: "late" | "url" | "click" = "late",
   ): void => {
     const margin = rule === "url" ? URL_LEAD_MARGIN_MS : PARITY_MARGIN_MS;
     if (is > was + margin) late.push({ rule, what: `${what} ${was} -> ${is}` });
   };
+  // What shows at `is` on the adopted click is on time no later than the
+  // plain click shows it, or than React holds a retry at `is`.
+  const held = (was: number, is: number): number =>
+    Math.max(was, reactHold(adopted, is));
   // How long the URL had moved before the page did. The plain click keeps
   // the page it is on until its response starts, and so does its URL.
   const ahead = (
@@ -2918,27 +3033,34 @@ function laterThanPlain(
   };
   ahead("the address bar", (click) => click.urlAt);
   ahead("the URL hook", (click) => click.hookAt);
+  // The page, or its skeleton, at the click: what the prefetch is for. A
+  // page that commits with its fill shows when the fill answers, and a
+  // prefetch made on another page is not adopted.
+  if (!spec.commitsWithFill && spec.prefetchedOn !== "hub") {
+    never("the first visible change (ms)", 0, adopted.firstChangeAt, "click");
+  }
   never(
     "the first visible change (ms)",
     plain.firstChangeAt,
     adopted.firstChangeAt,
   );
-  never("the completed page (ms)", held(plain.completeAt), adopted.completeAt);
+  const completeBound = held(plain.completeAt, adopted.completeAt);
+  never("the completed page (ms)", completeBound, adopted.completeAt);
   // A plain click that shows no fallback keeps the page it is on instead.
   never(
     "the last fallback gone (ms)",
-    held(plain.fallbacks.length > 0 ? plain.fallbackGoneAt : plain.completeAt),
+    held(
+      plain.fallbacks.length > 0 ? plain.fallbackGoneAt : plain.completeAt,
+      adopted.fallbackGoneAt,
+    ),
     adopted.fallbackGoneAt,
   );
   // The response has streamed when React's throttle holds the reveal back.
   never(
     "useNavigation() idle, the page incomplete (ms)",
-    plain.quietMs + held(plain.completeAt) - plain.completeAt,
+    plain.quietMs + completeBound - plain.completeAt,
     adopted.quietMs,
   );
-  // Each element on its own: a unit's content held back until a read inside
-  // it arrives completes the page on time, with its last fallback gone on
-  // time.
   if (spec.skeleton) {
     // The layout shows with the fill, by design: no later than the plain
     // click shows what the layout covers, or React's 300 ms after the
@@ -2953,21 +3075,26 @@ function laterThanPlain(
       shownAt,
     );
   }
+  // Each element on its own. The page's first content is never later than
+  // the plain click's; what shows after it may wait for React's throttle,
+  // which the adopted click's earlier fallbacks start earlier: a read that
+  // lands after the deferred part's reveal shows its own fallback and
+  // React's 300 ms from then.
+  const firstAt = firstContentAt(adopted);
   adopted.order.forEach((id, index) => {
     const was = plain.order.indexOf(id);
+    if (was < 0 || adopted.fallbacks.includes(id)) return;
     // A flagged layout entered from outside shows with the fill by design,
     // and so does what shows with it: the layout's bound above holds them.
-    if (was < 0 || adopted.fallbacks.includes(id)) return;
     if (id === spec.skeleton?.layout) return;
     const is = adopted.seenAt[index]!;
     const withLayout =
       adopted.inside.includes(id) && Math.abs(is - shownAt) <= SAME_FRAME_MS;
     if (withLayout) return;
+    const first = is <= firstAt + SAME_FRAME_MS;
     never(
       `${id} visible at (ms)`,
-      afterLayout(id)
-        ? Math.max(plain.seenAt[was]!, shownAt + REACT_THROTTLE_MS)
-        : plain.seenAt[was]!,
+      first ? plain.seenAt[was]! : held(plain.seenAt[was]!, is),
       is,
     );
   });
@@ -2989,6 +3116,7 @@ function brief(click: PrefetchFalseClick): Record<string, unknown> {
     hookAt: click.hookAt,
     viewTransitionsAt: click.viewTransitionsAt,
     shownMs: click.shownMs,
+    fallbackEventsAt: click.fallbackEventsAt,
     seen: click.order.map((id, index) => `${click.seenAt[index]}:${id}`),
     remounted: click.remounted,
     nav: click.nav.map((reading, index) => `${click.navAt[index]}:${reading}`),

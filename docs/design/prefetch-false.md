@@ -48,20 +48,49 @@ action, a back/forward and a no-JS form post never see a deferred segment.
 The flag applies only to a segment the client does not have yet. This router
 keeps what is on screen wherever it can, and the flag must never cost you
 that, so a segment the browser already holds is never deferred. The promise
-the feature makes, and the one to check any change against: **a click that
-adopts a prefetch with deferred units is never worse than the same click with
-no prefetch at all. It never covers more of the page with a fallback than
-that plain navigation does, and never for longer; it waits only where the
-plain navigation would wait; and content that is already on screen is never
-replaced by a fallback, blanked or remounted while a fill is pending.**
+the feature makes, and the one to check any change against, is the
+maintainer's bar of 2026-10-11: **a click that adopts a prefetch shows the
+next page, or its skeleton, at the click. It never shows that page later
+than the same click with no prefetch at all, and the router adds no wait of
+its own: what shows after the click is decided by React's own Suspense
+rules. Content that is already on screen is never replaced by a fallback,
+blanked or remounted while a fill is pending.**
 
-Two exceptions, both the maintainer's call, both asserted rather than left
-open. The first is the one place where the adopted click shows a different
-page: a flagged `loading()` on a layout, entered from a page without the
-layout, shows its skeleton with the click over the layout's whole area, and
-the layout once the fill has answered, at least React's 300 ms after the
-skeleton, where a plain click shows the layout with its first chunk ("A
-layout unit shows its skeleton with the click"). Whatever
+Showing the next page early is what justifies a prefetch; the parts it
+deferred are meant to arrive after the click. So a fallback that shows for
+them is the design, not a failure, even where a plain click shows none. The
+adopted click reveals the deferred part a response sooner than the plain
+click, so a read inside it that lands later shows its own fallback, and
+React keeps that fallback up its 300 ms ("When the holes resolve").
+
+You may meet an older statement of the promise: "never covers more of the
+page with a fallback than the plain navigation, and never for longer". It
+asked the adopted click to complete no later than the plain one, and it is
+wrong. It held back a page the visitor could already be reading, to line it
+up with a value that was not there yet, and meeting it took router code
+that steers React's timing: first an alignment of the reveal to React's
+300 ms, then a `<Suspense>` that never resolves, placed to restart React's
+throttle. Both were dropped. When React's own behaviour leaves a difference
+from the plain click, it is documented and the test follows it.
+
+Timing is judged at a realistic distance. The parity cases run against a
+server that takes 300 ms before its first byte on every request (the
+fixture's `&server=` middleware, "The parity cases"). A local server answers
+in a few ms, and at that distance React's 300 ms throttle is the slowest
+thing on the page: it decides when anything shows, and a comparison there
+says nothing about what a prefetch saves.
+
+Two cases differ from the plain click on purpose, both the maintainer's
+call, both asserted rather than left open. The first is the one place where
+the adopted click shows a different page: a flagged `loading()` on a layout,
+entered from a page without the layout, shows its skeleton with the click
+over the layout's whole area, and the layout once the fill has answered, at
+least React's 300 ms after the skeleton, where a plain click shows the
+layout with its first chunk ("A layout unit shows its skeleton with the
+click"). That is the bar's shape: the skeleton at the click, the layout when
+React reveals it. With the server 300 ms away the layout shows when the
+plain click's does; a server nearer than React's 300 ms makes it wait for
+the throttle. Whatever
 is still pending below it then shows its fallback inside the layout, as on a
 plain click: a `loading()` of its own, an app's `<Suspense>`, or, for a read
 with no boundary of its own, the layout's own fallback a second time. React
@@ -908,13 +937,33 @@ read in the production build):
 What R-throttle does to an adopted click is the one thing to keep in mind
 here. A plain click shows its fallback when its response starts, so React
 reveals nothing sooner than 300 ms after that. An adopted click shows its
-fallback with the click, a round trip earlier, so React may reveal a
-deferred unit a round trip sooner, before a nested read that the plain
-click's one reveal includes. That read then shows a fallback of its own,
-which the plain click never shows, and R-throttle holds its content another
-300 ms. Nothing in the client lines the two reveals up. The parity cases of
-the shared suite measure where that shows, and `inner` and `nested` with the
-server 100 ms away fail on it ("Limits").
+fallback with the click, a round trip earlier, so React reveals a deferred
+unit as soon as its data lands, before a nested read that the plain click's
+one reveal includes. That read then shows a fallback of its own, which the
+plain click never shows, and R-throttle holds its content 300 ms from then.
+The page is up sooner and the late read is React's to reveal: that is the
+bar, not a gap. Nothing in the client lines the two reveals up, and nothing
+should; the client did once, with React's 300 ms copied into it, and that
+code is gone (R-throttle is React's number, and a copy of it goes stale the
+day React changes it).
+
+Production, router app, the server 300 ms away, adopted against plain, in
+ms (the full production run):
+
+| click    | first fallback | the page's first content       | late read, its own fallback | complete    |
+| -------- | -------------- | ------------------------------ | --------------------------- | ----------- |
+| `inner`  | 4 and 315      | 408 and 614 (`pf-inner-early`) | 711 and 614, at 408         | 711 and 614 |
+| `nested` | 3 and 314      | 3 and 314 (the page)           | 715 and 614, at 413         | 715 and 614 |
+
+`nested`'s early read shows at 413 against 614. The Cloudflare app reads the
+same within 10 ms.
+
+The parity cases hold what shows after the page's first content to React's
+rule, not to the plain click's completion: a value is on time when it shows
+no later than the plain click shows it, or than 300 ms after the last time a
+fallback showed or hid on the adopted click (`reactHold` in the shared
+suite), with the margin. A value held past both is a wait the router added,
+and fails ("The parity cases").
 
 #### A layout unit shows its skeleton with the click
 
@@ -968,8 +1017,9 @@ assert the expectation instead of the plain click's layout time:
   layout or its page shows;
 - what showed inside the layout in its frame is held by the layout's bound
   (`watchPage` records which elements first showed inside the layout); what
-  shows later is compared with the plain click's time, or with the layout
-  plus React's 300 ms when that is later;
+  shows later is compared with the plain click's time, or with React's
+  300 ms after the last fallback that showed or hid when that is later (the
+  layout's reveal is such a change, as in every parity case);
 - every other rule is asserted as in any parity case, nothing else mounted
   twice and React's log included.
 
@@ -1682,35 +1732,70 @@ segments. A fill refuses `rendered()` outright for the same reason R12 exists.
   no boundary"). A plain click's address bar moves with its response, so it
   is ahead of the page by the loader's time, and the adopted click's by the
   fill's round trip more. `useNavigation()` and the URL hooks move with the
-  page in both. Production, `bare`, plain against adopted, how far ahead of
-  the page:
+  page in both, and the page itself shows when the plain click's does.
+  Production, router app, plain against adopted, how far ahead of the page:
 
-  | click                            | address bar     | `useNavigation().location` |
-  | -------------------------------- | --------------- | -------------------------- |
-  | `bare`                           | 100 and 104 ms  | 1 and 0 ms                 |
-  | `bare`, loaders 300 ms slower    | 402 and 406 ms  | 1 and 1 ms                 |
-  | `bare`, a slow loader            | 704 and 705 ms  | 0 and 0 ms                 |
-  | `bare`, the fill's head held 1 s | 103 and 1108 ms | 0 and 0 ms                 |
+  | click                                              | address bar    | `useNavigation().location` |
+  | -------------------------------------------------- | -------------- | -------------------------- |
+  | `bare`, a server answering in a few ms             | 100 and 104 ms | 1 and 0 ms                 |
+  | `bare`, loaders 300 ms slower, the same server     | 402 and 406 ms | 1 and 1 ms                 |
+  | `bare`, a slow loader, the same server             | 704 and 705 ms | 0 and 0 ms                 |
+  | `bare`, the server 300 ms away                     | 104 and 439 ms | 1 and 1 ms                 |
+  | `above`, the server 300 ms away                    | 101 and 409 ms | 0 and 0 ms                 |
+  | `bare-inner`, the server 300 ms away               | 101 and 412 ms | 0 and 1 ms                 |
+  | `bare`, the server 300 ms away, requests 1 s later | 99 and 1417 ms | 1 and 0 ms                 |
 
-  With the server near, the difference is inside the parity rule's 50 ms
-  margin. With the server far it is the round trip, and that one cell runs as
-  an expected failure (`OPEN_HELD`). Not fixed: the three ways to move the
-  address bar with the page each break a page that is not held ("A read with
-  no boundary").
+  With a server that answers in a few ms the difference is inside the
+  parity rule's 50 ms margin. With the server 300 ms away, as every parity
+  case now runs, it is the fill's round trip, so every held cell runs as an
+  expected failure (`OPEN_HELD`): `bare`, `bare-inner` and `above` in all
+  three loader columns, and `bare` with its requests held a second, ten
+  cells. Not fixed: the three ways to move the address bar with the page
+  each break a page that is not held ("A read with no boundary"). Under the
+  bar the address bar moving at the click is feedback at the click; whether
+  the rule should stay for these pages is the maintainer's call.
 
-- A deferred unit can reveal a round trip sooner than a plain click would,
-  and that is a cost, not a gain. Its fallback has been up since the click,
+- A deferred unit reveals as soon as its data lands, a round trip or more
+  before a plain click's reveal: its fallback has been up since the click,
   so React's 300 ms run from the click, where a plain click's run from its
-  response's first chunk. A nested read that lands between the two reveals
-  is in the plain click's one reveal and misses the adopted click's: it shows
+  response's first chunk. A nested read that lands after that reveal shows
   a fallback of its own, which the plain click never shows, and React holds
-  its content another 300 ms ("When the holes resolve"). Measured with the
-  server 100 ms away, `inner` and `nested`, both apps and both modes, every
-  pair of every run: the page complete at 603 to 611 ms against the plain
-  click's 407 to 439, with the late read's own fallback
-  (`pf-inner-late-fallback`, `pf-nested-late-fallback`) that the plain click
-  never shows. Those two parity cells fail in the shared suite; they are not
-  marked open.
+  its content 300 ms from then, so that one value can show up to 300 ms
+  after the plain click's ("When the holes resolve"). The page itself is up
+  sooner. That is the bar (the maintainer's, 2026-10-11): the next page
+  early, the deferred parts when React reveals them. Measured in
+  production, router app, the server 300 ms away: `inner` shows its content
+  at 408 ms against 614 and its late read at 711 against 614; `nested` its
+  early read at 413 against 614 and its late one at 715 against 614. The
+  parity cells assert it and pass, in both apps and both modes. They failed under the old completion
+  rule, with the server 100 ms away (the page complete at 603 to 611 ms
+  against 407 to 439).
+- A page with a `<ViewTransition>` of the app's own mounted across the
+  click pays a view transition the plain click does not, once the server is
+  far enough that the fill answers after React's throttle has run out. The
+  fill resolves each hole with its first chunk, with a node or a stream
+  that is still pending. React retries the boundary at once (its fallback
+  has been up since the click), the retry suspends again on the loader,
+  React commits it all the same (R-throttle, second half), and with a
+  `<ViewTransition>` on the page that commit starts a view transition
+  (R-start), which the reveal then waits for (R-wait). It is the mechanism
+  a `transition()` route avoids by committing with its fill ("A unit under
+  `transition()` waits for its fill"), and the router cannot do the same
+  here: the boundary is the app's. Measured in production, router app, the
+  server 300 ms away (`&boundary=1`), plain against adopted: `unit` starts
+  view transitions at 616 against 304 and 602 ms and shows the page at 636
+  against 621; with `&vtms=600`, at 616 against 305 and 949 ms, the page at
+  631 against 966, 335 ms later than the plain click. A probe of React's
+  commits (a devtools hook in the page) finds the commit at 308 re-rendering
+  the unit's boundary, which stays on its fallback. With the server near,
+  the fill and the loader land before the throttle runs out, the first
+  retry has everything, and the cells passed. Found with the server delay
+  and not fixed: `unit` and `loader` with an app boundary, at both
+  durations, fail in both apps and both modes, except `loader` at 600 ms in
+  the router app: there the view transition of the click's own handle push
+  (5 to 605 ms) is still running when the fill answers, so the retry waits
+  for it, finds the value, and reveals in one. Whether to change when a
+  hole resolves, or to accept it, is the maintainer's call.
 - A newer navigation cancels a pending fill when it starts, not when it
   commits. One that then ends without replacing the page leaves the deferred
   part's fallbacks up, unfilled, until the next navigation ("Abort"). The
@@ -1719,10 +1804,11 @@ segments. A fill refuses `rendered()` outright for the same reason R12 exists.
   page committed, because the navigation that adopts the prefetch fills its
   holes itself. `useNavigation()` reads idle from the commit, with
   `isStreaming` true until the fill has streamed. The maintainer's call.
-- A loader that lands within a few milliseconds of React's 300 ms is a coin
-  flip for a plain click too: the value either makes the throttled reveal or
-  waits 300 ms for the next one. The parity matrix keeps its mid-duration
-  column at 400 ms for that reason.
+- A loader that lands within a few milliseconds of React's first reveal is
+  a coin flip for a plain click too: the value either makes the throttled
+  reveal or waits 300 ms for the next one. A plain click's first reveal
+  comes 300 ms into its response, so the parity matrix keeps its
+  mid-duration column at 400 ms into the response, 100 ms clear of it.
 - A prefetch that is still unanswered when its link is clicked on its own
   page is waited for and adopted, and the fill leaves after it: the deferred
   part completes later than a plain click's by up to what was left of the
@@ -1767,6 +1853,82 @@ segments. A fill refuses `rendered()` outright for the same reason R12 exists.
 - A page restored from the back/forward cache with a fill in flight shows the
   network error boundary if the browser dropped the request.
 
+### The parity cases
+
+`expectAdoptedClickIsNeverWorseThanAPlainClick` in the shared suite makes
+each click twice on fresh pages, once plain and once after its prefetch has
+been received, and compares what a reader could see. That is 219 cases
+(`PREFETCH_FALSE_PARITY_CASES`), each in both apps and both modes.
+
+Every one runs with the server 300 ms away. The fixture's first entry is a
+route middleware (`serverDelay`) that waits `&server=<ms>` before every
+render pass of the include: the document, a prefetch, a navigation, a fill,
+and an action's revalidation render (route middleware does not wrap an
+action's body; the fixture has no action). The flag rides on every hub link,
+as the others do. Why 300? It is about what one request costs a real server
+before its first byte, and it is the time a prefetch saves. With a local
+server answering in a few ms and the fixture's 100 ms loaders, the first
+reveal of both clicks waited for React's throttle, a few ms apart, so the
+cases measured React, not the prefetch.
+`LATENCY_CLICKS`, nine clicks from the hub (`loader`, `unit`, `section`,
+`section-own`, `vt-unit`, `inner`, `vt-inner`, `nested`, `vt-below`), run
+again with the server 500 ms away and their loaders 0, 150, 300 and 600 ms
+slower: 36 cells, the ones that used to run with the server 100 ms away.
+
+That 100 ms used to be a wait in the browser (`farAway`, which holds every
+RSC request of the click before it is sent). The middleware puts the same
+time in front of a response's first byte and covers the document and the
+prefetch as well, so those cells use it alone. The browser wait stays where
+the middleware cannot stand in: `HEAD_HELD_CLICKS` hold the click's requests
+a second on top of the server, far above every margin, and the in-flight
+bound (`expectClickDuringThePrefetchStaysWithinItsBound`) keeps its own
+300 ms for every request, the prefetch included, as its numbers were
+measured.
+
+What the cases compare, before the bar of 2026-10-11 and now:
+
+| Compared                                                                             | Before                                                                 | Now                                                                                                                                                                |
+| ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| The first change                                                                     | no later than the plain click's                                        | the same, and within 100 ms of the click, except where the page commits with its fill (`commitsWithFill`) or the prefetch was made on another page                 |
+| The page's first content                                                             | no later than the plain click's                                        | the same: the first frame with content the page did not show before the click                                                                                      |
+| What shows after it                                                                  | no later than the plain click's (a flagged layout's reveal aside)      | no later than the plain click's, or than React's 300 ms after the last fallback that showed or hid on the adopted click (`reactHold`), whichever is later          |
+| The completed page, the last fallback gone, idle and incomplete                      | no later than the plain click's (a flagged layout's reveal aside)      | bounded as what shows after the first content                                                                                                                      |
+| A fallback the plain click does not show                                             | a failure, unless the read's own (`ownFallback`) or a flagged layout's | allowed where it waits for deferred work: the read's own, one inside the deferred part (`deferredFallbacks`), a flagged layout's skeleton and what shows inside it |
+| Content hidden, a blank page, a remount, server work, view transitions, the URL lead | as now                                                                 | unchanged                                                                                                                                                          |
+
+Where does "React's 300 ms after the last fallback change" come from?
+`react-dom-client` marks the time whenever a Suspense boundary switches
+between its fallback and its content, either way, and commits a retry no
+sooner than 300 ms after the last mark, anywhere on the page. The page's
+sampler records the same moments (`fallbackEventsAt`: the set of visible
+fallback nodes changed, so a skeleton that hides as its copy inside the
+layout shows counts). A value held to that bound is React's choice. A value
+held past it, and past the plain click, is a wait the router added, and the
+case fails. The page's first content gets no such allowance: showing it
+early is what the prefetch is for.
+
+The margins are unchanged: 100 ms for times, 50 ms for the URL lead. A late
+pair is recorded again, up to three pairs.
+
+Production, router app, the server 300 ms away, adopted against plain, in
+ms (the full production run; the Cloudflare app reads the same within
+10 ms):
+
+| click                          | first fallback | first content | complete      |
+| ------------------------------ | -------------- | ------------- | ------------- |
+| hub to `loader`                | 4 and 312      | 4 and 312     | 411 and 613   |
+| hub to `inner`                 | 4 and 315      | 408 and 614   | 711 and 614   |
+| hub to `nested`                | 3 and 314      | 3 and 314     | 715 and 614   |
+| hub to `section-read`, `hslow` | 3 and 925      | 911 and 925   | 1213 and 1225 |
+
+`loader` is the plain case: the page with the click, the value a response
+sooner. `inner` and `nested` are the cases the old rule failed: the page up
+a response sooner, the late read about 100 ms after the plain click's,
+behind its own fallback, React's 300 ms after that fallback showed.
+`section-read` with a 600 ms layout handler shows its skeleton at the
+click, the layout with its page and the read's fallback inside it with the
+fill (911 against the plain click's 925), and the value 12 ms sooner.
+
 ### Open cases
 
 A gap that is known and not fixed is data on its parity case
@@ -1777,9 +1939,13 @@ regression in the same cell is a real failure. Then the test is marked with
 failure with the reason, and an unexpected pass, which fails the suite, the
 day the gap is fixed.
 
-| Gap         | Cells per app | Rules it breaks |
-| ----------- | ------------- | --------------- |
-| `OPEN_HELD` | 1, both modes | the URL rule    |
+| Gap         | Cells per app  | Rules it breaks |
+| ----------- | -------------- | --------------- |
+| `OPEN_HELD` | 10, both modes | the URL rule    |
+
+`OPEN_HELD` had one cell until the parity cases ran with the server 300 ms
+away (the bar of 2026-10-11): with a server that answers in a few ms only
+the fill held a second showed the address bar's lead.
 
 Before the fill stopped rendering a tree (`f43a4a27`) there were 35 cells.
 `OPEN_NESTED` (2) closed with the held-boundary fix (#1080). 32 closed with
@@ -1827,6 +1993,10 @@ that much to every deferred loader, which is how the parity matrix puts a
 loader on either side of React's 300 ms. `&boundary=1` wraps the hub's
 heading in a `<ViewTransition>` of the app's own, and `&vtms=<ms>` makes
 every view transition take that long (an app's own
-`animation-duration` on the view-transition pseudo-elements). Without `manual=1`
+`animation-duration` on the view-transition pseudo-elements). `&server=<ms>`
+makes every request the fixture serves wait that long before it renders,
+the document and the prefetch included; `&server=300` is what the parity
+cases run with, and the difference a prefetch makes is easy to see there and
+hard to see without it. Without `manual=1`
 the panel, the badge and the polling are not rendered, which is what the
 suites see. Every link carries the flags that are set.
