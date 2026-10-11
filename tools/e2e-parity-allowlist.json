@@ -260,6 +260,11 @@
     "reason": "Dev-server cold start and route-file watcher; a production build has no watcher and no module runner to reload"
   },
   {
+    "base": "hmr cold discovery recovery (cloudflare)",
+    "file": "tests/cloudflare-basic/e2e/hmr-cold-discovery-recovery.test.ts",
+    "reason": "Dev-server route-file watcher recovering a failed cold discovery; a production build has no watcher and no discovery temp runner"
+  },
+  {
     "base": "prerender",
     "file": "tests/cloudflare-basic/e2e/prerender-dev.test.ts",
     "reason": "Dev-only title marker (dev mode); production twins live in prerender*.test.ts siblings under production describes"

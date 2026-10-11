@@ -323,11 +323,29 @@ informational warning when the dep optimizer's `browserHash` changed across the 
 reserving the loud, actionable error for a genuinely empty registry. A failed cold
 discovery commits nothing, so the routes-manifest module's no-manifest branch still replays
 `state.clientUrlProjectionMap` (the projections the failed pass computed), and the failure
-sets `lastDiscoveryError`: `canRefreshRuntimeDiscovery()` (discovery/state.ts) then lets the
-route-file watcher re-run discovery on a main runner, the recovery mode a failed HMR
-rediscovery already had. Before, the watcher required a committed manifest, so only a
-restart recovered. Pinned by `src/vite/__tests__/dev-discovery-recovery.test.ts`, which
-drives the plugin's `configureServer` against a fake dev server.
+sets `lastDiscoveryError` (`recordDiscoveryFailure`): `canRefreshRuntimeDiscovery()`
+(discovery/state.ts) then lets the route-file watcher re-run discovery, the recovery mode a
+failed HMR rediscovery already had. Before, the watcher required a committed manifest, so
+only a restart recovered.
+
+Cloudflare needed the same recovery a second time. Its cold discovery runs on the temp Node
+server, and a failure there (the temp runner's entry import throwing, or `discoverRouters`
+giving up) recorded nothing, while `refreshRuntimeDiscovery` returned early with no
+committed manifest. That left the same 500s as on Node. The worker builds its dev trie from
+the live route tree (`buildRouterTrieFromUrlpatterns`), which evaluates every `include()`,
+and it gets its clientUrls projections only from the routes-manifest module. A cold failure
+before the projections were computed made that build throw
+`include() could not resolve the server projection` on every request, and no save cleared
+it. Both failures now record `lastDiscoveryError`. The recovering save re-runs discovery on
+the temp runner (`getOrCreateTempServer` creates a fresh one when the failed start closed
+it), and the worker reload that follows (`forceCloudflareWorkerReload`) invalidates the
+worker's whole module graph, routes-manifest module included, so the Node path's explicit
+invalidation is not needed there.
+
+Pinned by `src/vite/__tests__/dev-discovery-recovery.test.ts`, which drives the plugin's
+`configureServer` against fake Node and Cloudflare dev servers, and by
+`tests/cloudflare-basic/e2e/hmr-cold-discovery-recovery.test.ts` (local only, like the other
+route-edit e2e), which boots a real Cloudflare dev server on a discovery-only failure.
 
 ### A reload no file of the app asked for (why the watcher skips some directories)
 

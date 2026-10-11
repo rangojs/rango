@@ -4,6 +4,11 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  DEV_DISCOVERY_EPOCH_HEADER,
+  DEV_DISCOVERY_PROBE_HEADER,
+  DEV_DISCOVERY_READY_EVENT,
+} from "../../dev-discovery-protocol.js";
+import {
   VIRTUAL_ROUTES_MANIFEST_ID,
   type DiscoveryState,
 } from "../discovery/state.js";
@@ -11,14 +16,25 @@ import {
 // The dev recovery wiring in router-discovery.ts's configureServer, driven
 // through the plugin against fake dev servers. discoverRouters and the gen-file
 // writers are stubbed: their own behavior is covered by
-// discover-routers-reload.test.ts and the route-types tests.
+// discover-routers-reload.test.ts and the route-types tests. On Cloudflare the
+// discovery temp server comes from the stubbed vite createServer.
 
 const discoverRouters = vi.hoisted(() => vi.fn());
+const createViteServer = vi.hoisted(() => vi.fn());
 vi.mock("../discovery/discover-routers.js", () => ({ discoverRouters }));
 vi.mock("../discovery/route-types-writer.js", () => ({
   writeCombinedRouteTypesWithTracking: vi.fn(),
   writeRouteTypesFiles: vi.fn(),
   supplementGenFilesWithRuntimeRoutes: vi.fn(),
+}));
+vi.mock("vite", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("vite")>()),
+  createServer: createViteServer,
+}));
+// The cloudflare:* loader hook createTempRscServer installs is process-global.
+vi.mock("node:module", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:module")>()),
+  register: vi.fn(),
 }));
 
 const { createRouterDiscoveryPlugin } = await import("../router-discovery.js");
@@ -34,6 +50,7 @@ beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "rango-dev-discovery-recovery-"));
   entry = join(root, "src", "router.tsx");
   discoverRouters.mockReset();
+  createViteServer.mockReset();
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(console, "warn").mockImplementation(() => {});
   vi.spyOn(console, "log").mockImplementation(() => {});
@@ -191,4 +208,113 @@ describe("Node dev server: recovery after a failed cold discovery", () => {
     expect(discoverRouters).toHaveBeenCalledTimes(3);
     expect(invalidateModule).toHaveBeenCalledTimes(1);
   });
+});
+
+/** The Cloudflare discovery temp server (a Node Vite server with an RSC runner). */
+function createTempServer({ entryError }: { entryError?: Error } = {}) {
+  const serverMod = {
+    RouterRegistry: new Map(),
+    HostRouterRegistry: new Map(),
+  };
+  const rsc = {
+    runner: {
+      import: vi.fn(async (id: string) => {
+        if (id === entry && entryError) throw entryError;
+        return id === "@rangojs/router/server" ? serverMod : {};
+      }),
+    },
+    moduleGraph: { invalidateAll: vi.fn() },
+  };
+  return { environments: { rsc, ssr: {} }, close: vi.fn(async () => {}) };
+}
+
+describe("Cloudflare dev server: recovery after a failed cold discovery", () => {
+  beforeEach(() => {
+    // The worker-readiness probe after a reload: answer at the probed epoch.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async (_url: string, init: { headers: Record<string, string> }) =>
+          new Response(null, {
+            headers: {
+              [DEV_DISCOVERY_EPOCH_HEADER]:
+                init.headers[DEV_DISCOVERY_PROBE_HEADER],
+            },
+          }),
+      ),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete (globalThis as { __PRERENDER_DEV_URL?: string }).__PRERENDER_DEV_URL;
+  });
+
+  it.each([
+    {
+      failure: "the temp runner cannot import the entry",
+      coldPasses: 0,
+      setup: () => {
+        const recovered = createTempServer();
+        createViteServer
+          .mockResolvedValueOnce(
+            createTempServer({ entryError: new Error("cold import failed") }),
+          )
+          .mockResolvedValue(recovered);
+        discoverRouters.mockImplementation(async (state: DiscoveryState) =>
+          commitManifest(state),
+        );
+        return recovered;
+      },
+    },
+    {
+      failure: "discoverRouters fails on the temp runner",
+      coldPasses: 1,
+      setup: () => {
+        const temp = createTempServer();
+        createViteServer.mockResolvedValue(temp);
+        discoverRouters
+          .mockRejectedValueOnce(new Error("cold discovery failed"))
+          .mockImplementation(async (state: DiscoveryState) =>
+            commitManifest(state),
+          );
+        return temp;
+      },
+    },
+  ])(
+    "$failure: the next source save rediscovers and reloads the worker",
+    async ({ coldPasses, setup }) => {
+      const temp = setup();
+      const dev = createDevServer({ runner: false });
+      const plugin = startPlugin(dev, "cloudflare");
+
+      const coldModule = await plugin.loadManifestModule();
+      expect(discoverRouters).toHaveBeenCalledTimes(coldPasses);
+      expect(coldModule).not.toContain("setRouterManifest(");
+
+      save(dev, "src/urls.tsx", URLS_SOURCE);
+      // The save holds the routes-manifest module until the pass commits.
+      const code = await plugin.loadManifestModule();
+
+      expect(discoverRouters).toHaveBeenCalledTimes(coldPasses + 1);
+      expect(discoverRouters).toHaveBeenLastCalledWith(
+        expect.anything(),
+        temp.environments.rsc,
+        temp.environments.ssr,
+      );
+      expect(code).toContain('setRouterManifest("app"');
+      // The worker drops its module graph, routes-manifest module included,
+      // and reports the new discovery epoch.
+      expect(dev.rsc.moduleGraph.invalidateAll).toHaveBeenCalled();
+      expect(dev.rsc.hot.send).toHaveBeenCalledWith({ type: "full-reload" });
+      await vi.waitFor(() =>
+        expect(dev.client.hot.send).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: "custom",
+            event: DEV_DISCOVERY_READY_EVENT,
+          }),
+        ),
+      );
+    },
+  );
 });
