@@ -9,12 +9,19 @@ import { HistoryHandlesTickLoader } from "./history-handles.defs.js";
 // A link to a page the history cache holds merges its response's handles onto
 // that page's own pushes. Section > A, and Section > B layout > B, whose
 // loader reruns on every visit: the second link to B re-renders the loader
-// only, and B's layout crumb, page crumb and title come from its entry.
-// Links do not prefetch, so each click is answered by the history cache path.
+// only, and B's layout crumb, page crumb and title come from its entry. The
+// section re-renders on a navigation to A only and shows its run in its crumb,
+// so on the second B its crumb must be the run of the section it shows, the
+// one from the page on screen. Links do not prefetch, so each click is
+// answered by the history cache path.
+let sectionRuns = 0;
 function HistoryHandlesSection(ctx: any) {
-  ctx.use(Breadcrumbs)({ label: "History", href: "/history-handles" });
+  sectionRuns += 1;
+  const runs = sectionRuns;
+  ctx.use(Breadcrumbs)({ label: `History ${runs}`, href: "/history-handles" });
   return (
     <section data-testid="hch-section">
+      <p data-testid="hch-section-runs">{runs}</p>
       <HistoryHandlesCrumbs />
       <Outlet />
     </section>
@@ -32,6 +39,7 @@ function HistoryHandlesBLayout(ctx: any) {
 export const historyHandlesPatterns = urls(
   ({ layout, path, loader, revalidate }) => [
     layout(HistoryHandlesSection, () => [
+      revalidate(({ nextUrl }) => nextUrl.pathname === "/history-handles/a"),
       path(
         "/history-handles/a",
         (ctx) => {

@@ -1,5 +1,4 @@
 import type {
-  HandleData,
   NavigationBridge,
   NavigationBridgeConfig,
   NavigationStore,
@@ -22,6 +21,7 @@ import {
   pushHistoryWithIdx,
 } from "./history-state.js";
 import { consumeHandles } from "./react/NavigationProvider.js";
+import { withSegmentHandles } from "../handles/pushed-by.js";
 import {
   handleNavigationStart,
   handleNavigationEnd,
@@ -140,32 +140,6 @@ function isRestorable(
     segments.length > 0 &&
     !segments.some(isPlaceholder)
   );
-}
-
-/**
- * `target` with the buckets of the segments `ids` names taken from `source`,
- * each handle's and its pushedBy record's alike, in new containers.
- */
-function withSegmentHandles(
-  target: HandleData,
-  source: HandleData,
-  ids: ReadonlySet<string>,
-): HandleData {
-  const out: HandleData = {};
-  for (const name of new Set([
-    ...Object.keys(target),
-    ...Object.keys(source),
-  ])) {
-    const buckets: Record<string, unknown[]> = {};
-    for (const [id, values] of Object.entries(target[name] ?? {})) {
-      if (!ids.has(id)) buckets[id] = values;
-    }
-    for (const [id, values] of Object.entries(source[name] ?? {})) {
-      if (ids.has(id)) buckets[id] = values;
-    }
-    if (Object.keys(buckets).length > 0) out[name] = buckets;
-  }
-  return out;
 }
 
 /**
@@ -396,14 +370,13 @@ export function createNavigationBridge(
       // title as fresh. It also leaves the nav-instance token intact.
       const sourceHistoryKey = store.getHistoryKey();
       const sourceCached = store.getCachedSegments(sourceHistoryKey);
-      let sourceHandleData: HandleData | undefined;
       if (sourceCached?.segments && sourceCached.segments.length > 0) {
-        sourceHandleData = liveHandleDataForCache(
+        const currentHandleData = liveHandleDataForCache(
           eventController,
           store,
           sourceHistoryKey,
         );
-        store.updateCacheHandleData(sourceHistoryKey, sourceHandleData);
+        store.updateCacheHandleData(sourceHistoryKey, currentHandleData);
       }
 
       // Check if we have cached segments for target URL
@@ -414,12 +387,13 @@ export function createNavigationBridge(
       // since it may have fresher data after an action revalidation.
       // This avoids unnecessary server round-trips for shared layout loaders.
       let cachedSegments = cached?.segments;
-      let cachedHandleData = cached?.handleData;
+      // The segments taken from the page on screen: their pushes come from
+      // it too (targetCacheHandleData below).
+      const fromSource = new Set<string>();
       if (cachedSegments && sourceCached?.segments) {
         const sourceSegmentMap = new Map(
           sourceCached.segments.map((s) => [s.id, s]),
         );
-        const fromSource = new Set<string>();
         cachedSegments = cachedSegments.map((targetSeg) => {
           const sourceSeg = sourceSegmentMap.get(targetSeg.id);
           // Use source (current page) version for shared segments - it's
@@ -429,15 +403,6 @@ export function createNavigationBridge(
           fromSource.add(targetSeg.id);
           return sourceSeg;
         });
-        // A segment's pushes come from where the segment does: this is the
-        // handle state the response's handles merge onto (partial-update.ts).
-        if (sourceHandleData) {
-          cachedHandleData = withSegmentHandles(
-            cachedHandleData ?? {},
-            sourceHandleData,
-            fromSource,
-          );
-        }
       }
 
       // Also check if there's an intercept cache entry for this URL
@@ -538,7 +503,18 @@ export function createNavigationBridge(
                 ...(hasUsableCache
                   ? {
                       targetCacheSegments: cachedSegments,
-                      targetCacheHandleData: cachedHandleData,
+                      // Read at commit: a push the page on screen gets while
+                      // the request is in flight is in it.
+                      targetCacheHandleData: () =>
+                        withSegmentHandles(
+                          cached?.handleData ?? {},
+                          liveHandleDataForCache(
+                            eventController,
+                            store,
+                            sourceHistoryKey,
+                          ),
+                          fromSource,
+                        ),
                     }
                   : {}),
                 ...(clientUrlPresentation && {
