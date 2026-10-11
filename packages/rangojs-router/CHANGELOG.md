@@ -169,6 +169,20 @@ about scroll and leave a pending navigation's decision alone. A navigation
 that asks not to scroll (`<Link scroll={false}>`, an intercept) is honoured
 as before.
 
+### Fixed: a loader whose rerun an action skips keeps its handle pushes
+
+A loader can push handles: `ctx.use(Meta)({ title })`, or a custom handle such
+as a breadcrumb. When a server action skipped that loader's
+rerun (its `revalidate()` answered `false`, for example
+`({ isAction }) => (isAction() ? isAction(CartActions) : undefined)`), the page
+kept the loader's data but dropped its pushes: the title it set disappeared from
+the document, and a breadcrumb reading the handle fell back to its default.
+This happened in `clientUrls()` groups and on ordinary `urls()` routes alike,
+whenever the route's handler or another of its loaders re-ran. Now a loader's
+pushes follow its data: a skipped loader keeps the handles it pushed, and a
+loader that reruns replaces its own pushes, as before. In the same way, a route
+handler that does not rerun keeps its pushes when one of its loaders reruns.
+
 ### Fixed: a loader's late handle push no longer shows on the page you navigated to
 
 On a document load, a loader that calls `ctx.use(handle)(value)` after an await

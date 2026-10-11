@@ -51,6 +51,7 @@ import {
   shownHandles,
   source,
 } from "./fixtures/shell-request-data.js";
+import { withoutPushedBy } from "../../handles/pushed-by.js";
 
 const red = it.fails;
 
@@ -511,7 +512,7 @@ async function shellHandles(
   }>(result.prelude);
   let handles: ShellRequestHandles["hydration"] = {};
   for await (const data of metadata?.handles ?? []) handles = data;
-  return handles;
+  return withoutPushedBy(handles);
 }
 
 /**

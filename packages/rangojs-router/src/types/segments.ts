@@ -262,10 +262,12 @@ export interface MatchResult {
   /**
    * Every segment id whose handler actually ran on the server this request,
    * including ones with `component === null` that get filtered out of
-   * `segments`/`diff` to avoid wasted bytes. Drives the client's handle-
-   * cleanup pass — a slot that re-resolves and pushes nothing must clear
-   * its previous handle bucket, but `diff` doesn't carry it because the
-   * segment payload doesn't either. A superset of `diff`.
+   * `segments`/`diff` to avoid wasted bytes, and every loader segment that
+   * ran. Drives the client's handle merge (handles/pushed-by.ts) — a slot
+   * that re-resolves and pushes nothing must clear its previous handle
+   * bucket, but `diff` doesn't carry it because the segment payload doesn't
+   * either; a loader that ran replaces its pushes, one that did not keeps
+   * them. A superset of `diff`.
    */
   resolvedIds: string[];
   /**

@@ -134,6 +134,8 @@ import { clientUrlsVarsMiddleware } from "./urls/client-urls-vars-shared.js";
 import clientUrlsInterceptPatterns from "./urls/client-urls-intercept.js";
 import clientUrlsTransitionPatterns from "./urls/client-urls-transition.js";
 import clientUrlsActionPatterns from "./urls/client-urls-action.js";
+import heldHandlesClientPatterns from "./urls/held-handles.client-urls.js";
+import { heldHandlesPatterns } from "./urls/held-handles.js";
 import clientUrlsSlowPatterns, { SlowChrome } from "./urls/client-urls-slow.js";
 import { getClientUrlsActionCount } from "./urls/client-urls-action.store.js";
 import { ClientUrlsItemLoader } from "./urls/client-urls.loader.js";
@@ -973,6 +975,12 @@ export const urlpatterns = urls(
           name: "clientAction",
         }),
       ]),
+      // A loader whose rerun an action skips keeps its handle pushes (#1103):
+      // clientUrls() group and the ordinary urls() twin.
+      include("/held-handles-client", heldHandlesClientPatterns, {
+        name: "heldHandlesClient",
+      }),
+      include("/", heldHandlesPatterns, { name: "" }),
       intercept(
         "@modal",
         ".clientIntercept.item",

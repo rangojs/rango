@@ -62,6 +62,7 @@ import {
   PREFETCH_HEADER,
 } from "../router/segment-resolution/prefetch-deferral.js";
 import { resolveDeferredHandleValues } from "../handles/deferred-resolution.js";
+import { withoutPushedBy } from "../handles/pushed-by.js";
 import type { HandleData } from "../server/handle-store.js";
 import { _getRequestContext } from "../server/request-context.js";
 import {
@@ -321,9 +322,12 @@ async function decodePayloadHandles(
   for await (const data of metadata?.handles ?? []) hydration = data;
   const late: HandleData[] = [];
   for await (const data of metadata?.handlesLate ?? []) {
-    late.push(await resolveDeferredHandleValues(data));
+    late.push(withoutPushedBy(await resolveDeferredHandleValues(data)));
   }
-  return { hydration: await resolveDeferredHandleValues(hydration), late };
+  return {
+    hydration: withoutPushedBy(await resolveDeferredHandleValues(hydration)),
+    late,
+  };
 }
 
 /** The ids of the segments a payload marks deferred. */

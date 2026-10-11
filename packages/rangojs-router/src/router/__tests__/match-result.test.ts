@@ -427,6 +427,31 @@ describe("match-result", () => {
       // The internal _handlerRan marker must not leak into the emitted segments.
       expect(result.segments.every((s) => !("_handlerRan" in s))).toBe(true);
     });
+
+    // #1103: the browser replaces the handle pushes of a loader that ran and
+    // keeps those of a loader the response skipped, so resolvedIds names the
+    // loaders that ran. A skipped loader is in matched only.
+    it("partial match resolvedIds names the loader segments that ran", () => {
+      const ctx = createMockContext({
+        isFullMatch: false,
+        clientSegmentIds: ["R0", "R0D0.held", "R0D1.rerun"],
+      });
+      const state = createPipelineState();
+      state.matchedIds = ["R0", "R0D0.held", "R0D1.rerun"];
+      const segments = [
+        createSegment("R0", { _handlerRan: true } as Partial<ResolvedSegment>),
+        createSegment("R0D1.rerun", {
+          type: "loader",
+          component: null,
+          loaderId: "rerun",
+        }),
+      ];
+
+      const result = buildMatchResult(segments, ctx, state);
+
+      expect(result.resolvedIds).toEqual(["R0", "R0D1.rerun"]);
+      expect(result.matched).toEqual(["R0", "R0D0.held", "R0D1.rerun"]);
+    });
   });
 
   describe("collectMatchResult()", () => {

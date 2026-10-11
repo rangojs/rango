@@ -10,7 +10,9 @@ change 2 text below is kept as analysis, with a note at the top of each
 affected section. "What is built" and "What is not built" below say exactly
 where the line is.
 A later section, "What a document hydrates with on a shell HIT", covers
-#1035: not which push a page shows, but when the client gets it.
+#1035: not which push a page shows, but when the client gets it. The last
+one, "What the browser keeps on a partial response", covers #1103: the
+browser's side of the rule, when a response re-runs only part of a route.
 
 The evidence is
 `packages/rangojs-router/src/testing/__tests__/serve-shell-request-push-ownership.rsc-test.tsx`:
@@ -945,6 +947,110 @@ through `readHandles()` instead (`shownHandles`, `final`). What each test
 asserts is the same. One assertion flipped: "a deferred push by a runs: 1
 loader reaches the HIT" asserted that the prelude contained the deferred
 value.
+
+## What the browser keeps on a partial response (#1103)
+
+Status: built. Everything above is about the server: which run's pushes a
+request delivers. This section is about the browser, which holds the pushes
+of earlier responses and has to merge each new one into them.
+
+### The rule
+
+**A loader's pushes follow its data.** On a navigation or an action
+response, the browser keeps the data of every loader the response did not
+re-run (its `revalidate()` answered `false`, or the default skipped it), and
+it keeps that loader's pushes with it. Only a run the response made replaces
+pushes, and it replaces only its own: the segment's handler when it ran, each
+loader that ran. A run that happened and pushed nothing leaves nothing behind.
+
+The issue that showed it: a `clientUrls()` route whose loader pushes `Meta`
+with a title and a breadcrumb, and skips its rerun on an unrelated action
+(`({ isAction }) => (isAction() ? isAction(SomeActions) : undefined)`).
+After the action the page kept the loader's data and lost the title and the
+breadcrumb. Ordinary `urls()` routes had the same bug.
+
+### Why it broke
+
+A loader pushes under its owning segment's id: `fresh.ts` and
+`revalidation.ts` pin `_currentSegmentId` to the entry's shortCode before
+the kickoffs, so the route's handler and every loader registered on it share
+one bucket per handle. The browser merged a partial response bucket by
+bucket (`browser/event-controller.ts` `setHandleData`): a bucket in the
+response replaced the one it had, and a bucket of a segment in `resolvedIds`
+that the response did not carry was deleted. Revalidation is not per
+bucket, though. An action re-runs the route's handler (the POST default in
+`router/revalidation.ts`) and decides each loader on its own, so the
+response's bucket held the handler's pushes and those of the loaders that
+re-ran, and replaced the pushes of the loader that did not. On a
+`clientUrls()` route the handler is the server's `ClientUrlsRoot` stub,
+which pushes nothing, so the bucket was deleted outright. The converse broke
+the same way: a loader re-run under a handler that did not re-run took the
+handler's pushes with it.
+
+The browser could not tell the pushes apart, because nothing on the wire said
+which run made each one.
+
+### What is built
+
+1. **Each push names its run** (`server/handle-store.ts`, `SlotTag.by`). At
+   push time the store records the loader whose run makes it:
+   `getHandlePushOwner()` (`server/context.ts`) answers the DSL loader the
+   scope resolves (`runInsideLoaderScope` now takes the loader's id at the
+   five kickoff sites in `fresh.ts`, `revalidation.ts` and
+   `intercept-resolution.ts`), else the outermost loader body around the
+   push (a loader a handler reads with `ctx.use`). A copy names the loader
+   it stands for (`replayOf`, `restoredOf`, `placeholderOf`, or the record
+   `owner`). A handler's own push names nothing.
+2. **The snapshot carries it** (`handles/pushed-by.ts`). Every stream yield
+   (`stream()`, `streamLate()`, the frozen document snapshot, and the
+   capture's `recordedHandleData` cut) holds, beside each handle, a pushedBy
+   record under a key no handle has: `data[pushedByKey(h)][segmentId][i]` is
+   the `$$id` of the loader whose run pushed `data[h][segmentId][i]`, or
+   `null` for the handler. Riding inside the snapshot, it crosses Flight and
+   every clone and history-cache copy with the values, and
+   `collectHandleData` reads a handle by its `$$id`, so no collect sees it.
+   `resolveDeferredHandleValues` keeps it aligned when it drops a value;
+   `serveShellRequest` strips it from what it returns.
+3. **`resolvedIds` names the loaders that ran** (`router/match-result.ts`).
+   A partial match resolves only the loaders it runs, so each loader segment
+   it returns is in `resolvedIds` next to the handlers that ran. That also
+   makes the field's documented "superset of `diff`" true.
+4. **The merge replaces runs, not buckets** (`mergePartialHandleData`, called
+   by `setHandleData` for a partial update). A value counts for the handler,
+   or for a loader when `matched` registers that loader on the segment
+   (`${segmentId}D${i}.${$$id}`); an id the match does not register, a
+   dependency or a loader a handler read, counts as the handler's. A run
+   re-ran when its id is in `resolvedIds` or it has values in the response.
+   A re-run's values give way to the response's, which take the position of
+   the first value they replace; the other runs' values stay where they are.
+   A snapshot without pushedBy records (every value the handler's) merges
+   exactly as before.
+
+### Not covered: a page shown from the history cache
+
+A link navigation to a URL the history cache holds sends the cached segment
+ids, and the server re-renders only what revalidates. The merge base is the
+handle data of the page on screen, not the cached entry's (`partial-update.ts`
+passes `targetCacheHandleData` only when the response has no diff), so the
+pushes of the segments the navigation takes from the cache and the page on
+screen does not share are lost. That is a different cause from the one above
+(a wrong base, not a merge too coarse) and is not part of this change.
+
+### Evidence
+
+- `src/__tests__/event-controller.test.ts`, "a loader the response skipped
+  keeps its pushes (#1103)": four of its five tests fail on `origin/main`,
+  the fifth (a held loader's rerun replaces its pushes in place) is the
+  control.
+- `src/router/__tests__/match-result.test.ts`, "partial match resolvedIds
+  names the loader segments that ran".
+- `src/server/__tests__/handle-store.test.ts`, "HandleStore pushedBy records
+  (the run of each push)"; `src/handles/__tests__/deferred-resolution.test.ts`,
+  "keeps the pushedBy record aligned with the values it drops".
+- e2e `held loader handles (dev)` / `(production)` in the router test-app and
+  `tests/cloudflare-basic` (body: `tests/shared-e2e/src/held-handles-scenario.ts`),
+  a `clientUrls()` group and its `urls()` twin: all four cases fail on
+  `origin/main` in both apps.
 
 ## Compatibility and risk
 

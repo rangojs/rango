@@ -125,7 +125,17 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // apart from the gates outside it (+98B gzip, browser/partial-update.ts
 // settleHoles). Measured on main 8c10cc9b (#1085, #1083, #1086): 49479B,
 // against main's own 47501B.
-const ROUTER_CHUNK_GZIP_MAX = 48 * 1024 + 384;
+//
+// Raised on 2026-10-11 for issue #1103 (+313B gzip measured on main, 47925B
+// -> 48238B): a partial response re-runs a route's handler and each loader on
+// its own revalidation decision, so the browser merges handle pushes per run,
+// not per segment bucket (handles/pushed-by.ts mergePartialHandleData), and
+// resolveDeferredHandleValues keeps the pushedBy record aligned. None of it
+// can load lazily: it runs in the commit of every navigation and action.
+// Combined with `prefetch: false` it measured 49816B, so 48.75KB. Expected to come
+// back down when server-only clientUrls() revalidate() lands (about -634B
+// gzip): tighten it then.
+const ROUTER_CHUNK_GZIP_MAX = 48 * 1024 + 768;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

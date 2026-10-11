@@ -200,6 +200,8 @@ export const NamedRoutes = {
   "handlerUse.slotOptOut": "/handler-use/slot-opt-out",
   "handlerUse.threeLayer": "/handler-use/three-layer",
   "hashNavigation.index": "/hash-navigation",
+  "heldHandlesClient.index": "/held-handles-client",
+  heldHandlesServer: "/held-handles-server",
   "hookTests.formAction": "/hook-tests/form-action",
   "hookTests.index": "/hook-tests",
   "hookTests.noLoader": "/hook-tests/no-loader",

@@ -164,17 +164,19 @@ export async function resolveLoaders<TEnv>(
         // key off it.
         ...stampAwaitBeforeFlush(loaderEntry),
         loaderData: deps.wrapLoaderPromise(
-          runInsideLoaderScope(() =>
-            resolveLoaderData(
-              loaderEntry,
-              ctx,
-              ctx.pathname,
-              // The bake key rides for flagged loaders too: ssr:false
-              // bakes at capture regardless of the entry's loading() lane
-              // (loader-cache.ts capture branch) and its HIT-tail seed
-              // overlay needs the same key.
-              bakeLane || loaderEntry.bake === true ? segmentId : null,
-            ),
+          runInsideLoaderScope(
+            () =>
+              resolveLoaderData(
+                loaderEntry,
+                ctx,
+                ctx.pathname,
+                // The bake key rides for flagged loaders too: ssr:false
+                // bakes at capture regardless of the entry's loading() lane
+                // (loader-cache.ts capture branch) and its HIT-tail seed
+                // overlay needs the same key.
+                bakeLane || loaderEntry.bake === true ? segmentId : null,
+              ),
+            loader.$$id,
           ),
           entry,
           segmentId,
@@ -216,13 +218,15 @@ export async function resolveLoaders<TEnv>(
     const { loader } = loaderEntry;
     const segmentId = `${shortCode}D${i}.${loader.$$id}`;
     const wrapped = deps.wrapLoaderPromise(
-      runInsideLoaderScope(() =>
-        resolveLoaderData(
-          loaderEntry,
-          ctx,
-          ctx.pathname,
-          bakeLane || loaderEntry.bake === true ? segmentId : null,
-        ),
+      runInsideLoaderScope(
+        () =>
+          resolveLoaderData(
+            loaderEntry,
+            ctx,
+            ctx.pathname,
+            bakeLane || loaderEntry.bake === true ? segmentId : null,
+          ),
+        loader.$$id,
       ),
       entry,
       segmentId,

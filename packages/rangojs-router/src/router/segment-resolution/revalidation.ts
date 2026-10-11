@@ -271,18 +271,24 @@ export async function resolveLoadersWithRevalidation<TEnv>(
   // (matchPartialWithPprReplay) seeds once its doc record hits.
   const bakeLane = !entryLoadingMasksLoaders(entry.loading);
 
-  const start = (loaderEntry: LoaderEntry, segmentId: string) =>
+  const start = (
+    loaderEntry: LoaderEntry,
+    segmentId: string,
+    loaderId: string,
+  ) =>
     deps.wrapLoaderPromise(
-      runInsideLoaderScope(() =>
-        resolveLoaderData(
-          loaderEntry,
-          ctx,
-          ctx.pathname,
-          // `bake`, not awaitBeforeFlush: a navigation evaluation never
-          // carries awaitBeforeFlush, and an ssr: false loader must pin
-          // here exactly as on the document HIT.
-          bakeLane || loaderEntry.bake === true ? segmentId : null,
-        ),
+      runInsideLoaderScope(
+        () =>
+          resolveLoaderData(
+            loaderEntry,
+            ctx,
+            ctx.pathname,
+            // `bake`, not awaitBeforeFlush: a navigation evaluation never
+            // carries awaitBeforeFlush, and an ssr: false loader must pin
+            // here exactly as on the document HIT.
+            bakeLane || loaderEntry.bake === true ? segmentId : null,
+          ),
+        loaderId,
       ),
       entry,
       segmentId,
@@ -311,12 +317,14 @@ export async function resolveLoadersWithRevalidation<TEnv>(
           belongsToRoute,
           deferred: true,
         };
-        deferredLoaderRuns.set(deferred, () => start(loaderEntry, segmentId));
+        deferredLoaderRuns.set(deferred, () =>
+          start(loaderEntry, segmentId, loader.$$id),
+        );
         return deferred;
       }
       return {
         ...base,
-        loaderData: start(loaderEntry, segmentId),
+        loaderData: start(loaderEntry, segmentId, loader.$$id),
         belongsToRoute,
       };
     },

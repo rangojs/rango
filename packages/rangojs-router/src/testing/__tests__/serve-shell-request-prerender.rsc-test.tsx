@@ -34,6 +34,7 @@ import {
 } from "../../index.rsc.js";
 import { deserializeResult } from "../../cache/segment-codec.js";
 import { shellHarness, source } from "./fixtures/shell-request-data.js";
+import { withoutPushedBy } from "../../handles/pushed-by.js";
 
 const Notes = createHandle<string>();
 
@@ -109,7 +110,7 @@ async function shellHandles(
   }>(result.prelude);
   let handles: ShellRequestHandles["hydration"] = {};
   for await (const data of metadata?.handles ?? []) handles = data;
-  return handles;
+  return withoutPushedBy(handles);
 }
 
 /**

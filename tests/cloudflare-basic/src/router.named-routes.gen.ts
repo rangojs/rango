@@ -61,6 +61,8 @@ export const NamedRoutes = {
   guideSwr: "/guide-swr/:slug",
   guideSwrTrigger: "/guide-swr-trigger/:slug",
   "handlerFirst.index": "/handler-first",
+  "heldHandlesClient.index": "/held-handles-client",
+  heldHandlesServer: "/held-handles-server",
   heldUseCache: "/held-use-cache/:probe",
   heldUseCacheControl: "/held-use-cache/:probe/:op",
   home: "/",

@@ -314,6 +314,8 @@ import { ActionLocationStatePage } from "./pages/action-location-state.js";
 import { renderedBarrierPatterns } from "./pages/rendered-barrier.js";
 import { prefetchTransitionPatterns } from "./pages/prefetch-transition.js";
 import { lateHistoryPatterns } from "./pages/late-history.js";
+import { heldHandlesPatterns } from "./pages/held-handles.js";
+import heldHandlesClientPatterns from "./pages/held-handles.client-urls.js";
 import { heldBoundaryPatterns } from "./pages/held-boundary.js";
 import { peFormStatePatterns } from "./pages/pe-form-state.js";
 import { suspenseCasesPatterns } from "./pages/suspense-cases.js";
@@ -2878,6 +2880,12 @@ export const urlpatterns = urls(
         include("/", prefetchTransitionPatterns, { name: "" }),
         include("/", heldBoundaryPatterns, { name: "" }),
         include("/", lateHistoryPatterns, { name: "" }),
+        // A loader whose rerun an action skips keeps its handle pushes
+        // (#1103): clientUrls() group and the ordinary urls() twin.
+        include("/held-handles-client", heldHandlesClientPatterns, {
+          name: "heldHandlesClient",
+        }),
+        include("/", heldHandlesPatterns, { name: "" }),
         include("/", peFormStatePatterns, { name: "" }),
         include("/", suspenseCasesPatterns, { name: "sc" }),
         // prefetch: false on loader() and loading(): one page per case with
