@@ -194,6 +194,10 @@ function fingerprint(node: Node): string {
         return;
       }
       out.push(entry.type, "(");
+      // A tag sees the raw text: String.raw`\x41` is not String.raw`A`.
+      if (entry.type === "TemplateElement") {
+        out.push(JSON.stringify(entry.value.raw));
+      }
     }
     for (const key of Object.keys(entry)) {
       if (FINGERPRINT_SKIP.has(key)) continue;

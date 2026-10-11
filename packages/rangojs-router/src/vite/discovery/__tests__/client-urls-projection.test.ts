@@ -9,6 +9,7 @@ import {
   resolveClientUrlsSource,
 } from "../client-urls-projection.js";
 import { createDiscoveryState } from "../state.js";
+import type { LoaderDefinition } from "../../../types.js";
 
 const PROJECT_ROOT = "/workspace/app";
 
@@ -243,6 +244,43 @@ describe("discoverClientUrlProjections", () => {
     expect(state.clientUrlProjectionMap).toBe(previous);
     expect(serverMod.clearClientUrlProjections).not.toHaveBeenCalled();
     expect(serverMod.setClientUrlProjection).not.toHaveBeenCalled();
+  });
+
+  it("names the reference and source file when a revalidate() predicate was not hoisted", async () => {
+    const state = createState();
+    const reference = "/src/cart.urls.tsx#default";
+    const source = `${PROJECT_ROOT}/src/cart.urls.tsx`;
+    state.clientUrlSourceByReferenceId.set(reference, source);
+    const previous = new Map([["old#default", projection]]);
+    state.clientUrlProjectionMap = previous;
+    const cartLoader: LoaderDefinition<unknown> = {
+      __brand: "loader",
+      $$id: "loaders#cart",
+    };
+    const unhoisted = clientUrls(({ path, loader, revalidate }) => [
+      path("/cart", HomePage, () => [
+        loader(cartLoader, () => [revalidate(() => false)]),
+      ]),
+    ]);
+    const runner = { import: vi.fn(async () => ({ default: unhoisted })) };
+    const serverMod = createServerModule();
+
+    const failure = await discoverClientUrlProjections(
+      state,
+      { runner },
+      serverMod,
+    ).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    const message = (failure as Error).message;
+    expect(message).toContain(
+      `reference "${reference}" from source "${source}"`,
+    );
+    expect(message).toContain(
+      'revalidate() on loader "loaders#cart" of route "/cart" was not hoisted',
+    );
+    expect(state.clientUrlProjectionMap).toBe(previous);
+    expect(serverMod.calls).toEqual([]);
   });
 
   it("names the reference and source when the SSR runner is unavailable", async () => {

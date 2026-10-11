@@ -284,7 +284,17 @@ export async function discoverClientUrlProjections(
         cause,
       );
     }
-    const projection = projectClientUrlsModule(module, { hoisted: true });
+    let projection: ClientUrlProjection | undefined;
+    try {
+      projection = projectClientUrlsModule(module, { hoisted: true });
+    } catch (cause) {
+      throw projectionError(
+        referenceIds[0],
+        source,
+        cause instanceof Error ? cause.message : String(cause),
+        cause,
+      );
+    }
     if (!projection) {
       throw projectionError(
         referenceIds[0],

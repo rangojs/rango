@@ -207,6 +207,28 @@ export default clientUrls(({ path, loader, revalidate }) => [
     expect(result!.keys).toEqual([plain]);
   });
 
+  it("keys a template's raw text: String.raw`\\x41` and String.raw`A` are different predicates", async () => {
+    const escaped = "() => String.raw`\\x41` === 'A'";
+    const plain = "() => String.raw`A` === 'A'";
+    expect(key(escaped)).not.toBe(key(plain));
+    // An untagged template and a quote style stay format-only.
+    expect(key("() => `a${1}b`")).toBe(key("() => `a${1}b`"));
+    expect(key("() => 'x' === \"x\"")).toBe(key("() => \"x\" === 'x'"));
+
+    const result = await hoist(
+      `${HEAD}export default clientUrls(({ path, loader, revalidate }) => [
+  path("/a", A, () => [
+    loader(A, () => [revalidate(${escaped})]),
+    loader(B, () => [revalidate(${plain})]),
+  ]),
+]);
+`,
+    );
+    expect(result!.keys).toEqual([key(escaped), key(plain)]);
+    expect(result!.module).toContain(escaped);
+    expect(result!.module).toContain(plain);
+  });
+
   it("finds the helper however the builder callback binds it, at any depth", async () => {
     const result =
       await hoist(`${HEAD}export const a = clientUrls(({ layout, path, loader, revalidate: r }) => [
