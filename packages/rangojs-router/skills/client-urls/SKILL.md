@@ -352,6 +352,9 @@ only a segment new to the page is deferred, so a same-route click
 - `intercept()` loaders accept the flag and ignore it, as in `urls()`.
 - With `ssr: false` on a `ppr` group route the flag is ignored (the bake
   lane), as on a server route.
+- Test it with `serveShellRequest` in the Flight project: mount the module
+  itself, and `rangoUseClientTransform()` installs the group's projection
+  (`/testing` → `serve-shell-request.md`, "`clientUrls()` routes").
 
 ## Intercepts
 

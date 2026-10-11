@@ -116,6 +116,34 @@ false })` in a `clientUrls()` definition keeps that loader out of the
 fill } })` and `result.readDeferred()` to test it. See `/loader`, `/route` and
 the design note `docs/design/prefetch-false.md`.
 
+### Added: Flight-project tests serve `clientUrls()` routes
+
+A test in the Flight (`react-server`) Vitest project whose router mounted a
+`clientUrls()` group threw `include() could not resolve the server projection`:
+the group is the default export of a `"use client"` module, a client reference
+there, and only the Vite plugin's route discovery installed its projection.
+`rangoUseClientTransform()` (`@rangojs/router/testing/vitest`) now installs it
+the way discovery does, so `serveShellRequest` and `dispatch` serve the group's
+routes with no setup. Mount the module itself:
+
+```tsx
+import shopUrls from "../src/shop/urls"; // "use client"; export default clientUrls(...)
+
+const router = createRouter().routes(
+  urls(({ include }) => [include("/shop", shopUrls, { name: "shop" })]),
+);
+
+// /shop/product/:id declares loader(ReviewsLoader, { prefetch: false })
+const prefetch = await serveShellRequest(router, "/shop/product/1", {
+  partial: { from: "/shop", prefetch: true },
+});
+expect(await prefetch.readDeferred()).toHaveLength(1);
+```
+
+The Flight project already lists the transform in its `plugins` (see the
+testing skill's `setup.md`); there is nothing to change. The node project
+imports the module as the definition itself and needed nothing before either.
+
 ### Fixed: a navigation you leave before it renders no longer reaches the page you went to
 
 A navigation that is superseded (another click, Back/Forward) ignores its

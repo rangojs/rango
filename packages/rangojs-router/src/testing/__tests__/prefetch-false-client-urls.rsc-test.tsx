@@ -4,9 +4,9 @@
  * runs only them, and the loading() flags around a group stay inert
  * (docs/design/prefetch-false.md, R8 and "`clientUrls()` routes").
  *
- * The group is mounted as an app mounts it: include() receives the client
- * reference of a "use client" module, and its projection is installed under
- * that reference, as discovery installs it.
+ * The group is mounted as an app mounts it: include() receives the default
+ * export of a "use client" module, a client reference here, whose projection
+ * rangoUseClientTransform installed (vitest.rsc.config.ts).
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -28,88 +28,24 @@ import {
 } from "../flight.entry.js";
 import { createLoader, createRouter, urls } from "../../index.rsc.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
-import { clientUrls } from "../../client-urls/client-urls.js";
+import group from "./fixtures/prefetch-false-client-urls.js";
 import {
-  serializeClientUrlPatterns,
-  setClientUrlProjection,
-  type ClientUrlReference,
-} from "../../client-urls/server-projection.js";
-import PrefetchFalseClientUrls from "./fixtures/prefetch-false-client-urls.js";
-
-const runs: Record<string, number> = {};
-const ran = (name: string): number => (runs[name] = (runs[name] ?? 0) + 1);
-const count = (name: string): number => runs[name] ?? 0;
-const resetRuns = (): void => {
-  for (const key of Object.keys(runs)) delete runs[key];
-};
-
-function counted(name: string) {
-  return createLoader(async () => ({ value: `${name}-run-${ran(name)}` }));
-}
+  count,
+  PriceLoader,
+  ran,
+  ReviewsLoader,
+  resetRuns,
+  runs,
+  ShellLoader,
+} from "./fixtures/prefetch-false-client-urls-data.js";
 
 function page(name: string) {
   return (): React.ReactNode => <p>{`${name}-run-${ran(name)}`}</p>;
 }
 
-const PriceLoader = counted("price");
-const ReviewsLoader = counted("reviews");
-const ItemLoader = counted("item");
-const ShellLoader = counted("cu-shell");
-const DetailLoader = counted("detail");
-const ModalLoader = counted("modal");
-const AboveLoader = counted("above-loader");
-
-function CuHome(): null {
-  return null;
-}
-function CuLoaderPage(): null {
-  return null;
-}
-function CuItem(): null {
-  return null;
-}
-function CuLayout(): null {
-  return null;
-}
-function CuInLayout(): null {
-  return null;
-}
-function CuDetail(): null {
-  return null;
-}
-function CuModal(): null {
-  return null;
-}
-
-const definition = clientUrls(
-  ({ path, layout, loader, loading, intercept }) => [
-    path("/", CuHome, { name: "index" }),
-    path("/loader", CuLoaderPage, { name: "loader" }, () => [
-      loader(PriceLoader),
-      loader(ReviewsLoader, { prefetch: false }),
-      loading("cu-loading"),
-    ]),
-    path("/item/:id", CuItem, { name: "item" }, () => [
-      loader(ItemLoader, { prefetch: false }),
-    ]),
-    layout(CuLayout, () => [
-      loader(ShellLoader, { prefetch: false }),
-      path("/in-layout", CuInLayout, { name: "inLayout" }),
-    ]),
-    path("/detail/:id", CuDetail, { name: "detail" }, () => [
-      loader(DetailLoader),
-    ]),
-    intercept("@modal", ".detail", CuModal, () => [
-      loader(ModalLoader, { prefetch: false }),
-    ]),
-  ],
-);
-
-// On the server this import is a client reference (rangoUseClientTransform).
-// include() is typed for the definition it stands for, as in an app.
-const reference = PrefetchFalseClientUrls as unknown as ClientUrlReference;
-setClientUrlProjection(reference, serializeClientUrlPatterns(definition));
-const group = reference as unknown as typeof definition;
+const AboveLoader = createLoader(async () => ({
+  value: `above-loader-run-${ran("above-loader")}`,
+}));
 
 const errors: string[] = [];
 

@@ -346,6 +346,27 @@ export function serializeClientUrlPatterns(
   });
 }
 
+/**
+ * The projection of a clientUrls() module from its namespace, or undefined
+ * when its default export is not a clientUrls() definition. Discovery
+ * (vite/discovery/client-urls-projection.ts) and the testing "use client"
+ * transform (testing/internal/client-urls-projection.ts) both project a
+ * module through it.
+ */
+export function projectClientUrlsModule(
+  namespace: Readonly<Record<string, unknown>>,
+): ClientUrlProjection | undefined {
+  const definition = namespace.default;
+  if (
+    (typeof definition !== "object" && typeof definition !== "function") ||
+    definition === null ||
+    (definition as { __brand?: unknown }).__brand !== "client-urls"
+  ) {
+    return undefined;
+  }
+  return serializeClientUrlPatterns(definition as ClientUrlPatterns);
+}
+
 export function isClientUrlPatterns(
   value: unknown,
 ): value is ClientUrlPatterns {
@@ -719,7 +740,8 @@ export function clientUrlIncludePatterns(
       throw new Error(
         `include() could not resolve the server projection for clientUrls() module "${id}". ` +
           'The definition must be the default export of a "use client" module so the ' +
-          "Vite discovery pass can project it; in unit tests pass the clientUrls() object directly.",
+          "Vite discovery pass can project it; in a Vitest project, rangoUseClientTransform() " +
+          "from @rangojs/router/testing/vitest projects it.",
       );
     }
     return materializeRouteItems(source, projection, helpers);

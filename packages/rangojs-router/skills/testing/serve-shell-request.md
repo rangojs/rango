@@ -275,6 +275,27 @@ expect(await fill.readDeferred()).toEqual([]); // a fill defers nothing
 
 `deliveredIds` is the payload's `metadata.matched`, read from `prefetch.flight`. Count the loader's runs in your own fixture: the prefetch ran it zero times, the fill once.
 
+### `clientUrls()` routes
+
+A router that mounts a `clientUrls()` group serves its routes here as in your app. The group is the default export of a `"use client"` module, a client reference in this project, and `rangoUseClientTransform()` ([`./setup.md`](./setup.md)) installs its server projection as the rango plugin's discovery does. Mount the module itself:
+
+```tsx
+import shopUrls from "../src/shop/urls"; // "use client"; export default clientUrls(...)
+
+const router = createRouter().routes(
+  urls(({ include }) => [include("/shop", shopUrls, { name: "shop" })]),
+);
+
+// /shop/product/:id declares loader(PriceLoader) and
+// loader(ReviewsLoader, { prefetch: false }).
+const prefetch = await serveShellRequest(router, "/shop/product/1", {
+  partial: { from: "/shop", segments: held, prefetch: true },
+});
+expect(await prefetch.readDeferred()).toHaveLength(1); // ReviewsLoader's segment
+```
+
+`held` is the `metadata.matched` of a navigation to `/shop`. On a group route only a loader's own flag defers (the group's, and a server layout's above the group); a flagged `loading()` defers nothing there. Loaders inside the group's `intercept()` ignore the flag, as in `urls()`. `dispatch` matches the group's routes through the same projection.
+
 ## Warming a route: router.prerender()
 
 `router.prerender()` warms a route that is not `Prerender(..., { onDemand })`

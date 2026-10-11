@@ -328,9 +328,11 @@ export default defineConfig({
   // Applies the "use client" transform so renderServerTree resolves client
   // islands from a server tree's own imports — no clientComponents to pass.
   // Server components are untouched (renderToFlightString of leaf trees is
-  // unaffected). Omit it only if you don't use renderServerTree. The
-  // injected registerClientReference import is resolved from this package's
-  // @vitejs/plugin-rsc — the consumer does not need a direct plugin-rsc dep.
+  // unaffected). It also installs the server projection of a "use client"
+  // clientUrls() module, so a router that mounts the group serves its routes.
+  // Omit it only if you use neither. The injected registerClientReference
+  // import is resolved from this package's @vitejs/plugin-rsc — the consumer
+  // does not need a direct plugin-rsc dep.
   // rangoUseCacheTransform wraps "use cache" functions as the rango plugin does
   // in dev (it transforms only its rsc environment; Vitest's is ssr).
   plugins: [rangoUseClientTransform(), rangoUseCacheTransform()],
@@ -1415,6 +1417,20 @@ A HIT runs no handler: it replays the handler output the capture baked. Count
 a handler's runs across the MISS and the HITs after it to pin that; only a
 loader under `loading()` runs again.
 
+#### `clientUrls()` routes
+
+A router that mounts a `clientUrls()` group serves its routes here too. Mount
+the `"use client"` module itself (`include("/shop", shopUrls)` or
+`.routes(shopUrls)`): in this project its default export is a client
+reference, and `rangoUseClientTransform()` installs the group's server
+projection as the rango plugin's discovery does in your app, through the same
+projection step and into the registry `include()` materializes from. Without
+the transform the include throws `could not resolve the server projection`.
+`dispatch` matches the group's routes through the same projection. A group
+route's `loader(Def, { prefetch: false })` is tested as on a server route
+(`partial: { prefetch: true }`, then the fill); the testing skill's
+`serve-shell-request.md` has the recipe.
+
 #### A form submitted before hydration
 
 `serveShellRequest(router, url, { form })` POSTs the form a browser sends before
@@ -1690,7 +1706,7 @@ resetShellTestState(): Promise<void>; // beforeEach: capture backoff/guards + CF
 findClientBoundaries(tree, selector?: string | { name?, testId?, props?, where? }): ClientBoundary[]; // {id,name,props,children,element}[] (props excludes children); [] if none
 findElements(tree, selector?: string | { tag?, testId?, props?, text?, where? }): FoundElement[]; // server/host elements {tag,props,children,text,element}[]
 textContent(node): string; // concatenated subtree text (use instead of JSON.stringify(tree).toContain)
-rangoUseClientTransform(); // Vite plugin for vitest.rsc.config.ts -> auto-discover islands
+rangoUseClientTransform(); // Vite plugin for vitest.rsc.config.ts -> auto-discover islands, project clientUrls() modules
 rangoUseCacheTransform(); // Vite plugin for vitest.rsc.config.ts -> wrap "use cache" functions (dev ids)
 // react-server vitest project MUST also alias @rangojs/router -> index.rsc.ts (rangoTestAliases) or a
 // handler/component reading getRequestContext()/cookies() hits the throwing stub (tree: undefined).
