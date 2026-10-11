@@ -2,6 +2,130 @@
 
 ## Unreleased
 
+### Breaking: a `clientUrls()` loader's `revalidate()` runs on the server, with the same arguments as in `urls()`
+
+**Before.** A `revalidate()` predicate in a `clientUrls()` group ran in the
+browser, before the request went out, and sent its verdict to the server in an
+`X-Rango-Client-Reval` header. It saw only the URLs, the params, `isAction()`
+and `actionId`. It could not read an action's result or form data, or anything
+the server had set on the request. A prefetched in-group navigation ignored it,
+because a prefetch carried no verdicts.
+
+**Now.** The build moves the predicate out of the `"use client"` module, and it
+runs on the server in the same code as a `urls()` loader's (`evaluateRevalidation`),
+with the same argument object and type (`ShouldRevalidateFn` from
+`@rangojs/router`): `currentParams`, `currentUrl`, `nextParams`, `nextUrl`,
+`defaultShouldRevalidate`, `context` (so `context.get(var)` works),
+`segmentType`, `actionId`, `isAction(...refs)`, `actionUrl`, `actionResult`,
+`formData`, `method`, the route names and `stale`. Nothing runs in the browser
+before the request, and the request carries no client-computed decision.
+
+```tsx
+// Before: in the browser, URLs / params / isAction / actionId only
+revalidate(({ isAction }) => isAction(checkout));
+
+// After: on the server, the full urls() argument
+revalidate((ctx) =>
+  ctx.isAction(checkout) ? ctx.actionResult?.ok === true : undefined,
+);
+```
+
+What to change:
+
+- **Write the predicate inline, or import it, and reference imports and globals
+  only.** An inline arrow, an imported predicate (`revalidate(isCartAction)`), a
+  namespace member (`P.cart`) and a call of an imported factory
+  (`makePredicate("cart")`) all work, as do globals such as `URL` and
+  `import.meta.env`.
+- **Move a predicate declared in the `"use client"` module** (a `const` next to
+  the group) into its own module without `"use client"` and import it. The build
+  names the file, line and column (`[rango] clientUrls() revalidate() at
+<file>:<line>:<col>: revalidate() runs on the server; ...`). The same error
+  covers a predicate that captures a binding of an enclosing function (read it
+  from the predicate's argument), uses `this`, `arguments`, `import()` or
+  `import.meta` other than `import.meta.env`, is `async` or a generator, takes a
+  spread, a second argument or no argument, is not a function, or imports
+  `client-only` or a module whose directive is `"use client"` (on the server its
+  exports are client references). A `"use server"` import is fine: on the
+  server it is the real action, which `isAction(ref)` matches.
+- **Read values from the argument, not from browser state.** `window`,
+  `document`, `navigator`, `localStorage`, `sessionStorage`, `location` and
+  `history` are build errors in a predicate. Put the input on the request (a
+  cookie or a search param) and read it from the argument, or refresh the
+  loader with `useRefreshLoaders`.
+- **Replace the removed types.** `ClientRevalidateArgs` and `ClientRevalidateFn`
+  are gone from `@rangojs/router/client`; use `RevalidateParams` or
+  `ShouldRevalidateFn` from `@rangojs/router` (a type-only import is fine in a
+  `"use client"` file).
+- **In tests, replace `runClientRevalidate` with `await runRevalidate(...)`**
+  from `@rangojs/router/testing` (`RunClientRevalidateOptions` is gone;
+  `RunRevalidateOptions` replaces it, see below). It runs the predicate through
+  the production `evaluateRevalidation` and serves `urls()` and `clientUrls()`
+  predicates alike. Vitest does not run the build plugin, so in a unit test the
+  predicate stays a plain function. In the Flight project,
+  `rangoUseClientTransform()` registers the plain predicates of a mounted
+  group on the server, so a `serveShellRequest` navigation or action runs them
+  there, as in your app.
+
+Notes:
+
+- `currentParams` and `nextParams` are the server's route params, which include
+  the `include()` mount's params. They used to be the definition-local params.
+- `actionId` is the server's `src/...#export` form, no longer the browser's
+  hashed id. Match actions with `isAction(ref)`, which is unchanged.
+- Document requests and no-JS form posts hold no segments, so every loader still
+  renders whatever a predicate says. On the action-triggered refetch GET,
+  `isAction()` is false, as for `urls()`.
+- A browser from before the deploy may still send `X-Rango-Client-Reval`; the
+  server ignores it.
+- A `server-only` or `node:` import in a predicate module works on the server, but
+  the import also stays in the `"use client"` module, which is not pruned for the
+  browser, so it must still load there as before.
+- `intercept()` loaders inside `clientUrls()` still do not apply their
+  `revalidate()`.
+- The `vite-rsc-demo` `productData` predicate moved from its `"use client"`
+  module to `tests/vite-rsc-demo/src/urls/client-shop.predicates.ts`, as the
+  example.
+
+What you gain:
+
+- **The action's `actionResult` and `formData`, `context.get()`, `method` and the
+  route names.** A group can re-run a loader only when the action succeeded.
+- **A prefetched in-group navigation honours the predicate.** The server runs it
+  for the prefetch like any other request; a stale back/forward revalidation
+  sees `stale: true`.
+- **The browser no longer runs predicates before every in-group request**, and
+  its copy of the group keeps a key in place of each predicate, so the evaluator
+  and the predicate bodies are out of the client bundle.
+
+`runRevalidate(fn | fn[], opts?)` takes `currentUrl`, `nextUrl`, `currentParams`,
+`nextParams`, `action` (an imported action, an action id string, or `{ ref,
+result, formData, url }`), `method`, `segmentType`, `belongsToRoute`, `stale`,
+`routeName`, `fromRouteName`, `env`, `vars` (what a middleware would have set,
+for `context.get()`) and `context`. Outside a built app an imported action has
+no `$id`: pass the id string, or stamp `$id` on the function in the test.
+
+```ts
+import { runRevalidate } from "@rangojs/router/testing";
+
+expect(
+  await runRevalidate(onCheckoutOk, {
+    action: { ref: "src/actions/cart.ts#checkout", result: { ok: true } },
+  }),
+).toBe(true);
+```
+
+### Added: `serveShellRequest({ action })` sends the request a JS server action call makes
+
+`serveShellRequest(router, url, { action: { ref, id, args, segments } })` from
+`@rangojs/router/testing/flight` POSTs what the browser posts when the page at
+`url` calls a server action: `args` encoded as the browser encodes them, with
+`?_rsc_action`, the `rsc-action` header, `X-RSC-Router-Client-Path` and
+`_rsc_segments` (the segment ids the page holds). `ref` is registered under `id`
+(`<module id>#<export name>`). It is how a test reaches the revalidation that
+follows an action, `actionResult` and `formData` included, through the real
+handler. It cannot be combined with `partial` or `form`.
+
 ### Added: `prefetch: false` on `loader()` and `loading()` keeps expensive work out of prefetches
 
 A prefetch renders everything a click would: every handler and every loader.

@@ -1121,6 +1121,11 @@ should not be treated as equivalent.
 ## Revalidation Contract
 
 - Revalidation is segment-scoped and opt-in by rules (`revalidate(...)`).
+- `clientUrls()` loader predicates are hoisted to the server by the build
+  (`vite/plugins/client-urls-revalidate-hoist.ts`) and evaluated by
+  `evaluateRevalidation` like any loader's, with the `urls()` arguments; no
+  client-supplied decision exists. Pinned by semantic-matrix row R2
+  (`e2e/semantic-matrix.test.ts`).
 - Default decisions during action revalidation (no `revalidate()` configured;
   seeds for user predicates — see `evaluateRevalidation` in
   `router/revalidation.ts`):

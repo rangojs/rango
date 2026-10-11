@@ -438,7 +438,7 @@ That narrower contract avoids a second loader cache or navigation protocol, and
 it keeps the DSL inside `clientUrls()` small: named client components,
 `path`/`layout`/`loader`/`loading`, a restricted `intercept()` (no `when`
 selector), a `transition()` that takes ViewTransition classes,
-`viewTransition` and a browser-run `when`, a browser-run per-loader `revalidate()`, and the `name`,
+`viewTransition` and a browser-run `when`, a per-loader `revalidate()` that the build moves to the server, and the `name`,
 `search`, `trailingSlash`, and `ppr` path options. The `include()` that mounts
 the group in the canonical `urls()` tree supplies URL/name prefixes and the
 surrounding RSC layouts, middleware scope, and boundaries; `middleware()`,
@@ -483,7 +483,7 @@ const { tree, headers } = await renderHandler(ProductPage, {
 expect(findElements(tree, { tag: "h1" })[0].text).toContain("Widget");
 ```
 
-`runLoader`, `runMiddleware`, `runTransitionWhen`, `runClientRevalidate`,
+`runLoader`, `runMiddleware`, `runTransitionWhen`, `runRevalidate`,
 `dispatch`, `renderRoute`, `serveShellRequest`, and the Flight renderers cover the tiers below e2e; the repo's own rule is that if a feature
 cannot be tested through these primitives, the primitive gets extended in the
 same PR. What we use to test the router is what you get to test your app.

@@ -252,20 +252,20 @@ export const urlpatterns = urls(({ include, layout, middleware }) => [
 Middleware and layout handlers ride DIFFERENT schedules, and conflating them
 is the common misread:
 
-| Runs on…                   | Hard load | Within-group navigation                         | Nav with all loaders held               | Action                                     |
-| -------------------------- | --------- | ----------------------------------------------- | --------------------------------------- | ------------------------------------------ |
-| `AdminRscLayout` handler   | yes       | no — its segment HOLDS (partial rendering)      | no                                      | no by default (`action:parent-chain-skip`) |
-| `requireAdmin` middleware  | yes       | **yes — every canonical request**               | **yes**                                 | yes (wraps the revalidation render)        |
-| Group loaders              | yes       | per-loader `revalidate()` decision              | skipped (the decision crossed the wire) | per-loader decision (`isAction`)           |
-| Optimistic loading/pending | n/a       | renders BEFORE the response — presentation only | same                                    | n/a                                        |
+| Runs on…                   | Hard load | Within-group navigation                         | Nav with all loaders held              | Action                                      |
+| -------------------------- | --------- | ----------------------------------------------- | -------------------------------------- | ------------------------------------------- |
+| `AdminRscLayout` handler   | yes       | no — its segment HOLDS (partial rendering)      | no                                     | no by default (`action:parent-chain-skip`)  |
+| `requireAdmin` middleware  | yes       | **yes — every canonical request**               | **yes**                                | yes (wraps the revalidation render)         |
+| Group loaders              | yes       | per-loader `revalidate()`, run on the server    | skipped (their `revalidate()` said so) | per-loader `revalidate()` (`isAction(ref)`) |
+| Optimistic loading/pending | n/a       | renders BEFORE the response — presentation only | same                                   | n/a                                         |
 
 Two consequences worth stating plainly:
 
 - **Middleware does NOT run "on first encounter" only.** Every navigation
   inside the group — including a tab/param switch whose loaders all hold —
   still sends the canonical partial Flight request (that request is what
-  commits URL, history, and content, and it carries the client revalidation
-  DECISIONS). Middleware in the matched chain wraps every one of those
+  commits URL, history, and content, and the server runs each group loader's
+  `revalidate()` while it handles it). Middleware in the matched chain wraps every one of those
   requests, so `requireAdmin` re-authorizes each navigation and its
   `ctx.set()` variables are fresh for the group's loaders on every pass. The
   instant feel comes from held data and optimistic presentation, not from
@@ -442,8 +442,8 @@ global map entirely.
 
 - `path()`, `layout()`, `loader()`, `loading()`, a restricted `intercept()`,
   a `transition()` (ViewTransition classes/name, `viewTransition`, and a
-  browser-run `when`), and a client-run per-loader `revalidate()`
-  inside `clientUrls()`;
+  browser-run `when`), and a per-loader `revalidate()` inside `clientUrls()`
+  that the build moves to the server;
 - named client component values for paths, layouts, and intercepts;
 - mounting through `include()` in the canonical `urls()` tree, with URL and
   route-name prefixes, wrapping RSC layouts, and prefix-scoped middleware
@@ -493,28 +493,115 @@ config is present.
 
 `revalidate(fn)` is valid inside a `loader()` use callback only —
 `loader(SessionLoader, () => [revalidate(fn)])` — and gives each loader its
-OWN revalidation decision instead of the route-level batch. The predicate is
-declared in the `"use client"` module, so it never crosses the projection
-boundary: it EXECUTES IN THE BROWSER before the partial or action request,
-with a client-computable subset of the server args (`currentUrl`, `nextUrl`,
-`currentParams`, `nextParams`, `defaultShouldRevalidate`, `stale`,
-`isAction`, `actionId`), and only its DECISION crosses — an
-`X-Rango-Client-Reval` header carrying skip/force loader ids. `isAction` is
-the same callable matcher as on the server (`isAction()`, `isAction(fn)`,
-`isAction(import * as Actions)`, `isAction({ a, b })`) — not a boolean —
-and matches against `actionId` via the action stub's `$id ?? $$id`
-(hashed `$$id` in production browsers — not a file-path substring). On the
-server, every materialized loader stub has a
-synthesized per-loader `revalidate()` that honors a decision addressed to
-its id and otherwise applies the locked default; requests that carry no
-decisions (no-JS, PE, prefetch, document loads) always get the defaults,
-and decisions can only address client-urls stubs — server-tree loaders
-never see the header. Trust model: same class as `_rsc_segments` — a
-decision only makes the client's own view staler or fresher, never bypasses
-middleware or authorization. Pinned dev+prod in `e2e/client-urls.test.ts`:
-after an action, one loader of the group refreshes while a sibling with
-`isAction() ? false : defaultShouldRevalidate` keeps its held value in the
-same commit; `isAction(target)` vs `isAction(* as Actions)` pin identity.
+OWN revalidation decision instead of the route-level batch. The predicate
+runs ONLY ON THE SERVER, with the same argument object and type as a
+`urls()` loader's (`ShouldRevalidateFn` from `@rangojs/router`):
+`currentParams`, `currentUrl`, `nextParams`, `nextUrl`,
+`defaultShouldRevalidate`, `context` (the server handler context, so
+`context.get(var)` works), `segmentType` (`"loader"`), `actionId`,
+`isAction(...refs)`, `actionUrl`, `actionResult`, `formData`, `method`,
+`routeName` / `fromRouteName` / `toRouteName`, and `stale`. It runs inside
+`evaluateRevalidation` (`src/router/revalidation.ts`), the code `urls()`
+predicates run in. Nothing runs in the browser before the request, and the
+request carries no client-computed decision: there is no hybrid, and
+`X-Rango-Client-Reval` no longer exists (a browser from before the deploy
+may still send it; the server ignores it).
+
+The predicate is written in the `"use client"` module, so the build moves it.
+The rango Vite plugin (`src/vite/plugins/client-urls-revalidate-hoist.ts`)
+hoists each `revalidate()` argument into a server-only virtual module
+`<file>?rango-revalidate`. The browser and SSR copies of the group keep a
+marker, `{ $$rangoRevalidate: "<key>" }` (`client-urls/hoisted-revalidate.ts`);
+the key hashes the project-relative file and the predicate's syntax tree
+(formatting, comments, parentheses and TypeScript excluded, so the React
+Compiler re-printing the client copy keeps it). plugin-rsc turns the RSC copy
+of a `"use client"` module into client-reference proxies, so a post transform
+appends `import "<file>?rango-revalidate"` to it: the predicates register
+(`registerClientUrlRevalidators`, `client-urls/revalidate-registry.ts`) when
+the group's module loads on the server, and a lazy `include()` stays lazy.
+Route discovery serializes the SSR copy, so the projection carries a
+per-loader key (`loaderRevalidate`); materialization
+(`client-urls/server-projection.ts`) attaches the registered predicate to
+the loader stub. A key with no registration fails loudly at materialization,
+naming the loader, route and module. The scope and capture analysis is shared
+with the `transition({ when })` hoist (`src/vite/plugins/hoist/scope.ts`,
+`hoist/literal.ts`).
+
+What the argument may be, and what the build rejects (every error names
+`file:line:column` and starts `[rango] clientUrls() revalidate() at ...:
+revalidate() runs on the server; ...`):
+
+- **Accepted:** an inline arrow or function expression, an imported
+  predicate (`revalidate(isCartAction)`), a namespace member (`P.cart`), a
+  call of an imported factory (`makePredicate("cart")`). The argument may
+  reference imports and globals only (`URL`, `Boolean`, `import.meta.env`).
+- **A binding declared in the same `"use client"` module:** move the
+  predicate to its own module without `"use client"` and import it, or write
+  it inline. (The `vite-rsc-demo` `productData` predicate lives in
+  `tests/vite-rsc-demo/src/urls/client-shop.predicates.ts` for this reason.)
+- **A binding of an enclosing function:** read it from the predicate's
+  argument.
+- **`this`, `arguments`, `super`, `new.target`; `import()`; `import.meta`
+  other than `import.meta.env`.**
+- **A browser-only global** (`window`, `document`, `navigator`,
+  `localStorage`, `sessionStorage`, `location`, `history`): put the input on
+  the request (a cookie or a search param) and read it from the argument, or
+  refresh with `useRefreshLoaders`.
+- **An `async` or generator function; a spread, a second argument, or no
+  argument; a non-function value** (an object, array or string literal).
+- **An import of `client-only`, or of a module whose directive prologue is
+  `"use client"`:** on the server its exports are client references. A
+  `"use server"` import is fine (on the server it is the real action, which
+  `isAction(ref)` matches). `server-only` and `node:` imports work on the
+  server, but the import also stays in the `"use client"` module (imports are
+  not pruned from the browser bundle), so it must still load in the browser.
+
+Vitest does not run the plugin, so in unit tests the predicate stays a plain
+function; test it with `runRevalidate` from `@rangojs/router/testing`, which
+serves `urls()` and `clientUrls()` predicates alike.
+
+Behaviour per request:
+
+| Request                           | The predicate sees                                                                                                      | Default when it defers             |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| JS action POST                    | `method: "POST"`, `actionId`, `actionResult` (the return value), `formData` (the last `FormData` argument), `actionUrl` | true                               |
+| In-group navigation GET           | the two URLs and param sets                                                                                             | true when params or search changed |
+| Prefetch partial                  | as a navigation: a prefetched in-group navigation honours the predicate                                                 | as a navigation                    |
+| Stale back/forward revalidation   | `stale: true`                                                                                                           | as a navigation                    |
+| Action-triggered refetch GET      | `isAction()` is false on that GET, as for `urls()`                                                                      | as a navigation                    |
+| Document request, no-JS form post | not called: these hold no segments, so every loader renders (first-render guarantee)                                    | renders                            |
+
+`currentParams` and `nextParams` are the server's route params, which include
+the `include()` mount's params. `actionId` is the server's
+`src/...#export` form, so `isAction(ref)` matches the action that ran. The
+optimistic destination swap (`client-urls/client-root.tsx`) is unchanged: it
+never read a verdict. Because `actionResult` is visible, a group can decide on
+what the action returned:
+
+```tsx
+loader(CheckoutLoader, () => [
+  revalidate((ctx) =>
+    ctx.isAction(checkout) ? ctx.actionResult?.ok === true : undefined,
+  ),
+]);
+```
+
+`isAction` is the same callable matcher as on a `urls()` loader
+(`isAction()`, `isAction(fn)`, `isAction(import * as Actions)`,
+`isAction({ a, b })`) — not a boolean. On the server, every materialized
+loader stub has a `revalidate()` that runs the predicate chain and otherwise
+applies the locked default. Trust model: the verdict is computed on the
+server from the request it received, like every `urls()` predicate; the
+client's `_rsc_segments` still only tells the server what it holds, and a
+predicate never bypasses middleware or authorization. Pinned dev+prod in
+`e2e/client-urls.test.ts` (after an action, one loader of the group
+refreshes while a sibling with `revalidate(() => false)` keeps its held value
+in the same commit; `isAction(target)` vs `isAction(* as Actions)` pin
+identity; an `actionResult` predicate, a `formData` predicate, and a
+prefetched param navigation) and in `semantic-matrix.test.ts` row R2.
+
+`intercept()` loaders inside `clientUrls()` do not apply their `revalidate()`
+yet (a known gap, left for a follow-up), so do not rely on it there.
 
 `loader(Def, { ssr: false }, use?)` is the SSR-completeness opt-in.
 By default every loader streams on every render, so nothing a slow loader
@@ -576,8 +663,11 @@ Composition limits around a client include, locked explicitly:
 - `parallel()` slots are handler-valued, so a client include is structurally
   unrepresentable inside one; parallel routes attach to server routes only.
 - Canonical revalidation of a committed page follows ordinary server
-  semantics; the group's loaders participate per-loader through client-run
-  `revalidate()` decisions (see Supported surface). Segment-level
+  semantics; the group's loaders participate per-loader through
+  server-run `revalidate()` predicates, hoisted out of the `"use client"`
+  module by the build (see Supported surface). Predicate functions never cross
+  the projection boundary at runtime: the browser and SSR copies hold a key and
+  the server holds the function. Segment-level
   `revalidate()` on the surrounding server tree is unaffected by the group.
 - Intercepts come in TWO declaration forms, split by the projection boundary:
   1. **Server-declared** (a wrapping layout or route in the server tree) — the

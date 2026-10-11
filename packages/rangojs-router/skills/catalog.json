@@ -35,7 +35,7 @@
     },
     {
       "name": "client-urls",
-      "description": "Define client-component route groups with clientUrls() in a \"use client\" module — no handlers, useLoader at read sites, client-run revalidate predicates, loader-thrown notFound/redirect, loader handle writes, and the ssr:false SSR-completeness opt-in. Use when a route group's pages are client components, when building high-navigation-speed UIs (dashboards, admin panels, settings) where transitions must feel instant, when moving data reads from handler ctx.use() to useLoader at consumption sites, or when asking how routes defined in a \"use client\" file work.",
+      "description": "Define client-component route groups with clientUrls() in a \"use client\" module — no handlers, useLoader at read sites, server-run revalidate predicates, loader-thrown notFound/redirect, loader handle writes, and the ssr:false SSR-completeness opt-in. Use when a route group's pages are client components, when building high-navigation-speed UIs (dashboards, admin panels, settings) where transitions must feel instant, when moving data reads from handler ctx.use() to useLoader at consumption sites, or when asking how routes defined in a \"use client\" file work.",
       "argumentHint": "[setup]",
       "path": "skills/client-urls/SKILL.md"
     },

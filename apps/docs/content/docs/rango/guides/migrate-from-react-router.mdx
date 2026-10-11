@@ -26,14 +26,14 @@ Every React Router route lands in one of two Rango shapes. Pick per route group,
 - **Server handlers** (the default in this guide): the route component becomes a server component, and its data fetching merges into the handler. This shape gives the biggest gains (server-first rendering, smaller client bundles) and is the right target whenever the component can become a server component.
 - **`clientUrls()` groups**: for groups whose components are hook-heavy client components, `clientUrls()` keeps the route-module shape. The definition lives in a `"use client"` module, components stay client components, and data comes from `createLoader()` definitions:
 
-| React Router route module          | `clientUrls()`                                                           |
-| ---------------------------------- | ------------------------------------------------------------------------ |
-| component (client, hooks)          | stays a client component                                                 |
-| `loader` (throws `redirect` / 404) | `createLoader()`; thrown `redirect()` / `notFound()` keep working        |
-| `useLoaderData()`                  | `useLoader(Loader)` at the read site, under `<Suspense>`                 |
-| `shouldRevalidate`                 | a `revalidate()` predicate on the loader, which also runs in the browser |
-| `meta({ data })`                   | `ctx.use(Meta)` push from the loader body                                |
-| `defer` / `Await`                  | loaders stream; `<Suspense>` above each read                             |
+| React Router route module          | `clientUrls()`                                                     |
+| ---------------------------------- | ------------------------------------------------------------------ |
+| component (client, hooks)          | stays a client component                                           |
+| `loader` (throws `redirect` / 404) | `createLoader()`; thrown `redirect()` / `notFound()` keep working  |
+| `useLoaderData()`                  | `useLoader(Loader)` at the read site, under `<Suspense>`           |
+| `shouldRevalidate`                 | a `revalidate()` predicate on the loader, which runs on the server |
+| `meta({ data })`                   | `ctx.use(Meta)` push from the loader body                          |
+| `defer` / `Await`                  | loaders stream; `<Suspense>` above each read                       |
 
 Start with server handlers. Reach for `clientUrls()` when converting a group means rewriting interactive components rather than moving data fetching, or for high-frequency navigation surfaces such as dashboards, admin panels, and settings: the definition also matches in the browser, so a navigation shows its pending UI without waiting for the server. A group ported this way can move to server handlers later, route by route. See [Client URL routes](/docs/rango/features/routing#client-url-routes).
 
@@ -434,7 +434,7 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 ]);
 ```
 
-RR7's `shouldRevalidate` controls client-side loader re-fetching. Rango's `revalidate()` controls which segments and loaders re-run on the server during partial rendering after navigation or actions; in a `clientUrls()` group, a loader's `revalidate()` predicate runs in the browser instead. The intent is the same — skip unnecessary work. To react to one specific action, match it by reference with `ctx.isAction(updateProfile)` rather than comparing `actionId` strings. See [Choosing what revalidates](/docs/rango/guides/server-actions#choosing-what-revalidates).
+RR7's `shouldRevalidate` controls client-side loader re-fetching. Rango's `revalidate()` controls which segments and loaders re-run on the server during partial rendering after navigation or actions; in a `clientUrls()` group, a loader's `revalidate()` predicate runs there too, with the same arguments as in `urls()`. The intent is the same — skip unnecessary work. To react to one specific action, match it by reference with `ctx.isAction(updateProfile)` rather than comparing `actionId` strings. See [Choosing what revalidates](/docs/rango/guides/server-actions#choosing-what-revalidates).
 
 ## Step 4: Route protection
 

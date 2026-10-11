@@ -48,34 +48,34 @@ Both are made structural by `parityDescribe` and `expectParity`, below.
 
 ## The testing surface, mapped to the API
 
-| You ship / consume…                                    | Test that…                                                                          | Layer               | Primitive                                                                                                      | Skill                                    |
-| ------------------------------------------------------ | ----------------------------------------------------------------------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| `reverse` / `useReverse` / `href`                      | the URL is correct; misuse fails to compile                                         | unit + types        | call directly; `@ts-expect-error`                                                                              | `/typesafety`, `/links`                  |
-| a `loader()` body                                      | data logic given params/env/vars/search                                             | unit (node)         | `runLoader` (handle or raw fn)                                                                                 | `/loader`                                |
-| a loader's cookie / header / redirect output           | `Set-Cookie`, response headers, `throw redirect()` (auth loaders)                   | unit (node)         | `runLoaderResult` (envelope: `{ result, thrown, response, cookies, headers, locationState, stateCookieName }`) | `/loader`                                |
-| `middleware()` (auth, logging)                         | ordering, short-circuit, cookie/header merge                                        | unit (node)         | `runMiddleware`                                                                                                | `/middleware`                            |
-| a client component reading router context              | it renders given params/loaderData/Outlet                                           | unit (DOM)          | `renderRoute`                                                                                                  | `/hooks`                                 |
-| a component reading `useLocationState`                 | it renders the seeded location-state value                                          | unit (DOM)          | `renderRoute` (`locationState` option)                                                                         | `/hooks`                                 |
-| a client component's hydration                         | its first client render matches its own server HTML (no recoverable error)          | unit (DOM)          | `renderRoute` (`hydrate` option)                                                                               | `/hooks`                                 |
-| a component reading `useHandle` (Breadcrumbs)          | it renders the seeded handle output                                                 | unit (DOM)          | `renderRoute` (`handles` option)                                                                               | `/breadcrumbs`                           |
-| a handle's `collect`/accumulator                       | it maps per-segment pushes to the accumulated value                                 | unit (node)         | `collectHandle`                                                                                                | `/breadcrumbs`                           |
-| a component under an `include('/shop', …)` mount       | `useMount`/`useHref`/`useReverse` resolve the prefix                                | unit (DOM)          | `renderRoute` (`mount` option)                                                                                 | `/composability`                         |
-| a server action's cookie / header / flash output       | `Set-Cookie`, response headers, flash — even on `throw redirect()`                  | unit (node)         | `runInRequestContext` (`{ result, thrown, response, cookies, headers, locationState, stateCookieName }`)       | `/server-actions`                        |
-| a response route (`path.json/.text/...`)               | status, content-type, body, content negotiation                                     | integration         | `dispatch`                                                                                                     | `/response-routes`, `/mime-routes`       |
-| a redirect / `404` / middleware redirect               | the `Response` (status + `Location`)                                                | integration         | `dispatch`                                                                                                     | `/middleware`, `/route`                  |
-| a Server Component's Flight render (default)           | rendered props/host content, typed boundary props (`Date`/`Map`), inlined-vs-island | RSC unit            | `renderServerTree` + `findClientBoundaries`/`findElements`                                                     | `/route`                                 |
-| the exact Flight **wire payload** shape (niche)        | serializer row framing / a drift snapshot                                           | RSC unit            | `renderToFlightString` + `toMatchFlightSnapshot`                                                               | `/route`                                 |
-| a real route **handler** `(ctx) => rsc`                | what it renders given params/loaders/vars; its effects                              | RSC unit            | `renderHandler` (seeded `HandlerContext`)                                                                      | `/route`                                 |
-| `transition({ when })` / `clientUrls()` `revalidate()` | the navigation holds / the loader re-runs, given `from`/`to` or URLs and params     | unit (node)         | `runTransitionWhen` / `runClientRevalidate`                                                                    | `/view-transitions`, `/client-urls`      |
-| a `"use server"` action + revalidation flow            | the mutate -> reload -> UI update, JS and no-JS                                     | e2e                 | `parityDescribe` + `expectParity`                                                                              | `/server-actions`                        |
-| navigation / hydration / view transitions              | no reload, no page error, correct pathname                                          | e2e                 | `parityDescribe`, `waitForHydration`, matchers                                                                 | `/hooks`, `/view-transitions`            |
-| a `"use cache"` function                               | hit/miss: the body runs once across two calls; the value round-trips                | RSC unit            | `renderHandler`/`runLoader` + seeded `cacheStore` + `rangoUseCacheTransform()` (rsc project)                   | `/use-cache`                             |
-| a loader's own `cache()`                               | hit/miss; `updateTag()` of a tag its body recorded drops the entry                  | RSC unit            | `runLoader` + `cache` + seeded `cacheStore` (rsc project)                                                      | `/loader`, `/caching`                    |
-| `cache()` / loader cache / `"use cache"` stale         | hit/miss/stale across two requests                                                  | e2e + signal        | `assertCacheStatus` / telemetry sink                                                                           | `/caching`, `/use-cache`, `/cache-guide` |
-| `Prerender(...)` routes                                | served from a build-time artifact (a cache hit)                                     | e2e (prod) + signal | `assertCacheStatus(..., "prerendered")`                                                                        | `/prerender`                             |
-| `ppr` shell (axis 2)                                   | MISS -> capture -> HIT: the frozen shell vs the live tail; tag eviction; replay     | RSC unit            | `serveShellRequest` (HTML step stubbed)                                                                        | `/ppr`                                   |
-| `ppr` shell (axis 2) in real HTML                      | document HIT/MISS; partial fresh/stale replay or bounded bypass                     | e2e + signal / unit | `assertShellStatus` / `assertPprReplayStatus` / `shellCacheKey` + `MemorySegmentCacheStore`                    | `/ppr`                                   |
-| the generated `*.named-routes.gen.ts`                  | it matches the runtime route map (drift in CI)                                      | unit (node)         | `assertGeneratedRoutesMatch`                                                                                   | `/typesafety`                            |
+| You ship / consume…                              | Test that…                                                                          | Layer               | Primitive                                                                                                      | Skill                                    |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `reverse` / `useReverse` / `href`                | the URL is correct; misuse fails to compile                                         | unit + types        | call directly; `@ts-expect-error`                                                                              | `/typesafety`, `/links`                  |
+| a `loader()` body                                | data logic given params/env/vars/search                                             | unit (node)         | `runLoader` (handle or raw fn)                                                                                 | `/loader`                                |
+| a loader's cookie / header / redirect output     | `Set-Cookie`, response headers, `throw redirect()` (auth loaders)                   | unit (node)         | `runLoaderResult` (envelope: `{ result, thrown, response, cookies, headers, locationState, stateCookieName }`) | `/loader`                                |
+| `middleware()` (auth, logging)                   | ordering, short-circuit, cookie/header merge                                        | unit (node)         | `runMiddleware`                                                                                                | `/middleware`                            |
+| a client component reading router context        | it renders given params/loaderData/Outlet                                           | unit (DOM)          | `renderRoute`                                                                                                  | `/hooks`                                 |
+| a component reading `useLocationState`           | it renders the seeded location-state value                                          | unit (DOM)          | `renderRoute` (`locationState` option)                                                                         | `/hooks`                                 |
+| a client component's hydration                   | its first client render matches its own server HTML (no recoverable error)          | unit (DOM)          | `renderRoute` (`hydrate` option)                                                                               | `/hooks`                                 |
+| a component reading `useHandle` (Breadcrumbs)    | it renders the seeded handle output                                                 | unit (DOM)          | `renderRoute` (`handles` option)                                                                               | `/breadcrumbs`                           |
+| a handle's `collect`/accumulator                 | it maps per-segment pushes to the accumulated value                                 | unit (node)         | `collectHandle`                                                                                                | `/breadcrumbs`                           |
+| a component under an `include('/shop', …)` mount | `useMount`/`useHref`/`useReverse` resolve the prefix                                | unit (DOM)          | `renderRoute` (`mount` option)                                                                                 | `/composability`                         |
+| a server action's cookie / header / flash output | `Set-Cookie`, response headers, flash — even on `throw redirect()`                  | unit (node)         | `runInRequestContext` (`{ result, thrown, response, cookies, headers, locationState, stateCookieName }`)       | `/server-actions`                        |
+| a response route (`path.json/.text/...`)         | status, content-type, body, content negotiation                                     | integration         | `dispatch`                                                                                                     | `/response-routes`, `/mime-routes`       |
+| a redirect / `404` / middleware redirect         | the `Response` (status + `Location`)                                                | integration         | `dispatch`                                                                                                     | `/middleware`, `/route`                  |
+| a Server Component's Flight render (default)     | rendered props/host content, typed boundary props (`Date`/`Map`), inlined-vs-island | RSC unit            | `renderServerTree` + `findClientBoundaries`/`findElements`                                                     | `/route`                                 |
+| the exact Flight **wire payload** shape (niche)  | serializer row framing / a drift snapshot                                           | RSC unit            | `renderToFlightString` + `toMatchFlightSnapshot`                                                               | `/route`                                 |
+| a real route **handler** `(ctx) => rsc`          | what it renders given params/loaders/vars; its effects                              | RSC unit            | `renderHandler` (seeded `HandlerContext`)                                                                      | `/route`                                 |
+| `transition({ when })` / `revalidate()`          | the navigation holds / the loader re-runs, given `from`/`to` or URLs and params     | unit (node)         | `runTransitionWhen` / `runRevalidate`                                                                          | `/view-transitions`, `/client-urls`      |
+| a `"use server"` action + revalidation flow      | the mutate -> reload -> UI update, JS and no-JS                                     | e2e                 | `parityDescribe` + `expectParity`                                                                              | `/server-actions`                        |
+| navigation / hydration / view transitions        | no reload, no page error, correct pathname                                          | e2e                 | `parityDescribe`, `waitForHydration`, matchers                                                                 | `/hooks`, `/view-transitions`            |
+| a `"use cache"` function                         | hit/miss: the body runs once across two calls; the value round-trips                | RSC unit            | `renderHandler`/`runLoader` + seeded `cacheStore` + `rangoUseCacheTransform()` (rsc project)                   | `/use-cache`                             |
+| a loader's own `cache()`                         | hit/miss; `updateTag()` of a tag its body recorded drops the entry                  | RSC unit            | `runLoader` + `cache` + seeded `cacheStore` (rsc project)                                                      | `/loader`, `/caching`                    |
+| `cache()` / loader cache / `"use cache"` stale   | hit/miss/stale across two requests                                                  | e2e + signal        | `assertCacheStatus` / telemetry sink                                                                           | `/caching`, `/use-cache`, `/cache-guide` |
+| `Prerender(...)` routes                          | served from a build-time artifact (a cache hit)                                     | e2e (prod) + signal | `assertCacheStatus(..., "prerendered")`                                                                        | `/prerender`                             |
+| `ppr` shell (axis 2)                             | MISS -> capture -> HIT: the frozen shell vs the live tail; tag eviction; replay     | RSC unit            | `serveShellRequest` (HTML step stubbed)                                                                        | `/ppr`                                   |
+| `ppr` shell (axis 2) in real HTML                | document HIT/MISS; partial fresh/stale replay or bounded bypass                     | e2e + signal / unit | `assertShellStatus` / `assertPprReplayStatus` / `shellCacheKey` + `MemorySegmentCacheStore`                    | `/ppr`                                   |
+| the generated `*.named-routes.gen.ts`            | it matches the runtime route map (drift in CI)                                      | unit (node)         | `assertGeneratedRoutesMatch`                                                                                   | `/typesafety`                            |
 
 ## What these primitives deliberately don't cover
 
@@ -892,11 +892,13 @@ remount bugs, real Flight serialization, loader execution, middleware, or handle
 ordering — those need `renderToFlightString` or e2e. Loader data is seeded, never
 run.
 
-### Navigation predicates — runTransitionWhen and runClientRevalidate
+### Navigation predicates — runTransitionWhen and runRevalidate
 
-`transition({ when })` and a `clientUrls()` loader's `revalidate()` run in the
-browser, so you test them as plain functions, through the router's own
-evaluation code. Both primitives are synchronous and render nothing.
+`transition({ when })` runs in the browser and a `revalidate()` predicate (a
+`urls()` segment's, or a `clientUrls()` loader's, which the build moves to the
+server) runs on the server, so you test both as plain functions, through the
+router's own evaluation code. Neither primitive renders anything:
+`runTransitionWhen` is synchronous, `runRevalidate` returns a Promise.
 
 `runTransitionWhen(when, { kind, from, to, action })` takes the predicate or a
 whole `transition()` config (one without `when` always applies), builds the
@@ -915,11 +917,25 @@ const { applied } = runTransitionWhen(({ from }) => from.params.id !== "1", {
 expect(applied).toBe(false);
 ```
 
-`runClientRevalidate(fn | fn[], { currentUrl, nextUrl, currentParams,
-nextParams, stale, action, actionRequest })` runs one predicate, or a chain in declaration
-order, through the production chain evaluator and returns the final `boolean`.
-Outside a built app an imported action carries no id, so pass the id string
-your predicate matches.
+`runRevalidate(fn | fn[], { currentUrl, nextUrl, currentParams, nextParams,
+action, method, segmentType, belongsToRoute, stale, routeName, fromRouteName,
+env, vars, context })` runs one predicate, or a chain in declaration order,
+through the production `evaluateRevalidation` inside a seeded request context
+and resolves to the final `boolean`. The predicate gets the argument object it
+gets on the server, `actionResult`, `formData` and `context.get()` included
+(`action: { ref, result, formData }` and `vars` seed them), so it serves
+`urls()` and `clientUrls()` predicates alike. Outside a built app an imported
+action carries no id, so pass the id string your predicate matches:
+
+```ts
+import { runRevalidate } from "@rangojs/router/testing";
+
+expect(
+  await runRevalidate(onCheckoutOk, {
+    action: { ref: "src/actions/cart.ts#checkout", result: { ok: true } },
+  }),
+).toBe(true);
+```
 
 Neither runs the Vite plugin's hoist or validation, so an invalid `when` is
 caught at dev startup, build and HMR, not here. Whether a view transition
@@ -1426,7 +1442,11 @@ reference, and `rangoUseClientTransform()` installs the group's server
 projection as the rango plugin's discovery does in your app, through the same
 projection step and into the registry `include()` materializes from. Without
 the transform the include throws `could not resolve the server projection`.
-`dispatch` matches the group's routes through the same projection. A group
+`dispatch` matches the group's routes through the same projection. Vitest
+runs no hoist, so a group loader's `revalidate()` predicates are plain
+functions in the module; the transform registers them as the plugin's
+generated module would, and the server runs them with the `urls()` arguments
+on a `partial` navigation or an `action` request. A group
 route's `loader(Def, { prefetch: false })` is tested as on a server route
 (`partial: { prefetch: true }`, then the fill); the testing skill's
 `serve-shell-request.md` has the recipe.
@@ -1443,6 +1463,20 @@ and `await result.readPayloadFormState()` is the payload's `formState`, the
 value the browser entry hands `hydrateRoot` so a hydrated `useActionState` does
 not reset (#1087). A GET, a plain-form POST and a redirecting action carry none. A state Flight cannot serialize leaves the document intact and makes `readPayloadFormState()` reject. `fields` carries the form's own fields to the action.
 The hydration itself stays e2e.
+
+#### A server action called from the page
+
+`serveShellRequest(router, url, { action: { ref, id, args, segments } })` sends
+the request a JS server action call makes from the page at `url`, as
+`browser/server-action-bridge.ts` sends it: a POST of `args` encoded as the
+browser encodes them, with `?_rsc_action`, the `rsc-action` header,
+`X-RSC-Router-Client-Path` and `_rsc_segments` (`segments`, the segment ids the
+page holds; default none). `ref` is registered under `id`
+(`<module id>#<export name>`). The response is the action's Flight payload. It
+is how you pin what a `revalidate()` predicate sees on an action, `actionResult`
+and `formData` included, through the real handler; the example is
+`src/testing/__tests__/client-urls-revalidate.rsc-test.tsx`. Not with `partial`
+or `form`.
 
 ## E2E with dev/prod and PE parity
 
@@ -1697,7 +1731,7 @@ renderHandler(handler, opts?: { request?, params?, env?, vars?, loaders?, routeM
 // invokes; without cacheStore registerCachedFunction bypasses uncached (warns once under the runner).
 // inActionRevalidation: render as if inside a server action's revalidation render, so a stale "use cache"
 // entry whose profile sets foregroundOnAction:true re-executes in the FOREGROUND (fresh) instead of SWR.
-serveShellRequest(router, url: string | URL, opts?: { cacheStore?, env?, headers?, partial?: true | { from?, segments? } }):
+serveShellRequest(router, url: string | URL, opts?: { cacheStore?, env?, headers?, partial?: true | { from?, segments? }, form?, action?: { ref, id, args?, segments? } }):
   Promise<{ response, body, shellStatus, replayStatus, prelude, flight, key, readEntry(): Promise<ShellCacheEntry | null>,
     readHandles(): Promise<{ hydration: HandleData, late: HandleData[] } | undefined> }>;
 // One GET through the router's production handler, background capture settled. HTML step stubbed:

@@ -206,6 +206,8 @@ export const urlpatterns = urls(({ layout, path, loader, revalidate }) => [
 
 For broad filters by file or directory, the raw `actionId` is path-bearing in server-side predicates for module-level `"use server"` files (`src/actions/cart.ts#addToCart`, dev and production): `revalidate(({ actionId }) => actionId?.startsWith("src/actions/account/") || undefined)`.
 
+A loader in a `clientUrls()` group takes the same predicate with the same arguments, `actionResult` and `formData` included: the build moves it to the server. See [Revalidation runs on the server](/docs/rango/guides/client-urls#revalidation-runs-on-the-server).
+
 Two rules keep this correct:
 
 - **Cross-segment dependencies re-run together.** If a loader reads `ctx.get()` data set by an outer layout, share the same predicate on producer and consumer — otherwise the loader sees stale context. See [Data Flow](/docs/rango/concepts/data-flow) and [Middleware](/docs/rango/features/middleware) for the full contract.

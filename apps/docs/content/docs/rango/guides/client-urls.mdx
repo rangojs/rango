@@ -159,7 +159,7 @@ The builder receives seven helpers:
 | `layout(Component, children)`               | builder, `layout()` children                         | Must contain at least one `path()`. May also hold `loader()`, `loading()`, `intercept()`, and nested `layout()`        |
 | `loader(Def, options?, use?)`               | `path()` use, `layout()` children, `intercept()` use | Options are `ssr` and `prefetch` (`{ ssr: false, prefetch: false }`). The use callback may contain `revalidate()` only |
 | `loading(element)`                          | `path()` use, `layout()` children, `intercept()` use | The route-level fallback around the optimistic render. Takes no options                                                |
-| `revalidate(fn)`                            | `loader()` use only                                  | Runs in the browser, see [Revalidation](#revalidation-runs-in-the-browser)                                             |
+| `revalidate(fn)`                            | `loader()` use only                                  | Runs on the server, see [Revalidation](#revalidation-runs-on-the-server)                                               |
 | `transition(config)`                        | `path()` use only                                    | View transition classes, `name`, `viewTransition`, and an inline `when` browser predicate                              |
 | `intercept(slot, ".name", Component, use?)` | builder, `layout()` children                         | A restricted form, see [Intercepts](#intercepts)                                                                       |
 
@@ -249,15 +249,18 @@ The loader body is server code, so anything a loader can do in the server tree w
 
 `useLoader()` suspends until its data streams in. Pick the pending UI per route. `loading()` replaces the whole route while its reads wait. An inline `<Suspense>` above each read keeps the rest of the destination visible and lets each read wait on its own. During an optimistic render, reads suspend into `loading()` if the route declares one, and otherwise into the nearest inline `<Suspense>`. A destination with no boundary at all keeps the current page on screen until the response commits.
 
-### Revalidation runs in the browser
+### Revalidation runs on the server
 
-A `revalidate()` predicate in a group is declared in a `"use client"` module, so it runs in the browser before the request goes out. Only its decision (skip or force, per loader ID) travels with the request, in a header. It receives `currentUrl`, `nextUrl`, `currentParams`, `nextParams` (both definition-local), `defaultShouldRevalidate`, `stale`, `isAction`, and `actionId`. There is no server `context`. Return a boolean for a final decision, `{ defaultShouldRevalidate }` to adjust the default for later predicates, or nothing to keep the default.
+A `revalidate()` predicate in a group runs on the server, with the same argument object and type as a `revalidate()` predicate on a loader in `urls()` (`ShouldRevalidateFn`, from `@rangojs/router`): `currentParams`, `currentUrl`, `nextParams`, `nextUrl`, `defaultShouldRevalidate`, `context` (the server handler context, so `context.get(var)` works), `segmentType`, `actionId`, `isAction`, `actionUrl`, `actionResult`, `formData`, `method`, the route names, and `stale`. Nothing runs in the browser before the request goes out, and the request carries no client-side decision. Return a boolean for a final decision, `{ defaultShouldRevalidate }` to adjust the default for later predicates, or nothing to keep the default.
+
+You still write the predicate in the `"use client"` module. The build moves it to a server-only module, and the browser keeps a key in its place. That is why the argument may reference imports and globals only.
 
 ```tsx
 "use client";
 import { clientUrls } from "@rangojs/router/client";
 import * as CartActions from "./cart.actions.js";
-import { CartLoader, ProductLoader } from "./shop.loaders.js";
+import { checkout } from "./cart.actions.js";
+import { CartLoader, OrderLoader, ProductLoader } from "./shop.loaders.js";
 import { ProductPage, ShopLayout } from "./shop-components.js";
 
 export default clientUrls(({ path, layout, loader, revalidate }) => [
@@ -265,6 +268,12 @@ export default clientUrls(({ path, layout, loader, revalidate }) => [
     // Refresh the cart after cart actions only; hold it across navigations.
     loader(CartLoader, () => [
       revalidate(({ isAction }) => isAction(CartActions)),
+    ]),
+    // Refresh the order after checkout, and only when checkout succeeded.
+    loader(OrderLoader, () => [
+      revalidate((ctx) =>
+        ctx.isAction(checkout) ? ctx.actionResult?.ok === true : undefined,
+      ),
     ]),
     path("/product/:slug", ProductPage, { name: "product" }, () => [
       loader(ProductLoader, () => [
@@ -287,7 +296,28 @@ export default clientUrls(({ path, layout, loader, revalidate }) => [
 ]);
 ```
 
-`isAction` works the same as it does on the server: `isAction()` matches any action, and `isAction(ref)`, `isAction(a, b)`, `isAction(ModuleNamespace)`, and `isAction({ a, b })` match specific ones. In the browser, `actionId` is a hashed ID, so match actions by reference instead of by `actionId` substrings. Compare the param that identifies the data. A predicate that always returns `false` keeps showing the old product when only `:slug` changes. Requests that carry no decisions (no-JS, progressive enhancement, prefetch, document loads) use the server defaults. A decision can only make the client's own view staler or fresher. It never skips middleware.
+`isAction` works the same as it does in `urls()`: `isAction()` matches any action, and `isAction(ref)`, `isAction(a, b)`, `isAction(ModuleNamespace)`, and `isAction({ a, b })` match specific ones. `actionId` is the server's `src/...#export` form, but matching by reference is the supported way. `currentParams` and `nextParams` are the server's route params, so they include the params of the `include()` mount. Compare the param that identifies the data. A predicate that always returns `false` keeps showing the old product when only `:slug` changes.
+
+What the predicate sees on each request:
+
+- **A JS action call** runs it with `method: "POST"`, `actionId`, `actionResult` (the action's return value), `formData` (the last `FormData` argument), and `actionUrl`. The default is to re-run.
+- **A navigation inside the group** re-runs by default when the params or the search changed. A prefetched navigation runs the predicate too, so it honours it.
+- **A stale back/forward revalidation** sees `stale: true`.
+- **Document requests and no-JS form posts** hold no segments, so every loader renders whatever a predicate says.
+- **The refetch that follows an action** is a GET on which `isAction()` is false, as in `urls()`.
+
+A predicate can be an inline arrow or function, an imported predicate (`revalidate(isCartAction)`), a namespace member (`revalidate(Predicates.cart)`), or a call of an imported factory (`revalidate(makePredicate("cart"))`). It can use globals such as `URL` and `Boolean`, and `import.meta.env`. Anything else is a build error that names the file, line, and column and starts `[rango] clientUrls() revalidate() at ...: revalidate() runs on the server;`:
+
+- A binding declared in the same `"use client"` module. Move the predicate to its own module without `"use client"` and import it, or write it inline.
+- A binding of an enclosing function. Read it from the predicate's argument.
+- `this`, `arguments`, `super`, `new.target`, `import()`, or `import.meta` other than `import.meta.env`.
+- A browser-only global: `window`, `document`, `navigator`, `localStorage`, `sessionStorage`, `location`, or `history`. Put the input on the request, in a cookie or a search param, and read it from the argument, or refresh the loader with `useRefreshLoaders`.
+- An `async` or generator function, a spread, a second argument, no argument, or a value that is not a function (an object, array, or string literal).
+- An import of `client-only`, or of a module whose directive is `"use client"`: on the server its exports are client references. An import of a `"use server"` module is fine, because on the server it is the real action, which `isAction(ref)` matches.
+
+A `server-only` or `node:` import works on the server, but the import also stays in the `"use client"` module, which is not pruned for the browser, so it must still load there.
+
+Vitest does not run the build, so in a unit test the predicate is a plain function. Test it with `runRevalidate` from `@rangojs/router/testing`, which serves predicates in `urls()` and in `clientUrls()` alike. A predicate decides only whether a loader re-runs. It never skips middleware. `intercept()` loaders inside a group do not apply their `revalidate()` yet.
 
 ### `ssr: false`
 
