@@ -540,6 +540,23 @@ This only catches handlers resolution awaits. A handler under `loading()` is
 streamed, so it may reach `ctx.use()` after the check; that loader then runs in
 the prefetch and again in the fill. Data is never missing, only fetched twice.
 
+The run a handler starts files the loader's handle pushes under the segment
+that registers the loader, as a navigation's run does: resolution records it
+when it defers the loader (`PrefetchDeferral.loaderOwners`), and the loader
+executor reads it before falling back to the segment being resolved
+(`router/loader-resolution.ts`). Without it, a layout loader that a route
+handler started pushed into the route's bucket, and a later navigation to a
+sibling route under the same layout dropped the push.
+
+One gap is left: a flagged loader with `cache()` that a handler reads runs
+for the handler without its cache binding (resolution never reached
+`resolveLoaderData`, which primes the binding), and the delivery afterwards
+reads the cache. On a HIT the handler renders the loader's fresh run while
+the loader's segment carries the cached value, and the loader runs once more
+than on a plain navigation, where the handler reads the cached value too. A
+fix starts a deferred loader that a reader asks for through its own
+`resolveLoaderData`; not built.
+
 ### `cache()`, `ppr` and `Prerender`
 
 Stored routes need no special path. A `cache()` HIT, a `ppr` partial replay

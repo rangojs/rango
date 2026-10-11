@@ -40,6 +40,7 @@ import {
   deferUnit,
   getPrefetchDeferral,
   isFillRequest,
+  markLoaderDeferred,
 } from "./prefetch-deferral.js";
 import {
   handleHandlerResult,
@@ -310,6 +311,7 @@ export async function resolveLoadersWithRevalidation<TEnv>(
       // would have run, and its cache() is not read either
       // (resolveLoaderData is never reached).
       if (defersLoader(ctx, loaderEntry, segmentId)) {
+        markLoaderDeferred(ctx, loader.$$id, shortCode);
         const deferred: ResolvedSegment = {
           ...base,
           belongsToRoute,

@@ -538,8 +538,12 @@ function createLoaderExecutor<TEnv>(
     // resolution continues — by the time the async body pushes, it would be
     // stale. Attributing to the owning route/layout segment gives handle
     // pushes the same granularity handler pushes have (segmentOrder-correct
-    // for breadcrumb accumulation).
-    const owningSegmentId = internal._currentSegmentId;
+    // for breadcrumb accumulation). A loader a prefetch deferred and a reader
+    // starts anyway keeps the segment that registers it
+    // (PrefetchDeferral.loaderOwners).
+    const owningSegmentId =
+      internal._prefetchDeferral?.loaderOwners?.get(loader.$$id) ??
+      internal._currentSegmentId;
 
     let renderedResolved = false;
     let renderedPromise: Promise<void> | null = null;

@@ -177,6 +177,18 @@ function ContextLayout(ctx: HandlerContext): React.ReactNode {
   return <p>context-layout</p>;
 }
 
+/** A layout's flagged loader that pushes a handle, read by the route below. */
+const OwnerLoader = createLoader(async (ctx) => {
+  ran("owner-loader");
+  ctx.use(Notes)("owner-note");
+  return { value: "owner" };
+});
+
+async function OwnerPage(ctx: HandlerContext): Promise<React.ReactNode> {
+  const { value } = await ctx.use(OwnerLoader);
+  return <p>{value}</p>;
+}
+
 async function AwaitedPage(ctx: HandlerContext): Promise<React.ReactNode> {
   ran("awaited-page");
   const { value } = await ctx.use(AwaitedLoader);
@@ -352,6 +364,10 @@ function makeRouter() {
             ]),
             path("/awaited", AwaitedPage, { name: "awaited" }, () => [
               loader(AwaitedLoader, { prefetch: false }),
+            ]),
+            layout(page("owner-layout"), () => [
+              loader(OwnerLoader, { prefetch: false }),
+              path("/owner/page", OwnerPage, { name: "ownerPage" }),
             ]),
             path("/slot", page("slot-page"), { name: "slot" }, () => [
               parallel({ "@side": page("side") }, () => [
@@ -1421,6 +1437,23 @@ describe("R8: where the flag cannot be honoured the work runs in the prefetch", 
       expect(count("early-dep")).toBe(1);
       expect(payload.deferred).toEqual([]);
       expect(present(payload.find(EarlyDepLoader.$$id)!.loaderData)).toBe(true);
+    });
+
+    // The handler below starts the layout's loader in the prefetch: the
+    // loader's pushes go to the layout, where a plain navigation's run of it
+    // files them, not to the handler that read it.
+    it("a handler below that reads it: its handle pushes stay on its own segment", async () => {
+      const { serve, prefetch } = setup();
+      const noteOwner = (result: ServeShellRequestResult) =>
+        result.flight?.match(/"([^"]+)":\["owner-note"\]/)?.[1];
+      const plain = await serve("/owner/page", { partial: { from: "/" } });
+      const prefetched = await prefetch("/owner/page");
+      expect(payloadOf(prefetched).deferred).toEqual([]);
+      expect(count("owner-loader")).toBe(2);
+      expect(noteOwner(plain)).toBe(
+        payloadOf(plain).find(OwnerLoader.$$id)!.id.split("D")[0],
+      );
+      expect(noteOwner(prefetched)).toBe(noteOwner(plain));
     });
 
     it("a streamed handler that reads it before its first await: one run, nothing deferred", async () => {

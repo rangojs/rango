@@ -115,6 +115,13 @@ export interface PrefetchDeferral {
    * a navigation to the page lists.
    */
   below?: true;
+  /**
+   * The segment that registers each loader this prefetch deferred, by
+   * `$$id`. A reader that starts one anyway (a handler's ctx.use(), delivered
+   * by revalidation.ts deliverStartedLoaders) files its handle pushes there,
+   * where a navigation's run of it files them, not under the reader.
+   */
+  loaderOwners?: Map<string, string>;
 }
 
 const EMPTY_SCOPE: DeferralScope = {
@@ -317,6 +324,22 @@ export function getPrefetchDeferral(
 /** The request is a fill: a held segment is skipped without consulting anything. */
 export function isFillRequest(ctx: HandlerContext<any, any>): boolean {
   return getPrefetchDeferral(ctx)?.mode === "fill";
+}
+
+/**
+ * Record the segment that registers a loader this prefetch deferred
+ * (PrefetchDeferral.loaderOwners). The first registration wins, as the
+ * loader's one run per request does.
+ */
+export function markLoaderDeferred(
+  ctx: HandlerContext<any, any>,
+  loaderId: string,
+  owner: string,
+): void {
+  const plan = getPrefetchDeferral(ctx);
+  if (plan && !plan.loaderOwners?.has(loaderId)) {
+    (plan.loaderOwners ??= new Map()).set(loaderId, owner);
+  }
 }
 
 /**
