@@ -22,6 +22,10 @@ test.describe("prefetch-false", () => {
 });
 
 test.describe("prefetch-false (production)", () => {
+  // The production project runs a file's tests in order on one worker
+  // (fullyParallel: false): ~300 cases at 4 s each outran the CI shard's
+  // globalTimeout. Parallel mode lets shards and workers split them.
+  test.describe.configure({ mode: "parallel" });
   const f = useFixture({ root: "./e2e/test-app", mode: "build" });
   prefetchFalseSuite(f, true);
 });
