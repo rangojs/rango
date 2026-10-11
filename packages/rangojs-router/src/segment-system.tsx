@@ -23,6 +23,7 @@ import { RootErrorBoundary } from "./root-error-boundary.js";
 import { INTERNAL_RANGO_DEBUG } from "./internal-debug.js";
 import { INTERNAL_RANGO_SUSPENSE_AUDIT } from "./internal-suspense-audit.js";
 import { getBoundaryContent } from "./segment-boundary-content.js";
+import { asStream } from "./browser/defer.js";
 import {
   buildLoaderPromise,
   getMemoizedLoaderPromise,
@@ -570,9 +571,9 @@ export async function renderSegments(
           componentTypeof: typeof c,
         });
       }
-      nodeContent = deferredUnit
-        ? resolvedComponent
-        : registerLazyRef(resolvedComponent);
+      // A hole here is read by React itself (browser/defer.ts asStream).
+      const streamed = asStream(resolvedComponent) as ReactNode;
+      nodeContent = deferredUnit ? streamed : registerLazyRef(streamed);
     }
 
     // Wrap with <ViewTransition> if transition config exists (React 19.3+ / experimental).

@@ -60,18 +60,22 @@ about to reveal shows its fallback instead.
 
 Where this is kept today: `getBoundaryContent` (`src/segment-boundary-content.ts:20`)
 hands a component that is still a promise (a Flight-streamed segment) as that same
-promise; `getMemoizedLoaderPromise` (`src/segment-loader-promise.ts:120`) hands one
+promise; `getMemoizedLoaderPromise` (`src/segment-loader-promise.ts:116`) hands one
 aggregate per set of loader references while it is pending; the per-loader streams
 `buildLoaderStreams` passes through untouched (`src/segment-system.tsx`). The three
-places that read them are `Suspender` (`src/route-content-wrapper.tsx:178`),
-`LoaderResolver` (`:334`) and the `useLoader` read site (`src/use-loader.tsx:226`).
-`armHoles` (`src/browser/partial-update.ts:272`) is a producer too: for a click that
-adopts a `prefetch: false` prefetch it makes one deferred (`src/browser/defer.ts`) per
-placeholder and writes its promise to the placeholder's `loaderData` or `component`,
-where `check:suspense-contract` does not look. A deferred stays the same promise from the
-click to its fill: the navigation resolves it from the fill's answer, and an answer that
-replaces the page hands a content boundary that same promise, stamped
-`status: "fulfilled"`.
+places that read them are `Suspender` (`src/route-content-wrapper.tsx:170`),
+`LoaderResolver` (`:313`) and the `useLoader` read site (`src/use-loader.tsx:232`).
+`armHoles` (`src/browser/partial-update.ts:277`) is a producer too: for a click that
+adopts a `prefetch: false` prefetch it makes one `Defer` (`src/browser/defer.ts`) per
+placeholder and writes it to the placeholder's `loaderData` or `component`, where
+`check:suspense-contract` does not look. Every reader of the hole waits on the defer's
+one promise, from the click to its fill: `Suspender` and `useLoader` read it by the
+read rule (`readDefer`), and React reads it itself where a segment has no `loading()`
+(`asStream`). An answer that replaces the page hands each place its defer again,
+resolved; the router sets `status` and `value` on the defer, never on the promise, and
+a reader that never handed React the promise reads the value (rule 2). The rule and
+its reasons are in [prefetch-false.md](../../../../docs/design/prefetch-false.md),
+"How a hole is read".
 
 A navigation to another URL hands new values, and that is not a violation: it is new
 data. So is a replacement that is already settled in a form React can read (rule 2).
@@ -88,7 +92,7 @@ browser, `getBoundaryContent` (`src/segment-boundary-content.ts:20`) hands a set
 component as the node itself; only the server wraps it, so Suspense still streams the
 fallback in the document. `getMemoizedLoaderPromise` remembers the array once its
 aggregate fulfils and from then on hands that array (`entry.value ??
-entry.promise`, `src/segment-loader-promise.ts:139`), so a later tree reads the loader
+entry.promise`, `src/segment-loader-promise.ts:135`), so a later tree reads the loader
 data without suspending. An aggregate whose sources have all fulfilled (Flight sets the
 status on its chunks) is that array from its first call: the sources of a page a
 `prefetch: false` fill settled without a render are first aggregated by the next
@@ -102,7 +106,7 @@ the aggregate has settled, still hands the loader boundary a settled promise Rea
 not read. Does React then suspend on it? Only where something reads the aggregate. A
 layout's or route's loader boundary does not: `buildLoaderStreams` gives it per-loader
 streams, and `LoaderResolver` hands those to `OutletProvider` before it reaches
-`use(loaderDataPromise)` (`src/route-content-wrapper.tsx:317`), so its `useLoader`
+`use(loaderDataPromise)` (`src/route-content-wrapper.tsx:341`), so its `useLoader`
 readers suspend on the streams and the aggregate is never read. An earlier version of
 the audit observed each promise's settlement itself and reported that unread aggregate
 as I2 on a refresh under CPU throttling (the shell layout's loader data fulfilled 13 ms

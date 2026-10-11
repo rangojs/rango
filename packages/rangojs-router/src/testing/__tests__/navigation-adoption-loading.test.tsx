@@ -11,6 +11,7 @@ import { useNavigation } from "../../browser/react/use-navigation.js";
 import type { NavigationUpdate } from "../../browser/types.js";
 import type { ResolvedSegment } from "../../types.js";
 import { renderRoute } from "../render-route.js";
+import { Defer, readDefer } from "../../browser/defer.js";
 
 // A click that adopts a payload with deferred segments (`prefetch: false`),
 // through the real provider and the real event controller: what
@@ -306,8 +307,14 @@ describe("a click that adopts a prefetch, and its fill", () => {
     };
   }
 
+  // As the router's read sites read what the tree is handed: a hole by the
+  // read rule (Suspender, useLoader), a stream with use().
   const read = (value: unknown): ReactNode =>
-    (value instanceof Promise ? use(value) : value) as ReactNode;
+    (value instanceof Defer
+      ? readDefer(value)
+      : value instanceof Promise
+        ? use(value)
+        : value) as ReactNode;
 
   function Unit({ content }: { content: unknown }) {
     return <p data-testid="page">{read(content)}</p>;
@@ -655,7 +662,7 @@ describe("a click that adopts a prefetch, and its fill", () => {
       expect(page.shown()).toBe("skeleton");
       const signal = page.fillSignal()!;
       expect(signal.aborted, "the commit leaves the fill running").toBe(false);
-      const hole = loaderSegment.loaderData as Promise<unknown>;
+      const hole = (loaderSegment.loaderData as Defer<unknown>).promise;
       page.router.store.loaders.trackPendingStream("data", hole);
 
       await act(async () => leave(page.router.eventController));

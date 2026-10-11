@@ -15,7 +15,7 @@ const addTransitionType: ((type: string) => void) | undefined =
 import type { RenderSegmentsOptions } from "../segment-system.js";
 import { reconcileSegments } from "./segment-reconciler.js";
 import type { ReconcileActor } from "./segment-reconciler.js";
-import { defer, type Deferred } from "./defer.js";
+import { Defer } from "./defer.js";
 import {
   emitNavigationError,
   toNetworkError,
@@ -159,7 +159,7 @@ function missingIds(
 }
 
 /**
- * A tree built with holes: one deferred per placeholder segment, standing for
+ * A tree built with holes: one defer per placeholder segment, standing for
  * the value its work did not produce. The segment is always new to the page:
  * a payload that defers is adopted only on the page it was prefetched from,
  * with the segments it was prefetched with (rsc/rsc-rendering.ts
@@ -169,8 +169,8 @@ function missingIds(
  * releases it (docs/design/prefetch-false.md, "The browser").
  */
 interface Holes {
-  /** Placeholder segment (the payload's object) -> its deferred. */
-  deferreds: Map<ResolvedSegment, Deferred<unknown>>;
+  /** Placeholder segment (the payload's object) -> its defer. */
+  defers: Map<ResolvedSegment, Defer<unknown>>;
   /** The `matched` the tree was built for. */
   matched: string[];
 }
@@ -268,28 +268,30 @@ export function createPartialUpdater(
   }
 
   /**
-   * One deferred per placeholder: a loader's is its `loaderData`, any other
-   * segment's is its `component`. To the rest of the client a deferred is a
-   * stream that has not arrived yet.
+   * One defer per placeholder: a loader's is its `loaderData`, any other
+   * segment's is its `component`. Every reader of a hole (Suspender,
+   * useLoader, React itself where a segment has no loading()) reads it as a
+   * stream that has not arrived yet, and all of them wait on its one promise
+   * (browser/defer.ts readDefer, asStream).
    */
   function armHoles(placeholders: ResolvedSegment[], matched: string[]): Holes {
-    const deferreds = new Map<ResolvedSegment, Deferred<unknown>>();
+    const defers = new Map<ResolvedSegment, Defer<unknown>>();
     for (const segment of placeholders) {
-      const hole = defer<unknown>();
-      if (segment.type === "loader") segment.loaderData = hole.promise;
-      else segment.component = hole.promise as ReactNode;
-      deferreds.set(segment, hole);
+      const hole = new Defer<unknown>();
+      if (segment.type === "loader") segment.loaderData = hole;
+      else segment.component = hole as unknown as ReactNode;
+      defers.set(segment, hole);
     }
-    return { deferreds, matched };
+    return { defers, matched };
   }
 
   /**
-   * A deferred that will not be resolved must not stay a pending stream. It
-   * is never rejected either: a rejection is unhandled in every aggregate
-   * built over it (segment-loader-promise.ts).
+   * A defer that will not be resolved must not stay a pending stream. It is
+   * never rejected either: a rejection is unhandled in every aggregate built
+   * over it (segment-loader-promise.ts).
    */
   function releaseHoles(holes: Holes): void {
-    for (const [placeholder, hole] of holes.deferreds) {
+    for (const [placeholder, hole] of holes.defers) {
       if (placeholder.type === "loader") {
         store.loaders.releasePendingStream(placeholder.loaderId!, hole.promise);
       }
@@ -304,7 +306,7 @@ export function createPartialUpdater(
    */
   function entryToFill(holes: Holes): ResolvedSegment[] | undefined {
     const live = entryOnScreen();
-    return live?.some((s) => holes.deferreds.has(s)) ? live : undefined;
+    return live?.some((s) => holes.defers.has(s)) ? live : undefined;
   }
 
   function entryOnScreen(): ResolvedSegment[] | undefined {
@@ -365,18 +367,18 @@ export function createPartialUpdater(
   /**
    * Fill the holes of the tree this navigation committed with its fill's
    * `answer`: a partial payload that carries the segment each placeholder
-   * stands for. Each deferred resolves with that segment's value, the stored
+   * stands for. Each defer resolves with that segment's value, the stored
    * entry is rewritten with the segments themselves, and what the answer's
    * handlers pushed and the location state they set go to the stores their
    * readers subscribe to. React is handed nothing: the tree that reads the
-   * deferreds is the page, and what resolves reaches it as a stream that
+   * defers is the page, and what resolves reaches it as a stream that
    * arrived.
    *
    * Called after tx.commit(), so the answer can never land before the tree it
    * fills. The navigation's signal is the one thing that cancels it: a newer
    * navigation or a back/forward aborts the request while it waits for its
    * response (navigation-client.ts), and an answer that arrives after the
-   * abort is dropped. Either way the deferreds are released, not resolved.
+   * abort is dropped. Either way the defers are released, not resolved.
    *
    * One answer does replace the page: one whose segments are not the ones the
    * tree was built for. A handler that was awaited threw or called
@@ -437,7 +439,7 @@ export function createPartialUpdater(
         config.fill?.locationState(metadata.locationState);
       }
 
-      const placeholders = [...holes.deferreds.keys()];
+      const placeholders = [...holes.defers.keys()];
       const answers = placeholders.map((placeholder) =>
         reconciled.segments.find(
           (s) => s.id === placeholder.id && s.type === placeholder.type,
@@ -451,18 +453,15 @@ export function createPartialUpdater(
         // this array on every yield and drops the buckets of segments
         // outside it.
         replace(holes.matched, matched);
-        // A boundary that suspended on its deferred while it mounted is
-        // handed that promise again, settled with what the answer put in its
-        // place. Handed the node, it is a component that called use() and
-        // then finished without it at the same place, which React reports in
-        // development ("This library called use() to suspend in a previous
-        // render but did not call use() when it finished"). Settled here, not
-        // only resolved: a deferred React never read (one below another
-        // hole) suspends this urgent update at once and shows its boundary's
-        // fallback, which the plain click does not show
+        // Each place a hole stood is handed its defer again, resolved with
+        // what the answer put there, and its reader applies the read rule
+        // (browser/defer.ts): a reader that suspended on it while it mounted
+        // calls use() of the same promise, which React has marked; one React
+        // never read (a hole below another one) reads the value, so this
+        // urgent update shows no fallback the plain click does not show
         // (navigation-adoption-loading.test.tsx, "a failed route's error").
         const settled = new Map<ResolvedSegment, ResolvedSegment>();
-        for (const [placeholder, hole] of holes.deferreds) {
+        for (const [placeholder, hole] of holes.defers) {
           const next = reconciled.mainSegments.find(
             (s) => s.id === placeholder.id && s.type !== "loader",
           );
@@ -471,14 +470,10 @@ export function createPartialUpdater(
             next &&
             !(next.component instanceof Promise)
           ) {
-            Object.assign(hole.promise, {
-              status: "fulfilled",
-              value: next.component,
-            });
             hole.resolve(next.component);
             settled.set(next, {
               ...next,
-              component: hole.promise as ReactNode,
+              component: hole as unknown as ReactNode,
             });
           }
         }
@@ -504,11 +499,13 @@ export function createPartialUpdater(
         config.fill?.handles(metadata);
         // All in one task, each with its own stream or node: a hole below
         // another one is read in the render the outer one's resolution
-        // starts, and one that is resolved by then costs that render one
-        // microtask, not a fallback.
+        // starts. Resolved by then with a node, it costs that render nothing
+        // where a router reader reads it (browser/defer.ts readDefer); with a
+        // stream, or where React reads the node itself, one microtask. Not a
+        // fallback.
         placeholders.forEach((placeholder, index) => {
           const next = answers[index]!;
-          holes.deferreds
+          holes.defers
             .get(placeholder)!
             .resolve(
               placeholder.type === "loader" ? next.loaderData : next.component,
@@ -516,13 +513,13 @@ export function createPartialUpdater(
         });
       }
 
-      // The entry keeps the answer's own streams and nodes, not the
-      // deferreds: the next render from this page builds on it, and a
-      // deferred is a promise React has read only where a reader was on
-      // screen. The answer belongs to the visit that built the tree: the
-      // entry is rewritten in place, not re-cached. cacheSegmentsForHistory
-      // would advance the store's nav instance and disown the tree's handle
-      // stream, and would reset the entry's stale flag.
+      // The entry keeps the answer's own streams and nodes, not the defers:
+      // a defer belongs to the tree on screen, and the next render from this
+      // page builds on the entry. The answer belongs to the visit that built
+      // the tree: the entry is rewritten in place, not re-cached.
+      // cacheSegmentsForHistory would advance the store's nav instance and
+      // disown the tree's handle stream, and would reset the entry's stale
+      // flag.
       replace(live, reconciled.segments);
       store.setSegmentIds(matched);
       filled = true;

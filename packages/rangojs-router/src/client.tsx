@@ -30,6 +30,7 @@ import { AuditedOutletProvider, OutletProvider } from "./outlet-provider.js";
 import { INTERNAL_RANGO_SUSPENSE_AUDIT } from "./internal-suspense-audit.js";
 import { MountContextProvider } from "./browser/react/mount-context.js";
 import { getBoundaryContent } from "./segment-boundary-content.js";
+import { asStream } from "./browser/defer.js";
 
 /**
  * Render the content for a named parallel/intercept slot segment.
@@ -42,11 +43,12 @@ function renderSlotContent(segment: ResolvedSegment | null): ReactNode {
   if (!segment) return null;
 
   // A slot that streams with no loading() gets a boundary with no fallback
-  // around its promise. Not a deferred slot (`prefetch: false`): its promise
-  // is the gate its fill resolves, and the slot it stands for was awaited, so
-  // every later render of the page has the content here with no boundary
-  // around it. The gate takes that place: another element here and the slot
-  // is mounted again when the page is next rendered.
+  // around its promise. Not a deferred slot (`prefetch: false`): its hole is
+  // what its fill resolves, and the slot it stands for was awaited, so every
+  // later render of the page has the content here with no boundary around
+  // it. The hole takes that place, read by React (browser/defer.ts
+  // asStream): another element here and the slot is mounted again when the
+  // page is next rendered.
   const content: ReactNode =
     segment.loading ||
     (segment.component instanceof Promise && !segment.deferred) ? (
@@ -56,7 +58,7 @@ function renderSlotContent(segment: ResolvedSegment | null): ReactNode {
         segmentId={segment.id}
       />
     ) : (
-      (segment.component ?? null)
+      ((asStream(segment.component) as ReactNode) ?? null)
     );
 
   const hasOwnLoaders = !!(segment.loaderDataPromise && segment.loaderIds);

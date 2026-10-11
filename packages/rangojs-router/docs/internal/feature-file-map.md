@@ -252,7 +252,9 @@ The public DOM seam is
   [cache/document-cache.ts](../../src/cache/document-cache.ts), the adoption
   and the navigation's fill of its holes in
   [browser/partial-update.ts](../../src/browser/partial-update.ts) (one
-  deferred per hole, [browser/defer.ts](../../src/browser/defer.ts)), what
+  defer per hole, [browser/defer.ts](../../src/browser/defer.ts): the
+  `Defer`, the read rule `readDefer` that `Suspender` and `useLoader` apply,
+  and `asStream` for a hole React reads itself), what
   cancels the fill in
   [browser/event-controller.ts](../../src/browser/event-controller.ts) (a
   committed navigation stays abortable while its stream is open) and

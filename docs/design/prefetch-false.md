@@ -673,7 +673,7 @@ It does no harm, for two reasons you can rely on separately:
   during a back/forward reload was answered with the stored deferring body
   (measured in Chromium, `fromDiskCache` in the Network domain).
 - The client does not care where a payload came from. Any payload that
-  carries deferred segments gets its deferreds and its one fill ("The browser"
+  carries deferred segments gets its defers and its one fill ("The browser"
   below), and the fill is sent `cache: "no-store"`. A prefetch answered from
   the browser's copy is adopted exactly like one answered by the server.
 
@@ -773,15 +773,18 @@ built from, so the tree built from them is the tree a plain click's payload
 builds: the same router elements with the same keys around every segment
 ("No remount"). What is missing is what the boundaries are handed.
 
-`armHoles()` fills that in. Each placeholder gets a **deferred**: a promise
-the browser created, with the function that resolves it (`defer()` in
-`src/browser/defer.ts`; a deferred is never rejected, "Failure"). A deferred loader's promise becomes its
-`loaderData`; any other placeholder's becomes its `component`. To the rest of
-the client it is a stream that has not arrived yet, which is something it
-already knows how to show. This happens before the reconcile, on the
-payload's own segment objects. That is safe because every adoption decodes
-its own payload (see "Reuse" below). The result is a `Holes` record: the
-deferreds and the `matched` the tree was built for.
+`armHoles()` fills that in. Each placeholder gets its own **defer**
+(`Defer` in `src/browser/defer.ts`): a promise the browser created, the
+function that resolves it, and what the router knows of it (`status`,
+`value`, `read`). A defer is never rejected ("Failure"). A deferred loader's
+defer becomes its `loaderData`; any other placeholder's becomes its
+`component`. To the rest of the client it is a stream that has not arrived
+yet, which is something it already knows how to show, and every reader of
+the hole waits on the defer's one promise ("How a hole is read" below). This
+happens before the reconcile, on the payload's own segment objects. That is
+safe because every adoption decodes its own payload (see "Reuse" below). The
+result is a `Holes` record: the defers and the `matched` the tree was built
+for.
 
 Then the navigation sends the fill request, before it renders anything:
 `client.fetchPartial({ fill: true, signal })`, with its own signal ("Abort").
@@ -792,14 +795,14 @@ From there the click goes one of two ways.
    fully prefetched payload still renders with `forceAwait`, so everything
    the prefetch did bring is handed to its boundary as a value;
    `renderSegments` (`src/segment-system.tsx`) skips the awaits that would
-   wait on a deferred. The commit is urgent ("The click commits on the plain
+   wait on a defer. The commit is urgent ("The click commits on the plain
    click's lane"). Then the same navigation waits for the fill's answer and
    fills the holes (next section). `navigate()` resolves once it has.
 2. **It waits for its fill.** A placeholder that is not a loader, on a page
    that commits in a transition, is the one case where the client knows
    before it renders that committing now would be wrong. That click is a
    navigation whose response is the prefetch plus the fill ("A unit under
-   `transition()` waits for its fill"). Nothing reads its deferreds.
+   `transition()` waits for its fill"). Nothing reads its defers.
 
 The reconcile needs no special case. A payload that defers is adopted only on
 the page that prefetched it, with the segments that page held when it did
@@ -863,7 +866,7 @@ From there, in this order:
    type, and checks that `matched` is the one the tree was built for. If not,
    the answer is not for this tree: see "Failure".
 4. It hands the answer's handle stream to the handle store.
-5. It resolves every deferred, in one task, with the value of its segment: a
+5. It resolves every defer, in one task, with the value of its segment: a
    loader's `loaderData`, any other segment's `component` ("When the holes
    resolve").
 6. It rewrites the entry and the store's segment ids.
@@ -877,17 +880,16 @@ instance, which disowns the tree's still-open handle stream, and reset the
 entry's stale flag.
 
 What goes into the entry is what the answer sent, loader streams included,
-not the deferreds. A deferred is for the tree that is on screen. The next
-render from this page (a click that keeps the layout, an action) builds on
-the entry, and a deferred left there is a promise React has read only where
-some reader happened to be mounted: handed to a boundary on screen in a
-render that cannot wait, it shows that boundary's fallback over content (the
-held-boundary bug, #1080).
+not the defers. A defer is for the tree that is on screen. The next render
+from this page (a click that keeps the layout, an action) builds on the
+entry, and finds the segment's own node or stream where each hole stood: the
+same thing a plain click's entry holds, in the place React already has it
+("How a hole is read" says why no router component may stand there).
 
 That rule reaches one line outside the fill, and it is scar tissue of this
 design. The first render from a filled entry is the first time anything
 aggregates the answer's loader streams, because the tree on screen read the
-deferreds. A slot reads its loaders through one aggregate promise
+defers. A slot reads its loaders through one aggregate promise
 (`getMemoizedLoaderPromise` in `src/segment-loader-promise.ts`), and a fresh
 aggregate over streams that have all arrived is still a promise React has not
 read. Moving between two pages that keep the slot then replaced the slot,
@@ -908,7 +910,8 @@ React, never from a component's render. A slot's boundary is handed the
 result through the slot segment's `loaderDataPromise`, which
 `renderSegments` writes and `renderSlotContent` (`src/client.tsx`) reads.
 The fill writes no field of a segment the tree on screen reads: it resolves
-deferreds and rewrites the entry's array. One write predates this feature
+defers (the router's own objects, which the segments keep pointing to) and
+rewrites the entry's array. One write predates this feature
 and is left alone: a navigation that keeps a slot reuses the slot's segment
 object from the entry (the reconciler returns a segment the server did not
 re-send as it is), so its `renderSegments` writes `loaderDataPromise` on an
@@ -931,7 +934,7 @@ the tree, and the fill hands React no update to carry them.
 | `handles` (the handle stream) | `fill.handles(metadata)`: `consumeHandles` in `NavigationProvider.tsx`, the function the provider's own updates use | `useHandle` (`eventController.subscribeToHandles`)                               |
 | `locationState`               | `fill.locationState(state)`: `eventController.commitLocationState(merged, true)`, then `flushRouteState()`          | `useLocationState` (the provider takes the snapshot with the state notification) |
 | `matched`                     | `store.setSegmentIds()`, and the tree's own `matched` array when it changes ("Failure")                             | later requests' `_rsc_segments`                                                  |
-| `segments`                    | the deferreds, and the entry in the history cache                                                                   | the tree on screen; the next render                                              |
+| `segments`                    | the defers, and the entry in the history cache                                                                      | the tree on screen; the next render                                              |
 | `redirect`                    | `fill.redirect(url, state)`: a replace navigation                                                                   | the bridge                                                                       |
 
 `consumeHandles` reads the stream with the `matched`, `isPartial` and
@@ -955,9 +958,9 @@ is a document navigation and the rest is dropped.
 
 ### When the holes resolve
 
-All at once, when the fill answers. Each deferred resolves with its own
+All at once, when the fill answers. Each defer resolves with its own
 segment's stream or node and follows it: a loader whose data is still
-streaming resolves its deferred with that stream, and the boundary that reads
+streaming resolves its defer with that stream, and the boundary that reads
 it keeps waiting for the stream, as it would on a plain click. Nothing waits
 for another stream, for the end of the response, or for React to commit the
 tree. What shows meanwhile, and when React reveals it, is React's: the
@@ -1027,7 +1030,7 @@ maintainer's call: the skeleton with the click, rather than the page being
 left until the fill's first chunk (holding the click was rejected), and the
 layout's handler stays out of the prefetch (running it there was rejected).
 
-The layout's deferred resolves with the rest, when the fill answers, and
+The layout's defer resolves with the rest, when the fill answers, and
 React reveals the layout no sooner than its 300 ms after the skeleton. What
 shows inside it then depends on where the app reads:
 
@@ -1080,21 +1083,21 @@ layout).
 #### Where React holds the tree
 
 A deferred loader read with no boundary (R11) makes React hold the click's
-commit on that deferred. The navigation hands React the tree and goes on to
+commit on that defer. The navigation hands React the tree and goes on to
 wait for the fill without waiting for React, so the page React holds shows as
-soon as the fill answers. Two pages are why nothing a deferred waits for may
-wait for React's commit, a unit's own deferred included:
+soon as the fill answers. Two pages are why nothing a defer waits for may
+wait for React's commit, a unit's own defer included:
 
 - `bare-inner`: a read with no boundary, in a response that stays open behind
   it (a slower flagged loader behind its own `<Suspense>`).
 - `above`: a unit whose loader is read above the unit's fallback, by a layout
   that calls `useLoader()` on its route's loader. React holds the click on
-  the loader's deferred. When the unit's own resolved one commit later, the
+  the loader's defer. When the unit's own resolved one commit later, the
   commit that ended the hold showed the unit's fallback for React's 300 ms,
   where a plain click showed the page. Before that the page did not show at
-  all: the loader's deferred waited for a tree of the fill's, that tree
+  all: the loader's defer waited for a tree of the fill's, that tree
   waited for the click's commit, and the commit was waiting for the
-  deferred.
+  defer.
 
 `expectNoBoundaryHoldsThePageLeftUntilTheFillReturns` pins both pages in a
 browser, and `src/testing/__tests__/navigation-adoption-loading.test.tsx`
@@ -1103,16 +1106,79 @@ through the real provider and updater.
 #### In one task
 
 A unit's content renders the holes below it: a layout's outlet, a slot, a
-loader the route reads. When the unit's deferred resolves, React retries its
-boundary and reads those holes in that render. A hole whose deferred is
-resolved by then costs the retry one microtask (R-sync, second half). A hole
-that resolves a task later is a second suspension: the inner boundary shows
-its fallback, or, where the inner fallback is the same element as the outer
-one (a parallel slot reads its loaders above its content, behind the same
-skeleton), the skeleton mounts a second time and R-throttle starts over
-(measured on `slot`: content 99 to 250 ms late). The old design needed a rule
+loader the route reads. When the unit's defer resolves, React retries its
+boundary and reads those holes in that render. A hole resolved by then with a
+node costs the retry nothing where a router reader reads it (the read rule,
+next section); one resolved with a stream, or read by React itself, costs it
+one microtask (R-sync, second half). A hole that resolves a task later is a
+second suspension: the inner boundary shows its fallback, or, where the inner
+fallback is the same element as the outer one (a parallel slot reads its
+loaders above its content, behind the same skeleton), the skeleton mounts a
+second time and R-throttle starts over (measured on `slot`: content 99 to 250
+ms late). The old design needed a rule
 per ownership for this ("the loaders a unit owns resolve with the unit"). One
-`forEach` over the deferreds replaces it.
+`forEach` over the defers replaces it.
+
+#### How a hole is read
+
+Every reader of a hole reads its defer, and when it waits, it waits on the
+defer's one promise: two `useLoader()` calls of the same deferred loader
+suspend on the same `defer.promise`. Which reader that is depends on where
+the hole sits:
+
+| Where the hole is                                        | Who reads it                                                     | How                                                             |
+| -------------------------------------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------- |
+| A deferred loader                                        | `useLoader` (`src/use-loader.tsx`)                               | `readDefer`                                                     |
+| A placeholder with `loading()` (a unit, a slot with one) | `Suspender` (`src/route-content-wrapper.tsx`)                    | `readDefer`                                                     |
+| A placeholder with no `loading()`, a slot with none      | React itself, as a child (`renderSegments`, `renderSlotContent`) | `asStream`: the promise while pending, the value once fulfilled |
+| A slot's loader aggregate, the pending-stream registry   | `buildLoaderPromise`, `announcePendingStreams`                   | `asStream`                                                      |
+
+`readDefer` (`src/browser/defer.ts`) is the read rule:
+
+- A hole that has fulfilled, and whose promise no reader has handed React
+  (`read` is unset), is its value: no suspension. A `use()` of a promise
+  React has never seen suspends an urgent render once (R-sync), and the
+  boundary shows its fallback even though the value is in hand.
+- Otherwise the reader sets `read` and calls `use(defer.promise)`. A promise
+  React has waited on, React marks itself, so once the hole has resolved the
+  read returns at once. It has to be the same promise every time: React
+  replays a reader that suspended with the thenables it read the first time,
+  and a replay that switched to the value logs "A component was suspended by
+  an uncached promise".
+- Either path calls `use()` once (`SETTLED_THENABLE` on the value path), as
+  every `useLoader` read with route context does: a reader that suspended in
+  `use()` on mount and then finished without it logs "This library called
+  use() to suspend in a previous render but did not call use() when it
+  finished".
+
+The router writes `status`, `value` and `read` on the defer, its own object,
+and never React's thenable fields on the promise. `status` turns `fulfilled`
+when the router resolves the hole with a value it holds (a node). Resolved
+with a stream (a loader's Flight chunk), the promise follows the stream and
+`status` stays `pending`: the readers wait on the promise, which React then
+marks.
+
+Why does React read a hole with no `loading()` itself, and not a small router
+component? The filled entry hands the next render from this page the
+segment's own node in that place. A router component around the hole would
+be a fiber that node does not have, and React would remount the segment
+there, a layout with everything under it, on the next navigation that keeps
+it. React reads a promise child in place: it suspends the component above
+it, which commits nothing until the hole fulfils, so a fulfilled hole can be
+handed there as its value whether or not React read the promise before.
+Where a segment has `loading()`, `Suspender` stands in that place in every
+render already, so it reads the defer.
+
+`src/__tests__/browser-defer.test.tsx` pins the rule against real React,
+each case red without its part of it: one promise for every reader of a
+deferred loader; a fulfilled hole never read renders with no fallback, as a
+route's content and as a `useLoader()` read (red when the read always calls
+`use(defer.promise)`); a hole a reader suspended on reads at once after it
+resolves with no `use()` warning (red when such a read switches to the value
+with no `use()`: "This library called use() to suspend..."); and a
+time-sliced reader that suspended and is replayed hands `use()`
+the same promise (red without `read`: "A component was suspended by an
+uncached promise").
 
 ### The click commits on the plain click's lane
 
@@ -1155,7 +1221,7 @@ three runs of three in both apps since.
 An urgent commit has R-sync's price: a boundary handed a promise React has
 not read shows its fallback. Two things pay it. `forceAwait` stays on for a
 prefetched payload, so what the prefetch brought is handed over as values and
-only the deferreds are promises, each behind the fallback a plain click shows
+only the defers are holes, each behind the fallback a plain click shows
 there. And a value that is known is never handed to a boundary as a promise
 (#1080, `getBoundaryContent` and the aggregate rule above).
 
@@ -1201,7 +1267,7 @@ the reconciled segments), the click is a navigation that waits for its fill:
 - With the fill's first chunk the prefetched segments (minus the
   placeholders) and the fill's are reconciled together, and the result goes
   down the ordinary commit path: one `tx.commit`, one tree, one transition.
-  No deferred is read by anything. The fill's location state rides on the
+  No defer is read by anything. The fill's location state rides on the
   commit's `serverState`, and its handle stream is read right after the
   commit, under the entry it made.
 - A fill that fails, or answers with a redirect, is the navigation failing or
@@ -1266,7 +1332,7 @@ nothing a plain click does not cost.
 The other click React holds is one the client cannot see coming. A deferred
 loader whose read has no `<Suspense>` and no `loading()` above it suspends
 the click's render with nothing to fall back to, and React keeps the page
-being left until the deferred resolves (R11). Whether a tree does that is not in
+being left until the defer resolves (R11). Whether a tree does that is not in
 the segments: it depends on where the app's components call `useLoader()`.
 `bare`, `bare-inner` and `above` in the fixture are such pages.
 
@@ -1359,7 +1425,7 @@ loader is still streaming:
   being left is ahead of the page, against the same for the plain click,
   with a 50 ms margin), not the address bar.
 - **View transitions.** A fill starts none: it hands React nothing, and a
-  deferred that resolves is a Suspense retry, which is what reveals a plain
+  defer that resolves is a Suspense retry, which is what reveals a plain
   click's content too. On a route with `transition()` the browser gets two
   `document.startViewTransition` calls, the commit and the reveal, with or
   without the prefetch, for a flagged loader and for a flagged `loading()`,
@@ -1408,11 +1474,13 @@ it so:
 - **A slot with no `loading()`.** A slot's chain is built where the layout
   renders it (`renderSlotContent` in `src/client.tsx`), and it wraps a slot
   that streams with no `loading()` in a boundary of its own, by looking at
-  whether the slot's `component` is a promise. A deferred slot's hole is a
-  promise, but the slot it stands for was awaited: a navigation renders its
-  content with no boundary around it. So a deferred slot gets none, and its
-  hole stands where the content will. This is the one place the tree depends
-  on a value and not on the skeleton.
+  whether the slot's `component` is a promise. A deferred slot's hole is
+  pending too, but the slot it stands for was awaited: a navigation renders
+  its content with no boundary around it. So a deferred slot gets none, and
+  its hole stands where the content will, read by React itself (`asStream`:
+  the defer's promise, or its value once fulfilled, never a router component
+  the filled page would not have there). This is the one place the tree
+  depends on a value and not on the skeleton.
   `src/__tests__/parallel-outlet-deferred.test.tsx` pins it.
 - **Values as values.** What the prefetch did bring is awaited before the
   tree is built (`forceAwait`), and what is known is handed over as the value.
@@ -1420,7 +1488,7 @@ it so:
 `src/__tests__/segment-system.test.tsx` ("builds a plain click's wrapper
 chain from the skeleton") builds a page with a flagged layout, two slots, a
 route with `loading()` and `transition()`, an orphan layout and a loader at
-each level, once from placeholders with deferreds and once from a plain click's
+each level, once from placeholders with defers and once from a plain click's
 segments, and compares every router element in tree order: its type, its key,
 its segment and the slots it carries. In the browser,
 `expectAdoptedClickBuildsThePageOnce` watches fourteen clicks from the click
@@ -1455,15 +1523,15 @@ the page on screen waits for its fill, `navigate()` never copies one of its
 placeholders over the target entry's segment of the same id (it copies the
 page's other shared segments, which are fresher), so the target keeps its
 cache hit. So returning to the entry fetches what
-is missing; it never restores a tree suspended on a deferred nobody will
+is missing; it never restores a tree suspended on a defer nobody will
 resolve.
 
 A click that waits for its fill ("A unit under `transition()`") has no entry
 until the fill answers. Left before that, it leaves nothing behind.
 
-A deferred is resolved by its fill or never settled at all. Resolving an
+A defer is resolved by its fill or never settled at all. Resolving an
 abandoned one with nothing would show up in a tree that may still be mounted
-for a moment, and a deferred is never rejected (see "Failure"). It is only
+for a moment, and a defer is never rejected (see "Failure"). It is only
 released: `store.loaders.releasePendingStream()` removes it from the
 pending streams, so `useLoader().isLoading` and the streaming indicators do
 not wait on it forever.
@@ -1513,7 +1581,7 @@ What an abort does depends on how far the fill got:
 - **While a tree of the answer's is built** ("Failure"). Nothing is handed
   over.
 
-Either way the deferreds are released and the entry keeps its placeholders
+Either way the defers are released and the entry keeps its placeholders
 ("History"). The navigation then returns, and `navigate()` resolves.
 
 What does not cancel the fill: a commit that is not a navigation's (an
@@ -1567,30 +1635,38 @@ per match except the ways deferred work can fail:
 `fillHoles` sees the first two as a placeholder with no segment of its id
 and type in the answer, or a `matched` that differs. It then renders the
 answer's segments as a navigation would and hands React that tree, once, with
-the answer's metadata (so the provider reads its handle stream). A boundary
-that suspended on its deferred while it mounted is handed that promise again, its
-`status` set to `fulfilled` with what the answer put in its place (the
-`error` or `notFound` segment's node), so React reads it at once. Handed the
-node itself, it was a component that called `use()` and then finished
-without it at the same place, and React logged in development: "This
-library called use() to suspend in a previous render but did not call use()
-when it finished". The `status` is the router's own write, and it stays for
-a second reason. A deferred React never read (the route below a flagged
-layout: the layout's read suspended first) suspends that urgent update at
-once if it is handed only resolved (R-sync), and the layout's fallback
-shows inside the layout, held React's 300 ms, where the plain click shows
-the error with the layout. Removing the write was tried on 2026-10-11 under
-the rule that the router does not lean on React internals: the outlet's
-fallback mounted once on the adopted click and never on the plain one
-(`navigation-adoption-loading.test.tsx`, "a failed route's error"). It is
-the one write of React's thenable fields in the client, on this failure
-ending only. The other deferreds, loaders' and those with no segment of
-their id in the answer, are released: the tree that read them is gone. The
-tree's
-`matched` array is rewritten in place first, because the click payload's
-handle stream reads it on every yield. `section-throws` and `section-missing`
-in the fixture are routes below the flagged layout whose handler fails that
-way, and `expectDeferredHandlerFailureReplacesItsSegment` checks that the
+the answer's metadata (so the provider reads its handle stream). Each place
+a hole stood is handed its defer again, resolved with what the answer put
+there (the `error` or `notFound` segment's node), and its reader applies the
+read rule ("How a hole is read"):
+
+- A `Suspender` that suspended on the defer while it mounted calls `use()` of
+  the same promise, which React has marked, and reads the node at once.
+  Handed the node itself, it would be a component that called `use()` and
+  then finished without it at the same place, and React logs in development:
+  "This library called use() to suspend in a previous render but did not
+  call use() when it finished".
+- A defer React never read (the route below a flagged layout: the layout's
+  read suspended first) is its value. Handed only a resolved promise, it
+  suspends that urgent update at once (R-sync), and the layout's fallback
+  shows inside the layout, held React's 300 ms, where the plain click shows
+  the error with the layout (`navigation-adoption-loading.test.tsx`, "a
+  failed route's error": with the value path removed, "no fallback inside
+  the layout: expected 1 to be +0").
+- Where the answer's segment has no `loading()` (an `error` segment never
+  has one), React reads the node there itself, and the defer is handed as
+  its value (`asStream`): nothing below that place committed while the hole
+  was pending.
+
+Until 2026-10-11 this ending wrote `status: "fulfilled"` and `value` onto the
+hole's promise itself, the client's one write of React's thenable fields. The
+defer's own `status` and `read` replace it: the router decides from what it
+knows, and React's fields are React's. The other defers, loaders' and those
+with no segment of their id in the answer, are released: the tree that read
+them is gone. The tree's `matched` array is rewritten in place first, because
+the click payload's handle stream reads it on every yield. `section-throws`
+and `section-missing` in the fixture are routes below the flagged layout
+whose handler fails that way, and `expectDeferredHandlerFailureReplacesItsSegment` checks that the
 adopted click ends on the page the plain click ends on: the layout with the
 route's boundary inside it, no fallback left, nothing streaming.
 
@@ -1599,7 +1675,7 @@ streamed, so its failure arrives inside its segment's `component` and lands
 in the boundary React finds for it. A loader's error, `notFound()` or
 `redirect()` rides in its `loaderData` and is decoded where the loader is
 read (`StreamedLoaderErrorBoundary`), exactly as for a loader that streams
-behind `loading()`. Both resolve their deferred like any value:
+behind `loading()`. Both resolve their defer like any value:
 `expectDeferredOutcomeArrivesWithTheFill` covers a loader that throws, one
 that calls `notFound()` and one that redirects.
 
@@ -1645,7 +1721,7 @@ own ending: it throws to the navigation's caller or starts over, and the fill
 as such hands over nothing. A handler that failed in that fill is part of the
 one tree the click commits.
 
-The deferreds are never rejected, and this is scar tissue. The first version
+The defers are never rejected, and this is scar tissue. The first version
 rejected them, so that React would throw at each reader into its nearest
 error boundary. It worked on screen, and it also raised an uncaught
 `Connection closed.` in the page: the tree builds aggregate promises over a
@@ -1665,7 +1741,7 @@ redirect, or a client built without the hook, is a document navigation.
 
 A prefetch entry respawns on every adoption (`makeRespawn` in
 `prefetch/fetch.ts`), so each adoption decodes its own payload, arms its own
-deferreds and sends its own fill.
+defers and sends its own fill.
 
 An entry that defers lives under its source page's key, which includes the
 segments that page held (`buildSourceKey` in `prefetch/cache.ts`). Coming
@@ -1770,25 +1846,25 @@ per flagged loader.
 The click, from route A to route B of the same group, with B's prefetch
 received on A:
 
-| When                      | What happens                                                                                                                                                                                                                                                                                                                                                                                    |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| The click                 | The optimistic swap, unchanged (`beginClientUrlNavigation`, `ClientUrlsRoot`): `useOutlet().pending` turns true, B's component renders in a transition lane, every loader read of B suspends on `PENDING_FOREVER`.                                                                                                                                                                              |
-| A few microtasks later    | `client.fetchPartial` hands back the prefetched payload; `armHoles` gives each placeholder a deferred; the fill leaves with the navigation's signal.                                                                                                                                                                                                                                            |
-| Same task                 | `renderSegments` builds B's tree: unflagged loaders as values (`forceAwait`), each flagged loader's stream is its deferred. `tx.commit()` moves the URL, the history entry and the store, and the tree goes to React in a transition marked `rango-optimistic-commit`: the lane the plain group click's commit takes (the content-hold branch already admits `optimisticPresented` with holes). |
-| Right after the hand-over | `mode.presentation.clear()`: `pending` ends with this commit, not with the fill.                                                                                                                                                                                                                                                                                                                |
-| The fill answers          | `fillHoles` resolves each deferred with the loader's stream and rewrites the entry in place. React retries the boundary that reads it. No tree is handed over.                                                                                                                                                                                                                                  |
+| When                      | What happens                                                                                                                                                                                                                                                                                                                                                                                 |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The click                 | The optimistic swap, unchanged (`beginClientUrlNavigation`, `ClientUrlsRoot`): `useOutlet().pending` turns true, B's component renders in a transition lane, every loader read of B suspends on `PENDING_FOREVER`.                                                                                                                                                                           |
+| A few microtasks later    | `client.fetchPartial` hands back the prefetched payload; `armHoles` gives each placeholder a defer; the fill leaves with the navigation's signal.                                                                                                                                                                                                                                            |
+| Same task                 | `renderSegments` builds B's tree: unflagged loaders as values (`forceAwait`), each flagged loader's stream is its defer. `tx.commit()` moves the URL, the history entry and the store, and the tree goes to React in a transition marked `rango-optimistic-commit`: the lane the plain group click's commit takes (the content-hold branch already admits `optimisticPresented` with holes). |
+| Right after the hand-over | `mode.presentation.clear()`: `pending` ends with this commit, not with the fill.                                                                                                                                                                                                                                                                                                             |
+| The fill answers          | `fillHoles` resolves each defer with the loader's stream and rewrites the entry in place. React retries the boundary that reads it. No tree is handed over.                                                                                                                                                                                                                                  |
 
 The holes live on the canonical tree. The group segment's `OutletProvider`
-gets `loaderStreams` from `buildLoaderStreams`, the deferred is the stream
+gets `loaderStreams` from `buildLoaderStreams`, the defer is the stream
 for the flagged loader's id, and `ClientUrlsRoot`'s own provider has no
 streams once `routeId` is B, so `useLoader(ReviewsLoader)` walks up to the
 segment's provider. What a read of the flagged loader suspends on:
 
-| Window                         | Promise                                                                                                      |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------ |
-| Click to the commit (the swap) | `PENDING_FOREVER`, memoized per intent (`client-root.tsx`)                                                   |
-| The commit to the fill         | the hole's deferred: one per placeholder per adoption, stable for the tree (rule 1 of the Suspense contract) |
-| After the fill                 | the fill's own stream for that loader; the history entry holds it, never the deferred                        |
+| Window                         | Promise                                                                                                                  |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| Click to the commit (the swap) | `PENDING_FOREVER`, memoized per intent (`client-root.tsx`)                                                               |
+| The commit to the fill         | the promise of the hole's defer: one per placeholder per adoption, stable for the tree (rule 1 of the Suspense contract) |
+| After the fill                 | the fill's own stream for that loader; the history entry holds it, never the defer                                       |
 
 The switch from the first to the second happens inside a boundary that is
 already on its fallback (`loading()`'s `<Suspense>` in `ClientUrlsRoot`, or
@@ -1870,12 +1946,10 @@ outside the shared funnel and are never deferred because
 
 ### Where it is pinned
 
-### Where it is pinned
-
 - `src/__tests__/partial-update-fill.test.ts`: the updater with a mocked
   client and store. One `onUpdate` and one `renderSegments` per adopted click
   (a loader, a route unit, a layout unit with route, slot and loaders), every
-  deferred resolved with the fill's value at its first chunk, the entry
+  defer resolved with the fill's value at its first chunk, the entry
   holding the fill's own segments, a fill that answers before the commit, a
   fill its navigation's signal aborts (before its response, after it, while
   the tree of a failed answer is built), the click that waits for its fill,
@@ -1889,6 +1963,8 @@ outside the shared funnel and are never deferred because
   ("a fill in flight"): the signal a newer navigation and a back/forward
   abort after the commit. `src/__tests__/navigation-client.test.ts` ("the
   signal"): a request cancelled until its response, never after.
+- `src/__tests__/browser-defer.test.tsx`: the defer and its read rule
+  against real React ("How a hole is read").
 - `src/__tests__/segment-system.test.tsx`,
   `src/__tests__/parallel-outlet-deferred.test.tsx`,
   `src/__tests__/segment-loader-promise.test.ts`: the tree.
@@ -2236,7 +2312,7 @@ the one-tree click:
 | Gap           | Cells | What closed it                                                                              |
 | ------------- | ----- | ------------------------------------------------------------------------------------------- |
 | `OPEN_QUEUED` | 10    | A click with holes commits urgently ("The click commits on the plain click's lane")         |
-| `OPEN_ABOVE`  | 3     | No deferred waits for React's commit, a unit's own included ("Where React holds the tree")  |
+| `OPEN_ABOVE`  | 3     | No defer waits for React's commit, a unit's own included ("Where React holds the tree")     |
 | `OPEN_HELD`   | 19    | A unit under `transition()` commits nothing at the click; the hooks move with a held commit |
 
 The same #1080 merge opened `OPEN_LAYOUT_CHROME` and

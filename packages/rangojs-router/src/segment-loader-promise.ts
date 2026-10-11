@@ -1,5 +1,6 @@
 import type { ResolvedSegment } from "./types.js";
 import { INTERNAL_RANGO_DEBUG } from "./internal-debug.js";
+import { asStream } from "./browser/defer.js";
 
 /**
  * Browser: a boundary is handed the settled value. React treats a promise as
@@ -97,13 +98,7 @@ export function buildLoaderPromise(loaders: ResolvedSegment[]): Promise<any[]> {
       }
     }
   }
-  return Promise.all(
-    loaders.map((loader) =>
-      loader.loaderData instanceof Promise
-        ? loader.loaderData
-        : Promise.resolve(loader.loaderData),
-    ),
-  );
+  return Promise.all(loaders.map((loader) => asStream(loader.loaderData)));
 }
 
 function isObjectLike(value: unknown): value is object {

@@ -48,6 +48,7 @@ vi.mock("../root-error-boundary.js", () => ({
 }));
 
 import { renderSegments } from "../segment-system";
+import { Defer } from "../browser/defer";
 import { LoaderRedirect } from "../loader-redirect";
 import {
   decodeLoaderEntry,
@@ -1869,11 +1870,11 @@ describe("segment-system", () => {
     });
 
     // prefetch: false (docs/design/prefetch-false.md). A deferred segment's
-    // value is a gate: a promise the browser resolves when the fill request
-    // lands (browser/partial-update.ts). The tree build must never wait for
-    // one: the fill is only merged once the build has returned.
+    // value is a gate: a defer the browser resolves when the fill request
+    // lands (browser/partial-update.ts armHoles). The tree build must never
+    // wait for one: the fill is only merged once the build has returned.
     describe("deferred segments (prefetch: false)", () => {
-      const gate = () => new Promise<never>(() => {});
+      const gate = () => new Defer<never>();
       const fallback = createElement("div", null, "Loading...");
 
       /** Fails instead of hanging when the build waits on a gate. */
@@ -2023,6 +2024,44 @@ describe("segment-system", () => {
         ];
 
         await built(renderSegments(segments, { forceAwait: true }));
+      });
+
+      // No Suspender of the router's reads a hole with no loading(): React
+      // reads the node itself, so the filled page's node later takes the
+      // same place (browser/defer.ts asStream). A placeholder's hole is
+      // pending; the place a failed fill hands its defer again (fillHoles)
+      // holds it fulfilled.
+      const contentOf = async (segment: ResolvedSegment) => {
+        const tree = toTreeNode(await built(renderSegments([segment])));
+        // Wrapped: an async function would adopt a promise it returns.
+        return [collectByType(tree, MockOutletProvider)[0].props.children];
+      };
+
+      it("hands React a placeholder's hole with no loading() as its promise", async () => {
+        const hole = new Defer<ReactNode>();
+        const [content] = await contentOf(
+          seg({
+            id: "R0",
+            type: "route",
+            component: hole as unknown as ReactNode,
+            deferred: true,
+          }),
+        );
+        expect(content).toBe(hole.promise);
+      });
+
+      it("hands React a fulfilled hole with no loading() as its value", async () => {
+        const node = createElement("p", null, "page");
+        const hole = new Defer<ReactNode>();
+        hole.resolve(node);
+        const [content] = await contentOf(
+          seg({
+            id: "R0",
+            type: "error",
+            component: hole as unknown as ReactNode,
+          }),
+        );
+        expect(content).toBe(node);
       });
 
       it("does not settle a slot's aggregate that holds a gate", async () => {

@@ -387,11 +387,15 @@ server projection.
   prefetch. The payload is the page's skeleton: one placeholder per skipped
   segment, with what its wrapper chain is built from, and a complete
   `matched`. The navigation that adopts it builds the page's tree once, with
-  a deferred per placeholder (`armHoles`, `browser/defer.ts`), sends one fill
+  a `Defer` per placeholder (`armHoles`, `browser/defer.ts`: one promise
+  every reader of the hole waits on, and the router's `status`, `value` and
+  `read`; `readDefer` is the read rule of `Suspender` and `useLoader`,
+  `asStream` what React itself reads where a segment has no `loading()`, an
+  aggregate and the pending-stream registry), sends one fill
   request (`_rsc_fill=1`) that runs only the deferred work, with its own
   signal, before it renders, commits the tree urgently, and then, inside the
   same navigation, fills the holes from the fill's answer (`fillHoles`):
-  every deferred resolves in one task with its own stream or node, the
+  every defer resolves in one task with its own stream or node, the
   stored entry is rewritten, and handle data and location state go to their
   stores (`PartialUpdateConfig.fill`, `consumeHandles`). The fill hands React
   no tree, and its stream keeps the navigation's streaming token open. A
@@ -400,7 +404,7 @@ server projection.
   restored from the back/forward cache does not), which cancels the fill
   request until it has answered (`navigation-client.ts`, the rule for every
   partial request: a response that has arrived is ignored, never aborted)
-  and drops an answer that arrives later; the deferreds are released. A
+  and drops an answer that arrives later; the defers are released. A
   flagged layout entered from outside shows its skeleton with the click
   (the one place the page differs from a plain click's). A click on a
   prefetch still in flight reuses it and sends the fill after it (bounded
@@ -418,7 +422,10 @@ server projection.
   `PrefetchDeferral` on `InternalHandlerContext._prefetchDeferral`),
   `segment-resolution/revalidation.ts`; stored routes (`cache()`, `ppr`,
   `Prerender`) defer loaders only. Browser: `browser/partial-update.ts`
-  (`armHoles`, `fillHoles`), `browser/defer.ts`.
+  (`armHoles`, `fillHoles`), `browser/defer.ts` (`Defer`, `readDefer`,
+  `asStream`), read in `route-content-wrapper.tsx` (`Suspender`),
+  `use-loader.tsx`, `segment-system.tsx` and `client.tsx`
+  (`renderSlotContent`).
   `ctx.rendered()` is refused for a deferrable loader on every request kind
   (`router/loader-resolution.ts`). The document cache keeps one slot,
   refuses a payload that carries deferred units

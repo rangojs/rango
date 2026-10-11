@@ -40,6 +40,7 @@ import {
   type UpdateMode,
 } from "../browser/partial-update";
 import { LoaderStore } from "../loader-store";
+import { Defer } from "../browser/defer";
 
 const URL_PAGE = "http://localhost/product";
 
@@ -301,13 +302,14 @@ function stubLocation() {
 }
 
 describe("adopting a payload with deferred segments", () => {
-  it("commits at once with a deferred as the loader's data", async () => {
+  it("commits at once with a defer as the loader's data", async () => {
     const adoption = loaderAdoption();
     const { adopt, onUpdate, store, tx } = setup(adoption);
     await adopt();
 
     expect(onUpdate).toHaveBeenCalledTimes(1);
-    expect(adoption.reviews.loaderData).toBeInstanceOf(Promise);
+    expect(adoption.reviews.loaderData).toBeInstanceOf(Defer);
+    expect(deferOf(adoption.reviews).status).toBe("pending");
     expect(adoption.reviews.deferred).toBe(true);
     // The store never reports a placeholder as held.
     expect(tx.commit.mock.calls[0][0]).toEqual(["L0", "L0R0", "L0R0D0.price"]);
@@ -315,7 +317,7 @@ describe("adopting a payload with deferred segments", () => {
     expect(store.cache.get("/product")!.segments).toContain(adoption.reviews);
   });
 
-  it("puts the deferred in a unit's component and keeps its fallback", async () => {
+  it("puts the defer in a unit's component and keeps its fallback", async () => {
     const layout = seg("L0", { type: "layout", component: "layout" });
     const unit = seg("L0R0", {
       component: null,
@@ -335,7 +337,7 @@ describe("adopting a payload with deferred segments", () => {
     });
     await adopt();
 
-    expect(unit.component).toBeInstanceOf(Promise);
+    expect(unit.component).toBeInstanceOf(Defer);
     expect(unit.loading).toBe("skeleton");
     expect(tx.commit.mock.calls[0][0]).toEqual(["L0"]);
   });
@@ -480,11 +482,12 @@ function sectionAdoption({ outer = false } = {}) {
   };
 }
 
-/** The deferred armHoles left on a placeholder, and the value a segment carries. */
+/** The value a segment carries, the defer armHoles left on a placeholder, its promise. */
 const valueOf = (segment: ResolvedSegment): unknown =>
   segment.type === "loader" ? segment.loaderData : segment.component;
-const holeOf = (placeholder: ResolvedSegment) =>
-  valueOf(placeholder) as Promise<unknown>;
+const deferOf = (placeholder: ResolvedSegment) =>
+  valueOf(placeholder) as Defer<unknown>;
+const holeOf = (placeholder: ResolvedSegment) => deferOf(placeholder).promise;
 
 /** A prefetched page whose route is one deferred unit, below a held layout. */
 function unitAdoption(overrides?: Partial<ResolvedSegment>) {
@@ -544,7 +547,7 @@ describe("a clientUrls() click that presented its destination", () => {
     expect(order).toEqual(["transition:rango-optimistic-commit", "clear"]);
     expect(run.onUpdate).toHaveBeenCalledTimes(1);
     expect(presentation.clear).toHaveBeenCalledTimes(1);
-    const deferredRead = adoption.reviews.loaderData as Promise<unknown>;
+    const deferredRead = holeOf(adoption.reviews);
     expect(await settled(deferredRead)).toBe(false);
 
     run.fill.resolve(
@@ -584,7 +587,7 @@ describe("the fill landing", () => {
     const { adopt, fill, store } = setup(adoption);
     const { navigation } = await adopt();
     const entry = store.cache.get("/product")!.segments;
-    const hole = adoption.reviews.loaderData as Promise<unknown>;
+    const hole = holeOf(adoption.reviews);
 
     const filled = loaderSeg("L0R0D1.reviews", "reviews", { reviews: 5 });
     fill.resolve(fillPayload([filled], adoption.matched));
@@ -598,7 +601,11 @@ describe("the fill landing", () => {
     expect(store.cacheSegmentsForHistory).not.toHaveBeenCalled();
     expect(store.getSegmentIds()).toEqual(adoption.matched);
     await expect(hole).resolves.toEqual({ reviews: 5 });
-    // The tree on screen reads the deferred. The entry keeps the fill's stream.
+    expect(deferOf(adoption.reviews)).toMatchObject({
+      status: "fulfilled",
+      value: { reviews: 5 },
+    });
+    // The tree on screen reads the defer. The entry keeps the fill's stream.
     expect(filled.loaderData).toEqual({ reviews: 5 });
   });
 
@@ -667,15 +674,14 @@ describe("the fill landing", () => {
           valueOf(brought),
         );
       }
-      // The entry holds the fill's own segments, not the placeholders: the
-      // next render from this page builds on streams and nodes, and a
-      // deferred is a promise React has read only where a reader was on
-      // screen.
+      // The entry holds the fill's own segments, not the placeholders: a
+      // defer belongs to the tree on screen.
       const entry = store.cache.get("/product")!.segments;
       expect(entry.some((s) => s.deferred)).toBe(false);
       for (const brought of adoption.filled) expect(entry).toContain(brought);
       for (const segment of entry) {
         expect(holes, segment.id).not.toContain(valueOf(segment));
+        expect(valueOf(segment), segment.id).not.toBeInstanceOf(Defer);
       }
     },
   );
@@ -689,7 +695,7 @@ describe("the fill landing", () => {
     const navigation = navigate();
     await flush();
     let resolved = false;
-    void (adoption.reviews.loaderData as Promise<unknown>).then(() => {
+    void holeOf(adoption.reviews).then(() => {
       resolved = true;
     });
     fill.resolve(
@@ -742,7 +748,7 @@ describe("the fill landing", () => {
       fill.resolve(response);
       await navigation;
 
-      await expect(adoption.reviews.loaderData).resolves.toEqual({
+      await expect(holeOf(adoption.reviews)).resolves.toEqual({
         reviews: 5,
       });
       expect(hooks.handles).toHaveBeenCalledWith(response.payload.metadata);
@@ -1093,11 +1099,11 @@ describe("a fill whose segments are not the ones the tree was built for", () => 
     };
   }
 
-  // A boundary that suspended on its deferred while it mounted, rendered
-  // again with a node in its place, is a component that called use() and
-  // then did not: React reports it in development. So the new tree hands
-  // such a boundary its deferred, settled with the answer's node.
-  it("replaces the page with the fill's segments in one update, handing each boundary its deferred settled", async () => {
+  // Each place a hole stood is handed its defer again, resolved with the
+  // answer's node, and its reader applies the read rule (browser/defer.ts):
+  // a reader that suspended on it calls use() of the same promise, one React
+  // never read takes the value. The router writes nothing on the promise.
+  it("replaces the page with the fill's segments in one update, handing each place its defer, resolved", async () => {
     const adoption = sectionAdoption();
     const hooks = bridge();
     const { adopt, fill, store, onUpdate, renderSegments } = setup(adoption, {
@@ -1130,11 +1136,13 @@ describe("a fill whose segments are not the ones the tree was built for", () => 
       [2, "content-L0L1.@side"],
       [4, "boundary"],
     ] as const) {
-      const hole = holes[index]!;
-      expect(hole).toMatchObject({ status: "fulfilled", value });
-      expect(await hole).toBe(value);
+      const defer = deferOf(adoption.placeholders[index]!);
+      expect(defer).toMatchObject({ status: "fulfilled", value });
+      expect(defer.promise).not.toHaveProperty("status");
+      expect(defer.promise).not.toHaveProperty("value");
+      expect(await defer.promise).toBe(value);
       const id = adoption.placeholders[index]!.id;
-      expect(rendered.find((s) => s.id === id)!.component).toBe(hole);
+      expect(rendered.find((s) => s.id === id)!.component).toBe(defer);
     }
     expect(store.loaders.isStreamPending("page")).toBe(false);
     expect(store.cache.get("/product")!.segments.map((s) => s.id)).toEqual(
@@ -1173,12 +1181,12 @@ describe("a fill whose segments are not the ones the tree was built for", () => 
 // newer navigation or a back/forward aborts (event-controller.ts), is the one
 // thing that cancels it. Nothing else tracks a pending fill.
 describe("a fill its navigation is left before it lands", () => {
-  it("is aborted before its response: nothing resolves, and the deferreds stop being pending streams", async () => {
+  it("is aborted before its response: nothing resolves, and the defers stop being pending streams", async () => {
     const adoption = loaderAdoption();
     const { adopt, calls, onUpdate, end, store } = setup(adoption);
     const controller = new AbortController();
     const { navigation } = await adopt(controller.signal);
-    const hole = adoption.reviews.loaderData as Promise<unknown>;
+    const hole = holeOf(adoption.reviews);
     store.loaders.trackPendingStream("reviews", hole);
     expect(store.loaders.isStreamPending("reviews")).toBe(true);
 
@@ -1252,9 +1260,7 @@ describe("a fill its navigation is left before it lands", () => {
     await flush();
     expect(tx.commit).not.toHaveBeenCalled();
     expect(onUpdate).not.toHaveBeenCalled();
-    expect(await settled(adoption.reviews.loaderData as Promise<unknown>)).toBe(
-      false,
-    );
+    expect(await settled(holeOf(adoption.reviews))).toBe(false);
     expect(store.setSegmentIds).not.toHaveBeenCalled();
   });
 });
@@ -1288,12 +1294,12 @@ describe("a fill that does not land", () => {
   // takes over. The deferreds are released, never rejected: a rejected one is
   // an unhandled rejection of every aggregate built over it
   // (segment-loader-promise.ts).
-  it("shows a response it cannot use as an error, and settles no deferred", async () => {
+  it("shows a response it cannot use as an error, and settles no defer", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const adoption = loaderAdoption();
     const { adopt, fill, onUpdate, store } = setup(adoption);
     const { navigation } = await adopt();
-    const hole = adoption.reviews.loaderData as Promise<unknown>;
+    const hole = holeOf(adoption.reviews);
     store.loaders.trackPendingStream("reviews", hole);
 
     // Lists a segment the client does not hold and does not send it.

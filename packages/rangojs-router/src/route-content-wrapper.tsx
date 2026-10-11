@@ -10,6 +10,7 @@ import {
   LOADER_REDIRECT,
 } from "./decode-loader-results.js";
 import { LoaderRedirect } from "./loader-redirect.js";
+import { Defer, readDefer } from "./browser/defer.js";
 import type { BoundaryAudit } from "./suspense-audit.js";
 import {
   AuditedFallback,
@@ -141,7 +142,7 @@ export function AuditedRouteContent({
   const audit = useBoundaryAudit(
     `content:${segmentId}`,
     segmentId ?? "",
-    content,
+    content instanceof Defer ? content.promise : content,
   );
   return (
     <Suspense
@@ -174,8 +175,14 @@ const Suspender = ({
   // A pending promise suspends here and the wrapping Suspense shows the
   // loading() fallback; a node renders without suspending. The wrapper tree
   // (RouteContentWrapper > Suspense > Suspender) is identical either way (see
-  // docs/tree-structure.md), like LoaderResolver's resolved-data branch.
-  return content instanceof Promise ? use(content) : content;
+  // docs/tree-structure.md), like LoaderResolver's resolved-data branch. A
+  // `prefetch: false` hole is read here, by the read rule, so the filled
+  // page's node later takes the same place.
+  return content instanceof Defer
+    ? (readDefer(content) as ReactNode)
+    : content instanceof Promise
+      ? use(content)
+      : content;
 };
 
 /**

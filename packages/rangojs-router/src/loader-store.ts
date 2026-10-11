@@ -36,6 +36,7 @@
  */
 
 import { unwrapsSynchronously } from "./thenable-status.js";
+import { asStream } from "./browser/defer.js";
 
 /** The loader-segment shape announcePendingStreams reads (ResolvedSegment). */
 export interface PendingStreamSource {
@@ -574,12 +575,13 @@ export class LoaderStore {
    */
   announcePendingStreams(segments: readonly PendingStreamSource[]): void {
     for (const segment of segments) {
+      const data = asStream(segment.loaderData);
       if (
         segment.type === "loader" &&
         segment.loaderId &&
-        segment.loaderData instanceof Promise
+        data instanceof Promise
       ) {
-        this.trackPendingStream(segment.loaderId, segment.loaderData);
+        this.trackPendingStream(segment.loaderId, data);
       }
     }
     for (const loaderId of this.pendingStreams.keys()) {
