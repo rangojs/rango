@@ -240,9 +240,10 @@ describe("useLocationState late hydration (#992)", () => {
   );
 
   // A boundary that suspends on the client only (a lazy chunk still loading)
-  // is dehydrated when the document is revealed. A transition that changed
-  // the location state a reader outside it reads committed without hydrating
-  // it, so it hydrated later against the entry's state.
+  // is dehydrated when the document is revealed. The reader outside it gets
+  // the entry's state only after it has hydrated (execution-model.md, "The
+  // reveal barrier is alone in its lane"; this case is close to a minimal
+  // repro of what breaks otherwise).
   it.each([
     { strict: true, label: "StrictMode" },
     { strict: false, label: "no StrictMode" },
@@ -262,9 +263,12 @@ describe("useLocationState late hydration (#992)", () => {
         return <p data-testid={testId}>{state?.count ?? 0}</p>;
       }
 
-      // A component, as a route renders one. React tells a dehydrated
-      // boundary about a context change only from an ancestor that bails
-      // out: one directly under a parent that re-renders is skipped.
+      // A component, as a route renders one, with the boundary beside the
+      // reader. Placed directly under NavigationProvider's RootErrorBoundary,
+      // which re-renders in the barrier transition, the boundary would be
+      // skipped even with the barrier alone in its lane: no ancestor bails out
+      // to propagate. A routed tree sits under renderSegments' own
+      // RootErrorBoundary element, which bails out.
       function Page() {
         return (
           <>

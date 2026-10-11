@@ -348,24 +348,15 @@ The decisions live in `router/segment-resolution/revalidation.ts` and ask
     returns that state and late handle writes wait. `NavigationProvider`
     moves `HydrationBarrierContext` in a transition once the document has
     been revealed (`documentRevealed`: no `$?`/`$~` boundary left), so React
-    hydrates every boundary still dehydrated before that commit, one a lazy
-    chunk holds included. The barrier transition changes nothing a component
-    reads. React tells a dehydrated boundary about a context change only by
-    lazy propagation from an ancestor that bails out with no work below it;
-    once its selective-hydration attempt commits the boundary still
-    dehydrated, a consumer of the changed context outside it keeps their
-    common ancestor from propagating again, and React commits the transition
-    around the boundary. Location state used to land in the barrier commit, so
-    a `useLocationState` reader outside a boundary a lazy chunk still held let
-    the barrier commit early: the boundary then hydrated against the entry's
-    state and the released store, and React client-rendered it over its HTML.
-    After the barrier commit two things land: location state in a transition
-    of its own (`LocationStateContext`, so `useLocationState` readers
-    re-render when the entry's state object changes), and handle data in the
-    release notification (the waiting writes apply in order and `useHandle`
-    readers whose selection changed re-render). A navigation
-    committed before the reveal releases the store before its update, so its
-    page mounts against the live store. Trade-off: a held navigation whose
+    hydrates every boundary still dehydrated before that commit, one still
+    suspended on the client included (next bullet: why that transition
+    carries nothing else). After the barrier commit two things land:
+    location state in a transition of its own (`LocationStateContext`, so
+    `useLocationState` readers re-render when the entry's state object
+    changes), and handle data in the release notification (the waiting
+    writes apply in order and `useHandle` readers whose selection changed
+    re-render). A navigation committed before the reveal releases the store
+    before its update, so its page mounts against the live store. Trade-off: a held navigation whose
     history entry commits during the window releases the store for the whole
     hold, so an old-page boundary that hydrates during the hold reads the
     destination's values and can mismatch (React client-renders it).
@@ -379,11 +370,61 @@ The decisions live in `router/segment-resolution/revalidation.ts` and ask
     document's state the same way (`getHydrationSnapshot()`). Pinned by
     `use-handle-hydration.test.tsx`, `router-hooks-hydration.test.tsx`,
     `navigation-provider-hydration.test.tsx`,
-    `render-route-hydrate.test.tsx` (`lateHandles`, and a boundary
-    suspended on the client at reveal), `location-state-hydration.test.tsx`,
-    `expectGatedBoundaryHydratesWithOutsideReader` in both apps,
+    `render-route-hydrate.test.tsx` (`lateHandles`),
     `expectLateBoundaryHandleReaderHydratesClean` in both apps (#1035), and
     `hydration-demo.test.ts` in vite-rsc-demo.
+  - **The reveal barrier is alone in its lane.** You would expect any
+    transition to wait for a dehydrated boundary beneath a provider it
+    changes, and React does wait, but only when the change reaches the
+    boundary. React 19.3 tells a dehydrated boundary about a context change
+    one way: lazy propagation from an ancestor that bails out with nothing
+    pending below it (`propagateParentContextChanges`). The boundary's own
+    `beginWork` never does it: `attemptEarlyBailoutIfNoScheduledUpdate`
+    returns a Suspense fiber whose `memoizedState.dehydrated` is set without
+    propagating (a boundary showing its fallback does propagate). Here is how
+    that goes wrong with a second update in the barrier's lane, say the
+    entry's location state with a `useLocationState` reader rendered next to
+    a `<Suspense>` whose client code is still loading. The first render
+    propagates, marks both the reader and the boundary, and the boundary
+    attempts selective hydration at the bumped TransitionHydrationLane
+    (`updateDehydratedSuspenseComponent` throws `SelectiveHydrationException`).
+    Its code is not there, so that pass commits the boundary still dehydrated
+    and clears the lane propagation put on it. The reader still holds the
+    lane, so on the retry their common parent has pending work below it and
+    does not propagate again, the boundary bails out, and the transition
+    commits around it. The provider then releases the store; when the code
+    arrives the boundary hydrates against the entry's state and the live
+    store, React reports "Hydration failed because the server rendered text
+    didn't match the client" (#418 in a build) and client-renders it over
+    its HTML. With the barrier alone, nothing outside the boundary holds the
+    lane: the retry propagates again, the boundary gives up on selective
+    hydration (`renderDidSuspendDelayIfPossible`), and the transition waits
+    until the boundary hydrates at its retry lane. "Alone" means the lane, not
+    the callback: `setLocationState` in its own `startTransition` inside the
+    same callback is batched into the same lane and fails the same tests,
+    which is why location state lands in the effect after the barrier's
+    commit. The shape matters too: a wrapper component between the reader's
+    parent and the `<Suspense>` bails out on the retry and propagates, so the
+    bug needs the boundary rendered directly beside the reader, which is what
+    a server page rendering both gives you. Sources:
+    `react-dom/cjs/react-dom-client.development.js` 19.3.0
+    (`updateDehydratedSuspenseComponent` :11418, the throw at :11547;
+    `attemptEarlyBailoutIfNoScheduledUpdate` :11916, the dehydrated return at
+    :11970; `propagateParentContextChanges` :5879), upstream
+    `packages/react-reconciler/src/ReactFiberBeginWork.js` and
+    `ReactFiberNewContext.js`; no upstream issue found. The
+    `location-state-hydration.test.tsx` case "a boundary suspended on the
+    client at reveal…" is close to a minimal repro. Trade-off: location state
+    now waits for every boundary still suspended on the client at reveal,
+    whatever holds it: a lazy chunk, a slow client component chunk, or a
+    deliberate deferred-hydration gate. A hydrate-when-visible island has no
+    upper bound; one consumer measured 2.9 s. It is not a new kind of wait:
+    without a reader outside the boundary, location state and late handle
+    data already waited for such a boundary before. Pinned by
+    `render-route-hydrate.test.tsx` and `location-state-hydration.test.tsx`
+    ("a boundary suspended on the client …", a `use()` gate, StrictMode on
+    and off) and `expectGatedBoundaryHydratesWithOutsideReader` in both apps,
+    dev and production (a `React.lazy` chunk the test lets load).
   - **`ctx.dynamic()` is the request-level opt-out on this axis.** Runtime
     middleware calls it BEFORE the commit point, so it forces the request onto
     axis 1 — the shell lookup/HIT/MISS-capture is skipped even when a valid
@@ -391,6 +432,7 @@ The decisions live in `router/segment-resolution/revalidation.ts` and ask
     capture-schedule in `rsc-rendering.ts`). A handler runs AFTER the commit, so
     it can only suppress the follow-up capture on a MISS. It gates the PPR SHELL
     axis only — a `Prerender()` route's build-baked B-segments still replay.
+
 - **Runtime PPR capture is mixed-chain and never re-runs middleware.** The
   background capture renders the page under a derived context that INHERITS the
   triggering request's post-middleware state (so middleware-derived ctx values

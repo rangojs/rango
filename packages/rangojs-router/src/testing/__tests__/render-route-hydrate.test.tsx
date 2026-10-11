@@ -225,9 +225,9 @@ describe("renderRoute: hydrate", () => {
 
   // A boundary that suspends on the client only (a lazy chunk still loading,
   // here a `use()` of a promise the test resolves) stays dehydrated after the
-  // document is revealed. With a location-state reader outside it, the entry's
-  // state used to land while it was dehydrated and the store was released: it
-  // then hydrated against both and React client-rendered it over its HTML.
+  // document is revealed. The entry's location state and the late handles
+  // must wait for it, even with a location-state reader outside it, so it
+  // hydrates against what the server rendered.
   it.each([
     { strict: false, label: "no StrictMode" },
     { strict: true, label: "StrictMode" },

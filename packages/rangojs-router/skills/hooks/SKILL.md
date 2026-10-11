@@ -113,9 +113,10 @@ cannot mismatch its server HTML.
   value right after it hydrates.
 - Handle data a loader pushed late, and the entry's location state: both wait
   until the whole document has streamed and been revealed, and every boundary
-  has hydrated, one whose client code is still loading (a lazy chunk)
-  included. Then location state lands in a transition and handle data in the
-  release notification. `useLocationState` readers re-render when the entry's
+  has hydrated, including any boundary still suspended on the client (a lazy
+  chunk, a deferred-hydration gate; that wait has no upper bound). Then
+  location state lands in a transition and handle data in the release
+  notification. `useLocationState` readers re-render when the entry's
   state object changes; `useHandle` readers when their selection changes.
 - A navigation that commits before then mounts its page with the live values
   from its first render. A boundary of the document that persists across that

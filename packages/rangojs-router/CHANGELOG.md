@@ -2,27 +2,33 @@
 
 ## Unreleased
 
-### Fixed: a Suspense boundary whose code is still loading hydrates as the server rendered it when location state is read outside it
+### Fixed: a Suspense boundary still suspended on the client hydrates as the server rendered it when location state is read outside it
 
 **Before.** On a document load with location state in the history entry (after
 a reload, or Back to a page that loads its document), a `<Suspense>` boundary
-that could not hydrate yet because its client code was still loading (a
-`React.lazy` chunk, a slow client component chunk) could be client-rendered
-over its server HTML. It happened when a `useLocationState` reader outside the
-boundary, a sibling in the same component for example, had state: the reader
-received the entry's state while the boundary was still waiting, and when the
-chunk arrived the boundary hydrated against that state instead of what the
-server rendered. React reported `Hydration failed because the server rendered
-text didn't match the client` (minified error #418 in a production build) and
-replaced the boundary's DOM. A `useHandle` reader in the boundary could
-mismatch the same way, since late handle pushes were applied at that moment
-too.
+that could not hydrate yet could be client-rendered over its server HTML. A
+boundary is in that state when something on the client suspends it after the
+document has finished streaming: its client code still loading (a
+`React.lazy` chunk, a slow client component chunk), or a deferred-hydration
+gate such as a hydrate-when-visible island. It happened when a
+`useLocationState` reader outside the boundary, rendered next to it, had
+state: the reader received the entry's state while the boundary was still
+waiting, and when the boundary hydrated it rendered against that state
+instead of what the server rendered. React reported `Hydration failed because
+the server rendered text didn't match the client` (minified error #418 in a
+production build) and replaced the boundary's DOM. A `useHandle` reader in the
+boundary could mismatch the same way, since late handle pushes were applied at
+that moment too.
 
 **Now.** Location state and late handle data wait until every boundary of the
-document has hydrated, one waiting for a chunk included, and only then reach
-their readers. The boundary hydrates as the server rendered it. A reader
-outside it keeps the server's value (`undefined`) until then, which is what
-`useLocationState` already promised for the rest of the page.
+document has hydrated, any boundary still suspended on the client included,
+and only then reach their readers. The boundary hydrates as the server
+rendered it. A reader outside it keeps the server's value (`undefined`) until
+then, which is what `useLocationState` already promised for the rest of the
+page. That wait has no upper bound when a deferred-hydration gate holds a
+boundary: a hydrate-when-visible island that stays off screen keeps location
+state `undefined` until it hydrates. Late handle data already waited for such
+a boundary whenever no location-state reader sat outside it.
 
 ## 0.23.0 (2026-10-11)
 

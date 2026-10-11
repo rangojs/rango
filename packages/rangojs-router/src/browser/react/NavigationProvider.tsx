@@ -312,14 +312,15 @@ export interface NavigationProviderProps {
    * `hydrate: true`), whose store EventController.lockHydration locked.
    * `settled` resolves once the stream has ended and React has revealed every
    * boundary. Then a transition changes HydrationBarrierContext alone, and
-   * React commits it once every boundary has hydrated, one a lazy chunk still
-   * holds included. Until that commit location state is `undefined`, as SSR
-   * rendered it, and the store is locked; after it the entry's state lands in
-   * a transition of its own and the store is released (handle data lands in
-   * that release notification). A navigation committed earlier releases the
-   * store before its update, for the whole hold when the navigation is held:
-   * an old-page boundary hydrating meanwhile reads the destination's values
-   * and can mismatch.
+   * React commits it once every boundary has hydrated, one still suspended on
+   * the client (a lazy chunk, a deferred-hydration gate) included. Until that
+   * commit location state is `undefined`, as SSR rendered it, and the store
+   * is locked; after it the entry's state lands in a transition of its own
+   * and the store is released (handle data lands in that release
+   * notification). A navigation committed earlier releases the store before
+   * its update, for the whole hold when the navigation is held: an old-page
+   * boundary hydrating meanwhile reads the destination's values and can
+   * mismatch.
    * Absent for a provider mounted on the client.
    */
   hydration?: { settled: Promise<void> };
@@ -434,22 +435,12 @@ export function NavigationProvider({
     return startConnectionWarmup();
   }, [warmupEnabled]);
 
-  // The document has been revealed: a transition that changes
-  // HydrationBarrierContext and nothing else. React hydrates every boundary
-  // still dehydrated beneath a changed provider before it commits, so this
-  // commit waits for a boundary a lazy chunk still holds.
-  //
-  // Nothing a component reads may change in it. React 19.3 tells a dehydrated
-  // boundary about a context change only by lazy propagation from an ancestor
-  // that bails out with no work below it (attemptEarlyBailoutIfNoScheduledUpdate
-  // returns a dehydrated boundary without propagating). Once its
-  // selective-hydration attempt commits the boundary still dehydrated, a
-  // consumer of the changed context outside it keeps the transition lane in
-  // their common ancestor's childLanes, nothing propagates again, and the
-  // transition commits around the boundary. The entry's location state used to
-  // ride here: a reader outside a boundary a lazy chunk held let the barrier
-  // commit, the boundary hydrated later against the entry's state and the
-  // released store, and React client-rendered it over its HTML.
+  // The document has been revealed. The barrier must be the only update in
+  // its transition lane: then React holds the commit until every boundary
+  // still dehydrated beneath it has hydrated. Any other update in the lane
+  // (location state in its own startTransition here included) can let React
+  // commit around a boundary still suspended on the client. Why:
+  // docs/internal/execution-model.md, "The reveal barrier is alone in its lane".
   useEffect(() => {
     if (!hydration) return;
     let cancelled = false;
