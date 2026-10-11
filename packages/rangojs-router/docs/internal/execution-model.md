@@ -86,7 +86,10 @@ fill request (_rsc_fill), sent when the click adopts that payload
 `loading()`: the entry's handler, its loaders, its orphan layouts and slots
 and, for a layout, every deeper entry. An entry whose handler output is
 stored (`cache()`, `ppr`, `Prerender`/`Static`) is served as usual and only
-its loaders are left out.
+its loaders are left out. A flagged loader is left out only if nothing reads
+it: one a handler or another loader reads with `ctx.use()` in the prefetch
+starts through its own registration, `cache()` included, and is delivered as
+on a navigation.
 
 Three things to keep in mind, because each looks like a bug the first time:
 

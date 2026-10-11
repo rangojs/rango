@@ -57,6 +57,7 @@ vi.mock("../../server/context.js", async () => {
 import { resolveAllSegmentsWithRevalidation } from "../segment-resolution/revalidation.js";
 import {
   planPrefetchDeferral,
+  startDeferredLoader,
   type PrefetchDeferral,
 } from "../segment-resolution/prefetch-deferral.js";
 import type { EntryData } from "../../server/context.js";
@@ -206,6 +207,48 @@ describe("a prefetch: deferral replaces execution", () => {
     const loader = byId.get("R1D0.awaited")!;
     expect(loader.deferred).toBeUndefined();
     await expect(loader.loaderData).resolves.toEqual({ from: "awaited" });
+  });
+
+  // A reader (createLoaderExecutor's useLoader in a real request) starts a
+  // deferred loader through its registration: resolveLoaderData with the
+  // loader's own entry and segment, as resolution would have started it.
+  it("a deferred loader a handler reads starts through its registration and is delivered", async () => {
+    const layoutLoader = loaderEntry("owned", { prefetch: false });
+    const read: unknown[] = [];
+    const route = entry("route", "R1", {
+      handler: vi.fn(async (ctx: any) => {
+        read.push(await startDeferredLoader(ctx, "owned"));
+        return "content-R1";
+      }),
+    });
+    const layout = entry("layout", "L0", {
+      loader: [layoutLoader],
+    });
+    const { byId, plan } = await resolve([layout, route], "prefetch", []);
+
+    expect(read).toEqual([{ from: "owned" }]);
+    expect(resolveLoaderDataMock.mock.calls[0]![0]).toBe(layoutLoader);
+    expect(plan!.deferredLoaders!.get("owned")).toMatchObject({
+      owner: "L0",
+      started: true,
+    });
+    const loader = byId.get("L0D0.owned")!;
+    expect(loader.deferred).toBeUndefined();
+    await expect(loader.loaderData).resolves.toEqual({ from: "owned" });
+  });
+
+  it("registers a deferred loader nobody reads and never starts it", async () => {
+    const route = entry("route", "R1", {
+      loader: [loaderEntry("unread", { prefetch: false })],
+    });
+    const { byId, plan } = await resolve([route], "prefetch", []);
+
+    expect(ran()).toEqual([]);
+    expect(plan!.deferredLoaders!.get("unread")).toMatchObject({
+      owner: "R1",
+    });
+    expect(plan!.deferredLoaders!.get("unread")!.started).toBeUndefined();
+    expect(byId.get("R1D0.unread")!.deferred).toBe(true);
   });
 
   it("skips a flagged route with everything its fallback covers", async () => {

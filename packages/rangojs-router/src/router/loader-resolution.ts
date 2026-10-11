@@ -57,6 +57,8 @@ import { getFetchableLoader } from "../server/fetchable-loader-store.js";
 import { _getRequestContext } from "../server/request-context.js";
 import {
   firstUnitCandidate,
+  loaderOwner,
+  startDeferredLoader,
   type PrefetchDeferral,
 } from "./segment-resolution/prefetch-deferral.js";
 import {
@@ -424,7 +426,9 @@ function createLoaderExecutor<TEnv>(
     /**
      * A stale refresh's executor (setupLoaderAccess _runLoaderIsolated): its
      * runs' pushes are diverted from the page's store, so a run's end says
-     * nothing about the page's replayed values (HandleStore.settleLoaderRun).
+     * nothing about the page's replayed values (HandleStore.settleLoaderRun),
+     * and it never starts a loader the page's prefetch deferred
+     * (startDeferredLoader): a refresh reads each loader fresh.
      */
     detached?: boolean;
     /**
@@ -499,7 +503,14 @@ function createLoaderExecutor<TEnv>(
     const bound =
       callerLoaderId !== null &&
       internal._loaderCacheOverrides?.get(loader.$$id);
-    const memo = bound || loaderPromises.get(loader.$$id);
+    // A loader the prefetch deferred starts through its registration, cache()
+    // binding included, as a navigation's run of it does.
+    const memo =
+      bound ||
+      loaderPromises.get(loader.$$id) ||
+      (executorOptions?.detached
+        ? undefined
+        : startDeferredLoader(ctx, loader.$$id));
     if (memo) {
       if (recordTags) readValueTags(memo);
       // A "use cache" body reading it refuses an identity read the run made
@@ -539,11 +550,8 @@ function createLoaderExecutor<TEnv>(
     // stale. Attributing to the owning route/layout segment gives handle
     // pushes the same granularity handler pushes have (segmentOrder-correct
     // for breadcrumb accumulation). A loader a prefetch deferred and a reader
-    // starts anyway keeps the segment that registers it
-    // (PrefetchDeferral.loaderOwners).
-    const owningSegmentId =
-      internal._prefetchDeferral?.loaderOwners?.get(loader.$$id) ??
-      internal._currentSegmentId;
+    // starts anyway keeps the segment that registers it (loaderOwner).
+    const owningSegmentId = loaderOwner(ctx, loader.$$id);
 
     let renderedResolved = false;
     let renderedPromise: Promise<void> | null = null;
@@ -875,7 +883,9 @@ export function setupLoaderAccess<TEnv>(
   // pushes, and a later run here replaces them (HandleStore.pushReplayed).
   const claimed = new Set<string>();
   const internal = ctx as InternalHandlerContext<any, TEnv>;
-  internal._loaderStarted = (loaderId) => loaderPromises.has(loaderId);
+  internal._loaderStarted = (loaderId) =>
+    loaderPromises.has(loaderId) ||
+    internal._loaderCacheOverrides?.has(loaderId) === true;
   internal._claimLoaderPushes = (loaderId) => {
     if (loaderPromises.has(loaderId) || claimed.has(loaderId)) return false;
     claimed.add(loaderId);

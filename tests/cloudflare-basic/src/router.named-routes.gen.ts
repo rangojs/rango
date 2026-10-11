@@ -182,6 +182,7 @@ export const NamedRoutes = {
   "prefetchFalse.own": "/prefetch-false/own",
   "prefetchFalse.ppr": "/prefetch-false/ppr",
   "prefetchFalse.prerendered": "/prefetch-false/prerendered",
+  "prefetchFalse.readCached": "/prefetch-false/read-cached",
   "prefetchFalse.redirects": "/prefetch-false/redirects",
   "prefetchFalse.section": "/prefetch-false/section",
   "prefetchFalse.sectionCached": "/prefetch-false/section-cached",

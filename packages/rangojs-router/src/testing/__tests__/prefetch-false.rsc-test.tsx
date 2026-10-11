@@ -195,6 +195,34 @@ async function AwaitedPage(ctx: HandlerContext): Promise<React.ReactNode> {
   return <p>{value}</p>;
 }
 
+/** Flagged with its own cache(): the route handler reads one, not the other. */
+const ReadCachedLoader = counted("read-cached");
+const UnreadCachedLoader = counted("unread-cached");
+
+async function ReadCachedPage(ctx: HandlerContext): Promise<React.ReactNode> {
+  const { value } = await ctx.use(ReadCachedLoader);
+  return <p>{`page:${value}`}</p>;
+}
+
+/** Flagged with its own cache(), read by an unflagged loader after it. */
+const LoaderReadCachedLoader = counted("loader-read-cached");
+const CachedReaderLoader = createLoader(async (ctx) => {
+  const { value } = await ctx.use(LoaderReadCachedLoader);
+  return { reader: `reader:${value}` };
+});
+
+/** A layout's flagged loader with its own cache() that pushes a handle. */
+const CachedOwnerLoader = createLoader(async (ctx) => {
+  ran("cached-owner-loader");
+  ctx.use(Notes)("cached-owner-note");
+  return { value: "cached-owner" };
+});
+
+async function CachedOwnerPage(ctx: HandlerContext): Promise<React.ReactNode> {
+  const { value } = await ctx.use(CachedOwnerLoader);
+  return <p>{value}</p>;
+}
+
 const errors: string[] = [];
 
 function makeRouter() {
@@ -364,6 +392,26 @@ function makeRouter() {
             ]),
             path("/awaited", AwaitedPage, { name: "awaited" }, () => [
               loader(AwaitedLoader, { prefetch: false }),
+            ]),
+            path("/read-cached", ReadCachedPage, () => [
+              loader(ReadCachedLoader, { prefetch: false }, () => [
+                cache({ ttl: 60 }),
+              ]),
+              loader(UnreadCachedLoader, { prefetch: false }, () => [
+                cache({ ttl: 60 }),
+              ]),
+            ]),
+            path("/loader-read-cached", page("loader-read-cached-page"), () => [
+              loader(LoaderReadCachedLoader, { prefetch: false }, () => [
+                cache({ ttl: 60 }),
+              ]),
+              loader(CachedReaderLoader),
+            ]),
+            layout(page("cached-owner-layout"), () => [
+              loader(CachedOwnerLoader, { prefetch: false }, () => [
+                cache({ ttl: 60 }),
+              ]),
+              path("/cached-owner/page", CachedOwnerPage),
             ]),
             layout(page("owner-layout"), () => [
               loader(OwnerLoader, { prefetch: false }),
@@ -1454,6 +1502,121 @@ describe("R8: where the flag cannot be honoured the work runs in the prefetch", 
         payloadOf(plain).find(OwnerLoader.$$id)!.id.split("D")[0],
       );
       expect(noteOwner(prefetched)).toBe(noteOwner(plain));
+    });
+
+    // The handler's read starts the loader through its own registration, its
+    // cache() included, as on a plain navigation: the page and the loader's
+    // segment carry one value from one run. A flagged loader nothing reads is
+    // still deferred and its cache() is not read (R1).
+    describe("with its own cache()", () => {
+      class ItemReadStore extends MemorySegmentCacheStore {
+        readonly reads: string[] = [];
+        override async getItem(key: string) {
+          this.reads.push(key);
+          return super.getItem(key);
+        }
+      }
+      const readsOf = (store: ItemReadStore, loader: { $$id: string }) =>
+        store.reads.filter((key) => key.startsWith(`loader:${loader.$$id}:`))
+          .length;
+      /** What the page rendered, and what the loader's segment carries. */
+      const values = (result: ServeShellRequestResult) => ({
+        page: result.flight?.match(/page:(read-cached-run-\d+)/)?.[1],
+        segment: result.flight?.match(/"value":"(read-cached-run-\d+)"/)?.[1],
+      });
+
+      it("cold: one run for the handler and the segment, and the next prefetch reads the HIT", async () => {
+        const store = new ItemReadStore();
+        const { prefetch } = setup(store);
+        const first = await prefetch("/read-cached");
+        expect(count("read-cached")).toBe(1);
+        expect(values(first)).toEqual({
+          page: "read-cached-run-1",
+          segment: "read-cached-run-1",
+        });
+        expect(payloadOf(first).find(ReadCachedLoader.$$id)!.deferred).toBe(
+          undefined,
+        );
+
+        const second = await prefetch("/read-cached");
+        expect(values(second)).toEqual({
+          page: "read-cached-run-1",
+          segment: "read-cached-run-1",
+        });
+        expect(count("read-cached")).toBe(1);
+        expect(readsOf(store, ReadCachedLoader)).toBe(2);
+      });
+
+      it("warm: the prefetch serves the handler and the segment from the HIT, as a plain navigation does", async () => {
+        const store = new ItemReadStore();
+        const { serve, prefetch } = setup(store);
+        await serve("/read-cached");
+        expect(count("read-cached")).toBe(1);
+        const plain = await serve("/read-cached", { partial: { from: "/" } });
+        expect(values(plain)).toEqual({
+          page: "read-cached-run-1",
+          segment: "read-cached-run-1",
+        });
+
+        const prefetched = await prefetch("/read-cached");
+        expect(values(prefetched)).toEqual(values(plain));
+        expect(count("read-cached")).toBe(1);
+      });
+
+      it("the unread flagged loader beside it does not run and its cache() is not read; the fill reads it", async () => {
+        const store = new ItemReadStore();
+        const { serve, prefetch, fill } = setup(store);
+        await serve("/read-cached");
+        expect(count("unread-cached")).toBe(1);
+        const readsBefore = readsOf(store, UnreadCachedLoader);
+
+        const prefetched = payloadOf(await prefetch("/read-cached"));
+        const unread = prefetched.find(UnreadCachedLoader.$$id)!;
+        expect(prefetched.deferred).toEqual([unread.id]);
+        expect("loaderData" in unread).toBe(false);
+        expect(count("unread-cached")).toBe(1);
+        expect(readsOf(store, UnreadCachedLoader)).toBe(readsBefore);
+
+        const filled = await fill("/read-cached", prefetched);
+        expect(payloadOf(filled).ids).toEqual([unread.id]);
+        expect(count("unread-cached")).toBe(1);
+        expect(readsOf(store, UnreadCachedLoader)).toBe(readsBefore + 1);
+        expect(filled.flight).toContain("unread-cached-run-1");
+      });
+
+      it("a loader that reads it: the reader and the segment share the HIT", async () => {
+        const { serve, prefetch } = setup();
+        await serve("/loader-read-cached");
+        expect(count("loader-read-cached")).toBe(1);
+
+        const prefetched = await prefetch("/loader-read-cached");
+        expect(prefetched.flight).toContain("reader:loader-read-cached-run-1");
+        expect(prefetched.flight).toContain(
+          '"value":"loader-read-cached-run-1"',
+        );
+        expect(payloadOf(prefetched).deferred).toEqual([]);
+        expect(count("loader-read-cached")).toBe(1);
+      });
+
+      // The HIT replays the loader's recorded pushes: onto the layout that
+      // registers it, as on a plain navigation, not onto the route that read it.
+      it("a layout's loader a handler below reads: its replayed pushes stay on the layout", async () => {
+        const { serve, prefetch } = setup();
+        const noteOwner = (result: ServeShellRequestResult) =>
+          result.flight?.match(/"([^"]+)":\["cached-owner-note"\]/)?.[1];
+        await serve("/cached-owner/page");
+        expect(count("cached-owner-loader")).toBe(1);
+        const plain = await serve("/cached-owner/page", {
+          partial: { from: "/" },
+        });
+        const prefetched = await prefetch("/cached-owner/page");
+        expect(count("cached-owner-loader")).toBe(1);
+        expect(payloadOf(prefetched).deferred).toEqual([]);
+        expect(noteOwner(plain)).toBe(
+          payloadOf(plain).find(CachedOwnerLoader.$$id)!.id.split("D")[0],
+        );
+        expect(noteOwner(prefetched)).toBe(noteOwner(plain));
+      });
     });
 
     it("a streamed handler that reads it before its first await: one run, nothing deferred", async () => {

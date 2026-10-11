@@ -138,6 +138,11 @@ export const PfReviewsLoader = createLoader((ctx) =>
   work(ctx, "loader.data", 100),
 );
 export const PfUnitLoader = createLoader((ctx) => work(ctx, "unit.data", 100));
+// Flagged, with its own cache() keyed by the run, and read by its route's
+// handler: the prefetch starts it through that cache().
+export const PfReadCachedLoader = createLoader((ctx) =>
+  work(ctx, "read-cached.data", 100),
+);
 export const PfCachedLoader = createLoader((ctx) =>
   work(ctx, "cached.data", 100),
 );
@@ -298,6 +303,7 @@ const CASES = [
   ],
   ["section-read", "inside the flagged layout, its loader read in a Suspense"],
   ["outer", "a flagged loader above a flagged layout, read in a Suspense"],
+  ["read-cached", "flagged loader with its own cache(), read by the handler"],
   ["cu", "a clientUrls() group: its origin route, no loaders"],
   ["cu/loader", "group route: a flagged loader beside an unflagged one"],
   ["cu/bare", "group route: a flagged loader, no boundary"],
@@ -751,6 +757,22 @@ function HandlePage(ctx: any) {
   );
 }
 
+// Reads its flagged loader on the server too: pf-read-cached-read is what the
+// handler read, pf-read-cached-value the loader's own segment.
+async function ReadCachedPage(ctx: any) {
+  countRun(runOf(ctx), "read-cached.handler");
+  const { name, n } = await ctx.use(PfReadCachedLoader);
+  return (
+    <div data-testid="pf-read-cached-page">
+      <span data-testid="pf-read-cached-read">{`${name}:${n}`}</span>
+      <PrefetchFalseValue
+        loader={PfReadCachedLoader}
+        testId="pf-read-cached-value"
+      />
+    </div>
+  );
+}
+
 function CachedPage(ctx: any) {
   countRun(runOf(ctx), "cached.handler");
   return (
@@ -989,6 +1011,14 @@ export const prefetchFalsePatterns = urls(
         path("/cached", CachedPage, { name: "cached" }, () => [
           loader(PfCachedLoader),
           loading(fallback("cached"), { prefetch: false }),
+        ]),
+      ]),
+
+      // A flagged loader with its own cache() that the handler reads: it
+      // runs in the prefetch through its cache(), nothing is deferred.
+      path("/read-cached", ReadCachedPage, { name: "readCached" }, () => [
+        loader(PfReadCachedLoader, { prefetch: false }, () => [
+          cache({ ttl: 600, key: (ctx) => runOf(ctx) }),
         ]),
       ]),
 

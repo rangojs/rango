@@ -2050,6 +2050,56 @@ export async function expectCachedRouteUnderHeldFlaggedLayoutUsesItsRecord(
 }
 
 /**
+ * A flagged loader with its own `cache()` that its route's handler reads
+ * (`read-cached`). The handler needs the value, so the prefetch runs the
+ * loader, and it starts it through its `cache()`, as a plain navigation
+ * does: what the handler read (pf-read-cached-read) and the loader's own
+ * segment (pf-read-cached-value) are one value from one run, nothing is
+ * deferred and the click sends nothing. A later visit's prefetch reads the
+ * entry the first one stored: the loader does not run again.
+ *
+ * Scar tissue: the handler's read ran the loader without its cache(), and
+ * the segment delivered afterwards read the entry. On the second visit the
+ * page showed the loader's second run beside the entry's first, and the
+ * loader ran once more than on a plain navigation.
+ */
+export async function expectHandlerReadFlaggedLoaderUsesItsCache(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+): Promise<void> {
+  const name = "read-cached";
+  const counters = [`${name}.data`, `${name}.handler`];
+  let hub = await openHub(page, fixture);
+  const requests = recordPartials(page, hub.pathname(name));
+  for (const visit of [1, 2]) {
+    // Another query for the second visit: the browser keeps a prefetch that
+    // defers nothing (`max-age`) and would answer the same URL from its copy.
+    // The entry is keyed by the run alone, so the query does not split it.
+    if (visit === 2) hub = await openHub(page, fixture, hub.run, { delay: 1 });
+    await prefetchCase(page, hub, name);
+    expect(
+      pick(await hub.counts(), counters),
+      visit === 1
+        ? "the prefetch ran the loader once, for the handler"
+        : "the second prefetch read the stored entry",
+    ).toEqual({ [`${name}.data`]: 1, [`${name}.handler`]: visit });
+
+    await byId(page, `pf-link-${name}`).click();
+    await expect(page).toHaveURL(hub.pageUrl(name));
+    await expect(byId(page, `pf-${name}-read`)).toHaveText(`${name}.data:1`);
+    await expect(byId(page, `pf-${name}-value`)).toHaveText(`${name}.data:1`);
+    expect(
+      kindsOf(requests),
+      "nothing was deferred: the click sent nothing",
+    ).toEqual(visit === 1 ? ["prefetch"] : ["prefetch", "prefetch"]);
+  }
+  expect(pick(await hub.counts(), counters)).toEqual({
+    [`${name}.data`]: 1,
+    [`${name}.handler`]: 2,
+  });
+}
+
+/**
  * A same-route navigation (`item/a` to `item/b`): the client holds the route
  * and its loader segment, so nothing is deferred. The prefetch runs the
  * flagged loader, the click sends no fill, no fallback shows at any point
@@ -4165,6 +4215,9 @@ export function definePrefetchFalseTests(
       name: "cached",
       prefetched: ["cached.handler"],
     }));
+
+  it("a flagged loader with its own cache() that the handler reads runs through its cache() in the prefetch", (page, fixture) =>
+    expectHandlerReadFlaggedLoaderUsesItsCache(page, fixture));
 
   it("a Prerender route skips only the loader behind the fallback", (page, fixture) =>
     expectPrefetchSkipsFlaggedWorkAndClickFillsIt(page, fixture, {

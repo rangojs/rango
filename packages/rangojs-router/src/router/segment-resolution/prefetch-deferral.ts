@@ -116,12 +116,30 @@ export interface PrefetchDeferral {
    */
   below?: true;
   /**
-   * The segment that registers each loader this prefetch deferred, by
-   * `$$id`. A reader that starts one anyway (a handler's ctx.use(), delivered
-   * by revalidation.ts deliverStartedLoaders) files its handle pushes there,
-   * where a navigation's run of it files them, not under the reader.
+   * The loaders this prefetch deferred, by `$$id` (registerDeferredLoader).
+   * A deferred loader runs only if something reads it: a handler's or another
+   * loader's ctx.use() starts it through its registration
+   * (startDeferredLoader), and revalidation.ts deliverStartedLoaders delivers
+   * what was started by the end of resolution.
    */
-  loaderOwners?: Map<string, string>;
+  deferredLoaders?: Map<string, DeferredLoader>;
+}
+
+/** A loader this prefetch deferred: PrefetchDeferral.deferredLoaders. */
+export interface DeferredLoader {
+  /**
+   * The segment that registers it. Its run files its handle pushes there,
+   * where a navigation's run of it files them, not under the reader
+   * (loaderOwner).
+   */
+  readonly owner: string;
+  /**
+   * Starts it as resolution would have: resolveLoaderData with its cache()
+   * binding, so the reader and the delivered segment share one value.
+   */
+  readonly start: () => Promise<unknown>;
+  /** A reader started it. */
+  started?: true;
 }
 
 const EMPTY_SCOPE: DeferralScope = {
@@ -327,19 +345,64 @@ export function isFillRequest(ctx: HandlerContext<any, any>): boolean {
 }
 
 /**
- * Record the segment that registers a loader this prefetch deferred
- * (PrefetchDeferral.loaderOwners). The first registration wins, as the
- * loader's one run per request does.
+ * Register a loader this prefetch deferred, with the segment that registers
+ * it and how to start it there (PrefetchDeferral.deferredLoaders). The first
+ * registration wins, as the loader's one run per request does.
  */
-export function markLoaderDeferred(
+export function registerDeferredLoader(
   ctx: HandlerContext<any, any>,
   loaderId: string,
   owner: string,
+  start: () => Promise<unknown>,
 ): void {
   const plan = getPrefetchDeferral(ctx);
-  if (plan && !plan.loaderOwners?.has(loaderId)) {
-    (plan.loaderOwners ??= new Map()).set(loaderId, owner);
+  if (plan && !plan.deferredLoaders?.has(loaderId)) {
+    (plan.deferredLoaders ??= new Map()).set(loaderId, { owner, start });
   }
+}
+
+/**
+ * A reader asks for a loader this prefetch deferred and nothing has started:
+ * start it through its registration and return the run, or undefined when
+ * the read takes the ordinary path. Without this the reader ran the loader
+ * bare, without its cache() binding, and the segment delivered afterwards
+ * read the binding: two values on one page and an extra run on a HIT.
+ *
+ * A started cache() binding of the loader (`_loaderCacheOverrides`) is never
+ * redirected here: the read is that binding's own MISS execution, and
+ * starting the registration would hand the binding its own pending value.
+ */
+export function startDeferredLoader(
+  ctx: HandlerContext<any, any>,
+  loaderId: string,
+): Promise<unknown> | undefined {
+  const internal = ctx as InternalHandlerContext<any, any>;
+  const deferred = internal._prefetchDeferral?.deferredLoaders?.get(loaderId);
+  if (
+    !deferred ||
+    deferred.started ||
+    internal._loaderCacheOverrides?.has(loaderId)
+  ) {
+    return undefined;
+  }
+  deferred.started = true;
+  return deferred.start();
+}
+
+/**
+ * The segment a run of `loaderId` files its handle pushes under: the one
+ * that registers it when this prefetch deferred it, else the segment being
+ * resolved.
+ */
+export function loaderOwner(
+  ctx: HandlerContext<any, any>,
+  loaderId: string,
+): string | undefined {
+  const internal = ctx as InternalHandlerContext<any, any>;
+  return (
+    internal._prefetchDeferral?.deferredLoaders?.get(loaderId)?.owner ??
+    internal._currentSegmentId
+  );
 }
 
 /**

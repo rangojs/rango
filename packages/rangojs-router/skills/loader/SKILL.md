@@ -1216,19 +1216,20 @@ The limits:
   navigation, `notFound()` renders the nearest not-found boundary, an error
   reaches the error boundary.
 - **The fill reads through the loader's own caching; a prefetch reads none
-  of it, by intent.** A loader with `cache()` is skipped in a prefetch even
-  when its entry is warm, and so is a `"use cache"` function it calls: a
-  prefetch that looked would have to run the loader on a miss, which is the
-  work the flag keeps out. The fill is where the loader runs. It serves a
-  warm `cache()` entry without running the loader, runs the loader and
-  stores on a cold one, and a `"use cache"` function inside the loader hits
-  or stores as on any request.
+  of it, by intent.** A loader with `cache()` that nothing in the prefetch
+  reads is skipped even when its entry is warm, and so is a `"use cache"`
+  function it calls: a prefetch that looked would have to run the loader on
+  a miss, which is the work the flag keeps out. The fill is where the loader
+  runs. It serves a warm `cache()` entry without running the loader, runs
+  the loader and stores on a cold one, and a `"use cache"` function inside
+  the loader hits or stores as on any request.
 - **A loader something else reads with `ctx.use()` runs in the prefetch.**
   The reader needs the value, so the flag cannot keep the loader out. When
-  the read is in time, the loader is an ordinary loader for that prefetch:
-  one run, nothing deferred, no fill for it. In time means: inside a handler
-  that has no `loading()` (the router waits for it), or before the reader's
-  first `await`.
+  the read is in time, the loader is an ordinary loader for that prefetch,
+  its own `cache()` included: one run (none on a warm entry), the reader and
+  the loader's data agree, nothing deferred, no fill for it. In time means:
+  inside a handler that has no `loading()` (the router waits for it), or
+  before the reader's first `await`.
 - **Two late readers make it run twice.** The loader runs in the prefetch for
   its reader and again in the fill, because by the time the read happens the
   loader's own segment has already been sent as deferred:

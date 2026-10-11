@@ -201,7 +201,10 @@ runs and stores, and a `"use cache"` function inside deferred work (a flagged
 loader, or a handler behind a flagged `loading()`) hits or stores as on any
 request. Pinned by `prefetch-false.rsc-test.tsx` ("a fill serves the loader's
 cache() when it is warm", "a fill runs the loader and stores its cache() when
-it is cold", and the `"use cache" in deferred work` describe).
+it is cold", and the `"use cache" in deferred work` describe). R1 is about a
+loader nothing starts: one that a reader starts in the prefetch runs there and
+reads its `cache()` as on a plain navigation ("Handlers that read a flagged
+loader").
 
 **R2. A flagged `loading()` entry that is new to the client, in a prefetch.**
 Two cases, and which one applies depends on whether the entry's handler output
@@ -474,9 +477,11 @@ All of it is in `src/router/segment-resolution/revalidation.ts`, the partial
 path. The document path (`fresh.ts`) never defers.
 
 - `resolveLoadersWithRevalidation` is the one place a navigation kicks a DSL
-  loader off. A loader `defersLoader()` says yes to (R14) is emitted as
-  `{ type: "loader", deferred: true }` with no `loaderData`, and
-  `resolveLoaderData` is never called, so its `cache()` is not read (R1).
+  loader off. A loader `defersLoader()` says yes to (R14) is registered
+  (`registerDeferredLoader`) and emitted as `{ type: "loader", deferred: true }`
+  with no `loaderData`. Registering starts nothing: `resolveLoaderData` is
+  called only when a reader starts the loader, so the `cache()` of a loader
+  nothing reads is not read (R1).
 - `resolveEntryHandlerWithRevalidation` skips a unit's handler, emits the
   segment with `component: null`, the fallback and `deferred: true`, and sets
   the latch (`markUnitDeferred`). The walk goes on.
@@ -529,33 +534,54 @@ fill was already one.
 ### Handlers that read a flagged loader
 
 A handler that calls `await ctx.use(ReviewsLoader)` needs the value to render,
-so the loader runs in the prefetch whatever its flag says. Marking its segment
-deferred anyway would make the fill run it a second time. So after resolution,
-`resolveAllSegmentsWithRevalidation` looks at each deferred loader segment and
-asks the handler context whether that loader was started in this request
-(`_loaderStarted`, installed by `setupLoaderAccess`). If it was, the segment
-is delivered from the memoized run, as before the feature existed (R8).
+so the loader runs in the prefetch whatever its flag says. The rule is lazy
+deferral: a deferred loader is one nobody started by the end of resolution.
+
+Deferring a loader registers it and starts nothing. The registration
+(`PrefetchDeferral.deferredLoaders`, `registerDeferredLoader`) holds the
+segment that registers the loader and how resolution would have started it:
+`resolveLoaderData` with the loader's entry, its `cache()` binding included.
+When something reads the loader, a handler's `ctx.use()` or another loader's,
+the loader executor (`createLoaderExecutor` in `router/loader-resolution.ts`)
+finds no run and no binding and starts it through that registration
+(`startDeferredLoader`), once. So the read takes the path a navigation takes:
+a warm `cache()` serves the reader and the body does not run, a cold one runs
+it and stores. After resolution, `resolveAllSegmentsWithRevalidation` looks
+at each deferred loader segment and delivers every loader that was started
+(`deliverStartedLoaders`): its own `resolveLoaderData` finds the same run or
+binding, so the reader and the loader's segment carry one value from one
+run, as on a plain navigation (R8). What a prefetch does with a flagged
+loader's `cache()` therefore follows whether the loader is started: an
+unstarted one is not read (R1), a started one reads and writes its `cache()`
+exactly as a navigation's run does.
+
+It used to start the other way round. The reader ran the loader bare, without
+its binding, which only resolution primes, and the delivery afterwards read
+the `cache()`. On a HIT the page rendered the loader's fresh run while its
+segment carried the cached value, two values on one page, and the loader ran
+once more than on a plain navigation. Pinned by
+`src/testing/__tests__/prefetch-false.rsc-test.tsx` ("with its own cache()").
+
+Two reads are not redirected. A stale refresh's executor
+(`_runLoaderIsolated`) reads each loader fresh by design and never starts a
+registration. And once a `cache()` binding of the loader has started, under
+any registration, a read that reaches the executor is that binding's own MISS
+execution: starting the registration there would hand the binding its own
+pending value.
 
 This only catches handlers resolution awaits. A handler under `loading()` is
-streamed, so it may reach `ctx.use()` after the check; that loader then runs in
-the prefetch and again in the fill. Data is never missing, only fetched twice.
+streamed, so it may reach `ctx.use()` after the check; that loader then starts
+in the prefetch, through its registration, and is resolved again by the fill.
+Data is never missing, only fetched twice, unless its own `cache()` serves the
+fill.
 
-The run a handler starts files the loader's handle pushes under the segment
-that registers the loader, as a navigation's run does: resolution records it
-when it defers the loader (`PrefetchDeferral.loaderOwners`), and the loader
-executor reads it before falling back to the segment being resolved
-(`router/loader-resolution.ts`). Without it, a layout loader that a route
-handler started pushed into the route's bucket, and a later navigation to a
-sibling route under the same layout dropped the push.
-
-One gap is left: a flagged loader with `cache()` that a handler reads runs
-for the handler without its cache binding (resolution never reached
-`resolveLoaderData`, which primes the binding), and the delivery afterwards
-reads the cache. On a HIT the handler renders the loader's fresh run while
-the loader's segment carries the cached value, and the loader runs once more
-than on a plain navigation, where the handler reads the cached value too. A
-fix starts a deferred loader that a reader asks for through its own
-`resolveLoaderData`; not built.
+The run a reader starts files the loader's handle pushes under the segment
+that registers the loader, as a navigation's run does: the loader executor
+and a `cache()` HIT's replay (`executeLoaderData`) ask `loaderOwner`, which
+answers with the registration's segment before falling back to the segment
+being resolved. Without it, a layout loader that a route handler started
+pushed into the route's bucket, and a later navigation to a sibling route
+under the same layout dropped the push.
 
 ### `cache()`, `ppr` and `Prerender`
 
@@ -2192,8 +2218,9 @@ segments. A fill refuses `rendered()` outright for the same reason R12 exists.
   handler it awaits, which loaders were started (`deliverStartedLoaders` in
   `revalidation.ts`). A loader started by then is delivered from that run
   and is not deferred: one run, no fill for it. A read after the check is not
-  seen: the loader runs for its reader, its own segment has already been
-  emitted as deferred, and the fill runs it again. Two readers can be late:
+  seen: the loader runs for its reader (through its registration, `cache()`
+  included), its own segment has already been emitted as deferred, and the
+  fill resolves it again. Two readers can be late:
   1. a handler under `loading()`. It is streamed, so resolution calls it and
      does not wait for it. A `ctx.use(Flagged)` after its first `await` is
      late unless resolution happens to be waiting on something else.

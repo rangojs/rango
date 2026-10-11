@@ -40,7 +40,7 @@ import {
   deferUnit,
   getPrefetchDeferral,
   isFillRequest,
-  markLoaderDeferred,
+  registerDeferredLoader,
 } from "./prefetch-deferral.js";
 import {
   handleHandlerResult,
@@ -115,25 +115,31 @@ function emitRevalidationDecision(
 // ---------------------------------------------------------------------------
 
 /**
- * How to run a loader a prefetch deferred, kept so deliverStartedLoaders can
- * deliver it after all. Keyed by the emitted segment object.
+ * How to deliver a loader a prefetch deferred, kept so deliverStartedLoaders
+ * can deliver it after all. Keyed by the emitted segment object.
  */
 const deferredLoaderRuns = new WeakMap<ResolvedSegment, () => unknown>();
 
 /**
- * A deferred loader something already started in this request (a handler
- * that awaits it with ctx.use(), or another loader) ran in the prefetch
- * whatever its flag says: deliver its memoized run instead of having the
- * fill run it a second time. Called once resolution has awaited every
- * handler it awaits; a streamed handler that reads the loader later is not
- * seen, and that loader runs again in the fill.
+ * A deferred loader something started in this request (a handler that awaits
+ * it with ctx.use(), or another loader) ran in the prefetch whatever its flag
+ * says: deliver that run instead of having the fill run it a second time. A
+ * reader starts it through its registration (prefetch-deferral.ts
+ * startDeferredLoader), so the delivery's resolveLoaderData finds the same
+ * run or cache() binding. Called once resolution has awaited every handler it
+ * awaits; a streamed handler that reads the loader later is not seen, and
+ * that loader runs again in the fill.
  */
 function deliverStartedLoaders<TEnv>(
   ctx: HandlerContext<any, TEnv>,
   segments: ResolvedSegment[],
 ): void {
-  const started = (ctx as InternalHandlerContext<any, TEnv>)._loaderStarted;
-  if (!started || getPrefetchDeferral(ctx)?.mode !== "prefetch") return;
+  const plan = getPrefetchDeferral(ctx);
+  if (plan?.mode !== "prefetch") return;
+  const internal = ctx as InternalHandlerContext<any, TEnv>;
+  const started = (loaderId: string): boolean =>
+    plan.deferredLoaders?.get(loaderId)?.started === true ||
+    internal._loaderStarted?.(loaderId) === true;
   for (const segment of segments) {
     if (!segment.deferred || segment.type !== "loader") continue;
     const run = deferredLoaderRuns.get(segment);
@@ -270,25 +276,31 @@ export async function resolveLoadersWithRevalidation<TEnv>(
   // (matchPartialWithPprReplay) seeds once its doc record hits.
   const bakeLane = !entryLoadingMasksLoaders(entry.loading);
 
+  const kickoff = (
+    loaderEntry: LoaderEntry,
+    segmentId: string,
+    loaderId: string,
+  ): Promise<unknown> =>
+    runInsideLoaderScope(
+      () =>
+        resolveLoaderData(
+          loaderEntry,
+          ctx,
+          ctx.pathname,
+          // `bake`, not awaitBeforeFlush: a navigation evaluation never
+          // carries awaitBeforeFlush, and an ssr: false loader must pin
+          // here exactly as on the document HIT.
+          bakeLane || loaderEntry.bake === true ? segmentId : null,
+        ),
+      loaderId,
+    );
   const start = (
     loaderEntry: LoaderEntry,
     segmentId: string,
     loaderId: string,
   ) =>
     deps.wrapLoaderPromise(
-      runInsideLoaderScope(
-        () =>
-          resolveLoaderData(
-            loaderEntry,
-            ctx,
-            ctx.pathname,
-            // `bake`, not awaitBeforeFlush: a navigation evaluation never
-            // carries awaitBeforeFlush, and an ssr: false loader must pin
-            // here exactly as on the document HIT.
-            bakeLane || loaderEntry.bake === true ? segmentId : null,
-          ),
-        loaderId,
-      ),
+      kickoff(loaderEntry, segmentId, loaderId),
       entry,
       segmentId,
       ctx.pathname,
@@ -308,10 +320,12 @@ export async function resolveLoadersWithRevalidation<TEnv>(
         loaderId: loader.$$id,
       };
       // Only a loader on a segment the client lacks (defersLoader). It
-      // would have run, and its cache() is not read either
-      // (resolveLoaderData is never reached).
+      // would have run. Registered, not started: it runs, and reads its
+      // cache(), only if a reader starts it (startDeferredLoader).
       if (defersLoader(ctx, loaderEntry, segmentId)) {
-        markLoaderDeferred(ctx, loader.$$id, shortCode);
+        registerDeferredLoader(ctx, loader.$$id, shortCode, () =>
+          kickoff(loaderEntry, segmentId, loader.$$id),
+        );
         const deferred: ResolvedSegment = {
           ...base,
           belongsToRoute,

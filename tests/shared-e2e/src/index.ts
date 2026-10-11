@@ -91,6 +91,7 @@ export {
   expectAdoptedClickIsNeverWorseThanAPlainClick,
   recordPlainAndAdoptedClick,
   expectCachedRouteUnderHeldFlaggedLayoutUsesItsRecord,
+  expectHandlerReadFlaggedLoaderUsesItsCache,
   expectHeldFlaggedLayoutLeavesRoutesToTheirOwnFlags,
   expectPendingFillReadsLikeAStreamingNavigation,
   expectPrefetchThatDeferredStaysWithItsPage,

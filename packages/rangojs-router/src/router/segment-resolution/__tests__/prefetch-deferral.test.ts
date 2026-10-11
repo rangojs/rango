@@ -9,11 +9,14 @@ import {
   firstUnitCandidate,
   getPrefetchDeferral,
   isFillRequest,
+  loaderOwner,
   markUnitDeferred,
   partialDeferralMode,
   planPrefetchDeferral,
+  registerDeferredLoader,
   requestKind,
   resolveDeferralScope,
+  startDeferredLoader,
   type PrefetchDeferral,
 } from "../prefetch-deferral";
 
@@ -768,5 +771,59 @@ describe("the decisions", () => {
     expect(getPrefetchDeferral(undefined)).toBeUndefined();
     expect(isFillRequest(ctxWith(fill))).toBe(true);
     expect(isFillRequest(ctxWith(undefined))).toBe(false);
+  });
+});
+
+describe("a deferred loader's registration", () => {
+  function prefetching() {
+    const loader = loaderEntry("deferred", { prefetch: false });
+    const route = entry("route", { loader: [loader] });
+    const plan = planPrefetchDeferral([route], "prefetch", {}, null)!;
+    return { _prefetchDeferral: plan, _currentSegmentId: "reader" } as any;
+  }
+
+  it("keeps the first registration, as the loader's one run per request does", () => {
+    const ctx = prefetching();
+    const first = vi.fn(async () => "first");
+    registerDeferredLoader(ctx, "deferred", "L0", first);
+    registerDeferredLoader(ctx, "deferred", "R1", async () => "second");
+    expect(ctx._prefetchDeferral.deferredLoaders.get("deferred")).toEqual({
+      owner: "L0",
+      start: first,
+    });
+  });
+
+  it("is started once, by the first reader", async () => {
+    const ctx = prefetching();
+    const start = vi.fn(async () => "value");
+    registerDeferredLoader(ctx, "deferred", "L0", start);
+    await expect(startDeferredLoader(ctx, "deferred")).resolves.toBe("value");
+    expect(startDeferredLoader(ctx, "deferred")).toBeUndefined();
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(ctx._prefetchDeferral.deferredLoaders.get("deferred").started).toBe(
+      true,
+    );
+  });
+
+  it("leaves a read to the ordinary path when nothing is registered", () => {
+    expect(startDeferredLoader(prefetching(), "deferred")).toBeUndefined();
+    expect(startDeferredLoader(ctxWith(undefined), "deferred")).toBeUndefined();
+  });
+
+  it("is not started by its own cache() binding's execution", () => {
+    const ctx = prefetching();
+    const start = vi.fn(async () => "value");
+    registerDeferredLoader(ctx, "deferred", "L0", start);
+    ctx._loaderCacheOverrides = new Map([["deferred", Promise.resolve("hit")]]);
+    expect(startDeferredLoader(ctx, "deferred")).toBeUndefined();
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("names the registering segment as the owner of its pushes, else the one being resolved", () => {
+    const ctx = prefetching();
+    expect(loaderOwner(ctx, "deferred")).toBe("reader");
+    registerDeferredLoader(ctx, "deferred", "L0", async () => "value");
+    expect(loaderOwner(ctx, "deferred")).toBe("L0");
+    expect(loaderOwner(ctx, "other")).toBe("reader");
   });
 });

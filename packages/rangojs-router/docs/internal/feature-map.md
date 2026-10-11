@@ -436,7 +436,10 @@ server projection.
   Server plan and decisions:
   `router/segment-resolution/prefetch-deferral.ts` (`resolveDeferralScope`,
   `PrefetchDeferral` on `InternalHandlerContext._prefetchDeferral`,
-  `deferUnit`), wire markers in `prefetch-markers.ts`,
+  `deferUnit`; a deferred loader is registered, not started, and a reader's
+  `ctx.use()` starts it through its registration with its `cache()`:
+  `registerDeferredLoader`, `startDeferredLoader` from `createLoaderExecutor`,
+  `loaderOwner`), wire markers in `prefetch-markers.ts`,
   `segment-resolution/revalidation.ts`; stored routes (`cache()`, `ppr`,
   `Prerender`) defer loaders only. Browser: `browser/partial-update.ts`
   (`armHoles`, `fillHoles`), `browser/defer.ts` (`Defer`, `readDefer`,

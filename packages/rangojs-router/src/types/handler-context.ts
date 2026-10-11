@@ -500,9 +500,10 @@ export type InternalHandlerContext<
    */
   _prefetchDeferral?: import("../router/segment-resolution/prefetch-deferral.js").PrefetchDeferral;
   /**
-   * @internal Whether a loader was started in this request (a handler's or
-   * another loader's ctx.use()). A prefetch delivers such a loader instead of
-   * deferring it. See setupLoaderAccess.
+   * @internal Whether a loader was started in this request: a run of it (a
+   * handler's or another loader's ctx.use()) or its cache() binding. A
+   * prefetch delivers such a loader instead of deferring it. See
+   * setupLoaderAccess.
    */
   _loaderStarted?: (loaderId: string) => boolean;
 };
