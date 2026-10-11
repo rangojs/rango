@@ -461,7 +461,8 @@ global map entirely.
   the full loader body contract: thrown `notFound()`/`redirect()` authority
   signals, handle writes (`ctx.use(Meta)({ title })`, handler parity), and
   `ctx.get(handle)` reads behind `await ctx.rendered()`;
-- per-loader delivery options: `loader(Def, { ssr: false }, use?)`;
+- per-loader delivery options: `loader(Def, { ssr: false, prefetch: false },
+use?)`;
 - hard-load server matching, SSR, hydration, and canonical partial Flight soft
   navigation, with implicitly-suspending `useLoader` reads (a pending first
   read suspends to its `<Suspense>` boundary while the loader streams).
@@ -530,6 +531,25 @@ streaming behind their boundaries. A flagged loader must not
 deadlock error), and `intercept()` loaders reject the option (intercepts
 render on client navigations only). Pinned dev+prod in
 `tests/vite-rsc-demo/e2e/client-shop-stream.test.ts`.
+
+`loader(Def, { prefetch: false }, use?)` keeps one loader out of the route's
+`<Link>` prefetches, as on a server route
+([prefetch-false.md](../../../docs/design/prefetch-false.md), "`clientUrls()`
+routes"). The flag is projected with the loader's index
+(`deferrableLoaderIndices`) and materialized onto the server stub, so a
+prefetch of the route defers it while its segment is new to the client. An
+in-group click still presents the destination at the click; with the
+prefetch adopted it then commits the prefetched tree at once (the URL, the
+history entry and the unflagged loaders' data), `useOutlet().pending` ends
+with that commit, and one fill request runs only the flagged loaders. A
+`layout()` loader with the flag is flagged on every route below it, and a
+flagged `loader()` on a server layout above the group is deferred too while
+that layout is new to the client. `loading()` inside `clientUrls()` takes no
+options, a flagged `loading()` on a server layout above the group defers
+nothing for its routes, and `intercept()` loaders accept the flag and ignore
+it, as in `urls()`. Pinned dev+prod by the `clientUrls():` cases of
+`tests/shared-e2e/src/prefetch-false.ts` in the router test-app and
+cloudflare-basic.
 
 INSIDE `clientUrls()` the DSL is deliberately minimal: client route groups
 exist for transition performance — instant optimistic presentation, held

@@ -139,6 +139,7 @@ interface LoaderItem extends ItemBase {
   readonly definition: LoaderDefinition<any, any>;
   readonly revalidate: readonly ClientRevalidateFn[];
   readonly ssr?: false;
+  readonly prefetch?: false;
 }
 
 interface RevalidateItem extends ItemBase {
@@ -391,13 +392,13 @@ function createHelpers(): ClientUrlHelpers {
         `clientUrls() loader() ssr must be a boolean (got ${JSON.stringify(options.ssr)}). Omit it (or pass true) to stream on every render.`,
       );
     }
-    // Typed out (ClientUrlHelpers.loader); a JS caller gets the reason in dev.
     if (
       process.env.NODE_ENV !== "production" &&
-      (options as { prefetch?: unknown } | undefined)?.prefetch !== undefined
+      options?.prefetch !== undefined &&
+      typeof options.prefetch !== "boolean"
     ) {
       throw new Error(
-        "clientUrls() loader() does not take prefetch: a clientUrls() route renders its destination in the browser, so a prefetch has nothing to defer behind. Declare the route in urls() to use loader(Def, { prefetch: false }).",
+        `clientUrls() loader() prefetch must be a boolean (got ${JSON.stringify(options.prefetch)}). Omit it (or pass true) to run the loader in prefetches.`,
       );
     }
     const items = use ? runUse(use, "loader use") : [];
@@ -413,6 +414,7 @@ function createHelpers(): ClientUrlHelpers {
         )
         .map((item) => item.fn),
       ...(options?.ssr === false ? { ssr: false as const } : {}),
+      ...(options?.prefetch === false ? { prefetch: false as const } : {}),
     });
   };
 
@@ -572,6 +574,7 @@ function applyConfig(
           loader: item.definition,
           revalidate: Object.freeze([...item.revalidate]),
           ...(item.ssr === false ? { ssr: false as const } : {}),
+          ...(item.prefetch === false ? { prefetch: false as const } : {}),
         }),
       );
     } else if (item.type === "loading") {
@@ -684,6 +687,8 @@ function collectIntercepts(
       let loading: ReactNode | undefined;
       for (const useItem of item.use) {
         if (useItem.type === "loader") {
+          // `prefetch` is not carried: an intercept prefetch defers nothing,
+          // so the flag is accepted and ignored, as on a urls() intercept().
           loaders.push(
             Object.freeze({
               loader: useItem.definition,

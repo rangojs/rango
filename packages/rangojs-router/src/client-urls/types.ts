@@ -120,6 +120,14 @@ export interface ClientUrlLoaderRecord {
    * regardless.
    */
   readonly ssr?: false;
+  /**
+   * loader(Def, { prefetch: false }): a prefetch of the route defers this
+   * loader and the click that adopts it runs it in its fill request (see
+   * {@link LoaderOptions}). Projected onto the materialized stub. Inside
+   * intercept() it is not recorded: intercept loaders ignore the flag, as in
+   * urls().
+   */
+  readonly prefetch?: false;
 }
 
 /**
@@ -183,10 +191,18 @@ export interface ClientUrlHelpers {
    * route the flag BAKES: the loader executes at shell capture and its
    * settled return freezes into the shell (nested promises stay live
    * holes).
+   *
+   * Pass `{ prefetch: false }` to keep this loader out of the route's
+   * prefetches (see {@link LoaderOptions}): an in-group click still shows
+   * the destination at once, commits the adopted prefetch with the other
+   * loaders' data, and runs only the flagged loaders in its one fill
+   * request. A `layout()` loader with the flag is flagged on every route
+   * below it. Inside intercept() the flag is accepted and ignored, as in
+   * urls().
    */
   readonly loader: <TData>(
     definition: LoaderDefinition<TData>,
-    optionsOrUse?: Pick<LoaderOptions, "ssr"> | ClientUrlUse,
+    optionsOrUse?: Pick<LoaderOptions, "ssr" | "prefetch"> | ClientUrlUse,
     use?: ClientUrlUse,
   ) => ClientUrlItem;
   readonly loading: (component: ReactNode) => ClientUrlItem;

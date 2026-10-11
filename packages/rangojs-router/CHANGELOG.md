@@ -41,6 +41,16 @@ What to know before you use it:
   `loading()` shows when that is the nearest boundary, and with no boundary
   React holds the page being left until the fill returns
   (`useNavigation()` reads `loading` meanwhile).
+- **`clientUrls()` routes take it on `loader()`.** `loader(Def, { prefetch:
+false })` in a `clientUrls()` definition keeps that loader out of the
+  route's prefetches; on a `layout()` of the group it applies to every route
+  below it. A click inside the group shows the destination at once, as it
+  always did; with the prefetch adopted, the URL and the other loaders' data
+  move with the click too, `useOutlet().pending` ends with that commit, and
+  the fill runs only the flagged loaders. A flagged `loader()` on a server
+  layout above the group is deferred while that layout is new to the page.
+  `loading()` in `clientUrls()` takes no options, and a flagged `loading()`
+  on a server layout above a group defers nothing for the group's routes.
 - **Under `transition()` a deferred `loading()` commits with its fill.**
   Nothing changes at the click: the address bar, the URL hooks and the page
   move together when the fill starts answering, as they do when a plain
@@ -87,8 +97,9 @@ What to know before you use it:
   the stored handler output is served as before. A loader with its own
   `cache()` is skipped in a prefetch even on a hit; the fill reads through
   `cache()` and `"use cache"` as any request does.
-- A loader a handler awaits with `ctx.use()`, `clientUrls()` routes and
-  `intercept()` ignore the flag.
+- A loader a handler awaits with `ctx.use()`, loaders inside `intercept()`
+  (in `urls()` and in `clientUrls()`), and a flagged `loading()` above a
+  `clientUrls()` route ignore the flag.
 - **Double runs.** A flagged loader that a handler under `loading()`, or
   another loader, reads with `ctx.use()` after an `await` runs in the
   prefetch for its reader and again in the fill.

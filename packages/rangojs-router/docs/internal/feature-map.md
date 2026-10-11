@@ -423,10 +423,18 @@ server projection.
   (`router/loader-resolution.ts`). The document cache keeps one slot,
   refuses a payload that carries deferred units
   (`RequestContext._payloadDeferred`) and skips `_rsc_fill`
-  (`cache/document-cache.ts`). Inert
-  in `clientUrls()` groups and `intercept()`; `clientUrls()` `loader()`
-  rejects the option in development. Design:
-  [prefetch-false.md](../../../../docs/design/prefetch-false.md).
+  (`cache/document-cache.ts`). In a `clientUrls()` group the flag is
+  honoured on `loader()`: the DSL records it on the loader record
+  (`ClientUrlLoaderRecord.prefetch`), the projection carries
+  `deferrableLoaderIndices` and materialization flags the stub; a group
+  route's chain counts loader flags only, the group's and a server layout's
+  above it, never a flagged `loading()` (`resolveDeferralScope`). An
+  in-group click presents its destination, then commits the adopted
+  prefetch in the optimistic-commit transition and clears the presentation
+  right after the hand-over (`UpdateMode.navigate.presentation`), so
+  `useOutlet().pending` ends with the commit; one fill settles the holes.
+  Inert inside `intercept()` (both DSLs accept the option and ignore it).
+  Design: [prefetch-false.md](../../../../docs/design/prefetch-false.md).
 - Loader-level cache (`loader(Def, () => [cache({...})])`,
   `router/segment-resolution/loader-cache.ts`): item-family read-through with
   SWR. A `key()` result is stored as `loader:<id>:key:` plus its URI

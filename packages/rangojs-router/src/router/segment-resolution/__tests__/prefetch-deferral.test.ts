@@ -182,14 +182,62 @@ describe("resolveDeferralScope", () => {
     expect(resolveDeferralScope([route]).units.size).toBe(0);
   });
 
-  it("is inert on a clientUrls() route", () => {
+  // A group route's handler is ClientUrlsRoot, keyed by its group
+  // (segment-system.tsx): a unit there would hand React a promise in place of
+  // the optimistic destination on screen. A loader's own flag reaches every
+  // piece of server work a group route has.
+  it("on a clientUrls() route, a loader's own flag defers and no loading() flag does", () => {
+    const groupLoader = loaderEntry("group-reviews", { prefetch: false });
+    const groupPrice = loaderEntry("group-price");
+    const aboveLoader = loaderEntry("above-shell", { prefetch: false });
+    const behindLoading = loaderEntry("behind-loading");
+    const slotLoader = loaderEntry("slot-loader");
+    const slot = entry("parallel", { ...flagged, loader: [slotLoader] });
+    const above = entry("layout", {
+      ...flagged,
+      loader: [aboveLoader, behindLoading],
+      parallel: { "@side": slot },
+    });
     const route = entry("route", {
       ...flagged,
-      clientGroup: "group",
-      loader: [loaderEntry("page", { prefetch: false })],
+      clientGroup: "/cu",
+      loader: [groupPrice, groupLoader],
     });
-    const scope = resolveDeferralScope([entry("layout", flagged), route]);
-    expect(scope.loaders.size + scope.units.size).toBe(0);
+    const scope = resolveDeferralScope([above, route]);
+
+    expect(scope.loaders.get(groupLoader)).toBe(true);
+    expect(scope.loaders.get(aboveLoader)).toBe(true);
+    expect(scope.loaders.has(groupPrice)).toBe(false);
+    expect(scope.loaders.has(behindLoading)).toBe(false);
+    expect(scope.loaders.has(slotLoader)).toBe(false);
+    expect(ids(scope)).toEqual(["above-shell", "group-reviews"]);
+    expect(scope.units.size).toBe(0);
+  });
+
+  it("control: the same chain without a group defers the units and what they cover", () => {
+    const aboveLoader = loaderEntry("above-shell", { prefetch: false });
+    const behindLoading = loaderEntry("behind-loading");
+    const route = entry("route", {
+      ...flagged,
+      loader: [
+        loaderEntry("price"),
+        loaderEntry("reviews", { prefetch: false }),
+      ],
+    });
+    const above = entry("layout", {
+      ...flagged,
+      loader: [aboveLoader, behindLoading],
+    });
+    const scope = resolveDeferralScope([above, route]);
+
+    expect(scope.loaders.has(behindLoading)).toBe(true);
+    expect(ids(scope)).toEqual([
+      "above-shell",
+      "behind-loading",
+      "price",
+      "reviews",
+    ]);
+    expect(scope.units.size).toBe(2);
   });
 
   it("never defers a bake-lane loader on a ppr route, and says so once", () => {

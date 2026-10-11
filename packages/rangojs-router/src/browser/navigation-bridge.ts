@@ -500,7 +500,9 @@ export function createNavigationBridge(
                       targetCacheHandleData: cachedHandleData,
                     }
                   : {}),
-                optimisticPresented: clientUrlPresentation !== null,
+                ...(clientUrlPresentation && {
+                  presentation: clientUrlPresentation,
+                }),
               },
         );
       } catch (error) {

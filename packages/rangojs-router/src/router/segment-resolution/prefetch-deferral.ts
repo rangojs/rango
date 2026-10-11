@@ -130,10 +130,6 @@ const EMPTY_SCOPE: DeferralScope = {
 const scopes = new WeakMap<EntryData, DeferralScope>();
 const warnedBakeLoaders = new Set<string>();
 
-function flagsLoading(entry: EntryData): boolean {
-  return entry.loadingPrefetch === false;
-}
-
 /**
  * The deferral scope of a matched chain, memoized on its leaf entry (entries
  * are per-isSSR manifest objects, replaced on HMR). EMPTY_SCOPE when nothing
@@ -154,9 +150,14 @@ export function resolveDeferralScope(
   // ssr: false on a ppr route is the bake lane (loader-cache.ts
   // resolveLoaderData): shell material, served from the record.
   const pprRoute = isPprEntry(leaf);
-  // clientUrls() group routes present their destination in the browser and
-  // render loading() themselves (segment-system.tsx): the flag is inert.
-  const inert = leaf.clientGroup !== undefined;
+  // A clientUrls() group route renders loading() itself and its handler is
+  // ClientUrlsRoot (segment-system.tsx keys it by group): a unit would hand
+  // React a promise in place of the optimistic destination on screen. So
+  // in its chain only a loader's own flag counts, the group's and a server
+  // layout's above it; a flagged loading() defers nothing.
+  const clientGroupChain = leaf.clientGroup !== undefined;
+  const flagsLoading = (entry: EntryData): boolean =>
+    !clientGroupChain && entry.loadingPrefetch === false;
 
   // `behind`: the segment ids of the flagged entries whose fallback covers
   // `entry`'s loaders.
@@ -209,17 +210,15 @@ export function resolveDeferralScope(
     }
   };
 
-  if (!inert) {
-    let behind: readonly string[] = [];
-    entries.forEach((entry, index) => {
-      const flagged = flagsLoading(entry);
-      if (flagged) units.set(entry, { index, ids: [entry.shortCode] });
-      const own = flagged ? [...behind, entry.shortCode] : behind;
-      collect(entry, own, index);
-      // A layout's fallback covers its outlet: every deeper chain entry.
-      if (flagged && entry.type !== "route") behind = own;
-    });
-  }
+  let behind: readonly string[] = [];
+  entries.forEach((entry, index) => {
+    const flagged = flagsLoading(entry);
+    if (flagged) units.set(entry, { index, ids: [entry.shortCode] });
+    const own = flagged ? [...behind, entry.shortCode] : behind;
+    collect(entry, own, index);
+    // A layout's fallback covers its outlet: every deeper chain entry.
+    if (flagged && entry.type !== "route") behind = own;
+  });
 
   const scope: DeferralScope =
     loaders.size === 0 && units.size === 0

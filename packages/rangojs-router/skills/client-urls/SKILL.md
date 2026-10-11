@@ -131,7 +131,7 @@ flow into the generated route map, so `href()`, `ctx.reverse()` and
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `path()`       | Options are `name`, `search`, `trailingSlash`, `ppr` (shell caching — see `/ppr` → The loader lane rule); no response variants. Use callback may contain `loader()`, `loading()`, `transition()` |
 | `layout()`     | `layout(Component, () => [...])` — children are required and must contain at least one `path()`; may also hold `loader()`, `loading()`, `intercept()`, nested `layout()`                         |
-| `loader()`     | `loader(Def, use?)` or `loader(Def, { ssr: false }, use?)` — see below                                                                                                                           |
+| `loader()`     | `loader(Def, use?)` or `loader(Def, { ssr: false, prefetch: false }, use?)` — see below                                                                                                          |
 | `loading()`    | Route-level boundary around the optimistic render; inline `<Suspense>` at read sites keeps the destination's chrome visible while only the reads wait                                            |
 | `revalidate()` | Valid **inside a loader() use callback only**; runs in the browser                                                                                                                               |
 | `transition()` | Inside a `path()` use callback only (at most one). ViewTransition config plus a browser-run `when` predicate (see `/view-transitions`); same-route navs in a group already hold without it       |
@@ -320,6 +320,38 @@ fast (existence checks before expensive fetches) and flag the loaders that
 need it, not the route.
 
 Pinned end to end by dev + production e2e in the router repository.
+
+## `prefetch: false` — keep a loader out of prefetches
+
+A `<Link>` prefetch of a group route runs its loaders. Flag the expensive one
+and the prefetch skips it:
+
+```tsx
+path("/product/:slug", ProductPage, { name: "product" }, () => [
+  loader(PriceLoader),
+  loader(ReviewsLoader, { prefetch: false }), // kept out of prefetches
+  loading(<ProductSkeleton />),
+]),
+```
+
+A click inside the group still shows the destination at once. With the
+prefetch received, the URL and the other loaders' data move with the click
+too, `useOutlet().pending` ends with that commit, and one follow-up request
+(the fill) runs only the flagged loaders. Read the flagged loader inside its
+own `<Suspense>` to show the page and that fallback at once; with no boundary
+React holds the page being left until the fill answers, as it would with no
+prefetch. Same rules as on a server route (`/loader` → "`prefetch: false`"):
+only a segment new to the page is deferred, so a same-route click
+(`/product/a` to `/product/b`) prefetches the loader as usual.
+
+- On a `layout()` of the group the flag applies to every route below it.
+- A flagged `loader()` on a server layout above the group is deferred while
+  that layout is new to the page (entering the group from outside).
+- `loading()` in `clientUrls()` takes no options, and a flagged `loading()`
+  on a server layout above the group defers nothing for the group's routes.
+- `intercept()` loaders accept the flag and ignore it, as in `urls()`.
+- With `ssr: false` on a `ppr` group route the flag is ignored (the bake
+  lane), as on a server route.
 
 ## Intercepts
 

@@ -260,5 +260,14 @@ The public DOM seam is
   signal cancels any partial request until its response arrives),
   and the user-facing options in
   [route-definition/dsl-helpers.ts](../../src/route-definition/dsl-helpers.ts)
-  (`loader()`, `loading()`). Design: [prefetch-false.md](../../../../docs/design/prefetch-false.md).
+  (`loader()`, `loading()`). On `clientUrls()` routes the option is recorded
+  by [client-urls/client-urls.ts](../../src/client-urls/client-urls.ts),
+  projected and materialized onto the loader stubs by
+  [client-urls/server-projection.ts](../../src/client-urls/server-projection.ts)
+  (`deferrableLoaderIndices`), and the optimistic presentation is cleared
+  with the canonical commit in
+  [browser/partial-update.ts](../../src/browser/partial-update.ts)
+  (`UpdateMode.navigate.presentation`, passed by
+  [browser/navigation-bridge.ts](../../src/browser/navigation-bridge.ts)).
+  Design: [prefetch-false.md](../../../../docs/design/prefetch-false.md).
 - Some entries in this map are intentionally grouped (for example `router/segment-resolution/*`) because behavior is split across multiple files.

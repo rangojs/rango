@@ -242,21 +242,92 @@ describe("clientUrls", () => {
     ).toThrow(/stream was replaced.*ssr: false/);
   });
 
-  // A clientUrls() route presents its destination in the browser: a prefetch
-  // has nothing to defer behind (docs/design/prefetch-false.md, "Limits").
-  it("rejects the prefetch option, which only urls() loaders take", () => {
-    const AccountLoader = loader("loaders#account");
-    for (const prefetch of [false, true]) {
-      expect(() =>
-        clientUrls(({ path, loader: useLoader }) => [
-          path("/x", AccountPage, () => [
-            useLoader(AccountLoader, { prefetch } as never),
-          ]),
+  // prefetch: false on a group route's loader (docs/design/prefetch-false.md,
+  // R8 and "clientUrls() routes"): recorded on the route's loader record,
+  // beside ssr, and projected onto the server stub from there.
+  it("stores prefetch: false on the loader record, beside ssr; true records nothing", () => {
+    const PriceLoader = loader("loaders#price");
+    const ReviewsLoader = loader("loaders#reviews");
+    const BothLoader = loader("loaders#both");
+    const TrueLoader = loader("loaders#true");
+
+    const patterns = clientUrls(({ path, loader: useLoader, revalidate }) => [
+      path("/product/:slug", AccountPage, () => [
+        useLoader(PriceLoader),
+        useLoader(ReviewsLoader, { prefetch: false }, () => [
+          revalidate(() => false),
         ]),
-      ).toThrow(
-        /clientUrls\(\) loader\(\) does not take prefetch.*Declare the route in urls\(\)/,
-      );
+        useLoader(BothLoader, { ssr: false, prefetch: false }),
+        useLoader(TrueLoader, { prefetch: true }),
+      ]),
+    ]);
+
+    const [route] = patterns.routes;
+    expect(route.loaders[0]).toEqual({ loader: PriceLoader, revalidate: [] });
+    expect(route.loaders[1]).toMatchObject({
+      loader: ReviewsLoader,
+      prefetch: false,
+    });
+    expect(route.loaders[1].revalidate).toHaveLength(1);
+    expect(route.loaders[1].ssr).toBeUndefined();
+    expect(route.loaders[2]).toMatchObject({
+      loader: BothLoader,
+      ssr: false,
+      prefetch: false,
+    });
+    expect(route.loaders[3]).toEqual({ loader: TrueLoader, revalidate: [] });
+  });
+
+  it("flags a layout() loader with prefetch: false on every route below it", () => {
+    const ShellLoader = loader("loaders#shell");
+    const PageLoader = loader("loaders#page");
+
+    const patterns = clientUrls(({ path, layout, loader: useLoader }) => [
+      layout(AccountLayout, () => [
+        useLoader(ShellLoader, { prefetch: false }),
+        path("/a", AccountPage, () => [useLoader(PageLoader)]),
+        path("/b", SettingsPage),
+      ]),
+    ]);
+
+    for (const route of patterns.routes) {
+      expect(route.loaders[0]).toMatchObject({
+        loader: ShellLoader,
+        prefetch: false,
+      });
     }
+    expect(patterns.routes[0].loaders[1]).toEqual({
+      loader: PageLoader,
+      revalidate: [],
+    });
+  });
+
+  it("rejects a prefetch value that is not a boolean", () => {
+    const AccountLoader = loader("loaders#account");
+    expect(() =>
+      clientUrls(({ path, loader: useLoader }) => [
+        path("/x", AccountPage, () => [
+          useLoader(AccountLoader, { prefetch: "never" } as never),
+        ]),
+      ]),
+    ).toThrow(/clientUrls\(\) loader\(\) prefetch must be a boolean/);
+  });
+
+  // A urls() intercept() takes loader(Def, { prefetch: false }) and ignores
+  // it: an intercept prefetch defers nothing (R8). A clientUrls() intercept()
+  // does the same: no rejection, and nothing recorded to project.
+  it("accepts prefetch: false inside intercept() and ignores it, as urls() does", () => {
+    const DetailLoader = loader("loaders#detail");
+    const patterns = clientUrls(({ path, intercept, loader: useLoader }) => [
+      path("/items/:id", AccountPage, { name: "detail" }),
+      intercept("@modal", ".detail", AccountLayout, () => [
+        useLoader(DetailLoader, { prefetch: false }),
+      ]),
+    ]);
+
+    expect(patterns.intercepts[0].loaders).toEqual([
+      { loader: DetailLoader, revalidate: [] },
+    ]);
   });
 
   it("rejects ssr: false on intercept loaders", () => {
@@ -285,7 +356,7 @@ describe("clientUrls", () => {
       Parameters<ClientUrlHelpers["loader"]>["length"]
     >().toEqualTypeOf<1 | 2 | 3>();
     expectTypeOf<keyof ClientUrlLoaderRecord>().toEqualTypeOf<
-      "loader" | "revalidate" | "ssr"
+      "loader" | "revalidate" | "ssr" | "prefetch"
     >();
     expectTypeOf<keyof ClientUrlRouteRecord>().toEqualTypeOf<
       | "id"

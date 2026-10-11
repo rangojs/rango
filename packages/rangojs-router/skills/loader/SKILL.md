@@ -1261,8 +1261,15 @@ The limits:
   (`const reviews = ctx.use(ReviewsLoader)` at the top, awaited where you
   need it), or drop the flag from a loader the page cannot render without.
 
-- **No effect in `clientUrls()` routes and `intercept()`.** `clientUrls()`
-  `loader()` throws in development if you pass `prefetch`.
+- **`clientUrls()` routes take it on `loader()`.** In a `clientUrls()`
+  definition `loader(Def, { prefetch: false })` works as here: a click
+  inside the group shows the destination at once, commits the prefetched
+  data with the URL, and one fill runs the flagged loaders (see
+  `/client-urls` → "`prefetch: false`"). A flagged `loading()` defers nothing
+  on a group route, from the group or from a server layout above it.
+- **No effect inside `intercept()`.** Its loaders accept the flag and ignore
+  it, in `urls()` and in `clientUrls()`: a prefetch that resolves an
+  intercept defers nothing.
 - **`ppr` and `ssr: false`.** On a `ppr` route an `ssr: false` loader is the
   bake lane and is served from the shell, so `prefetch: false` is ignored for
   it and development logs a warning. Under `cache()` and `Prerender` the flag

@@ -198,6 +198,97 @@ describe("client URL server projection", () => {
     expect(navLoaders[1]!.awaitBeforeFlush).toBeUndefined();
   });
 
+  // prefetch: false crosses the client/server projection as indices, beside
+  // awaitedLoaderIndices, and lands on the materialized stub's LoaderEntry,
+  // which is what the server's deferral scope reads
+  // (router/segment-resolution/prefetch-deferral.ts).
+  it("serializes deferrableLoaderIndices and materializes prefetch: false on the stub entry", () => {
+    function DetailModal(): null {
+      return null;
+    }
+    const source = clientUrls(({ path, layout, intercept, loader }) => [
+      layout(AppLayout, () => [
+        loader(loaderDefinition("loaders#shell"), { prefetch: false }),
+        path("/product/:slug", AccountPage, { name: "product" }, () => [
+          loader(loaderDefinition("loaders#price")),
+          loader(loaderDefinition("loaders#reviews"), { prefetch: false }),
+          loader(loaderDefinition("loaders#both"), {
+            ssr: false,
+            prefetch: false,
+          }),
+        ]),
+        path("/plain", AccountPage, { name: "plain" }, () => [
+          loader(loaderDefinition("loaders#plain")),
+        ]),
+      ]),
+      intercept("@modal", ".product", DetailModal, () => [
+        loader(loaderDefinition("loaders#modal"), { prefetch: false }),
+      ]),
+    ]);
+
+    const projection = serializeClientUrlPatterns(source);
+    const [product, plain] = projection.routes;
+    expect(product!.loaderIds).toEqual([
+      "loaders#shell",
+      "loaders#price",
+      "loaders#reviews",
+      "loaders#both",
+    ]);
+    expect(product!.deferrableLoaderIndices).toEqual([0, 2, 3]);
+    expect(product!.awaitedLoaderIndices).toEqual([3]);
+    // The layout's flagged loader flattens onto every route below it.
+    expect(plain!.deferrableLoaderIndices).toEqual([0]);
+    // An intercept's loaders ignore the flag (R8): nothing to project.
+    expect(JSON.stringify(projection.intercepts)).not.toContain("deferrable");
+    expect(JSON.parse(JSON.stringify(projection))).toEqual(projection);
+
+    // A projection serialized before the option existed has no field.
+    const unflagged = serializeClientUrlPatterns(
+      clientUrls(({ path, loader }) => [
+        path("/x", AccountPage, () => [loader(loaderDefinition("loaders#x"))]),
+      ]),
+    );
+    expect("deferrableLoaderIndices" in unflagged.routes[0]!).toBe(false);
+
+    const manifest = new Map<string, EntryData>();
+    RangoContext.run(
+      {
+        manifest,
+        patterns: new Map(),
+        trailingSlash: new Map(),
+        searchSchemas: new Map(),
+        namespace: "test",
+        parent: null,
+        counters: {},
+        isSSR: false,
+      },
+      () =>
+        materializeClientUrlPatterns(
+          clientReference("app.urls#deferrable"),
+          projection,
+        ).handler(),
+    );
+    const entry = manifest.get("product");
+    if (!entry || entry.type !== "route") {
+      throw new Error("Expected the projected product route");
+    }
+    expect(
+      entry.loader.map((loaderEntry) => ({
+        id: loaderEntry.loader.$$id,
+        prefetch: loaderEntry.prefetch,
+        bake: loaderEntry.bake,
+      })),
+    ).toEqual([
+      { id: "loaders#shell", prefetch: false, bake: undefined },
+      { id: "loaders#price", prefetch: undefined, bake: undefined },
+      { id: "loaders#reviews", prefetch: false, bake: undefined },
+      { id: "loaders#both", prefetch: false, bake: true },
+    ]);
+    const groupLayout = entry.parent!;
+    const interceptEntry = groupLayout.intercept[0]!;
+    expect(interceptEntry.loader.map((l) => l.prefetch)).toEqual([undefined]);
+  });
+
   it("projects ppr (true and JSON config), rejects malformed ppr values", () => {
     // The boolean form projects verbatim.
     const boolProjection = serializeClientUrlPatterns(

@@ -153,15 +153,15 @@ Under a named `include()`, group routes are added to the generated route map, so
 
 The builder receives seven helpers:
 
-| Helper                                      | Allowed in                                           | Notes                                                                                                           |
-| ------------------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `path(pattern, Component, options?, use?)`  | builder, `layout()` children                         | The use callback may contain `loader()`, `loading()`, and at most one `transition()`                            |
-| `layout(Component, children)`               | builder, `layout()` children                         | Must contain at least one `path()`. May also hold `loader()`, `loading()`, `intercept()`, and nested `layout()` |
-| `loader(Def, options?, use?)`               | `path()` use, `layout()` children, `intercept()` use | The only option is `ssr` (`{ ssr: false }`). The use callback may contain `revalidate()` only                   |
-| `loading(element)`                          | `path()` use, `layout()` children, `intercept()` use | The route-level fallback around the optimistic render. Takes no options                                         |
-| `revalidate(fn)`                            | `loader()` use only                                  | Runs in the browser, see [Revalidation](#revalidation-runs-in-the-browser)                                      |
-| `transition(config)`                        | `path()` use only                                    | View transition classes, `name`, `viewTransition`, and an inline `when` browser predicate                       |
-| `intercept(slot, ".name", Component, use?)` | builder, `layout()` children                         | A restricted form, see [Intercepts](#intercepts)                                                                |
+| Helper                                      | Allowed in                                           | Notes                                                                                                                  |
+| ------------------------------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `path(pattern, Component, options?, use?)`  | builder, `layout()` children                         | The use callback may contain `loader()`, `loading()`, and at most one `transition()`                                   |
+| `layout(Component, children)`               | builder, `layout()` children                         | Must contain at least one `path()`. May also hold `loader()`, `loading()`, `intercept()`, and nested `layout()`        |
+| `loader(Def, options?, use?)`               | `path()` use, `layout()` children, `intercept()` use | Options are `ssr` and `prefetch` (`{ ssr: false, prefetch: false }`). The use callback may contain `revalidate()` only |
+| `loading(element)`                          | `path()` use, `layout()` children, `intercept()` use | The route-level fallback around the optimistic render. Takes no options                                                |
+| `revalidate(fn)`                            | `loader()` use only                                  | Runs in the browser, see [Revalidation](#revalidation-runs-in-the-browser)                                             |
+| `transition(config)`                        | `path()` use only                                    | View transition classes, `name`, `viewTransition`, and an inline `when` browser predicate                              |
+| `intercept(slot, ".name", Component, use?)` | builder, `layout()` children                         | A restricted form, see [Intercepts](#intercepts)                                                                       |
 
 A `loader()` or `loading()` placed in a layout's children applies to every route inside that layout.
 
@@ -296,6 +296,26 @@ By default every loader streams, so nothing a slow loader produces is guaranteed
 - A flagged loader must not `await ctx.rendered()` or read handles with `ctx.get()`. The document render waits for the loader before the render barrier resolves, so the two would wait on each other, and the router throws a deadlock error.
 - Intercept loaders reject the option, because intercepts only render on client navigations.
 - Every document load pays the flagged loader's latency before the first byte. Keep flagged loaders fast.
+
+### `prefetch: false`
+
+A `<Link>` prefetch of a group route runs the route's loaders. `loader(Def, { prefetch: false })` keeps one loader out of the route's prefetches, so an expensive loader is not called for every link a visitor might click:
+
+```tsx
+path("/product/:slug", ProductPage, { name: "product" }, () => [
+  loader(PriceLoader),
+  loader(ReviewsLoader, { prefetch: false }),
+  loading(<ProductSkeleton />),
+]),
+```
+
+A click inside the group still shows the destination at once. When the prefetch has been received, the URL and the other loaders' data move with the click too, and one follow-up request runs only the flagged loaders. `useOutlet().pending` turns `false` when the click commits, not when that request answers.
+
+- Read the flagged loader inside its own `<Suspense>` to show the page and that fallback at once. With no boundary, React keeps the page being left on screen until the value arrives, as it does with no prefetch.
+- Only data the page does not have yet is skipped. On a click between two params of the same route (`/product/a` to `/product/b`), the prefetch runs the loader as usual.
+- On a `layout()` loader, the option applies to every route inside the layout. A flagged `loader()` on a server layout above the group is skipped too, while that layout is new to the page.
+- `loading()` in a group takes no options, and `loading(fallback, { prefetch: false })` on a server layout above the group skips nothing for the group's routes.
+- Intercept loaders accept the option and ignore it.
 
 ### Shell caching with `ppr`
 

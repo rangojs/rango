@@ -12,7 +12,10 @@ import type { ResolvedSegment } from "../browser/types";
 import type { RenderSegmentsOptions } from "../segment-system";
 import { NetworkError, ServerRedirect } from "../errors";
 
-const transitionState = vi.hoisted(() => ({ inTransition: false }));
+const transitionState = vi.hoisted(() => ({
+  inTransition: false,
+  types: [] as string[],
+}));
 vi.mock("react", async () => {
   const actual = await vi.importActual<typeof import("react")>("react");
   return {
@@ -25,13 +28,17 @@ vi.mock("react", async () => {
         transitionState.inTransition = false;
       }
     },
+    addTransitionType: (type: string) => transitionState.types.push(type),
   };
 });
 vi.mock("../browser/segment-structure-assert.js", () => ({
   assertSegmentStructure: vi.fn(),
 }));
 
-import { createPartialUpdater } from "../browser/partial-update";
+import {
+  createPartialUpdater,
+  type UpdateMode,
+} from "../browser/partial-update";
 import { LoaderStore } from "../loader-store";
 
 const URL_PAGE = "http://localhost/product";
@@ -213,6 +220,7 @@ function setup(
       segments: ResolvedSegment[],
       options?: RenderSegmentsOptions,
     ) => Promise<unknown>;
+    mode?: UpdateMode;
   },
 ) {
   const store = createStore(adoption.layout ? [adoption.layout] : []);
@@ -235,7 +243,7 @@ function setup(
     fill: options?.fill as any,
   });
   const navigate = (signal?: AbortSignal) =>
-    updater(URL_PAGE, undefined, false, signal, tx as any);
+    updater(URL_PAGE, undefined, false, signal, tx as any, options?.mode);
   /**
    * The click, up to its commit. An adopted click's navigation then waits for
    * its fill, which the test answers through `fill`.
@@ -507,6 +515,68 @@ function unitAdoption(overrides?: Partial<ResolvedSegment>) {
     },
   };
 }
+
+// A clientUrls() click presents its destination at the click
+// (client-urls/navigation.ts) and then adopts the prefetch like any click. Its
+// commit takes the lane the plain group click takes, a transition marked
+// rango-optimistic-commit, and the presentation ends with that commit: the
+// fill after it does not count toward useOutlet().pending
+// (docs/design/prefetch-false.md, "`clientUrls()` routes").
+describe("a clientUrls() click that presented its destination", () => {
+  it("commits once in the optimistic-commit transition, clears the presentation after the hand-over and before the fill answers, then resolves the deferred", async () => {
+    const adoption = loaderAdoption();
+    const order: string[] = [];
+    const presentation = { clear: vi.fn(() => order.push("clear")) };
+    const run = setup(adoption, {
+      fill: bridge(),
+      mode: { type: "navigate", presentation },
+    });
+    transitionState.types.length = 0;
+    run.onUpdate.mockImplementation(() =>
+      order.push(
+        transitionState.inTransition
+          ? `transition:${transitionState.types.join(",")}`
+          : "urgent",
+      ),
+    );
+    const { navigation } = await run.adopt();
+
+    expect(order).toEqual(["transition:rango-optimistic-commit", "clear"]);
+    expect(run.onUpdate).toHaveBeenCalledTimes(1);
+    expect(presentation.clear).toHaveBeenCalledTimes(1);
+    const deferredRead = adoption.reviews.loaderData as Promise<unknown>;
+    expect(await settled(deferredRead)).toBe(false);
+
+    run.fill.resolve(
+      fillPayload(
+        [loaderSeg("L0R0D1.reviews", "reviews", { reviews: 5 })],
+        adoption.matched,
+      ),
+    );
+    await navigation;
+    await expect(deferredRead).resolves.toEqual({ reviews: 5 });
+    expect(run.onUpdate).toHaveBeenCalledTimes(1);
+    expect(presentation.clear).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears the presentation with the commit of a click with no holes too", async () => {
+    const adoption = loaderAdoption();
+    adoption.reviews.loaderData = { reviews: 1 };
+    delete adoption.reviews.deferred;
+    const order: string[] = [];
+    const presentation = { clear: vi.fn(() => order.push("clear")) };
+    const run = setup(adoption, {
+      mode: { type: "navigate", presentation },
+    });
+    run.onUpdate.mockImplementation(() =>
+      order.push(transitionState.inTransition ? "transition" : "urgent"),
+    );
+    await run.navigate();
+
+    expect(order).toEqual(["transition", "clear"]);
+    expect(run.calls).toHaveLength(1);
+  });
+});
 
 describe("the fill landing", () => {
   it("rewrites the entry in place, updates the held ids and resolves the deferred", async () => {

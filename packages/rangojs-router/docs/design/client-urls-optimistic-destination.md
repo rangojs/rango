@@ -116,9 +116,15 @@ swaps content in the same render. The new root separates them:
   in `<Suspense fallback={route.loading}>` and the skeleton shows at once. If
   the component has inline boundaries at its reads, its chrome shows at once.
 
-The clear path is unchanged: `clear()` already runs inside `startTransition`
-so the optimistic presentation entangles with the held canonical commit
-(`src/client-urls/navigation.ts`, comment above `clear`).
+The clear path: `clear()` runs inside `startTransition` so the optimistic
+presentation entangles with the held canonical commit
+(`src/client-urls/navigation.ts`, comment above `clear`). `fetchPartialUpdate`
+calls it right after it hands React the canonical tree
+(`UpdateMode.navigate.presentation`), not after the navigation returns: a
+click that adopts a `prefetch: false` prefetch still waits for its fill
+then, and `pending` ends with the commit, as on a plain click
+([prefetch-false.md](../../../../docs/design/prefetch-false.md),
+"`clientUrls()` routes").
 
 ### 4. Commit: the group-keyed segment reconciles in place (phase two)
 
@@ -138,7 +144,7 @@ So at commit React reconciles the destination's segment into the position the
 origin's segment held, the same `ClientUrlsRoot` instance receives the new
 `routeId`, and the optimistically rendered component keeps its instance: local
 state entered during the window survives, effects run once. The commit rides
-the transition lane (`partial-update.ts`, `optimisticPresented`), so a read
+the transition lane (`partial-update.ts`, `UpdateMode.navigate.presentation`), so a read
 that still suspends holds the presented content instead of flashing a
 fallback.
 

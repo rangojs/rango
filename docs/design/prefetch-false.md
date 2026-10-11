@@ -167,6 +167,24 @@ Three words carry the rest of this document:
 | Action revalidation, popstate, no-JS (PE)                            | unchanged                                   | unchanged                                    |
 | Shell capture, warm request, on-demand prerender, `_rsc_loader` lane | unchanged (none is a prefetch)              | unchanged                                    |
 
+The same for a route of a `clientUrls()` group, whose `loading()` takes no
+options. "In-group click" is a click from one route of the group to another
+route of the same group mount: the click that presents its destination
+optimistically ("`clientUrls()` routes" below).
+
+| Request kind                                                   | Flagged group `loader()`                                                                                                       |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Document request (hard load)                                   | runs, as before (an `ssr: false` one is awaited, R3)                                                                           |
+| Prefetch request, loader segment new to the client             | not executed, marked deferred (R1); the response is source-scoped (R15)                                                        |
+| Prefetch request, loader segment the client holds (same-route) | runs when it revalidates, as before (R14); the click sends no fill                                                             |
+| In-group click that adopts the prefetch                        | the destination at the click; the prefetched tree, the URL and the other loaders' data with the commit after it; one fill (R4) |
+| The same click, before the prefetch has answered               | the destination at the click; waits for the prefetch, then as above                                                            |
+| In-group click with no prefetch to adopt                       | runs, as before: the destination at the click, then the commit with the response (one request)                                 |
+| Click into the group from a server page, adopted               | the server-route path: urgent commit with the hole, one fill                                                                   |
+| Fill request                                                   | executes; only the deferred loader segments are emitted (R5)                                                                   |
+| Back/forward, action refetch                                   | unchanged                                                                                                                      |
+| Intercept target                                               | unchanged: the optimistic presentation declines, and a prefetch that resolves an intercept defers nothing (R8)                 |
+
 ## The rules
 
 These are the invariants. If you change this feature, these are what must
@@ -248,7 +266,12 @@ a stored body. A stored body that is complete may answer a prefetch; "The
 document cache" below says why.
 
 **R8. Safe degrade.** Where the flag cannot be honoured the work runs in the
-prefetch, as before. Never missing data, never a hole with no fill.
+prefetch, as before. Never missing data, never a hole with no fill. On a
+route of a `clientUrls()` group the flag is honoured on `loader()`: a group
+route's own `loader(Def, { prefetch: false })` (a group `layout()`'s
+included), and a flagged `loader()` on a server layout above the group. A
+flagged `loading()` defers nothing on a group route, and neither does any
+loader inside `intercept()`, in `urls()` or in `clientUrls()`.
 
 **R9. No change without the flag.** A prefetch response for a route with no
 flag is byte-identical to what it was. Pinned by
@@ -352,15 +375,19 @@ when any of these holds:
 And never when:
 
 - The route is `ppr` and the loader is `ssr: false` (R3).
-- The route segment belongs to a `clientUrls()` group. Those routes present
-  their destination optimistically in the browser and render `loading()`
-  themselves, so the flag is inert for the whole route (R8). `clientUrls()`
-  `loader()` rejects the option at definition time; its `loading()` takes
-  none.
-- The loader is declared inside `intercept()`. Intercept loaders do not go
-  through the shared funnel (`intercept-resolution.ts` calls
-  `resolveLoaderData` itself), and a prefetch that resolves an intercept is
-  not deferred at all (R8).
+- The route segment belongs to a `clientUrls()` group and the loader is
+  deferrable only through a `loading()` (2 to 4). In a group route's chain
+  `resolveDeferralScope` counts no flagged `loading()`, the group's or a
+  server layout's above it: a group route's handler is `ClientUrlsRoot`,
+  keyed by its group (`segment-system.tsx`), and a unit there would hand
+  React a promise in place of the optimistic destination the visitor is
+  already looking at. A loader's own flag (1) counts wherever it sits in that
+  chain: the group's own, and a server layout's above the group.
+- The loader is declared inside `intercept()`, in `urls()` or in
+  `clientUrls()`. Intercept loaders do not go through the shared funnel
+  (`intercept-resolution.ts` calls `resolveLoaderData` itself), and a
+  prefetch that resolves an intercept is not deferred at all (R8). Both DSLs
+  accept the option there and ignore it.
 
 "Deferrable" is a static property of the registration. Whether a deferrable
 loader is actually deferred is decided per request, by R14: `defersLoader()`
@@ -806,10 +833,9 @@ never a copy of the segment.
 `fillHoles(holes, answer, signal, url, gatedOff)` is the routine. It takes
 the holes, the answer (the promise of a partial payload plus the end of its
 stream, which is what `client.fetchPartial` returns) and the navigation's
-signal. Nothing inside it asks where the tree or the answer came from. That
-seam is deliberate. `clientUrls()` navigations build an optimistic tree with a
-promise per loader today and then commit a second, canonical tree; the same
-routine can settle that tree instead.
+signal. Nothing inside it asks where the tree or the answer came from: an
+in-group `clientUrls()` click fills the canonical tree it commits after its
+optimistic one with the same routine ("`clientUrls()` routes").
 
 The navigation calls it after `tx.commit()` and after it has handed React the
 tree. The request left before the render, so it can answer first: its answer
@@ -1703,6 +1729,147 @@ boundary the page waits for the fill, so it shows later than the plain
 click's by what was left of the prefetch, and never more than 36 ms past
 that.
 
+### `clientUrls()` routes
+
+A `clientUrls()` group exists so a click inside it feels instant: the browser
+already has every route's component, so it renders the destination at the
+click and its loader reads suspend until the server answers
+(`packages/rangojs-router/docs/design/client-urls-optimistic-destination.md`).
+What the browser does not have is the data, and that is all a prefetch brings
+to a group click. So the flag is on `loader()` there:
+
+```tsx
+"use client";
+export default clientUrls(({ path, loader, loading }) => [
+  path("/product/:slug", ProductPage, { name: "product" }, () => [
+    loader(PriceLoader),
+    loader(ReviewsLoader, { prefetch: false }), // kept out of prefetches
+    loading(<ProductSkeleton />),
+  ]),
+]);
+```
+
+**The adopted prefetch is the canonical response, so the click commits it
+at once, holes included, and the fill settles that tree.** That is the
+server-route mechanism unchanged, with the optimistic swap the group click
+already makes in front of it.
+
+The flag reaches the server through the projection. `clientUrls()` records
+`prefetch: false` on the route's loader record beside `ssr` (a `layout()`'s
+loader is flattened onto every route below it, flag included);
+`serializeClientUrlPatterns` (`src/client-urls/server-projection.ts`) writes
+the indices of the flagged loaders as `deferrableLoaderIndices`, beside
+`awaitedLoaderIndices`; materialization passes `{ prefetch: false }` to the
+server `loader()` of each stub. From there the stub is any flagged loader:
+`resolveLoadersWithRevalidation` emits it deferred on a segment new to the
+client and never calls it. The route segment renders, because its handler is
+the cheap `ClientUrlsRoot` element, so the prefetch carries the group segment
+with its `clientGroup` key, the unflagged loaders' data and one placeholder
+per flagged loader.
+
+The click, from route A to route B of the same group, with B's prefetch
+received on A:
+
+| When                      | What happens                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The click                 | The optimistic swap, unchanged (`beginClientUrlNavigation`, `ClientUrlsRoot`): `useOutlet().pending` turns true, B's component renders in a transition lane, every loader read of B suspends on `PENDING_FOREVER`.                                                                                                                                                                              |
+| A few microtasks later    | `client.fetchPartial` hands back the prefetched payload; `armHoles` gives each placeholder a deferred; the fill leaves with the navigation's signal.                                                                                                                                                                                                                                            |
+| Same task                 | `renderSegments` builds B's tree: unflagged loaders as values (`forceAwait`), each flagged loader's stream is its deferred. `tx.commit()` moves the URL, the history entry and the store, and the tree goes to React in a transition marked `rango-optimistic-commit`: the lane the plain group click's commit takes (the content-hold branch already admits `optimisticPresented` with holes). |
+| Right after the hand-over | `mode.presentation.clear()`: `pending` ends with this commit, not with the fill.                                                                                                                                                                                                                                                                                                                |
+| The fill answers          | `fillHoles` resolves each deferred with the loader's stream and rewrites the entry in place. React retries the boundary that reads it. No tree is handed over.                                                                                                                                                                                                                                  |
+
+The holes live on the canonical tree. The group segment's `OutletProvider`
+gets `loaderStreams` from `buildLoaderStreams`, the deferred is the stream
+for the flagged loader's id, and `ClientUrlsRoot`'s own provider has no
+streams once `routeId` is B, so `useLoader(ReviewsLoader)` walks up to the
+segment's provider. What a read of the flagged loader suspends on:
+
+| Window                         | Promise                                                                                                      |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| Click to the commit (the swap) | `PENDING_FOREVER`, memoized per intent (`client-root.tsx`)                                                   |
+| The commit to the fill         | the hole's deferred: one per placeholder per adoption, stable for the tree (rule 1 of the Suspense contract) |
+| After the fill                 | the fill's own stream for that loader; the history entry holds it, never the deferred                        |
+
+The switch from the first to the second happens inside a boundary that is
+already on its fallback (`loading()`'s `<Suspense>` in `ClientUrlsRoot`, or
+one in the page), so React keeps the fallback and the transition commits. A
+read with no boundary holds the transition on A in both clicks until the
+value arrives (R11), and `pending` with it: the clear is a transition of the
+same task, so React holds it with the tree.
+
+The click sends exactly one request, the fill: its own navigation request is
+answered by the adopted prefetch. The fill lists what the client holds once
+B commits and skips every held segment outright (R5), so it renders no
+`ClientUrlsRoot`, runs no unflagged loader and sends no client revalidation
+decisions; decisions address held loaders, and a fill runs none of them. A
+click into the group from a server page makes no optimistic presentation and
+takes the server-route path: the urgent commit with the hole, one fill.
+
+**`pending` ends with the commit.** The bridge used to clear the
+presentation in its `finally`, after `fetchPartialUpdate` returned, and with
+holes that is after `fillHoles`: `useOutlet().pending` stayed true for the
+fill's round trip on a page that was committed and idle, longer than the
+plain group click, whose `pending` falls with its commit. So
+`UpdateMode.navigate` carries the presentation (`presentation?: { clear():
+void }`, which replaced `optimisticPresented`), and `fetchPartialUpdate`
+clears it right after the tree is handed to React. On a plain click that is
+the moment it always cleared. `useNavigation()` reads as on a server route:
+`loading` until React commits the tree, then idle with `isStreaming` until
+the fill has streamed.
+
+Production, router app, the server 300 ms away, `cu` to `cu/loader` (a
+flagged loader read in its own `<Suspense>` beside an unflagged one), plain
+against adopted, in ms from the click (medians of three pairs):
+
+| What                         | plain | adopted |
+| ---------------------------- | ----- | ------- |
+| The URL                      | 309   | 2       |
+| The unflagged loader's value | 313   | 3       |
+| `useOutlet().pending` ends   | 313   | 3       |
+| The flagged loader's value   | 614   | 412     |
+
+Both clicks show the destination at the click (the plain one with the
+route's `loading()`, the adopted one with the page and the flagged read's
+own fallback).
+
+Two alternatives were rejected:
+
+- _Fill the optimistic tree and hold the canonical commit._ The URL, the
+  history entry and the app's hooks would wait for the fill; the swap's
+  promises are React state inside `ClientUrlsRoot`, so reaching them from the
+  navigation needs a registry it writes and the component reads, a second
+  source of truth (AGENTS.md Hard rule 8); and the canonical tree would
+  still be handed to React when the fill answers, a second tree per click.
+- _`loading(…, { prefetch: false })` in `clientUrls()`._ It would make the
+  group segment a handler unit, so the canonical commit would hand React a
+  promise in place of the `ClientUrlsRoot` element keyed `cg:<group>`, and
+  the destination the visitor is already looking at, with whatever they
+  typed into it, would be replaced by the unit's fallback or held. The
+  loader flag reaches all of a group route's server work. For the same
+  reason a flagged `loading()` on a server layout above a group defers
+  nothing for the group's routes: inside the group that layout is held
+  anyway (R14), and from outside it would put the group segment behind a
+  placeholder.
+
+Interplay, all unchanged from the server-route path: a newer navigation
+cancels the fill until its response arrives and then lets it stream to its
+end, ignored (R9); an action refetch renders the placeholder it does not
+hold, and the fill's identity check drops its answer; scroll is decided by
+`tx.commit()` with the canonical commit; the fill's reveal is a Suspense
+retry, as the plain click's loader reveal is. An async include of a
+`clientUrls()` module goes through the same adapter
+(`clientUrlIncludePatterns`), so the projected field rides through.
+
+`intercept()` is not built: its loaders ignore the flag in both DSLs (R8).
+Supporting them would take the flag on the intercept's loader record
+(`collectIntercepts`), a `deferrableLoaderIndices` on
+`ClientUrlProjectionIntercept` materialized onto the intercept's stubs, and
+on the server a deferral path for intercept loaders, which today resolve
+outside the shared funnel and are never deferred because
+`partialDeferralMode` gives a request that resolves an intercept no mode.
+
+### Where it is pinned
+
 ### Where it is pinned
 
 - `src/__tests__/partial-update-fill.test.ts`: the updater with a mocked
@@ -1726,7 +1893,23 @@ that.
   `src/__tests__/parallel-outlet-deferred.test.tsx`,
   `src/__tests__/segment-loader-promise.test.ts`: the tree.
 - `tests/shared-e2e/src/prefetch-false.ts`: the browser bodies, run by both
-  apps in a dev and a `(production)` describe.
+  apps in a dev and a `(production)` describe. The `clientUrls()` bodies
+  (titles starting `clientUrls():`) run against the fixture's group at
+  `/prefetch-false/cu`.
+- `clientUrls()` routes: `src/client-urls/__tests__/client-urls.test.ts` (the
+  DSL records the flag, a `layout()`'s on every route below it, and accepts
+  and ignores it inside `intercept()`),
+  `src/client-urls/__tests__/server-projection.test.tsx` and
+  `src/vite/discovery/__tests__/virtual-module-codegen.test.ts` (the flag
+  crosses the projection and its replay),
+  `src/router/segment-resolution/__tests__/prefetch-deferral.test.ts` (a
+  loader's own flag defers in a group chain, no `loading()` does),
+  `src/testing/__tests__/prefetch-false-client-urls.rsc-test.tsx` (the same
+  through `serveShellRequest`), `src/__tests__/partial-update-fill.test.ts`
+  ("a clientUrls() click that presented its destination": one commit in the
+  optimistic-commit transition, `pending` cleared before the fill answers)
+  and `src/client-urls/__tests__/client-root.test.tsx` (a hole keeps the
+  destination instance and the read's fallback).
 
 ## `ctx.rendered()`: R12 and R13
 
@@ -1862,6 +2045,14 @@ segments. A fill refuses `rendered()` outright for the same reason R12 exists.
   parity cases hold the gap to a bound (`OPEN_RETRY_TRANSITION`, "Open
   cases").
 
+- In a `clientUrls()` group the canonical commit is a transition, and
+  `useNavigation()` and its location move with the router's commit there,
+  not with a page React holds: on a read with no boundary (`cu/bare`) the
+  plain click's location moves about 100 ms before the page (with its
+  response), the adopted click's about 400 ms before it (at the click). The
+  group's own `useOutlet().pending` stays true until the page shows in both.
+  The parity cases of in-group clicks (`optimistic`) do not compare the URL
+  hook, as no case compares the address bar.
 - A newer navigation cancels a pending fill when it starts, not when it
   commits. One that then ends without replacing the page leaves the deferred
   part's fallbacks up, unfilled, until the next navigation ("Abort"). The
@@ -1911,7 +2102,9 @@ segments. A fill refuses `rendered()` outright for the same reason R12 exists.
   one run, start the read before the first `await`, or drop the flag from a
   loader the page cannot render without.
 
-- `clientUrls()` routes and `intercept()` ignore the flag.
+- Loaders inside `intercept()`, in `urls()` and in `clientUrls()`, ignore
+  the flag, and so does a flagged `loading()` on a `clientUrls()` route or on
+  a server layout above a group ("Which loaders are deferrable").
 - A fill does not refresh a stale `cache()` record (see "Where the decisions
   are made"). The record waits for the next request that reads it.
 - Values a held handler would have set with `ctx.set()` are not visible to
@@ -1927,7 +2120,11 @@ segments. A fill refuses `rendered()` outright for the same reason R12 exists.
 `expectAdoptedClickIsNeverWorseThanAPlainClick` in the shared suite makes
 each click twice on fresh pages, once plain and once after its prefetch has
 been received, and compares what a reader could see. That is 219 cases
-(`PREFETCH_FALSE_PARITY_CASES`), each in both apps and both modes.
+(`PREFETCH_FALSE_PARITY_CASES`), each in both apps and both modes, and 15
+on the fixture's `clientUrls()` group (`PREFETCH_FALSE_CLIENT_URLS_PARITY_CASES`:
+in-group clicks to `cu/loader`, `cu/bare` and `cu/vt`, the same-route
+`cu/item/a` to `cu/item/b`, and hub to `cu/loader`, each with fast, 300 ms
+slower and slow loaders).
 
 Every one runs with the server 300 ms away. The fixture's first entry is a
 route middleware (`serverDelay`) that waits `&server=<ms>` before every

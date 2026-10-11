@@ -2,7 +2,7 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
-import { useEffect, useState, type ReactNode } from "react";
+import { Suspense, useEffect, useState, type ReactNode } from "react";
 import {
   createLocationState,
   Outlet,
@@ -303,6 +303,97 @@ describe("ClientUrlsRoot", () => {
       (result.getByTestId("account-input") as HTMLInputElement).value,
     ).toBe("typed while pending");
     expect(accountMounts).toBe(1);
+  });
+
+  // prefetch: false (docs/design/prefetch-false.md, "`clientUrls()` routes"):
+  // the canonical commit of an adopted prefetch hands the group segment a
+  // deferred for each flagged loader, where the plain click hands it the
+  // response's stream. The destination is the same instance, and a read in
+  // its own boundary stays on that fallback until the fill resolves it.
+  it("keeps the destination and a flagged read's fallback across a commit whose loader is a hole, until it resolves", async () => {
+    const ReviewsLoader = {
+      __brand: "loader",
+      $$id: "loaders/reviews#ReviewsLoader",
+    } as LoaderDefinition<{ count: number }>;
+    let mounts = 0;
+    function Reviews(): ReactNode {
+      const { data } = useLoader(ReviewsLoader);
+      return <p>Reviews {data.count}</p>;
+    }
+    function ProductPage(): ReactNode {
+      const [text, setText] = useState("");
+      useEffect(() => {
+        mounts += 1;
+      }, []);
+      return (
+        <>
+          <input
+            data-testid="note"
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+          />
+          <Suspense fallback={<p>Loading reviews</p>}>
+            <Reviews />
+          </Suspense>
+        </>
+      );
+    }
+    const definition = clientUrls(({ layout, path, loader, loading }) => [
+      layout(AppLayout, () => [
+        path("/", HomePage),
+        path("/product", ProductPage, () => [
+          loader(ReviewsLoader, { prefetch: false }),
+          loading(<p>Loading product</p>),
+        ]),
+      ]),
+    ]);
+    // The group segment's provider (segment-system.tsx): its loader streams
+    // are what the canonical tree hands the group.
+    const segment = (routeId: string, streams?: Record<string, unknown>) => (
+      <OutletProvider content={null} loaderStreams={streams}>
+        <ClientUrlsRoot definition={definition} routeId={routeId} />
+      </OutletProvider>
+    );
+    const result = render(segment("client-route-0"));
+    const abort = new AbortController();
+    let presentation: ReturnType<typeof beginClientUrlNavigation> = null;
+    await act(async () => {
+      presentation = beginClientUrlNavigation(
+        new URL("http://localhost/product"),
+        abort.signal,
+      );
+    });
+    const input = result.getByTestId("note") as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "typed at the click" } });
+    });
+    expect(result.getByText("Loading reviews")).toBeDefined();
+
+    let resolveHole!: (value: { count: number }) => void;
+    const hole = new Promise<{ count: number }>((resolve) => {
+      resolveHole = resolve;
+    });
+    await act(async () => {
+      result.rerender(
+        segment("client-route-1", { [ReviewsLoader.$$id]: hole }),
+      );
+      presentation?.clear();
+    });
+    expect((result.getByTestId("note") as HTMLInputElement).value).toBe(
+      "typed at the click",
+    );
+    expect(result.getByText("Loading reviews")).toBeDefined();
+    expect(result.queryByText("Loading product")).toBeNull();
+    expect(result.container.querySelector("main")?.dataset.pending).toBe(
+      "false",
+    );
+
+    await act(async () => resolveHole({ count: 5 }));
+    expect(result.getByText("Reviews 5")).toBeDefined();
+    expect((result.getByTestId("note") as HTMLInputElement).value).toBe(
+      "typed at the click",
+    );
+    expect(mounts).toBe(1);
   });
 
   it("scopes route hooks to the optimistic branch", async () => {

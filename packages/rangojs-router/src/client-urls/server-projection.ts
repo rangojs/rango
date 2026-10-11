@@ -96,6 +96,11 @@ export interface ClientUrlProjectionRoute {
    *  document renders await them before first flush. Absent (= none) in
    *  projections serialized before the option existed. */
   readonly awaitedLoaderIndices?: readonly number[];
+  /** Indices into loaderIds of loaders declared loader(Def, { prefetch:
+   *  false }); materialization passes the option through to the server
+   *  loader(), so a prefetch of the route defers them. Absent (= none) in
+   *  projections serialized before the option existed. */
+  readonly deferrableLoaderIndices?: readonly number[];
   /** Data-only transition config (never `when`); absent in projections
    *  serialized before transition support. */
   readonly transition?: Readonly<ClientTransitionConfig>;
@@ -282,6 +287,9 @@ function serializeRoute(route: ClientUrlRouteRecord): ClientUrlProjectionRoute {
   const awaitedLoaderIndices = route.loaders
     .map(({ ssr }, index) => (ssr === false ? index : -1))
     .filter((index) => index >= 0);
+  const deferrableLoaderIndices = route.loaders
+    .map(({ prefetch }, index) => (prefetch === false ? index : -1))
+    .filter((index) => index >= 0);
 
   const transition = serializeTransition(route);
   return Object.freeze({
@@ -293,6 +301,9 @@ function serializeRoute(route: ClientUrlRouteRecord): ClientUrlProjectionRoute {
     hasLoading: route.loading !== undefined,
     ...(awaitedLoaderIndices.length > 0
       ? { awaitedLoaderIndices: Object.freeze(awaitedLoaderIndices) }
+      : {}),
+    ...(deferrableLoaderIndices.length > 0
+      ? { deferrableLoaderIndices: Object.freeze(deferrableLoaderIndices) }
       : {}),
     ...(transition ? { transition } : {}),
     ...(typeof route.transition?.when === "function"
@@ -554,9 +565,14 @@ function materializeRouteItems(
             ...route.loaderIds.map((id, loaderIndex) =>
               loader(
                 createLoaderStub(id),
-                route.awaitedLoaderIndices?.includes(loaderIndex)
-                  ? { ssr: false }
-                  : undefined,
+                {
+                  ...(route.awaitedLoaderIndices?.includes(loaderIndex) && {
+                    ssr: false,
+                  }),
+                  ...(route.deferrableLoaderIndices?.includes(loaderIndex) && {
+                    prefetch: false,
+                  }),
+                },
                 () => [revalidate(makeClientDecisionRevalidate(id))],
               ),
             ),

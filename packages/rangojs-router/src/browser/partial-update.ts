@@ -210,12 +210,14 @@ export type UpdateMode =
       /** Source URL for intercept restore (popstate cache miss) */
       interceptSourceUrl?: string;
       /**
-       * The bridge already presented an optimistic clientUrls() destination
-       * for this navigation: transition-lane commits add
+       * The optimistic clientUrls() destination the bridge presented for
+       * this navigation. Transition-lane commits add
        * OPTIMISTIC_COMMIT_TRANSITION_TYPE so router <ViewTransition>
-       * boundaries do not animate the identical repaint.
+       * boundaries do not animate the identical repaint, and `clear()` runs
+       * once the canonical tree is handed to React: `useOutlet().pending`
+       * ends with that commit, not with a `prefetch: false` fill after it.
        */
-      optimisticPresented?: boolean;
+      presentation?: { clear(): void };
       /**
        * A router.refresh() (or cross-tab refresh) of the current URL:
        * transition({ when }) sees kind "revalidate", not "replace".
@@ -1119,8 +1121,9 @@ export function createPartialUpdater(
 
       debugLog("[partial-update] updating document");
 
-      const optimisticPresented =
-        mode.type === "navigate" && mode.optimisticPresented === true;
+      const presentation =
+        mode.type === "navigate" ? mode.presentation : undefined;
+      const optimisticPresented = presentation !== undefined;
       // [VT-DIAG] Gated behind INTERNAL_RANGO_DEBUG. Reports which reconciled
       // segment still carries a transition after the server-side when-gate, and
       // whether the commit will be held in a startTransition. If `withTransition`
@@ -1228,6 +1231,9 @@ export function createPartialUpdater(
         // branch above (the opt-in).
         onUpdate(update);
       }
+      // In a transition, so where React holds the tree the clear is held
+      // with it (client-urls/navigation.ts).
+      presentation?.clear();
 
       // The tree is committed and handed to React, which may hold it on a
       // hole read with no boundary: this navigation fills it now, from the
