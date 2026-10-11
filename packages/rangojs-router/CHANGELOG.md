@@ -34,11 +34,11 @@ it does when every loader re-runs.
 
 ### Fixed: a modal over a `Prerender()` route shows its loaders' new data after a server action called from it
 
-**Before.** In production, a server action called from a modal that
-`intercept()` opened over a `Prerender()` route re-ran the modal's loaders, but
-the response was built from the intercept copy the build stored, with the modal
-marked as one the browser already held, so it left the modal out. The modal
-kept showing its loaders' old data.
+**Before.** A server action called from a modal that `intercept()` opened over
+a `Prerender()` route re-ran the modal's loaders, but the response was built
+from the stored intercept copy (the build's in production, the dev store's in
+development), with the modal marked as one the browser already held, so it left
+the modal out. The modal kept showing its loaders' old data.
 
 **Now.** The stored modal is sent with its loaders' data, as the segment cache
 already sends a cached one; a loader whose `revalidate()` answers `false` keeps

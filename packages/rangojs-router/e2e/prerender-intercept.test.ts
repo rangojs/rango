@@ -4,9 +4,10 @@ import { waitForHydration, expectNoPageError, goBack } from "./helper";
 
 /**
  * A server action called from the open modal re-runs FreshTimestampLoader and
- * holds the modal's other loader (revalidate() false). In production the
- * response serves the modal from the intercept variant the build baked
- * (cache-lookup.ts yieldFromStore): it must carry the stored modal with its
+ * holds the modal's other loader (revalidate() false). The response serves
+ * the modal from the stored intercept variant, the build's in production and
+ * the dev store's in dev (cache-lookup.ts yieldFromStore): it must carry the
+ * stored modal with its
  * loaders' data. Kept instead (component null), the slot was left out of the
  * response, and the re-run loader's data with it.
  */
