@@ -24,3 +24,27 @@ export function countRun(run: string, name: string): number {
 export function readRunCounts(run: string): Record<string, number> {
   return Object.fromEntries(runs.get(run) ?? []);
 }
+
+/** The `?run=` of the request: the counters' key. */
+export const runOf = (ctx: any): string => ctx.searchParams.get("run") ?? "";
+
+/** `&delay=<ms>`: added to every `.data` and `.early` loader. */
+export const delayOf = (ctx: any): number =>
+  Number(ctx.searchParams.get("delay") ?? 0) || 0;
+
+/**
+ * Count one run of `name` and take `delayMs`. A `.data` or `.early` counter
+ * also takes `&delay=` and, with `&slow=1`, 600 ms more.
+ */
+export async function work(
+  ctx: any,
+  name: string,
+  delayMs: number = 0,
+): Promise<{ name: string; n: number }> {
+  const n = countRun(runOf(ctx), name);
+  const timed = name.endsWith(".data") || name.endsWith(".early");
+  const slow = timed && ctx.searchParams.get("slow") === "1";
+  const wait = delayMs + (slow ? 600 : 0) + (timed ? delayOf(ctx) : 0);
+  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+  return { name, n };
+}

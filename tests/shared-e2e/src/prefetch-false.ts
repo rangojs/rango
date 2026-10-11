@@ -899,6 +899,8 @@ const IN_FLIGHT_MARGIN_MS = 100;
 export interface PrefetchFalseInFlightCase {
   /** The link, clicked while its prefetch has not answered. */
   name: string;
+  /** The case to stand on before the click. Default: the hub. */
+  from?: string;
   /**
    * The deferred read has no boundary, so the page shows with its value:
    * the whole page is the deferred part, and only its bound applies.
@@ -969,7 +971,7 @@ export async function expectClickDuringThePrefetchStaysWithinItsBound(
     return late;
   };
 
-  const first = await recordInFlightPair(page, fixture, spec.name);
+  const first = await recordInFlightPair(page, fixture, spec);
   const { plain, adopted, remainingMs } = first;
   expect(plain.requests, "the plain click is one navigation").toEqual([
     "navigation",
@@ -995,7 +997,7 @@ export async function expectClickDuringThePrefetchStaysWithinItsBound(
   let late = outside(first);
   while (late.length > 0 && pairs.length < PARITY_PAIRS) {
     hooks.onRepeat?.(`pair ${pairs.length}: ${late.join("; ")}`);
-    const next = await recordInFlightPair(page, fixture, spec.name);
+    const next = await recordInFlightPair(page, fixture, spec);
     pairs.push(next);
     late = outside(next);
   }
@@ -1019,12 +1021,17 @@ export function describeInFlightPair(pair: PrefetchFalseInFlightPair): string {
 async function recordInFlightPair(
   page: Page,
   fixture: PrefetchFalseFixture,
-  name: string,
+  { name, from }: PrefetchFalseInFlightCase,
 ): Promise<PrefetchFalseInFlightPair> {
   const click = async (
     inFlight: boolean,
   ): Promise<{ click: PrefetchFalseClick; remainingMs: number }> => {
     const hub = await openHub(page, fixture);
+    if (from) {
+      await clickWithoutHover(page, from);
+      await expect(byId(page, `pf-${from}-value`)).toBeVisible();
+      await complete(page);
+    }
     const before = await hub.counts();
     const requests = recordPartials(page, hub.pathname(name));
     const near = await farAway(page, IN_FLIGHT_LATENCY_MS);
@@ -1417,6 +1424,11 @@ export interface PrefetchFalseObservation {
    * `useNavigation().location.pathname`. null: it never did.
    */
   hookAt: number | null;
+  /**
+   * When the last element with `data-pending="true"` went (a clientUrls()
+   * group layout prints `useOutlet().pending` there). null: none showed.
+   */
+  pendingEndAt: number | null;
 }
 
 /**
@@ -1478,6 +1490,8 @@ async function watchPage(
       const startHook = hookOf();
       let urlAt: number | null = null;
       let hookAt: number | null = null;
+      let pendingWas = false;
+      let pendingEndAt: number | null = null;
       const readUrl = (): void => {
         if (urlAt === null && location.pathname !== startPath) urlAt = now();
       };
@@ -1507,6 +1521,11 @@ async function watchPage(
       const sample = (): void => {
         readUrl();
         if (hookAt === null && hookOf() !== startHook) hookAt = now();
+        const pendingNow = [
+          ...document.querySelectorAll('[data-pending="true"]'),
+        ].some(visible);
+        if (clicked && pendingWas && !pendingNow) pendingEndAt = now();
+        pendingWas = pendingNow;
         let fallbackShowing = false;
         const showing = new Set<string>();
         const showingNodes = new Set<Element>();
@@ -1643,6 +1662,7 @@ async function watchPage(
           viewTransitionsAt,
           urlAt,
           hookAt,
+          pendingEndAt,
         };
       };
     },
@@ -2141,6 +2161,20 @@ export interface PrefetchFalseParityCase extends PrefetchFalseFlags {
   deferredFallbacks?: string[];
   /** How many view transitions the plain click starts, where a case pins it. */
   viewTransitions?: number;
+  /**
+   * A clientUrls() click inside its group. Both clicks present the
+   * destination at the click (client-urls/navigation.ts), so the plain click
+   * changes the page before its response can, and both commit the
+   * canonical tree in a transition: `useNavigation()` and its location move
+   * with the router's commit there, as the address bar does, not with a page
+   * React holds, so the URL hook is not compared (the group's own
+   * `useOutlet().pending` is). The adopted click renders the swap and the
+   * canonical tree together, so it may animate a first change that the plain
+   * click splits in two (the swap, then a canonical commit that changes
+   * nothing the page box shows): it starts no more view transitions than the
+   * plain click and animates no fewer changes.
+   */
+  optimistic?: boolean;
   /**
    * The page shows when the fill answers, not with the click. A deferred
    * unit on a page that commits in a transition: the click waits for its
@@ -2816,7 +2850,9 @@ export async function expectAdoptedClickIsNeverWorseThanAPlainClick(
   );
   check(
     "transitions",
-    animatedChanges(adopted) === animatedChanges(plain),
+    spec.optimistic
+      ? animatedChanges(adopted) >= animatedChanges(plain)
+      : animatedChanges(adopted) === animatedChanges(plain),
     `view transitions that change the page: the plain navigation ${animatedChanges(plain)}, the adopted click ${animatedChanges(adopted)}`,
   );
   check(
@@ -2843,7 +2879,7 @@ export async function expectAdoptedClickIsNeverWorseThanAPlainClick(
   if (away > 0 && plain.times.length > 1) {
     check(
       "setup",
-      plain.firstChangeAt >= away,
+      spec.optimistic === true || plain.firstChangeAt >= away,
       `the plain click showed something at ${plain.firstChangeAt} ms, before its response could (${away} ms)`,
     );
     if (spec.commitsWithFill) {
@@ -3085,7 +3121,7 @@ function laterThanPlain(
   // How long a URL hook had moved before the page did. The address bar is
   // not compared: the router's commit moves it, before React shows a page
   // it holds, and an adopted click commits at the click.
-  if (plain.hookAt !== null && adopted.hookAt !== null) {
+  if (!spec.optimistic && plain.hookAt !== null && adopted.hookAt !== null) {
     never(
       "the URL hook ahead of the page (ms)",
       plain.firstChangeAt - plain.hookAt,
@@ -3106,6 +3142,15 @@ function laterThanPlain(
   );
   const completeBound = held(plain.completeAt, adopted.completeAt);
   never("the completed page (ms)", completeBound, adopted.completeAt);
+  // A clientUrls() click reports itself busy until the commit that shows the
+  // page: a fill after it does not count.
+  if (plain.pendingEndAt !== null && adopted.pendingEndAt !== null) {
+    never(
+      "useOutlet().pending ended (ms)",
+      held(plain.pendingEndAt, adopted.pendingEndAt),
+      adopted.pendingEndAt,
+    );
+  }
   // A plain click that shows no fallback keeps the page it is on instead.
   never(
     "the last fallback gone (ms)",
@@ -3174,6 +3219,7 @@ function brief(click: PrefetchFalseClick): Record<string, unknown> {
     quietMs: click.quietMs,
     urlAt: click.urlAt,
     hookAt: click.hookAt,
+    pendingEndAt: click.pendingEndAt,
     viewTransitionsAt: click.viewTransitionsAt,
     shownMs: click.shownMs,
     fallbackEventsAt: click.fallbackEventsAt,
@@ -3477,6 +3523,404 @@ export async function expectPendingFillReadsLikeAStreamingNavigation(
   await expect(byId(page, `pf-${name}-value`)).toBeVisible();
   await settled(page);
 }
+
+// ---------------------------------------------------------------------------
+// clientUrls() routes
+// ---------------------------------------------------------------------------
+
+/**
+ * `prefetch: false` on a clientUrls() group's loaders
+ * (docs/design/prefetch-false.md, "`clientUrls()` routes"). The fixture's
+ * group is mounted at `cu`: `cu` is its origin route, `cu/<route>` the
+ * others, with test ids `pf-cu/<route>-*`. A click inside the group presents
+ * the destination at the click, as it always did; with the prefetch adopted
+ * it then commits the prefetched tree at once, and the one request it sends
+ * is the fill.
+ */
+
+/** Stand on the group's origin, `cu`, reached by a plain click from the hub. */
+async function openGroup(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+  flags: PrefetchFalseFlags = {},
+): Promise<Hub> {
+  const hub = await openHub(page, fixture, undefined, flags);
+  await clickWithoutHover(page, "cu");
+  await expect(byId(page, "pf-cu-value")).toBeVisible();
+  await expect(page).toHaveURL(hub.pageUrl("cu"));
+  await complete(page);
+  return hub;
+}
+
+const CU_LOADER_WORK = ["cu/loader.price", "cu/loader.data"];
+
+/**
+ * An in-group click with the prefetch received, its fill held: the URL and
+ * the unflagged loader's value show with the click, the flagged read's own
+ * fallback beside them, and the one request the click sends is the fill.
+ * `useOutlet().pending` ends with that commit, not with the fill, and
+ * `useNavigation()` reads idle and streaming meanwhile. Released, the fill
+ * brings the flagged value; nothing the prefetch ran runs again. The server
+ * is `SERVER_MS` away for every request.
+ */
+export async function expectGroupClickCommitsThePrefetchAndFillsItsFlaggedLoader(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+): Promise<void> {
+  const hub = await openGroup(page, fixture, { server: SERVER_MS });
+  const requests = recordPartials(page, hub.pathname("cu/loader"));
+  await prefetchCase(page, hub, "cu/loader");
+  expect(
+    pick(await hub.counts(), CU_LOADER_WORK),
+    "the prefetch ran the unflagged loader and not the flagged one",
+  ).toEqual({ "cu/loader.price": 1, "cu/loader.data": 0 });
+
+  const fills = await holdFills(page);
+  const watch = await watchPage(page, ["pf-layout", "pf-cu-above-layout"]);
+  await clickWithoutHover(page, "cu/loader");
+  await expect(page).toHaveURL(hub.pageUrl("cu/loader"));
+  await expect(byId(page, "pf-cu/loader-price")).toHaveText(
+    "cu/loader.price:1",
+  );
+  await expect(byId(page, "pf-cu/loader-fallback")).toBeVisible();
+  await expect(byId(page, "pf-cu/loader-value")).toHaveCount(0);
+  await expect
+    .poll(() => kindsOf(requests), "the click sent its fill")
+    .toEqual(["prefetch", "fill"]);
+  // The fill is held: the click's own commit is what ends `pending`.
+  await expect(byId(page, "pf-cu-layout")).toHaveAttribute(
+    "data-pending",
+    "false",
+  );
+  await expect(byId(page, "pf-nav")).toHaveAttribute("data-state", "idle");
+  await expect(byId(page, "pf-nav")).toHaveAttribute("data-streaming", "true");
+  // Still, a moment later.
+  await page.waitForTimeout(100);
+  await expect(byId(page, "pf-cu-layout")).toHaveAttribute(
+    "data-pending",
+    "false",
+  );
+  await expect(byId(page, "pf-cu/loader-fallback")).toBeVisible();
+  expect(
+    pick(await hub.counts(), ["cu/loader.data"]),
+    "the flagged loader has not run",
+  ).toEqual({ "cu/loader.data": 0 });
+
+  await fills.release();
+  await expect(byId(page, "pf-cu/loader-value")).toHaveText("cu/loader.data:1");
+  await complete(page);
+  const seen = await watch.stop();
+
+  const at = (id: string): number => seen.seenAt[seen.order.indexOf(id)]!;
+  expect(seen.urlAt, "the URL moved with the click").not.toBeNull();
+  expect(seen.urlAt!, "the URL moved with the click").toBeLessThanOrEqual(
+    PARITY_MARGIN_MS,
+  );
+  expect(
+    at("pf-cu/loader-price"),
+    "the prefetched value showed with the click",
+  ).toBeLessThanOrEqual(PARITY_MARGIN_MS);
+  expect(seen.pendingEndAt, "pending ended").not.toBeNull();
+  expect(
+    seen.pendingEndAt!,
+    "pending ended with the click's commit",
+  ).toBeLessThanOrEqual(PARITY_MARGIN_MS);
+  expect(seen.hidden, "held content stayed on screen").toEqual([]);
+  expect(seen.blank, "the page was never blank").toBe(false);
+  expect(
+    kindsOf(requests),
+    "one prefetch and one fill: the navigation was answered by the prefetch",
+  ).toEqual(["prefetch", "fill"]);
+  expect(
+    pick(await hub.counts(), CU_LOADER_WORK),
+    "the fill ran the flagged loader once, and nothing the prefetch ran",
+  ).toEqual({ "cu/loader.price": 1, "cu/loader.data": 1 });
+}
+
+/**
+ * The same in-group click with no prefetch: one navigation request, no
+ * fill, every loader run once by it, `pending` over when it commits.
+ */
+export async function expectPlainGroupClickSendsNoFill(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+): Promise<void> {
+  const hub = await openGroup(page, fixture);
+  const requests = recordPartials(page, hub.pathname("cu/loader"));
+  await clickWithoutHover(page, "cu/loader");
+  await expect(page).toHaveURL(hub.pageUrl("cu/loader"));
+  await expect(byId(page, "pf-cu/loader-value")).toHaveText("cu/loader.data:1");
+  await expect(byId(page, "pf-cu/loader-price")).toHaveText(
+    "cu/loader.price:1",
+  );
+  await complete(page);
+  await expect(byId(page, "pf-cu-layout")).toHaveAttribute(
+    "data-pending",
+    "false",
+  );
+  expect(kindsOf(requests), "one navigation, no fill").toEqual(["navigation"]);
+  expect(pick(await hub.counts(), CU_LOADER_WORK)).toEqual({
+    "cu/loader.price": 1,
+    "cu/loader.data": 1,
+  });
+}
+
+/**
+ * Into the group from a server page, the prefetch received: a flagged loader
+ * on the server layout above the group is deferred while that layout is new
+ * to the client, beside the group route's own, and that layout's flagged
+ * loading() defers nothing (the prefetch ran the layout). With no group on
+ * the page there is no optimistic presentation: the click commits the
+ * prefetched tree with its holes and one fill runs both flagged loaders.
+ */
+export async function expectGroupEntryDefersTheFlaggedLoaderAboveTheGroup(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+): Promise<void> {
+  const work = [
+    "cu/above.layout",
+    "cu/above.data",
+    "cu/loader.price",
+    "cu/loader.data",
+  ];
+  const hub = await openHub(page, fixture);
+  const requests = recordPartials(page, hub.pathname("cu/loader"));
+  await prefetchCase(page, hub, "cu/loader");
+  expect(
+    pick(await hub.counts(), work),
+    "the prefetch ran the layout above the group and the unflagged loader",
+  ).toEqual({
+    "cu/above.layout": 1,
+    "cu/above.data": 0,
+    "cu/loader.price": 1,
+    "cu/loader.data": 0,
+  });
+
+  const fills = await holdFills(page);
+  await clickWithoutHover(page, "cu/loader");
+  await expect(page).toHaveURL(hub.pageUrl("cu/loader"));
+  await expect(byId(page, "pf-cu/loader-price")).toHaveText(
+    "cu/loader.price:1",
+  );
+  await expect(byId(page, "pf-cu-above-layout")).toBeVisible();
+  await expect(byId(page, "pf-cu/above-fallback")).toBeVisible();
+  await expect(byId(page, "pf-cu/loader-fallback")).toBeVisible();
+  await expect
+    .poll(() => kindsOf(requests), "the click sent its fill")
+    .toEqual(["prefetch", "fill"]);
+
+  await fills.release();
+  await expect(byId(page, "pf-cu/above-value")).toHaveText("cu/above.data:1");
+  await expect(byId(page, "pf-cu/loader-value")).toHaveText("cu/loader.data:1");
+  await complete(page);
+  expect(kindsOf(requests)).toEqual(["prefetch", "fill"]);
+  expect(
+    pick(await hub.counts(), work),
+    "one fill ran both flagged loaders, and nothing the prefetch ran",
+  ).toEqual({
+    "cu/above.layout": 1,
+    "cu/above.data": 1,
+    "cu/loader.price": 1,
+    "cu/loader.data": 1,
+  });
+}
+
+/** A filled group entry restores from history on back and forward. */
+export async function expectGroupBackAndForwardKeepTheFilledPage(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+): Promise<void> {
+  const hub = await openGroup(page, fixture);
+  await prefetchCase(page, hub, "cu/loader");
+  await clickWithoutHover(page, "cu/loader");
+  await expect(byId(page, "pf-cu/loader-value")).toHaveText("cu/loader.data:1");
+  await complete(page);
+  const requests = recordPartials(page, hub.pathname("cu/loader"));
+
+  for (let round = 0; round < 2; round++) {
+    await page.goBack();
+    await expect(page).toHaveURL(hub.pageUrl("cu"));
+    await expect(byId(page, "pf-cu-value")).toBeVisible();
+    await page.goForward();
+    await expect(page).toHaveURL(hub.pageUrl("cu/loader"));
+    await expect(byId(page, "pf-cu/loader-value")).toHaveText(
+      "cu/loader.data:1",
+    );
+    await expect(byId(page, "pf-cu/loader-price")).toHaveText(
+      "cu/loader.price:1",
+    );
+    await expect(byId(page, "pf-cu/loader-fallback")).toHaveCount(0);
+  }
+  expect(requests, "the filled entry was restored from history").toEqual([]);
+  expect(pick(await hub.counts(), CU_LOADER_WORK)).toEqual({
+    "cu/loader.price": 1,
+    "cu/loader.data": 1,
+  });
+}
+
+/**
+ * A newer navigation while the fill is in flight. Before the fill's response
+ * it cancels the request: the flagged loader never runs, and going back
+ * fetches what the entry is missing. After the response has arrived the fill
+ * is never aborted: it streams to its end with no error, and nothing it
+ * carries reaches the page the newer navigation committed.
+ */
+export async function expectNewerNavigationDuringAGroupFill(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+): Promise<void> {
+  const failed: string[] = [];
+  page.on("requestfailed", (request) => {
+    if (isFill(request.url())) failed.push(request.failure()?.errorText ?? "");
+  });
+
+  // Before the fill's response: cancelled.
+  let hub = await openGroup(page, fixture);
+  await prefetchCase(page, hub, "cu/loader");
+  const fills = await holdFills(page);
+  await clickWithoutHover(page, "cu/loader");
+  await expect(byId(page, "pf-cu/loader-fallback")).toBeVisible();
+  await clickWithoutHover(page, "cu");
+  await expect(page).toHaveURL(hub.pageUrl("cu"));
+  await expect(byId(page, "pf-cu-value")).toBeVisible();
+  await expect.poll(() => failed.length, "the fill was cancelled").toBe(1);
+  await fills.release();
+  await complete(page);
+  expect(
+    pick(await hub.counts(), ["cu/loader.data"]),
+    "the cancelled fill ran nothing",
+  ).toEqual({ "cu/loader.data": 0 });
+  await page.goBack();
+  await expect(page).toHaveURL(hub.pageUrl("cu/loader"));
+  await expect(
+    byId(page, "pf-cu/loader-value"),
+    "going back fetches what the entry is missing",
+  ).toHaveText("cu/loader.data:1");
+  await complete(page);
+
+  // After the fill's response: the flagged loader takes 1.5 s more, so its
+  // value is still streaming when the newer navigation starts.
+  failed.length = 0;
+  hub = await openGroup(page, fixture, { delay: 1500 });
+  await prefetchCase(page, hub, "cu/loader");
+  const fill = page.waitForResponse(
+    (response) =>
+      isPartialFor(response.url(), hub.pathname("cu/loader")) &&
+      isFill(response.url()),
+  );
+  await clickWithoutHover(page, "cu/loader");
+  const answer = await fill;
+  await expect(byId(page, "pf-cu/loader-fallback")).toBeVisible();
+  await clickWithoutHover(page, "cu");
+  await expect(page).toHaveURL(hub.pageUrl("cu"));
+  await expect(byId(page, "pf-cu-value")).toBeVisible();
+  expect(await answer.finished(), "the fill streamed to its end").toBeNull();
+  await complete(page);
+  expect(failed, "the fill that had answered was not aborted").toEqual([]);
+  expect(
+    pick(await hub.counts(), ["cu/loader.data"]),
+    "the fill ran the flagged loader",
+  ).toEqual({ "cu/loader.data": 1 });
+  // A moment after the fill's end: the newer page is still what shows.
+  await page.waitForTimeout(200);
+  await expect(page).toHaveURL(hub.pageUrl("cu"));
+  await expect(byId(page, "pf-cu-value")).toBeVisible();
+  await expect(byId(page, "pf-cu/loader-page")).toHaveCount(0);
+}
+
+/**
+ * A server action while the fill is in flight. The action does not cancel
+ * the fill. Its refetch lists what the page holds, which leaves the
+ * placeholder out, so it renders the flagged loader and its commit settles
+ * the read. The fill's answer is then for a tree that is gone: it streams to
+ * its end and is dropped, and the page keeps the action's value.
+ */
+export async function expectActionDuringAGroupFill(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+): Promise<void> {
+  const hub = await openGroup(page, fixture);
+  await prefetchCase(page, hub, "cu/loader");
+  const fills = await holdFills(page);
+  await clickWithoutHover(page, "cu/loader");
+  await expect(byId(page, "pf-cu/loader-fallback")).toBeVisible();
+
+  const action = page.waitForResponse(
+    (response) => response.request().method() === "POST",
+  );
+  await byId(page, "pf-cu-action").click();
+  expect(await (await action).finished(), "the action answered").toBeNull();
+  await expect(
+    byId(page, "pf-cu/loader-value"),
+    "the action's refetch rendered the flagged loader",
+  ).toHaveText("cu/loader.data:1");
+  await expect(byId(page, "pf-cu/loader-fallback")).toHaveCount(0);
+  expect(pick(await hub.counts(), ["cu/action", "cu/loader.data"])).toEqual({
+    "cu/action": 1,
+    "cu/loader.data": 1,
+  });
+
+  const fill = page.waitForResponse(
+    (response) =>
+      isPartialFor(response.url(), hub.pathname("cu/loader")) &&
+      isFill(response.url()),
+  );
+  await fills.release();
+  expect(
+    await (await fill).finished(),
+    "the fill streamed to its end",
+  ).toBeNull();
+  await complete(page);
+  await expect(page).toHaveURL(hub.pageUrl("cu/loader"));
+  await expect(
+    byId(page, "pf-cu/loader-value"),
+    "the fill's answer did not replace the action's",
+  ).toHaveText("cu/loader.data:1");
+  await expect(byId(page, "pf-cu-layout")).toHaveAttribute(
+    "data-pending",
+    "false",
+  );
+}
+
+/** A clientUrls() click stands on this, inside the group. */
+const IN_GROUP = {
+  from: "cu",
+  held: ["pf-cu-above-layout"],
+  optimistic: true,
+};
+
+const CU_PARITY_CLICKS: PrefetchFalseParityCase[] = [
+  { name: "cu/loader", ...IN_GROUP, ownFallback: "pf-cu/loader-fallback" },
+  // A read with no boundary: React holds the page, in both clicks.
+  { name: "cu/bare", ...IN_GROUP, ...HELD },
+  { name: "cu/vt", ...IN_GROUP, ownFallback: "pf-cu/vt-fallback" },
+  // A same-route navigation: the page holds the route and its loader.
+  {
+    name: "cu/item/b",
+    from: "cu/item/a",
+    stem: "cu/item",
+    held: ["pf-cu-above-layout"],
+  },
+  // Into the group from the hub: no optimistic presentation, and the layout
+  // above the group is new, so its flagged loader is deferred too.
+  {
+    name: "cu/loader",
+    ownFallback: "pf-cu/loader-fallback",
+    deferredFallbacks: ["pf-cu/above-fallback"],
+  },
+];
+
+/**
+ * The clientUrls() clicks, as `expectAdoptedClickIsNeverWorseThanAPlainClick`
+ * runs them: with fast loaders, loaders `MID_DELAY_MS` slower and slow ones,
+ * every one with the server `SERVER_MS` away.
+ */
+export const PREFETCH_FALSE_CLIENT_URLS_PARITY_CASES: PrefetchFalseParityCase[] =
+  [
+    ...CU_PARITY_CLICKS,
+    ...CU_PARITY_CLICKS.map((spec) => ({ ...spec, delay: MID_DELAY_MS })),
+    ...CU_PARITY_CLICKS.map((spec) => ({ ...spec, slow: true })),
+  ].map((spec) => ({ server: SERVER_MS, ...spec }));
 
 // ---------------------------------------------------------------------------
 // The suite
@@ -3825,4 +4269,64 @@ export function definePrefetchFalseTests(
 
   it("a deferring prefetch the browser kept never answers a navigation during a back/forward reload", (page, fixture) =>
     expectDeferringPrefetchTheBrowserKeptIsHarmless(page, fixture, "click"));
+
+  // clientUrls() routes: loader(Def, { prefetch: false }) in a group.
+  it("clientUrls(): an in-group click commits the prefetch with the click and one fill brings the flagged loader; pending ends with the commit", (page, fixture) =>
+    expectGroupClickCommitsThePrefetchAndFillsItsFlaggedLoader(page, fixture));
+
+  it("clientUrls(): an in-group click with no prefetch sends one navigation and no fill", (page, fixture) =>
+    expectPlainGroupClickSendsNoFill(page, fixture));
+
+  it("clientUrls(): a flagged loader on the server layout above the group is deferred while that layout is new; its flagged loading() defers nothing", (page, fixture) =>
+    expectGroupEntryDefersTheFlaggedLoaderAboveTheGroup(page, fixture));
+
+  it("clientUrls(): back and forward after a fill restore the filled group page", (page, fixture) =>
+    expectGroupBackAndForwardKeepTheFilledPage(page, fixture));
+
+  it("clientUrls(): a newer navigation cancels a fill before its response and leaves one that has answered to stream to its end", (page, fixture) =>
+    expectNewerNavigationDuringAGroupFill(page, fixture));
+
+  it("clientUrls(): a server action during a fill ends on the complete page", (page, fixture) =>
+    expectActionDuringAGroupFill(page, fixture));
+
+  it("clientUrls(): an in-group click while the prefetch is still in flight adopts it, late by no more than what was left of it", async (page, fixture) => {
+    const pair = await expectClickDuringThePrefetchStaysWithinItsBound(
+      page,
+      fixture,
+      { name: "cu/loader", from: "cu" },
+      {
+        onRepeat: (late) =>
+          test.info().annotations.push({
+            type: "in-flight pair repeated",
+            description: late,
+          }),
+      },
+    );
+    test.info().annotations.push({
+      type: "in flight",
+      description: describeInFlightPair(pair),
+    });
+  });
+
+  for (const spec of PREFETCH_FALSE_CLIENT_URLS_PARITY_CASES) {
+    it(`clientUrls(): a click that adopts a prefetch is never worse than a plain click: ${prefetchFalseParityTitle(spec)}`, async (page, fixture) => {
+      const pair = await expectAdoptedClickIsNeverWorseThanAPlainClick(
+        page,
+        fixture,
+        spec,
+        {
+          onRepeat: (late) =>
+            test.info().annotations.push({
+              type: "parity pair repeated",
+              description: late,
+            }),
+          onOpen: ({ reason }) => test.fail(true, reason),
+        },
+      );
+      test.info().annotations.push({
+        type: "parity",
+        description: describePair(pair),
+      });
+    });
+  }
 }

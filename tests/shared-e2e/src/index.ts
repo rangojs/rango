@@ -91,6 +91,13 @@ export {
   prefetchFalseParityTitle,
   PREFETCH_FALSE_PARITY_CASES,
   expectSameRouteNavigationIsNeverDeferred,
+  expectGroupClickCommitsThePrefetchAndFillsItsFlaggedLoader,
+  expectPlainGroupClickSendsNoFill,
+  expectGroupEntryDefersTheFlaggedLoaderAboveTheGroup,
+  expectGroupBackAndForwardKeepTheFilledPage,
+  expectNewerNavigationDuringAGroupFill,
+  expectActionDuringAGroupFill,
+  PREFETCH_FALSE_CLIENT_URLS_PARITY_CASES,
 } from "./prefetch-false.js";
 export type {
   PrefetchFalseCase,

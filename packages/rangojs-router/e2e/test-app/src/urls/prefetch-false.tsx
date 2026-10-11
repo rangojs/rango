@@ -17,8 +17,15 @@ import {
   PrefetchFalseNav,
   PrefetchFalseValue,
 } from "../components/PrefetchFalseValue.js";
+import prefetchFalseClientUrls from "./prefetch-false-client-urls.js";
 import { PfNotes } from "./prefetch-false.handle.js";
-import { countRun, readRunCounts } from "../prefetch-false-counts.js";
+import {
+  countRun,
+  delayOf,
+  readRunCounts,
+  runOf,
+  work,
+} from "../prefetch-false-counts.js";
 
 // `prefetch: false` (docs/design/prefetch-false.md): one page per case, all
 // behind one hub layout whose links prefetch on hover only, so a suite decides
@@ -76,6 +83,13 @@ import { countRun, readRunCounts } from "../prefetch-false-counts.js";
 // is `bare` with a <Suspense> around the read: the route has no loading(),
 // and the read's own boundary is all that can show a fallback.
 //
+// `cu` and `cu/<route>` are a clientUrls() group (prefetch-false-client-urls.tsx)
+// under a server layout (pf-cu-above-layout, counter `cu/above.layout`) whose
+// own loader is flagged (pf-cu/above-value, counter `cu/above.data`, read in
+// a Suspense with pf-cu/above-fallback) and whose loading() is flagged too:
+// a flagged loading() defers nothing on a group route. Test ids and counters
+// of a group route `cu/<route>` are `pf-cu/<route>-*` and `cu/<route>.*`.
+//
 // pf-nav mirrors useNavigation() as data-state / data-streaming / data-path
 // (its location's pathname), and pf-outlet is the box the page renders in.
 //
@@ -106,11 +120,6 @@ import { countRun, readRunCounts } from "../prefetch-false-counts.js";
 // local server answers in a few ms.
 // The flags ride on every link. Without them the page is quiet for a suite.
 
-const runOf = (ctx: any): string => ctx.searchParams.get("run") ?? "";
-
-const delayOf = (ctx: any): number =>
-  Number(ctx.searchParams.get("delay") ?? 0) || 0;
-
 const serverOf = (ctx: any): number =>
   Number(ctx.searchParams.get("server") ?? 0) || 0;
 
@@ -121,15 +130,6 @@ async function serverDelay(ctx: any, next: () => Promise<Response>) {
   const ms = serverOf(ctx);
   if (ms > 0) await new Promise((resolve) => setTimeout(resolve, ms));
   return next();
-}
-
-async function work(ctx: any, name: string, delayMs: number = 0) {
-  const n = countRun(runOf(ctx), name);
-  const timed = name.endsWith(".data") || name.endsWith(".early");
-  const slow = timed && ctx.searchParams.get("slow") === "1";
-  const wait = delayMs + (slow ? 600 : 0) + (timed ? delayOf(ctx) : 0);
-  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
-  return { name, n };
 }
 
 // `export const` so the expose-internal-ids transform gives each a stable $$id.
@@ -228,6 +228,9 @@ export const PfVtBelowLoader = createLoader((ctx) =>
   work(ctx, "vt-below.data", 100),
 );
 export const PfOwnLoader = createLoader((ctx) => work(ctx, "own.data", 100));
+export const PfCuAboveLoader = createLoader((ctx) =>
+  work(ctx, "cu/above.data", 100),
+);
 export const PfSectionThrowsLoader = createLoader((ctx) =>
   work(ctx, "section-throws.data", 100),
 );
@@ -295,6 +298,12 @@ const CASES = [
   ],
   ["section-read", "inside the flagged layout, its loader read in a Suspense"],
   ["outer", "a flagged loader above a flagged layout, read in a Suspense"],
+  ["cu", "a clientUrls() group: its origin route, no loaders"],
+  ["cu/loader", "group route: a flagged loader beside an unflagged one"],
+  ["cu/bare", "group route: a flagged loader, no boundary"],
+  ["cu/item/a", "group route, same route: held segments are never deferred"],
+  ["cu/item/b", "from cu/item/a the prefetch runs the loader, no fill"],
+  ["cu/vt", "group route: a flagged loader on a route with transition()"],
 ] as const;
 
 const box = {
@@ -653,6 +662,24 @@ function VtBelowLayout(ctx: any) {
   );
 }
 
+// A server layout above a clientUrls() group: its own flagged loader is
+// deferred while the layout is new to the client, and its flagged loading()
+// defers nothing for the group's routes.
+function CuAboveLayout(ctx: any) {
+  countRun(runOf(ctx), "cu/above.layout");
+  return (
+    <div data-testid="pf-cu-above-layout">
+      <Suspense fallback={fallback("cu/above")}>
+        <PrefetchFalseValue
+          loader={PfCuAboveLoader}
+          testId="pf-cu/above-value"
+        />
+      </Suspense>
+      <Outlet />
+    </div>
+  );
+}
+
 // A slot with its own flagged loading() is its own unit: the route renders.
 function SlotLayout() {
   return (
@@ -776,6 +803,7 @@ export const prefetchFalsePatterns = urls(
     path,
     layout,
     middleware,
+    include,
     loader,
     loading,
     cache,
@@ -1123,6 +1151,14 @@ export const prefetchFalsePatterns = urls(
       path("/control", ControlPage, { name: "control" }, () => [
         loader(PfControlLoader),
         loading(fallback("control")),
+      ]),
+
+      // A clientUrls() group under a server layout with a flagged loader and
+      // a flagged loading().
+      layout(CuAboveLayout, () => [
+        loader(PfCuAboveLoader, { prefetch: false }),
+        loading(fallback("cu/above-layout"), { prefetch: false }),
+        include("/cu", prefetchFalseClientUrls, { name: "cu" }),
       ]),
     ]),
   ],
