@@ -136,6 +136,7 @@ import clientUrlsTransitionPatterns from "./urls/client-urls-transition.js";
 import clientUrlsActionPatterns from "./urls/client-urls-action.js";
 import heldHandlesClientPatterns from "./urls/held-handles.client-urls.js";
 import { heldHandlesPatterns } from "./urls/held-handles.js";
+import { historyHandlesPatterns } from "./urls/history-handles.js";
 import clientUrlsSlowPatterns, { SlowChrome } from "./urls/client-urls-slow.js";
 import { getClientUrlsActionCount } from "./urls/client-urls-action.store.js";
 import { ClientUrlsItemLoader } from "./urls/client-urls.loader.js";
@@ -981,6 +982,9 @@ export const urlpatterns = urls(
         name: "heldHandlesClient",
       }),
       include("/", heldHandlesPatterns, { name: "" }),
+      // A link to a page the history cache holds keeps that page's handle
+      // pushes when the response re-renders part of it.
+      include("/", historyHandlesPatterns, { name: "" }),
       intercept(
         "@modal",
         ".clientIntercept.item",

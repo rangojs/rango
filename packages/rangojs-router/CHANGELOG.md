@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a link back to a page you visited keeps that page's breadcrumbs and title
+
+A link to a URL you visited earlier in the tab is answered from the page the
+browser kept for it: the server re-renders only what revalidates, and the rest
+comes from the kept page. When the server re-rendered anything (a loader with
+`revalidate(() => true)`, a layout whose `revalidate()` answered `true`), the
+handles of everything it did not re-render were taken from the page you were
+leaving instead of the kept page. So on page A, a link to B, a link back to A
+and a link to B again showed B without the breadcrumb its layout pushed, the
+breadcrumb its route pushed and the title it set, and with nothing in their
+place. Now the page you land on starts from the handles it was kept with, and
+the response's pushes replace only those of what re-ran, as on any other
+navigation. A layout the two pages share is shown with the pushes of the page
+you left, where its content comes from too.
+
 ## 0.23.0 (2026-10-11)
 
 ### Breaking: a `clientUrls()` loader's `revalidate()` runs on the server, with the same arguments as in `urls()`

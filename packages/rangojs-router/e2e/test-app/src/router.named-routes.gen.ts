@@ -202,6 +202,8 @@ export const NamedRoutes = {
   "hashNavigation.index": "/hash-navigation",
   "heldHandlesClient.index": "/held-handles-client",
   heldHandlesServer: "/held-handles-server",
+  historyHandlesA: "/history-handles/a",
+  historyHandlesB: "/history-handles/b",
   "hookTests.formAction": "/hook-tests/form-action",
   "hookTests.index": "/hook-tests",
   "hookTests.noLoader": "/hook-tests/no-loader",

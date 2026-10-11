@@ -1026,15 +1026,44 @@ which run made each one.
    A snapshot without pushedBy records (every value the handler's) merges
    exactly as before.
 
-### Not covered: a page shown from the history cache
+### Covered later: a page shown from the history cache
 
 A link navigation to a URL the history cache holds sends the cached segment
-ids, and the server re-renders only what revalidates. The merge base is the
-handle data of the page on screen, not the cached entry's (`partial-update.ts`
-passes `targetCacheHandleData` only when the response has no diff), so the
-pushes of the segments the navigation takes from the cache and the page on
-screen does not share are lost. That is a different cause from the one above
-(a wrong base, not a merge too coarse) and is not part of this change.
+ids, and the server re-renders only what revalidates. The merge used to start
+from the handle data of the page on screen, not the cached entry's:
+`partial-update.ts` handed `targetCacheHandleData` to the provider only when
+the response had no diff. So the pushes of the segments the navigation took
+from the cache and the page on screen did not share were lost. The repro: A,
+a link to B, a link back to A, a link to B again, with a loader on B that
+reruns on every visit; the second B showed neither its layout's crumb, nor its
+route's crumb, nor its title. A different cause from the one above (a wrong
+base, not a merge too coarse), fixed after it:
+
+1. **The base is the target's entry, as the bridge builds it**
+   (`browser/navigation-bridge.ts`). The bridge already takes a segment the
+   page on screen shares with the entry from the page on screen (it can be
+   fresher). It now takes that segment's handle buckets from the same place
+   (`withSegmentHandles`, every handle and its pushedBy record alike), so
+   `targetCacheHandleData` is the handle state of exactly the segments in
+   `targetCacheSegments`. A segment's pushes come from where the segment does,
+   the rule above applied to the cache.
+2. **Both partial branches hand it on** (`browser/partial-update.ts`). The
+   no-diff branch did; the branch that renders the response now sets
+   `cachedHandleData` on its update's metadata too.
+3. **The provider starts from it** (`browser/react/NavigationProvider.tsx`).
+   An update that carries `cachedHandleData` replaces the handle state with it
+   first; its handle stream then merges onto it with `mergePartialHandleData`,
+   unchanged. Back/forward restores and the no-diff branch carry no stream, so
+   for them this is the replace they did before.
+
+Evidence: `src/__tests__/history-cache-handle-base.test.tsx` drives the real
+bridge, partial updater, store and provider with a faked server answer (four
+tests, all four fail on `8a843aae`; the fourth is the shared-segment base on a
+response with no diff, where the entry's older pushes used to win). e2e
+`history cache handles (dev)` / `(production)` in the router test-app and
+`tests/cloudflare-basic` (body:
+`tests/shared-e2e/src/history-cache-handles-scenario.ts`) fail on `8a843aae`
+in both apps and both modes at the second visit to B.
 
 ### Evidence
 

@@ -1,4 +1,5 @@
 import type {
+  HandleData,
   NavigationBridge,
   NavigationBridgeConfig,
   NavigationStore,
@@ -139,6 +140,32 @@ function isRestorable(
     segments.length > 0 &&
     !segments.some(isPlaceholder)
   );
+}
+
+/**
+ * `target` with the buckets of the segments `ids` names taken from `source`,
+ * each handle's and its pushedBy record's alike, in new containers.
+ */
+function withSegmentHandles(
+  target: HandleData,
+  source: HandleData,
+  ids: ReadonlySet<string>,
+): HandleData {
+  const out: HandleData = {};
+  for (const name of new Set([
+    ...Object.keys(target),
+    ...Object.keys(source),
+  ])) {
+    const buckets: Record<string, unknown[]> = {};
+    for (const [id, values] of Object.entries(target[name] ?? {})) {
+      if (!ids.has(id)) buckets[id] = values;
+    }
+    for (const [id, values] of Object.entries(source[name] ?? {})) {
+      if (ids.has(id)) buckets[id] = values;
+    }
+    if (Object.keys(buckets).length > 0) out[name] = buckets;
+  }
+  return out;
 }
 
 /**
@@ -369,13 +396,14 @@ export function createNavigationBridge(
       // title as fresh. It also leaves the nav-instance token intact.
       const sourceHistoryKey = store.getHistoryKey();
       const sourceCached = store.getCachedSegments(sourceHistoryKey);
+      let sourceHandleData: HandleData | undefined;
       if (sourceCached?.segments && sourceCached.segments.length > 0) {
-        const currentHandleData = liveHandleDataForCache(
+        sourceHandleData = liveHandleDataForCache(
           eventController,
           store,
           sourceHistoryKey,
         );
-        store.updateCacheHandleData(sourceHistoryKey, currentHandleData);
+        store.updateCacheHandleData(sourceHistoryKey, sourceHandleData);
       }
 
       // Check if we have cached segments for target URL
@@ -386,18 +414,30 @@ export function createNavigationBridge(
       // since it may have fresher data after an action revalidation.
       // This avoids unnecessary server round-trips for shared layout loaders.
       let cachedSegments = cached?.segments;
-      const cachedHandleData = cached?.handleData;
+      let cachedHandleData = cached?.handleData;
       if (cachedSegments && sourceCached?.segments) {
         const sourceSegmentMap = new Map(
           sourceCached.segments.map((s) => [s.id, s]),
         );
+        const fromSource = new Set<string>();
         cachedSegments = cachedSegments.map((targetSeg) => {
           const sourceSeg = sourceSegmentMap.get(targetSeg.id);
           // Use source (current page) version for shared segments - it's
           // fresher. A placeholder waiting for its fill (prefetch: false) is
           // not a copy of the segment: the target keeps its own.
-          return sourceSeg && !isPlaceholder(sourceSeg) ? sourceSeg : targetSeg;
+          if (!sourceSeg || isPlaceholder(sourceSeg)) return targetSeg;
+          fromSource.add(targetSeg.id);
+          return sourceSeg;
         });
+        // A segment's pushes come from where the segment does: this is the
+        // handle state the response's handles merge onto (partial-update.ts).
+        if (sourceHandleData) {
+          cachedHandleData = withSegmentHandles(
+            cachedHandleData ?? {},
+            sourceHandleData,
+            fromSource,
+          );
+        }
       }
 
       // Also check if there's an intercept cache entry for this URL

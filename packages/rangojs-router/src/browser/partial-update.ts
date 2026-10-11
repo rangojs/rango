@@ -200,8 +200,9 @@ export type UpdateMode =
        * when we send cached segment IDs to the server - if the server returns empty diff,
        * we use the same segments we told the server we have. */
       targetCacheSegments?: ResolvedSegment[];
-      /** Cached handle data for the target URL. When server returns empty diff and we're
-       * rendering from cache, this is passed to the UI to restore breadcrumbs etc. */
+      /** Handle data of the segments in `targetCacheSegments` (each from where
+       * the segment came). The page's handle state on commit: the response's
+       * handles, when it has any, merge onto it, not onto the page on screen's. */
       targetCacheHandleData?: Record<string, Record<string, unknown[]>>;
       /** Source URL for intercept restore (popstate cache miss) */
       interceptSourceUrl?: string;
@@ -643,6 +644,12 @@ export function createPartialUpdater(
         : undefined;
     const cachedSegs = targetCache ?? getCurrentCachedSegments();
     const cachedSegsSource = targetCache ? "history-cache" : "current-page";
+    // The handle state the segments above pushed: what a commit from them
+    // starts from (NavigationProvider), whether or not the response re-renders.
+    const cachedHandleData =
+      targetCache && mode.type === "navigate"
+        ? mode.targetCacheHandleData
+        : undefined;
     if (IS_BROWSER_DEBUG) {
       debugLog(
         `[Browser] cachedSegs source: ${cachedSegsSource} (${cachedSegs.length} segments: ${cachedSegs.map((s) => s.id).join(", ")})`,
@@ -745,10 +752,10 @@ export function createPartialUpdater(
             { routeName: payload.metadata.routeName },
           );
 
-          if (mode.targetCacheHandleData) {
+          if (cachedHandleData) {
             store.updateCacheHandleData(
               store.getHistoryKey(),
-              mode.targetCacheHandleData,
+              cachedHandleData,
             );
           }
 
@@ -756,10 +763,7 @@ export function createPartialUpdater(
             payload.metadata!;
           const cachedUpdate = {
             root: newTree,
-            metadata: {
-              ...metadataWithoutHandles,
-              cachedHandleData: mode.targetCacheHandleData,
-            },
+            metadata: { ...metadataWithoutHandles, cachedHandleData },
             ...(commitScroll && { scroll: commitScroll }),
           };
 
@@ -1118,7 +1122,9 @@ export function createPartialUpdater(
       // navigation-transaction.ts CommitResult.
       const update: NavigationUpdate = {
         root: newTree,
-        metadata: payload.metadata!,
+        metadata: cachedHandleData
+          ? { ...payload.metadata, cachedHandleData }
+          : payload.metadata!,
         ...(navScroll && { scroll: navScroll }),
       };
       if (process.env.NODE_ENV !== "production") {

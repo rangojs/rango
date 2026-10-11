@@ -65,6 +65,8 @@ export const NamedRoutes = {
   heldHandlesServer: "/held-handles-server",
   heldUseCache: "/held-use-cache/:probe",
   heldUseCacheControl: "/held-use-cache/:probe/:op",
+  historyHandlesA: "/history-handles/a",
+  historyHandlesB: "/history-handles/b",
   home: "/",
   identityRawCached: "/identity-raw/cached",
   identityRawCopies: "/identity-raw/copies",
