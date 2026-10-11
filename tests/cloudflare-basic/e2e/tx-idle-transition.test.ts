@@ -43,7 +43,7 @@ function idleViewTransitionTests(mode: "dev" | "build") {
     const f = useFixture({ root: ".", mode });
     test.setTimeout(60000);
 
-    test("transition({ when: false }) and transition({ viewTransition: false }) start no view transition on a cold click to loading() with two loaders", async ({
+    test("transition({ when: () => false }) and transition({ viewTransition: false }) start no view transition on a cold click to loading() with two loaders", async ({
       page,
     }) => {
       using _ = expectNoPageError(page);

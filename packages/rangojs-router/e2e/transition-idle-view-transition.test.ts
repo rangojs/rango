@@ -1,6 +1,12 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { expectNoPageError, testId, waitForHydration } from "./helper";
+import {
+  countViewTransitions,
+  expectNoPageError,
+  testId,
+  viewTransitions,
+  waitForHydration,
+} from "./helper";
 
 /**
  * #1078: under transition() + loading(), React's Suspense retry after the
@@ -14,25 +20,6 @@ import { expectNoPageError, testId, waitForHydration } from "./helper";
  * deterministic, the timing is not.
  */
 
-async function countViewTransitions(page: Page): Promise<void> {
-  await page.addInitScript(() => {
-    const w = window as unknown as { __vtCount?: number };
-    w.__vtCount = 0;
-    const original = document.startViewTransition?.bind(document);
-    if (!original) return;
-    document.startViewTransition = ((arg: unknown) => {
-      w.__vtCount = (w.__vtCount ?? 0) + 1;
-      return original(arg as never);
-    }) as typeof document.startViewTransition;
-  });
-}
-
-async function viewTransitions(page: Page): Promise<number> {
-  return page.evaluate(
-    () => (window as unknown as { __vtCount?: number }).__vtCount ?? 0,
-  );
-}
-
 function idleViewTransitionTests(mode: "dev" | "build") {
   const label = mode === "build" ? "production" : mode;
 
@@ -40,7 +27,7 @@ function idleViewTransitionTests(mode: "dev" | "build") {
     const f = useFixture({ root: "./e2e/test-app", mode });
     test.setTimeout(60000);
 
-    test("transition({ when: false }) and transition({ viewTransition: false }) start no view transition on a cold click to loading() with two loaders", async ({
+    test("transition({ when: () => false }) and transition({ viewTransition: false }) start no view transition on a cold click to loading() with two loaders", async ({
       page,
     }) => {
       using _ = expectNoPageError(page);

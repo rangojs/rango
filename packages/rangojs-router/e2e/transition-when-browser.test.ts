@@ -1,6 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { expectNoPageError, testId, waitForHydration } from "./helper";
+import {
+  countViewTransitions,
+  expectNoPageError,
+  testId,
+  viewTransitions,
+  waitForHydration,
+} from "./helper";
 import {
   bump,
   clicks,
@@ -22,26 +28,6 @@ import { expectConsole } from "@shared/e2e";
  * prerender.tsx (/docs/:slug) and urls/client-urls-transition.tsx; the
  * predicates log to window.__txWhenLog / __ctWhenLog.
  */
-
-// Counts document.startViewTransition calls: a gated-off commit starts none.
-async function countViewTransitions(page: Page): Promise<void> {
-  await page.addInitScript(() => {
-    const w = window as unknown as { __vtCount?: number };
-    w.__vtCount = 0;
-    const original = document.startViewTransition?.bind(document);
-    if (!original) return;
-    document.startViewTransition = ((arg: unknown) => {
-      w.__vtCount = (w.__vtCount ?? 0) + 1;
-      return original(arg as never);
-    }) as typeof document.startViewTransition;
-  });
-}
-
-async function viewTransitions(page: Page): Promise<number> {
-  return page.evaluate(
-    () => (window as unknown as { __vtCount?: number }).__vtCount ?? 0,
-  );
-}
 
 function browserDecisionTests(mode: "dev" | "build") {
   const label = mode === "build" ? "production" : mode;

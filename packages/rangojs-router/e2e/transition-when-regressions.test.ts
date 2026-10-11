@@ -1,6 +1,12 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { expectNoPageError, testId, waitForHydration } from "./helper";
+import {
+  countViewTransitions,
+  expectNoPageError,
+  testId,
+  viewTransitions,
+  waitForHydration,
+} from "./helper";
 import {
   bump,
   clicks,
@@ -71,20 +77,8 @@ function regressionTests(mode: "dev" | "build") {
       page,
     }) => {
       using _ = expectNoPageError(page);
-      await page.addInitScript(() => {
-        const w = window as unknown as { __vtCount?: number };
-        w.__vtCount = 0;
-        const original = document.startViewTransition?.bind(document);
-        if (!original) return;
-        document.startViewTransition = ((arg: unknown) => {
-          w.__vtCount = (w.__vtCount ?? 0) + 1;
-          return original(arg as never);
-        }) as typeof document.startViewTransition;
-      });
-      const vtCount = () =>
-        page.evaluate(
-          () => (window as unknown as { __vtCount?: number }).__vtCount ?? 0,
-        );
+      await countViewTransitions(page);
+      const vtCount = () => viewTransitions(page);
       await page.goto(f.url("/tx-keep/a"));
       await waitForHydration(page);
       await expect(testId(page, "tx-keep-n")).toHaveText("a", {
