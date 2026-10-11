@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a handle pushed from an `intercept()`'s handler or loader reaches the page
+
+**Before.** A push made inside an intercept, `ctx.use(Breadcrumbs)(...)` in its
+handler or in one of its loaders, was filed under whichever segment the router
+had resolved last. On the usual navigation that opens a modal, where the
+browser already holds every segment of the page, nothing had been resolved: the
+handler's push threw "Handle ... used outside of handler context", so the modal
+rendered its error boundary (status 500), and a loader's push was dropped. When
+the navigation re-ran a layout, the push was filed under that layout instead.
+
+**Now.** Both are filed under the intercept's slot, as a `parallel()` slot's
+pushes are, and reach the page's `useHandle()` readers.
+
+### Fixed: a modal opened by `intercept()` whose loaders all skip `revalidate()` keeps its data after a server action
+
+**Before.** A server action called from an open modal re-runs the intercept's
+handler, and a loader whose `revalidate()` answers `false` does not run. When
+that was every loader of the intercept, the response carried no loader data for
+the modal and the browser dropped the data it held: the modal's `useLoader()`
+threw "data not found in context". When only some of its loaders skipped, the
+modal showed the re-run loaders' new data but kept the render it had before the
+action, so props and markup the handler produced did not update.
+
+**Now.** A loader that skips keeps the data the modal already shows, whether it
+is one of the loaders or all of them, and the handler's new render applies, as
+it does when every loader re-runs.
+
 ## 0.23.0 (2026-10-11)
 
 ### Breaking: a `clientUrls()` loader's `revalidate()` runs on the server, with the same arguments as in `urls()`

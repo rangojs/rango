@@ -321,6 +321,7 @@ import { peFormStatePatterns } from "./pages/pe-form-state.js";
 import { suspenseCasesPatterns } from "./pages/suspense-cases.js";
 import { txWhenPatterns } from "./pages/tx-when.js";
 import { interceptWhenShapePatterns } from "./pages/intercept-when-shape.js";
+import { interceptHeldPatterns } from "./pages/intercept-held.js";
 import { authRedirectPatterns } from "./pages/auth-redirect.js";
 import { redirectLoopPatterns } from "./pages/redirect-loop.js";
 import { deferredHandleNavPatterns } from "./pages/deferred-handle-nav.js";
@@ -2900,6 +2901,11 @@ export const urlpatterns = urls(
         // intercept-when-shape).
         include("/intercept-when-shape", interceptWhenShapePatterns, {
           name: "interceptWhenShape",
+        }),
+        // Intercept slot handle pushes and held loaders (mirrors the router
+        // e2e app's intercept-held).
+        include("/intercept-held", interceptHeldPatterns, {
+          name: "interceptHeld",
         }),
 
         // Cookie-gated route-middleware redirect (#1047).

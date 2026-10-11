@@ -10,19 +10,26 @@ describe("merge-segment-loaders", () => {
     const fromCache = {
       id: "seg",
       component: "cached-component",
+      layout: "cached-layout",
+      loading: "cached-loading",
       loaderIds: ["a", "b", "c"],
       loaderDataPromise: Promise.resolve([1, 2, 3]),
     } as any;
     const fromServer = {
       id: "seg",
       component: "server-component",
+      layout: "server-layout",
+      loading: undefined,
       loaderIds: ["b"],
       loaderDataPromise: Promise.resolve([20]),
     } as any;
 
     const merged = mergeSegmentLoaders(fromServer, fromCache);
 
-    expect(merged.component).toBe("cached-component");
+    // The server's re-render applies; the cached structure stays.
+    expect(merged.component).toBe("server-component");
+    expect(merged.layout).toBe("server-layout");
+    expect(merged.loading).toBe("cached-loading");
     expect(merged.loaderIds).toEqual(["a", "b", "c"]);
     await expect(merged.loaderDataPromise).resolves.toEqual([1, 20, 3]);
   });
@@ -68,6 +75,62 @@ describe("merge-segment-loaders", () => {
 
     expect(needsLoaderMerge(fromServer, fromCache)).toBe(true);
     expect(needsLoaderMerge(fromCache, fromServer)).toBe(false);
+  });
+
+  it("merges an empty aggregate: every loader held, all cached data kept", async () => {
+    const fromCache = {
+      id: "seg.@modal",
+      component: "cached-component",
+      loaderIds: ["a", "b"],
+      loaderDataPromise: Promise.resolve([1, 2]),
+    } as any;
+    const fromServer = {
+      id: "seg.@modal",
+      component: "server-component",
+      loaderIds: [],
+      loaderDataPromise: [],
+    } as any;
+
+    expect(needsLoaderMerge(fromServer, fromCache)).toBe(true);
+    const merged = mergeSegmentLoaders(fromServer, fromCache);
+    expect(merged.component).toBe("server-component");
+    expect(merged.loaderIds).toEqual(["a", "b"]);
+    await expect(merged.loaderDataPromise).resolves.toEqual([1, 2]);
+  });
+
+  it("merges two settled aggregates into the array itself, not a fresh promise", () => {
+    const fulfilled = Object.assign(Promise.resolve([1, 2, 3]), {
+      status: "fulfilled",
+      value: [1, 2, 3],
+    });
+    const merged = mergeSegmentLoaders(
+      { id: "seg", loaderIds: ["b"], loaderDataPromise: [20] } as any,
+      {
+        id: "seg",
+        loaderIds: ["a", "b", "c"],
+        loaderDataPromise: fulfilled,
+      } as any,
+    );
+
+    expect(merged.loaderDataPromise).toEqual([1, 20, 3]);
+  });
+
+  it("does not merge into a server segment without an aggregate", () => {
+    // A parallel slot's loaders are loader segments of their own: the server
+    // sends the slot with no aggregate, while the browser's copy carries the
+    // one segment-system attached at render. It must not be merged.
+    const fromCache = {
+      id: "seg.@cart",
+      component: "cached-component",
+      loaderIds: ["cart"],
+      loaderDataPromise: Promise.resolve([{ count: 0 }]),
+    } as any;
+    const fromServer = {
+      id: "seg.@cart",
+      component: "server-component",
+    } as any;
+
+    expect(needsLoaderMerge(fromServer, fromCache)).toBe(false);
   });
 
   it("inserts missing diff segments after parent layout and appends non-loader diffs", () => {

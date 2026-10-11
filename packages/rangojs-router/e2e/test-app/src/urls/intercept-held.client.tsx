@@ -6,7 +6,9 @@ import { Modal } from "../components/Modal.js";
 import { interceptHeldAction } from "./intercept-held.actions.js";
 import {
   InterceptHeldCrumbs,
+  InterceptHeldLoader,
   InterceptPushLoader,
+  InterceptRerunLoader,
 } from "./intercept-held.defs.js";
 
 export function InterceptHeldCrumbsBar() {
@@ -37,6 +39,33 @@ export function InterceptHeldLoaderModal({
       <p data-testid="ih-modal-id">{id}</p>
       <p data-testid="ih-modal-renders">{renders}</p>
       <p data-testid="ih-modal-runs">{data.runs}</p>
+      <button
+        data-testid="ih-modal-action"
+        onClick={() => void interceptHeldAction()}
+      >
+        Call action
+      </button>
+    </Modal>
+  );
+}
+
+// One held loader and one following the default: the server re-runs the
+// second, the browser merges it into the aggregate it holds.
+export function InterceptHeldMixedModal({
+  id,
+  renders,
+}: {
+  id: string;
+  renders: number;
+}) {
+  const held = useLoader(InterceptHeldLoader);
+  const rerun = useLoader(InterceptRerunLoader);
+  return (
+    <Modal testId="ih-modal">
+      <p data-testid="ih-modal-id">{id}</p>
+      <p data-testid="ih-modal-renders">{renders}</p>
+      <p data-testid="ih-modal-runs">{held.data.runs}</p>
+      <p data-testid="ih-modal-rerun-runs">{rerun.data.runs}</p>
       <button
         data-testid="ih-modal-action"
         onClick={() => void interceptHeldAction()}

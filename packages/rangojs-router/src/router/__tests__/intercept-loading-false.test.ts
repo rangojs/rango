@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { resolveInterceptLoadersOnly } from "../intercept-resolution.js";
+import { evaluateRevalidation } from "../revalidation.js";
 import type { InterceptEntry } from "../../server/context";
 import type { EntryData } from "../../server/context";
 import type { SegmentResolutionDeps } from "../types.js";
@@ -189,5 +190,48 @@ describe("resolveInterceptLoadersOnly loading: false parity", () => {
     // loader.error telemetry; assert it carries isPartial:true.
     const errorContext = (deps.wrapLoaderPromise as any).mock.calls[0][4];
     expect(errorContext).toMatchObject({ isPartial: true });
+  });
+});
+
+describe("resolveInterceptLoadersOnly on a slot the client holds", () => {
+  const revalidationContext = (clientSegmentIds: string[]) => ({
+    clientSegmentIds: new Set(clientSegmentIds),
+    prevParams: {},
+    request: new Request("http://localhost/"),
+    prevUrl: new URL("http://localhost/prev"),
+    nextUrl: new URL("http://localhost/next"),
+    routeKey: "test",
+  });
+
+  it("every loader held: the empty aggregate, not null (the cached one would be sent)", async () => {
+    vi.mocked(evaluateRevalidation).mockResolvedValueOnce(false);
+    const deps = makeDeps();
+    const result = await resolveInterceptLoadersOnly(
+      makeInterceptEntry(false),
+      makeParentEntry(),
+      {},
+      makeContext(),
+      true,
+      deps,
+      revalidationContext(["L0R0.@modal"]),
+    );
+
+    expect(result).toEqual({ loaderDataPromise: [], loaderIds: [] });
+    expect(deps.wrapLoaderPromise).not.toHaveBeenCalled();
+  });
+
+  it("pins the slot's id as the loaders' handle push owner", async () => {
+    const context = makeContext();
+    await resolveInterceptLoadersOnly(
+      makeInterceptEntry(false),
+      makeParentEntry(),
+      {},
+      context,
+      true,
+      makeDeps(),
+      revalidationContext([]),
+    );
+
+    expect(context._currentSegmentId).toBe("L0R0.@modal");
   });
 });

@@ -235,6 +235,7 @@ export const NamedRoutes = {
   "interceptHeld.handlerItem": "/intercept-held/handler/:id",
   "interceptHeld.index": "/intercept-held",
   "interceptHeld.loaderItem": "/intercept-held/loader/:id",
+  "interceptHeld.mixedItem": "/intercept-held/mixed/:id",
   "interceptHeld.pushItem": "/intercept-held/push/:id",
   "interceptHeld.rerunItem": "/intercept-held/rerun/:id",
   "interceptWhenShape.item": "/intercept-when-shape/item/:id",

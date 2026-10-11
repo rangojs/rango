@@ -5,23 +5,17 @@
  * An intercept's loaders ride on the slot segment as one aggregate
  * (`loaderIds` + `loaderDataPromise`, router/intercept-resolution.ts), not as
  * loader segments of their own. A loader whose revalidate() answers false is
- * left out of it, and when every loader is, resolveInterceptEntry sends the
- * slot with `loaderIds: undefined` (`loaderIds.length > 0 ? loaderIds :
- * undefined`). The browser's action reconcile (browser/segment-reconciler.ts)
- * merges a partial aggregate only when the server's has `loaderIds`
- * (`needsLoaderMerge`, browser/merge-segment-loaders.ts), so the cached
- * aggregate is replaced by nothing. renderSlotContent (client.tsx) then finds
- * no `loaderDataPromise && loaderIds` and mounts the slot with no
- * LoaderBoundary; the modal's `useLoader()` throws "data not found in
- * context".
+ * left out of it; when every loader is, the slot is sent with an EMPTY
+ * aggregate. The browser's action reconcile (browser/segment-reconciler.ts)
+ * merges a partial aggregate into the one it holds (`needsLoaderMerge`,
+ * browser/merge-segment-loaders.ts). A slot sent with no aggregate at all
+ * replaced the cached one: renderSlotContent (client.tsx) found no
+ * `loaderDataPromise && loaderIds`, mounted the slot with no LoaderBoundary,
+ * and the modal's `useLoader()` threw "data not found in context".
  *
  * The request is the one the browser sends from an open modal: the page URL,
  * the held segment ids and the intercept source header
  * (browser/server-action-bridge.ts).
- *
- * KNOWN GAP: the `red` test is vitest's `it.fails`, which keeps the suite
- * green while the assertion fails and turns red the moment it passes. Drop
- * `red` for `it` when the slot keeps its aggregate.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -41,8 +35,6 @@ import { MemorySegmentCacheStore } from "../../cache/index.js";
 import { deserializeResult } from "../../cache/segment-codec.js";
 import { reconcileSegments } from "../../browser/segment-reconciler.js";
 import type { ResolvedSegment } from "../../types.js";
-
-const red = it.fails;
 
 const runs = { a: 0, b: 0 };
 
@@ -158,12 +150,13 @@ describe("a modal held across a server action keeps its loader data", () => {
     ]);
   });
 
-  it("control: one held loader and one re-run merge into the cached aggregate", async () => {
+  it("one held loader and one re-run: the re-run merges into the cached aggregate, the handler's re-render applies", async () => {
     const { cachedSlot, sentSlot, slot } = await slotAfterAction(
       "skip",
       "rerun",
     );
     expect(sentSlot?.loaderIds).toHaveLength(1);
+    expect(slot.component).toBe(sentSlot!.component);
     expect(slot.loaderIds).toEqual(cachedSlot.loaderIds);
     expect(await slot.loaderDataPromise).toMatchObject([
       { data: { a: "a-run-1" } },
@@ -172,17 +165,20 @@ describe("a modal held across a server action keeps its loader data", () => {
     expect(runs).toEqual({ a: 1, b: 2 });
   });
 
-  red(
-    "every loader held: the slot keeps the aggregate it was opened with",
-    async () => {
-      const { cachedSlot, slot } = await slotAfterAction("skip", "skip");
-      expect(runs).toEqual({ a: 1, b: 1 });
-      // renderSlotContent mounts the slot's LoaderBoundary only when both are set.
-      expect(slot.loaderIds).toEqual(cachedSlot.loaderIds);
-      expect(await slot.loaderDataPromise).toMatchObject([
-        { data: { a: "a-run-1" } },
-        { data: { b: "b-run-1" } },
-      ]);
-    },
-  );
+  it("every loader held: the slot keeps the aggregate it was opened with", async () => {
+    const { cachedSlot, sentSlot, slot } = await slotAfterAction(
+      "skip",
+      "skip",
+    );
+    expect(runs).toEqual({ a: 1, b: 1 });
+    expect(sentSlot?.loaderIds).toEqual([]);
+    // The handler's re-render applies, as when the loaders re-run.
+    expect(slot.component).toBe(sentSlot!.component);
+    // renderSlotContent mounts the slot's LoaderBoundary only when both are set.
+    expect(slot.loaderIds).toEqual(cachedSlot.loaderIds);
+    expect(await slot.loaderDataPromise).toMatchObject([
+      { data: { a: "a-run-1" } },
+      { data: { b: "b-run-1" } },
+    ]);
+  });
 });

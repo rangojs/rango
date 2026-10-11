@@ -2,11 +2,27 @@ import type { ResolvedSegment } from "./types.js";
 import { debugLog, IS_BROWSER_DEBUG } from "./logging.js";
 
 /**
+ * An aggregate's array when it has settled in a form React reads
+ * synchronously (the array itself, or a thenable carrying React's or Flight's
+ * `status: "fulfilled"`); undefined while it is pending.
+ */
+function settledAggregate(
+  aggregate: Promise<any[]> | any[] | undefined,
+): any[] | undefined {
+  if (Array.isArray(aggregate)) return aggregate;
+  const thenable = aggregate as { status?: string; value?: any[] } | undefined;
+  return thenable?.status === "fulfilled" ? thenable.value : undefined;
+}
+
+/**
  * Merge partial loader data from server with cached loader data.
  *
  * During partial revalidation (stale or action), the server may return only
- * some loaders that pass the revalidation check. The component still needs
- * all loader data, so we merge fresh data with cached data.
+ * some loaders that pass the revalidation check, none when every one is held.
+ * The component still needs all loader data, so we merge fresh data with
+ * cached data. Two settled aggregates merge into the array itself: a fresh
+ * Promise.all over settled parts is a promise React has not read, and content
+ * on screen handed one suspends (docs/internal/suspense-contract.md, rule 2).
  *
  * @param fromServer - Segment returned from server with partial loaders
  * @param fromCache - Cached segment with full loader data
@@ -25,24 +41,29 @@ export function mergeSegmentLoaders(
     );
   }
 
+  // Fresh data for the loaders the server re-ran, cached data for the rest.
+  const merge = (newData: any[], cachedData: any[]): any[] =>
+    cachedLoaderIds.map((id: string, i: number) => {
+      const newIndex = serverLoaderIds.indexOf(id);
+      return newIndex !== -1 ? newData[newIndex] : cachedData[i];
+    });
+  const settledNew = settledAggregate(fromServer.loaderDataPromise);
+  const settledCached = settledAggregate(fromCache.loaderDataPromise);
+
   return {
     ...fromCache,
-    // Keep cached component (server's might be a fresh Promise that needs the loaders)
-    component: fromCache.component,
-    // Merge loader data - await both and combine
-    loaderDataPromise: Promise.all([
-      fromServer.loaderDataPromise!,
-      fromCache.loaderDataPromise!,
-    ]).then(([newData, cachedData]) => {
-      // Build merged array: use new data for updated loaders, cached for rest
-      return cachedLoaderIds.map((id: string, i: number) => {
-        const newIndex = serverLoaderIds.indexOf(id);
-        if (newIndex !== -1) {
-          return (newData as any[])[newIndex]; // Use fresh data
-        }
-        return (cachedData as any[])[i]; // Use cached data
-      });
-    }),
+    // The server re-ran the slot's handler and layout: their render applies,
+    // as it does when every loader re-runs. Only the loaders it held keep
+    // their cached data.
+    component: fromServer.component,
+    layout: fromServer.layout,
+    loaderDataPromise:
+      settledNew && settledCached
+        ? merge(settledNew, settledCached)
+        : Promise.all([
+            fromServer.loaderDataPromise!,
+            fromCache.loaderDataPromise!,
+          ]).then(([newData, cachedData]) => merge(newData, cachedData)),
     // Keep all loader IDs from cache
     loaderIds: fromCache.loaderIds,
     // The rebuilt aggregate is the source of truth. Cached per-loader

@@ -4,6 +4,7 @@ import { Modal } from "../components/Modal.js";
 import {
   InterceptHeldCrumbsBar,
   InterceptHeldLoaderModal,
+  InterceptHeldMixedModal,
   InterceptPushModal,
 } from "./intercept-held.client.js";
 import {
@@ -13,12 +14,14 @@ import {
   InterceptRerunLoader,
 } from "./intercept-held.defs.js";
 
-// Known-gap fixtures (e2e/intercept-held.test.ts). One layout with a @modal
-// slot and three intercepted routes, each opened from the index page:
+// e2e/intercept-held.test.ts (tests/shared-e2e intercept-held-scenario). One
+// layout with a @modal slot and five intercepted routes, each opened from the
+// index page:
 //  - /loader/:id  the modal's only loader skips revalidate() (a server action
 //                 called from the open modal must leave the modal on its
 //                 loader data);
 //  - /rerun/:id   control: the same modal, its loader following the default;
+//  - /mixed/:id   one loader held, one following the default;
 //  - /push/:id    the modal's loader pushes a crumb;
 //  - /handler/:id the modal's handler pushes a crumb.
 // The layout shows the crumb handle; it pushes "layout" itself.
@@ -48,6 +51,13 @@ function InterceptHeldIndex() {
         data-testid="ih-open-rerun"
       >
         Open default-revalidation modal
+      </Link>
+      <Link
+        to="/intercept-held/mixed/1"
+        prefetch="none"
+        data-testid="ih-open-mixed"
+      >
+        Open mixed-revalidation modal
       </Link>
       <Link
         to="/intercept-held/push/1"
@@ -115,6 +125,22 @@ export const interceptHeldPatterns = urls(
             />
           ),
           () => [loader(InterceptRerunLoader)],
+        ),
+
+        path("/mixed/:id", FullPage("ih-mixed-page"), { name: "mixedItem" }),
+        intercept(
+          "@modal",
+          ".mixedItem",
+          (ctx) => (
+            <InterceptHeldMixedModal
+              id={ctx.params.id}
+              renders={++modalRenders}
+            />
+          ),
+          () => [
+            loader(InterceptHeldLoader, () => [revalidate(() => false)]),
+            loader(InterceptRerunLoader),
+          ],
         ),
 
         path("/push/:id", FullPage("ih-push-page"), { name: "pushItem" }),
