@@ -102,9 +102,10 @@ Three things to keep in mind, because each looks like a bug the first time:
   with no prefetch at all, and adds no wait of its own: what shows after the
   click, a fallback for the deferred part included, is React's Suspense
   behaviour. Content on screen is never replaced by a fallback, blanked or
-  remounted while a fill is pending. What a prefetch defers depends on what its source page holds, so a
-  response that defers is used only on that page (`x-rsc-prefetch-scope:
-source`) and is never reused by the document cache or a shared cache.
+  remounted while a fill is pending. What a prefetch defers depends on what
+  its source page holds, so a response that defers is used only on that
+  page (`x-rsc-prefetch-scope: source`) and is never reused by the document
+  cache or a shared cache.
 - **Deferral replaces execution; it never adds a skip.** A new segment always
   renders, so the flag only ever turns work that would have run into deferred
   work. Revalidation of held segments is untouched.

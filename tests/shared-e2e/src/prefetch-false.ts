@@ -2177,11 +2177,17 @@ export interface PrefetchFalseParityCase extends PrefetchFalseFlags {
   innerFallback?: string;
   /**
    * A gap that is known and not fixed. The case runs all the same: every
-   * comparison the gap does not break has to hold, and one it breaks has to
-   * fail. So the report shows an expected failure, and an unexpected pass
-   * the day the gap is closed.
+   * comparison the gap does not break has to hold, the gap's bound has to
+   * hold, and one comparison it breaks has to fail. So the report shows an
+   * expected failure, and an unexpected pass the day the gap is closed.
    */
   open?: PrefetchFalseOpenGap;
+  /**
+   * The gap does not show in every app: where every comparison holds the
+   * case passes, and where the gap breaks one it is an expected failure.
+   * Another case of the same gap shows its closing.
+   */
+  openWhereItShows?: boolean;
 }
 
 /** One comparison of `expectAdoptedClickIsNeverWorseThanAPlainClick`. */
@@ -2200,8 +2206,10 @@ export type PrefetchFalseParityRule =
   | "late"
   /** The page, or its skeleton, did not show at the click in every pair. */
   | "click"
-  /** The address bar or a URL hook further ahead of the page. */
-  | "url"
+  /** A URL hook further ahead of the page than in the plain click. */
+  | "hook"
+  /** An open gap grew past the bound it is held to. */
+  | "bound"
   /** A flagged layout's skeleton and layout, against the expectation. */
   | "skeleton"
   /** An error React logged in development during either click. */
@@ -2212,30 +2220,69 @@ export interface PrefetchFalseOpenGap {
   reason: string;
   /** The comparisons the gap breaks. Every other one still has to hold. */
   breaks: PrefetchFalseParityRule[];
+  /**
+   * What keeps the gap from growing, checked on the first pair before the
+   * case is marked as an expected failure: what is outside the bound.
+   */
+  bound: (pair: PrefetchFalsePair, spec: PrefetchFalseParityCase) => string[];
 }
 
 /**
- * OPEN, not fixed: where React holds an adopted click for a read with no
- * boundary, the address bar moves with the click and the page when the value
- * arrives. The page's transaction commits before its tree is handed to
- * React, and whether the tree can show is React's to find out. A plain click
- * moves the address bar with its response, so its bar is ahead of the page
- * by the loader's time, and the adopted click's by the fill's round trip
- * more. That is inside the margin with a server that answers in a few ms,
- * and outside it with the server `SERVER_MS` away, where every parity case
- * runs: every held cell (`HELD`) is open. The URL hooks move with the page
- * in both clicks, and so does the page.
- *
- * Measured in production on `bare`, plain against adopted, how far the
- * address bar is ahead of the page: 101 against 104 ms with the server near,
- * 104 against 439 with the server 300 ms away, 99 against 1417 with the
- * requests held a second more. The URL hook: 1 against 1 in each. The page:
- * 424 against 441 ms with the server 300 ms away.
+ * A view transition takes about this long when the page sets no duration
+ * (`&vtms=`): Chrome's default animation is 250 ms, and its capture frames
+ * come on top.
  */
-const OPEN_HELD: PrefetchFalseOpenGap = {
+const DEFAULT_TRANSITION_MS = 300;
+
+/**
+ * OPEN, accepted as React's behaviour (#1078, the maintainer's call of
+ * 2026-10-11): a `<ViewTransition>` of the app's own is mounted across the
+ * click, and the server is far enough that the fill answers after React's
+ * throttle has run out (the fallback has been up since the click). The hole
+ * resolves with the fill's first chunk, with a node or a stream that is still
+ * pending; React retries the boundary, the retry suspends again, and React
+ * commits it with the fallback in place (R-throttle, second half). That
+ * commit starts a view transition that changes nothing (R-start), and the
+ * reveal waits for it (R-wait). With the server near the first retry has
+ * everything, and none of it shows.
+ *
+ * Measured in production, router app, the server 300 ms away, plain against
+ * adopted: `unit` starts view transitions at 616 against 304 and 602 ms and
+ * completes at 636 against 621; with 600 ms transitions, at 616 against 305
+ * and 949 ms, complete at 631 against 966. `loader` the same, after the
+ * handle push's own transition both clicks start.
+ *
+ * Its bound: one view transition more than the plain click at most, as many
+ * that change the page, and the page complete no later than the plain
+ * click's plus one view transition (`vtms`, or `DEFAULT_TRANSITION_MS`) plus
+ * `PARITY_MARGIN_MS`. Measured over both apps and modes: 261 to 335 ms past
+ * the plain click at 600 ms (the bound is 700), from 72 ms sooner to 18 ms
+ * later at the default duration (400).
+ */
+const OPEN_RETRY_TRANSITION: PrefetchFalseOpenGap = {
   reason:
-    "a click React holds for a read with no boundary moves the address bar with the click, a round trip before the plain click moves it",
-  breaks: ["url"],
+    "#1078: with an app <ViewTransition> mounted, React commits the hole's retry with its fallback in place once its throttle is up, that commit starts a view transition that changes nothing, and the reveal waits for it",
+  breaks: ["transitions", "late"],
+  bound: ({ plain, adopted }, spec) => {
+    const outside: string[] = [];
+    if (adopted.viewTransitions > plain.viewTransitions + 1) {
+      outside.push(
+        `view transitions: the plain navigation starts ${plain.viewTransitions}, the adopted click ${adopted.viewTransitions}, more than one more`,
+      );
+    }
+    if (animatedChanges(adopted) !== animatedChanges(plain)) {
+      outside.push(
+        `view transitions that change the page: the plain navigation ${animatedChanges(plain)}, the adopted click ${animatedChanges(adopted)}`,
+      );
+    }
+    const duration = spec.vtms ?? DEFAULT_TRANSITION_MS;
+    if (adopted.completeAt > plain.completeAt + duration + PARITY_MARGIN_MS) {
+      outside.push(
+        `the completed page at ${adopted.completeAt} ms, past the plain click's ${plain.completeAt} plus one view transition (${duration} ms) and the margin`,
+      );
+    }
+    return outside;
+  },
 };
 
 /**
@@ -2287,13 +2334,12 @@ const IN_SECTION = { from: "section", held: ["pf-section-layout"] };
 const BESIDE_SLOT = { held: ["pf-slot-layout", "pf-slot-side"] };
 
 /**
- * A page React holds for a read with no boundary (R11): nothing changes at
- * the click, the page shows with the fill's value, and the address bar moves
- * at the click (`OPEN_HELD`).
+ * A page React holds for a read with no boundary (R11): nothing on it
+ * changes at the click, and the page shows with the fill's value, when the
+ * plain click's does.
  */
-const HELD: Pick<PrefetchFalseParityCase, "commitsWithFill" | "open"> = {
+const HELD: Pick<PrefetchFalseParityCase, "commitsWithFill"> = {
   commitsWithFill: true,
-  open: OPEN_HELD,
 };
 
 const PARITY_CLICKS: PrefetchFalseParityCase[] = [
@@ -2463,8 +2509,13 @@ const BOUNDARY_CLICKS: PrefetchFalseParityCase[] = [
   { name: "unit", from: "vt" },
   { name: "section", from: "vt" },
   { name: "loader", from: "vt", ownFallback: "pf-loader-fallback" },
-  { name: "unit", boundary: true },
-  { name: "loader", boundary: true, ownFallback: "pf-loader-fallback" },
+  { name: "unit", boundary: true, open: OPEN_RETRY_TRANSITION },
+  {
+    name: "loader",
+    boundary: true,
+    ownFallback: "pf-loader-fallback",
+    open: OPEN_RETRY_TRANSITION,
+  },
 ];
 
 /** The fill's head held about a second: far above every margin. */
@@ -2535,7 +2586,16 @@ export const PREFETCH_FALSE_PARITY_CASES: PrefetchFalseParityCase[] = [
   ]),
   ...BOUNDARY_CLICKS.flatMap((spec) => [
     spec,
-    { ...spec, vtms: LONG_TRANSITION_MS },
+    {
+      ...spec,
+      vtms: LONG_TRANSITION_MS,
+      // In the router app the handle push of `loader`'s handler starts a view
+      // transition of its own right after the click's commit; at 600 ms it is
+      // still running when the fill answers, so the retry waits for it and
+      // finds the value (production: transitions at 5 and 662 ms, one
+      // reveal). The Cloudflare app shows the gap.
+      ...(spec.open && spec.name === "loader" && { openWhereItShows: true }),
+    },
   ]),
   ...HEAD_HELD_CLICKS,
 ].map((spec: PrefetchFalseParityCase) => {
@@ -2581,14 +2641,12 @@ export interface PrefetchFalseClick extends PrefetchFalseObservation {
 const PARITY_MARGIN_MS = 100;
 
 /**
- * How much further ahead of the page than in the plain click the address
- * bar and the URL hooks may move. Half of `PARITY_MARGIN_MS`: where the two
- * clicks move them alike the leads differ by a few frames. Where React holds
- * an adopted click the address bar leads by the fill's whole round trip,
- * 400 ms and more with the server `SERVER_MS` away, outside either margin
- * (`OPEN_HELD`).
+ * How much further ahead of the page than in the plain click a URL hook may
+ * move. Half of `PARITY_MARGIN_MS`: the hook reads React state, so it moves
+ * with the commit that shows the page in both clicks (0 to 2 ms ahead,
+ * measured on the pages React holds).
  */
-const URL_LEAD_MARGIN_MS = PARITY_MARGIN_MS / 2;
+const HOOK_LEAD_MARGIN_MS = PARITY_MARGIN_MS / 2;
 
 /**
  * Pairs of clicks one case may record. A loaded machine can delay one click
@@ -2638,8 +2696,13 @@ export interface PrefetchFalsePair {
  * - The click runs no server work a plain click does not run, starts no
  *   view transition a plain click does not start, and as many that change
  *   the page (`animatedChanges`).
- * - The address bar and the URL hooks do not move further ahead of the page
- *   than in the plain click (`URL_LEAD_MARGIN_MS`).
+ * - The URL hooks do not move further ahead of the page than in the plain
+ *   click (`HOOK_LEAD_MARGIN_MS`). The address bar is not compared: it moves
+ *   when the router commits the navigation (`commit` in
+ *   navigation-transaction.ts updates the store and the URL together),
+ *   before React shows a page it holds, on every navigation; `prefetch:
+ *   false` moves that commit to the click. Under the bar that is feedback
+ *   at the click (the maintainer's call, 2026-10-11).
  * - A case with `skeleton` (a flagged layout entered from outside) shows the
  *   layout's skeleton first, within `PARITY_MARGIN_MS` of the click, and the
  *   layout in the same frame as the content its loading() covers
@@ -2661,8 +2724,9 @@ export interface PrefetchFalsePair {
  * not enough. A failure lists every broken comparison and every pair.
  *
  * A case with `open` reports its gap: what the gap does not break is
- * asserted first, as for any case. Then `onOpen` is called (the suite marks
- * the test as an expected failure there) and what the gap breaks is asserted.
+ * asserted first, as for any case, and so is the gap's bound. Then `onOpen`
+ * is called (the suite marks the test as an expected failure there) and what
+ * the gap breaks is asserted.
  *
  * Returns the first pair, for a case that pins more.
  */
@@ -2858,12 +2922,15 @@ export async function expectAdoptedClickIsNeverWorseThanAPlainClick(
     wrong.push({
       rule,
       what:
-        rule === "url"
-          ? "the URL further ahead of the page than in the plain click, in every pair"
+        rule === "hook"
+          ? "a URL hook further ahead of the page than in the plain click, in every pair"
           : rule === "click"
             ? "the page did not show at the click, in every pair"
             : "later than the plain click, and than React's throttle explains, in every pair",
     });
+  }
+  for (const what of spec.open?.bound(first, spec) ?? []) {
+    wrong.push({ rule: "bound", what: `open gap past its bound: ${what}` });
   }
 
   const report = `${prefetchFalseParityTitle(spec)}\n${pairs
@@ -2873,7 +2940,7 @@ export async function expectAdoptedClickIsNeverWorseThanAPlainClick(
     )
     .join("\n")}`;
   expect(list(wrong.filter((broken) => !known(broken))), report).toEqual([]);
-  if (spec.open) {
+  if (spec.open && !(spec.openWhereItShows && !wrong.some(known))) {
     hooks.onOpen?.(spec.open);
     expect(list(wrong), `open: ${spec.open.reason}\n${report}`).toEqual([]);
   }
@@ -2991,7 +3058,7 @@ function firstContentAt(click: PrefetchFalseClick): number {
 /**
  * Where the adopted click of a pair breaks the bar past the margin: it does
  * not show the page at the click, shows something later than the plain
- * click does and later than React's throttle explains, or has the URL
+ * click does and later than React's throttle explains, or has a URL hook
  * further ahead of the page.
  */
 function laterThanPlain(
@@ -3006,33 +3073,26 @@ function laterThanPlain(
     what: string,
     was: number,
     is: number,
-    rule: "late" | "url" | "click" = "late",
+    rule: "late" | "hook" | "click" = "late",
   ): void => {
-    const margin = rule === "url" ? URL_LEAD_MARGIN_MS : PARITY_MARGIN_MS;
+    const margin = rule === "hook" ? HOOK_LEAD_MARGIN_MS : PARITY_MARGIN_MS;
     if (is > was + margin) late.push({ rule, what: `${what} ${was} -> ${is}` });
   };
   // What shows at `is` on the adopted click is on time no later than the
   // plain click shows it, or than React holds a retry at `is`.
   const held = (was: number, is: number): number =>
     Math.max(was, reactHold(adopted, is));
-  // How long the URL had moved before the page did. The plain click keeps
-  // the page it is on until its response starts, and so does its URL.
-  const ahead = (
-    what: string,
-    movedAt: (click: PrefetchFalseClick) => number | null,
-  ): void => {
-    const was = movedAt(plain);
-    const is = movedAt(adopted);
-    if (was === null || is === null) return;
+  // How long a URL hook had moved before the page did. The address bar is
+  // not compared: the router's commit moves it, before React shows a page
+  // it holds, and an adopted click commits at the click.
+  if (plain.hookAt !== null && adopted.hookAt !== null) {
     never(
-      `${what} ahead of the page (ms)`,
-      plain.firstChangeAt - was,
-      adopted.firstChangeAt - is,
-      "url",
+      "the URL hook ahead of the page (ms)",
+      plain.firstChangeAt - plain.hookAt,
+      adopted.firstChangeAt - adopted.hookAt,
+      "hook",
     );
-  };
-  ahead("the address bar", (click) => click.urlAt);
-  ahead("the URL hook", (click) => click.hookAt);
+  }
   // The page, or its skeleton, at the click: what the prefetch is for. A
   // page that commits with its fill shows when the fill answers, and a
   // prefetch made on another page is not adopted.

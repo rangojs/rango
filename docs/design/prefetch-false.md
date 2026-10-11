@@ -1239,8 +1239,16 @@ has to match is what the page being left can observe while it waits:
   (the `hook` column in "Limits"). Same mechanism: the location it reads is
   controller state, and it arrives in the batch React holds. `usePathname`
   and `useSearchParams` were not measured here.
-- **The address bar**: moves with the click in the adopted click and with the
-  response in the plain one. This is the one difference left ("Limits").
+- **The address bar**: moves when the router commits the navigation, before
+  React shows a page it holds, on every navigation: `commit` in
+  `src/browser/navigation-transaction.ts` updates the store and the URL
+  together, and the tree reaches React after it. A plain click commits with
+  its response, so its address bar leads a page React holds by the loader's
+  time. `prefetch: false` moves that commit to the click, so the adopted
+  click's address bar leads by the fill's round trip more. The page itself
+  is not later for it, and under the bar the URL changing at the click is
+  feedback at the click: the parity cases do not compare the address bar
+  (the maintainer's call, 2026-10-11; "Limits").
 
 A page whose every deferred read has a boundary is not held and shows with
 the click: a reader behind its own `<Suspense>` on a route with no
@@ -1253,9 +1261,10 @@ the click). `own` in the fixture is that route, and
 finds the page, the read's fallback, the address bar and the hook all moved,
 with `useNavigation()` on `idle` and streaming.
 
-Why not move the address bar with the page as well? Three ways were looked
-at and none was built, because each breaks something a page with a boundary
-relies on (reasoned from the code, not measured):
+Why not move the address bar with the page as well, for these clicks or for
+any navigation React holds? Three ways were looked at and none was built,
+because each breaks something a page with a boundary relies on (reasoned
+from the code, not measured):
 
 - _Commit the transaction when React commits the tree._ The first render of
   the new page would then run before the URL, the history entry and the
@@ -1295,9 +1304,11 @@ loader is still streaming:
   because the navigation has not committed.
 - **The URL and the URL hooks** move with the page. The address bar does too,
   except where React holds a click for a read with no boundary: there it
-  moves with the click. The parity check measures it (how far the address bar
-  and a URL hook on the page being left are ahead of the page, against the
-  same for the plain click, with a 50 ms margin).
+  moves when the router commits, at the click, as it moves before a held
+  page on any navigation ("A read with no boundary"). The parity check
+  measures the URL hook (how far `useNavigation().location` on the page
+  being left is ahead of the page, against the same for the plain click,
+  with a 50 ms margin), not the address bar.
 - **View transitions.** A fill starts none: it hands React nothing, and a
   deferred that resolves is a Suspense retry, which is what reveals a plain
   click's content too. On a route with `transition()` the browser gets two
@@ -1727,13 +1738,14 @@ segments. A fill refuses `rendered()` outright for the same reason R12 exists.
   location state of the prefetched payload: state a deferred handler sets is
   not in `to.state` for that predicate, where a plain click's has it. Read
   from the code, not measured: no fixture has that shape.
-- Where React holds an adopted click for a read with no boundary, the address
-  bar moves with the click and the page when the value arrives ("A read with
-  no boundary"). A plain click's address bar moves with its response, so it
-  is ahead of the page by the loader's time, and the adopted click's by the
-  fill's round trip more. `useNavigation()` and the URL hooks move with the
-  page in both, and the page itself shows when the plain click's does.
-  Production, router app, plain against adopted, how far ahead of the page:
+- Where React holds a click for a read with no boundary, the address bar
+  moves when the router commits the navigation, before the page shows, as
+  on every navigation ("A read with no boundary"). A plain click commits
+  with its response and an adopted click at the click, so the adopted
+  click's address bar leads the page by the fill's round trip more.
+  `useNavigation()` and the URL hooks move with the page in both, and the
+  page itself shows when the plain click's does. Production, router app,
+  plain against adopted, how far ahead of the page:
 
   | click                                              | address bar    | `useNavigation().location` |
   | -------------------------------------------------- | -------------- | -------------------------- |
@@ -1745,15 +1757,12 @@ segments. A fill refuses `rendered()` outright for the same reason R12 exists.
   | `bare-inner`, the server 300 ms away               | 101 and 412 ms | 0 and 1 ms                 |
   | `bare`, the server 300 ms away, requests 1 s later | 99 and 1417 ms | 1 and 0 ms                 |
 
-  With a server that answers in a few ms the difference is inside the
-  parity rule's 50 ms margin. With the server 300 ms away, as every parity
-  case now runs, it is the fill's round trip, so every held cell runs as an
-  expected failure (`OPEN_HELD`): `bare`, `bare-inner` and `above` in all
-  three loader columns, and `bare` with its requests held a second, ten
-  cells. Not fixed: the three ways to move the address bar with the page
-  each break a page that is not held ("A read with no boundary"). Under the
-  bar the address bar moving at the click is feedback at the click; whether
-  the rule should stay for these pages is the maintainer's call.
+  Under the bar that lead is feedback at the click, not a later page, and
+  the maintainer dropped the rule that compared it (2026-10-11): it used to
+  be an open case (`OPEN_HELD`), with one cell while the server answered in
+  a few ms and ten once it was 300 ms away. Not changed either: the three
+  ways to move the address bar with the page each break a page that is not
+  held ("A read with no boundary").
 
 - A deferred unit reveals as soon as its data lands, a round trip or more
   before a plain click's reveal: its fallback has been up since the click,
@@ -1767,35 +1776,40 @@ segments. A fill refuses `rendered()` outright for the same reason R12 exists.
   production, router app, the server 300 ms away: `inner` shows its content
   at 408 ms against 614 and its late read at 711 against 614; `nested` its
   early read at 413 against 614 and its late one at 715 against 614. The
-  parity cells assert it and pass, in both apps and both modes. They failed under the old completion
-  rule, with the server 100 ms away (the page complete at 603 to 611 ms
-  against 407 to 439).
+  parity cells assert it and pass, in both apps and both modes. They failed
+  under the old completion rule, with the server 100 ms away (the page
+  complete at 603 to 611 ms against 407 to 439).
 - A page with a `<ViewTransition>` of the app's own mounted across the
   click pays a view transition the plain click does not, once the server is
   far enough that the fill answers after React's throttle has run out. The
   fill resolves each hole with its first chunk, with a node or a stream
   that is still pending. React retries the boundary at once (its fallback
   has been up since the click), the retry suspends again on the loader,
-  React commits it all the same (R-throttle, second half), and with a
-  `<ViewTransition>` on the page that commit starts a view transition
-  (R-start), which the reveal then waits for (R-wait). It is the mechanism
-  a `transition()` route avoids by committing with its fill ("A unit under
-  `transition()` waits for its fill"), and the router cannot do the same
-  here: the boundary is the app's. Measured in production, router app, the
-  server 300 ms away (`&boundary=1`), plain against adopted: `unit` starts
-  view transitions at 616 against 304 and 602 ms and shows the page at 636
+  React commits it with the fallback in place (R-throttle, second half),
+  and with a `<ViewTransition>` on its path that commit starts a view
+  transition that changes nothing (R-start), which the reveal then waits
+  for (R-wait). It is React's behaviour, and the maintainer accepted it as
+  such on 2026-10-11, as for #1078: no router change. A `transition()` route
+  avoids the same mechanism by committing with its fill ("A unit under
+  `transition()` waits for its fill"); here the boundary is the app's, and
+  the router cannot see it. Measured in production, router app, the server
+  300 ms away (`&boundary=1`), plain against adopted: `unit` starts view
+  transitions at 616 against 304 and 602 ms and shows the page at 636
   against 621; with `&vtms=600`, at 616 against 305 and 949 ms, the page at
   631 against 966, 335 ms later than the plain click. A probe of React's
   commits (a devtools hook in the page) finds the commit at 308 re-rendering
   the unit's boundary, which stays on its fallback. With the server near,
   the fill and the loader land before the throttle runs out, the first
-  retry has everything, and the cells passed. Found with the server delay
-  and not fixed: `unit` and `loader` with an app boundary, at both
-  durations, fail in both apps and both modes, except `loader` at 600 ms in
-  the router app: there the view transition of the click's own handle push
-  (5 to 605 ms) is still running when the fill answers, so the retry waits
-  for it, finds the value, and reveals in one. Whether to change when a
-  hole resolves, or to accept it, is the maintainer's call.
+  retry has everything, and none of this shows.
+
+  The escape hatches are the app's. Its own `<ViewTransition>` decides what
+  it animates through its props, and whether it is mounted across the
+  navigation at all. For the router's boundaries, `transition({ when })`
+  decides per navigation whether a route's transition applies, and
+  `transition({ viewTransition: false })` places no `<ViewTransition>`. The
+  parity cases hold the gap to a bound (`OPEN_RETRY_TRANSITION`, "Open
+  cases").
+
 - A newer navigation cancels a pending fill when it starts, not when it
   commits. One that then ends without replacing the page leaves the deferred
   part's fallbacks up, unfilled, until the next navigation ("Abort"). The
@@ -1887,14 +1901,15 @@ measured.
 
 What the cases compare, before the bar of 2026-10-11 and now:
 
-| Compared                                                                             | Before                                                                 | Now                                                                                                                                                                |
-| ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| The first change                                                                     | no later than the plain click's                                        | the same, and within 100 ms of the click, except where the page commits with its fill (`commitsWithFill`) or the prefetch was made on another page                 |
-| The page's first content                                                             | no later than the plain click's                                        | the same: the first frame with content the page did not show before the click                                                                                      |
-| What shows after it                                                                  | no later than the plain click's (a flagged layout's reveal aside)      | no later than the plain click's, or than React's 300 ms after the last fallback that showed or hid on the adopted click (`reactHold`), whichever is later          |
-| The completed page, the last fallback gone, idle and incomplete                      | no later than the plain click's (a flagged layout's reveal aside)      | bounded as what shows after the first content                                                                                                                      |
-| A fallback the plain click does not show                                             | a failure, unless the read's own (`ownFallback`) or a flagged layout's | allowed where it waits for deferred work: the read's own, one inside the deferred part (`deferredFallbacks`), a flagged layout's skeleton and what shows inside it |
-| Content hidden, a blank page, a remount, server work, view transitions, the URL lead | as now                                                                 | unchanged                                                                                                                                                          |
+| Compared                                                               | Before                                                                 | Now                                                                                                                                                                |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| The first change                                                       | no later than the plain click's                                        | the same, and within 100 ms of the click, except where the page commits with its fill (`commitsWithFill`) or the prefetch was made on another page                 |
+| The page's first content                                               | no later than the plain click's                                        | the same: the first frame with content the page did not show before the click                                                                                      |
+| What shows after it                                                    | no later than the plain click's (a flagged layout's reveal aside)      | no later than the plain click's, or than React's 300 ms after the last fallback that showed or hid on the adopted click (`reactHold`), whichever is later          |
+| The completed page, the last fallback gone, idle and incomplete        | no later than the plain click's (a flagged layout's reveal aside)      | bounded as what shows after the first content                                                                                                                      |
+| A fallback the plain click does not show                               | a failure, unless the read's own (`ownFallback`) or a flagged layout's | allowed where it waits for deferred work: the read's own, one inside the deferred part (`deferredFallbacks`), a flagged layout's skeleton and what shows inside it |
+| Content hidden, a blank page, a remount, server work, view transitions | as now                                                                 | unchanged                                                                                                                                                          |
+| How far the URL is ahead of a page React holds                         | the address bar and a URL hook, against the plain click's, 50 ms       | a URL hook only: the address bar moves with the router's commit on every navigation, and the adopted click commits at the click                                    |
 
 Where does "React's 300 ms after the last fallback change" come from?
 `react-dom-client` marks the time whenever a Suspense boundary switches
@@ -1907,7 +1922,7 @@ held past it, and past the plain click, is a wait the router added, and the
 case fails. The page's first content gets no such allowance: showing it
 early is what the prefetch is for.
 
-The margins are unchanged: 100 ms for times, 50 ms for the URL lead. A late
+The margins are unchanged: 100 ms for times, 50 ms for a URL hook's lead. A late
 pair is recorded again, up to three pairs.
 
 Production, router app, the server 300 ms away, adopted against plain, in
@@ -1932,20 +1947,35 @@ fill (911 against the plain click's 925), and the value 12 ms sooner.
 ### Open cases
 
 A gap that is known and not fixed is data on its parity case
-(`PrefetchFalseParityCase.open`: a reason and the rules it breaks). The case
-still runs. Every rule the gap does not break is asserted first, so a
-regression in the same cell is a real failure. Then the test is marked with
+(`PrefetchFalseParityCase.open`: a reason, the rules it breaks and a bound).
+The case still runs. Every rule the gap does not break is asserted first, so
+a regression in the same cell is a real failure, and so is the gap's bound,
+so the gap cannot grow without a failure. Then the test is marked with
 `test.fail` and the broken rules are asserted: the run reports an expected
 failure with the reason, and an unexpected pass, which fails the suite, the
 day the gap is fixed.
 
-| Gap         | Cells per app  | Rules it breaks |
-| ----------- | -------------- | --------------- |
-| `OPEN_HELD` | 10, both modes | the URL rule    |
+| Gap                     | Cells per app                                        | Rules it breaks                                        |
+| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------ |
+| `OPEN_RETRY_TRANSITION` | 4, both modes (3 fail as expected in the router app) | the view-transition count; at 600 ms, the timing rules |
 
-`OPEN_HELD` had one cell until the parity cases ran with the server 300 ms
-away (the bar of 2026-10-11): with a server that answers in a few ms only
-the fill held a second showed the address bar's lead.
+`OPEN_RETRY_TRANSITION` is the app-boundary gap in "Limits" (#1078): hub to
+`unit` and to `loader` with `&boundary=1`, at the default duration and at
+600 ms. Its bound: one view transition more than the plain click at most,
+as many that change the page, and the page complete no later than the
+plain click's plus one view transition (600 ms, or 300 ms at the default
+duration) plus the parity margin. The measured cells are 261 to 335 ms
+past the plain click at 600 ms (the bound allows 700), and from 72 ms ahead
+of it to 18 ms behind at the default duration (it allows 400). `loader` at
+600 ms is marked `openWhereItShows`: in the router app the view transition
+of the click's own handle push (from about 5 to 605 ms) is still running
+when the fill answers, so the retry waits for it, finds the value and
+reveals once, and the case passes; in the Cloudflare app it is an expected
+failure. The other three cells show
+the gap in both apps, so its closing shows up there.
+
+`OPEN_HELD`, the address bar ahead of a page React holds, is gone with the
+rule it broke ("A read with no boundary").
 
 Before the fill stopped rendering a tree (`f43a4a27`) there were 35 cells.
 `OPEN_NESTED` (2) closed with the held-boundary fix (#1080). 32 closed with
