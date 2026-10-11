@@ -665,7 +665,7 @@ describe("clientUrls", () => {
     ).toThrow("does not support path() inside intercept()");
   });
 
-  it("stores client-run revalidate predicates per loader without executing them", () => {
+  it("stores revalidate predicates per loader without executing them", () => {
     const SessionLoader = loader("loaders#session");
     const ItemLoader = loader("loaders#item");
     let predicateCalls = 0;
@@ -738,12 +738,32 @@ describe("clientUrls", () => {
     ).toThrow("revalidate() expects a predicate function");
 
     expect(() =>
+      clientUrls(({ path, loader: useLoader, revalidate }) => [
+        path("/", HomePage, () => [
+          useLoader(loader("loaders#a"), () => [
+            revalidate({ $$rangoRevalidate: 1 } as never),
+          ]),
+        ]),
+      ]),
+    ).toThrow("revalidate() expects a predicate function");
+
+    expect(() =>
       clientUrls(({ path, loader: useLoader, loading }) => [
         path("/", HomePage, () => [
           useLoader(loader("loaders#a"), () => [loading("no")]),
         ]),
       ]),
     ).toThrow("does not support loading() inside loader()");
+  });
+
+  it("keeps the marker the build leaves in place of a hoisted predicate", () => {
+    const hoisted = { $$rangoRevalidate: "k1" };
+    const patterns = clientUrls(({ path, loader: useLoader, revalidate }) => [
+      path("/", HomePage, () => [
+        useLoader(loader("loaders#a"), () => [revalidate(hoisted as never)]),
+      ]),
+    ]);
+    expect(patterns.routes[0].loaders[0].revalidate).toEqual([hoisted]);
   });
 
   it("rejects malformed values instead of executing them", () => {

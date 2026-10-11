@@ -520,7 +520,3 @@ export type { ScopedReverseFunction, LocalReverseFunction } from "./reverse.js";
 
 export type { LoaderDefinition } from "./types.js";
 export type { ActionRef, IsActionFn } from "./types.js";
-export type {
-  ClientRevalidateArgs,
-  ClientRevalidateFn,
-} from "./client-urls/types.js";

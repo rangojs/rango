@@ -3,9 +3,9 @@ import { validateUserRouteName } from "../route-name.js";
 import { buildRouteTrie } from "../router/route-trie-builder.js";
 import { tryTrieMatch } from "../router/trie-matching.js";
 import type { LoaderDefinition } from "../types.js";
+import { isHoistedRevalidateRef } from "./hoisted-revalidate.js";
 import type {
   ClientPathOptions,
-  ClientRevalidateFn,
   ClientTransitionConfig,
   ClientUrlBuilder,
   ClientUrlHelpers,
@@ -137,14 +137,14 @@ interface TransitionItem extends ItemBase {
 interface LoaderItem extends ItemBase {
   readonly type: "loader";
   readonly definition: LoaderDefinition<any, any>;
-  readonly revalidate: readonly ClientRevalidateFn[];
+  readonly revalidate: ClientUrlLoaderRecord["revalidate"];
   readonly ssr?: false;
   readonly prefetch?: false;
 }
 
 interface RevalidateItem extends ItemBase {
   readonly type: "revalidate";
-  readonly fn: ClientRevalidateFn;
+  readonly fn: ClientUrlLoaderRecord["revalidate"][number];
 }
 
 interface LoadingItem extends ItemBase {
@@ -419,7 +419,9 @@ function createHelpers(): ClientUrlHelpers {
   };
 
   const revalidate: ClientUrlHelpers["revalidate"] = (fn) => {
-    if (typeof fn !== "function") {
+    // The build leaves a marker in place of the predicate it moved to the
+    // server (vite/plugins/client-urls-revalidate-hoist.ts).
+    if (typeof fn !== "function" && !isHoistedRevalidateRef(fn)) {
       throw new Error("clientUrls() revalidate() expects a predicate function");
     }
     return toPublicItem({
@@ -776,8 +778,6 @@ export function clientUrls<const TItems extends ClientUrlItems>(
 }
 
 export type {
-  ClientRevalidateArgs,
-  ClientRevalidateFn,
   ClientTransitionConfig,
   ClientUrlBuilder,
   ClientUrlHelpers,

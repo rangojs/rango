@@ -117,6 +117,30 @@ export interface ServeShellRequestOptions<TEnv = any> {
    * Not with `partial`.
    */
   form?: FormData;
+  /**
+   * Send the request a JS server action call makes from the page at `url`:
+   * a POST of `args` (encoded as the browser encodes them) for `ref`, with
+   * the page's mounted `segments` (default none), as
+   * browser/server-action-bridge.ts sends it. The response is the action's
+   * Flight payload (its return value and the re-rendered segments).
+   * Not with `partial` or `form`.
+   */
+  action?: ServeShellRequestAction;
+}
+
+/** The JS server action call of {@link ServeShellRequestOptions.action}. */
+export interface ServeShellRequestAction {
+  /** The server action. */
+  ref: (...args: any[]) => unknown;
+  /**
+   * Its reference id, `<module id>#<export name>`, as the build gives a
+   * "use server" export; registered so the handler loads `ref` by it.
+   */
+  id: string;
+  /** The arguments the page calls it with. */
+  args?: readonly unknown[];
+  /** The segment ids the page holds (`_rsc_segments`). */
+  segments?: readonly string[];
 }
 
 /** A response's handle data, as the browser consumes it. */
@@ -473,9 +497,46 @@ async function getHandler(
   return handler;
 }
 
-function buildRequest(url: URL, options: ServeShellRequestOptions): Request {
+async function buildActionRequest(
+  url: URL,
+  headers: Headers,
+  action: ServeShellRequestAction,
+): Promise<Request> {
+  const [{ registerTestAction }] = await Promise.all([
+    import("./internal/test-action.js"),
+    import("./internal/flight-client-globals.js"),
+  ]);
+  const { encodeReply } =
+    await import("@vitejs/plugin-rsc/vendor/react-server-dom/client.edge");
+  registerTestAction(action.ref, action.id, "serveShellRequest");
+  const target = new URL(url);
+  target.searchParams.set("_rsc_action", action.id);
+  target.searchParams.set("_rsc_segments", (action.segments ?? []).join(","));
+  headers.set("rsc-action", action.id);
+  if (!headers.has("X-RSC-Router-Client-Path")) {
+    headers.set("X-RSC-Router-Client-Path", url.href);
+  }
+  return new Request(target, {
+    method: "POST",
+    headers,
+    body: await encodeReply([...(action.args ?? [])]),
+  });
+}
+
+async function buildRequest(
+  url: URL,
+  options: ServeShellRequestOptions,
+): Promise<Request> {
   const headers = new Headers(options.headers);
   const partial = options.partial;
+  if (options.action) {
+    if (partial || options.form) {
+      throw new Error(
+        "serveShellRequest: action cannot be combined with partial or form",
+      );
+    }
+    return buildActionRequest(url, headers, options.action);
+  }
   if (options.form) {
     if (partial) {
       throw new Error(
@@ -585,7 +646,7 @@ export async function serveShellRequest<TEnv = any>(
   const target = new URL(url, "http://localhost");
   await ensureRouterManifest(router.id);
   const handler = await getHandler(router, options.cacheStore);
-  const request = buildRequest(target, options);
+  const request = await buildRequest(target, options);
   const executionContext = createCollectingExecutionContext();
   const { tasks } = executionContext;
   const recorder: Recorder = {};

@@ -1,4 +1,3 @@
-import { requestHeaders } from "../server/request-headers.js";
 import * as React from "react";
 import type { SearchSchemaValue } from "../search-params.js";
 import { getLoaderLazy } from "../server/loader-registry.js";
@@ -7,7 +6,11 @@ import {
   getUrlPrefix,
   type InterceptSelectorContext,
 } from "../server/context.js";
-import type { LoaderDefinition, TrailingSlashMode } from "../types.js";
+import type {
+  LoaderDefinition,
+  ShouldRevalidateFn,
+  TrailingSlashMode,
+} from "../types.js";
 import type {
   PartialPrerenderProps,
   PathOptions,
@@ -16,11 +19,8 @@ import type {
 import type { PathHelpers } from "../urls/path-helper-types.js";
 import type { AllUseItems } from "../route-types.js";
 import { urls } from "../urls/urls-function.js";
-import {
-  CLIENT_REVALIDATION_HEADER,
-  decodeClientRevalidationDecisions,
-  type ClientRevalidationDecisions,
-} from "./revalidation-protocol.js";
+import { isHoistedRevalidateRef } from "./hoisted-revalidate.js";
+import { getClientUrlRevalidator } from "./revalidate-registry.js";
 import {
   ClientUrlsGroupLayout,
   ClientUrlsInterceptLoading,
@@ -101,6 +101,11 @@ export interface ClientUrlProjectionRoute {
    *  loader(), so a prefetch of the route defers them. Absent (= none) in
    *  projections serialized before the option existed. */
   readonly deferrableLoaderIndices?: readonly number[];
+  /** Per loader (aligned with loaderIds), the keys of its hoisted
+   *  revalidate() predicates in declaration order; materialization attaches
+   *  the registered predicates (revalidate-registry.ts). Absent when no
+   *  loader declares one. */
+  readonly loaderRevalidate?: readonly (readonly string[])[];
   /** Data-only transition config (never `when`); absent in projections
    *  serialized before transition support. */
   readonly transition?: Readonly<ClientTransitionConfig>;
@@ -273,7 +278,21 @@ function serializeTransition(
   return Object.freeze(config) as Readonly<ClientTransitionConfig>;
 }
 
-function serializeRoute(route: ClientUrlRouteRecord): ClientUrlProjectionRoute {
+/** Options for {@link serializeClientUrlPatterns}. */
+export interface SerializeClientUrlPatternsOptions {
+  /**
+   * The definition was loaded through the rango Vite plugin (route
+   * discovery), which moves every revalidate() predicate to the server and
+   * leaves a marker: a plain function then is a site the build could not
+   * see, and fails loudly.
+   */
+  readonly hoisted?: boolean;
+}
+
+function serializeRoute(
+  route: ClientUrlRouteRecord,
+  options: SerializeClientUrlPatternsOptions,
+): ClientUrlProjectionRoute {
   const loaderIds = route.loaders.map(({ loader }, index) => {
     if (typeof loader.$$id !== "string" || loader.$$id.length === 0) {
       throw projectionError(
@@ -283,6 +302,21 @@ function serializeRoute(route: ClientUrlRouteRecord): ClientUrlProjectionRoute {
     }
     return loader.$$id;
   });
+
+  const loaderRevalidate = route.loaders.map(({ loader, revalidate }) =>
+    revalidate.flatMap((entry) => {
+      if (isHoistedRevalidateRef(entry)) return [entry.$$rangoRevalidate];
+      if (options.hoisted) {
+        throw new Error(
+          `clientUrls() revalidate() on loader "${loader.$$id}" of route ` +
+            `"${route.pattern}" was not hoisted to the server: call the ` +
+            "builder's revalidate() helper with an inline function or an " +
+            "imported predicate.",
+        );
+      }
+      return [];
+    }),
+  );
 
   const awaitedLoaderIndices = route.loaders
     .map(({ ssr }, index) => (ssr === false ? index : -1))
@@ -304,6 +338,13 @@ function serializeRoute(route: ClientUrlRouteRecord): ClientUrlProjectionRoute {
       : {}),
     ...(deferrableLoaderIndices.length > 0
       ? { deferrableLoaderIndices: Object.freeze(deferrableLoaderIndices) }
+      : {}),
+    ...(loaderRevalidate.some((keys) => keys.length > 0)
+      ? {
+          loaderRevalidate: Object.freeze(
+            loaderRevalidate.map((keys) => Object.freeze(keys)),
+          ),
+        }
       : {}),
     ...(transition ? { transition } : {}),
     ...(typeof route.transition?.when === "function"
@@ -336,10 +377,13 @@ function serializeIntercept(
 
 export function serializeClientUrlPatterns(
   patterns: ClientUrlPatterns,
+  options: SerializeClientUrlPatternsOptions = {},
 ): ClientUrlProjection {
   return Object.freeze({
     version: 1 as const,
-    routes: Object.freeze(patterns.routes.map(serializeRoute)),
+    routes: Object.freeze(
+      patterns.routes.map((route) => serializeRoute(route, options)),
+    ),
     intercepts: Object.freeze(
       (patterns.intercepts ?? []).map(serializeIntercept),
     ),
@@ -355,6 +399,7 @@ export function serializeClientUrlPatterns(
  */
 export function projectClientUrlsModule(
   namespace: Readonly<Record<string, unknown>>,
+  options: SerializeClientUrlPatternsOptions = {},
 ): ClientUrlProjection | undefined {
   const definition = namespace.default;
   if (
@@ -364,7 +409,7 @@ export function projectClientUrlsModule(
   ) {
     return undefined;
   }
-  return serializeClientUrlPatterns(definition as ClientUrlPatterns);
+  return serializeClientUrlPatterns(definition as ClientUrlPatterns, options);
 }
 
 export function isClientUrlPatterns(
@@ -457,53 +502,42 @@ export function clearClientUrlProjections(): void {
 }
 
 /**
- * Per-request memo for decoded client revalidation decisions: the synthesized
- * predicate below runs once per loader stub per revalidation pass, and every
- * stub reads the same header.
+ * The revalidate() predicates of one materialized loader. A definition
+ * object (unit tests, the testing primitives) carries its functions. A
+ * client reference resolves the projection's content keys in the registry
+ * the group's hoisted module filled when it loaded; a key with no
+ * registration fails loudly here, at materialization, never at a request.
  */
-const decisionsByRequest = new WeakMap<
-  Request,
-  ClientRevalidationDecisions | null
->();
-
-function clientDecisionsFor(
-  request: Request | undefined,
-): ClientRevalidationDecisions | null {
-  if (!request) return null;
-  if (decisionsByRequest.has(request)) {
-    return decisionsByRequest.get(request) ?? null;
-  }
-  const decoded = decodeClientRevalidationDecisions(
-    requestHeaders(request).get(CLIENT_REVALIDATION_HEADER),
-  );
-  decisionsByRequest.set(request, decoded);
-  return decoded;
-}
-
-/**
- * The server end of client-run per-loader revalidation: clientUrls()
- * revalidate() predicates EXECUTE in the browser (they are client-module
- * code), and their decisions arrive on the request header. This synthesized
- * predicate — attached to every materialized loader stub — honors a decision
- * addressed to its loader id and otherwise returns the locked default, which
- * is also the behavior for requests that carry no decisions (no-JS, PE,
- * prefetch, document loads). Decisions can only address client-urls stubs;
- * server-tree loaders never see this predicate.
- */
-function makeClientDecisionRevalidate(
-  loaderId: string,
-): (args: {
-  defaultShouldRevalidate: boolean;
-  context: { request: Request };
-}) => boolean {
-  return ({ defaultShouldRevalidate, context }) => {
-    const decisions = clientDecisionsFor(context?.request);
-    if (decisions) {
-      if (decisions.skip.includes(loaderId)) return false;
-      if (decisions.force.includes(loaderId)) return true;
+function loaderRevalidators(
+  reference: ClientUrlDefinitionSource,
+  route: ClientUrlProjectionRoute,
+  loaderIndex: number,
+): ShouldRevalidateFn<any, any>[] {
+  const fromRegistry = (key: string): ShouldRevalidateFn<any, any> => {
+    if (!getClientUrlRevalidator(key)) {
+      const id = isClientUrlReference(reference) ? reference.$$id : "(inline)";
+      throw new Error(
+        `clientUrls() revalidate() on loader "${route.loaderIds[loaderIndex]}" ` +
+          `of route "${route.pattern}" in "${id}" has no server ` +
+          `registration (key "${key}"). The rango Vite plugin registers ` +
+          "hoisted predicates when the group's module loads in the RSC " +
+          "environment; a transform that changed the predicate's syntax " +
+          "in one environment only also causes this.",
+      );
     }
-    return defaultShouldRevalidate;
+    // Looked up per call: a dev re-evaluation of the hoisted module
+    // re-registers the key with functions bound to the current imports.
+    return (args) => getClientUrlRevalidator(key)!(args);
   };
+  if (isClientUrlPatterns(reference)) {
+    const record = reference.routes.find(({ id }) => id === route.id);
+    return (record?.loaders[loaderIndex]?.revalidate ?? []).map((entry) =>
+      isHoistedRevalidateRef(entry)
+        ? fromRegistry(entry.$$rangoRevalidate)
+        : entry,
+    );
+  }
+  return (route.loaderRevalidate?.[loaderIndex] ?? []).map(fromRegistry);
 }
 
 function createLoaderStub(id: string): LoaderDefinition<unknown> {
@@ -583,8 +617,13 @@ function materializeRouteItems(
             }),
           materializedPathOptions(route, clientGroup),
           () => [
-            ...route.loaderIds.map((id, loaderIndex) =>
-              loader(
+            ...route.loaderIds.map((id, loaderIndex) => {
+              const revalidators = loaderRevalidators(
+                reference,
+                route,
+                loaderIndex,
+              );
+              return loader(
                 createLoaderStub(id),
                 {
                   ...(route.awaitedLoaderIndices?.includes(loaderIndex) && {
@@ -594,9 +633,9 @@ function materializeRouteItems(
                     prefetch: false,
                   }),
                 },
-                () => [revalidate(makeClientDecisionRevalidate(id))],
-              ),
-            ),
+                () => revalidators.map((fn) => revalidate(fn)),
+              );
+            }),
             ...(route.hasLoading
               ? [
                   loading(

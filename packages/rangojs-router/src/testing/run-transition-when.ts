@@ -58,7 +58,7 @@ export interface RunTransitionWhenOptions {
   /** The destination. Defaults to `from`; always `from` for "action" and "revalidate". */
   to?: RunTransitionWhenLocation;
   /**
-   * The triggering action (like runClientRevalidate's): an imported server
+   * The triggering action (like runRevalidate's): an imported server
    * action (id via `$id ?? $$id`), an actionId string, or
    * `{ ref, formData, result, error }`.
    */

@@ -132,10 +132,15 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // not per segment bucket (handles/pushed-by.ts mergePartialHandleData), and
 // resolveDeferredHandleValues keeps the pushedBy record aligned. None of it
 // can load lazily: it runs in the commit of every navigation and action.
-// Combined with `prefetch: false` it measured 49816B, so 48.75KB. Expected to come
-// back down when server-only clientUrls() revalidate() lands (about -634B
-// gzip): tighten it then.
-const ROUTER_CHUNK_GZIP_MAX = 48 * 1024 + 768;
+// Combined with `prefetch: false` it measured 49816B, so 48.75KB.
+//
+// Tightened 48.75KB -> 48.125KB on 2026-10-11: a clientUrls() loader's
+// revalidate() runs on the server, so the browser's predicate collector and
+// the X-Rango-Client-Reval header plumbing left the chunk (client-urls/
+// revalidate-chain.ts, revalidation-protocol.ts, the decision code in
+// navigation.ts and browser/partial-update.ts). Measured on
+// feat/prefetch-false-0.23 76751f37: 49815B -> 49207B (-608B gzip).
+const ROUTER_CHUNK_GZIP_MAX = 48 * 1024 + 128;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

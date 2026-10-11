@@ -12,8 +12,7 @@
  * Post the result with `serveShellRequest(router, url, { form })`.
  */
 
-import * as RSDServer from "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge";
-import { registerServerModule } from "./internal/server-modules.js";
+import { registerTestAction } from "./internal/test-action.js";
 
 /** Options for {@link createActionForm}. */
 export interface CreateActionFormOptions {
@@ -41,15 +40,7 @@ export function createActionForm(
   options: CreateActionFormOptions,
 ): FormData {
   const { id, useActionState = true, fields = {} } = options;
-  const [moduleId, name] = id.split("#");
-  if (!moduleId || !name) {
-    throw new Error(
-      `createActionForm: id must be "<module id>#<export name>", received ${JSON.stringify(id)}`,
-    );
-  }
-  registerServerModule(moduleId, {
-    [name]: RSDServer.registerServerReference(action, moduleId, name),
-  });
+  registerTestAction(action, id, "createActionForm");
 
   const form = new FormData();
   if (useActionState) {

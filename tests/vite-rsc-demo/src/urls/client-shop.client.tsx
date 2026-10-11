@@ -9,7 +9,6 @@ import {
   useOutlet,
   useParams,
   useSearchParams,
-  type ClientRevalidateArgs,
 } from "@rangojs/router/client";
 import { Meta } from "@/handles/meta.js";
 import {
@@ -28,6 +27,7 @@ import {
   addToCartWithResult,
 } from "@/handlers/shop/actions/shop.actions.js";
 import { AddToCartForm } from "@/components/AddToCartForm.js";
+import { productData } from "./client-shop.predicates.js";
 import {
   StreamingActionForm,
   StreamingActionStatus,
@@ -41,9 +41,9 @@ import {
  * no handlers at all, so the migration is forced into the good shape by
  * construction: every read is useLoader AT the consumption site, waiting is
  * scoped by the inline Suspense above each read, and the per-loader
- * revalidate(() => false) predicates (client-run — only the decision crosses
- * the wire) make tab/search navigations instant instead of refetching the 2s
- * product loader.
+ * revalidate() predicates (moved to the server by the build, where they run
+ * like a urls() loader's) make tab/search navigations instant instead of
+ * refetching the 2s product loader.
  */
 
 function CartBadge() {
@@ -714,8 +714,8 @@ function ClientShopProductInfo() {
           <h3>Reviews</h3>
           <p>“Instant tab switch — the loaders never re-ran.”</p>
           <p>
-            The per-loader <code>revalidate()</code> predicates run in the
-            browser; only their decision crossed the wire with this navigation.
+            The per-loader <code>revalidate()</code> predicates ran on the
+            server for this navigation and kept the loaders' data.
           </p>
         </div>
       ) : (
@@ -735,8 +735,8 @@ function ClientShopProductInfo() {
       >
         {/* One action → three freshness outcomes: the cart badge refreshes
             (its predicate revalidates on actions), while product + related
-            HOLD (their predicates skip actions) — per-loader decisions on
-            the action POST itself. */}
+            HOLD (their predicates skip actions) — per-loader decisions the
+            server makes on the action POST itself. */}
         <div
           style={{ padding: "1rem", border: "1px solid #ddd", borderRadius: 8 }}
         >
@@ -838,27 +838,6 @@ function ClientShopProductPage() {
       </p>
     </div>
   );
-}
-
-/**
- * Product data changes on slug changes, never on tab switches or cart
- * actions. A blunt `() => false` kept serving the OLD product's data on
- * product→product navs (same route, new param); the predicate must be
- * param-sensitive, exactly like the server shop's revalidation.
- */
-function productData({
-  isAction,
-  currentParams,
-  nextParams,
-  defaultShouldRevalidate,
-}: Pick<
-  ClientRevalidateArgs,
-  "isAction" | "currentParams" | "nextParams" | "defaultShouldRevalidate"
->) {
-  if (isAction()) return false;
-  return currentParams.slug !== nextParams.slug
-    ? defaultShouldRevalidate
-    : false;
 }
 
 export default clientUrls(({ path, layout, loader, revalidate }) => [

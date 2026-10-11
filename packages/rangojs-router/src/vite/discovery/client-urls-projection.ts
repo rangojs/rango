@@ -196,7 +196,12 @@ export async function refreshRecordedClientUrlProjections(
     } catch {
       continue;
     }
-    const projection = projectClientUrlsModule(module);
+    let projection: ClientUrlProjection | undefined;
+    try {
+      projection = projectClientUrlsModule(module, { hoisted: true });
+    } catch {
+      continue;
+    }
     if (!projection) continue;
     debug?.(
       "pre-entry refresh %s -> [%s]",
@@ -279,7 +284,7 @@ export async function discoverClientUrlProjections(
         cause,
       );
     }
-    const projection = projectClientUrlsModule(module);
+    const projection = projectClientUrlsModule(module, { hoisted: true });
     if (!projection) {
       throw projectionError(
         referenceIds[0],

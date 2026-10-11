@@ -7,7 +7,12 @@ import {
   runWithPrefixes,
   type EntryData,
 } from "../../server/context.js";
-import type { LoaderContext, LoaderDefinition } from "../../types.js";
+import type {
+  LoaderContext,
+  LoaderDefinition,
+  RevalidateParams,
+  ShouldRevalidateFn,
+} from "../../types.js";
 import type { PathOptions } from "../../urls/pattern-types.js";
 import { createRouter, toInternal } from "../../router.js";
 import { urls } from "../../urls/urls-function.js";
@@ -26,8 +31,14 @@ import {
   materializeClientUrlPatterns,
   serializeClientUrlPatterns,
   setClientUrlProjection,
+  type ClientUrlProjection,
   type ClientUrlReference,
 } from "../server-projection.js";
+import {
+  clearClientUrlRevalidators,
+  registerClientUrlRevalidators,
+} from "../revalidate-registry.js";
+import { runRevalidate } from "../../testing/run-revalidate.js";
 
 const { getLoaderLazyMock } = vi.hoisted(() => ({
   getLoaderLazyMock: vi.fn(),
@@ -95,6 +106,7 @@ function materializedLoaderDefinition(id: string): LoaderDefinition<unknown> {
 
 afterEach(() => {
   clearClientUrlProjections();
+  clearClientUrlRevalidators();
   getLoaderLazyMock.mockReset();
 });
 
@@ -755,67 +767,182 @@ describe("client URL server projection", () => {
     });
   });
 
-  it("attaches a synthesized per-loader revalidate honoring client decisions by $$id", () => {
-    const source = clientUrls(({ path, loader }) => [
-      path("/items/:id", AccountPage, { name: "item" }, () => [
-        loader(loaderDefinition("loaders#session")),
-        loader(loaderDefinition("loaders#item")),
-      ]),
-    ]);
-    const manifest = new Map<string, EntryData>();
-    RangoContext.run(
-      {
-        manifest,
-        patterns: new Map(),
-        trailingSlash: new Map(),
-        searchSchemas: new Map(),
-        namespace: "test",
-        parent: null,
-        counters: {},
-      },
-      () =>
-        materializeClientUrlPatterns(
-          clientReference("app.urls#client-reval"),
-          serializeClientUrlPatterns(source),
-        ).handler(),
-    );
+  describe("hoisted revalidate() predicates", () => {
+    const marker = (key: string) =>
+      ({ $$rangoRevalidate: key }) as unknown as ShouldRevalidateFn;
 
-    const entry = manifest.get("item");
-    if (!entry || entry.type !== "route") throw new Error("Expected route");
-    // Every stub carries exactly one synthesized predicate.
-    expect(entry.loader.map(({ revalidate }) => revalidate.length)).toEqual([
-      1, 1,
-    ]);
+    function materializeRoute(
+      reference: Parameters<typeof materializeClientUrlPatterns>[0],
+      projection: ClientUrlProjection,
+      name: string,
+    ): Extract<EntryData, { type: "route" }> {
+      const manifest = new Map<string, EntryData>();
+      RangoContext.run(
+        {
+          manifest,
+          patterns: new Map(),
+          trailingSlash: new Map(),
+          searchSchemas: new Map(),
+          namespace: "test",
+          parent: null,
+          counters: {},
+        },
+        () => materializeClientUrlPatterns(reference, projection).handler(),
+      );
+      const entry = manifest.get(name);
+      if (!entry || entry.type !== "route") throw new Error("Expected route");
+      return entry;
+    }
 
-    const run = (
-      loaderIndex: number,
-      headerValue: string | null,
-      defaultShouldRevalidate: boolean,
-    ): boolean => {
-      const request = new Request("http://localhost/items/1", {
-        headers: headerValue
-          ? { "X-Rango-Client-Reval": headerValue }
-          : undefined,
+    it("projects each loader's hoisted keys and rejects an unhoisted predicate under hoisted serialization", () => {
+      const source = clientUrls(({ path, loader, revalidate }) => [
+        path("/items/:id", AccountPage, { name: "item" }, () => [
+          loader(loaderDefinition("loaders#session"), () => [
+            revalidate(marker("k-a")),
+            revalidate(marker("k-b")),
+          ]),
+          loader(loaderDefinition("loaders#item")),
+        ]),
+      ]);
+      expect(
+        serializeClientUrlPatterns(source, { hoisted: true }).routes[0]
+          .loaderRevalidate,
+      ).toEqual([["k-a", "k-b"], []]);
+
+      const plain = clientUrls(({ path, loader, revalidate }) => [
+        path("/items/:id", AccountPage, { name: "item" }, () => [
+          loader(loaderDefinition("loaders#item")),
+          loader(loaderDefinition("loaders#session"), () => [
+            revalidate(() => false),
+          ]),
+        ]),
+      ]);
+      // Unit tests (no plugin) keep plain functions out of the projection.
+      expect(
+        serializeClientUrlPatterns(plain).routes[0].loaderRevalidate,
+      ).toBeUndefined();
+      expect(() =>
+        serializeClientUrlPatterns(plain, { hoisted: true }),
+      ).toThrow(
+        'clientUrls() revalidate() on loader "loaders#session" of route "/items/:id" was not hoisted to the server',
+      );
+    });
+
+    it("runs a client reference's registered predicate on the server with the urls() arguments", async () => {
+      const source = clientUrls(({ path, loader, revalidate }) => [
+        path("/items/:id", AccountPage, { name: "item" }, () => [
+          loader(loaderDefinition("loaders#cart"), () => [
+            revalidate(marker("k-result")),
+          ]),
+          loader(loaderDefinition("loaders#scoped"), () => [
+            revalidate(marker("k-form")),
+          ]),
+          loader(loaderDefinition("loaders#plain")),
+        ]),
+      ]);
+      const seen: RevalidateParams[] = [];
+      registerClientUrlRevalidators({
+        "k-result": (args) => {
+          seen.push(args);
+          return args.actionResult?.ok === true;
+        },
+        "k-form": ({ formData, context }) =>
+          formData?.get("scope") === "all" ||
+          (context as unknown as { get(key: string): unknown }).get("flag") ===
+            "on",
       });
-      return entry.loader[loaderIndex].revalidate[0]({
-        defaultShouldRevalidate,
-        context: { request },
-      } as unknown as Parameters<
-        (typeof entry.loader)[number]["revalidate"][number]
-      >[0]) as boolean;
-    };
+      const entry = materializeRoute(
+        clientReference("app.urls#hoisted"),
+        serializeClientUrlPatterns(source, { hoisted: true }),
+        "item",
+      );
+      // A loader without predicates gets the defaults: no revalidate() item.
+      expect(entry.loader.map(({ revalidate }) => revalidate.length)).toEqual([
+        1, 1, 0,
+      ]);
 
-    const header = encodeURIComponent(
-      JSON.stringify({ skip: ["loaders#session"], force: ["loaders#item"] }),
-    );
-    // Decisions address stubs by $$id: session skipped, item forced.
-    expect(run(0, header, true)).toBe(false);
-    expect(run(1, header, false)).toBe(true);
-    // No header (no-JS, PE, prefetch, document loads): locked default applies.
-    expect(run(0, null, true)).toBe(true);
-    expect(run(1, null, false)).toBe(false);
-    // Malformed header degrades to absent.
-    expect(run(0, "not-json", true)).toBe(true);
+      const [cart, scoped] = entry.loader;
+      const action = (result: unknown, formData?: FormData) => ({
+        action: { ref: "src/cart.ts#checkout", result, formData },
+        currentUrl: "http://localhost/items/1",
+      });
+      expect(await runRevalidate(cart.revalidate, action({ ok: true }))).toBe(
+        true,
+      );
+      expect(await runRevalidate(cart.revalidate, action({ ok: false }))).toBe(
+        false,
+      );
+      expect(seen[0]).toMatchObject({
+        method: "POST",
+        actionId: "src/cart.ts#checkout",
+        actionResult: { ok: true },
+        segmentType: "loader",
+        defaultShouldRevalidate: true,
+      });
+      expect(seen[0].isAction()).toBe(true);
+
+      const all = new FormData();
+      all.set("scope", "all");
+      expect(
+        await runRevalidate(scoped.revalidate, action({ ok: true }, all)),
+      ).toBe(true);
+      expect(await runRevalidate(scoped.revalidate, action({ ok: true }))).toBe(
+        false,
+      );
+      expect(
+        await runRevalidate(scoped.revalidate, { vars: { flag: "on" } }),
+      ).toBe(true);
+    });
+
+    it("fails at materialization when a hoisted key has no server registration", () => {
+      const source = clientUrls(({ path, loader, revalidate }) => [
+        path("/items/:id", AccountPage, { name: "item" }, () => [
+          loader(loaderDefinition("loaders#cart"), () => [
+            revalidate(marker("k-missing")),
+          ]),
+        ]),
+      ]);
+      expect(() =>
+        materializeRoute(
+          clientReference("/src/shop.client.tsx#default"),
+          serializeClientUrlPatterns(source, { hoisted: true }),
+          "item",
+        ),
+      ).toThrow(
+        'clientUrls() revalidate() on loader "loaders#cart" of route "/items/:id" in "/src/shop.client.tsx#default" has no server registration (key "k-missing")',
+      );
+    });
+
+    it("attaches a definition object's own predicates", async () => {
+      const source = clientUrls(({ path, loader, revalidate }) => [
+        path("/items/:id", AccountPage, { name: "item" }, () => [
+          loader(loaderDefinition("loaders#item"), () => [
+            revalidate(({ currentParams, nextParams }) =>
+              currentParams.id === nextParams.id ? false : undefined,
+            ),
+          ]),
+        ]),
+      ]);
+      const entry = materializeRoute(
+        source,
+        serializeClientUrlPatterns(source),
+        "item",
+      );
+      const [item] = entry.loader;
+      expect(
+        await runRevalidate(item.revalidate, {
+          currentParams: { id: "1" },
+          nextParams: { id: "2" },
+        }),
+      ).toBe(true);
+      expect(
+        await runRevalidate(item.revalidate, {
+          currentParams: { id: "1" },
+          currentUrl: "http://localhost/items/1",
+          nextUrl: "http://localhost/items/1?tab=a",
+        }),
+      ).toBe(false);
+    });
   });
 
   it("delegates projected loader execution by $$id with the original context", async () => {

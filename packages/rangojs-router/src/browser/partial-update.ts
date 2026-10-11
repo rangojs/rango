@@ -38,10 +38,7 @@ import {
 import type { NavigationUpdate, RscMetadata } from "./types.js";
 import { OPTIMISTIC_COMMIT_TRANSITION_TYPE } from "./optimistic-commit.js";
 import type { LoaderStore } from "../loader-store.js";
-import {
-  collectClientRevalidationDecisions,
-  setActiveInterceptTargets,
-} from "../client-urls/navigation.js";
+import { setActiveInterceptTargets } from "../client-urls/navigation.js";
 import {
   decideCommitGatedOff,
   mergeSegmentParams,
@@ -658,31 +655,6 @@ export function createPartialUpdater(
       );
     }
 
-    // Client-run per-loader revalidation: execute the held clientUrls route's
-    // revalidate() predicates now and ship their decisions with the request.
-    // Fails soft to null (locked server defaults) when no group is active or
-    // URLs do not parse.
-    let clientRevalidation: string | null = null;
-    try {
-      clientRevalidation = collectClientRevalidationDecisions({
-        currentUrl: new URL(previousUrl, window.location.origin),
-        nextUrl: new URL(url, window.location.origin),
-        // This partial fetch is a GET the server evaluates WITHOUT
-        // actionContext (navigation defaults) even when it is an
-        // action-triggered refetch — so the decision baseline is never the
-        // action default here. Predicates still see isAction()/actionId
-        // truthfully for matching.
-        actionRequest: false,
-        isAction: mode.type === "action",
-        ...(mode.type === "action" && mode.actionId !== undefined
-          ? { actionId: mode.actionId }
-          : {}),
-        stale: mode.type === "stale-revalidation",
-      });
-    } catch {
-      clientRevalidation = null;
-    }
-
     let fetchResult: Awaited<ReturnType<NavigationClient["fetchPartial"]>>;
     fetchResult = await client.fetchPartial({
       targetUrl: url,
@@ -690,7 +662,6 @@ export function createPartialUpdater(
       previousUrl,
       staleRevalidation:
         mode.type === "stale-revalidation" || segments.length === 0,
-      clientRevalidation,
       version: getVersion(),
       routerId: store.getRouterId?.(),
     });

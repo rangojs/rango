@@ -1,5 +1,6 @@
 /**
- * Shared `isAction()` matcher for revalidate predicates (server + clientUrls).
+ * Shared `isAction()` matcher for revalidate() predicates (server) and
+ * transition({ when }) (browser).
  *
  * Action identity is `actionId`. The helper resolves an imported reference the
  * same way the action boundary derives that id (`$id ?? $$id`), so a

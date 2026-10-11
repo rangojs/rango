@@ -278,7 +278,7 @@ import {
   runLoader,
   runLoaderResult,
   runTransitionWhen,
-  runClientRevalidate,
+  runRevalidate,
   dispatch,
   assertCacheStatus,
   assertCacheDecision,
@@ -294,7 +294,8 @@ import type {
   RunLoaderResult,
   RunTransitionWhenOptions,
   RunTransitionWhenResult,
-  RunClientRevalidateOptions,
+  RunRevalidateAction,
+  RunRevalidateOptions,
   CacheDecisionEvent,
   CacheSegmentSignal,
   CacheSegmentStatus,
@@ -311,6 +312,7 @@ import {
   resetShellTestState,
 } from "@rangojs/router/testing/flight";
 import type {
+  ServeShellRequestAction,
   ServeShellRequestOptions,
   ServeShellRequestResult,
 } from "@rangojs/router/testing/flight";
@@ -319,12 +321,14 @@ import { flightMatchers } from "@rangojs/router/testing/flight-matchers";
 // Telemetry event member types (T5) + the runLoaderResult envelope (T2) must be
 // nameable at a consumer call site, not just structurally reachable.
 type _TelemetryTypesReachable = [
+  ServeShellRequestAction,
   ServeShellRequestOptions,
   ServeShellRequestResult,
   RunLoaderResult<unknown>,
   RunTransitionWhenOptions,
   RunTransitionWhenResult,
-  RunClientRevalidateOptions,
+  RunRevalidateAction,
+  RunRevalidateOptions,
   CacheDecisionEvent,
   CacheSegmentSignal,
   CacheSegmentStatus,
@@ -337,7 +341,7 @@ void runMiddleware;
 void runLoader;
 void runLoaderResult;
 void runTransitionWhen;
-void runClientRevalidate;
+void runRevalidate;
 void dispatch;
 void rangoTestConfig;
 void rangoTestAliases;
