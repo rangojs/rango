@@ -20,7 +20,7 @@ import { makeIsAction } from "./is-action.js";
 /**
  * Options for revalidation evaluation
  */
-interface EvaluateRevalidationOptions<TEnv> {
+export interface EvaluateRevalidationOptions<TEnv> {
   /** Current segment to evaluate */
   segment: ResolvedSegment;
   /** Previous route params (from route match, not segment) */

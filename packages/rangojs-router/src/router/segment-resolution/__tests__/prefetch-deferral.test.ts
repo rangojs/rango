@@ -2,10 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EntryData, LoaderEntry } from "../../../server/context";
 import {
   belowDeferredUnit,
-  defersAboveRecord,
   defersLoader,
   defersUnit,
   deferUnit,
+  fillSends,
   firstUnitCandidate,
   getPrefetchDeferral,
   isFillRequest,
@@ -13,6 +13,7 @@ import {
   markUnitDeferred,
   partialDeferralMode,
   planPrefetchDeferral,
+  recordUse,
   registerDeferredLoader,
   requestKind,
   resolveDeferralScope,
@@ -613,6 +614,12 @@ describe("the decisions", () => {
   });
 
   it("report whether this prefetch skips a layout above the cache boundary", () => {
+    // Neither read nor written (PrefetchDeferral.record).
+    const defersAboveRecord = (ctx: unknown): boolean => {
+      const { read, write } = recordUse(ctx as any);
+      expect(write).toBe(read);
+      return !read;
+    };
     const section = entry("layout", flagged);
     const route = entry("route");
     const slot = entry("parallel", flagged);
@@ -762,6 +769,45 @@ describe("the decisions", () => {
     markUnitDeferred(ctx, `${layout.shortCode}.@side`);
     expect(defersUnit(ctx, `${layout.shortCode}.@side`)).toBe(true);
     expect(defersUnit(ctx, route.shortCode)).toBe(false);
+  });
+
+  it("let a background re-render refresh the record on any request but a fill", () => {
+    const section = entry("layout", flagged);
+    const route = entry("route");
+    const build = () => ({
+      chain: [section, route],
+      cacheBoundary: route.shortCode,
+    });
+    const use = (mode: PrefetchDeferral["mode"]) =>
+      recordUse(ctxWith(plan(mode, build, holding(section.shortCode))));
+
+    expect(use("fill")).toEqual({ read: true, write: true, refresh: false });
+    expect(use("prefetch")).toEqual({ read: true, write: true, refresh: true });
+    expect(use(undefined)).toEqual({ read: true, write: true, refresh: true });
+    expect(recordUse(ctxWith(undefined))).toEqual({
+      read: true,
+      write: true,
+      refresh: true,
+    });
+    expect(recordUse(undefined).refresh).toBe(true);
+  });
+
+  // A fill's rule, whatever the site: send what the client lacks, keep what
+  // it holds; any other request leaves the decision to revalidation.
+  it("fillSends answers a fill from what the client holds, and nothing else", () => {
+    const route = entry("route", flagged);
+    const build = () => ({ chain: [route] });
+    const held = holding("held");
+
+    const fill = ctxWith(plan("fill", build));
+    expect(fillSends(fill, "held", held)).toBe(false);
+    expect(fillSends(fill, "new", held)).toBe(true);
+    for (const mode of ["prefetch", undefined] as const) {
+      const ctx = ctxWith(plan(mode, build));
+      expect(fillSends(ctx, "held", held)).toBeUndefined();
+      expect(fillSends(ctx, "new", held)).toBeUndefined();
+    }
+    expect(fillSends(ctxWith(undefined), "held", held)).toBeUndefined();
   });
 
   it("read the plan off a handler context, or nothing", () => {

@@ -9,7 +9,10 @@
 import type { ReactNode } from "react";
 import { invariant } from "../../errors";
 import { revalidate } from "../loader-resolution.js";
-import { evaluateRevalidation } from "../revalidation.js";
+import {
+  evaluateRevalidation,
+  type EvaluateRevalidationOptions,
+} from "../revalidation.js";
 import {
   getParallelEntries,
   getParallelSlotEntries,
@@ -38,8 +41,8 @@ import { entryLoadingMasksLoaders } from "./loader-mask.js";
 import {
   defersLoader,
   deferUnit,
+  fillSends,
   getPrefetchDeferral,
-  isFillRequest,
   registerDeferredLoader,
 } from "./prefetch-deferral.js";
 import {
@@ -108,6 +111,28 @@ function emitRevalidationDecision(
     routeKey,
     shouldRevalidate,
   });
+}
+
+/**
+ * Whether a segment the client holds (`held`, the set resolution works on)
+ * renders again. A fill keeps it (prefetch-deferral.ts fillSends): no
+ * revalidate() predicate runs and nothing is traced or observed. Any other
+ * request asks the segment's revalidate() chain, and `onEvaluated` sees that
+ * answer.
+ */
+async function revalidateHeld<TEnv>({
+  held,
+  onEvaluated,
+  ...options
+}: EvaluateRevalidationOptions<TEnv> & {
+  held: ReadonlySet<string>;
+  onEvaluated?: (shouldRevalidate: boolean) => void;
+}): Promise<boolean> {
+  const fill = fillSends(options.context, options.segment.id, held);
+  if (fill !== undefined) return fill;
+  const shouldRevalidate = await evaluateRevalidation(options);
+  onEvaluated?.(shouldRevalidate);
+  return shouldRevalidate;
 }
 
 // ---------------------------------------------------------------------------
@@ -194,7 +219,6 @@ export async function resolveLoadersWithRevalidation<TEnv>(
   }));
 
   const matchedIds = loaderMeta.map((m) => m.segmentId);
-  const fill = isFillRequest(ctx);
 
   const revalidationChecks = await Promise.all(
     loaderMeta.map(
@@ -221,8 +245,6 @@ export async function resolveLoadersWithRevalidation<TEnv>(
               }
               return true;
             }
-            // Fill: a held segment is skipped outright, no predicate runs.
-            if (fill) return false;
 
             const dummySegment: ResolvedSegment = {
               id: segmentId,
@@ -235,7 +257,7 @@ export async function resolveLoadersWithRevalidation<TEnv>(
               belongsToRoute,
             };
 
-            return await evaluateRevalidation({
+            return await revalidateHeld({
               segment: dummySegment,
               prevParams,
               getPrevSegment: null,
@@ -251,6 +273,7 @@ export async function resolveLoadersWithRevalidation<TEnv>(
               actionContext,
               stale,
               traceSource: "loader",
+              held: clientSegmentIds,
             });
           },
           async () => true,
@@ -704,10 +727,12 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
     // runs: a prefetch sends what the slot declares instead of running its
     // handler.
     let deferred = deferUnit(context, parallelId, "below");
+    // A fill sends exactly the slots the client lacks, ahead of every rule
+    // below (fillSends).
+    const fill = fillSends(context, parallelId, clientSegmentIds);
     let shouldResolve: boolean;
-    if (isFillRequest(context)) {
-      // Fill: only what the client does not hold renders, no predicate runs.
-      shouldResolve = !clientSegmentIds.has(parallelId);
+    if (fill !== undefined) {
+      shouldResolve = fill;
     } else if (deferred) {
       shouldResolve = true;
     } else if (isFullRefetch) {
@@ -880,8 +905,6 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
         }
         return true;
       }
-      // Fill: a held segment is skipped outright, no predicate runs.
-      if (isFillRequest(context)) return false;
 
       const dummySegment: ResolvedSegment = {
         id: entry.shortCode,
@@ -900,7 +923,7 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
         ...(entry.mountPath ? { mountPath: entry.mountPath } : {}),
       };
 
-      const shouldRevalidate = await evaluateRevalidation({
+      return revalidateHeld({
         segment: dummySegment,
         prevParams,
         getPrevSegment: null,
@@ -917,18 +940,20 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
         stale,
         traceSource:
           entry.type === "route" ? "route-handler" : "layout-handler",
+        held: clientSegmentIds,
+        onEvaluated: (shouldRevalidate) => {
+          emitRevalidationDecision(
+            entry.shortCode,
+            context.pathname,
+            routeKey,
+            shouldRevalidate,
+          );
+          debugLog("segment.revalidate", "entry revalidation decision", {
+            segmentId: entry.shortCode,
+            shouldRevalidate,
+          });
+        },
       });
-      emitRevalidationDecision(
-        entry.shortCode,
-        context.pathname,
-        routeKey,
-        shouldRevalidate,
-      );
-      debugLog("segment.revalidate", "entry revalidation decision", {
-        segmentId: entry.shortCode,
-        shouldRevalidate,
-      });
-      return shouldRevalidate;
     },
     async () => {
       // Only an entry the client lacks (defersUnit). Its handler would
@@ -1308,8 +1333,6 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
         }
         return true;
       }
-      // Fill: a held segment is skipped outright, no predicate runs.
-      if (isFillRequest(context)) return false;
 
       const dummySegment: ResolvedSegment = {
         id: orphan.shortCode,
@@ -1323,7 +1346,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
         ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
       };
 
-      const shouldRevalidate = await evaluateRevalidation({
+      return revalidateHeld({
         segment: dummySegment,
         prevParams,
         getPrevSegment: null,
@@ -1339,14 +1362,15 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
         actionContext,
         stale,
         traceSource: "orphan-layout",
+        held: clientSegmentIds,
+        onEvaluated: (shouldRevalidate) =>
+          emitRevalidationDecision(
+            orphan.shortCode,
+            context.pathname,
+            routeKey,
+            shouldRevalidate,
+          ),
       });
-      emitRevalidationDecision(
-        orphan.shortCode,
-        context.pathname,
-        routeKey,
-        shouldRevalidate,
-      );
-      return shouldRevalidate;
     },
     async () => {
       // Below a unit a prefetch skipped: the orphan goes with it.

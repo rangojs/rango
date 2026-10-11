@@ -113,7 +113,7 @@ import {
   runWithRequestContext,
   type RequestContext,
 } from "../../server/request-context.js";
-import { isFillRequest } from "../segment-resolution/prefetch-deferral.js";
+import { recordUse } from "../segment-resolution/prefetch-deferral.js";
 
 /**
  * Re-render a cached route in the background and write it with
@@ -282,15 +282,16 @@ export function withBackgroundRevalidation<TEnv>(
     // Only trigger background revalidation if:
     // 1. Cache was hit and stale
     // 2. Cache scope exists
-    // 3. The request is not a fill (prefetch: false). A fill runs no handler
-    //    of a segment the client holds, and the re-render runs every handler
-    //    of the route. The record stays stale until a request that reads it
-    //    arrives: the prefetch before the fill already was one.
+    // 3. The request may refresh the record (RecordUse.refresh): a fill may
+    //    not (prefetch: false). It runs no handler of a segment the client
+    //    holds, and the re-render runs every handler of the route. The record
+    //    stays stale until a request that reads it arrives: the prefetch
+    //    before the fill already was one.
     if (
       !state.shouldRevalidate ||
       !state.cacheHit ||
       !ctx.cacheScope ||
-      isFillRequest(ctx.handlerContext)
+      !recordUse(ctx.handlerContext).refresh
     ) {
       return;
     }

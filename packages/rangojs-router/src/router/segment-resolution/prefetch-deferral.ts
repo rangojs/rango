@@ -99,11 +99,8 @@ export interface PrefetchDeferral {
    * not stored and not held. Empty outside a prefetch.
    */
   readonly skipped: ReadonlySet<string>;
-  /**
-   * One of `skipped` is a chain entry: nothing below it runs, so the response
-   * has no content for it, a route cache() record included.
-   */
-  readonly skipsChain: boolean;
+  /** How this request may use the route's cache() record (recordUse). */
+  readonly record: RecordUse;
   /** Segment id of the handler unit this prefetch skipped. */
   deferredUnit?: string;
   /**
@@ -123,6 +120,31 @@ export interface PrefetchDeferral {
    * what was started by the end of resolution.
    */
   deferredLoaders?: Map<string, DeferredLoader>;
+}
+
+/**
+ * How a request may use the route's cache() record, decided once per match
+ * (planPrefetchDeferral) for the cache middleware.
+ */
+export interface RecordUse {
+  /**
+   * withCacheLookup reads it. False when this prefetch skips a chain unit
+   * (PrefetchDeferral.skipped): the unit takes everything below it, so the
+   * read would replay the record's handle pushes for segments the response
+   * does not carry. Decided from what the client holds, never per tree: a
+   * prefetch that holds the flagged layout reads and writes the record like
+   * any other request.
+   */
+  readonly read: boolean;
+  /** withCacheStore writes it. False where `read` is: the record would be incomplete. */
+  readonly write: boolean;
+  /**
+   * A background re-render of the whole route may write it: the stale-hit
+   * refresh (withBackgroundRevalidation) and the proactive write a partial
+   * response needs (withCacheStore). False for a fill: the re-render runs
+   * the handlers of segments the client holds, which a fill does not run.
+   */
+  readonly refresh: boolean;
 }
 
 /** A loader this prefetch deferred: PrefetchDeferral.deferredLoaders. */
@@ -329,7 +351,12 @@ export function planPrefetchDeferral(
       }
     }
   }
-  return { scope, mode, storedFrom, held, skipped, skipsChain };
+  const record: RecordUse = {
+    read: !skipsChain,
+    write: !skipsChain,
+    refresh: mode !== "fill",
+  };
+  return { scope, mode, storedFrom, held, skipped, record };
 }
 
 export function getPrefetchDeferral(
@@ -342,6 +369,30 @@ export function getPrefetchDeferral(
 /** The request is a fill: a held segment is skipped without consulting anything. */
 export function isFillRequest(ctx: HandlerContext<any, any>): boolean {
   return getPrefetchDeferral(ctx)?.mode === "fill";
+}
+
+/**
+ * A fill's whole revalidation rule (R5): send a segment the client does not
+ * hold, keep one it holds, and consult nothing else (no revalidate()
+ * predicate, no params or search comparison, no trace entry). Undefined on
+ * any other request, where revalidation decides. `held` is the set the
+ * deciding site resolves with.
+ */
+export function fillSends(
+  ctx: HandlerContext<any, any>,
+  segmentId: string,
+  held: ReadonlySet<string>,
+): boolean | undefined {
+  return isFillRequest(ctx) ? !held.has(segmentId) : undefined;
+}
+
+const RECORD_OPEN: RecordUse = { read: true, write: true, refresh: true };
+
+/** PrefetchDeferral.record, or all of it open when the match has no plan. */
+export function recordUse(
+  ctx: HandlerContext<any, any> | undefined,
+): RecordUse {
+  return getPrefetchDeferral(ctx)?.record ?? RECORD_OPEN;
 }
 
 /**
@@ -479,17 +530,6 @@ export function firstUnitCandidate(
     if (unitEligible(plan.storedFrom, entry, unit)) return entry;
   }
   return undefined;
-}
-
-/**
- * This prefetch skips a layout above the route cache's boundary, and with it
- * everything the record below holds: withCacheLookup and withCacheStore leave
- * the record alone for it. Decided per request, from what the client holds:
- * a prefetch of the same tree that holds the layout reads and writes the
- * record like any other request.
- */
-export function defersAboveRecord(ctx: HandlerContext<any, any>): boolean {
-  return getPrefetchDeferral(ctx)?.skipsChain === true;
 }
 
 /**
