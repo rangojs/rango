@@ -100,7 +100,9 @@ export default defineConfig({
   // 10m hang guard on CI shards only. A local dev+production run is ~2200
   // tests / ~15 min and was cut mid-suite with a green "N passed" line
   // (issue #864). Playwright default (0) is unlimited locally.
-  globalTimeout: process.env.CI ? 10 * 60 * 1000 : undefined,
+  // 18 (was 10): the prefetch: false parity cases run against a 300-500 ms
+  // server and sit together in one shard; the router job's cap is 30 minutes.
+  globalTimeout: process.env.CI ? 18 * 60 * 1000 : undefined,
   timeout: process.env.CI ? 60000 : 30000, // 60s on CI, 30s locally
   webServer: [
     ...(HOST_ONLY || ROUTE_HMR_ONLY
