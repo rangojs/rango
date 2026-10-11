@@ -128,7 +128,7 @@ export function setupNavigationBridgeDelegatedPrefetch(
 /**
  * A history entry's segments, when they can be shown. An entry left before
  * its fill landed (`prefetch: false`) holds placeholders, not segments:
- * restoring it would suspend on gates nobody resolves, so it is fetched.
+ * restoring it would suspend on holes nobody resolves, so it is fetched.
  */
 function isRestorable(
   segments: ResolvedSegment[] | undefined,

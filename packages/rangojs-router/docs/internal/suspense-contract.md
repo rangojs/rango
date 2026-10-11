@@ -63,8 +63,8 @@ hands a component that is still a promise (a Flight-streamed segment) as that sa
 promise; `getMemoizedLoaderPromise` (`src/segment-loader-promise.ts:116`) hands one
 aggregate per set of loader references while it is pending; the per-loader streams
 `buildLoaderStreams` passes through untouched (`src/segment-system.tsx`). The three
-places that read them are `Suspender` (`src/route-content-wrapper.tsx:170`),
-`LoaderResolver` (`:313`) and the `useLoader` read site (`src/use-loader.tsx:232`).
+places that read them are `Suspender` (`src/route-content-wrapper.tsx:171`),
+`LoaderResolver` (`:316`) and the `useLoader` read site (`src/use-loader.tsx:232`).
 `armHoles` (`src/browser/partial-update.ts:277`) is a producer too: for a click that
 adopts a `prefetch: false` prefetch it makes one `Defer` (`src/browser/defer.ts`) per
 placeholder and writes it to the placeholder's `loaderData` or `component`, where
@@ -72,8 +72,9 @@ placeholder and writes it to the placeholder's `loaderData` or `component`, wher
 one promise, from the click to its fill: `Suspender` and `useLoader` read it by the
 read rule (`readDefer`), and React reads it itself where a segment has no `loading()`
 (`asStream`). An answer that replaces the page hands each place its defer again,
-resolved; the router sets `status` and `value` on the defer, never on the promise, and
-a reader that never handed React the promise reads the value (rule 2). The rule and
+resolved; the router sets `status` and `value` on the defer, never on the promise (for a
+defer resolved with a stream, once the stream arrives), and a reader that never handed
+React the promise reads the value (rule 2). The rule and
 its reasons are in [prefetch-false.md](../../../../docs/design/prefetch-false.md),
 "How a hole is read".
 
@@ -106,7 +107,7 @@ the aggregate has settled, still hands the loader boundary a settled promise Rea
 not read. Does React then suspend on it? Only where something reads the aggregate. A
 layout's or route's loader boundary does not: `buildLoaderStreams` gives it per-loader
 streams, and `LoaderResolver` hands those to `OutletProvider` before it reaches
-`use(loaderDataPromise)` (`src/route-content-wrapper.tsx:341`), so its `useLoader`
+`use(loaderDataPromise)` (`src/route-content-wrapper.tsx:348`), so its `useLoader`
 readers suspend on the streams and the aggregate is never read. An earlier version of
 the audit observed each promise's settlement itself and reported that unread aggregate
 as I2 on a refresh under CPU throttling (the shell layout's loader data fulfilled 13 ms
@@ -197,7 +198,7 @@ and in cloudflare-basic, dev, `tests/shared-e2e/src/suspense-cases.ts`):
 | `useLoader().load()`                                  | 0                                                                                  | 0                                                        |
 | A handle pushed after the page committed              | 0                                                                                  | 0                                                        |
 | A `clientUrls()` navigation                           | 1 `navigation`, and one commit                                                     | 1 `navigation`, and 2 to 4 commits                       |
-| A click that adopts a `prefetch: false` prefetch      | 1 `navigation`; its fill resolves the tree's gates and hands React nothing         | 1                                                        |
+| A click that adopts a `prefetch: false` prefetch      | 1 `navigation`; its fill resolves the tree's holes and hands React nothing         | 1                                                        |
 
 The `prefetch: false` row is measured by `expectAdoptedClickBuildsThePageOnce`
 (`tests/shared-e2e/src/prefetch-false.ts`, 17 fixture pages, both apps, dev). The fill

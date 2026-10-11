@@ -178,12 +178,14 @@ const Suspender = ({
   // (RouteContentWrapper > Suspense > Suspender) is identical either way (see
   // docs/tree-structure.md), like LoaderResolver's resolved-data branch. A
   // `prefetch: false` hole is read here, by the read rule, so the filled
-  // page's node later takes the same place.
+  // page's node later takes the same place. The content can be a pending
+  // promise in one tree and its node in the next: use() at this place on
+  // every render, as LoaderResolver does.
   return content instanceof Defer
     ? (readDefer(content) as ReactNode)
     : content instanceof Promise
       ? use(content)
-      : content;
+      : (use(SETTLED_THENABLE), content);
 };
 
 /**

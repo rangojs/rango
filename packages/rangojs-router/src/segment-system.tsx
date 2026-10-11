@@ -269,7 +269,7 @@ function wrapDefaultOutletContent(
  * `settle` is the forceAwait/action lane of a loader set that holds a
  * deferred loader (`prefetch: false`, see hasDeferred): every other loader is
  * settled like a flagged one, so the commit stays whole for them, and the
- * deferred one keeps its gate for the read site to suspend on. A settled
+ * deferred one keeps its hole for the read site to suspend on. A settled
  * error with no boundary is left to the read site there, where the aggregate
  * lane it replaces would have thrown it.
  */
@@ -311,8 +311,9 @@ async function buildLoaderStreams(
 
 /**
  * A loader set that holds a deferred loader (`prefetch: false`): its
- * `loaderData` is a gate the browser resolves when the fill request lands
- * (browser/partial-update.ts), so no lane may await the set as a whole. The
+ * `loaderData` is a hole (browser/defer.ts) the browser resolves when the
+ * fill request lands (browser/partial-update.ts fillHoles), so no lane may
+ * await the set as a whole. The
  * tree build would wait for a request that is only sent once it returns.
  */
 function hasDeferred(loaders: ResolvedSegment[]): boolean {

@@ -545,7 +545,8 @@ export class LoaderStore {
 
   /**
    * Stop tracking a stream. trackPendingStream does it as the stream settles;
-   * an abandoned fill's gate (browser/partial-update.ts) never settles, and
+   * an abandoned fill's hole (browser/partial-update.ts releaseHoles) never
+   * settles, and
    * left tracked it would pin the family's held readers on every later
    * transition.
    */

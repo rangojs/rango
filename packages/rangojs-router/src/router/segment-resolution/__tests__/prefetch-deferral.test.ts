@@ -338,19 +338,38 @@ describe("partialDeferralMode", () => {
     expect(partialDeferralMode({ ...PREFETCH, ...override })).toBe(undefined);
   });
 
-  it("is a fill whenever the URL carries the marker, whatever else it says", () => {
+  it("is a fill whenever a GET carries the marker, whatever else it says", () => {
     expect(partialDeferralMode({ ...PREFETCH, fill: true })).toBe("fill");
     expect(
       partialDeferralMode({
         fill: true,
         prefetch: false,
-        method: "POST",
+        method: "GET",
         isAction: true,
         isIntercept: true,
         isShellCapture: true,
       }),
     ).toBe("fill");
   });
+
+  // A fill is the GET the browser sends after an adopted prefetch: a POST
+  // (an action) that carries the marker is a normal request.
+  it.each(["POST", "HEAD"])(
+    "is not a fill for a %s that carries the marker",
+    (method) => {
+      expect(partialDeferralMode({ ...PREFETCH, fill: true, method })).toBe(
+        undefined,
+      );
+      expect(
+        partialDeferralMode({
+          ...PREFETCH,
+          fill: true,
+          method,
+          isAction: true,
+        }),
+      ).toBe(undefined);
+    },
+  );
 });
 
 describe("planPrefetchDeferral", () => {

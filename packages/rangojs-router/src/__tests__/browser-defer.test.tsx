@@ -106,14 +106,27 @@ describe("Defer", () => {
     expect(promise).not.toHaveProperty("value");
   });
 
-  // Resolved with a stream, the router does not hold the value: the promise
-  // follows the stream, and a reader waits on the promise.
-  it("stays pending when resolved with a stream, and its promise follows the stream", async () => {
+  // Resolved with a stream, the router does not hold the value until the
+  // stream arrives: the promise follows the stream, and so do status and
+  // value, on the defer, never on its promise.
+  it("resolved with a stream, status and value follow it", async () => {
     const hole = new Defer<unknown>();
     let arrive!: (value: unknown) => void;
     hole.resolve(new Promise((resolve) => (arrive = resolve)));
+    expect(hole.status).toBe("pending");
+    expect(hole.value).toBeUndefined();
+
     arrive({ count: 5 });
     await expect(hole.promise).resolves.toEqual({ count: 5 });
+    expect(hole).toMatchObject({ status: "fulfilled", value: { count: 5 } });
+    expect(hole.promise).not.toHaveProperty("status");
+  });
+
+  it("stays pending when its stream rejects, and its promise carries the rejection", async () => {
+    const hole = new Defer<unknown>();
+    const failure = new Error("stream failed");
+    hole.resolve(Promise.reject(failure));
+    await expect(hole.promise).rejects.toBe(failure);
     expect(hole.status).toBe("pending");
     expect(hole.value).toBeUndefined();
   });

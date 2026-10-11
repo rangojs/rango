@@ -82,7 +82,10 @@ Notes:
   the import also stays in the `"use client"` module, which is not pruned for the
   browser, so it must still load there as before.
 - `intercept()` loaders inside `clientUrls()` still do not apply their
-  `revalidate()`.
+  `revalidate()`, but the build checks their predicates like any other: an
+  intercept predicate that captures a binding of the `"use client"` module
+  (or breaks another rule above) is a build error now, although nothing runs
+  it. Move it into an imported module, or drop it.
 - The `vite-rsc-demo` `productData` predicate moved from its `"use client"`
   module to `tests/vite-rsc-demo/src/urls/client-shop.predicates.ts`, as the
   example.

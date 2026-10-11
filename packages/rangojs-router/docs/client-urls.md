@@ -601,7 +601,10 @@ identity; an `actionResult` predicate, a `formData` predicate, and a
 prefetched param navigation) and in `semantic-matrix.test.ts` row R2.
 
 `intercept()` loaders inside `clientUrls()` do not apply their `revalidate()`
-yet (a known gap, left for a follow-up), so do not rely on it there.
+yet (a known gap, left for a follow-up), so do not rely on it there. The build
+still checks those predicates like any other, so one that captures a binding of
+the `"use client"` module fails the build although nothing runs it: import it
+from a module without `"use client"`, or drop it.
 
 `loader(Def, { ssr: false }, use?)` is the SSR-completeness opt-in.
 By default every loader streams on every render, so nothing a slow loader

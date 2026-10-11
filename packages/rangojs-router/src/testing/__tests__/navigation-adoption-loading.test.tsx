@@ -1,5 +1,12 @@
 // @vitest-environment happy-dom
-import { Suspense, use, useContext, useEffect, type ReactNode } from "react";
+import {
+  Suspense,
+  use,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
 import { act, cleanup } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { EventController } from "../../browser/event-controller.js";
@@ -9,7 +16,9 @@ import { NavigationStoreContext } from "../../browser/react/context.js";
 import { consumeHandles } from "../../browser/react/NavigationProvider.js";
 import { useNavigation } from "../../browser/react/use-navigation.js";
 import type { NavigationUpdate } from "../../browser/types.js";
-import type { ResolvedSegment } from "../../types.js";
+import { OutletProvider } from "../../outlet-provider.js";
+import type { LoaderDefinition, ResolvedSegment } from "../../types.js";
+import { useLoader } from "../../use-loader.js";
 import { renderRoute } from "../render-route.js";
 import { Defer, readDefer } from "../../browser/defer.js";
 
@@ -608,6 +617,66 @@ describe("a click that adopts a prefetch, and its fill", () => {
     expect(shown()).toBe("value");
     expect(updates()).toBe(1);
   });
+
+  // A loader read only in a part of the page the user opens after the fill
+  // arrived (a tab opened with setState): its reader mounts in an urgent
+  // render, after the hole's stream has fulfilled. The plain click's stream
+  // is a Flight chunk, which Flight marks fulfilled, so its read is the value
+  // at once; the hole follows its stream, so its read is too.
+  it.each([
+    ["the adopted click", false],
+    ["control: the plain click", true],
+  ])(
+    "%s: a useLoader() reader mounted after the fill arrived reads the hole with no fallback",
+    async (_label, plain) => {
+      const DataLoader = { $$id: "data" } as unknown as LoaderDefinition<
+        string,
+        any
+      >;
+      let open!: () => void;
+      function Tab(): ReactNode {
+        return ` ${useLoader(DataLoader).data}`;
+      }
+      function Tabs(): ReactNode {
+        const [opened, setOpened] = useState(false);
+        open = () => setOpened(true);
+        return <p data-testid="page">page{opened && <Tab />}</p>;
+      }
+      const chunk = Object.assign(Promise.resolve("value"), {
+        status: "fulfilled",
+        value: "value",
+      });
+      const { shown, fill, navigation } = await adopt({
+        adopted: [
+          segment(DATA, "loader", { loaderId: "data", deferred: true }),
+        ],
+        filled: [
+          segment(DATA, "loader", { loaderId: "data", loaderData: chunk }),
+        ],
+        plain,
+        render: (find) => (
+          <Suspense fallback={<Fallback />}>
+            <OutletProvider
+              content={null}
+              loaderStreams={{ data: find(DATA).loaderData }}
+            >
+              <Tabs />
+            </OutletProvider>
+          </Suspense>
+        ),
+      });
+      if (!plain) await fill(50);
+      await navigation;
+      expect(shown()).toBe("page");
+
+      act(() => open());
+      expect(document.body.textContent, "no fallback over the page").toBe(
+        "page value",
+      );
+      expect(shown()).toBe("page value");
+      expect(mounts.fallback).toBe(0);
+    },
+  );
 
   // A unit on a page that commits in a transition: the click is a
   // navigation that waits for its fill. Nothing reaches React with the

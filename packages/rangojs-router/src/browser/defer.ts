@@ -19,13 +19,24 @@ export class Defer<T> {
   /**
    * Resolved with a value the router holds (a node), the hole is
    * "fulfilled" at once. Resolved with a stream (a Flight chunk), its promise
-   * follows the stream and it stays "pending": readers wait on the promise.
+   * follows the stream, and so does the hole: "fulfilled" with the stream's
+   * value once it arrives, so a reader that mounts after that reads the value
+   * as it would read the chunk Flight marked. A rejected stream leaves the
+   * hole pending; its promise carries the rejection.
    */
   resolve!: (value: T) => void;
   readonly promise: Promise<T> = new Promise<T>((settle) => {
     this.resolve = (value) => {
       settle(value);
-      if (!(value instanceof Promise)) {
+      if (value instanceof Promise) {
+        value.then(
+          (arrived: T) => {
+            this.status = "fulfilled";
+            this.value = arrived;
+          },
+          () => {},
+        );
+      } else {
         this.status = "fulfilled";
         this.value = value;
       }

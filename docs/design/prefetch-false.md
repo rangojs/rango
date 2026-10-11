@@ -1154,9 +1154,15 @@ the hole sits:
 The router writes `status`, `value` and `read` on the defer, its own object,
 and never React's thenable fields on the promise. `status` turns `fulfilled`
 when the router resolves the hole with a value it holds (a node). Resolved
-with a stream (a loader's Flight chunk), the promise follows the stream and
-`status` stays `pending`: the readers wait on the promise, which React then
-marks.
+with a stream (a loader's Flight chunk), the promise follows the stream, and
+so does the defer: `status` turns `fulfilled`, with the stream's value, once
+the stream arrives. Readers mounted before that wait on the promise, which
+React then marks. A reader that mounts after it (a tab the user opens with a
+plain `setState` once the fill landed) reads the value, as it reads the chunk
+Flight marked on a plain click. Before the defer followed its stream, that
+reader called `use()` of a promise React had never seen, and the urgent
+render showed the boundary's fallback over the page (R-sync). A stream that
+rejects leaves the defer pending; its promise carries the rejection.
 
 Why does React read a hole with no `loading()` itself, and not a small router
 component? The filled entry hands the next render from this page the
@@ -1178,7 +1184,11 @@ resolves with no `use()` warning (red when such a read switches to the value
 with no `use()`: "This library called use() to suspend..."); and a
 time-sliced reader that suspended and is replayed hands `use()`
 the same promise (red without `read`: "A component was suspended by an
-uncached promise").
+uncached promise"); and a defer resolved with a stream takes the stream's
+status and value. `src/testing/__tests__/navigation-adoption-loading.test.tsx`
+("a useLoader() reader mounted after the fill arrived") pins the late reader
+through the real updater against the plain click: red while the defer stayed
+`pending` (the fallback over the page, `'pageskeleton'`).
 
 ### The click commits on the plain click's lane
 

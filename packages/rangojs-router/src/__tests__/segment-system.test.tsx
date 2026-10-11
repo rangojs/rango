@@ -1870,20 +1870,20 @@ describe("segment-system", () => {
     });
 
     // prefetch: false (docs/design/prefetch-false.md). A deferred segment's
-    // value is a gate: a defer the browser resolves when the fill request
+    // value is a hole: a defer the browser resolves when the fill request
     // lands (browser/partial-update.ts armHoles). The tree build must never
     // wait for one: the fill is only merged once the build has returned.
     describe("deferred segments (prefetch: false)", () => {
-      const gate = () => new Defer<never>();
+      const hole = () => new Defer<never>();
       const fallback = createElement("div", null, "Loading...");
 
-      /** Fails instead of hanging when the build waits on a gate. */
+      /** Fails instead of hanging when the build waits on a hole. */
       function built(tree: Promise<ReactNode>): Promise<ReactNode> {
         return Promise.race([
           tree,
           new Promise<never>((_, reject) =>
             setTimeout(
-              () => reject(new Error("renderSegments waited on a gate")),
+              () => reject(new Error("renderSegments waited on a hole")),
               200,
             ),
           ),
@@ -1891,9 +1891,9 @@ describe("segment-system", () => {
       }
 
       it.each([{ forceAwait: true }, { isAction: true }])(
-        "settles the other loaders and leaves the gate to the read site under loading() (%o)",
+        "settles the other loaders and leaves the hole to the read site under loading() (%o)",
         async (options) => {
-          const reviews = gate();
+          const reviews = hole();
           const segments: ResolvedSegment[] = [
             seg({ id: "R0", type: "route", loading: fallback }),
             seg({
@@ -1927,8 +1927,8 @@ describe("segment-system", () => {
         },
       );
 
-      it("settles the other loaders and leaves the gate to the read site without loading()", async () => {
-        const reviews = gate();
+      it("settles the other loaders and leaves the hole to the read site without loading()", async () => {
+        const reviews = hole();
         const segments: ResolvedSegment[] = [
           seg({ id: "R0", type: "route" }),
           seg({
@@ -1975,7 +1975,7 @@ describe("segment-system", () => {
             id: "R0D1.reviews",
             type: "loader",
             loaderId: "reviews",
-            loaderData: gate(),
+            loaderData: hole(),
             deferred: true,
           }),
         ];
@@ -1988,12 +1988,26 @@ describe("segment-system", () => {
         expect(() =>
           decodeLoaderEntry(outlet.props.loaderStreams.price),
         ).toThrow("boom");
+
+        // As the plain click's streaming lane does with the same error: the
+        // tree is built and the read site throws it.
+        const plain = toTreeNode(
+          await built(renderSegments(segments.slice(0, 2))),
+        );
+        const price = await collectByType(plain, MockOutletProvider)[0].props
+          .loaderStreams.price;
+        expect(() => decodeLoaderEntry(price)).toThrow("boom");
+
+        // The aggregate lane: with no deferred loader in the set.
+        await expect(
+          renderSegments(segments.slice(0, 2), { forceAwait: true }),
+        ).rejects.toThrow("boom");
       });
 
       it.each([{ forceAwait: true }, { isAction: true }, {}])(
-        "passes a deferred unit's gate to its fallback boundary unawaited (%o)",
+        "passes a deferred unit's hole to its fallback boundary unawaited (%o)",
         async (options) => {
-          const content = gate();
+          const content = hole();
           const segments: ResolvedSegment[] = [
             seg({
               id: "R0",
@@ -2018,7 +2032,7 @@ describe("segment-system", () => {
           seg({
             id: "R0",
             type: "route",
-            component: gate() as unknown as ReactNode,
+            component: hole() as unknown as ReactNode,
             deferred: true,
           }),
         ];
@@ -2064,7 +2078,7 @@ describe("segment-system", () => {
         expect(content).toBe(node);
       });
 
-      it("does not settle a slot's aggregate that holds a gate", async () => {
+      it("does not settle a slot's aggregate that holds a hole", async () => {
         const segments: ResolvedSegment[] = [
           seg({ id: "L0", type: "layout" }),
           seg({
@@ -2079,7 +2093,7 @@ describe("segment-system", () => {
             type: "loader",
             namespace: "side",
             loaderId: "side",
-            loaderData: gate(),
+            loaderData: hole(),
             deferred: true,
           }),
           seg({ id: "L0R0", type: "route" }),
@@ -2108,8 +2122,8 @@ describe("segment-system", () => {
         // and a loader, and an orphan layout of the route.
         const page = (filled: boolean): ResolvedSegment[] => {
           const value = <T,>(known: T): T =>
-            filled ? known : (gate() as unknown as T);
-          const hole = filled ? {} : { deferred: true as const };
+            filled ? known : (hole() as unknown as T);
+          const flag = filled ? {} : { deferred: true as const };
           const loader = (id: string, loaderId: string, namespace: string) =>
             seg({
               id,
@@ -2118,7 +2132,7 @@ describe("segment-system", () => {
               loaderId,
               component: null,
               loaderData: value(Promise.resolve({ ok: true, data: loaderId })),
-              ...hole,
+              ...flag,
             });
           const node = (id: string) =>
             value(createElement("div", null, id) as ReactNode);
@@ -2131,7 +2145,7 @@ describe("segment-system", () => {
               namespace: "section",
               loading: fallback,
               component: node("L0L1"),
-              ...hole,
+              ...flag,
             }),
             seg({
               id: "L0L1.@side",
@@ -2139,7 +2153,7 @@ describe("segment-system", () => {
               slot: "@side",
               namespace: "side",
               component: node("side"),
-              ...hole,
+              ...flag,
             }),
             seg({
               id: "L0L1.@panel",
@@ -2148,7 +2162,7 @@ describe("segment-system", () => {
               namespace: "panel",
               loading: fallback,
               component: node("panel"),
-              ...hole,
+              ...flag,
             }),
             loader("L0L1D0.panel", "panel", "panel"),
             loader("L0L1R0D0.page", "page", "page"),
@@ -2158,7 +2172,7 @@ describe("segment-system", () => {
               namespace: "orphan",
               belongsToRoute: true,
               component: node("orphan"),
-              ...hole,
+              ...flag,
             }),
             seg({
               id: "L0L1R0",
@@ -2168,7 +2182,7 @@ describe("segment-system", () => {
               transition: {},
               params: { id: "1" },
               component: node("page"),
-              ...hole,
+              ...flag,
             }),
           ];
         };

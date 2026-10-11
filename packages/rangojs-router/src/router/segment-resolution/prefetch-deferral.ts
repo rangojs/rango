@@ -230,12 +230,13 @@ export function resolveDeferralScope(
 
 /**
  * Which half of the feature a partial request is, if either (`fill` and
- * `prefetch` are requestKind's answer). A prefetch defers only on a plain GET
- * navigation: an action
- * re-renders what it changed, an intercept resolves its loaders outside the
- * shared funnel, and a shell capture is never a prefetch whatever the request
- * that scheduled it sent. The four conditions overlap today (an action is a
- * POST, a capture runs the full match): each one states its own reason.
+ * `prefetch` are requestKind's answer). Both halves are GETs: a request of
+ * another method that carries either marker is a normal request. A prefetch
+ * defers only on a plain GET navigation: an action re-renders what it
+ * changed, an intercept resolves its loaders outside the shared funnel, and a
+ * shell capture is never a prefetch whatever the request that scheduled it
+ * sent. The four conditions overlap today (an action is a POST, a capture
+ * runs the full match): each one states its own reason.
  */
 export function partialDeferralMode(request: {
   fill: boolean;
@@ -245,9 +246,9 @@ export function partialDeferralMode(request: {
   isIntercept: boolean;
   isShellCapture: boolean;
 }): PrefetchDeferral["mode"] {
+  if (request.method !== "GET") return undefined;
   if (request.fill) return "fill";
   return request.prefetch &&
-    request.method === "GET" &&
     !request.isAction &&
     !request.isIntercept &&
     !request.isShellCapture

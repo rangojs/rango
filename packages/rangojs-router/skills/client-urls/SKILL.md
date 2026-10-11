@@ -274,7 +274,9 @@ with the ternary above instead (same rule as a server-tree loader). A bare
 refetching when params change.
 
 `intercept()` loaders inside `clientUrls()` do not apply their `revalidate()`
-yet (a known gap, left for a follow-up).
+yet (a known gap, left for a follow-up). The build still checks those
+predicates like any other, so one that captures a binding of the `"use client"`
+module fails the build although nothing runs it: import it, or drop it.
 
 Two scars worth copying:
 
