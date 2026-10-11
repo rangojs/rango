@@ -13,7 +13,10 @@ rendered its error boundary (status 500), and a loader's push was dropped. When
 the navigation re-ran a layout, the push was filed under that layout instead.
 
 **Now.** Both are filed under the intercept's slot, as a `parallel()` slot's
-pushes are, and reach the page's `useHandle()` readers.
+pushes are, and reach the page's `useHandle()` readers when a navigation opens
+the modal. One case is unchanged: a server action called from the modal that
+skips one of its loaders (the loader's `revalidate()` answers `false`) still
+drops that loader's push from the page.
 
 ### Fixed: a modal opened by `intercept()` whose loaders all skip `revalidate()` keeps its data after a server action
 
@@ -28,6 +31,18 @@ action, so props and markup the handler produced did not update.
 **Now.** A loader that skips keeps the data the modal already shows, whether it
 is one of the loaders or all of them, and the handler's new render applies, as
 it does when every loader re-runs.
+
+### Fixed: a modal over a `Prerender()` route shows its loaders' new data after a server action called from it
+
+**Before.** In production, a server action called from a modal that
+`intercept()` opened over a `Prerender()` route re-ran the modal's loaders, but
+the response was built from the intercept copy the build stored, with the modal
+marked as one the browser already held, so it left the modal out. The modal
+kept showing its loaders' old data.
+
+**Now.** The stored modal is sent with its loaders' data, as the segment cache
+already sends a cached one; a loader whose `revalidate()` answers `false` keeps
+its data.
 
 ## 0.23.0 (2026-10-11)
 

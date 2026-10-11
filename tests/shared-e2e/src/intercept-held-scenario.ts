@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 /**
  * Intercept slot contracts in the live lane. Fixture: intercept-held* in each
- * app, a layout with a @modal slot and four intercepted routes opened from
+ * app, a layout with a @modal slot and five intercepted routes opened from
  * its index page. Both apps call this from a dev and a (production) describe.
  *
  * 1. A modal whose loaders all skip revalidate() keeps its loader data when a
@@ -14,8 +14,9 @@ import { expect, test, type Page } from "@playwright/test";
  *    src/testing/__tests__/serve-shell-request-intercept-held-loaders.rsc-test.tsx.
  * 2. A handle pushed from an intercept's loader or handler is filed under the
  *    slot's segment id (resolveInterceptEntry pins `_currentSegmentId`), so
- *    it reaches the page when the client holds the page's segments. Userland
- *    pin: src/testing/__tests__/serve-shell-request-intercept-handle-owner.rsc-test.tsx.
+ *    it reaches the page when the modal opens over segments the client holds.
+ *    Userland pin:
+ *    src/testing/__tests__/serve-shell-request-intercept-handle-owner.rsc-test.tsx.
  */
 
 export interface InterceptHeldScenarioOptions {
@@ -27,22 +28,20 @@ export interface InterceptHeldScenarioOptions {
 export function runInterceptHeldTests(
   options: InterceptHeldScenarioOptions,
 ): void {
-  const byTestId = (page: Page, id: string) => page.getByTestId(id);
-
   async function openModal(page: Page, link: string, modal: string) {
     await page.goto(options.url(options.basePath));
     await page.waitForFunction(() =>
       document.documentElement.hasAttribute("data-hydrated"),
     );
-    await byTestId(page, link).click();
-    await expect(byTestId(page, modal)).toBeVisible();
+    await page.getByTestId(link).click();
+    await expect(page.getByTestId(modal)).toBeVisible();
   }
 
   /** The modal as it was opened: the handler's render and the loader's run. */
   async function readModal(page: Page) {
     return {
-      renders: await byTestId(page, "ih-modal-renders").innerText(),
-      runs: await byTestId(page, "ih-modal-runs").innerText(),
+      renders: await page.getByTestId("ih-modal-renders").innerText(),
+      runs: await page.getByTestId("ih-modal-runs").innerText(),
     };
   }
 
@@ -52,7 +51,7 @@ export function runInterceptHeldTests(
         response.request().method() === "POST" &&
         "rsc-action" in response.request().headers(),
     );
-    await byTestId(page, "ih-modal-action").click();
+    await page.getByTestId("ih-modal-action").click();
     await answered;
   }
 
@@ -64,11 +63,11 @@ export function runInterceptHeldTests(
 
     await callActionFromModal(page);
 
-    await expect(byTestId(page, "ih-modal-renders")).not.toHaveText(
+    await expect(page.getByTestId("ih-modal-renders")).not.toHaveText(
       before.renders,
     );
-    await expect(byTestId(page, "ih-modal-runs")).not.toHaveText(before.runs);
-    await expect(byTestId(page, "ih-modal")).toBeVisible();
+    await expect(page.getByTestId("ih-modal-runs")).not.toHaveText(before.runs);
+    await expect(page.getByTestId("ih-modal")).toBeVisible();
   });
 
   test("a modal whose loaders all skip revalidate() keeps its loader data across a server action", async ({
@@ -80,10 +79,10 @@ export function runInterceptHeldTests(
     await callActionFromModal(page);
 
     // The handler re-ran (the response was applied), the loader did not.
-    await expect(byTestId(page, "ih-modal-renders")).not.toHaveText(
+    await expect(page.getByTestId("ih-modal-renders")).not.toHaveText(
       before.renders,
     );
-    await expect(byTestId(page, "ih-modal-runs")).toHaveText(before.runs);
+    await expect(page.getByTestId("ih-modal-runs")).toHaveText(before.runs);
   });
 
   test("a modal with one held loader and one re-run shows the handler's re-render and both loaders' data", async ({
@@ -91,17 +90,19 @@ export function runInterceptHeldTests(
   }) => {
     await openModal(page, "ih-open-mixed", "ih-modal");
     const before = await readModal(page);
-    const rerunBefore = await byTestId(page, "ih-modal-rerun-runs").innerText();
+    const rerunBefore = await page
+      .getByTestId("ih-modal-rerun-runs")
+      .innerText();
 
     await callActionFromModal(page);
 
-    await expect(byTestId(page, "ih-modal-renders")).not.toHaveText(
+    await expect(page.getByTestId("ih-modal-renders")).not.toHaveText(
       before.renders,
     );
-    await expect(byTestId(page, "ih-modal-rerun-runs")).not.toHaveText(
+    await expect(page.getByTestId("ih-modal-rerun-runs")).not.toHaveText(
       rerunBefore,
     );
-    await expect(byTestId(page, "ih-modal-runs")).toHaveText(before.runs);
+    await expect(page.getByTestId("ih-modal-runs")).toHaveText(before.runs);
   });
 
   test("a handle pushed by an intercept's loader reaches the page", async ({
@@ -110,7 +111,7 @@ export function runInterceptHeldTests(
     await openModal(page, "ih-open-push", "ih-push-modal");
 
     await expect(
-      byTestId(page, "ih-crumb").filter({ hasText: "modal-loader:1" }),
+      page.getByTestId("ih-crumb").filter({ hasText: "modal-loader:1" }),
     ).toHaveCount(1);
   });
 
@@ -120,7 +121,7 @@ export function runInterceptHeldTests(
     await openModal(page, "ih-open-handler", "ih-handler-modal");
 
     await expect(
-      byTestId(page, "ih-crumb").filter({ hasText: "modal-handler:1" }),
+      page.getByTestId("ih-crumb").filter({ hasText: "modal-handler:1" }),
     ).toHaveCount(1);
   });
 }

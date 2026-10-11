@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
-import { resolveInterceptLoadersOnly } from "../intercept-resolution.js";
+import {
+  resolveInterceptEntry,
+  resolveInterceptLoadersOnly,
+} from "../intercept-resolution.js";
 import { evaluateRevalidation } from "../revalidation.js";
 import type { InterceptEntry } from "../../server/context";
 import type { EntryData } from "../../server/context";
@@ -220,8 +223,13 @@ describe("resolveInterceptLoadersOnly on a slot the client holds", () => {
     expect(deps.wrapLoaderPromise).not.toHaveBeenCalled();
   });
 
-  it("pins the slot's id as the loaders' handle push owner", async () => {
+  it("pins the slot's id as the loaders' handle push owner at their kickoff", async () => {
     const context = makeContext();
+    const owners: unknown[] = [];
+    context.use = vi.fn(() => {
+      owners.push(context._currentSegmentId);
+      return Promise.resolve({ data: "loader-result" });
+    });
     await resolveInterceptLoadersOnly(
       makeInterceptEntry(false),
       makeParentEntry(),
@@ -232,6 +240,38 @@ describe("resolveInterceptLoadersOnly on a slot the client holds", () => {
       revalidationContext([]),
     );
 
-    expect(context._currentSegmentId).toBe("L0R0.@modal");
+    expect(owners).toEqual(["L0R0.@modal"]);
+  });
+});
+
+describe("resolveInterceptEntry handle push owner", () => {
+  it("pins the slot's id for its loaders' kickoff and its handler's run", async () => {
+    const context = makeContext();
+    const owners: Record<string, unknown[]> = { loader: [], handler: [] };
+    context.use = vi.fn(() => {
+      owners.loader.push(context._currentSegmentId);
+      return Promise.resolve({ data: "loader-result" });
+    });
+    const entry: InterceptEntry = {
+      ...makeInterceptEntry(false),
+      handler: (ctx: any) => {
+        owners.handler.push(ctx._currentSegmentId);
+        return "modal";
+      },
+    };
+
+    await resolveInterceptEntry(
+      entry,
+      makeParentEntry(),
+      {},
+      context,
+      true,
+      makeDeps(),
+    );
+
+    expect(owners).toEqual({
+      loader: ["L0R0.@modal"],
+      handler: ["L0R0.@modal"],
+    });
   });
 });

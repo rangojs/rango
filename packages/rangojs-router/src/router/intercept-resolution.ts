@@ -263,10 +263,14 @@ export async function resolveInterceptEntry<TEnv>(
   latchPprHeaderScopeForInterceptTarget(interceptEntry);
 
   // The intercept segment's id: the tag scope its handler and layout record in
-  // (#957, cache-tag.ts runInSegmentTagScope) and the bucket its handler's and
-  // loaders' handle pushes are filed under (pinned below, as the parallel-slot
-  // funnels and the build-time intercept bake pin theirs).
+  // (#957, cache-tag.ts runInSegmentTagScope) and the owner of its handler's
+  // and loaders' handle pushes, pinned before the loader kickoffs as
+  // fresh.ts/revalidation.ts pin theirs (createLoaderExecutor captures it at
+  // kickoff; a handler's ctx.use(Handle) reads it when called).
   const slotSegmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}`;
+  (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
+    slotSegmentId;
+  const hasLoaders = interceptEntry.loader.length > 0;
 
   const loaderPromises: Promise<any>[] = [];
   const loaderIds: string[] = [];
@@ -332,9 +336,6 @@ export async function resolveInterceptEntry<TEnv>(
     }
 
     loaderIds.push(loader.$$id);
-    // createLoaderExecutor captures the push owner at kickoff (loaderOwner).
-    (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
-      slotSegmentId;
     loaderPromises.push(
       deps.wrapLoaderPromise(
         // The DSL binding's funnel, as for route loaders: a loader's own
@@ -353,11 +354,6 @@ export async function resolveInterceptEntry<TEnv>(
     );
   }
 
-  // Without the pin a handler's ctx.use(Handle) reads the last segment the
-  // main resolution pinned (its push lands in that bucket), or nothing when
-  // the client holds every main segment, and throws.
-  (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
-    slotSegmentId;
   let handlerResult: ReactNode;
   try {
     const handler = interceptEntry.handler;
@@ -452,12 +448,10 @@ export async function resolveInterceptEntry<TEnv>(
     }
   }
 
-  // The aggregate lists the loaders that ran. When the client holds the slot
-  // and every loader skipped revalidate() it is empty, not absent: the browser
-  // merges a partial aggregate into the one it holds (merge-segment-loaders.ts
-  // needsLoaderMerge), while a slot sent without one replaced it and dropped
-  // the LoaderBoundary, so the modal's useLoader() threw.
-  if (interceptEntry.loader.length > 0 && loaderPromises.length === 0) {
+  // The aggregate lists the loaders that ran; empty, not absent, when the
+  // client holds the slot and all skipped. Absent replaces the client's
+  // aggregate, empty merges into it (merge-segment-loaders.ts).
+  if (hasLoaders && loaderPromises.length === 0) {
     loaderDataPromise = [];
   }
 
@@ -474,7 +468,7 @@ export async function resolveInterceptEntry<TEnv>(
     belongsToRoute,
     parallelName: `intercept:${interceptEntry.routeName}.${interceptEntry.slotName}`,
     loaderDataPromise,
-    loaderIds: interceptEntry.loader.length > 0 ? loaderIds : undefined,
+    loaderIds: hasLoaders ? loaderIds : undefined,
   };
   segments.push(interceptSegment);
 
@@ -517,7 +511,10 @@ export async function resolveInterceptLoadersOnly<TEnv>(
 
   latchPprHeaderScopeForInterceptTarget(interceptEntry);
 
+  // The loaders' handle push owner, as in resolveInterceptEntry.
   const slotSegmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}`;
+  (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
+    slotSegmentId;
   const loaderPromises: Promise<any>[] = [];
   const loaderIds: string[] = [];
 
@@ -580,9 +577,6 @@ export async function resolveInterceptLoadersOnly<TEnv>(
     }
 
     loaderIds.push(loader.$$id);
-    // The push owner, as in resolveInterceptEntry.
-    (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
-      slotSegmentId;
     loaderPromises.push(
       deps.wrapLoaderPromise(
         // The DSL binding's funnel, as for route loaders: a loader's own
@@ -603,7 +597,7 @@ export async function resolveInterceptLoadersOnly<TEnv>(
     );
   }
 
-  // Every loader held: the empty aggregate, as resolveInterceptEntry sends it.
+  // Every loader held: the empty aggregate (see resolveInterceptEntry).
   if (loaderPromises.length === 0) {
     return { loaderDataPromise: [], loaderIds };
   }

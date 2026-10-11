@@ -95,6 +95,8 @@ describe("merge-segment-loaders", () => {
     const merged = mergeSegmentLoaders(fromServer, fromCache);
     expect(merged.component).toBe("server-component");
     expect(merged.loaderIds).toEqual(["a", "b"]);
+    // The cached thenable itself: a boundary still waiting on it keeps it.
+    expect(merged.loaderDataPromise).toBe(fromCache.loaderDataPromise);
     await expect(merged.loaderDataPromise).resolves.toEqual([1, 2]);
   });
 

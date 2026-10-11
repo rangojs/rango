@@ -1,18 +1,6 @@
 import type { ResolvedSegment } from "./types.js";
 import { debugLog, IS_BROWSER_DEBUG } from "./logging.js";
-
-/**
- * An aggregate's array when it has settled in a form React reads
- * synchronously (the array itself, or a thenable carrying React's or Flight's
- * `status: "fulfilled"`); undefined while it is pending.
- */
-function settledAggregate(
-  aggregate: Promise<any[]> | any[] | undefined,
-): any[] | undefined {
-  if (Array.isArray(aggregate)) return aggregate;
-  const thenable = aggregate as { status?: string; value?: any[] } | undefined;
-  return thenable?.status === "fulfilled" ? thenable.value : undefined;
-}
+import { settledValue } from "../thenable-status.js";
 
 /**
  * Merge partial loader data from server with cached loader data.
@@ -47,8 +35,8 @@ export function mergeSegmentLoaders(
       const newIndex = serverLoaderIds.indexOf(id);
       return newIndex !== -1 ? newData[newIndex] : cachedData[i];
     });
-  const settledNew = settledAggregate(fromServer.loaderDataPromise);
-  const settledCached = settledAggregate(fromCache.loaderDataPromise);
+  const settledNew = settledValue(fromServer.loaderDataPromise!);
+  const settledCached = settledValue(fromCache.loaderDataPromise!);
 
   return {
     ...fromCache,
@@ -57,13 +45,17 @@ export function mergeSegmentLoaders(
     // their cached data.
     component: fromServer.component,
     layout: fromServer.layout,
+    // Every loader held: the cached aggregate itself, so a boundary still
+    // waiting on it keeps its one thenable (suspense-contract.md, rule 1).
     loaderDataPromise:
-      settledNew && settledCached
-        ? merge(settledNew, settledCached)
-        : Promise.all([
-            fromServer.loaderDataPromise!,
-            fromCache.loaderDataPromise!,
-          ]).then(([newData, cachedData]) => merge(newData, cachedData)),
+      serverLoaderIds.length === 0
+        ? fromCache.loaderDataPromise
+        : settledNew && settledCached
+          ? merge(settledNew, settledCached)
+          : Promise.all([
+              fromServer.loaderDataPromise!,
+              fromCache.loaderDataPromise!,
+            ]).then(([newData, cachedData]) => merge(newData, cachedData)),
     // Keep all loader IDs from cache
     loaderIds: fromCache.loaderIds,
     // The rebuilt aggregate is the source of truth. Cached per-loader

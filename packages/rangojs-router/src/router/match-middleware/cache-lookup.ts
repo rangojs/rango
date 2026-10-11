@@ -352,6 +352,10 @@ async function* yieldFromStore<TEnv>(
     if (
       !ctx.isFullMatch &&
       ctx.clientSegmentSet.has(segment.id) &&
+      // A stored intercept segment is re-sent, as on the runtime cache path:
+      // its loaders run (handleCacheHitIntercept) and the browser applies the
+      // slot with them (merge-segment-loaders.ts), so a null one blanks it.
+      !segment.namespace?.startsWith("intercept:") &&
       (fill ||
         (!paramsChanged &&
           !(

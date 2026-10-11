@@ -24,6 +24,17 @@ export function InterceptHeldCrumbsBar() {
   );
 }
 
+function ActionButton() {
+  return (
+    <button
+      data-testid="ih-modal-action"
+      onClick={() => void interceptHeldAction()}
+    >
+      Call action
+    </button>
+  );
+}
+
 export function InterceptHeldLoaderModal({
   id,
   renders,
@@ -39,12 +50,7 @@ export function InterceptHeldLoaderModal({
       <p data-testid="ih-modal-id">{id}</p>
       <p data-testid="ih-modal-renders">{renders}</p>
       <p data-testid="ih-modal-runs">{data.runs}</p>
-      <button
-        data-testid="ih-modal-action"
-        onClick={() => void interceptHeldAction()}
-      >
-        Call action
-      </button>
+      <ActionButton />
     </Modal>
   );
 }
@@ -66,12 +72,7 @@ export function InterceptHeldMixedModal({
       <p data-testid="ih-modal-renders">{renders}</p>
       <p data-testid="ih-modal-runs">{held.data.runs}</p>
       <p data-testid="ih-modal-rerun-runs">{rerun.data.runs}</p>
-      <button
-        data-testid="ih-modal-action"
-        onClick={() => void interceptHeldAction()}
-      >
-        Call action
-      </button>
+      <ActionButton />
     </Modal>
   );
 }

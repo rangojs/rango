@@ -16,6 +16,13 @@
  * The request is the one the browser sends from an open modal: the page URL,
  * the held segment ids and the intercept source header
  * (browser/server-action-bridge.ts).
+ *
+ * Over a `Prerender()` target the modal is served from the build's intercept
+ * variant, on the action too (match-middleware/cache-lookup.ts
+ * yieldFromStore). The stored slot is re-sent with its handler output, as on
+ * the runtime cache path. Kept instead (component null), the response left the
+ * slot out (match-result.ts drops a null segment the client holds), so the
+ * loaders that re-ran never reached the modal.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -30,7 +37,12 @@ vi.mock(
 );
 
 import { resetShellTestState, serveShellRequest } from "../flight.entry.js";
-import { createLoader, createRouter, urls } from "../../index.rsc.js";
+import {
+  Prerender,
+  createLoader,
+  createRouter,
+  urls,
+} from "../../index.rsc.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
 import { deserializeResult } from "../../cache/segment-codec.js";
 import { reconcileSegments } from "../../browser/segment-reconciler.js";
@@ -44,20 +56,38 @@ const LoaderB = createLoader(async () => ({ b: `b-run-${++runs.b}` }));
 async function touch(): Promise<void> {}
 
 type Mode = "skip" | "rerun";
+type Target = "live" | "prerender";
 
-/** The modal's two loaders, each held (revalidate() false) or following the default. */
-function makeRouter(a: Mode, b: Mode) {
+/** Intercept handler runs: every live resolution, the bake only over a Prerender(). */
+const modalRenders = { count: 0 };
+
+const PrerenderedItem = Prerender(
+  async () => [{ id: "1" }],
+  () => <article>item</article>,
+);
+
+/**
+ * The modal's two loaders, each held (revalidate() false) or following the
+ * default, over a live or a Prerender() target route.
+ */
+function makeRouter(a: Mode, b: Mode, target: Target) {
   return createRouter({}).routes(
     urls(({ path, layout, intercept, loader, revalidate }) => [
       layout(
         () => <main>shell</main>,
         () => [
           path("/list", () => <ul>list</ul>, { name: "list" }),
-          path("/item/:id", () => <article>item</article>, { name: "item" }),
+          path(
+            "/item/:id",
+            target === "prerender"
+              ? PrerenderedItem
+              : () => <article>item</article>,
+            { name: "item" },
+          ),
           intercept(
             "@modal",
             ".item",
-            () => <dialog>modal</dialog>,
+            () => <dialog>modal {++modalRenders.count}</dialog>,
             () => [
               loader(
                 LoaderA,
@@ -91,8 +121,8 @@ async function metadataOf(flight: string | undefined): Promise<Metadata> {
  * intercept source still names /list). Returns the modal slot as the browser
  * holds it after reconciling the action's response.
  */
-async function slotAfterAction(a: Mode, b: Mode) {
-  const router = makeRouter(a, b);
+async function slotAfterAction(a: Mode, b: Mode, target: Target = "live") {
+  const router = makeRouter(a, b, target);
   const cacheStore = new MemorySegmentCacheStore();
   const opened = await metadataOf(
     (
@@ -133,6 +163,7 @@ async function slotAfterAction(a: Mode, b: Mode) {
 beforeEach(async () => {
   runs.a = 0;
   runs.b = 0;
+  modalRenders.count = 0;
   await resetShellTestState();
 });
 
@@ -181,4 +212,25 @@ describe("a modal held across a server action keeps its loader data", () => {
       { data: { b: "b-run-1" } },
     ]);
   });
+});
+
+describe("over a Prerender() target, the stored modal is re-sent across a server action", () => {
+  for (const [a, b] of [
+    ["skip", "rerun"],
+    ["rerun", "rerun"],
+    ["skip", "skip"],
+  ] as const) {
+    it(`loaders ${a}/${b}: the re-run loaders' data reaches the stored modal`, async () => {
+      const { sentSlot, slot } = await slotAfterAction(a, b, "prerender");
+      // The bake rendered the modal; neither request ran its handler.
+      expect(modalRenders.count).toBe(1);
+      expect(await slot.loaderDataPromise).toMatchObject([
+        { data: { a: a === "skip" ? "a-run-1" : "a-run-2" } },
+        { data: { b: b === "skip" ? "b-run-1" : "b-run-2" } },
+      ]);
+      // Re-sent with the stored handler output, never as a kept (null) slot.
+      expect(sentSlot?.component).toBeTruthy();
+      expect(slot.component).toBe(sentSlot!.component);
+    });
+  }
 });

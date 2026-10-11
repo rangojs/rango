@@ -1,6 +1,37 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError, goBack } from "./helper";
+
+/**
+ * A server action called from the open modal re-runs FreshTimestampLoader and
+ * holds the modal's other loader (revalidate() false). In production the
+ * response serves the modal from the intercept variant the build baked
+ * (cache-lookup.ts yieldFromStore): it must carry the stored modal with its
+ * loaders' data. Kept instead (component null), the slot was left out of the
+ * response, and the re-run loader's data with it.
+ */
+async function expectModalKeptAcrossAction(page: Page, url: string) {
+  await page.goto(url);
+  await waitForHydration(page);
+  await page.locator('[data-testid="pri-link-alpha"]').click();
+  const modal = page.locator('[data-testid="pri-modal"]');
+  await expect(modal).toBeVisible();
+  const heldRuns = await modal.getByTestId("pri-held-runs").textContent();
+  const timestamp = await modal.getByTestId("fresh-timestamp").textContent();
+
+  const answered = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      "rsc-action" in response.request().headers(),
+  );
+  await modal.getByTestId("pri-modal-action").click();
+  await answered;
+
+  // The re-run loader's data landed (the response was applied).
+  await expect(modal.getByTestId("fresh-timestamp")).not.toHaveText(timestamp!);
+  await expect(modal.getByTestId("pri-modal-title")).toContainText("alpha");
+  await expect(modal.getByTestId("pri-held-runs")).toHaveText(heldRuns!);
+}
 
 // ---------------------------------------------------------------------------
 // Dev mode: intercept + prerender on-demand rendering
@@ -149,6 +180,13 @@ test.describe("prerender-intercept (dev mode)", () => {
     await expect(page.locator('[data-testid="pri-modal-title"]')).toContainText(
       "beta",
     );
+  });
+
+  test("a server action from the modal keeps it, with its held loader's data", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectModalKeptAcrossAction(page, f.url("/prerender-intercept"));
   });
 
   test("intercept handler handle push survives into the modal (#567 gap 1)", async ({
@@ -422,6 +460,13 @@ test.describe("prerender-intercept (production build)", () => {
     await expect(
       page.locator('[data-testid="prerender-intercept-layout"]'),
     ).toBeVisible();
+  });
+
+  test("a server action from the baked modal keeps it, with its held loader's data", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectModalKeptAcrossAction(page, f.url("/prerender-intercept"));
   });
 
   test("intercept handler handle push survives the baked artifact (#567 gap 1)", async ({

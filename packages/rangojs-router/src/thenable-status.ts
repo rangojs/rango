@@ -24,3 +24,14 @@ export const SETTLED_THENABLE: Promise<undefined> = Object.assign(
   Promise.resolve(undefined),
   { status: "fulfilled", value: undefined, _debugInfo: [] },
 );
+
+/**
+ * The value React reads from `value` without suspending: `value` itself when
+ * it is not a promise, a promise's `value` once it carries React's or Flight's
+ * `status: "fulfilled"`. Undefined while it is pending or rejected.
+ */
+export function settledValue<T>(value: T | Promise<T>): T | undefined {
+  if (!(value instanceof Promise)) return value;
+  const thenable = value as Promise<T> & { status?: string; value?: T };
+  return thenable.status === "fulfilled" ? thenable.value : undefined;
+}

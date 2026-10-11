@@ -1,8 +1,9 @@
 import { createHandle, createLoader } from "@rangojs/router";
 
 // e2e/intercept-held.test.ts: an intercept slot whose loaders skip
-// revalidate(), and handle pushes made inside an intercept slot. Module-level counters, so the page reads each run from the data and
-// the test compares against what the modal showed when it opened.
+// revalidate(), and handle pushes made inside an intercept slot.
+// Module-level counters, so the page reads each run from the data and the
+// test compares against what the modal showed when it opened.
 export const InterceptHeldCrumbs = createHandle<string, string[]>((segments) =>
   segments.flat(),
 );

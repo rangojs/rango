@@ -260,7 +260,9 @@ async function handleCacheHitIntercept<TEnv>(
         interceptMainSegment.loaderIds = freshLoaderResult.loaderIds;
         debugLog(
           "matchPartial.intercept",
-          "cache hit with fresh intercept loaders",
+          freshLoaderResult.loaderIds.length > 0
+            ? "cache hit with fresh intercept loaders"
+            : "cache hit, every intercept loader held",
           {
             routeName: ctx.localRouteName,
             slotName,
@@ -270,7 +272,7 @@ async function handleCacheHitIntercept<TEnv>(
     } else {
       debugLog(
         "matchPartial.intercept",
-        "cache hit without intercept loader revalidation",
+        "cache hit, intercept has no loaders",
         {
           routeName: ctx.localRouteName,
           slotName,
