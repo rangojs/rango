@@ -33,6 +33,7 @@ import { pprHeaderGuardPatterns } from "./urls/ppr-header-guard.js";
 import { shellCacheActionPatterns } from "./urls/shell-cache-action.js";
 import { shellPushOwnershipPatterns } from "./urls/shell-push-ownership.js";
 import { prerenderWarmPatterns } from "./urls/prerender-warm.js";
+import { requestKeyPatterns } from "./urls/request-keys.js";
 import { shellSecurePatterns } from "./urls/shell-secure.js";
 import { themePatterns } from "./urls/theme.js";
 import { hrefPatterns } from "./urls/href.js";
@@ -1074,6 +1075,10 @@ export const urlpatterns = urls(
 
       // router.prerender() warm fixtures — /warm (issue #1062).
       include("/", prerenderWarmPatterns, { name: "" }),
+
+      // Request-derived names like `constructor` (issue #1109): /constructor,
+      // /__proto__ and /loader-params.
+      include("/", requestKeyPatterns, { name: "" }),
 
       // PPR guarding + scope-fidelity fixtures — /shell-secure (global auth
       // middleware, mounted in router.tsx) and /shell-secure-dsl (route DSL

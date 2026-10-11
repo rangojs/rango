@@ -79,7 +79,7 @@ import { handleLoaderFetch } from "../loader-fetch";
 
 function createMockHandlerCtx() {
   return {
-    renderToReadableStream: () => new ReadableStream(),
+    renderToReadableStream: vi.fn((_payload: unknown) => new ReadableStream()),
     callOnError: vi.fn(),
     getRequiredRouteMap: () => ({}),
   } as any;
@@ -159,17 +159,20 @@ describe("handleLoaderFetch context parity", () => {
 
 // The request's loader params become ctx.params, so they hold only what a
 // route param can: string keys and string values, never a reserved key
-// (#1109).
+// (#1109). A rejected request is a 400 with a loaderError Flight payload, so
+// load() rejects with the message instead of "Connection closed.".
 describe("handleLoaderFetch loader params", () => {
+  let handlerCtx: ReturnType<typeof createMockHandlerCtx>;
   beforeEach(() => {
     capturedCtx = null;
+    handlerCtx = createMockHandlerCtx();
   });
 
   const get = (params: string) => {
     const url = new URL("http://localhost/products?_rsc_loader=myLoader");
     url.searchParams.set("_rsc_loader_params", params);
     return handleLoaderFetch(
-      createMockHandlerCtx(),
+      handlerCtx,
       new Request(url.href, { headers: { Accept: "text/x-component" } }),
       {},
       url,
@@ -181,12 +184,29 @@ describe("handleLoaderFetch loader params", () => {
     const headers: Record<string, string> = { Accept: "text/x-component" };
     if (contentType) headers["Content-Type"] = contentType;
     return handleLoaderFetch(
-      createMockHandlerCtx(),
+      handlerCtx,
       new Request(url.href, { method: "POST", headers, body }),
       {},
       url,
       {},
     );
+  };
+  const expectInvalidParams = (res: Response) => {
+    expect(res.status).toBe(400);
+    expect(res.headers.get("content-type")).toBe(
+      "text/x-component;charset=utf-8",
+    );
+    const payload = handlerCtx.renderToReadableStream.mock.lastCall?.[0];
+    expect(payload).toEqual({
+      loaderResult: null,
+      loaderError: {
+        message:
+          "Invalid loader params: expected an object of string values without the reserved keys __proto__, constructor, prototype",
+        name: "Error",
+      },
+    });
+    expect(handlerCtx.callOnError).not.toHaveBeenCalled();
+    expect(capturedCtx).toBeNull();
   };
 
   it.each([
@@ -213,10 +233,7 @@ describe("handleLoaderFetch loader params", () => {
     ["1"],
     ["null"],
   ])("a GET with %s is a 400 and never runs the loader", async (params) => {
-    const res = await get(params);
-    expect(res.status).toBe(400);
-    expect(await res.text()).toMatch(/^Invalid loader params/);
-    expect(capturedCtx).toBeNull();
+    expectInvalidParams(await get(params));
   });
 
   it("a JSON POST checks params the same way", async () => {
@@ -230,9 +247,9 @@ describe("handleLoaderFetch loader params", () => {
 
     capturedCtx = null;
     for (const params of [{ id: 1 }, { constructor: "x" }, "x", ["a"]]) {
-      const res = await post(JSON.stringify({ params }), "application/json");
-      expect(res.status).toBe(400);
-      expect(capturedCtx).toBeNull();
+      expectInvalidParams(
+        await post(JSON.stringify({ params }), "application/json"),
+      );
     }
   });
 
@@ -248,8 +265,6 @@ describe("handleLoaderFetch loader params", () => {
     expect(capturedCtx.params).toEqual({ id: "1" });
 
     capturedCtx = null;
-    const bad = await post(form('{"__proto__":"x"}'));
-    expect(bad.status).toBe(400);
-    expect(capturedCtx).toBeNull();
+    expectInvalidParams(await post(form('{"__proto__":"x"}')));
   });
 });

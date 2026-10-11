@@ -23,9 +23,13 @@ What you can notice:
   matches your param routes or 404s as any other segment does.
 - A fetchable loader ran with whatever params the request sent in
   `ctx.params`: numbers, objects, or the keys `__proto__`, `constructor` and
-  `prototype` from a hand-built `_rsc_loader_params` or untyped code. Now such
-  a request gets a `400 Invalid loader params` response and neither the loader
-  nor its middleware runs. `load({ params })` with string values is unchanged.
+  `prototype` from a hand-built `_rsc_loader_params` or untyped code. Now
+  neither the loader nor its middleware runs for such a request. The response
+  is a 400 carrying a loader error, so `load()` fails as it does when a loader
+  throws, with the message `Invalid loader params: expected an object of
+string values without the reserved keys __proto__, constructor, prototype`
+  in the rejection or the hook's `error`. `load({ params })` with string
+  values is unchanged.
 - Loader data with an own `__proto__` key (from `JSON.parse`) could fail to
   render in a PPR shell or a `cache()`d loader with "Only plain objects, and a
   few built-ins, can be passed to Client Components", because copying it set
