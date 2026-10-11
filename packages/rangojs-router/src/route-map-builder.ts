@@ -132,11 +132,34 @@ export function getRouterManifest(
   return perRouterManifestMap.get(routerId);
 }
 
+type TrieNode = import("./build/route-trie.js").TrieNode;
+
+/**
+ * Give every static-children map in the trie a null prototype, in place
+ * (#1109). The walker reads `node.s[segment]` with raw URL segments, so a
+ * trie that arrives as JSON (the build manifest) or across the dev runner
+ * boundary would answer `/constructor` or `/__proto__` with an inherited
+ * member. Object.setPrototypeOf keeps a JSON-parsed map's fast properties.
+ */
+function nullPrototypeStaticChildren(node: TrieNode): TrieNode {
+  if (node.s) {
+    Object.setPrototypeOf(node.s, null);
+    for (const key in node.s) nullPrototypeStaticChildren(node.s[key]);
+  }
+  if (node.p) nullPrototypeStaticChildren(node.p.c);
+  if (node.xp) {
+    for (const suffix of Object.keys(node.xp)) {
+      nullPrototypeStaticChildren(node.xp[suffix].c);
+    }
+  }
+  return node;
+}
+
 export function setRouterTrie(
   routerId: string,
   trie: import("./build/route-trie.js").TrieNode,
 ): void {
-  perRouterTrieMap.set(routerId, trie);
+  perRouterTrieMap.set(routerId, nullPrototypeStaticChildren(trie));
 }
 
 // Routers whose trie came from the COMPLETE build manifest (deserialized via
@@ -199,7 +222,7 @@ export async function ensureRouterManifest(routerId: string): Promise<void> {
   if (loader) {
     const mod = await loader();
     if (mod.trie) {
-      perRouterTrieMap.set(routerId, mod.trie);
+      perRouterTrieMap.set(routerId, nullPrototypeStaticChildren(mod.trie));
       // A trie serialized into the build manifest comes from complete
       // discovery — misses are authoritative 404s (see find-match.ts).
       markRouterTrieAuthoritative(routerId);

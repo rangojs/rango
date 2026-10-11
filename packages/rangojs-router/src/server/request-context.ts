@@ -12,6 +12,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { parseCookiesFromHeader } from "./cookie-parse.js";
+import { assignOwn } from "../router/segment-resolution/mask-nested.js";
 import type { CacheErrorCategory } from "../cache/cache-error.js";
 import type { CookieOptions } from "../router/middleware.js";
 import {
@@ -1492,10 +1493,10 @@ export function createRequestContext<TEnv>(
     }
     const result: Record<string, string> = {};
     for (const key of Object.keys(parsed)) {
-      if (!deleted.has(key)) result[key] = parsed[key];
+      if (!deleted.has(key)) assignOwn(result, key, parsed[key]);
     }
     for (const [k, v] of mutations) {
-      if (v !== null) result[k] = v;
+      if (v !== null) assignOwn(result, k, v);
     }
     return result;
   };

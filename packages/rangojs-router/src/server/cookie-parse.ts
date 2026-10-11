@@ -10,9 +10,12 @@
 export function parseCookiesFromHeader(
   cookieHeader: string | null,
 ): Record<string, string> {
-  if (!cookieHeader) return {};
+  // Null prototype (#1109): cookie names come from the request, so a lookup
+  // must never answer `constructor` or `toString` with an inherited member,
+  // and a cookie named `__proto__` is an own key like any other.
+  const cookies: Record<string, string> = Object.create(null);
+  if (!cookieHeader) return cookies;
 
-  const cookies: Record<string, string> = {};
   const pairs = cookieHeader.split(";");
 
   for (const pair of pairs) {

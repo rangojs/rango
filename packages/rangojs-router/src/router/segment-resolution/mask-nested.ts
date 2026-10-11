@@ -44,6 +44,29 @@ export function isPlainDataObject(
   return typeof (value as { $$typeof?: unknown }).$$typeof !== "symbol";
 }
 
+/**
+ * `target[key] = value` as an own data property, `__proto__` included: that
+ * assignment would call Object.prototype's setter and replace the target's
+ * prototype, which Flight refuses to serialize (#1109). Loader data parsed
+ * from JSON, cookie names and the like can carry the key.
+ */
+export function assignOwn(
+  target: Record<string, unknown>,
+  key: string,
+  value: unknown,
+): void {
+  if (key === "__proto__") {
+    Object.defineProperty(target, key, {
+      value,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  } else {
+    target[key] = value;
+  }
+}
+
 type KeyValidated = { _store?: { validated?: unknown } };
 
 /**
@@ -206,7 +229,11 @@ export function maskNestedContainerThenables(
     seen.set(value, out);
     let changed = false;
     for (const key of Object.keys(source)) {
-      out[key] = maskNestedContainerThenables(source[key], seen, report);
+      assignOwn(
+        out,
+        key,
+        maskNestedContainerThenables(source[key], seen, report),
+      );
       if (out[key] !== source[key]) changed = true;
     }
     if (changed) return out;

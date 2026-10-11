@@ -156,3 +156,100 @@ describe("handleLoaderFetch context parity", () => {
     expect(capturedCtx.searchParams.get("tab")).toBe("pricing");
   });
 });
+
+// The request's loader params become ctx.params, so they hold only what a
+// route param can: string keys and string values, never a reserved key
+// (#1109).
+describe("handleLoaderFetch loader params", () => {
+  beforeEach(() => {
+    capturedCtx = null;
+  });
+
+  const get = (params: string) => {
+    const url = new URL("http://localhost/products?_rsc_loader=myLoader");
+    url.searchParams.set("_rsc_loader_params", params);
+    return handleLoaderFetch(
+      createMockHandlerCtx(),
+      new Request(url.href, { headers: { Accept: "text/x-component" } }),
+      {},
+      url,
+      {},
+    );
+  };
+  const post = (body: BodyInit, contentType?: string) => {
+    const url = new URL("http://localhost/products?_rsc_loader=myLoader");
+    const headers: Record<string, string> = { Accept: "text/x-component" };
+    if (contentType) headers["Content-Type"] = contentType;
+    return handleLoaderFetch(
+      createMockHandlerCtx(),
+      new Request(url.href, { method: "POST", headers, body }),
+      {},
+      url,
+      {},
+    );
+  };
+
+  it.each([
+    ['{"id":"1"}', { id: "1" }],
+    ['{"id":"","q":"a b"}', { id: "", q: "a b" }],
+    ["{}", {}],
+  ])("a GET with %s reaches the loader", async (params, expected) => {
+    const res = await get(params);
+    expect(res.status).toBe(200);
+    expect(capturedCtx.params).toEqual(expected);
+  });
+
+  it.each([
+    ['{"id":1}'],
+    ['{"id":null}'],
+    ['{"id":{"a":"b"}}'],
+    ['{"id":["a"]}'],
+    ['{"__proto__":"x"}'],
+    ['{"__proto__":{"id":"x"}}'],
+    ['{"constructor":"x"}'],
+    ['{"prototype":"x"}'],
+    ['["a"]'],
+    ['"a"'],
+    ["1"],
+    ["null"],
+  ])("a GET with %s is a 400 and never runs the loader", async (params) => {
+    const res = await get(params);
+    expect(res.status).toBe(400);
+    expect(await res.text()).toMatch(/^Invalid loader params/);
+    expect(capturedCtx).toBeNull();
+  });
+
+  it("a JSON POST checks params the same way", async () => {
+    const ok = await post(
+      JSON.stringify({ params: { id: "1" }, body: { n: 1 } }),
+      "application/json",
+    );
+    expect(ok.status).toBe(200);
+    expect(capturedCtx.params).toEqual({ id: "1" });
+    expect(capturedCtx.body).toEqual({ n: 1 });
+
+    capturedCtx = null;
+    for (const params of [{ id: 1 }, { constructor: "x" }, "x", ["a"]]) {
+      const res = await post(JSON.stringify({ params }), "application/json");
+      expect(res.status).toBe(400);
+      expect(capturedCtx).toBeNull();
+    }
+  });
+
+  it("a multipart POST checks params the same way", async () => {
+    const form = (params: string) => {
+      const fd = new FormData();
+      fd.set("_rsc_loader_params", params);
+      fd.set("file", "content");
+      return fd;
+    };
+    const ok = await post(form('{"id":"1"}'));
+    expect(ok.status).toBe(200);
+    expect(capturedCtx.params).toEqual({ id: "1" });
+
+    capturedCtx = null;
+    const bad = await post(form('{"__proto__":"x"}'));
+    expect(bad.status).toBe(400);
+    expect(capturedCtx).toBeNull();
+  });
+});

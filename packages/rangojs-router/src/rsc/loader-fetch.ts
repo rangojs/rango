@@ -12,6 +12,7 @@
  */
 
 import { requestHeaders } from "../server/request-headers.js";
+import { FORBIDDEN_KEYS } from "../context-var.js";
 import { getLoaderLazy } from "../server/loader-registry.js";
 import { isDataNotFoundError } from "../errors.js";
 import { executeLoaderMiddleware } from "../router/middleware.js";
@@ -183,6 +184,15 @@ export async function handleLoaderFetch<TEnv>(
     }
   }
 
+  // The params become ctx.params, so they hold what a route param can: string
+  // keys and string values, never a reserved key (#1109).
+  if (!isLoaderParams(loaderParams)) {
+    return createResponseWithMergedHeaders(
+      `Invalid loader params: expected an object of string values without the reserved keys ${[...FORBIDDEN_KEYS].join(", ")}`,
+      { status: 400 },
+    );
+  }
+
   // Execute the loader with middleware.
   // finalizeResponse drains onResponse callbacks that middleware short-circuits
   // may leave behind (executeLoaderMiddleware does not finalize them itself).
@@ -303,4 +313,17 @@ export async function handleLoaderFetch<TEnv>(
       "[RSC] Loader error:",
     );
   }
+}
+
+function isLoaderParams(value: unknown): value is Record<string, string> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  for (const key of Object.keys(value)) {
+    if (FORBIDDEN_KEYS.has(key)) return false;
+    if (typeof (value as Record<string, unknown>)[key] !== "string") {
+      return false;
+    }
+  }
+  return true;
 }

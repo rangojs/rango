@@ -634,3 +634,74 @@ describe("React elements in a loader container (#942)", () => {
     expect(r.hasHole).toBe(true);
   });
 });
+
+// Loader data parsed from JSON can carry an own `__proto__` key, and its own
+// keys can be named like Object.prototype members. A copy keeps them own data
+// and keeps Object.prototype as the copy's prototype: an assignment
+// `out.__proto__ = v` set the copy's prototype instead, which Flight refuses
+// to serialize, and `key in recorded` read inherited members (#1109).
+describe("copies of loader data with keys named like Object.prototype members", () => {
+  const withProtoKey = () =>
+    JSON.parse('{"__proto__":{"admin":true},"name":"n"}') as Record<
+      string,
+      unknown
+    >;
+  const expectPlainCopy = (out: unknown, own: unknown) => {
+    expect(Object.getPrototypeOf(out)).toBe(Object.prototype);
+    expect(Object.getOwnPropertyDescriptor(out, "__proto__")).toEqual({
+      value: own,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+    expect((out as Record<string, unknown>).admin).toBeUndefined();
+  };
+
+  it("maskNestedContainerThenables keeps an own __proto__ key", () => {
+    const value = withProtoKey();
+    value.later = never();
+    const out = maskNestedContainerThenables(value);
+    expect(out).not.toBe(value);
+    expectPlainCopy(out, { admin: true });
+  });
+
+  it("elideLoaderContainer keeps an own __proto__ key", async () => {
+    const value = withProtoKey();
+    value.later = never();
+    const r = await elideLoaderContainer(value);
+    expect(r.state).toBe("ok");
+    if (r.state !== "ok") return;
+    expect(r.value).not.toBe(value);
+    expectPlainCopy(r.value, { admin: true });
+  });
+
+  it("overlayLoaderContainer fills an own __proto__ key's hole", () => {
+    const recorded = JSON.parse(
+      `{"__proto__":{"${LOADER_HOLE_KEY}":1},"name":"n"}`,
+    );
+    const fresh = JSON.parse('{"__proto__":{"admin":true},"name":"n"}');
+    const out = overlayLoaderContainer(fresh, recorded);
+    expectPlainCopy(out, { admin: true });
+  });
+
+  it("overlayLoaderContainer copies fresh keys named like Object.prototype members", () => {
+    const recorded = { name: { [LOADER_HOLE_KEY]: 1 } };
+    const fresh = { name: "n", toString: "t", constructor: "c" };
+    expect(overlayLoaderContainer(fresh, recorded)).toEqual(fresh);
+
+    const withProto = JSON.parse('{"name":"n","__proto__":{"admin":true}}');
+    expectPlainCopy(overlayLoaderContainer(withProto, recorded), {
+      admin: true,
+    });
+  });
+
+  it("overlayLoaderContainer reads a missing fresh key as undefined, not an inherited member", () => {
+    const recorded = { constructor: { [LOADER_HOLE_KEY]: 1 }, name: "n" };
+    const out = overlayLoaderContainer({ name: "n" }, recorded) as Record<
+      string,
+      unknown
+    >;
+    expect(Object.hasOwn(out, "constructor")).toBe(true);
+    expect(out.constructor).toBeUndefined();
+  });
+});

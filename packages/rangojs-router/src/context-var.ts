@@ -125,8 +125,15 @@ export function contextGet(
   return variables[keyOrVar.key];
 }
 
-/** Keys that must never be used as string variable names */
-const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+/**
+ * Keys that must never be used as string variable names, nor as a fetchable
+ * loader's request params (rsc/loader-fetch.ts).
+ */
+export const FORBIDDEN_KEYS: ReadonlySet<string> = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+]);
 
 export interface ContextSetOptions {
   /**

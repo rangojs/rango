@@ -271,7 +271,9 @@ function insertSegments(
   const segment = segments[index];
 
   if (segment.type === "static") {
-    if (!node.s) node.s = {};
+    // Null prototype: a segment named `constructor` or `__proto__` is an own
+    // key, never an inherited member to descend into and write a leaf on.
+    if (!node.s) node.s = Object.create(null) as Record<string, TrieNode>;
     if (!node.s[segment.value]) node.s[segment.value] = {};
     insertSegments(
       node.s[segment.value],

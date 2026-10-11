@@ -510,3 +510,57 @@ describe("ensureRouterManifest lazy loading", () => {
     expect(getRouterTrie("cleared")).toBeUndefined();
   });
 });
+
+// A trie reaches the router as JSON (the build manifest) or across the dev
+// runner boundary, so its static-children maps arrive with Object.prototype
+// and a request segment such as `constructor` would read an inherited member
+// (#1109). Installing the trie gives every such map a null prototype in place.
+describe("installed trie static-children maps", () => {
+  const trieJson = JSON.stringify(
+    buildRouteTrie(
+      {
+        about: "/about",
+        post: "/blog/:id/comments",
+        file: "/files/:name.js/raw",
+        ctor: "/constructor",
+      },
+      { about: "/about", post: "/blog", file: "/files", ctor: "/constructor" },
+    ),
+  );
+  const staticMaps = (node: TrieNode): object[] => {
+    const maps: object[] = [];
+    const visit = (n: TrieNode): void => {
+      if (n.s) {
+        maps.push(n.s);
+        for (const child of Object.values(n.s)) visit(child);
+      }
+      if (n.p) visit(n.p.c);
+      if (n.xp) for (const x of Object.values(n.xp)) visit(x.c);
+    };
+    visit(node);
+    return maps;
+  };
+
+  afterEach(() => clearAllRouterData());
+
+  it("ensureRouterManifest loads the JSON trie with null-prototype maps", async () => {
+    const trie = JSON.parse(trieJson) as TrieNode;
+    registerRouterManifestLoader("proto-lazy", () => Promise.resolve({ trie }));
+    await ensureRouterManifest("proto-lazy");
+    const loaded = getRouterTrie("proto-lazy")!;
+    expect(loaded).toBe(trie);
+    const maps = staticMaps(loaded);
+    expect(maps).toHaveLength(3);
+    for (const map of maps) expect(Object.getPrototypeOf(map)).toBeNull();
+    expect(loaded.s!.constructor).toBeDefined();
+    expect(loaded.s!.blog.s).toBeUndefined();
+    expect(loaded.s!.blog.p!.c.s!.toString).toBeUndefined();
+  });
+
+  it("setRouterTrie gives a plain-object trie null-prototype maps", () => {
+    setRouterTrie("proto-set", JSON.parse(trieJson) as TrieNode);
+    const maps = staticMaps(getRouterTrie("proto-set")!);
+    expect(maps).toHaveLength(3);
+    for (const map of maps) expect(Object.getPrototypeOf(map)).toBeNull();
+  });
+});
