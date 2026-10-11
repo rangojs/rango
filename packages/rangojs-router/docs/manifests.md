@@ -353,8 +353,9 @@ literal: `isUniversallySkippedScanDir` in `scan-filter.ts` is the one predicate
 `findTsFiles`, `findRouterFiles` and `findHostRouterFiles` all build on, so the watcher
 and the scans cannot drift apart. It names dot-directories, `node_modules`, `dist` and
 `coverage`. `build`, `__tests__` and `__mocks__` are not in the set: each is skipped by
-only one of the scans (`findTsFiles` skips `build`; the router scans skip the other two),
-and on Cloudflare the worker's module graph is empty until the first request, so an edit
+only one of the scans (`findTsFiles` skips `build` through `isSkippedSourceScanDir`, the
+rule the build loader pre-scan in `expose-internal-ids.ts` shares; the router scans skip
+the other two), and on Cloudflare the worker's module graph is empty until the first request, so an edit
 to a router or `urls()` module under one of them must still re-run discovery.
 
 A nested checkout under `.claude/worktrees/` or a tool's working copy can no longer reload
