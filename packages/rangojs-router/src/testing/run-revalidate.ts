@@ -13,12 +13,14 @@
 import { evaluateRevalidation } from "../router/revalidation.js";
 import { runWithRequestContext } from "../server/request-context.js";
 import type { ResolvedSegment, ShouldRevalidateFn } from "../types.js";
-import { resolveTestActionId } from "./internal/action-id.js";
+import {
+  normalizeTestAction,
+  resolveTestActionId,
+  type ImportedAction,
+} from "./internal/action-id.js";
 import { createTestRequestContext } from "./internal/context.js";
 import type { VarsInit } from "./internal/seed-vars.js";
 import { toURL } from "./to-url.js";
-
-type ImportedAction = (...args: never[]) => unknown;
 
 type RevalidateArgs = Parameters<ShouldRevalidateFn<any, any>>[0];
 
@@ -91,10 +93,7 @@ export async function runRevalidate<TEnv = any>(
   const nextUrl = toURL(opts.nextUrl, currentUrl);
   const currentParams = opts.currentParams ?? {};
   const nextParams = opts.nextParams ?? currentParams;
-  const action =
-    typeof opts.action === "function" || typeof opts.action === "string"
-      ? { ref: opts.action }
-      : opts.action;
+  const action = normalizeTestAction(opts.action);
   const method = opts.method ?? (action ? "POST" : "GET");
   const request = new Request(nextUrl, { method });
   const { ctx } = createTestRequestContext<TEnv>({

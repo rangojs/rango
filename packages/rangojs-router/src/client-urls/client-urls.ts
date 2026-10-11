@@ -387,6 +387,8 @@ function createHelpers(): ClientUrlHelpers {
         "clientUrls() loader() stream was replaced: use loader(Def, { ssr: false }) — the same knob as loading(fallback, { ssr: false }) — to await the loader before first flush on document requests.",
       );
     }
+    // Inline, not errors.ts assertBooleanOption: this module is in the
+    // client router chunk, where the helper costs 20 B gzip.
     if (options?.ssr !== undefined && typeof options.ssr !== "boolean") {
       throw new Error(
         `clientUrls() loader() ssr must be a boolean (got ${JSON.stringify(options.ssr)}). Omit it (or pass true) to stream on every render.`,

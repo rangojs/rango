@@ -289,6 +289,13 @@ export interface SerializeClientUrlPatternsOptions {
   readonly hoisted?: boolean;
 }
 
+function indicesWhere<T>(
+  items: readonly T[],
+  pred: (item: T) => boolean,
+): number[] {
+  return items.flatMap((item, index) => (pred(item) ? [index] : []));
+}
+
 function serializeRoute(
   route: ClientUrlRouteRecord,
   options: SerializeClientUrlPatternsOptions,
@@ -318,12 +325,14 @@ function serializeRoute(
     }),
   );
 
-  const awaitedLoaderIndices = route.loaders
-    .map(({ ssr }, index) => (ssr === false ? index : -1))
-    .filter((index) => index >= 0);
-  const deferrableLoaderIndices = route.loaders
-    .map(({ prefetch }, index) => (prefetch === false ? index : -1))
-    .filter((index) => index >= 0);
+  const awaitedLoaderIndices = indicesWhere(
+    route.loaders,
+    ({ ssr }) => ssr === false,
+  );
+  const deferrableLoaderIndices = indicesWhere(
+    route.loaders,
+    ({ prefetch }) => prefetch === false,
+  );
 
   const transition = serializeTransition(route);
   return Object.freeze({

@@ -9,6 +9,7 @@ import { AuditedOutletProvider, OutletProvider } from "./outlet-provider.js";
 import { withOptimisticCommitNone } from "./browser/optimistic-commit.js";
 import { MountContextProvider } from "./browser/react/mount-context.js";
 import type { ResolvedSegment, RootLayoutProps } from "./types.js";
+import { isRenderableLoading } from "./types/boundaries.js";
 import { isPlaceholder } from "./types/segments.js";
 import { decodeLoaderResults } from "./decode-loader-results.js";
 import { LoaderRedirect } from "./loader-redirect.js";
@@ -62,15 +63,6 @@ function segDebugLog(msg: string, details?: Record<string, unknown>): void {
 // compiles against any supported React and degrades to a no-op boundary.
 const ReactViewTransition: any =
   "ViewTransition" in React ? (React as any).ViewTransition : null;
-
-// A loading skeleton is renderable only when it is a real ReactNode value.
-// `false` is treated as "not renderable" here. This is the three-term gate;
-// the distinct two-term gate at the LoaderBoundary site deliberately treats
-// `false` as "create a boundary without a RouteContentWrapper"
-// (tree-structure.md), so it must NOT use this helper.
-function isRenderableLoading(loading: ReactNode): boolean {
-  return loading !== undefined && loading !== null && loading !== false;
-}
 
 // Exported for unit testing the no-parallel fast path (D6); internal otherwise.
 export function restoreParallelLoaderMarkers(

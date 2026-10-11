@@ -1,3 +1,4 @@
+import { LOADER_SEGMENT_ID } from "../browser/react/filter-segment-order.js";
 import type { HandleData } from "../server/handle-store.js";
 
 /**
@@ -43,8 +44,6 @@ export function withoutPushedBy(data: HandleData): HandleData {
   return out;
 }
 
-const LOADER_SEGMENT = /D\d+\./;
-
 type PushedBy = readonly (string | null)[] | undefined;
 
 const keysOf = (a: object | undefined, b: object | undefined): Set<string> =>
@@ -74,7 +73,8 @@ export function mergePartialHandleData(
 ): HandleData {
   // A run's key: a segment's id for its handler, `${segmentId}\0${$$id}` for
   // a loader (its segment id with the `D${index}.` marker replaced).
-  const runKey = (id: string): string => id.replace(LOADER_SEGMENT, "\u0000");
+  const runKey = (id: string): string =>
+    id.replace(LOADER_SEGMENT_ID, "\u0000");
   const inOrder = new Set(segmentOrder);
   const registered = new Set(matched.map(runKey));
   const ran = new Set(resolvedIds?.map(runKey));

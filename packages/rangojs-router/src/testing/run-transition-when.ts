@@ -22,7 +22,11 @@ import {
   resolveNavigationState,
 } from "../browser/history-state.js";
 import { isLocationStateEntry } from "../browser/react/location-state-shared.js";
-import { resolveTestActionId } from "./internal/action-id.js";
+import {
+  normalizeTestAction,
+  resolveTestActionId,
+  type ImportedAction,
+} from "./internal/action-id.js";
 import type {
   RouteLocation,
   TransitionConfig,
@@ -30,8 +34,6 @@ import type {
   TransitionWhenFn,
   TransitionWhenKind,
 } from "../types/segments.js";
-
-type ImportedAction = (...args: never[]) => unknown;
 
 /** A navigation side: a URL, or a partial RouteLocation. */
 export type RunTransitionWhenLocation =
@@ -105,10 +107,7 @@ export function runTransitionWhen(
   whenOrConfig: TransitionWhenFn | TransitionConfig,
   opts: RunTransitionWhenOptions = {},
 ): RunTransitionWhenResult {
-  const actionOption =
-    typeof opts.action === "function" || typeof opts.action === "string"
-      ? { ref: opts.action }
-      : opts.action;
+  const actionOption = normalizeTestAction(opts.action);
   const from = toLocation(opts.from, DEFAULT_URL);
   const context = createTransitionWhenContext({
     kind: opts.kind ?? (actionOption ? "action" : "push"),

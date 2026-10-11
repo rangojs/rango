@@ -1,3 +1,4 @@
+import { isLoaderSegmentId } from "../browser/react/filter-segment-order.js";
 import { requestHeaders } from "../server/request-headers.js";
 import type { RouteMatchResult } from "./pattern-matching.js";
 
@@ -145,7 +146,7 @@ export async function resolveNavigation(
 
   const filteredSegmentIds = clientSegmentIds.filter((id) => {
     if (id.includes(".@")) return false;
-    if (/D\d+\./.test(id)) return false;
+    if (isLoaderSegmentId(id)) return false;
     return true;
   });
 
