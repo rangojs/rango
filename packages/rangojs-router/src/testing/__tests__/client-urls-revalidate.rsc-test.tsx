@@ -34,6 +34,7 @@ import { createRouter, urls } from "../../index.rsc.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
 import group from "./fixtures/client-urls-revalidate.js";
 import {
+  FlakyLoader,
   ServerAlwaysLoader,
   ServerDefaultLoader,
   ServerNeverLoader,
@@ -50,10 +51,13 @@ const SCOPE_ACTION = "src/shop.actions.ts#scopeAction";
 const BREAK_ACTION = "src/shop.actions.ts#breakAction";
 
 const errors: string[] = [];
+/** What onError was told about each error: the phase and whether partial. */
+const reports: { phase: string; isPartial: boolean | undefined }[] = [];
 
 const router = createRouter({
-  onError: ({ error }) => {
+  onError: ({ error, phase, isPartial }) => {
     errors.push(error instanceof Error ? error.message : String(error));
+    reports.push({ phase, isPartial });
   },
 }).routes(
   urls(({ path, layout, middleware, include, loader, revalidate }) => [
@@ -66,6 +70,12 @@ const router = createRouter({
         }),
         path("/", () => <p>home</p>, { name: "home" }),
         include("/shop", group, { name: "shop" }),
+        path(
+          "/stock",
+          () => <p>stock</p>,
+          { name: "stock" },
+          () => [loader(FlakyLoader)],
+        ),
         path(
           "/constant",
           () => <p>constant</p>,
@@ -86,8 +96,9 @@ const router = createRouter({
  * group's loader errors reach one.
  */
 const boundedRouter = createRouter({
-  onError: ({ error }) => {
+  onError: ({ error, phase, isPartial }) => {
     errors.push(error instanceof Error ? error.message : String(error));
+    reports.push({ phase, isPartial });
   },
 }).routes(
   urls(({ layout, errorBoundary, include }) => [
@@ -151,6 +162,7 @@ beforeEach(async () => {
   resetRuns();
   flaky.failing = false;
   errors.length = 0;
+  reports.length = 0;
   await resetShellTestState();
 });
 
@@ -360,9 +372,10 @@ describe("clientUrls() loader that fails on its rerun after an action", () => {
     // The action ran and returned.
     expect(returnValue).toEqual({ ok: true, data: { saved: true } });
     expect(loaders).toEqual([
-      // No errorBoundary() above the route: no fallback, so the browser's
-      // commit of this revalidation fails and the action call rejects. A
-      // build redacts the message; onError gets the error itself.
+      // No errorBoundary() above the route: no fallback. The loader throws
+      // at its read in the browser, the nearest React boundary catches it,
+      // and the action call resolves (below). A build redacts the message;
+      // onError gets the error itself.
       expect.objectContaining({
         __loaderResult: true,
         ok: false,
@@ -377,6 +390,8 @@ describe("clientUrls() loader that fails on its rerun after an action", () => {
       },
     ]);
     expect(errors).toEqual(["stock service unavailable"]);
+    // Reported as a loader error of a partial (revalidation) render.
+    expect(reports).toEqual([{ phase: "loader", isPartial: true }]);
     expect({ flaky: count("flaky"), data: count("flaky-data") }).toEqual({
       flaky: 1,
       data: 1,
@@ -393,5 +408,71 @@ describe("clientUrls() loader that fails on its rerun after an action", () => {
     expect(loaders[0]).toMatchObject({ ok: false });
     expect((loaders[0] as { fallback: unknown }).fallback).not.toBeNull();
     expect(result.flight).toContain("The page failed to load");
+  });
+});
+
+/**
+ * The call's answer, as the browser's action bridge reads the response
+ * (serveShellRequest's readAction): the action resolves with its result, and
+ * useAction(action).revalidationError reports the loader that threw. The
+ * loader's entry rides to its read site, where it throws in place.
+ */
+describe("a loader that fails on its rerun after an action: the call's answer", () => {
+  const breakCall = (segments: string[]): ServeShellRequestOptions => ({
+    action: { ref: breakAction, id: BREAK_ACTION, args: [], segments },
+  });
+
+  for (const [name, target, url] of [
+    ["clientUrls() route", router, "/shop/flaky"],
+    [
+      "clientUrls() route under an errorBoundary()",
+      boundedRouter,
+      "/shop/flaky",
+    ],
+    ["urls() route", router, "/stock"],
+  ] as const) {
+    it(`${name}: the call resolves with the action's result and reports revalidationError`, async () => {
+      const { serve, standingOn } = setup(target);
+      const held = await standingOn(url);
+
+      const answer = await (await serve(url, breakCall(held))).readAction();
+      expect(answer).toEqual({
+        ok: true,
+        result: { saved: true },
+        revalidationError: expect.objectContaining({
+          message: "An error occurred",
+        }),
+      });
+      expect(errors).toEqual(["stock service unavailable"]);
+      expect(reports).toEqual([{ phase: "loader", isPartial: true }]);
+    });
+  }
+
+  it("a later action whose rerun succeeds reports nothing", async () => {
+    const { serve, standingOn } = setup();
+    const held = await standingOn("/shop/flaky");
+    await serve("/shop/flaky", breakCall(held));
+
+    flaky.failing = false;
+    const answer = await (
+      await serve("/shop/flaky", {
+        action: {
+          ref: resultAction,
+          id: RESULT_ACTION,
+          args: [true],
+          segments: held,
+        },
+      })
+    ).readAction();
+    expect(answer).toMatchObject({ ok: true, revalidationError: null });
+  });
+
+  it("a request that is not an action has no answer", async () => {
+    const { serve } = setup();
+    expect(
+      await (
+        await serve("/shop/flaky", { partial: { from: "/" } })
+      ).readAction(),
+    ).toBeUndefined();
   });
 });

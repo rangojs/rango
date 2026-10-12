@@ -18,6 +18,7 @@ import {
   useRevealAudit,
 } from "./suspense-audit-react.js";
 import { SETTLED_THENABLE } from "./thenable-status.js";
+import { shallowEqual } from "./browser/react/shallow-equal.js";
 
 /**
  * Router-owned error boundary for read-site loader errors. segment-system
@@ -40,12 +41,12 @@ import { SETTLED_THENABLE } from "./thenable-status.js";
  * Errors without any marker rethrow to the app's own boundaries.
  */
 export class StreamedLoaderErrorBoundary extends Component<
-  { children: ReactNode; resetKey?: string },
-  { error: unknown; resetKey?: string }
+  { children: ReactNode; reset: unknown[] },
+  { error: unknown; reset: unknown[] }
 > {
-  state: { error: unknown; resetKey?: string } = {
+  state: { error: unknown; reset: unknown[] } = {
     error: null,
-    resetKey: this.props.resetKey,
+    reset: this.props.reset,
   };
 
   static getDerivedStateFromError(error: unknown): { error: unknown } {
@@ -54,20 +55,21 @@ export class StreamedLoaderErrorBoundary extends Component<
 
   /**
    * A caught marker (redirect, notFound, error fallback) belongs to ONE route
-   * + params. Group-keyed segments (ResolvedSegment.clientGroup) keep this
-   * instance alive across in-group navigations, so the error must clear when
-   * the route or params change — otherwise a redirect caught for /legacy
-   * keeps rendering LoaderRedirect for /state. `resetKey` is the segment's
-   * id-params identity, the cadence the per-route remount used to provide.
+   * + params and ONE delivery of the segment's loader data. `reset` is the
+   * segment's id-params identity followed by each of its loaders' data; the
+   * error clears when any of them changes. Group-keyed segments
+   * (ResolvedSegment.clientGroup) keep this instance alive across in-group
+   * navigations, so a redirect caught for /legacy must not keep rendering
+   * LoaderRedirect for /state. A rerun hands a loader new data, a held loader
+   * keeps its own: a later action or navigation that re-ran the loader clears
+   * an error fallback left by an earlier failure, and a tree that re-ran
+   * nothing here keeps it.
    */
   static getDerivedStateFromProps(
-    props: { resetKey?: string },
-    state: { error: unknown; resetKey?: string },
-  ): { error: unknown; resetKey?: string } | null {
-    if (props.resetKey !== state.resetKey) {
-      return { error: null, resetKey: props.resetKey };
-    }
-    return null;
+    { reset }: { reset: unknown[] },
+    state: { reset: unknown[] },
+  ): { error: null; reset: unknown[] } | null {
+    return shallowEqual(reset, state.reset) ? null : { error: null, reset };
   }
 
   render(): ReactNode {

@@ -694,24 +694,36 @@ For a recoverable "already gone" case, return a result the form can show
 ### A loader that fails on the revalidation render
 
 A loader that throws while it reruns after the action does not undo the
-action, which has already run and returned. What follows depends on the route:
+action, which has already run and returned. It behaves as on a navigation, on
+every route, called directly or from `<form action>`, `useActionState` or
+`useTransition`:
 
-- **No `loading()` on the route (and any `clientUrls()` route):** the action
-  call rejects with the loader's error, nothing of that revalidation commits,
-  and the page keeps its data and its React state. A `<form action>`,
-  `useActionState` or `useTransition` call hands that rejection to the nearest
-  React error boundary above the form.
-- **A `urls()` route with `loading()`:** the call resolves with the action's
-  result, the page renders, and the loader's read throws to the nearest React
-  error boundary.
-- **An `errorBoundary()` above the route:** its fallback replaces the route.
+- The call resolves with the action's result.
+- The loader throws in place, at its `useLoader` read, and the nearest
+  boundary to the read catches it: your own React error boundary around the
+  read, else the route's `errorBoundary()`, else the router's root one.
+  Everything outside that boundary keeps its React state; loaders that reran
+  without error commit their new data.
+- The error goes to `onError` on the server (phase `"loader"`) and to
+  `useAction(action).revalidationError` in the browser (`error` stays `null`,
+  `result` is set).
+- A later rerun that succeeds clears an `errorBoundary()` fallback. Your own
+  boundary resets by its own rule: key it on data that reruns with the loader
+  and is read outside the boundary.
 
-For a failure the user can retry, return it from the loader as data
-(`{ ok: false, reason }`) and render it where the data goes. A failure returned
-as data is a value like any other, so a `cache()` on the loader (or a `ppr`
-bake, or a prerender) stores and serves it; a thrown error is never stored.
-See `/client-urls` → "A loader that fails on its rerun" for the table and an
-example.
+`notFound()` and `redirect()` from the loader keep their path: a `redirect()`
+replaces the route's content and navigates, and the layouts keep their
+instance. Every refetch the router runs for an action follows the same rule
+(after several actions at once, after a navigation during it), and the action
+that ran it reports the loader's error as its `revalidationError`. Not
+covered yet: an `intercept()`'s loaders, and a parallel slot's loaders under
+its own `loading()`. For a failure the user should see in place of the
+data without an error boundary, return it from the loader as data
+(`{ ok: false, reason }`) and render it where the data goes. A failure
+returned as data is a value like any other, so a `cache()` on the loader (or
+a `ppr` bake, or a prerender) stores and serves it; a thrown error is never
+stored. See `/client-urls` → "A loader that fails on its rerun" for the
+details and examples.
 
 ### Authorization in actions
 

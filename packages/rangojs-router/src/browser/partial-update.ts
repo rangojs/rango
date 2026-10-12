@@ -45,6 +45,7 @@ import { buildHistoryState } from "./history-state.js";
 import { addLocationState } from "./react/location-state-shared.js";
 import { isPlaceholder, type TransitionWhenKind } from "../types/segments.js";
 import { auditTreeCause, type TreeUpdateCause } from "../suspense-audit.js";
+import { revalidationErrorOf } from "../decode-loader-results.js";
 
 /**
  * Hold/animate decision for a commit: a non-intercept segment carries a
@@ -233,7 +234,9 @@ export type UpdateMode =
     };
 
 /**
- * Type for the fetchPartialUpdate function
+ * Type for the fetchPartialUpdate function. In `action` mode it resolves with
+ * the error of a loader that threw while it re-ran (revalidationErrorOf);
+ * the loader throws at its read.
  */
 export type PartialUpdater = (
   targetUrl: string,
@@ -242,7 +245,7 @@ export type PartialUpdater = (
   signal: AbortSignal | undefined,
   tx: BoundTransaction,
   mode?: UpdateMode,
-) => Promise<void>;
+) => Promise<Error | undefined>;
 
 export function createPartialUpdater(
   config: PartialUpdateConfig,
@@ -545,7 +548,7 @@ export function createPartialUpdater(
     signal: AbortSignal | undefined,
     tx: BoundTransaction,
     mode: UpdateMode = { type: "navigate" },
-  ): Promise<void> {
+  ): Promise<Error | undefined> {
     const segmentState = store.getSegmentState();
     const url = targetUrl || window.location.href;
 
@@ -1229,6 +1232,7 @@ export function createPartialUpdater(
       if (holes) await fillHoles(holes, signal, url, gatedOff);
 
       debugLog("[Browser] Navigation complete");
+      if (mode.type === "action") return revalidationErrorOf(serverSegments);
       return;
     } else {
       console.warn(`[Browser] Full update (fallback)`);
@@ -1308,6 +1312,9 @@ export function createPartialUpdater(
         onUpdate(fullUpdate);
       }
 
+      // This render streamed its loaders (no isAction); the pending action
+      // call waits for them only to report, as the partial lane's commit does.
+      if (mode.type === "action") return revalidationErrorOf(segments);
       return;
     }
   }

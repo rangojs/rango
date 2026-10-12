@@ -162,7 +162,23 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // its shadow graph are build-side and cost the chunk nothing. One 128B step:
 // main sat 148B under the old limit, and #1137 took ~124B. Measured on top of
 // #1137 (2abd2527a) with the review fixes: 49601B.
-const ROUTER_CHUNK_GZIP_MAX = 48 * 1024 + 512;
+//
+// Raised 48.5KB -> 48.875KB on 2026-10-13 for dc-t28 (#1129), measured on
+// main ae761c590 49602B -> 50037B (+435B gzip), in two parts, as the user
+// decided for #1129 (dc-c155): split them, and keep useAction in both apps'
+// action-failure fixtures. Router code +154B: a loader that throws on an
+// action's revalidation throws at its read (segment-system.tsx
+// buildLoaderStreams inPlace on the action lane, a loader redirect() kept in
+// the route's content), useAction reports it as revalidationError
+// (decode-loader-results.ts revalidationErrorOf, the bridge, partial-update.ts
+// action mode, event-controller.ts), and StreamedLoaderErrorBoundary resets
+// on its segment's and its ancestors' loader data. None of it can load
+// lazily: it runs in the action commit. The other +281B is not router code:
+// cloudflare-basic's action-failure fixture imports useAction for the first
+// time (the chunk drops it in an app that never calls it), to pin
+// revalidationError in both apps. useAction's getActionId guidance became
+// dev-only in the same change (about 225B less for every app calling it).
+const ROUTER_CHUNK_GZIP_MAX = 48 * 1024 + 896;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

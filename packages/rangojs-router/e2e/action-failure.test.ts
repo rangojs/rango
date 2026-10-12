@@ -15,10 +15,18 @@ const OPTIONS = {
 
 test.describe("loader failure after an action", () => {
   const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
-  runActionFailureTests({ url: (pathname) => f.url(pathname), ...OPTIONS });
+  runActionFailureTests({
+    url: (pathname) => f.url(pathname),
+    production: false,
+    ...OPTIONS,
+  });
 });
 
 test.describe("loader failure after an action (production)", () => {
   const f = useFixture({ root: "./e2e/test-app", mode: "build" });
-  runActionFailureTests({ url: (pathname) => f.url(pathname), ...OPTIONS });
+  runActionFailureTests({
+    url: (pathname) => f.url(pathname),
+    production: true,
+    ...OPTIONS,
+  });
 });

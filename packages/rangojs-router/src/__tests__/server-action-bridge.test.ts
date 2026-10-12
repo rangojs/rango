@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createEventController } from "../browser/event-controller";
 import { createServerActionBridge } from "../browser/server-action-bridge";
+import { renderSegments } from "../segment-system";
+import { LoaderStore } from "../loader-store";
+import { Defer } from "../browser/defer";
 
 function createMockStore() {
   return {
@@ -266,8 +269,9 @@ describe("server-action-bridge redirect payload validation", () => {
 });
 
 describe("server-action-bridge revalidation render failure", () => {
-  // A loader that throws on its rerun leaves an error entry with no fallback;
-  // the action commit's renderSegments rejects, and the call rejects with it.
+  // The action commit's renderSegments rejects (a segment that failed to
+  // build); the call rejects with it. A loader that throws on its rerun does
+  // not get here: it throws at its read (below).
   it("records the rejection as the action's error", async () => {
     stubWindow();
     vi.stubGlobal(
@@ -322,5 +326,451 @@ describe("server-action-bridge revalidation render failure", () => {
         error: renderError,
       }),
     );
+  });
+});
+
+describe("server-action-bridge loader that fails on its rerun", () => {
+  // The action ran and returned; a loader it revalidates threw. The commit is
+  // built by the real renderSegments, whose action lane hands the failed
+  // entry to its read site instead of decoding it in the build: the call
+  // resolves with the action's result, the commit carries the server's entry
+  // (the loader throws in place at its useLoader read), the page holds the
+  // loader as after any rerun, and useAction reports the failure apart from
+  // `error`.
+  it("resolves the call, commits the failed entry for its read site, and reports revalidationError", async () => {
+    stubWindow();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 200 })),
+    );
+    const route = { id: "R0", type: "route", component: "div" };
+    const held = {
+      id: "R0D0.stock",
+      type: "loader",
+      loaderId: "stock",
+      loaderData: Promise.resolve({
+        __loaderResult: true,
+        ok: true,
+        data: "stock:1",
+      }),
+    };
+    const failed = {
+      ...held,
+      loaderData: Promise.resolve({
+        __loaderResult: true,
+        ok: false,
+        error: { message: "stock service unavailable" },
+        fallback: null,
+      }),
+    };
+    const store = {
+      ...createMockStore(),
+      getHistoryKey: vi.fn(() => "/"),
+      getCachedSegments: vi.fn(() => ({
+        segments: [route, held],
+        stale: false,
+      })),
+      setSegmentIds: vi.fn(),
+      cacheSegmentsForHistory: vi.fn(),
+      rememberDisplayedEntry: vi.fn(),
+      getHistoryEntryMemory: vi.fn(() => undefined),
+      getRouterId: vi.fn(() => undefined),
+    };
+    const eventController = createEventController();
+    const setServerCallback = vi.fn();
+    const rendered: unknown[][] = [];
+    const onUpdate = vi.fn();
+    createServerActionBridge({
+      store: store as any,
+      client: {} as any,
+      eventController,
+      deps: {
+        createTemporaryReferenceSet: vi.fn(() => ({})),
+        encodeReply: vi.fn(async () => ""),
+        createFromFetch: vi.fn(async () => ({
+          metadata: {
+            pathname: "/",
+            segments: [route, failed],
+            matched: ["R0", "R0D0.stock"],
+            diff: ["R0", "R0D0.stock"],
+            resolvedIds: ["R0", "R0D0.stock"],
+            isPartial: true,
+          },
+          returnValue: { ok: true, data: "saved" },
+        })),
+        setServerCallback,
+      } as any,
+      onUpdate,
+      renderSegments: async (segments: any[], options: any) => {
+        rendered.push(segments);
+        return renderSegments(segments, options);
+      },
+    }).register();
+
+    await expect(
+      setServerCallback.mock.calls[0]![0]("hash#save", []),
+    ).resolves.toBe("saved");
+
+    expect(rendered[0]![1]).toBe(failed);
+    expect(store.cacheSegmentsForHistory.mock.calls[0]![1][1]).toBe(failed);
+    expect(store.setSegmentIds).toHaveBeenCalledWith(["R0", "R0D0.stock"]);
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() =>
+      expect(eventController.getActionState("save")).toMatchObject({
+        state: "idle",
+        error: null,
+        result: "saved",
+        revalidationError: expect.objectContaining({
+          message: "stock service unavailable",
+        }),
+      }),
+    );
+  });
+
+  it("reports no revalidationError for a notFound() signal or a rerun that succeeds", async () => {
+    stubWindow();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 200 })),
+    );
+    const route = { id: "R0", type: "route", component: "div" };
+    const loader = (id: string, entry: unknown) => ({
+      id: `R0D${id}`,
+      type: "loader",
+      loaderId: id,
+      loaderData: Promise.resolve(entry),
+    });
+    const segments = [
+      route,
+      loader("0.stock", { __loaderResult: true, ok: true, data: 1 }),
+      loader("1.item", {
+        __loaderResult: true,
+        ok: false,
+        notFound: true,
+        error: { message: "gone" },
+        fallback: null,
+      }),
+    ];
+    const store = {
+      ...createMockStore(),
+      getHistoryKey: vi.fn(() => "/"),
+      getCachedSegments: vi.fn(() => ({ segments, stale: false })),
+      setSegmentIds: vi.fn(),
+      cacheSegmentsForHistory: vi.fn(),
+      rememberDisplayedEntry: vi.fn(),
+      getHistoryEntryMemory: vi.fn(() => undefined),
+      getRouterId: vi.fn(() => undefined),
+    };
+    const eventController = createEventController();
+    const setServerCallback = vi.fn();
+    createServerActionBridge({
+      store: store as any,
+      client: {} as any,
+      eventController,
+      deps: {
+        createTemporaryReferenceSet: vi.fn(() => ({})),
+        encodeReply: vi.fn(async () => ""),
+        createFromFetch: vi.fn(async () => ({
+          metadata: {
+            pathname: "/",
+            segments,
+            matched: segments.map((s) => s.id),
+            diff: segments.map((s) => s.id),
+            isPartial: true,
+          },
+          returnValue: { ok: true, data: "saved" },
+        })),
+        setServerCallback,
+      } as any,
+      onUpdate: vi.fn(),
+      renderSegments,
+    }).register();
+
+    await expect(
+      setServerCallback.mock.calls[0]![0]("hash#save", []),
+    ).resolves.toBe("saved");
+    await vi.waitFor(() =>
+      expect(eventController.getActionState("save")).toMatchObject({
+        state: "idle",
+        result: "saved",
+        revalidationError: null,
+      }),
+    );
+  });
+});
+
+describe("server-action-bridge action on a page with a prefetch: false hole", () => {
+  // The page adopted a prefetch: false prefetch and its fill has not landed:
+  // one loader is a hole (browser/partial-update.ts armHoles). An action that
+  // revalidates a sibling loader, which throws, commits without waiting for
+  // the hole: the action lane leaves a placeholder for its read site
+  // (dc-d141: no router wait), and the report skips it.
+  it("commits and resolves while the hole is still pending", async () => {
+    stubWindow();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 200 })),
+    );
+    const route = { id: "R0", type: "route", component: "div" };
+    const held = {
+      id: "R0D0.stock",
+      type: "loader",
+      loaderId: "stock",
+      loaderData: Promise.resolve({
+        __loaderResult: true,
+        ok: true,
+        data: "stock:1",
+      }),
+    };
+    const hole = {
+      id: "R0D1.price",
+      type: "loader",
+      loaderId: "price",
+      deferred: true,
+      loaderData: new Defer<unknown>(),
+    };
+    const failed = {
+      ...held,
+      loaderData: Promise.resolve({
+        __loaderResult: true,
+        ok: false,
+        error: { message: "stock service unavailable" },
+        fallback: null,
+      }),
+    };
+    const store = {
+      ...createMockStore(),
+      loaders: new LoaderStore(),
+      getHistoryKey: vi.fn(() => "/"),
+      getCachedSegments: vi.fn(() => ({
+        segments: [route, held, hole],
+        stale: false,
+      })),
+      setSegmentIds: vi.fn(),
+      cacheSegmentsForHistory: vi.fn(),
+      rememberDisplayedEntry: vi.fn(),
+      getHistoryEntryMemory: vi.fn(() => undefined),
+      getRouterId: vi.fn(() => undefined),
+    };
+    const eventController = createEventController();
+    const setServerCallback = vi.fn();
+    const onUpdate = vi.fn();
+    createServerActionBridge({
+      store: store as any,
+      client: {} as any,
+      eventController,
+      deps: {
+        createTemporaryReferenceSet: vi.fn(() => ({})),
+        encodeReply: vi.fn(async () => ""),
+        createFromFetch: vi.fn(async () => ({
+          metadata: {
+            pathname: "/",
+            segments: [route, failed],
+            matched: ["R0", "R0D0.stock", "R0D1.price"],
+            diff: ["R0", "R0D0.stock"],
+            resolvedIds: ["R0", "R0D0.stock"],
+            isPartial: true,
+          },
+          returnValue: { ok: true, data: "saved" },
+        })),
+        setServerCallback,
+      } as any,
+      onUpdate,
+      renderSegments,
+    }).register();
+
+    await expect(
+      setServerCallback.mock.calls[0]![0]("hash#save", []),
+    ).resolves.toBe("saved");
+    expect(hole.loaderData.status).toBe("pending");
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+    const committed = store.cacheSegmentsForHistory.mock.calls[0]![1];
+    expect(committed[1]).toBe(failed);
+    expect(committed[2]).toBe(hole);
+    await vi.waitFor(() =>
+      expect(eventController.getActionState("save")).toMatchObject({
+        revalidationError: expect.objectContaining({
+          message: "stock service unavailable",
+        }),
+      }),
+    );
+  });
+});
+
+describe("server-action-bridge concurrent actions whose loader fails on its rerun", () => {
+  const route = { id: "R0", type: "route", component: "div" };
+  const loader = (loaderData: Promise<unknown>) => ({
+    id: "R0D0.stock",
+    type: "loader",
+    loaderId: "stock",
+    loaderData,
+  });
+  const failure = (run: number) => ({
+    __loaderResult: true,
+    ok: false,
+    error: { message: `stock service unavailable (run ${run})` },
+    fallback: null,
+  });
+  const answer = (
+    run: number,
+    loaderData: Promise<unknown> = Promise.resolve(failure(run)),
+  ) => ({
+    pathname: "/",
+    segments: [route, loader(loaderData)],
+    matched: ["R0", "R0D0.stock"],
+    diff: ["R0", "R0D0.stock"],
+    resolvedIds: ["R0", "R0D0.stock"],
+    isPartial: true,
+  });
+
+  /**
+   * Two overlapping actions, "fast" and "slow": the fast one's answer lands
+   * while the slow one is still fetching (concurrent-skip), and the slow one
+   * consolidates with a refetch (partial-update.ts, action mode). The loader
+   * throws on each rerun. Built by the real renderSegments.
+   */
+  function setup(fastLoaderData?: Promise<unknown>) {
+    stubWindow();
+    let releaseSlow!: () => void;
+    const slowArrives = new Promise<void>((resolve) => {
+      releaseSlow = resolve;
+    });
+    let fetches = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        if (fetches++ === 1) await slowArrives;
+        return new Response(null, { status: 200 });
+      }),
+    );
+    const held = loader(
+      Promise.resolve({ __loaderResult: true, ok: true, data: "stock:1" }),
+    );
+    const payloads = [
+      {
+        metadata: answer(2, fastLoaderData),
+        returnValue: { ok: true, data: "fast" },
+      },
+      { metadata: answer(3), returnValue: { ok: true, data: "slow" } },
+    ];
+    const refetched = { ...answer(4), diff: ["R0D0.stock"] };
+    let segmentIds = ["R0", "R0D0.stock"];
+    const cache = new Map<string, { segments: unknown[]; stale: boolean }>([
+      ["/", { segments: [route, held], stale: false }],
+    ]);
+    const store = {
+      ...createMockStore(),
+      loaders: new LoaderStore(),
+      getSegmentState: vi.fn(() => ({
+        path: "/",
+        currentUrl: "http://localhost/",
+        currentSegmentIds: segmentIds,
+      })),
+      getHistoryKey: vi.fn(() => "/"),
+      setHistoryKey: vi.fn(),
+      getCachedSegments: vi.fn((key: string) => cache.get(key)),
+      cacheSegmentsForHistory: vi.fn((key: string, segments: unknown[]) => {
+        cache.set(key, { segments, stale: false });
+      }),
+      setSegmentIds: vi.fn((ids: string[]) => {
+        segmentIds = ids;
+      }),
+      setCurrentUrl: vi.fn(),
+      setPath: vi.fn(),
+      setInterceptSourceUrl: vi.fn(),
+      rememberDisplayedEntry: vi.fn(),
+      getHistoryEntryMemory: vi.fn(() => undefined),
+      getRouterId: vi.fn(() => undefined),
+    };
+    const fetchPartial = vi.fn(async () => ({
+      payload: { metadata: refetched },
+      streamComplete: Promise.resolve(),
+    }));
+    const eventController = createEventController();
+    const setServerCallback = vi.fn();
+    const rendered: unknown[][] = [];
+    const onUpdate = vi.fn();
+    createServerActionBridge({
+      store: store as any,
+      client: { fetchPartial } as any,
+      eventController,
+      deps: {
+        createTemporaryReferenceSet: vi.fn(() => ({})),
+        encodeReply: vi.fn(async () => ""),
+        createFromFetch: vi.fn(async (response: Promise<Response>) => {
+          const payload = payloads.shift();
+          await response;
+          return payload;
+        }),
+        setServerCallback,
+      } as any,
+      onUpdate,
+      renderSegments: async (segments: any[], options: any) => {
+        rendered.push(segments);
+        return renderSegments(segments, options);
+      },
+    }).register();
+    const call = setServerCallback.mock.calls[0]![0] as (
+      id: string,
+      args: unknown[],
+    ) => Promise<unknown>;
+    return {
+      fast: call("hash#fast", []),
+      slow: call("hash#slow", []),
+      releaseSlow,
+      refetched,
+      cache,
+      cacheSegmentsForHistory: store.cacheSegmentsForHistory,
+      fetchPartial,
+      rendered,
+      onUpdate,
+      eventController,
+    };
+  }
+
+  // Both calls resolve with their results, the consolidation refetch commits
+  // its failed entry for the read site, and the action that ran it reports
+  // the failure apart from `error`. The skipped answer is never rendered and
+  // reports nothing.
+  it("resolves both calls, commits the refetch's failed entry, and reports it to the consolidating action", async () => {
+    const t = setup();
+    await expect(t.fast).resolves.toBe("fast");
+    t.releaseSlow();
+    await expect(t.slow).resolves.toBe("slow");
+
+    // One commit, the refetch's, with its own loader entry.
+    expect(t.fetchPartial).toHaveBeenCalledTimes(1);
+    expect(t.rendered).toHaveLength(1);
+    expect(t.rendered[0]![1]).toBe(t.refetched.segments[1]);
+    expect(t.onUpdate).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(t.eventController.getActionState("fast")).toMatchObject({
+        state: "idle",
+        error: null,
+        result: "fast",
+        revalidationError: null,
+      });
+      expect(t.eventController.getActionState("slow")).toMatchObject({
+        state: "idle",
+        error: null,
+        result: "slow",
+        revalidationError: expect.objectContaining({
+          message: "stock service unavailable (run 4)",
+        }),
+      });
+    });
+  });
+
+  // The skipped answer writes the entry and resolves when its metadata lands,
+  // as on main: it never waits for loader chunks of a response it does not
+  // render, so a slow or cut chunk cannot hold or fail the call.
+  it("a skipped answer writes the entry and resolves before its loader entry arrives", async () => {
+    const t = setup(new Promise(() => {}));
+    await expect(t.fast).resolves.toBe("fast");
+    expect(t.cacheSegmentsForHistory).toHaveBeenCalledTimes(1);
+
+    t.releaseSlow();
+    await expect(t.slow).resolves.toBe("slow");
+    expect(t.cache.get("/")!.segments[1]).toBe(t.refetched.segments[1]);
   });
 });

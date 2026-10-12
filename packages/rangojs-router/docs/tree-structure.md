@@ -44,7 +44,8 @@ like `useActionState`, refs, and local state. This is extremely hard to debug.
     navigation reconciles the mounted `ClientUrlsRoot`: the optimistic
     destination keeps its instance across the canonical commit, and same-route
     param navigations hold instead of remounting. The param-bearing
-    `id-params` value is passed to the group's error boundary as its reset key.
+    `id-params` value leads the `reset` of the segment's error boundary,
+    followed by its loaders' data.
   - `error` / `notFound` segments ALWAYS keep a param-BEARING key (`id-params`).
     `createErrorSegment` reuses the boundary layout's shortCode as the error
     segment id (`src/router/error-handling.ts`), so a param-agnostic error key

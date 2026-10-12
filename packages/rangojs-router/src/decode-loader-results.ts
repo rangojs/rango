@@ -1,6 +1,11 @@
 import type { ReactNode } from "react";
 import { createElement } from "react";
-import { isLoaderDataResult } from "./types.js";
+import {
+  isLoaderDataResult,
+  type ErrorInfo,
+  type ResolvedSegment,
+} from "./types.js";
+import { isPlaceholder } from "./types/segments.js";
 import { LoaderRedirect } from "./loader-redirect.js";
 
 /**
@@ -65,6 +70,51 @@ function signalFallback(result: any): ReactNode | undefined {
   return undefined;
 }
 
+/**
+ * A failed loader entry's error, rebuilt with the ErrorInfo identity
+ * (name/stack/code/cause) instead of a stripped generic Error.
+ */
+export function loaderResultError(result: { error: ErrorInfo }): Error {
+  const info = result.error;
+  const err = new Error(
+    info.message,
+    info.cause !== undefined ? { cause: info.cause } : undefined,
+  );
+  if (info.name) err.name = info.name;
+  if (info.stack) err.stack = info.stack;
+  if (info.code !== undefined) (err as { code?: string }).code = info.code;
+  return err;
+}
+
+/** A loader that threw: not ok, and not a notFound()/redirect() signal. */
+export function isLoaderError(
+  result: unknown,
+): result is { error: ErrorInfo; fallback: ReactNode | null } {
+  return (
+    isLoaderDataResult(result) &&
+    !result.ok &&
+    !result.notFound &&
+    !result.redirect
+  );
+}
+
+/**
+ * The error of the first loader that threw while it re-ran in an action's
+ * revalidation, for useAction()'s `revalidationError`. The loader itself
+ * throws at its read (segment-system buildLoaderStreams), and the action
+ * resolves. A notFound()/redirect() is a signal, not an error.
+ */
+export async function revalidationErrorOf(
+  segments: ResolvedSegment[] = [],
+): Promise<Error | undefined> {
+  for (const s of segments) {
+    if (s.type !== "loader" || isPlaceholder(s)) continue;
+    const entry = await s.loaderData;
+    if (isLoaderError(entry)) return loaderResultError(entry);
+  }
+  return undefined;
+}
+
 // Shared by segment-system (server) and LoaderResolver (client) so the
 // legacy/ok/error-fallback/throw decode of resolved loader values lives once.
 // Last failing loader wins errorFallback; an error without a fallback throws.
@@ -108,17 +158,7 @@ export function decodeLoaderResults(
     if (result.fallback != null) {
       errorFallback = result.fallback;
     } else {
-      // No boundary: rethrow preserving the ErrorInfo identity (name/stack/
-      // code/cause) instead of a stripped generic Error.
-      const info = result.error;
-      const err = new Error(
-        info.message,
-        info.cause !== undefined ? { cause: info.cause } : undefined,
-      );
-      if (info.name) err.name = info.name;
-      if (info.stack) err.stack = info.stack;
-      if (info.code !== undefined) (err as { code?: string }).code = info.code;
-      throw err;
+      throw loaderResultError(result);
     }
   }
 
@@ -153,14 +193,7 @@ export function decodeLoaderEntry(result: any): any {
     return result.data;
   }
   throwSignal(result);
-  const info = result.error;
-  const err = new Error(
-    info.message,
-    info.cause !== undefined ? { cause: info.cause } : undefined,
-  );
-  if (info.name) err.name = info.name;
-  if (info.stack) err.stack = info.stack;
-  if (info.code !== undefined) (err as { code?: string }).code = info.code;
+  const err = loaderResultError(result);
   if (result.fallback != null) {
     (err as any)[LOADER_ERROR_FALLBACK] = result.fallback;
   }

@@ -99,7 +99,10 @@ status on its chunks) is that array from its first call: the sources of a page a
 `prefetch: false` fill settled without a render are first aggregated by the next
 navigation that keeps them. A boundary may get the promise in one tree and the settled
 array in a later one: that is a different value at a different time (rule 6), not a
-switch under a render. The value path still calls `use()`: `Suspender` and
+switch under a render. The action lane hands a route's or layout's loaders as
+per-loader streams of their settled entries (`buildLoaderStreams` with `settle`),
+not the decoded aggregate, so each read decodes its entry synchronously and a loader
+error throws there, at its read, inside the segment's own boundaries (#1129). The value path still calls `use()`: `Suspender` and
 `LoaderResolver` call `use(SETTLED_THENABLE)` when they are handed the value, as every
 `useLoader` read with route context does. Without it, a place that suspended in `use()`
 on mount and then finishes without it logs React's "This library called use() to suspend
@@ -169,7 +172,7 @@ The allowed causes, and where each one emits:
 | `navigation`         | a link click, `router.push` / `replace` / `refresh`            | `src/browser/partial-update.ts:1034` (cached), `:1064` (leave intercept), `:1382` (partial), `:1497` (full), `:653` (a `prefetch: false` fill whose segments are not the ones its tree was built for) |
 | `popstate`           | back/forward restored from the history cache, or refetched     | `src/browser/navigation-bridge.ts:748`; a refetch goes through `partial-update.ts`                                                                                                                    |
 | `stale-revalidation` | the background refresh after a back/forward onto a stale entry | `src/browser/partial-update.ts:1382`, `:1514`                                                                                                                                                         |
-| `action`             | a server action's result, its error boundary, its refetch      | `src/browser/server-action-bridge.ts:663`, `:924`; `partial-update.ts` in `action` mode                                                                                                               |
+| `action`             | a server action's result, its error boundary, its refetch      | `src/browser/server-action-bridge.ts:629`, `:906`; `partial-update.ts` in `action` mode                                                                                                               |
 | `error`              | a failed request rendered into the tree                        | `src/browser/network-error-handler.ts:37`                                                                                                                                                             |
 | `hmr`                | the refetch after a source edit (dev)                          | `src/browser/rsc-router.tsx:598`                                                                                                                                                                      |
 

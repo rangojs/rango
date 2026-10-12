@@ -53,6 +53,7 @@ describe("createEventController", () => {
       expect(actionState.payload).toBeNull();
       expect(actionState.error).toBeNull();
       expect(actionState.result).toBeNull();
+      expect(actionState.revalidationError).toBeNull();
     });
   });
 
@@ -475,6 +476,23 @@ describe("createEventController", () => {
       // After 100ms, entry is removed
       vi.advanceTimersByTime(100);
       expect(ctrl.getInflightActions().size).toBe(0);
+    });
+
+    // A loader that failed while it re-ran after the action: the action
+    // succeeded, so `error` stays null and the failure is its own field.
+    it("action complete with a revalidation error keeps error null", () => {
+      const ctrl = createController();
+      const handle = ctrl.startAction("hash#save", []);
+      const failure = new Error("stock service unavailable");
+      handle.complete("saved", failure);
+
+      expect(ctrl.getActionState("save")).toMatchObject({
+        state: "idle",
+        error: null,
+        result: "saved",
+        revalidationError: failure,
+      });
+      expect(ctrl.getActionState("unknown").revalidationError).toBeNull();
     });
 
     it("action fail sets error", () => {

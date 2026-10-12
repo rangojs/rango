@@ -402,8 +402,8 @@ Everything after that is decided on the server, while it handles that request:
 - **The browser's caches.** When the response arrives the browser marks its
   history cache stale and drops its prefetches, unless the action called
   `keepClientCache()` (`/server-actions` → "Client Cache After an Action").
-- **A loader that fails on its rerun** reaches your `onError` on the server and
-  the page as an error, below.
+- **A loader that fails on its rerun** reaches your `onError` on the server,
+  and in the browser it throws at its read, below.
 
 A form's React state survives an action's revalidation in a group, as on a
 `urls()` route: the commit renders into the mounted page instead of remounting
@@ -412,17 +412,79 @@ it, so a controlled input keeps what the user typed.
 ### A loader that fails on its rerun
 
 The action has already run when its loaders rerun, so a loader that throws
-there does not undo it. Where the error lands decides what the user sees:
+there does not undo it. It behaves as on a navigation, on every route (a group
+route or a `urls()` route, with or without `loading()`), and whether the
+action was called directly or from `<form action>`, `useActionState` or
+`useTransition`:
 
-| The route                                                  | Called directly (`await action()`)                                                                                                                                                             | From `<form action>`, `useActionState` or `useTransition`                                                                                             |
-| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A group route, or a `urls()` route without `loading()`     | The call rejects with the loader's error (`"An error occurred"` in a build), although the action returned. Nothing of that revalidation commits: the page keeps its data and its React state.  | React hands the rejection to the nearest React error boundary above the form. With none of yours, the router's root error boundary replaces the page. |
-| A `urls()` route with `loading()`                          | The call resolves with the action's result. The commit renders, the loader's read throws, and the nearest React error boundary catches it; with none of yours, the root one replaces the page. | The same.                                                                                                                                             |
-| Under an `errorBoundary()` (for a group, around the mount) | Its fallback replaces the route: the page and its form state unmount.                                                                                                                          | The same.                                                                                                                                             |
+- **The call resolves** with the action's return value.
+- **The loader throws in place,** at its `useLoader` read. The nearest
+  boundary to the read catches it: your own React error boundary around the
+  read, else the `errorBoundary()` around the group's `include()` mount (or
+  the route's, in `urls()`), else the router's root error boundary.
+- **Everything outside that boundary stays,** with its React state: a form
+  next to the failed list keeps what the user typed. Loaders that reran
+  without error commit their new data in the same commit.
+- **The error is reported**: to your `onError` on the server (phase
+  `"loader"`), and in the browser as `revalidationError` on the action's
+  `useAction()` state. `error` stays `null` there and `result` holds the
+  action's return value, so "saved, but the list could not refresh" reads
+  apart from "the save failed".
+- **A later rerun that succeeds clears it.** An `errorBoundary()` fallback
+  clears on the next action or navigation that reruns the loader without
+  error. Your own boundary resets by its own rule: key the reset on data that
+  reruns with the loader and is read outside the boundary, so the reset lands
+  in the same render as the new data. A reset when the action settles can run
+  before React rendered the commit and catch the old failure again.
 
-A group route's `loading()` does not change the first row. For a failure the
-user can retry (a flaky upstream, a rate limit), return it as data instead of
-throwing, and render it where the data goes:
+```tsx
+// in the group's "use client" module
+function StockPanel() {
+  // Reruns with every save and never throws.
+  const { data: status } = useLoader(SaveStatusLoader);
+  return (
+    <StockBoundary resetKey={status.version}>
+      <StockList /> {/* useLoader(StockLoader) throws here on a failed rerun */}
+    </StockBoundary>
+  );
+}
+
+function SaveStock({ sku }: { sku: string }) {
+  const { revalidationError } = useAction(saveStock);
+  const [stale, setStale] = useState(false);
+  // useAction resets to idle once the action has settled: keep the notice.
+  useEffect(() => {
+    if (revalidationError) setStale(true);
+  }, [revalidationError]);
+  return (
+    <form action={saveStock.bind(null, sku)}>
+      <button>Save</button>
+      {stale && (
+        <p role="status">Saved. The stock count could not be refreshed.</p>
+      )}
+    </form>
+  );
+}
+```
+
+`StockBoundary` is an ordinary React error boundary whose
+`getDerivedStateFromProps` clears its error when `resetKey` changes. A loader
+that throws `notFound()` or `redirect()` is not a failure and keeps its path:
+a `redirect()` (a deleted record's page) replaces the route's content and
+navigates, and the layouts above keep their instance. A no-JS form post
+renders the whole document after the action, so a loader that throws there
+behaves as on a page load. Every refetch the router runs for an action
+follows the same rule (after several actions at once, after a navigation
+during it), and the action that ran it reports the error as its
+`revalidationError`; with several actions at once, that is the one whose
+refetch covers them all. Not covered yet: an `intercept()`'s loaders, and a
+parallel slot's loaders under its own `loading()`, decoded above the slot's
+content, so a boundary inside the slot does not see the error.
+
+For a failure the user should see in place of the data without an error
+boundary (a flaky upstream, a
+rate limit), return it as data instead of throwing, and render it where the
+data goes:
 
 ```tsx
 // stock.loader.ts
@@ -445,10 +507,7 @@ function Stock() {
 }
 ```
 
-The action resolves with its result, the page and its form state stay, and the
-next action or navigation that reruns the loader replaces the message. Keep
-throwing for a failure that should stop the page, with an `errorBoundary()`
-around the mount for it.
+The next action or navigation that reruns the loader replaces the message.
 
 A failure returned as data is an ordinary value, so whatever stores the
 loader's value stores it too: a `cache()` on the loader serves it for its TTL,
@@ -460,8 +519,9 @@ data in a loader that is not cached itself.
 
 Pinned by dev + production e2e in the router repository (a group, its `urls()`
 twin, each with and without `loading()`, and the group under an
-`errorBoundary()`), and by a `serveShellRequest({ action })` test of the
-response.
+`errorBoundary()`), and by `serveShellRequest({ action })` tests whose
+`readAction()` reads the call's answer as the browser does: the result and
+the `revalidationError`.
 
 ## Loaders are full citizens: signals and handles
 

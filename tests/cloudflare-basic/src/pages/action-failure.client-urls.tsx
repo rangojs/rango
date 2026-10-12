@@ -8,6 +8,7 @@ import {
 } from "./action-failure.client.js";
 import {
   ActionFailureDataLoader,
+  ActionFailureRevisionLoader,
   ActionFailureThrowLoader,
 } from "./action-failure.defs.js";
 
@@ -17,12 +18,17 @@ import {
 export default clientUrls(({ path, loader, loading }) => [
   path("/throw", ActionFailureThrowPage, { name: "throw" }, () => [
     loader(ActionFailureThrowLoader),
+    loader(ActionFailureRevisionLoader),
   ]),
   path(
     "/throw-loading",
     ActionFailureThrowPage,
     { name: "throwLoading" },
-    () => [loader(ActionFailureThrowLoader), loading(<ActionFailureLoading />)],
+    () => [
+      loader(ActionFailureThrowLoader),
+      loader(ActionFailureRevisionLoader),
+      loading(<ActionFailureLoading />),
+    ],
   ),
   path("/data", ActionFailureDataPage, { name: "data" }, () => [
     loader(ActionFailureDataLoader),

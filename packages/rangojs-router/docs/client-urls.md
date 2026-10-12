@@ -809,7 +809,8 @@ browser's cache invalidation after the response is the action's call too:
 `keepClientCache()` in the action suppresses it
 ([server-actions skill](../skills/server-actions/SKILL.md), "Client Cache
 After an Action"). And a loader that throws on its rerun is reported to the
-router's `onError` on the server and reaches the page as a loader error entry.
+router's `onError` on the server and reaches the browser as a loader error
+entry, which throws at the loader's read (below).
 
 A form's React state survives the revalidation, as on a `urls()` route: the
 action commit renders into the mounted tree (`server-action-bridge.ts`, the
@@ -818,59 +819,174 @@ action commit renders into the mounted tree (`server-action-bridge.ts`, the
 ### A loader that fails on its rerun after an action
 
 The action has run and returned by the time its loaders rerun, so the failure
-cannot undo it. What the browser does depends on two things: whether an
-`errorBoundary()` sits above the route (for a group, around the `include()`
-mount), and, for a `urls()` route, whether the route has a `loading()`:
+cannot undo it. The contract is the one a navigation already has, and it is
+the same on every route: a group route or a `urls()` route, with or without
+`loading()`, called directly or from `<form action>`, `useActionState` or
+`useTransition`.
 
-| The route                                                  | Action called directly (`await action()`)                                                                                                         | From `<form action>`, `useActionState`, `useTransition`                                                                                     |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| A group route, or a `urls()` route without `loading()`     | The call rejects with the loader's error (`"An error occurred"` in a build); nothing of that revalidation commits; page data and React state stay | React hands the rejection to the nearest React error boundary above the form; with none of the app's, `RootErrorBoundary` replaces the page |
-| A `urls()` route with `loading()`                          | The call resolves; the commit renders, the read throws, and the nearest React error boundary catches it (`RootErrorBoundary` if the app has none) | The same                                                                                                                                    |
-| Under an `errorBoundary()` (for a group, around the mount) | Its fallback replaces the route; the page and its form state unmount                                                                              | The same                                                                                                                                    |
+- The call resolves with the action's return value.
+- The loader throws in place, at its `useLoader` read. The nearest boundary
+  to the read catches it: the app's own React error boundary when one sits
+  around the read, else the `errorBoundary()` that covers the segment (for a
+  group, around the `include()` mount), else the router's root boundary.
+- What sits outside that boundary keeps its instance and React state: a form
+  next to the failed list keeps what the user typed. Loaders that reran
+  without error commit their new data in the same commit.
+- The error is reported to `onError` on the server (phase `"loader"`,
+  `isPartial: true`) and in the browser as `revalidationError` on the
+  action's `useAction()` state, with `error` null and `result` set.
+- A later action or navigation whose rerun succeeds clears an
+  `errorBoundary()` fallback the failure left. The app's own boundary resets
+  by its own rule (see the reset key below).
 
-Why the rows differ. The action lane settles loader data before it commits
-(`renderSegments` with `isAction`, `server-action-bridge.ts:848`). Without
-`loading()` the segment's loaders take the aggregate path: a loader entry with
-`ok: false` and no fallback makes `decodeLoaderResults` throw
-(`decode-loader-results.ts:121`, called from `segment-system.tsx:745`), so
-`renderSegments` rejects before `onUpdate`, the commit is dropped, and the
-rejection becomes the action call's. With `loading()` on a `urls()` route the
-lane awaits the same data (`segment-system.tsx:651-662`) but hands it to
-`LoaderBoundary`, which decodes it while React renders
-(`route-content-wrapper.tsx:351`): `renderSegments` resolves, the action
-resolves, and the throw happens in the committed render. A group route never
-takes that branch (`segment-system.tsx:638`, `!clientGroup && loading`), so
-its `loading()` changes nothing here. With an `errorBoundary()`,
-`loader-resolution.ts` renders its fallback into the entry,
-`decodeLoaderResults` takes it as the segment's `errorFallback`
-(`decode-loader-results.ts:109`), and the commit renders it in place of the
-route.
+```tsx
+<StockBoundary resetKey={revision}>
+  <StockList /> {/* useLoader(StockLoader) throws here on a failed rerun */}
+</StockBoundary>
+<SaveForm /> {/* await saveStock(sku) resolves: { saved: true } */}
+```
 
-The rejected call is the action's error for `useAction` too: the bridge's
-`catch` calls `handle.fail(error)`, and the event controller marks a disposed
-action completed, so an action started in its 100 ms settle window is not
-counted as concurrent (no consolidation refetch, #675).
+Why this one and not the alternatives? Before it, the outcome depended on
+where the decode ran. The action lane settled loader data before it
+committed, and without `loading()` the segment's loaders took the aggregate
+decode in the build, where an entry with `ok: false` and no fallback made
+`decodeLoaderResults` throw: `renderSegments` rejected, the commit was
+dropped, and the call rejected with the loader's error although the action
+had returned. A `<form action>` then handed that rejection to the nearest
+React error boundary above the form, so the root one replaced the page. With
+`loading()` on a `urls()` route the decode ran in `LoaderResolver` while
+React rendered, above the route's content: the call resolved and the root
+boundary replaced the page, skipping any boundary inside the route. With an
+`errorBoundary()` the build planted its fallback in place of the segment's
+`StreamedLoaderErrorBoundary`, so a boundary the app put nearer the read was
+skipped, and the wrapper chain lost a link (an `I5 drift` the e2e had to
+allow). Three outcomes for one event. A plain navigation had none of these
+problems: it hands each loader's entry to its read and lets it throw there.
+Keeping the old data instead (the first draft of #1129) was rejected: it
+differs from navigation and from `errorBoundary()`, and it shows stale data
+silently unless the app reads the report.
 
-The pattern to recommend for a failure the user can retry: return it from the
-loader as data (`{ ok: false, reason }`) and render it at the read. The action
-resolves, the page and its state stay, and the next rerun replaces the
-message. The skill carries the example. One caveat: the failure is then an
-ordinary value, so a `cache()` on the loader, a `ppr` bake of an `ssr: false`
-loader, or a prerender stores and serves it like any other. A thrown error is
-never stored: the miss path stores only what `execute()` returned
-(`cache/read-through-swr.ts:159`), and a background revalidation that throws
-keeps the stale entry. Cache the call the loader makes instead and convert the
-throw in an uncached loader.
+How it works. The action lane no longer decodes loader results in the build
+(`segment-system.tsx:728` and `:815`, `decodeInBuild` is
+`settleLoaders && !isAction`). It takes
+`buildLoaderStreams` with `settle` and `inPlace` (`:345`): every loader is
+still awaited before the commit, so the commit is one commit with no
+fallback, and each settled entry is handed to its read through
+`loaderStreams`, the channel a navigation uses. A plain error stays out of
+the build-time decode, so its `errorBoundary()` fallback rides the throw as
+the `LOADER_ERROR_FALLBACK` marker (`decode-loader-results.ts`
+`decodeLoaderEntry`) and `StreamedLoaderErrorBoundary` renders it
+(`route-content-wrapper.tsx:86`) unless a nearer boundary catches first.
+`notFound()` and `redirect()` are control flow and are still placed at build
+time, in the segment's content. A `redirect()` must never take the
+document-lane shortcut that replaces the whole page there
+(`!isAction && isLoaderRedirectNode`, `:750` and `:847`): a delete action
+whose item loader then redirects to the list would unmount every layout
+before the redirect navigation mounted them again. The planted node replaces
+the segment's `StreamedLoaderErrorBoundary`-wrapped content, so the wrapper
+chain loses a link while it redirects (an `I5 drift` the redirect e2e
+allows, as main does); the layouts above keep their instance. The read
+decodes a settled entry synchronously (`use-loader.tsx:74`),
+so nothing suspends (suspense-contract.md, rule 3) and the wrapper chain is
+the same on every lane (rule 4).
+
+The report is separate from the render. After the action lane's
+`renderSegments`, which awaited the entries anyway, the bridge scans the
+loader segments of the response for a thrown error (`revalidationErrorOf`,
+`decode-loader-results.ts:107`, called at `server-action-bridge.ts:864`)
+and passes the first to `handle.complete(result, revalidationError)`
+(`:915`). Every refetch an action runs goes through `partial-update.ts` in
+`action` mode, which renders the same way and resolves with its own scan
+(`partial-update.ts:1235`, and `:1317` for a full-update fallback, which
+renders on the plain lane, so the pending call waits for its loaders only to
+report, as the partial lane's commit does); `refetchRoute` hands it back as
+the action's `revalidationError`. That covers the refetch after several
+actions (`consolidation-needed`), after a navigation during the action that
+kept the history entry, and after an HMR update. An answer cached while a
+sibling is still fetching (`concurrent-skip`, `:831`) is never rendered and
+reports nothing: it resolves when its metadata lands, as before, and the
+sibling's refetch reruns those loaders and reports to the action that ran
+it. Waiting for loader chunks of a response it never renders would hold the
+call for its slowest loader, and fail it if the stream were cut. The refetch
+after a navigation to another history entry runs in the background after the
+call resolved, so there is no pending call to report to.
+
+The reset. `StreamedLoaderErrorBoundary` used to clear a caught marker only
+when its `resetKey` (the segment's route and params) changed, so an
+`errorBoundary()` fallback stayed after a later action or same-route
+navigation whose rerun succeeded. Its `reset` prop is now the segment's
+route-and-params key followed by the `loaderData` of each loader of the
+segment and of its ancestors (`segment-system.tsx:709`), and it resets when
+one of them is a different object (`route-content-wrapper.tsx:72`). The
+ancestors matter because a read walks up the chain: a route that reads its
+layout's loader catches that loader's marker at its own boundary, so it has
+to reset when the layout's loader reruns, not only its own (the first
+version of this fix missed that, and a navigation's fallback for a layout
+loader stayed after a good action). A rerun brings a new entry; a held loader
+keeps its segment and so its entry, so a tree that did not rerun the failed
+loader keeps the fallback, and an unrelated re-render never resets. The
+reset happens in the render that hands the boundary the new data, so it
+cannot race the commit, and a healthy boundary resets to the state it is
+already in: nothing remounts. One cost: a boundary whose own failure is held
+while an ancestor's loader reruns catches the throw again, and React mounts
+its fallback anew.
+
+An app's own boundary resets by its own rule. One that resets when the
+action settles races the commit, which React may not have rendered yet. The
+pattern that cannot race is the router's: key the reset on data that reruns
+with the failed loader and is read outside the boundary, so the reset lands
+in the same render as the new data (the e2e fixture's
+`ActionFailureAppBoundary`, keyed on a revision loader; the vite-rsc-demo
+`/errors/revalidation` pages).
+
+What it does not cover, each keeping its earlier behaviour:
+
+- An `intercept()` slot's loaders ride on the slot as one aggregate, decoded
+  by the slot's `LoaderResolver` while React renders, above the slot's
+  content. So do a parallel slot's loaders under the slot's own `loading()`
+  (`segment-system.tsx:898`, slots take no streams).
+- The `forceAwait` lanes (a fully prefetched click, a back/forward restore)
+  still decode in the build; extending the rule to them is a separate
+  decision.
+- A no-JS form post renders the whole document after the action, so a loader
+  that throws there behaves as on a page load, with no call to resolve.
+
+One more thing worth knowing about the report: `useAction` drops an action's
+state once the action has settled and its entry leaves the event controller
+(100 ms after settling, `event-controller.ts` `doSettle`), and
+`revalidationError` goes with `error` and `result`. A component that wants to
+keep a notice up latches it (the skill's example, and the e2e fixture's
+`af-revalidation-error` line).
+
+For a failure the user should see in place of the data without an error
+boundary, return it from the loader as data (`{ ok: false, reason }`) and
+render it at the read. The skill carries the example. One caveat: the failure
+is then an ordinary value, so a `cache()` on the loader, a `ppr` bake of an
+`ssr: false` loader, or a prerender stores and serves it like any other. A
+thrown error is never stored: the miss path stores only what `execute()`
+returned (`cache/read-through-swr.ts:159`), and a background revalidation
+that throws keeps the stale entry. Cache the call the loader makes instead
+and convert the throw in an uncached loader.
 
 Pinned dev+prod in `e2e/action-failure.test.ts` (router test-app) and
 `tests/cloudflare-basic/e2e/action-failure.test.ts`, body
 `tests/shared-e2e/src/action-failure-scenario.ts`: a group and its `urls()`
 twin, each with and without `loading()`, and the group under an
-`errorBoundary()`. The response itself is pinned through
-`serveShellRequest({ action })` in
-`src/testing/__tests__/client-urls-revalidate.rsc-test.tsx`; the settle-window
-fix in `src/__tests__/event-controller.test.ts` and
-`src/__tests__/server-action-bridge.test.ts`.
+`errorBoundary()`, each called directly, from a `<form action>`, and together
+with a slow action so the refetch after both throws again, with the page
+around the read marked to prove it kept its instance; with no app boundary,
+the `errorBoundary()` fallback and its reset after a later action (after an
+action's failure and after a navigation's), and the root boundary; and a
+delete action whose item loader then throws `redirect()`, with the layout
+marked to prove it kept its instance. Semantic matrix row R3 pins it on the
+`urls()` route. Unit: `src/__tests__/action-loader-error-in-place.test.tsx`
+(real React over the action lane: the boundary at the read, a `redirect()`
+that keeps the layout, a layout loader's fallback that clears),
+`streamed-loader-error-boundary.test.tsx` (the reset),
+`segment-system.test.tsx`, `server-action-bridge.test.ts`,
+`partial-update.test.ts`, `event-controller.test.ts`. Userland:
+`serveShellRequest(...).readAction()` in
+`src/testing/__tests__/client-urls-revalidate.rsc-test.tsx`.
 
 `loader(Def, { ssr: false }, use?)` is the SSR-completeness opt-in.
 By default every loader streams on every render, so nothing a slow loader

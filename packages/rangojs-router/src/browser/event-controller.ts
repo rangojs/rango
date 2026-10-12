@@ -72,6 +72,8 @@ export interface ActionEntry {
   result?: unknown;
   /** Error from action (set on failure) */
   error?: unknown;
+  /** A loader that failed while it re-ran after the action (set on success) */
+  revalidationError?: unknown;
   /** Segment IDs that were revalidated by this action */
   revalidatedSegments: string[];
   /** Timestamp when action started */
@@ -200,8 +202,8 @@ export interface ActionHandle extends Disposable {
    * later-initiated winner's response lands and overwrites it.
    */
   claimLocationState(state: Record<string, unknown>): Record<string, unknown>;
-  /** Complete the action with result */
-  complete(result?: unknown): void;
+  /** Complete the action with result, and a loader rerun's error, if any */
+  complete(result?: unknown, revalidationError?: unknown): void;
   /** Fail the action with error */
   fail(error: unknown): void;
   /** Whether action was completed (success or failure) */
@@ -403,12 +405,14 @@ export function subscribeToLocationChange(
   };
 }
 
-const DEFAULT_ACTION_STATE: TrackedActionState = {
+/** An action with no tracked entry: idle, nothing reported. */
+export const DEFAULT_ACTION_STATE: TrackedActionState = {
   state: "idle",
   actionId: null,
   payload: null,
   error: null,
   result: null,
+  revalidationError: null,
 };
 
 // Shared empty inflight-actions list. getState() hands back this exact reference
@@ -700,6 +704,7 @@ export function createEventController(
       payload: entry.payload,
       error: entry.error ?? null,
       result: entry.result ?? null,
+      revalidationError: entry.revalidationError ?? null,
     };
   }
 
@@ -871,7 +876,7 @@ export function createEventController(
     let actionCompleted = false;
     let cohortReleased = false;
     let pendingResult:
-      | { type: "success"; value?: unknown }
+      | { type: "success"; value?: unknown; revalidationError?: unknown }
       | { type: "error"; value: unknown }
       | null = null;
 
@@ -922,6 +927,7 @@ export function createEventController(
         entry.error = pendingResult.value;
       } else if (pendingResult?.type === "success") {
         entry.result = pendingResult.value;
+        entry.revalidationError = pendingResult.revalidationError;
       }
       entry.phase = "settling";
       notify();
@@ -997,8 +1003,8 @@ export function createEventController(
         return winning;
       },
 
-      complete(result?: unknown) {
-        settleWith({ type: "success", value: result });
+      complete(result?: unknown, revalidationError?: unknown) {
+        settleWith({ type: "success", value: result, revalidationError });
       },
 
       fail(error: unknown) {
