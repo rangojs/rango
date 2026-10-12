@@ -944,6 +944,16 @@ export const pageMeta: PageMeta[] = [
       },
       {
         "depth": 3,
+        "id": "after-an-action",
+        "text": "After an action"
+      },
+      {
+        "depth": 3,
+        "id": "a-loader-that-fails-on-its-re-run",
+        "text": "A loader that fails on its re-run"
+      },
+      {
+        "depth": 3,
         "id": "ssr-false",
         "text": "ssr: false"
       },
@@ -2606,6 +2616,26 @@ export const pageMeta: PageMeta[] = [
         "depth": 2,
         "id": "conditional-transitions-with-when",
         "text": "Conditional transitions with when"
+      },
+      {
+        "depth": 2,
+        "id": "when-a-view-transition-changes-nothing",
+        "text": "When a view transition changes nothing"
+      },
+      {
+        "depth": 3,
+        "id": "why-it-happens",
+        "text": "Why it happens"
+      },
+      {
+        "depth": 3,
+        "id": "getting-rid-of-it",
+        "text": "Getting rid of it"
+      },
+      {
+        "depth": 3,
+        "id": "a-viewtransition-you-placed",
+        "text": "A <ViewTransition> you placed"
       },
       {
         "depth": 2,

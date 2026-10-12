@@ -2,6 +2,10 @@
 export const routes = {
   benchFirst: "/bench/first",
   benchLast: "/bench/last",
+  "category.benchFirst": "/category/bench/first",
+  "category.benchLast": "/category/bench/last",
   home: "/",
+  "product.benchFirst": "/product/bench/first",
+  "product.benchLast": "/product/bench/last",
 } as const;
 export type routes = typeof routes;

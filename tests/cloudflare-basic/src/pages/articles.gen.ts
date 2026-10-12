@@ -2,5 +2,6 @@
 export const routes = {
   detail: "/:slug",
   index: "/",
+  list: "/page/:page",
 } as const;
 export type routes = typeof routes;
