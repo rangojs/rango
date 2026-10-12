@@ -466,3 +466,44 @@ describe("one request, several passes", () => {
     expect(streamModeCalls).toBe(1);
   });
 });
+
+describe("an intercept on the rewrite target", () => {
+  it("applies as on a direct navigation, its selector seeing the target", async () => {
+    const seen: string[] = [];
+    const interceptRouter = createRouter({})
+      .use("/promo/*", () => {
+        throw rewrite("item", { id: "1" });
+      })
+      .routes(
+        urls(({ path, layout, intercept }) => [
+          layout(
+            () => <main>shell</main>,
+            () => [
+              path("/list", () => <ul>list</ul>, { name: "list" }),
+              path("/item/:id", () => <article>item page</article>, {
+                name: "item",
+              }),
+              path("/promo/:slug", () => <p>never</p>),
+              intercept("@modal", ".item", () => <dialog>item modal</dialog>, {
+                when: (ctx) => {
+                  seen.push(
+                    `${ctx.from.url.pathname} -> ${ctx.to.url.pathname}`,
+                  );
+                  return true;
+                },
+              }),
+            ],
+          ),
+        ]),
+      );
+    const result = await serveShellRequest(interceptRouter, "/promo/summer", {
+      cacheStore: new MemorySegmentCacheStore(),
+      partial: { from: "/list" },
+    });
+    expect(result.response.status).toBe(200);
+    expect(result.response.headers.get("x-rango-rewrite")).toBe("/item/1");
+    expect(result.flight).toContain("item modal");
+    expect(seen).toEqual(["/list -> /item/1"]);
+    expect(payloadMetadata(result.flight).pathname).toBe("/promo/summer");
+  });
+});
