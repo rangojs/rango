@@ -13,7 +13,11 @@ import {
 import { clientUrls } from "../../../client-urls/client-urls.js";
 import type { ClientUrlReference } from "../../../client-urls/server-projection.js";
 import { discoverRouters } from "../discover-routers.js";
-import { canRefreshRuntimeDiscovery, createDiscoveryState } from "../state.js";
+import {
+  canRefreshRuntimeDiscovery,
+  createDiscoveryState,
+  recordDiscoveryFailure,
+} from "../state.js";
 import { generateRoutesManifestModule } from "../virtual-module-codegen.js";
 
 // A Vite module runner full reload clears its evaluated-module cache. One that
@@ -171,23 +175,23 @@ describe("recovery after a failed cold discovery", () => {
     await expect(
       discoverRouters(state, createRscEnv(realms, Infinity).rscEnv, ssrEnv),
     ).rejects.toThrow(/did not settle/);
-    // router-discovery.ts records the cold failure (recovery mode).
-    state.lastDiscoveryError = { message: "did not settle", at: Date.now() };
+    // router-discovery.ts records the cold failure (recovery mode); the
+    // wiring is pinned by src/vite/__tests__/dev-discovery-recovery.test.ts.
+    recordDiscoveryFailure(state, new Error("did not settle"));
 
     expect(state.perRouterManifests).toEqual([]);
     expect(generateRoutesManifestModule(state)).toContain(
       `setClientUrlProjection(${JSON.stringify(REFERENCE_ID)}, `,
     );
-    expect(canRefreshRuntimeDiscovery(state, true)).toBe(true);
-    // Cloudflare (no main runner) still needs a committed manifest.
-    expect(canRefreshRuntimeDiscovery(state, false)).toBe(false);
+    expect(canRefreshRuntimeDiscovery(state)).toBe(true);
 
     await discoverRouters(state, createRscEnv(realms, 0).rscEnv, ssrEnv);
     expect(state.mergedRouteManifest).toEqual(MANIFEST);
-    expect(canRefreshRuntimeDiscovery(state, false)).toBe(true);
+    state.lastDiscoveryError = null;
+    expect(canRefreshRuntimeDiscovery(state)).toBe(true);
   });
 
   it("stays off without a recorded failure when nothing was committed", () => {
-    expect(canRefreshRuntimeDiscovery(createState(), true)).toBe(false);
+    expect(canRefreshRuntimeDiscovery(createState())).toBe(false);
   });
 });

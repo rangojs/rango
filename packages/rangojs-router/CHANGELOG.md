@@ -2,6 +2,80 @@
 
 ## Unreleased
 
+### Fixed: names like `constructor`, `toString` or `__proto__` in a request or in loader data are ordinary keys ([#1109](https://github.com/rangojs/rango/issues/1109))
+
+Cookie names, URL segments and fetchable-loader params come from the request,
+and the router looked some of them up on plain objects, where a name like
+`constructor` or `toString` found a member every JavaScript object inherits.
+What you can notice:
+
+- `cookies().has("toString")` was `true`, and `cookies().get("constructor")`
+  returned a cookie whose value was a function, for a request that sent
+  neither. Now `has()`, `get()` and `getAll(name)` see only the cookies the
+  request sent, and a cookie named `__proto__` reads like any other (before, it
+  was dropped). `getRequestContext().cookies()` still returns a plain object.
+- A route with a path segment named `constructor` or `toString`
+  (`path("/constructor", ...)`) was left out of the production route trie, so
+  it 404'd or reached your catch-all route. A `__proto__` segment was worse:
+  building the trie wrote that route onto `Object.prototype`, so `vite build`
+  failed, and in development requests for other routes, such as `/blog/1` for
+  a `/blog/:id` route, failed with a 500. Now each such segment matches its
+  own route, and a request for one with no route of its own matches your
+  param routes or 404s as any other segment does.
+- A fetchable loader ran with whatever params the request sent in
+  `ctx.params`: numbers, objects, or the keys `__proto__`, `constructor` and
+  `prototype` from a hand-built `_rsc_loader_params` or untyped code. Now
+  neither the loader nor its middleware runs for such a request. The response
+  is a 400 carrying a loader error, so `load()` fails as it does when a loader
+  throws, with the message `Invalid loader params: expected an object of
+string values without the reserved keys __proto__, constructor, prototype`
+  in the rejection or the hook's `error`. `load({ params })` with string
+  values is unchanged.
+- Loader data with an own `__proto__` key (from `JSON.parse`) could fail to
+  render in a PPR shell or a `cache()`d loader with "Only plain objects, and a
+  few built-ins, can be passed to Client Components", because copying it set
+  the copy's prototype. Now the key stays ordinary data.
+
+### Fixed: the Cloudflare dev server recovers from a failed startup route discovery once you fix the cause
+
+Before: with `preset: "cloudflare"`, when route discovery failed as `vite dev` started,
+saving your fix did not run it again, and only a restart recovered:
+
+- If discovery failed before it read your `clientUrls()` modules, every request returned a
+  500, even though the worker had started:
+
+  ```
+  [vite] Internal server error: [@rangojs/router] Failed to resolve include at prefix "/your-prefix" during route discovery: include() could not resolve the server projection for clientUrls() module "/src/client-urls.tsx#default" ...
+  ```
+
+- If it failed on an error in your routes, such as an `include()`d `urls()` handler that
+  threw, pages worked again after the fix, but from the next save on
+  `router.named-routes.gen.ts` lost the routes only discovery sees, such as the ones a
+  factory function creates.
+
+In 0.23.0, recovery on save covered the Node dev server only.
+
+Now: on Cloudflare too, the next save of a source file after a failed startup discovery
+runs it again, reloads the worker, and the server serves your routes. Nothing changes in
+your code or in production builds.
+
+### Fixed: a link back to a page you visited keeps that page's breadcrumbs and title
+
+A link to a URL you visited earlier in the tab is answered from the page the
+browser kept for it: the server re-renders only what revalidates, and the rest
+comes from the kept page. When no prefetch had answered the link (in dev, where
+links do not prefetch by default; with `prefetch="none"`; on a click before
+its prefetch landed; with `router.push()`) and the server re-rendered anything
+(a loader with `revalidate(() => true)`, a layout whose `revalidate()` answered
+`true`), the handles of everything it did not re-render were taken from the
+page you were leaving instead of the kept page. So on page A, a link to B, a
+link back to A and a link to B again showed B without the breadcrumb its layout
+pushed, the breadcrumb its route pushed and the title it set, and with nothing
+in their place. Now the page you land on starts from the handles it was kept
+with, and the response's pushes replace only those of what re-ran, as on any
+other navigation. A layout the two pages share keeps the pushes it has on the
+page you left, as they are when the new page appears.
+
 ### Fixed: a handle pushed from an `intercept()`'s handler or loader reaches the page
 
 **Before.** A push made inside an intercept, `ctx.use(Breadcrumbs)(...)` in its

@@ -50,6 +50,32 @@ const keysOf = (a: object | undefined, b: object | undefined): Set<string> =>
   new Set([...Object.keys(a ?? {}), ...Object.keys(b ?? {})]);
 
 /**
+ * `target` with the buckets of the segments in `ids` taken from `source`.
+ * A pushedBy record is a snapshot key like a handle's, so a bucket's values
+ * and the record of the runs that pushed them always come from the same
+ * snapshot. New containers; the value arrays are shared, as cloneHandleData
+ * (navigation-store.ts) shares them.
+ */
+export function withSegmentHandles(
+  target: HandleData,
+  source: HandleData,
+  ids: ReadonlySet<string>,
+): HandleData {
+  const out: HandleData = {};
+  for (const name of keysOf(target, source)) {
+    const buckets: Record<string, unknown[]> = {};
+    for (const [id, values] of Object.entries(target[name] ?? {})) {
+      if (!ids.has(id)) buckets[id] = values;
+    }
+    for (const [id, values] of Object.entries(source[name] ?? {})) {
+      if (ids.has(id)) buckets[id] = values;
+    }
+    if (Object.keys(buckets).length > 0) out[name] = buckets;
+  }
+  return out;
+}
+
+/**
  * The handle data after a partial response's snapshot `incoming` (each stream
  * yield holds everything the response pushed so far). A segment outside
  * `segmentOrder` loses its buckets. In the others a value stands for the run

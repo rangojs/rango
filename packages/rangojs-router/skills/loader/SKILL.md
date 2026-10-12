@@ -285,7 +285,9 @@ See `/route` for the full handler-context contract (shared with loaders) and
 
 - `ctx.params` — merged route params + explicit loader params. For fetchable
   loaders called with `load(Loader, { params: { ... } })`, explicit params
-  override route-matched params.
+  override route-matched params. Explicit params are string values; a request
+  with another value or a `__proto__`, `constructor` or `prototype` key is
+  rejected (400, `load()` fails with `Invalid loader params`).
 - `ctx.routeParams` — server-trusted route params from URL pattern matching.
   Cannot be overridden by client-provided params.
 

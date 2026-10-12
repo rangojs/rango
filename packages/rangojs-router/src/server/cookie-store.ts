@@ -367,12 +367,16 @@ function createCookieStore(
 
     getAll(name?: string): Cookie[] {
       recordLoaderIdentityRead("cookies()");
-      const all = ctx._readCookies();
       if (name !== undefined) {
-        const value = all[name];
+        // The single-name read, not an index into the plain object
+        // _readCookies() returns: that would answer an inherited member.
+        const value = ctx._readCookie(name);
         return value !== undefined ? [{ name, value }] : [];
       }
-      return Object.entries(all).map(([n, v]) => ({ name: n, value: v }));
+      return Object.entries(ctx._readCookies()).map(([n, v]) => ({
+        name: n,
+        value: v,
+      }));
     },
 
     has(name: string): boolean {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { buildRouteTrie } from "../../build/route-trie";
 import { tryTrieMatch } from "../trie-matching";
 
@@ -613,4 +613,68 @@ describe("tryTrieMatch named catch-all (review F1 / F7)", () => {
       slug: "a b/c",
     });
   });
+});
+
+// Route segments named like Object.prototype members (#1109). The builder
+// used to read `node.s[segment]` through the prototype: `constructor` and
+// `toString` descended into the global Object and Object.prototype.toString,
+// and `__proto__` into Object.prototype, writing the route's leaf there
+// (`Object.prototype.r`) and leaving it out of the serialized trie.
+describe("segments named like Object.prototype members", () => {
+  const inherited = [Object.prototype, Object, Object.prototype.toString];
+  const leaked = (): unknown[] =>
+    inherited.map((o) => (o as unknown as Record<string, unknown>).r);
+  const unleak = (): void => {
+    for (const o of inherited)
+      delete (o as unknown as Record<string, unknown>).r;
+  };
+  afterEach(unleak);
+
+  const routes = {
+    ctor: "/constructor",
+    str: "/toString",
+    proto: "/__proto__",
+    post: "/blog/:id",
+  };
+
+  it("builds them as own keys without writing to Object.prototype", () => {
+    const trie = buildTestTrie(routes);
+    expect(leaked()).toEqual([undefined, undefined, undefined]);
+    expect(Object.keys(trie.s ?? {}).sort()).toEqual(
+      ["__proto__", "blog", "constructor", "toString"].sort(),
+    );
+    expect(Object.getPrototypeOf(trie.s)).toBeNull();
+  });
+
+  it.each([
+    ["/constructor", "ctor"],
+    ["/toString", "str"],
+    ["/__proto__", "proto"],
+  ])("matches %s to its own route, built and serialized", (path, key) => {
+    const trie = buildTestTrie(routes);
+    expect(tryTrieMatch(trie, path)?.routeKey).toBe(key);
+    // The production manifest carries the trie as JSON, loaded by another
+    // process than the one that built it.
+    const json = JSON.stringify(trie);
+    unleak();
+    expect(tryTrieMatch(JSON.parse(json), path)?.routeKey).toBe(key);
+  });
+
+  it("an intermediate node does not inherit a leaf", () => {
+    const trie = buildTestTrie(routes);
+    expect(tryTrieMatch(trie, "/blog")).toBeNull();
+    expect(tryTrieMatch(trie, "/blog/1")?.routeKey).toBe("post");
+  });
+
+  it.each(["/constructor", "/toString", "/__proto__", "/hasOwnProperty"])(
+    "%s with no such route falls to the param route or misses",
+    (path) => {
+      const trie = buildTestTrie({ about: "/about", page: "/:slug" });
+      expect(tryTrieMatch(trie, path)).toMatchObject({
+        routeKey: "page",
+        params: { slug: path.slice(1) },
+      });
+      expect(tryTrieMatch(buildTestTrie({ about: "/about" }), path)).toBeNull();
+    },
+  );
 });

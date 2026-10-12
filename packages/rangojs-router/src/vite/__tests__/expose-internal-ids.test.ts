@@ -1,4 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { findTsFiles } from "../../build/route-types/scan-filter.js";
 import {
   createLoaderScanStubPlugin,
   exposeInternalIds,
@@ -1677,5 +1681,62 @@ export const ${name} = createLoader(async () => ({ ok: true }));
     );
     expect(ids).toHaveLength(3);
     expect(ids).toEqual([...ids].sort());
+  });
+});
+
+// The build loader pre-scan walks the project with the directory rule
+// findTsFiles() uses (isSkippedSourceScanDir in scan-filter.ts).
+describe("loader pre-scan directories", () => {
+  const loaderFile = `import { createLoader } from "@rangojs/router";
+export const dataLoader = createLoader(async () => ({ ok: true }));
+`;
+
+  it("skips the directories findTsFiles skips and enters the rest", async () => {
+    const root = mkdtempSync(join(tmpdir(), "rango-loader-prescan-"));
+    try {
+      const files: Array<[string, boolean]> = [
+        ["src/loaders.ts", true],
+        ["src/__tests__/loaders.ts", true],
+        ["src/__mocks__/loaders.ts", true],
+        ["src/build-tools/loaders.ts", true],
+        ["node_modules/pkg/loaders.ts", false],
+        ["dist/loaders.ts", false],
+        ["build/loaders.ts", false],
+        ["src/build/loaders.ts", false],
+        ["coverage/loaders.ts", false],
+        [".cache/loaders.ts", false],
+        [".claude/worktrees/x/src/loaders.ts", false],
+      ];
+      for (const [rel] of files) {
+        mkdirSync(join(root, rel, ".."), { recursive: true });
+        writeFileSync(join(root, rel), loaderFile);
+      }
+
+      const plugin = createPlugin() as ReturnType<typeof createPlugin> & {
+        buildStart: (this: any) => Promise<void>;
+      };
+      plugin.configResolved({ command: "build", root });
+      await plugin.buildStart.call(rscCtx());
+      const manifest = plugin.load.call(
+        rscCtx(),
+        "\0virtual:rsc-router/loader-manifest",
+      ) as string;
+      const scanned = [...manifest.matchAll(/import\("\/([^"]+)"\)/g)]
+        .map((match) => match[1])
+        .sort();
+
+      const expected = files
+        .filter(([, kept]) => kept)
+        .map(([rel]) => rel)
+        .sort();
+      expect(scanned).toEqual(expected);
+      expect(
+        findTsFiles(root)
+          .map((file) => file.slice(root.length + 1))
+          .sort(),
+      ).toEqual(expected);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

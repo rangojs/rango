@@ -21,6 +21,7 @@ import {
   pushHistoryWithIdx,
 } from "./history-state.js";
 import { consumeHandles } from "./react/NavigationProvider.js";
+import { withSegmentHandles } from "../handles/pushed-by.js";
 import {
   handleNavigationStart,
   handleNavigationEnd,
@@ -386,7 +387,9 @@ export function createNavigationBridge(
       // since it may have fresher data after an action revalidation.
       // This avoids unnecessary server round-trips for shared layout loaders.
       let cachedSegments = cached?.segments;
-      const cachedHandleData = cached?.handleData;
+      // The segments taken from the page on screen: their pushes come from
+      // it too (targetCacheHandleData below).
+      const fromSource = new Set<string>();
       if (cachedSegments && sourceCached?.segments) {
         const sourceSegmentMap = new Map(
           sourceCached.segments.map((s) => [s.id, s]),
@@ -396,7 +399,9 @@ export function createNavigationBridge(
           // Use source (current page) version for shared segments - it's
           // fresher. A placeholder waiting for its fill (prefetch: false) is
           // not a copy of the segment: the target keeps its own.
-          return sourceSeg && !isPlaceholder(sourceSeg) ? sourceSeg : targetSeg;
+          if (!sourceSeg || isPlaceholder(sourceSeg)) return targetSeg;
+          fromSource.add(targetSeg.id);
+          return sourceSeg;
         });
       }
 
@@ -498,7 +503,18 @@ export function createNavigationBridge(
                 ...(hasUsableCache
                   ? {
                       targetCacheSegments: cachedSegments,
-                      targetCacheHandleData: cachedHandleData,
+                      // Read at commit: a push the page on screen gets while
+                      // the request is in flight is in it.
+                      targetCacheHandleData: () =>
+                        withSegmentHandles(
+                          cached?.handleData ?? {},
+                          liveHandleDataForCache(
+                            eventController,
+                            store,
+                            sourceHistoryKey,
+                          ),
+                          fromSource,
+                        ),
                     }
                   : {}),
                 ...(clientUrlPresentation && {

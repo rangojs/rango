@@ -179,6 +179,7 @@ import {
   PprShortMetaLayout,
 } from "./pages/ppr-slow-meta.js";
 import { OrphanFetchTest } from "./components/OrphanFetchTest.js";
+import { LoaderParamsProbe } from "./components/LoaderParamsProbe.js";
 import { RenderStabilityRoute } from "./pages/render-stability.js";
 import { FeatureDetailPage, FeaturesShell } from "./pages/features.js";
 import {
@@ -315,6 +316,7 @@ import { renderedBarrierPatterns } from "./pages/rendered-barrier.js";
 import { prefetchTransitionPatterns } from "./pages/prefetch-transition.js";
 import { lateHistoryPatterns } from "./pages/late-history.js";
 import { heldHandlesPatterns } from "./pages/held-handles.js";
+import { historyHandlesPatterns } from "./pages/history-handles.js";
 import heldHandlesClientPatterns from "./pages/held-handles.client-urls.js";
 import { heldBoundaryPatterns } from "./pages/held-boundary.js";
 import { peFormStatePatterns } from "./pages/pe-form-state.js";
@@ -1973,6 +1975,22 @@ export const urlpatterns = urls(
         path("/orphan-fetch", () => <OrphanFetchTest />, {
           name: "orphanFetch",
         }),
+        // Request-derived names like `constructor` (#1109): static segments
+        // match their own routes, and a fetchable loader's params are string
+        // values (request-keys.test.ts).
+        path(
+          "/constructor",
+          () => <p data-testid="request-key-page">constructor route</p>,
+          { name: "requestKeyConstructor" },
+        ),
+        path(
+          "/__proto__",
+          () => <p data-testid="request-key-page">__proto__ route</p>,
+          { name: "requestKeyProto" },
+        ),
+        path("/loader-params", () => <LoaderParamsProbe />, {
+          name: "loaderParams",
+        }),
         path("/render-stability/p/:id", RenderStabilityRoute, {
           name: "renderStability",
         }),
@@ -2887,6 +2905,9 @@ export const urlpatterns = urls(
           name: "heldHandlesClient",
         }),
         include("/", heldHandlesPatterns, { name: "" }),
+        // A link to a page the history cache holds keeps that page's handle
+        // pushes when the response re-renders part of it.
+        include("/", historyHandlesPatterns, { name: "" }),
         include("/", peFormStatePatterns, { name: "" }),
         include("/", suspenseCasesPatterns, { name: "sc" }),
         // prefetch: false on loader() and loading(): one page per case with

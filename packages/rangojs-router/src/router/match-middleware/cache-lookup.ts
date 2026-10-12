@@ -100,8 +100,8 @@ import { pushRevalidationTraceEntry, isTraceActive } from "../logging.js";
 import { treeHasStreaming } from "./segment-resolution.js";
 import { loaderPins } from "../segment-resolution/loader-cache.js";
 import {
-  defersAboveRecord,
-  isFillRequest,
+  fillSends,
+  recordUse,
 } from "../segment-resolution/prefetch-deferral.js";
 import type { PrerenderStore, PrerenderEntry } from "../../prerender/store.js";
 import {
@@ -346,24 +346,23 @@ async function* yieldFromStore<TEnv>(
   const paramsChanged =
     !ctx.isFullMatch && !paramsEqual(ctx.matched.params, ctx.prevParams);
   const resendRouteSegments = replaceable === true && ctx.isAction;
-  // A fill (prefetch-deferral.ts) keeps every segment the client holds.
-  const fill = isFillRequest(ctx.handlerContext);
   for (const segment of segments) {
     if (
       !ctx.isFullMatch &&
       ctx.clientSegmentSet.has(segment.id) &&
       // A stored intercept segment is re-sent, as on the runtime cache path:
-      // its loaders run (handleCacheHitIntercept) and the browser applies the
-      // slot with them (merge-segment-loaders.ts), so a null one blanks it.
-      !segment.namespace?.startsWith("intercept:") &&
-      (fill ||
-        (!paramsChanged &&
-          !(
-            resendRouteSegments &&
-            (segment.type === "route" || segment.belongsToRoute === true)
-          )))
+      // its loaders run (handleCacheHitIntercept), and a kept (null) one would
+      // be left out of the response with its loaders' new data.
+      !segment.namespace?.startsWith("intercept:")
     ) {
-      keepClientSegment(segment);
+      // A fill keeps it (fillSends); otherwise it is sent again when the
+      // params changed or an action re-sends the route's own segments.
+      const sends =
+        fillSends(ctx.handlerContext, segment.id, ctx.clientSegmentSet) ??
+        (paramsChanged ||
+          (resendRouteSegments &&
+            (segment.type === "route" || segment.belongsToRoute === true)));
+      if (!sends) keepClientSegment(segment);
     }
     yield segment;
   }
@@ -743,7 +742,7 @@ export function withCacheLookup<TEnv>(
     if (
       ctx.isAction ||
       !ctx.cacheScope?.enabled ||
-      defersAboveRecord(ctx.handlerContext)
+      !recordUse(ctx.handlerContext).read
     ) {
       yield* source;
       if (ms) {
@@ -916,7 +915,6 @@ export function withCacheLookup<TEnv>(
 
     yield* liveSegments;
 
-    const fill = isFillRequest(ctx.handlerContext);
     for (const segment of cacheResult.segments) {
       if (!ctx.clientSegmentSet.has(segment.id)) {
         if (isTraceActive()) {
@@ -939,8 +937,11 @@ export function withCacheLookup<TEnv>(
         continue;
       }
 
-      // A fill (prefetch-deferral.ts) skips a held segment outright.
-      if (fill) {
+      // A fill keeps a held segment outright (fillSends).
+      if (
+        fillSends(ctx.handlerContext, segment.id, ctx.clientSegmentSet) ===
+        false
+      ) {
         keepClientSegment(segment);
         yield segment;
         continue;

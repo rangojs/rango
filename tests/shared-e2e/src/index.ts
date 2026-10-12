@@ -30,6 +30,8 @@ export { runHeldBoundaryTests } from "./held-boundary-scenario.js";
 export { runLateHandleHistoryTests } from "./late-handle-history-scenario.js";
 export { runHeldHandlesTests } from "./held-handles-scenario.js";
 export type { HeldHandlesScenarioOptions } from "./held-handles-scenario.js";
+export { runHistoryCacheHandlesTests } from "./history-cache-handles-scenario.js";
+export type { HistoryCacheHandlesScenarioOptions } from "./history-cache-handles-scenario.js";
 export { runInterceptHeldTests } from "./intercept-held-scenario.js";
 export type { InterceptHeldScenarioOptions } from "./intercept-held-scenario.js";
 export type { LateHandleHistoryScenarioOptions } from "./late-handle-history-scenario.js";

@@ -541,18 +541,23 @@ export function NavigationProvider({
         eventController.setParams(update.metadata.params);
       }
 
+      // A page rendered from a history-cache entry (back/forward, or a link
+      // to it) starts from the entry's pushes, and its response's handles
+      // merge onto them: the page on screen's pushes are not its segments'.
+      const { matched, cachedHandleData } = update.metadata;
+      if (matched && cachedHandleData) {
+        eventController.setHandleData(cachedHandleData, matched);
+      }
       // Update handle data progressively as it streams in
       if (update.metadata.handles) {
         consumeHandles(update.metadata, eventController, store);
-      } else if (update.metadata.matched) {
-        // cachedHandleData present -> full restore (back/forward); absent ->
-        // partial cleanup of segments no longer matched.
-        const cached = update.metadata.cachedHandleData;
+      } else if (matched && !cachedHandleData) {
+        // Partial cleanup of segments no longer matched.
         eventController.setHandleData(
-          cached ?? {},
-          update.metadata.matched,
-          cached === undefined,
-          cached === undefined ? update.metadata.resolvedIds : undefined,
+          {},
+          matched,
+          true,
+          update.metadata.resolvedIds,
         );
       }
 
