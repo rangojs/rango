@@ -26,10 +26,11 @@ export type RewriteTarget =
     };
 
 const REWRITE_RULE =
-  "throw rewrite() renders another route at the same URL. It works only in " +
-  "middleware (router.use() or middleware() in urls()), before await next(), " +
-  "while it handles a GET or HEAD page request: not in a route handler, a " +
-  "loader, intercept middleware or a loader fetch. In a server action use " +
+  "rewrite() is for middleware: throw it from router.use() or route " +
+  "middleware (middleware() in urls()), before await next(), while it " +
+  "handles a GET or HEAD page request. Loaders and route handlers can't " +
+  "rewrite: throw rewrite() from the route's middleware instead. Intercept " +
+  "middleware and loader fetches can't either. In a server action use " +
   "redirect(); for a mutation return a Response from middleware.";
 
 export function describeRewriteTarget(target: RewriteTarget): string {

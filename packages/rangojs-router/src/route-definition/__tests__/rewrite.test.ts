@@ -53,7 +53,10 @@ describe("rewrite()", () => {
     expect(value).toBeInstanceOf(Error);
     expect(value.name).toBe("Rewrite");
     expect(value.message).toContain('rewrite("/maintenance")');
-    expect(value.message).toContain("It works only in middleware");
+    expect(value.message).toContain("rewrite() is for middleware");
+    expect(value.message).toContain(
+      "Loaders and route handlers can't rewrite: throw rewrite() from the route's middleware instead.",
+    );
     expect(value.message).toContain("before await next()");
     expect(value.message).toContain("In a server action use redirect()");
     expect(value.target).toEqual({ path: "/maintenance" });

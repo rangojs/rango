@@ -521,14 +521,31 @@ you need in from middleware), and a render other visitors may be served (a
 PPR shell capture, a page the document cache stores) reads `undefined`, as a
 direct visit does.
 
+**Middleware only, by design.** `rewrite()` is a middleware tool. A route
+handler or a loader (any loader, `ssr: false` included) cannot rewrite: its
+throw is an error whose message points you to route middleware. A rewrite
+that depends on data goes in the route's middleware, reading the data
+through a cached function the loader shares, so the lookup runs once:
+
+```typescript
+path("/product/:slug", ProductPage, { name: "product" }, () => [
+  middleware(async (ctx, next) => {
+    const product = await getProduct(ctx.params.slug); // cached, shared with the loader
+    if (product.discontinued) {
+      throw rewrite("discontinued", { slug: ctx.params.slug });
+    }
+    await next();
+  }),
+  loader(productLoader), // calls getProduct(slug): a cache hit
+]);
+```
+
 **Throw it, don't return it.** A returned rewrite is an error. Where a
 rewrite cannot be honored it is an error that names the rule: a route
-handler, a loader (`ssr: false` included; a rewrite from an `ssr: false`
-loader is a possible future addition), a server
-action (use `redirect()`), intercept middleware, a loader fetch
-(`useFetchLoader`, `load()`: it rejects with the rule) or its middleware,
-and middleware handling a non-GET request (a JS action or a no-JS form post:
-return a `Response`).
+handler or a loader (see above), a server action (use `redirect()`),
+intercept middleware, a loader fetch (`useFetchLoader`, `load()`: it
+rejects with the rule) or its middleware, and middleware handling a non-GET
+request (a JS action or a no-JS form post: return a `Response`).
 
 **try/catch around next().** A thrown rewrite passes through your
 middleware's `catch`. Rethrow it:

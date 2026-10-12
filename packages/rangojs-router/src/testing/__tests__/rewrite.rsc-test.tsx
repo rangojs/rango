@@ -161,6 +161,12 @@ const router = createRouter({
         {},
         () => [loader(RewritingLoader)],
       ),
+      path(
+        "/ssr-false-loader-rewrite",
+        () => <p>ssr false loader page</p>,
+        {},
+        () => [loader(RewritingLoader, { ssr: false })],
+      ),
       path("/shell-target", () => <p>shell target</p>, {
         name: "shell-target",
         ppr: true,
@@ -273,7 +279,7 @@ describe("throw rewrite() through the request handler", () => {
     });
     expect(result.response.status).toBe(500);
     expect(result.response.headers.get("x-rango-rewrite")).toBeNull();
-    expect(errors[0]?.error.message).toContain("It works only in middleware");
+    expect(errors[0]?.error.message).toContain("rewrite() is for middleware");
   });
 });
 
@@ -324,15 +330,23 @@ describe("where a rewrite is not supported", () => {
     );
   });
 
-  it("a loader that throws rewrite() renders its error, the page stays", async () => {
-    const result = await serveShellRequest(router, "/loader-rewrite", {
-      cacheStore: new MemorySegmentCacheStore(),
-    });
-    expect(result.response.headers.get("x-rango-rewrite")).toBeNull();
-    expect(result.body).toContain("loader page");
-    const loaderError = errors.find((e) => e.phase === "loader");
-    expect(loaderError?.error.message).toContain("It works only in middleware");
-  });
+  it.each([
+    ["/loader-rewrite", "loader page"],
+    ["/ssr-false-loader-rewrite", "ssr false loader page"],
+  ])(
+    "a loader that throws rewrite() renders its error, the page stays (%s)",
+    async (url, page) => {
+      const result = await serveShellRequest(router, url, {
+        cacheStore: new MemorySegmentCacheStore(),
+      });
+      expect(result.response.headers.get("x-rango-rewrite")).toBeNull();
+      expect(result.body).toContain(page);
+      const loaderError = errors.find((e) => e.phase === "loader");
+      expect(loaderError?.error.message).toContain(
+        "Loaders and route handlers can't rewrite: throw rewrite() from the route's middleware instead.",
+      );
+    },
+  );
 });
 
 describe("a rewritten request and the caches", () => {

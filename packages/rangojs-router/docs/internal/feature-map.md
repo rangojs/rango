@@ -633,7 +633,8 @@ Route-local schema definitions (`search` option), typed route param types (`Rout
   same-URL rewrite is a `RewriteLoopError` (onError "routing", 508). Refused
   with a site error: a rewrite after `next()`, mutations, intercept
   middleware; a loader fetch answers with the `loaderError` `load()` rejects
-  with; a handler's, loader's or server action's throw is its own error.
+  with; a handler's, loader's or server action's throw is its own error
+  (middleware only, by design: no loader rewrites).
   `runMiddleware` reports it, `dispatch` and `serveShellRequest` re-dispatch
   it, `renderRoute` takes `rewrite`. See `docs/internal/execution-model.md` →
   "Rewrite".

@@ -983,16 +983,16 @@ Where the old and the new URL show:
 
 Where a rewrite is not honored, and what it becomes:
 
-| Thrown from                                 | Result                                                                                               |
-| ------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| middleware after its `next()` ran the route | an error: "throw rewrite() before await next()"                                                      |
-| middleware during a mutation                | an error, onError `"routing"`                                                                        |
-| global middleware during a loader fetch     | the `loaderError` response `load()` rejects with (500, the rule in the message), onError `"routing"` |
-| a fetchable loader or its loader middleware | the loader's error response, onError `"loader"`                                                      |
-| a server action                             | the action's error (onError `"action"`); the Rewrite's message says "use redirect()"                 |
-| intercept middleware                        | an error naming the intercept site                                                                   |
-| a route handler or a loader                 | the error boundary / loader error UI, with the rule in the message                                   |
-| a returned (not thrown) `Rewrite`           | an error: "throw it, don't return it"                                                                |
+| Thrown from                                 | Result                                                                                                                         |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| middleware after its `next()` ran the route | an error: "throw rewrite() before await next()"                                                                                |
+| middleware during a mutation                | an error, onError `"routing"`                                                                                                  |
+| global middleware during a loader fetch     | the `loaderError` response `load()` rejects with (500, the rule in the message), onError `"routing"`                           |
+| a fetchable loader or its loader middleware | the loader's error response, onError `"loader"`                                                                                |
+| a server action                             | the action's error (onError `"action"`); the Rewrite's message says "use redirect()"                                           |
+| intercept middleware                        | an error naming the intercept site                                                                                             |
+| a route handler or a loader                 | the error boundary / loader error UI; the message says to throw `rewrite()` from route middleware (middleware only, by design) |
+| a returned (not thrown) `Rewrite`           | an error: "throw it, don't return it"                                                                                          |
 
 Caches: the document cache keys pass 2 by the target's URL, as a direct
 visit; it lets a `Rewrite` through its `catch` (`isRewrite`), and a stale
@@ -1191,12 +1191,11 @@ value within a group is therefore opt-in via a common `key`.
 
 ## Non-Guarantees
 
-- A rewrite from a loader, `ssr: false` included, is not supported yet (a
-  deferred follow-up): its rejection becomes the loader's error UI and is
-  reported through onError (phase `"loader"`), with the rule in the message.
-  Supporting `ssr: false` loaders on documents needs segment resolution to
-  pass a flagged loader's rewrite out instead of turning it into an error
-  envelope.
+- A loader cannot rewrite, by design (`ssr: false` included): `rewrite()` is
+  a middleware tool. A loader's throw becomes the loader's error UI and is
+  reported through onError (phase `"loader"`), its message pointing to route
+  middleware. A rewrite that depends on data goes in the route's middleware,
+  reading the data through a cached function the loader shares.
 - Route middleware is not an action guard.
 - Partial revalidation does not implicitly recompute non-revalidated ancestors.
 - A fill request (`prefetch: false`) does not recompute the handlers the

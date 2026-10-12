@@ -81,10 +81,28 @@ What a rewrite does:
 search)` a global route name.
 - More than 5 rewrites, or a rewrite to the URL the request is on, answers 508
   and reports a `RewriteLoopError` through `onError` (phase `"routing"`).
+- Middleware only, by design: a route handler or a loader (`ssr: false`
+  included) cannot rewrite, and its throw is an error that points to route
+  middleware. A rewrite that depends on data goes in the route's middleware,
+  reading the data through a cached function the loader shares:
+
+  ```ts
+  path("/product/:slug", ProductPage, { name: "product" }, () => [
+    middleware(async (ctx, next) => {
+      const product = await getProduct(ctx.params.slug); // cached, shared with the loader
+      if (product.discontinued) {
+        throw rewrite("discontinued", { slug: ctx.params.slug });
+      }
+      await next();
+    }),
+    loader(productLoader),
+  ]);
+  ```
+
 - Throw it, don't return it: a returned rewrite is an error. Throwing it from a
-  route handler, a loader, a server action (use `redirect()`), intercept
-  middleware, or from middleware handling a non-GET request (a mutation:
-  return a `Response`) is an error that names the rule. A loader fetch
+  server action (use `redirect()`), intercept middleware, or from middleware
+  handling a non-GET request (a mutation: return a `Response`) is an error
+  that names the rule. A loader fetch
   (`load()`, `useFetchLoader`) under a rewriting middleware rejects with the
   rule as its message.
 - A middleware that wraps `next()` in `try`/`catch` rethrows a rewrite with

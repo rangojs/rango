@@ -181,8 +181,8 @@ describe("handleLoaderFetch — rewrite() is not supported", () => {
     expect(ctx.callOnError.mock.calls[0]?.[1]).toBe("loader");
     const reported = ctx.callOnError.mock.calls[0]?.[0] as Error;
     expect(reported.name).toBe("Rewrite");
-    expect(reported.message).toContain("It works only in middleware");
-    expect(reported.message).toContain("a loader fetch");
+    expect(reported.message).toContain("rewrite() is for middleware");
+    expect(reported.message).toContain("loader fetches can't either");
   });
 });
 
