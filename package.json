@@ -22,6 +22,8 @@
     "check:docs-api": "node tools/check-docs-api.mjs",
     "check:skills": "node tools/check-skills.mjs",
     "check:skills-catalog": "node tools/generate-skills-catalog.mjs --check",
+    "check:route-gen": "node tools/generate-route-types.mjs --check",
+    "generate:route-types": "node tools/generate-route-types.mjs",
     "check:bundle-guards": "node tools/check-bundle-guards.mjs",
     "format": "oxfmt --check .",
     "format:fix": "oxfmt .",

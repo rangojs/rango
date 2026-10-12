@@ -10,6 +10,7 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
+import { planPerModuleRouteTypesForFile } from "../route-types/per-module-writer";
 import {
   writeCombinedRouteTypes,
   generateRouteTypesSource,
@@ -1128,6 +1129,37 @@ export const patterns = urls(({ path, include }) => [
     expect(content).toContain('index: "/"');
     expect(content).toContain("api.users");
     expect(content).toContain("/api/users");
+  });
+
+  it("plans without writing: routes, placeholder and null cases", () => {
+    const withRoutes = join(tempDir, "a.ts");
+    writeFileSync(
+      withRoutes,
+      `import { urls } from "@rangojs/router";
+export const patterns = urls(({ path }) => [path("/x", handler, { name: "x" })]);
+`,
+    );
+    const placeholder = join(tempDir, "b.ts");
+    writeFileSync(
+      placeholder,
+      `import { urls } from "@rangojs/router";
+import { buildRoutes } from "./factory.js";
+export const patterns = urls(buildRoutes);
+`,
+    );
+    const unrelated = join(tempDir, "c.ts");
+    writeFileSync(unrelated, "export const x = 1;\n");
+
+    const plan = planPerModuleRouteTypesForFile(withRoutes);
+    expect(plan?.isPlaceholder).toBe(false);
+    expect(plan?.genPath).toBe(join(tempDir, "a.gen.ts"));
+    expect(plan?.content).toContain('x: "/x"');
+    const empty = planPerModuleRouteTypesForFile(placeholder);
+    expect(empty?.isPlaceholder).toBe(true);
+    expect(empty?.content).toBe(generatePerModuleTypesSource([]));
+    expect(planPerModuleRouteTypesForFile(unrelated)).toBeNull();
+    expect(existsSync(join(tempDir, "a.gen.ts"))).toBe(false);
+    expect(existsSync(join(tempDir, "b.gen.ts"))).toBe(false);
   });
 
   it("emits empty placeholder when urls() variable exists but routes are unresolvable", () => {
