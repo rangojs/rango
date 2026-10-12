@@ -1,20 +1,20 @@
 /**
- * rewrite(): the Rewrite value, target resolution, the hop counter, and
+ * rewrite(): the Rewrite value, target resolution, the hop trail, and
  * applyRewrite, which moves the one request context to the target.
  */
 import { describe, expect, it } from "vitest";
-import * as rewriteModule from "../rewrite.js";
+import { isRewrite, rewrite, rewriteNotSupported } from "../rewrite.js";
 import {
   applyRewrite,
-  isRewrite,
+  resolveRewriteTarget,
+} from "../../rsc/rewrite-passes.js";
+import * as trailModule from "../../server/rewrite-trail.js";
+import {
   MAX_REWRITE_HOPS,
   recordRewriteHop,
-  rejectActionRewrite,
-  resolveRewriteTarget,
-  rewrite,
-  rewriteNotSupported,
-  RewriteLoopError,
-} from "../rewrite.js";
+  rewriteTrail,
+} from "../../server/rewrite-trail.js";
+import { RewriteLoopError } from "../../errors.js";
 import {
   createRequestContext,
   runWithRequestContext,
@@ -25,6 +25,7 @@ import { createMetricsStore } from "../../router/metrics.js";
 import type { LocationStateEntry } from "../../browser/react/location-state-shared.js";
 import { createVar } from "../../context-var.js";
 import { createHandle } from "../../handle.js";
+import { createLoader } from "../../loader.rsc.js";
 
 const ROUTES = {
   maintenance: "/maintenance",
@@ -53,7 +54,8 @@ describe("rewrite()", () => {
     expect(value.name).toBe("Rewrite");
     expect(value.message).toContain('rewrite("/maintenance")');
     expect(value.message).toContain("It works only in middleware");
-    expect(value.message).toContain("Use redirect()");
+    expect(value.message).toContain("before await next()");
+    expect(value.message).toContain("In a server action use redirect()");
     expect(value.target).toEqual({ path: "/maintenance" });
   });
 
@@ -94,18 +96,35 @@ describe("resolveRewriteTarget", () => {
     expect(url.href).toBe("https://shop.test/maintenance?from=a");
   });
 
+  it("drops the target's own internal _rsc params", () => {
+    const url = resolveRewriteTarget(
+      rewrite("/maintenance?from=a&_rsc_partial=true&_rsc_segments=x"),
+      ROUTES,
+      base,
+    );
+    expect(url.href).toBe("https://shop.test/maintenance?from=a");
+  });
+
   it("prefixes a path with the basename once", () => {
+    const at = (path: string) =>
+      resolveRewriteTarget(rewrite(path as `/${string}`), ROUTES, base, "/app");
+    expect(at("/maintenance").pathname).toBe("/app/maintenance");
+    expect(at("/app/maintenance").pathname).toBe("/app/maintenance");
+    expect(at("/").pathname).toBe("/app");
+    expect(at("/app?tab=x").href).toBe("https://shop.test/app?tab=x");
+    expect(at("/app#top").href).toBe("https://shop.test/app");
+  });
+
+  it("keeps a path inside the basename once normalized", () => {
+    expect(() =>
+      resolveRewriteTarget(rewrite("/../admin"), ROUTES, base, "/app"),
+    ).toThrow("outside the router's basename /app");
+    expect(() =>
+      resolveRewriteTarget(rewrite("/app/../../admin"), ROUTES, base, "/app"),
+    ).toThrow("outside the router's basename /app");
     expect(
-      resolveRewriteTarget(rewrite("/maintenance"), ROUTES, base, "/app")
-        .pathname,
-    ).toBe("/app/maintenance");
-    expect(
-      resolveRewriteTarget(rewrite("/app/maintenance"), ROUTES, base, "/app")
-        .pathname,
-    ).toBe("/app/maintenance");
-    expect(
-      resolveRewriteTarget(rewrite("/"), ROUTES, base, "/app").pathname,
-    ).toBe("/app");
+      resolveRewriteTarget(rewrite("/a/../b"), ROUTES, base, "/app").pathname,
+    ).toBe("/app/b");
   });
 
   it("resolves a global route name with params and search", () => {
@@ -134,19 +153,20 @@ describe("resolveRewriteTarget", () => {
   });
 });
 
-describe("the rewrite hop counter", () => {
+describe("the rewrite hop trail", () => {
   const at = (path: string) => new URL(`https://shop.test${path}`);
 
   it(`allows ${MAX_REWRITE_HOPS} hops and fails the next with the trail`, () => {
-    const variables: Record<string, unknown> = {};
+    const holder = { _variables: {} as Record<string, unknown> };
     for (let hop = 1; hop <= MAX_REWRITE_HOPS; hop++) {
-      expect(
-        recordRewriteHop(variables, at(`/h${hop - 1}`), at(`/h${hop}`)),
-      ).toBe(hop);
+      expect(recordRewriteHop(holder, at(`/h${hop - 1}`), at(`/h${hop}`))).toBe(
+        hop,
+      );
     }
+    expect(rewriteTrail(holder)?.[0]).toBe("https://shop.test/h0");
     let error: unknown;
     try {
-      recordRewriteHop(variables, at("/h5"), at("/h6"));
+      recordRewriteHop(holder, at("/h5"), at("/h6"));
     } catch (e) {
       error = e;
     }
@@ -166,31 +186,32 @@ describe("the rewrite hop counter", () => {
   });
 
   it("fails a rewrite to the URL the request is on at once", () => {
-    const variables: Record<string, unknown> = {};
-    expect(() =>
-      recordRewriteHop(variables, at("/a?x=1"), at("/a?x=1")),
-    ).toThrow("Infinite rewrite loop: /a?x=1 -> /a?x=1");
+    const holder = { _variables: {} as Record<string, unknown> };
+    expect(() => recordRewriteHop(holder, at("/a?x=1"), at("/a?x=1"))).toThrow(
+      "Infinite rewrite loop: /a?x=1 -> /a?x=1",
+    );
+    expect(rewriteTrail(holder)).toBeUndefined();
     // Another search is another URL.
-    expect(recordRewriteHop(variables, at("/a?x=1"), at("/a?x=2"))).toBe(1);
+    expect(recordRewriteHop(holder, at("/a?x=1"), at("/a?x=2"))).toBe(1);
   });
 
-  it("keeps the counter where user code cannot reach or reset it", () => {
-    const exported = Object.keys(rewriteModule);
-    expect(exported).not.toContain("REWRITE_TRAIL");
-    const variables: Record<string, unknown> = {};
-    recordRewriteHop(variables, at("/a"), at("/b"));
+  it("keeps the trail where user code cannot reach or reset it", () => {
+    expect(Object.keys(trailModule)).not.toContain("REWRITE_TRAIL");
+    const holder = { _variables: {} as Record<string, unknown> };
+    recordRewriteHop(holder, at("/a"), at("/b"));
     // String keys and a user's own createVar() tokens are other slots.
-    for (const key of Object.keys(variables)) delete variables[key];
+    for (const key of Object.keys(holder._variables)) {
+      delete holder._variables[key];
+    }
     const userVar = createVar<unknown>();
-    (variables as Record<symbol, unknown>)[userVar.key] = undefined;
-    expect(recordRewriteHop(variables, at("/b"), at("/c"))).toBe(2);
+    (holder._variables as Record<symbol, unknown>)[userVar.key] = undefined;
+    expect(recordRewriteHop(holder, at("/b"), at("/c"))).toBe(2);
   });
 });
 
 describe("rewriteNotSupported", () => {
   it.each([
     ["mutation", "Return a Response for mutations"],
-    ["action", "a server action threw it. Use redirect()"],
     ["loader-fetch", "during a loader fetch"],
     ["intercept", "intercept middleware threw it"],
   ] as const)("names the %s site", (site, text) => {
@@ -200,20 +221,6 @@ describe("rewriteNotSupported", () => {
     expect(error.message).toContain(text);
     expect(error.cause).toBe(original);
     expect(isRewrite(error)).toBe(false);
-  });
-
-  it("rejectActionRewrite turns an action's rewrite into the action error", async () => {
-    await expect(
-      rejectActionRewrite(() => {
-        throw rewrite("/m");
-      }),
-    ).rejects.toThrow("a server action threw it. Use redirect()");
-    await expect(rejectActionRewrite(async () => 42)).resolves.toBe(42);
-    await expect(
-      rejectActionRewrite(() => {
-        throw new Error("plain");
-      }),
-    ).rejects.toThrow("plain");
   });
 });
 
@@ -252,8 +259,6 @@ describe("applyRewrite", () => {
       ctx._requestMode = "partial-render";
       ctx._classifiedRoute = {} as never;
       ctx._documentCacheRender = true;
-      (ctx as { _currentSegmentId?: string })._currentSegmentId = "M0";
-      ctx._handleStore.push(Crumbs.$$id, "M0", "pass-one-crumb");
 
       const pass = applyRewrite(
         rewrite("maintenance"),
@@ -290,7 +295,8 @@ describe("applyRewrite", () => {
       expect(ctx.reverse).not.toBe(reverseBefore);
 
       // Kept: variables, stub status/headers/cookies, location state,
-      // dynamic(), metrics, request tags, onResponse callbacks.
+      // dynamic(), metrics, request tags, onResponse callbacks, the handle
+      // store (a pass never renders before it rewrites).
       expect(ctx.get(Marker)).toBe("pass-one");
       expect(ctx._variables).toBe(variables);
       expect(ctx.res.status).toBe(503);
@@ -301,40 +307,26 @@ describe("applyRewrite", () => {
       expect(ctx._metricsStore).toBe(metrics);
       expect([...ctx._requestTags]).toEqual(["tag-a"]);
       expect(ctx._onResponseCallbacks).toEqual([onResponse]);
+      expect(ctx._handleStore).toBe(handleStoreBefore);
 
-      // A fresh handle store, loader memo and use(): pass-one pushes are gone.
-      expect(ctx._handleStore).not.toBe(handleStoreBefore);
+      // A new loader memo behind getRequestContext().use(); handle pushes
+      // still go to the store.
       expect(ctx.use).not.toBe(useBefore);
-      expect(ctx._handleStore.getDataForSegment("M0")).toEqual({});
+      (ctx as { _currentSegmentId?: string })._currentSegmentId = "M0";
       ctx.use(Crumbs)("pass-two-crumb");
       expect(ctx._handleStore.getDataForSegment("M0")).toEqual({
         [Crumbs.$$id]: ["pass-two-crumb"],
       });
-      expect(handleStoreBefore.getDataForSegment("M0")).toEqual({
-        [Crumbs.$$id]: ["pass-one-crumb"],
-      });
     });
   });
 
-  it("rewires a render barrier the earlier pass already read", async () => {
+  it("runs a loader getRequestContext().use() started in the visitor's pass again for the target", async () => {
     const { ctx } = contextFor("https://shop.test/shop");
+    const SeenPath = createLoader(async (loaderCtx) => loaderCtx.pathname);
     await runWithRequestContext(ctx, async () => {
-      const passOne = ctx._renderBarrier;
-      ctx._resolveRenderBarrier([{ type: "route", id: "M0" }]);
-      await passOne;
+      expect(await ctx.use(SeenPath)).toBe("/shop");
       applyRewrite(rewrite("/m"), ctx.request, ctx, ROUTES, undefined);
-      const passTwo = ctx._renderBarrier;
-      expect(passTwo).not.toBe(passOne);
-      expect(ctx._renderBarrierSegmentOrder).toBeUndefined();
-      let settled = false;
-      void passTwo.then(() => {
-        settled = true;
-      });
-      await Promise.resolve();
-      expect(settled).toBe(false);
-      ctx._resolveRenderBarrier([{ type: "route", id: "M1" }]);
-      await passTwo;
-      expect(ctx._renderBarrierSegmentOrder).toEqual(["M1"]);
+      expect(await ctx.use(SeenPath)).toBe("/m");
     });
   });
 
@@ -345,11 +337,15 @@ describe("applyRewrite", () => {
       applyRewrite(rewrite("/b"), ctx.request, ctx, ROUTES, undefined);
       expect(ctx.rewrittenFrom?.href).toBe("https://shop.test/a?x=1");
       const first = ctx.rewrittenFrom;
+      expect(ctx.rewrittenFrom).toBe(first);
       applyRewrite(rewrite("/c?y=2"), ctx.request, ctx, ROUTES, undefined);
       expect(ctx.url.href).toBe("https://shop.test/c?y=2");
       expect(ctx.rewrittenFrom?.href).toBe("https://shop.test/a?x=1");
-      expect(ctx.rewrittenFrom).not.toBe(first);
-      expect(ctx.rewrittenFrom).not.toBe(ctx._rewrittenFrom);
+      expect(rewriteTrail(ctx)).toEqual([
+        "https://shop.test/a?x=1",
+        "https://shop.test/b",
+        "https://shop.test/c?y=2",
+      ]);
     });
   });
 

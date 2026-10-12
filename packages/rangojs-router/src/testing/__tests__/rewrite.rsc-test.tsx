@@ -4,7 +4,7 @@
  * the visitor's URL.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import React from "react";
+import React, { Suspense } from "react";
 
 vi.mock(
   "@vitejs/plugin-rsc/rsc/server",
@@ -39,6 +39,7 @@ import {
   MemorySegmentCacheStore,
   createDocumentCacheMiddleware,
 } from "../../cache/index.js";
+import { cachedRewrittenFrom } from "./fixtures/rewrite-data.js";
 
 const Lock = createVar<{ reason: string }>();
 
@@ -68,6 +69,7 @@ async function rewritingAction(): Promise<string> {
 }
 
 const errors: OnErrorContext[] = [];
+let selfRuns = 0;
 const spans: Array<{ name: string; attributes: Record<string, unknown> }> = [];
 
 const tracer: OTelActiveSpanTracer = {
@@ -98,7 +100,10 @@ const router = createRouter({
   .use(async (ctx, next) => {
     if (ctx.pathname === "/loop-a") throw rewrite("/loop-b");
     if (ctx.pathname === "/loop-b") throw rewrite("/loop-a");
-    if (ctx.pathname === "/self") throw rewrite("/self");
+    if (ctx.pathname === "/self") {
+      selfRuns++;
+      throw rewrite("/self");
+    }
     const lock = ctx.rewrittenFrom ? null : ctx.searchParams.get("lock");
     if (lock === "on") {
       // The maintenance recipe: a mutation gets a Response, a page a rewrite.
@@ -172,6 +177,7 @@ beforeEach(() => {
   resetShellTestState();
   errors.length = 0;
   spans.length = 0;
+  selfRuns = 0;
 });
 
 describe("throw rewrite() through the request handler", () => {
@@ -202,6 +208,10 @@ describe("throw rewrite() through the request handler", () => {
       partial: { from: "/guarded/page" },
     });
     expect(result.response.headers.get("x-rango-rewrite")).toBe("/maintenance");
+    expect(result.response.headers.get("content-type")).toBe(
+      "text/x-component;charset=utf-8",
+    );
+    expect(payloadMetadata(result.flight).isPartial).toBe(true);
     expect(result.flight).toContain("maintenance reason=deploy");
     expect(result.flight).not.toContain("shop page");
     expect(payloadMetadata(result.flight).pathname).toBe("/shop");
@@ -242,6 +252,8 @@ describe("throw rewrite() through the request handler", () => {
     });
     expect(result.response.status).toBe(508);
     expect(errors[0]?.error.message).toContain("/self -> /self");
+    // Refused before a second pass: the middleware ran once.
+    expect(selfRuns).toBe(1);
   });
 
   it("a rewrite to a path no route matches renders the 404 page", async () => {
@@ -304,8 +316,9 @@ describe("where a rewrite is not supported", () => {
       action: { ref: rewritingAction, id: "cart.ts#rewritingAction" },
     });
     const action = errors.find((e) => e.phase === "action");
+    expect(action?.error.name).toBe("Rewrite");
     expect(action?.error.message).toContain(
-      "a server action threw it. Use redirect()",
+      "In a server action use redirect()",
     );
   });
 
@@ -435,35 +448,318 @@ describe("a rewritten request and the caches", () => {
 });
 
 describe("one request, several passes", () => {
-  it("a route-middleware rewrite reuses the SSR setup the first pass started", async () => {
-    let streamModeCalls = 0;
+  it("the stream mode is resolved for the target, from global or route middleware", async () => {
+    const seen: string[] = [];
     const ssrRouter = createRouter({
       ssr: {
-        resolveStreaming: () => {
-          streamModeCalls++;
+        resolveStreaming: ({ url }) => {
+          seen.push(url.pathname);
           return "stream";
         },
       },
-    }).routes(
-      urls(({ path, middleware }) => [
-        path(
-          "/a",
-          () => <p>a</p>,
-          {},
-          () => [
-            middleware(() => {
-              throw rewrite("/b");
-            }),
-          ],
-        ),
-        path("/b", () => <p>b page</p>),
-      ]),
-    );
-    const result = await serveShellRequest(ssrRouter, "/a", {
+    })
+      .use("/g", () => {
+        throw rewrite("/b");
+      })
+      .routes(
+        urls(({ path, middleware }) => [
+          path(
+            "/a",
+            () => <p>a</p>,
+            {},
+            () => [
+              middleware(() => {
+                throw rewrite("/b");
+              }),
+            ],
+          ),
+          path("/g", () => <p>g</p>),
+          path("/b", () => <p>b page</p>),
+        ]),
+      );
+    const viaRoute = await serveShellRequest(ssrRouter, "/a", {
       cacheStore: new MemorySegmentCacheStore(),
     });
-    expect(result.body).toContain("b page");
-    expect(streamModeCalls).toBe(1);
+    expect(viaRoute.body).toContain("b page");
+    expect(seen.at(-1)).toBe("/b");
+    seen.length = 0;
+    const viaGlobal = await serveShellRequest(ssrRouter, "/g", {
+      cacheStore: new MemorySegmentCacheStore(),
+    });
+    expect(viaGlobal.body).toContain("b page");
+    expect(seen).toEqual(["/b"]);
+  });
+
+  const chainRouter = createRouter({})
+    .use(async (ctx, next) => {
+      const step = /^\/(c5|c6)\/(\d)$/.exec(ctx.pathname);
+      if (step) {
+        const at = Number(step[2]);
+        if (at < (step[1] === "c5" ? 5 : 6)) {
+          throw rewrite(`/${step[1]}/${at + 1}` as `/${string}`);
+        }
+      }
+      return next();
+    })
+    .routes(
+      urls(({ path }) => [
+        path("/c5/:k", (ctx: HandlerContext<{ k: string }>) => {
+          const own = ctx.rewrittenFrom!;
+          const other = getRequestContext().rewrittenFrom!;
+          own.pathname = "/mutated";
+          return (
+            <p>
+              {`chain end ${ctx.params.k} from=${other.pathname} copies-distinct=${own !== other}`}
+            </p>
+          );
+        }),
+        path("/c6/:k", () => <p>never</p>),
+      ]),
+    );
+
+  it(`takes 5 rewrites, reports the first URL, and answers the 6th with 508`, async () => {
+    const five = await serveShellRequest(chainRouter, "/c5/0", {
+      cacheStore: new MemorySegmentCacheStore(),
+    });
+    expect(five.response.status).toBe(200);
+    expect(five.response.headers.get("x-rango-rewrite")).toBe("/c5/5");
+    expect(five.body).toContain("chain end 5 from=/c5/0 copies-distinct=true");
+
+    const six = await serveShellRequest(chainRouter, "/c6/0", {
+      cacheStore: new MemorySegmentCacheStore(),
+    });
+    expect(six.response.status).toBe(508);
+  });
+});
+
+describe("a rewrite after next() (B2)", () => {
+  async function LateWriter(): Promise<React.ReactNode> {
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    cookies().set("late-from-pass-one", "1");
+    return <i>late</i>;
+  }
+
+  const afterRouter = createRouter({})
+    .use(async (ctx, next) => {
+      if (ctx.pathname === "/after-pre") {
+        cookies().set("pre-next", "1");
+      }
+      const response = await next();
+      if (ctx.pathname === "/after" || ctx.pathname === "/after-pre") {
+        throw rewrite("/target");
+      }
+      return response;
+    })
+    .routes(
+      urls(({ path }) => [
+        path("/after", () => (
+          <div>
+            after page
+            <Suspense fallback={<b>wait</b>}>
+              <LateWriter />
+            </Suspense>
+          </div>
+        )),
+        path("/after-pre", () => <p>after pre</p>),
+        path("/target", () => <p>target page</p>),
+      ]),
+    );
+
+  it("is an error: the route already rendered, and nothing re-dispatches", async () => {
+    for (const url of ["/after", "/after-pre"]) {
+      await expect(
+        serveShellRequest(afterRouter, url, {
+          cacheStore: new MemorySegmentCacheStore(),
+        }),
+      ).rejects.toThrow(
+        "threw rewrite() after calling next(): the route already rendered. throw rewrite() before await next().",
+      );
+    }
+  });
+});
+
+describe("ctx.rewrittenFrom and shared caches (B1)", () => {
+  const sharedErrors: OnErrorContext[] = [];
+  const sharedRouter = createRouter({
+    onError: (context) => {
+      sharedErrors.push(context);
+    },
+  })
+    .use((ctx, next) => {
+      if (ctx.pathname === "/promo-a") throw rewrite("/item");
+      if (ctx.pathname === "/c-a") throw rewrite("/cached");
+      if (ctx.pathname === "/uc-a") throw rewrite("/uc");
+      return next();
+    })
+    .routes(
+      urls(({ path, cache }) => [
+        path(
+          "/item",
+          (ctx: HandlerContext) => (
+            <p>{`item from=${ctx.rewrittenFrom?.pathname ?? "direct"}`}</p>
+          ),
+          { name: "item", ppr: true },
+        ),
+        cache({ ttl: 300 }, () => [
+          path("/cached", (ctx: HandlerContext) => (
+            <p>{`cached from=${ctx.rewrittenFrom?.pathname ?? "direct"}`}</p>
+          )),
+        ]),
+        path("/uc", async (ctx: HandlerContext) => (
+          <p>{await cachedRewrittenFrom(ctx)}</p>
+        )),
+        path("/promo-a", () => <p>promo</p>),
+        path("/c-a", () => <p>c a</p>),
+        path("/uc-a", () => <p>uc a</p>),
+      ]),
+    );
+
+  beforeEach(() => {
+    sharedErrors.length = 0;
+  });
+
+  it("a PPR shell a rewritten request captured shows what a direct visit shows", async () => {
+    const cacheStore = new MemorySegmentCacheStore();
+    const rewritten = await serveShellRequest(sharedRouter, "/promo-a", {
+      cacheStore,
+    });
+    expect(rewritten.shellStatus).toBe("MISS");
+    // The visitor's own render sees where it came from.
+    expect(rewritten.body).toContain("item from=/promo-a");
+
+    const direct = await serveShellRequest(sharedRouter, "/item", {
+      cacheStore,
+    });
+    expect(direct.shellStatus).toBe("HIT");
+    expect(direct.prelude).toContain("item from=direct");
+    expect(direct.body).not.toContain("from=/promo-a");
+  });
+
+  it("a cache() boundary refuses the read: nothing visitor-specific is stored", async () => {
+    const cacheStore = new MemorySegmentCacheStore();
+    const rewritten = await serveShellRequest(sharedRouter, "/c-a", {
+      cacheStore,
+    });
+    expect(rewritten.response.status).toBe(500);
+    expect(sharedErrors.map((e) => e.error.message).join()).toContain(
+      "ctx.rewrittenFrom cannot be read inside a cache() boundary",
+    );
+
+    const direct = await serveShellRequest(sharedRouter, "/cached", {
+      cacheStore,
+    });
+    expect(direct.body).not.toContain("from=/c-a");
+  });
+
+  it('a "use cache" function refuses the read', async () => {
+    const result = await serveShellRequest(sharedRouter, "/uc-a", {
+      cacheStore: new MemorySegmentCacheStore(),
+    });
+    expect(result.response.status).toBe(500);
+    expect(result.body).not.toContain("uc from=/uc-a");
+    expect(sharedErrors.map((e) => e.error.message).join()).toContain(
+      'ctx.rewrittenFrom cannot be read inside a "use cache" function',
+    );
+  });
+});
+
+describe("a loader fetch under a rewriting middleware (S1)", () => {
+  it("answers with the loader error load() rejects with, the rule in the message", async () => {
+    const result = await serveShellRequest(
+      router,
+      "/shop?lock=naive&_rsc_loader=abc",
+      {
+        cacheStore: new MemorySegmentCacheStore(),
+      },
+    );
+    expect(result.response.status).toBe(500);
+    expect(result.response.headers.get("content-type")).toBe(
+      "text/x-component;charset=utf-8",
+    );
+    expect(result.body).toContain("loaderError");
+    expect(result.body).toContain(
+      'rewrite(\\"maintenance\\") is not supported here: middleware threw it during a loader fetch',
+    );
+    expect(errors.map((e) => e.phase)).toEqual(["routing"]);
+  });
+});
+
+describe("intercept middleware cannot rewrite", () => {
+  it("fails the navigation with the intercept error", async () => {
+    const interceptErrors: OnErrorContext[] = [];
+    const interceptRouter = createRouter({
+      onError: (context) => {
+        interceptErrors.push(context);
+      },
+    }).routes(
+      urls(({ path, layout, intercept, middleware }) => [
+        layout(
+          () => <main>shell</main>,
+          () => [
+            path("/list", () => <ul>list</ul>, { name: "list" }),
+            path("/item/:id", () => <article>item</article>, { name: "item" }),
+            intercept(
+              "@modal",
+              ".item",
+              () => <dialog>modal</dialog>,
+              () => [
+                middleware(() => {
+                  throw rewrite("/list");
+                }),
+              ],
+            ),
+          ],
+        ),
+      ]),
+    );
+    const result = await serveShellRequest(interceptRouter, "/item/1", {
+      cacheStore: new MemorySegmentCacheStore(),
+      partial: { from: "/list" },
+    });
+    expect(result.response.status).toBe(500);
+    expect(interceptErrors.map((e) => e.error.message).join()).toContain(
+      'rewrite("/list") is not supported here: intercept middleware threw it',
+    );
+  });
+});
+
+describe("cache middleware around a route-middleware rewrite (N5)", () => {
+  it("a stale document-cache refresh of a route that now rewrites reports nothing", async () => {
+    let locked = false;
+    const staleErrors: OnErrorContext[] = [];
+    const docRouter = createRouter({
+      onError: (context) => {
+        staleErrors.push(context);
+      },
+    })
+      .use(createDocumentCacheMiddleware())
+      .routes(
+        urls(({ path, middleware }) => [
+          path(
+            "/page",
+            () => <p>page</p>,
+            {},
+            () => [
+              middleware(async (ctx, next) => {
+                if (locked) throw rewrite("/lock");
+                ctx.header(
+                  "Cache-Control",
+                  "s-maxage=0, stale-while-revalidate=300",
+                );
+                await next();
+              }),
+            ],
+          ),
+          path("/lock", () => <p>lock page</p>),
+        ]),
+      );
+    const cacheStore = new MemorySegmentCacheStore();
+    await serveShellRequest(docRouter, "/page", { cacheStore });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    locked = true;
+    const stale = await serveShellRequest(docRouter, "/page", { cacheStore });
+    expect(stale.response.headers.get("x-document-cache-status")).toBe("STALE");
+    expect(staleErrors).toEqual([]);
   });
 });
 

@@ -10,7 +10,9 @@ import {
   type MiddlewareEntry,
   type MiddlewareFn,
 } from "../middleware.js";
-import { applyRewrite, rewrite } from "../../route-definition/rewrite.js";
+import { rewrite } from "../../route-definition/rewrite.js";
+import { applyRewrite } from "../../rsc/rewrite-passes.js";
+import { rewriteTrail } from "../../server/rewrite-trail.js";
 import {
   createRequestContext,
   runWithRequestContext,
@@ -198,6 +200,78 @@ describe("executeMiddleware: throw rewrite()", () => {
   });
 });
 
+describe("executeMiddleware: a rewrite after next()", () => {
+  const run = (
+    ctx: RequestContext<any>,
+    middleware: MiddlewareFn<unknown>[],
+    final: () => Promise<Response> = async () => new Response("page"),
+  ) =>
+    runWithRequestContext(ctx, () =>
+      executeMiddleware(
+        middleware.map(entry),
+        ctx.request,
+        {},
+        ctx._variables,
+        final,
+      ),
+    );
+
+  it("is an error once next() resolved: the route already rendered", async () => {
+    const ctx = contextFor("http://localhost/shop");
+    const late: MiddlewareFn<unknown> = async function late(_mwCtx, next) {
+      await next();
+      throw rewrite("/custom-404");
+    };
+    await expect(run(ctx, [late])).rejects.toThrow(
+      'Middleware "late" threw rewrite() after calling next(): the route ' +
+        "already rendered. throw rewrite() before await next().",
+    );
+  });
+
+  it("is an error while next() is still running", async () => {
+    const ctx = contextFor("http://localhost/shop");
+    let release!: () => void;
+    const pending = new Promise<Response>((resolve) => {
+      release = () => resolve(new Response("page"));
+    });
+    const racer: MiddlewareFn<unknown> = async (_mwCtx, next) => {
+      void next();
+      throw rewrite("/elsewhere");
+    };
+    await expect(run(ctx, [racer], () => pending)).rejects.toThrow(
+      "threw rewrite() after calling next()",
+    );
+    release();
+  });
+
+  it("passes a rewrite the downstream threw, and one thrown after next() rejected", async () => {
+    const ctx = contextFor("http://localhost/shop");
+    const outer: MiddlewareFn<unknown> = async (_mwCtx, next) => next();
+    const inner: MiddlewareFn<unknown> = () => {
+      throw rewrite("/maintenance");
+    };
+    await expect(run(ctx, [outer, inner])).rejects.toMatchObject({
+      name: "Rewrite",
+    });
+
+    const errorPage: MiddlewareFn<unknown> = async (_mwCtx, next) => {
+      try {
+        return await next();
+      } catch {
+        throw rewrite("/error-page");
+      }
+    };
+    await expect(
+      run(ctx, [errorPage], async () => {
+        throw new Error("render failed");
+      }),
+    ).rejects.toMatchObject({
+      name: "Rewrite",
+      target: { path: "/error-page" },
+    });
+  });
+});
+
 describe("executeInterceptMiddleware: rewrite is not supported", () => {
   it("turns a thrown rewrite into the intercept error", async () => {
     const ctx = contextFor("http://localhost/photos/1");
@@ -272,7 +346,8 @@ describe("ctx.rewrittenFrom", () => {
     ]);
     expect(seen[0]).not.toBe(seen[1]);
     seen[0]!.pathname = "/mutated";
-    expect(ctx._rewrittenFrom?.pathname).toBe("/shop");
+    expect(rewriteTrail(ctx)?.[0]).toBe("http://localhost/shop?q=1");
+    expect(seen[0]).not.toBe(seen[1]);
 
     const handlerCtx = runWithRequestContext(ctx, () =>
       createHandlerContext(

@@ -168,7 +168,7 @@ describe("handleLoaderFetch — thrown Response from a no-middleware loader (D4)
 });
 
 describe("handleLoaderFetch — rewrite() is not supported", () => {
-  it("reports a rewrite a fetchable loader throws as the loader-fetch error", async () => {
+  it("reports a rewrite a fetchable loader throws as the loader's error, the rule in its message", async () => {
     loaderImpl = async () => {
       throw rewrite("/maintenance");
     };
@@ -178,11 +178,11 @@ describe("handleLoaderFetch — rewrite() is not supported", () => {
     const res = await handleLoaderFetch(ctx, request, {}, url, {});
 
     expect(res.status).toBe(500);
+    expect(ctx.callOnError.mock.calls[0]?.[1]).toBe("loader");
     const reported = ctx.callOnError.mock.calls[0]?.[0] as Error;
-    expect(reported.message).toContain(
-      'rewrite("/maintenance") is not supported here: it was thrown during a loader fetch',
-    );
-    expect(reported.name).toBe("Error");
+    expect(reported.name).toBe("Rewrite");
+    expect(reported.message).toContain("It works only in middleware");
+    expect(reported.message).toContain("a loader fetch");
   });
 });
 

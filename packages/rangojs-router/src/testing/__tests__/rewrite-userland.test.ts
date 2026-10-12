@@ -20,6 +20,7 @@ vi.mock("@vitejs/plugin-rsc/rsc/server", pluginRscMock);
 vi.mock("@vitejs/plugin-rsc/rsc/client", pluginRscMock);
 
 import { dispatch, runMiddleware } from "../index.js";
+import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
 import {
   cookies,
   createRouter,
@@ -227,6 +228,42 @@ describe("dispatch re-dispatches a rewritten request", () => {
       }),
     ).rejects.toThrow("Return a Response for mutations instead");
     expect(errors[0]?.phase).toBe("routing");
+  });
+
+  it("a cached response route that rewrites keeps the pre-handler onResponse callbacks", async () => {
+    const callbackRouter = createRouter({
+      cache: { store: new MemorySegmentCacheStore() },
+    })
+      .use(async (ctx, next) => {
+        // Registered once, on the visitor's pass.
+        if (!ctx.rewrittenFrom) {
+          getRequestContext().onResponse((response) => {
+            response.headers.set("x-pre-handler", "ran");
+            return response;
+          });
+        }
+        return next();
+      })
+      .routes(
+        urls(({ path, middleware, cache }) => [
+          cache({ ttl: 60 }, () => [
+            path.json(
+              "/api/cached",
+              () => ({ cached: true }),
+              {},
+              () => [
+                middleware(() => {
+                  throw rewrite("/api/fallback");
+                }),
+              ],
+            ),
+          ]),
+          path.json("/api/fallback", () => ({ fallback: true })),
+        ]),
+      );
+    const res = await dispatch(callbackRouter, { request: "/api/cached" });
+    expect(await res.json()).toEqual({ fallback: true });
+    expect(res.headers.get("x-pre-handler")).toBe("ran");
   });
 
   it("reloads a partial request at the visitor's URL", async () => {
