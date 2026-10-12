@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+### Fixed: names like `constructor`, `toString` or `__proto__` in a request or in loader data are ordinary keys ([#1109](https://github.com/rangojs/rango/issues/1109))
+
+Cookie names, URL segments and fetchable-loader params come from the request,
+and the router looked some of them up on plain objects, where a name like
+`constructor` or `toString` found a member every JavaScript object inherits.
+What you can notice:
+
+- `cookies().has("toString")` was `true`, and `cookies().get("constructor")`
+  returned a cookie whose value was a function, for a request that sent
+  neither. Now `has()`, `get()` and `getAll(name)` see only the cookies the
+  request sent, and a cookie named `__proto__` reads like any other (before, it
+  was dropped). `getRequestContext().cookies()` still returns a plain object.
+- A route with a path segment named `constructor` or `toString`
+  (`path("/constructor", ...)`) was left out of the production route trie, so
+  it 404'd or reached your catch-all route. A `__proto__` segment was worse:
+  building the trie wrote that route onto `Object.prototype`, so `vite build`
+  failed, and in development requests for other routes, such as `/blog/1` for
+  a `/blog/:id` route, failed with a 500. Now each such segment matches its
+  own route, and a request for one with no route of its own matches your
+  param routes or 404s as any other segment does.
+- A fetchable loader ran with whatever params the request sent in
+  `ctx.params`: numbers, objects, or the keys `__proto__`, `constructor` and
+  `prototype` from a hand-built `_rsc_loader_params` or untyped code. Now
+  neither the loader nor its middleware runs for such a request. The response
+  is a 400 carrying a loader error, so `load()` fails as it does when a loader
+  throws, with the message `Invalid loader params: expected an object of
+string values without the reserved keys __proto__, constructor, prototype`
+  in the rejection or the hook's `error`. `load({ params })` with string
+  values is unchanged.
+- Loader data with an own `__proto__` key (from `JSON.parse`) could fail to
+  render in a PPR shell or a `cache()`d loader with "Only plain objects, and a
+  few built-ins, can be passed to Client Components", because copying it set
+  the copy's prototype. Now the key stays ordinary data.
+
 ### Fixed: the Cloudflare dev server recovers from a failed startup route discovery once you fix the cause
 
 Before: with `preset: "cloudflare"`, when route discovery failed as `vite dev` started,

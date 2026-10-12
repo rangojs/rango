@@ -109,11 +109,12 @@ import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
 import { getContext } from "../../server/context.js";
 import { executionStart } from "../../cache/tag-invalidation.js";
 import {
+  bindRes,
   createRequestContext,
   runWithRequestContext,
   type RequestContext,
 } from "../../server/request-context.js";
-import { isFillRequest } from "../segment-resolution/prefetch-deferral.js";
+import { recordUse } from "../segment-resolution/prefetch-deferral.js";
 
 /**
  * Re-render a cached route in the background and write it with
@@ -166,9 +167,7 @@ export async function rerenderAndCacheRoute<TEnv>(
     themeConfig: requestCtx._themeConfig,
   });
   const renderCtx: RequestContext<TEnv> = Object.assign(
-    Object.create(requestCtx, {
-      res: Object.getOwnPropertyDescriptor(sink, "res")!,
-    }),
+    Object.create(requestCtx),
     {
       _handleStore: handleStore,
       _metricsStore: undefined,
@@ -185,6 +184,8 @@ export async function rerenderAndCacheRoute<TEnv>(
       _setKeepCacheDirective: sink._setKeepCacheDirective,
     },
   );
+  // ctx.res reads the sink's stub, not the live request's.
+  bindRes(renderCtx, () => sink.res);
   const store = Object.assign(Object.create(ctx.Store), { metrics: undefined });
   const runInStore = <T>(fn: () => T): T =>
     getContext().runWithStore(
@@ -282,15 +283,16 @@ export function withBackgroundRevalidation<TEnv>(
     // Only trigger background revalidation if:
     // 1. Cache was hit and stale
     // 2. Cache scope exists
-    // 3. The request is not a fill (prefetch: false). A fill runs no handler
-    //    of a segment the client holds, and the re-render runs every handler
-    //    of the route. The record stays stale until a request that reads it
-    //    arrives: the prefetch before the fill already was one.
+    // 3. The request may refresh the record (RecordUse.refresh): a fill may
+    //    not (prefetch: false). It runs no handler of a segment the client
+    //    holds, and the re-render runs every handler of the route. The record
+    //    stays stale until a request that reads it arrives: the prefetch
+    //    before the fill already was one.
     if (
       !state.shouldRevalidate ||
       !state.cacheHit ||
       !ctx.cacheScope ||
-      isFillRequest(ctx.handlerContext)
+      !recordUse(ctx.handlerContext).refresh
     ) {
       return;
     }

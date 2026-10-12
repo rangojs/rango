@@ -253,7 +253,6 @@ describe("reading a hole", () => {
     env.IS_REACT_ACT_ENVIRONMENT = false;
     const container = document.createElement("div");
     const root = createRoot(container);
-    const wait = () => new Promise((resolve) => setTimeout(resolve, 20));
     try {
       const hole = new Defer<unknown>();
       // The hole resolves in the microtask after the reader suspended,
@@ -265,11 +264,11 @@ describe("reading a hole", () => {
           if (hole.status === "pending") hole.resolve({ count: 6 });
         });
       };
-      root.render(<Harness initial={null} />);
-      await wait();
+      // Real scheduler, real time: wait for each commit, not a fixed delay.
+      root.render(<Harness initial={<p>ready</p>} />);
+      await vi.waitFor(() => expect(container.textContent).toBe("ready"));
       startTransition(() => setTree(readers(hole, "a")));
-      await wait();
-      expect(container.textContent).toBe("6");
+      await vi.waitFor(() => expect(container.textContent).toBe("6"));
       expect(warnings()).toEqual([]);
       expect(
         used.filter((usable) => usable !== SETTLED_THENABLE),
