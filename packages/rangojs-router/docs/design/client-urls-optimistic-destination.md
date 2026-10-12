@@ -84,6 +84,51 @@ are found by the existing parent walk (`src/use-loader.tsx:154-192`), because
 the branch's provider chains to the origin segment's providers, which share
 those outer layouts.
 
+The same walk serves the loaders of a client `layout()` the navigation keeps.
+`flattenLayout` creates a layout's loader records once, so every route under it
+holds the same record objects (`ClientUrlRouteRecord.layoutLoaders`). A
+destination record among the committed route's `layoutLoaders` is left out of
+the pending map, and its reads (in the kept layout or in the destination) find
+the committed data on the group segment's provider. A pending entry there
+suspended the kept layout itself, and React held the whole frame until the
+canonical commit. A layout the navigation mounts anew has records of its own,
+so its loaders stay pending even when the layout it replaces declared the same
+loader. The comparison is against the committed route's layout records, not
+all of its records: when the destination is the committed route itself (next
+paragraph), its own loaders hold the committed params' data and must wait.
+
+A same-route intent normally swaps nothing (held data owns that case), but not
+when the screen shows another destination's optimistic branch. Take
+`/product/a` committed, a click to `/` presenting the index, and a click to
+`/product/b` before the index commits: the router aborted the index
+navigation, so `/product/a` is still the committed route, and comparing route
+ids alone put `/product/a` and its data back on screen until `/product/b`
+committed. So `ClientUrlsRoot` presents an intent when its route differs from
+the committed one, or when its `fromFrame` is set: the navigation began while
+an optimistic frame was on screen.
+
+You might reach for `group.intent` to learn what is on screen. It is the wrong
+source, and the first version of this fix failed on CI's slow runner because
+of it. `partial-update.ts` hands React the index's canonical commit in a
+transition and clears the intent in the same task, so `group.intent` is null
+before React has rendered anything. A click in that window began with no
+intent in sight, so it did not swap. React 19.3 renders transition lanes one
+at a time (`getHighestPriorityLanes` returns `lanes & -lanes` for them), and
+the render that presented the click could run before the index's canonical
+commit, with `routeId` still `/product/a`'s. The old page came back. In the
+vite-rsc-demo `client-shop-stream` e2e that showed as "Wireless Headphones —
+$99.99" under the desk-lamp navigation, 3 of 3 retries on CI, 3 of 20 runs
+locally under CPU load.
+
+So `ClientUrlsRoot` registers the group in a layout effect, at commit, with no
+`routeId` while it presents a frame. `beginClientUrlNavigation` reads that:
+`fromFrame` is `!group.routeId`, and with no committed route registered every
+navigation decides `transition({ when })` at its swap. The routeId comparison
+stays first, so once a later render does carry the index's commit, the
+destination still differs from it and keeps its frame. An intent that began
+on a frame keeps its frame through its own canonical commit until the intent
+clears, which lands in the same transition.
+
 ### 2. Route identity is scoped to the branch
 
 `useParams`, `useSearchParams`, and `usePathname` read the event controller

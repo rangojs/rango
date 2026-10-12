@@ -114,6 +114,12 @@ export interface ClientUrlRouteRecord {
    */
   readonly layoutKeys: readonly number[];
   readonly loaders: readonly ClientUrlLoaderRecord[];
+  /**
+   * The leading `loaders` its layout()s declare, the same record objects for
+   * every route under a layout (flattenLayout creates them once): ClientUrlsRoot
+   * keeps a shared one's committed data in the optimistic frame.
+   */
+  readonly layoutLoaders: readonly ClientUrlLoaderRecord[];
   readonly loading: ReactNode | undefined;
   readonly transition: Readonly<ClientTransitionConfig> | undefined;
 }

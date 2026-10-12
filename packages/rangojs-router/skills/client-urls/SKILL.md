@@ -527,7 +527,10 @@ a hard load of the target URL renders the full route.
   `startTransition` when no new segments mount, and the wrapping layout sees
   `useOutlet().pending === true` for the held window; a route-level
   `loading()` does not re-flash there. Across different routes, a `layout()`
-  keeps its instance while the navigation stays under it. `transition()` is not needed for the
+  keeps its instance while the navigation stays under it, and its own
+  `layout()` loaders keep their data on the optimistic frame (a cart count does
+  not suspend); only the destination's loaders and those of layouts it mounts
+  anew wait for the server. `transition()` is not needed for the
   hold; it adds the view-transition animation. Inline `<Suspense>` above each
   `useLoader` read is still the finer-grained tool when different reads on
   one route should wait independently.

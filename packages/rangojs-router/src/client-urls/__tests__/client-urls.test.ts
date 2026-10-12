@@ -164,6 +164,26 @@ describe("clientUrls", () => {
     expect(route.loading).toBe("Account loading");
   });
 
+  it("shares a layout()'s loader records across its routes as layoutLoaders; a route's own loader() gets its own record", () => {
+    const LayoutLoader = loader("loaders#layout");
+    const OwnLoader = loader("loaders#own");
+    function Shell(): null {
+      return null;
+    }
+    const patterns = clientUrls(({ layout, loader: useLoader, path }) => [
+      layout(Shell, () => [
+        useLoader(LayoutLoader),
+        path("/a", AccountPage, () => [useLoader(OwnLoader)]),
+        path("/b", AccountPage, () => [useLoader(OwnLoader)]),
+      ]),
+    ]);
+    const [a, b] = patterns.routes;
+    expect(a!.loaders[0]).toBe(b!.loaders[0]);
+    expect(a!.loaders[1]).not.toBe(b!.loaders[1]);
+    expect(a!.layoutLoaders).toEqual([a!.loaders[0]]);
+    expect(a!.layoutLoaders[0]).toBe(b!.layoutLoaders[0]);
+  });
+
   it("stores only projectable route and loader fields", () => {
     const AccountLoader = loader("loaders#account");
 
@@ -183,6 +203,7 @@ describe("clientUrls", () => {
       layouts: [],
       layoutKeys: [],
       loaders: [{ loader: AccountLoader, revalidate: [] }],
+      layoutLoaders: [],
       loading: "Loading account",
     });
   });
@@ -397,6 +418,7 @@ describe("clientUrls", () => {
       | "layouts"
       | "layoutKeys"
       | "loaders"
+      | "layoutLoaders"
       | "loading"
       | "transition"
     >();

@@ -5,7 +5,7 @@ import {
   Fragment,
   Suspense,
   useDeferredValue,
-  useEffect,
+  useLayoutEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -17,10 +17,7 @@ import {
   registerClientUrlGroup,
   type ClientUrlNavigationIntent,
 } from "./navigation.js";
-import {
-  OptimisticLocationContext,
-  type OptimisticLocation,
-} from "./optimistic-location.js";
+import { OptimisticLocationContext } from "./optimistic-location.js";
 import type {
   ClientUrlInterceptRecord,
   ClientUrlPatterns,
@@ -124,11 +121,6 @@ export function ClientUrlsRoot({
   // same way client href()/useMount resolve include-relative URLs.
   const mount = useMount();
   const [intent, setIntent] = useState<ClientUrlNavigationIntent | null>(null);
-  useEffect(
-    () =>
-      registerClientUrlGroup(definition, mount, namePrefix, setIntent, routeId),
-    [definition, mount, namePrefix, routeId],
-  );
 
   // Optimistic destination (design: docs/design/client-urls-optimistic-destination.md).
   // `intent` is set urgently at navigation start so `pending` flips at once
@@ -137,46 +129,58 @@ export function ClientUrlsRoot({
   // own keeps the previous content visible (React's transition hold — the
   // pre-existing contract for routes without loading()), one with loading()
   // or inline <Suspense> at its reads presents immediately. Same-route intents
-  // never swap: held data + transition() own that case. A navigation its
-  // transition({ when }) gated off at the swap presents urgently: no hold,
-  // no view transition, the destination's loading() streams.
+  // from the committed page never swap: held data + transition() own that
+  // case; one that began on an optimistic frame does (fromFrame). A
+  // navigation its transition({ when }) gated off at the swap presents
+  // urgently: no hold, no view transition, the destination's loading()
+  // streams.
   const pending = intent !== null;
   const deferred = useDeferredValue(intent);
   const presented = intent?.transitionGatedOff ? intent : deferred;
   const optimisticRoute =
-    presented && presented.routeId !== routeId
+    presented && (presented.routeId !== routeId || presented.fromFrame)
       ? findRoute(definition, presented.routeId)
       : null;
   const route = optimisticRoute ?? findRoute(definition, routeId);
 
-  // Pending entries for the destination's loaders: useLoader use()s a Promise
-  // found in `loaderStreams` (the streaming-loader lane), so a read suspends
-  // instead of throwing "not found in context". Nothing resolves them — the
-  // canonical commit mounts the destination's own segment with real data and
-  // unmounts this branch — so one shared promise serves every loader.
-  // Memoized on the intent: use() needs a stable identity across replays.
-  const optimistic = useMemo<{
-    streams: Record<string, Promise<never>>;
-    location: OptimisticLocation;
-  } | null>(
+  // At commit, so a navigation reads what is on screen (no routeId while a
+  // frame is): React renders transition lanes one at a time, so the render
+  // that presents the next intent may still lack the canonical commit of the
+  // one it supersedes.
+  useLayoutEffect(
     () =>
-      optimisticRoute && presented
-        ? {
-            streams: Object.fromEntries(
-              optimisticRoute.loaders.map((record) => [
-                record.loader.$$id,
-                PENDING_FOREVER,
-              ]),
-            ),
-            location: {
-              params: presented.params,
-              pathname: presented.pathname,
-              search: presented.search,
-              state: presented.state,
-            },
-          }
-        : null,
-    [optimisticRoute, presented],
+      registerClientUrlGroup(
+        definition,
+        mount,
+        namePrefix,
+        setIntent,
+        optimisticRoute ? undefined : routeId,
+      ),
+    [definition, mount, namePrefix, routeId, optimisticRoute],
+  );
+
+  // Pending entries for the destination's loaders: useLoader use()s a Promise
+  // found in `loaderStreams`, so a read suspends instead of throwing "not
+  // found in context"; the canonical commit brings the real data. Skips the
+  // committed route's layout() records: flattenLayout creates them once per
+  // layout, so one the destination holds too is a layout both keep mounted
+  // (#1124), reading committed data. Route-own loaders always wait, also on
+  // a return to the committed route (fromFrame).
+  const loaderStreams = useMemo(
+    () =>
+      optimisticRoute
+        ? Object.fromEntries(
+            optimisticRoute.loaders
+              .filter(
+                (record) =>
+                  !findRoute(definition, routeId).layoutLoaders.includes(
+                    record,
+                  ),
+              )
+              .map((record) => [record.loader.$$id, PENDING_FOREVER]),
+          )
+        : undefined,
+    [optimisticRoute, definition, routeId],
   );
 
   // The wrapper chain below is IDENTICAL in the optimistic and the canonical
@@ -206,10 +210,11 @@ export function ClientUrlsRoot({
 
   return createElement(OutletProvider, {
     content: null,
-    loaderStreams: optimistic?.streams,
+    loaderStreams,
     pending,
     children: createElement(OptimisticLocationContext.Provider, {
-      value: optimistic?.location ?? null,
+      // The intent carries every OptimisticLocation field.
+      value: optimisticRoute ? presented : null,
       children: content,
     }),
   });

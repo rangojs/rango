@@ -2,7 +2,13 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
-import { Suspense, useEffect, useState, type ReactNode } from "react";
+import {
+  startTransition,
+  Suspense,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   createLocationState,
   Outlet,
@@ -117,6 +123,281 @@ describe("ClientUrlsRoot layout identity (#1124)", () => {
     expect(result.getByText("d")).toBeDefined();
     expect(result.getByTestId("shell")).not.toBe(shell);
     expect(result.getByRole("button").textContent).toBe("0");
+  });
+});
+
+// A layout() that reads its own loader, as a shop layout reads its cart: the
+// optimistic frame of a navigation between its routes keeps the layout and
+// its data, and waits only for what the destination mounts anew.
+describe("ClientUrlsRoot optimistic frame under a kept layout() that reads its loader", () => {
+  const loaderDef = (name: string) =>
+    ({
+      __brand: "loader",
+      $$id: `loaders/shop#${name}`,
+    }) as LoaderDefinition<string>;
+  const CartLoader = loaderDef("CartLoader");
+  const ItemLoader = loaderDef("ItemLoader");
+  const PanelLoader = loaderDef("PanelLoader");
+  let shopMounts = 0;
+  function Badge(): ReactNode {
+    return <span data-testid="badge">{useLoader(CartLoader).data}</span>;
+  }
+  function Shop(): ReactNode {
+    useEffect(() => {
+      shopMounts += 1;
+    }, []);
+    const { content, pending } = useOutlet();
+    const { data } = useLoader(CartLoader);
+    return (
+      <main data-testid="shop" data-pending={String(pending)}>
+        <p data-testid="cart">{data}</p>
+        <Suspense fallback={<p>Loading badge</p>}>
+          <Badge />
+        </Suspense>
+        {content}
+      </main>
+    );
+  }
+  function Home(): ReactNode {
+    return <p>Home</p>;
+  }
+  function Item(): ReactNode {
+    return <p>Item {useLoader(ItemLoader).data}</p>;
+  }
+  function PanelData(): ReactNode {
+    return <p>Panel {useLoader(PanelLoader).data}</p>;
+  }
+  function Panel(): ReactNode {
+    return (
+      <aside>
+        <Suspense fallback={<p>Loading panel</p>}>
+          <PanelData />
+        </Suspense>
+        {useOutlet().content}
+      </aside>
+    );
+  }
+  function PanelPage(): ReactNode {
+    return <p>Panel page</p>;
+  }
+  const definition = clientUrls(({ layout, path, loader, loading }) => [
+    layout(Shop, () => [
+      loader(CartLoader),
+      path("/", Home, () => [loader(ItemLoader)]),
+      path("/items/:id", Item, () => [
+        loader(ItemLoader),
+        loading(<p>Loading item</p>),
+      ]),
+      layout(Panel, () => [loader(PanelLoader), path("/x", PanelPage)]),
+      layout(Panel, () => [loader(PanelLoader), path("/y", PanelPage)]),
+    ]),
+  ]);
+  // The group segment's provider (segment-system.tsx) with the committed
+  // route's loader data.
+  const segment = (routeId: string, loaderData: Record<string, string>) => (
+    <OutletProvider content={null} loaderData={loaderData}>
+      <ClientUrlsRoot definition={definition} routeId={routeId} />
+    </OutletProvider>
+  );
+  const navigate = async (href: string) => {
+    let presentation: ReturnType<typeof beginClientUrlNavigation> = null;
+    await act(async () => {
+      presentation = beginClientUrlNavigation(
+        new URL(href),
+        new AbortController().signal,
+      );
+    });
+    return presentation as ReturnType<typeof beginClientUrlNavigation>;
+  };
+
+  it("presents the destination at once; the layout keeps its instance and reads its committed data until the canonical commit", async () => {
+    shopMounts = 0;
+    const result = render(
+      segment("client-route-0", {
+        [CartLoader.$$id]: "cart:1",
+        [ItemLoader.$$id]: "item:home",
+      }),
+    );
+    const shop = result.getByTestId("shop");
+
+    const presentation = await navigate("http://localhost/items/7");
+    // The destination's own loader waits, though the committed route has
+    // data under the same loader id.
+    expect(result.getByText("Loading item")).toBeDefined();
+    expect(result.queryByText("Home")).toBeNull();
+    expect(result.queryByText(/item:home/)).toBeNull();
+    expect(result.getByTestId("shop")).toBe(shop);
+    expect(shop.dataset.pending).toBe("true");
+    expect(result.getByTestId("cart").textContent).toBe("cart:1");
+    expect(result.getByTestId("badge").textContent).toBe("cart:1");
+    expect(result.queryByText("Loading badge")).toBeNull();
+
+    await act(async () => {
+      result.rerender(
+        segment("client-route-1", {
+          [CartLoader.$$id]: "cart:2",
+          [ItemLoader.$$id]: "item:7",
+        }),
+      );
+      presentation?.clear();
+    });
+    expect(result.getByText("Item item:7")).toBeDefined();
+    expect(result.getByTestId("shop")).toBe(shop);
+    expect(result.getByTestId("cart").textContent).toBe("cart:2");
+    expect(result.getByTestId("badge").textContent).toBe("cart:2");
+    expect(shopMounts).toBe(1);
+  });
+
+  it("a navigation to the committed route from an optimistic frame presents it with its own loaders pending, not the committed params' data", async () => {
+    shopMounts = 0;
+    const result = render(
+      segment("client-route-1", {
+        [CartLoader.$$id]: "cart:1",
+        [ItemLoader.$$id]: "item:7",
+      }),
+    );
+    expect(result.getByText("Item item:7")).toBeDefined();
+    const shop = result.getByTestId("shop");
+    // As the bridge does: abort the superseded navigation, then begin the
+    // next one in the same task, before any canonical commit.
+    let signal = new AbortController();
+    await act(async () => {
+      beginClientUrlNavigation(new URL("http://localhost/"), signal.signal);
+    });
+    expect(result.getByText("Home")).toBeDefined();
+    let presentation: ReturnType<typeof beginClientUrlNavigation> = null;
+    for (const id of ["8", "9"]) {
+      await act(async () => {
+        signal.abort();
+        signal = new AbortController();
+        presentation = beginClientUrlNavigation(
+          new URL(`http://localhost/items/${id}`),
+          signal.signal,
+        );
+      });
+      expect(result.getByText("Loading item")).toBeDefined();
+      expect(result.queryByText(/item:7/)).toBeNull();
+      expect(result.queryByText("Home")).toBeNull();
+      expect(result.getByTestId("shop")).toBe(shop);
+      expect(result.getByTestId("cart").textContent).toBe("cart:1");
+      expect(result.queryByText("Loading badge")).toBeNull();
+    }
+
+    await act(async () => {
+      result.rerender(
+        segment("client-route-1", {
+          [CartLoader.$$id]: "cart:1",
+          [ItemLoader.$$id]: "item:9",
+        }),
+      );
+      presentation?.clear();
+    });
+    expect(result.getByText("Item item:9")).toBeDefined();
+    expect(result.getByTestId("shop")).toBe(shop);
+    expect(shopMounts).toBe(1);
+  });
+
+  // React renders transition lanes one at a time: the superseded index
+  // navigation's canonical commit (cleared intent included) is still pending,
+  // here held by the layout's revealed cart read, when the next navigation's
+  // frame renders. That render still has the committed /items/7 route.
+  it("a navigation to the committed route made after the superseded one handed over its canonical commit still presents the destination", async () => {
+    let setSegment!: (next: {
+      routeId: string;
+      data: Record<string, string>;
+      streams?: Record<string, Promise<unknown>>;
+    }) => void;
+    function Group(): ReactNode {
+      const [current, setCurrent] = useState<{
+        routeId: string;
+        data: Record<string, string>;
+        streams?: Record<string, Promise<unknown>>;
+      }>({
+        routeId: "client-route-1",
+        data: { [CartLoader.$$id]: "cart:1", [ItemLoader.$$id]: "item:7" },
+      });
+      setSegment = setCurrent;
+      return (
+        <OutletProvider
+          content={null}
+          loaderData={current.data}
+          loaderStreams={current.streams}
+        >
+          <ClientUrlsRoot definition={definition} routeId={current.routeId} />
+        </OutletProvider>
+      );
+    }
+    const result = render(<Group />);
+    const shop = result.getByTestId("shop");
+    const first = new AbortController();
+    let toIndex: ReturnType<typeof beginClientUrlNavigation> = null;
+    await act(async () => {
+      toIndex = beginClientUrlNavigation(
+        new URL("http://localhost/"),
+        first.signal,
+      );
+    });
+    expect(result.getByText("Home")).toBeDefined();
+
+    // The index's canonical commit, as partial-update.ts hands it over: the
+    // tree in a transition, then the intent's clear. Its cart still streams.
+    await act(async () => {
+      startTransition(() =>
+        setSegment({
+          routeId: "client-route-0",
+          data: {},
+          streams: { [CartLoader.$$id]: new Promise(() => {}) },
+        }),
+      );
+      toIndex?.clear();
+    });
+    expect(result.getByText("Home")).toBeDefined();
+
+    await act(async () => {
+      first.abort();
+      beginClientUrlNavigation(
+        new URL("http://localhost/items/8"),
+        new AbortController().signal,
+      );
+    });
+    expect(result.getByText("Loading item")).toBeDefined();
+    expect(result.queryByText(/item:7/)).toBeNull();
+    expect(result.getByTestId("shop")).toBe(shop);
+    expect(result.getByTestId("cart").textContent).toBe("cart:1");
+  });
+
+  it("an aborted navigation that nothing supersedes returns the committed route", async () => {
+    const result = render(
+      segment("client-route-1", {
+        [CartLoader.$$id]: "cart:1",
+        [ItemLoader.$$id]: "item:7",
+      }),
+    );
+    const abort = new AbortController();
+    await act(async () => {
+      beginClientUrlNavigation(new URL("http://localhost/"), abort.signal);
+    });
+    expect(result.getByText("Home")).toBeDefined();
+    await act(async () => abort.abort());
+    expect(result.getByText("Item item:7")).toBeDefined();
+    expect(result.getByTestId("shop").dataset.pending).toBe("false");
+  });
+
+  it("a layout() the navigation mounts anew waits for its loader, though the layout it replaces had data under the same id", async () => {
+    const result = render(
+      segment("client-route-2", {
+        [CartLoader.$$id]: "cart:1",
+        [PanelLoader.$$id]: "panel:x",
+      }),
+    );
+    expect(result.getByText("Panel panel:x")).toBeDefined();
+    const shop = result.getByTestId("shop");
+
+    await navigate("http://localhost/y");
+    expect(result.getByText("Loading panel")).toBeDefined();
+    expect(result.queryByText("Panel panel:x")).toBeNull();
+    expect(result.getByTestId("shop")).toBe(shop);
+    expect(result.getByTestId("cart").textContent).toBe("cart:1");
   });
 });
 

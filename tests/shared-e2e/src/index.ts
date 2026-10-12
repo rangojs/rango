@@ -34,6 +34,11 @@ export { runActionFailureTests } from "./action-failure-scenario.js";
 export type { ActionFailureScenarioOptions } from "./action-failure-scenario.js";
 export { runHeldHandlesTests } from "./held-handles-scenario.js";
 export { runLoaderElementTests } from "./loader-element-scenario.js";
+export {
+  expectKeptLayoutReadingItsLoaderKeepsTheOptimisticFrame,
+  expectReturnToCommittedRouteFromOptimisticFrameShowsTheDestination,
+} from "./client-urls-layout-loader-scenario.js";
+export type { ClientUrlsLayoutLoaderOptions } from "./client-urls-layout-loader-scenario.js";
 export type { LoaderElementScenarioOptions } from "./loader-element-scenario.js";
 export type { HeldHandlesScenarioOptions } from "./held-handles-scenario.js";
 export { runHistoryCacheHandlesTests } from "./history-cache-handles-scenario.js";

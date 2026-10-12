@@ -247,7 +247,7 @@ If you need `when`, middleware, or a server handler, declare the intercept in th
 
 The loader body is server code, so anything a loader can do in the server tree works here. It can throw `notFound()` or `redirect()`, push handles with `ctx.use(Meta)({ title })`, and read handles with `ctx.get()` after `await ctx.rendered()`. A redirect thrown by a loader is always a client-side navigation, never an HTTP 302 on a document load. Put redirects that must happen before the response in middleware.
 
-`useLoader()` suspends until its data streams in. Pick the pending UI per route. `loading()` replaces the whole route while its reads wait. An inline `<Suspense>` above each read keeps the rest of the destination visible and lets each read wait on its own. During an optimistic render, reads suspend into `loading()` if the route declares one, and otherwise into the nearest inline `<Suspense>`. A destination with no boundary at all keeps the current page on screen until the response commits.
+`useLoader()` suspends until its data streams in. Pick the pending UI per route. `loading()` replaces the whole route while its reads wait. An inline `<Suspense>` above each read keeps the rest of the destination visible and lets each read wait on its own. During an optimistic render, reads suspend into `loading()` if the route declares one, and otherwise into the nearest inline `<Suspense>`. A destination with no boundary at all keeps the current page on screen until the response commits. A loader of a group `layout()` the navigation stays under is not the destination's: its reads keep the data on screen until the response commits, so a layout that shows a cart count does not hold the page back.
 
 ### Revalidation runs on the server
 
@@ -487,7 +487,7 @@ A few client APIs don't apply inside a group. `ParallelOutlet` has no slots to r
 
 ## Security boundary
 
-The optimistic render (the destination component, its group layouts, and its `loading()` UI) can appear before any middleware has run for that navigation. It has no loader data, since every `useLoader()` read suspends, so it can't reveal protected data. It does reveal the destination's layout and static content. Also, group components are client code: all of their source ships in the browser bundle.
+The optimistic render (the destination component, its group layouts, and its `loading()` UI) can appear before any middleware has run for that navigation. It has no new loader data: a read of the destination's own loaders suspends, and a loader of a group layout the navigation keeps shows what the page already had. So it can't reveal protected data. It does reveal the destination's layout and static content. Also, group components are client code: all of their source ships in the browser bundle.
 
 - **Keep protected data behind loaders.** Don't put protected data or sensitive route state in a group component outside a loader read.
 - **Authorize in server code.** Middleware around the mount runs on every navigation's server request, including a tab switch whose loaders all hold, so it re-checks each navigation. The outer server layout's handler does not re-run on navigations inside the group. For request data that must refresh on each navigation, use middleware `ctx.set()`, not the layout body. Loaders check what they return. Route middleware doesn't wrap server actions, so authorize inside the action. Fetchable loaders use their own `middleware` option.

@@ -1,4 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
+import {
+  expectKeptLayoutReadingItsLoaderKeepsTheOptimisticFrame,
+  expectReturnToCommittedRouteFromOptimisticFrameShowsTheDestination,
+} from "@shared/e2e";
 import { useFixture, type Fixture } from "./fixture";
 import {
   expectNoPageError,
@@ -119,6 +123,29 @@ function runClientUrlsSpec(f: Fixture): void {
     await expect(testId(page, "client-urls-layout")).toHaveAttribute(
       "data-e2e-kept",
       "1",
+    );
+  });
+
+  test("a layout() that reads its own loader keeps the optimistic frame and its instance across its routes", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectKeptLayoutReadingItsLoaderKeepsTheOptimisticFrame(page, {
+      url: (pathname) => f.url(pathname),
+      path: "/client-urls-layout-loader",
+    });
+  });
+
+  test("a click to the committed route from another route's optimistic frame shows its destination, never the committed params' data", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectReturnToCommittedRouteFromOptimisticFrameShowsTheDestination(
+      page,
+      {
+        url: (pathname) => f.url(pathname),
+        path: "/client-urls-layout-loader",
+      },
     );
   });
 

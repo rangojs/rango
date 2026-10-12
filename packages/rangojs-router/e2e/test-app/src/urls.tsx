@@ -148,6 +148,7 @@ import { heldHandlesPatterns } from "./urls/held-handles.js";
 import { historyHandlesPatterns } from "./urls/history-handles.js";
 import { interceptHeldPatterns } from "./urls/intercept-held.js";
 import clientUrlsSlowPatterns, { SlowChrome } from "./urls/client-urls-slow.js";
+import clientUrlsLayoutLoaderPatterns from "./urls/client-urls-layout-loader.js";
 import { getClientUrlsActionCount } from "./urls/client-urls-action.store.js";
 import { ClientUrlsItemLoader } from "./urls/client-urls.loader.js";
 import { Modal } from "./components/Modal.js";
@@ -935,6 +936,24 @@ export const urlpatterns = urls(
           name: "clientSlow",
         }),
       ]),
+      // A group layout that reads its own loader, behind a 400 ms middleware:
+      // navigations between its routes present at the click
+      // (client-urls.test.ts, body in tests/shared-e2e).
+      middleware(
+        async (_ctx, next) => {
+          await new Promise((resolve) => setTimeout(resolve, 400));
+          await next();
+        },
+        () => [
+          include(
+            "/client-urls-layout-loader",
+            clientUrlsLayoutLoaderPatterns,
+            {
+              name: "clientLayoutLoader",
+            },
+          ),
+        ],
+      ),
       // Async include resolving DIRECTLY to a clientUrls() module (no server
       // urls() wrapper) — see docs/internal/async-includes.md.
       include(
