@@ -316,6 +316,28 @@ describe("applyRewrite", () => {
     });
   });
 
+  it("rewires a render barrier the earlier pass already read", async () => {
+    const { ctx } = contextFor("https://shop.test/shop");
+    await runWithRequestContext(ctx, async () => {
+      const passOne = ctx._renderBarrier;
+      ctx._resolveRenderBarrier([{ type: "route", id: "M0" }]);
+      await passOne;
+      applyRewrite(rewrite("/m"), ctx.request, ctx, ROUTES, undefined);
+      const passTwo = ctx._renderBarrier;
+      expect(passTwo).not.toBe(passOne);
+      expect(ctx._renderBarrierSegmentOrder).toBeUndefined();
+      let settled = false;
+      void passTwo.then(() => {
+        settled = true;
+      });
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      ctx._resolveRenderBarrier([{ type: "route", id: "M1" }]);
+      await passTwo;
+      expect(ctx._renderBarrierSegmentOrder).toEqual(["M1"]);
+    });
+  });
+
   it("keeps rewrittenFrom on the visitor's URL across hops, a copy per context", async () => {
     const { ctx } = contextFor("https://shop.test/a?x=1");
     expect(ctx.rewrittenFrom).toBeUndefined();
