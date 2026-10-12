@@ -129,6 +129,8 @@ export const NamedRoutes = {
   "clientIntercept.detail": "/client-urls-intercept/detail/:itemId",
   "clientIntercept.index": "/client-urls-intercept",
   "clientIntercept.item": "/client-urls-intercept/items/:itemId",
+  "clientLayoutLoader.index": "/client-urls-layout-loader",
+  "clientLayoutLoader.item": "/client-urls-layout-loader/items/:id",
   "clientLoaderElement.index": "/client-urls-loader-element",
   "clientPackageResolution.clientPackageResolutionIndex": "/client-package-resolution",
   "clientSlow.a": "/client-urls-slow",

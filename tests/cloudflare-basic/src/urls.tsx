@@ -352,6 +352,7 @@ import mixedClientUrls from "./mixed-client/urls.js";
 import pureClientUrls from "./client-urls/urls.js";
 import { rewritePatterns } from "./pages/rewrite.js";
 import slowClientUrls, { SlowChrome } from "./client-urls/slow.js";
+import layoutLoaderClientUrls from "./client-urls-layout-loader/urls.js";
 import clientUrlsVarsPatterns from "./client-urls-vars/urls.js";
 import clientUrlsSsrSignalsPatterns from "./client-urls-ssr-signals/urls.js";
 import clientUrlsLoaderElementPatterns from "./client-urls-loader-element/urls.js";
@@ -1196,6 +1197,20 @@ export const urlpatterns = urls(
           }),
           include("/client-urls-slow", slowClientUrls, { name: "clientSlow" }),
         ]),
+        // A group layout that reads its own loader, behind a 400 ms
+        // middleware: navigations between its routes present at the click
+        // (e2e/client-urls.test.ts, body in tests/shared-e2e).
+        middleware(
+          async (_ctx, next) => {
+            await new Promise((resolve) => setTimeout(resolve, 400));
+            await next();
+          },
+          () => [
+            include("/client-urls-layout-loader", layoutLoaderClientUrls, {
+              name: "clientLayoutLoader",
+            }),
+          ],
+        ),
         // The SAME clientUrls() module mounted through an async include with
         // no server urls() wrapper: `() => import()` resolves to the module's
         // client reference, adapted like the eager mount above.

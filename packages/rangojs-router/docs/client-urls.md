@@ -166,7 +166,17 @@ boundary around the optimistic render), else into the nearest inline
 boundary at all keeps the current branch visible until the response commits
 (the swap renders in a transition lane, so React holds the previous content).
 A wrapping client URL layout sees `useOutlet().pending === true` for the
-optimistic branch in every case.
+optimistic branch in every case. Only the destination's own loaders and those
+of layouts the navigation mounts anew wait: a loader of a `layout()` the
+navigation keeps (a cart count in a shop layout) reads the data it already has,
+wherever it is read, until the canonical response replaces it. These are the
+committed route's layout loaders (`ClientUrlRouteRecord.layoutLoaders`), never
+its own: a navigation back to the committed route, made while another
+destination's optimistic branch is on screen (`/product/a → / → /product/b`
+inside one round trip), presents `/product/b` with its own loaders pending
+instead of the committed `/product/a` data. The intent carries `fromFrame`
+for that (`src/client-urls/navigation.ts`); a same-route navigation from the
+committed page keeps its content as before.
 
 Inside that branch, `useParams`, `usePathname`, `useSearchParams` and
 `useLocationState` describe the destination (the local match's params, the
@@ -413,7 +423,8 @@ destination and the group's client layouts read the `state` a cross-route
 navigation carries on their first optimistic render: history still holds the
 entry being left, so the branch reads the entry the commit will push. A
 reader outside the branch (chrome above the group), and one in content the
-navigation keeps on screen (a same-route navigation never swaps; a
+navigation keeps on screen (a same-route navigation from the committed page
+never swaps; a
 destination that suspends with no boundary holds the current page), keeps the
 committed entry's state and changes with the canonical commit, in the same
 React commit as its pathname and params. Server-set state is not part of the
@@ -487,7 +498,8 @@ browser resolves to the route's `when` in the definition it loaded. A
 cross-route navigation decides at the optimistic swap (the first
 presentation), over the destination's `when` and the kept segments outside
 the group, and the canonical commit reuses that decision; a same-route
-navigation never swaps and decides at the canonical commit, where `false`
+navigation from the committed page never swaps and decides at the canonical
+commit, where `false`
 also opts out of the group's default hold. Materialization re-emits the config
 in the standard child position, so the canonical commit gets the transition
 config — on React 19.3+, the router's ViewTransition boundary with those
@@ -846,9 +858,10 @@ boundary (or the route's `loading()`) instead of rendering a loading flag.
 
 The optimistic destination branch (the destination component and its
 `loading()` UI) can render before global authentication or authorization
-middleware completes. It has no loader data (every `useLoader()` read
-suspends), so it cannot reveal protected data, but it does reveal the
-destination's shell. Do not put protected data or sensitive route-state details
+middleware completes. It has no new loader data (a read of the destination's
+own loaders suspends; a loader of a `layout()` the navigation keeps shows what
+the page already had), so it cannot reveal protected data, but it does reveal
+the destination's shell. Do not put protected data or sensitive route-state details
 in a group component outside a loader read. There is no per-route opt-out: if
 revealing the destination shell itself is sensitive, define that route in
 `urls()` instead of a client route group.

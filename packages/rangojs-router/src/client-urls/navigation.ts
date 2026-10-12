@@ -6,6 +6,13 @@ import type { TransitionWhenFn } from "../types/segments.js";
 
 export interface ClientUrlNavigationIntent {
   readonly routeId: string;
+  /**
+   * The navigation began while an optimistic frame was on screen (a
+   * superseded navigation's): ClientUrlsRoot presents it even when its route
+   * is the committed one, so the committed params' data never comes back on
+   * screen.
+   */
+  readonly fromFrame: boolean;
   /** Destination params from the local trie match (definition-local). */
   readonly params: Readonly<Record<string, string>>;
   /** Absolute destination pathname (mount included) and search ("?..." or ""). */
@@ -43,10 +50,13 @@ interface ActiveClientUrlGroup {
   readonly mount: string;
   /** include() route-name prefix ("" at root) for canonical name composition. */
   readonly namePrefix: string;
-  /** The group route on screen (ClientUrlsRoot's committed routeId). */
+  /**
+   * The group route on screen (ClientUrlsRoot's committed routeId), undefined
+   * while an optimistic frame is. Registered at commit.
+   */
   readonly routeId: string | undefined;
   readonly setIntent: (intent: ClientUrlNavigationIntent | null) => void;
-  intent: ClientUrlNavigationIntent | null;
+  intent?: ClientUrlNavigationIntent | null;
 }
 
 /**
@@ -74,7 +84,7 @@ export interface ClientUrlNavigationPresentation {
    * gated off), or undefined when nothing was swapped (a same-route
    * navigation decides at the canonical commit).
    */
-  readonly transitionGatedOff: boolean | undefined;
+  readonly transitionGatedOff?: boolean;
   clear(): void;
 }
 
@@ -110,7 +120,6 @@ export function registerClientUrlGroup(
     namePrefix,
     routeId,
     setIntent,
-    intent: null,
   };
   activeGroup = group;
 
@@ -151,9 +160,10 @@ export function beginClientUrlNavigation(
 
   const state = buildState?.();
 
-  // A same-route intent never swaps (ClientUrlsRoot), so transition({ when })
-  // decides at the canonical commit; a cross-route one decides here, at the
-  // navigation's first presentation.
+  // A same-route intent from the committed page never swaps (ClientUrlsRoot),
+  // so transition({ when }) decides at the canonical commit; one that swaps
+  // decides here, at the navigation's first presentation. While a frame is on
+  // screen, group.routeId is undefined and every intent swaps.
   let transitionGatedOff: boolean | undefined;
   if (decideTransition && match.routeKey !== group.routeId) {
     const originLocal = stripMountPrefix(window.location.pathname, group.mount);
@@ -171,6 +181,10 @@ export function beginClientUrlNavigation(
 
   const intent: ClientUrlNavigationIntent = {
     routeId: match.routeKey,
+    // From what React committed, not group.intent: a superseded intent is
+    // cleared when its canonical commit is handed over, before React renders
+    // it, and its frame is still on screen until then.
+    fromFrame: !group.routeId,
     params: match.params,
     pathname: targetUrl.pathname,
     search: targetUrl.search,
@@ -192,16 +206,10 @@ export function beginClientUrlNavigation(
     // updates land in order, so this changes nothing there.
     startTransition(() => group.setIntent(null));
   };
-  signal.addEventListener("abort", clear, { once: true });
+  // An abort after clear() finds another intent or none and does nothing.
+  signal.addEventListener("abort", clear);
 
-  return {
-    routeId: match.routeKey,
-    transitionGatedOff,
-    clear() {
-      signal.removeEventListener("abort", clear);
-      clear();
-    },
-  };
+  return { ...intent, clear };
 }
 
 export function clearClientUrlNavigationRegistry(): void {

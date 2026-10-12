@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a `clientUrls()` group layout that reads its own loader keeps the instant page change on navigations between its routes
+
+In a `clientUrls()` group, a `layout()` that reads its own `layout()` loader,
+like a shop layout that shows a cart count with `useLoader(CartLoader)`, lost
+the group's instant navigation. A click to another route in the group
+changed nothing on screen until the server answered, about one round trip
+later, instead of showing the destination (or its `loading()`) at the click.
+In dev the console also reported `[rango][suspense] I1 swap at read:...` for
+the layout's loader. Wrapping the read in an inline `<Suspense>` did not help.
+
+Since 0.24.1 the layout stays mounted across those routes, and on the first
+frame its read was handed the destination's pending data, so it suspended and
+React held the whole page. Now a loader of a `layout()` that the navigation
+keeps reads the data it already has until the server's answer replaces it.
+Only the destination's own loaders, and those of layouts it mounts anew, wait
+for the server. Nothing changes in your code: the destination shows at the
+click again, and the layout keeps its instance and shows no fallback.
+
+### Fixed: a `clientUrls()` click made before the previous click's answer no longer shows the page you left
+
+In a `clientUrls()` group, a second click made before the server answered the
+first could bring back the page the first click left, with its old data. On
+`/shop/product/a`, a click to `/shop` and then, within one round trip, a click
+to `/shop/product/b` showed product A again until the server answered for B:
+the group compared B with the page it had committed (product A, the same
+route) and treated the click as a same-route navigation, which keeps the
+current content. A layout that reads its own loader hid this until the fix
+above, because the first click's destination did not show at the click.
+
+Now that click shows B at once, with B's own loaders waiting in its
+`loading()` or inline `<Suspense>`, as any other route change in the group
+does; a layout's loaders keep their data. A same-route navigation from the
+page on screen, like a filter or a tab, still keeps the current content until
+the answer arrives.
+
 ## 0.24.1 (2026-10-12)
 
 ### Fixed: a `clientUrls()` `layout()` keeps its instance across navigations between its routes ([#1124](https://github.com/rangojs/rango/issues/1124))

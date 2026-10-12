@@ -566,6 +566,9 @@ function createHelpers(): ClientUrlHelpers {
   });
 }
 
+// A layout()'s loader records are created once here and shared by every
+// route under it (ClientUrlRouteRecord.layoutLoaders); ClientUrlsRoot relies
+// on that identity (client-root.tsx).
 function applyConfig(
   context: FlattenContext,
   items: readonly InternalItem[],
@@ -619,6 +622,7 @@ function addPathRecord(
       layouts: Object.freeze([...routeContext.layouts]),
       layoutKeys: Object.freeze([...routeContext.layoutKeys]),
       loaders: Object.freeze([...routeContext.loaders]),
+      layoutLoaders: context.loaders,
       loading: routeContext.loading,
       transition: transitionItem
         ? Object.freeze({ ...transitionItem.config })
