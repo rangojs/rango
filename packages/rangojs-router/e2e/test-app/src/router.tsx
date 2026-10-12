@@ -12,6 +12,13 @@ import {
 import { createMemoryPrerenderStore } from "@rangojs/router/prerender";
 import { urlpatterns } from "./urls.js";
 import { shellSecureAuthMiddleware } from "./urls/shell-secure.js";
+import {
+  rwClientUrlsLockMiddleware,
+  rwCountMiddleware,
+  rwErrorPageMiddleware,
+  rwGuardMiddleware,
+  rwLockMiddleware,
+} from "./urls/rewrite.js";
 import { onErrorLog } from "./error-log.js";
 import { recordShellCaptureEvent } from "./shell-capture-events.js";
 import { swrLog } from "./swr-log.js";
@@ -407,6 +414,12 @@ export const router = createRouter<AppEnv>({
   // needs NO middleware — serving is integral; routes opt in via the `ppr` path
   // option (see urls/shell-cache.tsx, urls/shell-secure.tsx).
   .use("/shell-secure/*", shellSecureAuthMiddleware)
+  // throw rewrite() fixtures (urls/rewrite.tsx, e2e/rewrite.test.ts).
+  .use("/rw/*", rwCountMiddleware)
+  .use("/rw/*", rwLockMiddleware)
+  .use("/rw/guarded/*", rwGuardMiddleware)
+  .use("/rw/boom", rwErrorPageMiddleware)
+  .use("/client-urls-e2e/items/*", rwClientUrlsLockMiddleware)
   .routes(urlpatterns);
 
 export const reverse = router.reverse;

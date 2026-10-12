@@ -38,6 +38,7 @@ export { runMiddleware } from "./run-middleware.js";
 export type {
   RunMiddlewareOptions,
   RunMiddlewareResult,
+  RunMiddlewareRewrite,
 } from "./run-middleware.js";
 export { runLoader, runLoaderResult } from "./run-loader.js";
 export type {

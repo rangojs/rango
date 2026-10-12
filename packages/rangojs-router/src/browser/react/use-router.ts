@@ -5,6 +5,7 @@ import { NavigationStoreContext } from "./context.js";
 import { useMount } from "./use-mount.js";
 import { prefetchDirect } from "../prefetch/loader.js";
 import { getAppVersion } from "../app-version.js";
+import { prefixBasename } from "../../router/basename.js";
 import type { RouterInstance, RouterNavigateOptions } from "../types.js";
 
 /**
@@ -51,10 +52,7 @@ export function useRouter(): RouterInstance {
   return useMemo<RouterInstance>(() => {
     /** Prefix a root-relative path with basename if not already prefixed. */
     function withBasename(url: string): string {
-      const bn = ctx!.basename;
-      if (!bn || !url.startsWith("/") || url.startsWith(bn + "/") || url === bn)
-        return url;
-      return url === "/" ? bn : bn + url;
+      return prefixBasename(url, ctx!.basename);
     }
 
     /**

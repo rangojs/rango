@@ -34,7 +34,7 @@ import {
 } from "./helpers.js";
 import type { HandlerContext } from "./handler-context.js";
 
-interface LoaderErrorMeta<TEnv> {
+export interface LoaderErrorMeta<TEnv> {
   request: Request;
   url: URL;
   env: TEnv;
@@ -47,7 +47,7 @@ interface LoaderErrorMeta<TEnv> {
  * plain-text body would reject with React's opaque "Connection closed.".
  * Render failures report through onError("rendering").
  */
-function renderLoaderError<TEnv>(
+export function renderLoaderError<TEnv>(
   ctx: HandlerContext<TEnv>,
   loaderError: { message: string; name: string },
   status: number,

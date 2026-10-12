@@ -63,6 +63,14 @@ export interface RequestScope<TEnv = DefaultEnv> {
    */
   originalUrl: URL;
 
+  /**
+   * The visitor's URL (the address bar, search included) when middleware
+   * rewrote this request with `throw rewrite()`; `undefined` otherwise. `url`,
+   * `pathname` and `searchParams` are the rewrite target's. After several
+   * rewrites this is still the first URL. Each context gets its own copy.
+   */
+  rewrittenFrom?: URL;
+
   /** URL pathname (same as `url.pathname`). */
   pathname: string;
 

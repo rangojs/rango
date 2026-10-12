@@ -236,8 +236,10 @@ this guard, one user's data would be served to another.
 The raw reads throw the same way: `ctx.request.headers` on any `ctx` passed in
 (handler, loader, middleware; it is one `Request` object, also
 `getRequestContext().request`), and `getRequestContext().cookie()` /
-`.cookies()`. A `ctx` or a `Request` argument keys the entry by its route and
-URL only, never by its headers.
+`.cookies()`. `ctx.rewrittenFrom` (the visitor's URL of a request middleware
+rewrote) throws too, on a request nothing rewrote as well: it is not in the
+key. A `ctx` or a `Request` argument keys the entry by its route and URL
+only, never by its headers.
 
 Extract the value before the cached function and pass it as an argument:
 

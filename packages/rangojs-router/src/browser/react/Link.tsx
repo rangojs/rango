@@ -42,6 +42,7 @@ import {
   subscribeToAdaptiveStrategyChange,
 } from "../prefetch/default-strategy.js";
 import { getAppVersion } from "../app-version.js";
+import { prefixBasename } from "../../router/basename.js";
 import type { PrefetchStrategy } from "../../router/prefetch-default.js";
 
 // The PrefetchStrategy union is defined in router/prefetch-default.ts (both
@@ -244,15 +245,12 @@ export const Link: ForwardRefExoticComponent<
   // store and no origin: links stay internal.
   const isExternal = isExternalUrl(to, ctx?.origin);
 
-  // Auto-prefix with basename for app-local paths.
-  // Skip if external, already prefixed, or not a root-relative path.
-  const resolvedTo = useMemo(() => {
-    if (isExternal) return to;
-    const bn = ctx?.basename;
-    if (!bn || !to.startsWith("/") || to.startsWith(bn + "/") || to === bn)
-      return to;
-    return to === "/" ? bn : bn + to;
-  }, [to, isExternal, ctx?.basename]);
+  // Auto-prefix with basename for app-local paths (prefixBasename: not when
+  // external, already prefixed, or not root-relative).
+  const resolvedTo = useMemo(
+    () => (isExternal ? to : prefixBasename(to, ctx?.basename)),
+    [to, isExternal, ctx?.basename],
+  );
 
   // No explicit `prefetch` prop: fall back to the router-wide default from
   // the router store. Adaptive is resolved against the input capability when a

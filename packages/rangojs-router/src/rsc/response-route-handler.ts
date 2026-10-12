@@ -10,6 +10,7 @@ import { RouterError } from "../errors.js";
 import { getRequestContext } from "../server/request-context.js";
 import { contextGet, isNonCacheable } from "../context-var.js";
 import { NOCACHE_SYMBOL } from "../cache/taint.js";
+import { defineRewrittenFrom } from "../server/rewrite-trail.js";
 import { RESPONSE_TYPE_MIME } from "../router/content-negotiation.js";
 import { createCacheScope } from "../cache/cache-scope.js";
 import { serveResponseRouteWithCache } from "./response-cache-serve.js";
@@ -26,6 +27,7 @@ import {
 import type { HandlerContext } from "./handler-context.js";
 import { createProblemDetails } from "./response-error.js";
 import {
+  createReloadResponse,
   createResponseWithMergedHeaders,
   finalizeResponse,
   isCacheableStatus,
@@ -67,13 +69,7 @@ export async function handleResponseRoute<TEnv>(
   // Partial requests (client-side navigation) to response routes
   // get X-RSC-Reload to trigger hard navigation in the browser
   if (isPartial) {
-    return createResponseWithMergedHeaders(null, {
-      status: 200,
-      headers: {
-        "X-RSC-Reload": stripInternalParams(url).toString(),
-        "content-type": "text/x-component;charset=utf-8",
-      },
-    });
+    return createReloadResponse(getRequestContext(), url);
   }
 
   // Build lightweight context for response handler
@@ -101,6 +97,7 @@ export async function handleResponseRoute<TEnv>(
   };
   // Brand with taint symbol so "use cache" detects it as request-scoped
   // and extracts route-identifying properties (params, pathname, _responseType)
+  defineRewrittenFrom(responseHandlerCtx, reqCtx);
   (responseHandlerCtx as any)[NOCACHE_SYMBOL] = true;
 
   // Call handler directly, wrapped by route middleware if present

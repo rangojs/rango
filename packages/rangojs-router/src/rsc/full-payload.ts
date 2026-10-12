@@ -14,7 +14,11 @@ import type { HandlerContext } from "./handler-context.js";
 import type { RequestContext } from "../server/request-context.js";
 import type { HandleStore } from "../server/handle-store.js";
 import type { Theme } from "../theme/types.js";
-import { documentCacheStoresRender } from "../cache/document-cache.js";
+import {
+  rendersForSharedAudience,
+  rewriteTrail,
+  visitorUrl,
+} from "../server/rewrite-trail.js";
 import { attachTransitionWhen } from "./attach-transition-when.js";
 import { publicRouteName } from "../route-name.js";
 import { resolvedHandleStream } from "../handles/deferred-resolution.js";
@@ -38,7 +42,7 @@ export function buildFullPayload(
 ): RscPayload {
   return {
     metadata: {
-      pathname: url.pathname,
+      pathname: renderedLocation(reqCtx, url).pathname,
       routerId: ctx.router.id,
       basename: ctx.router.basename,
       segments: attachTransitionWhen(m.segments, reqCtx),
@@ -85,6 +89,36 @@ export function buildFullPayload(
 }
 
 /**
+ * The URL a render shows as the page's location (payload `pathname`, the SSR
+ * search and origin seed). For a request middleware rewrote, the visitor's
+ * URL, so the server markup and the hydrating client (which reads the address
+ * bar) agree on `usePathname()` and `useSearchParams()`. A render other
+ * visitors may be served shows `url`, the target, as a direct visit does: a
+ * shell capture, and a render the document cache stores (its key is the
+ * target). A render that shows the visitor's URL marks
+ * `_payloadVisitorLocation`, and the document cache does not store it.
+ */
+export function renderedLocation(
+  reqCtx:
+    | Pick<
+        RequestContext<any>,
+        | "_variables"
+        | "_shellCaptureRun"
+        | "_documentCacheRender"
+        | "_payloadVisitorLocation"
+        | "res"
+      >
+    | undefined,
+  url: URL,
+): URL {
+  if (!reqCtx || !rewriteTrail(reqCtx) || rendersForSharedAudience(reqCtx)) {
+    return url;
+  }
+  reqCtx._payloadVisitorLocation = true;
+  return visitorUrl(reqCtx, url);
+}
+
+/**
  * The theme a document payload carries as `metadata.initialTheme` (the
  * ThemeProvider's first state), read with no identity guard: it is the
  * router's own read, not handler code (#971).
@@ -116,9 +150,7 @@ export function payloadInitialTheme(
 ): Theme | undefined {
   const config = reqCtx._themeConfig;
   if (!config) return undefined;
-  if (reqCtx._shellCaptureRun || documentCacheStoresRender(reqCtx)) {
-    return config.defaultTheme;
-  }
+  if (rendersForSharedAudience(reqCtx)) return config.defaultTheme;
   const theme = reqCtx._readTheme();
   if (theme !== config.defaultTheme) reqCtx._payloadVisitorTheme = true;
   return theme;

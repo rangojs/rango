@@ -78,6 +78,7 @@ import { prerenderLocalePatterns } from "./urls/prerender-locale.js";
 import { loaderReversePatterns } from "./urls/loader-reverse.js";
 import { loaderCookiePatterns } from "./urls/loader-cookie.js";
 import { mwChainPatterns } from "./urls/mw-chain.js";
+import { rewritePatterns } from "./urls/rewrite.js";
 import { revalidationContractPatterns } from "./urls/revalidation-contract.js";
 import { ctxCleanPatterns } from "./urls/ctx-clean.js";
 import { actionRedirectRevalidationPatterns } from "./urls/action-redirect-revalidation.js";
@@ -1337,6 +1338,9 @@ export const urlpatterns = urls(
 
       // Middleware chain integration test (global mw + action + route mw + layout + loader)
       include("/mw-chain", mwChainPatterns, { name: "mwChain" }),
+
+      // throw rewrite() from middleware (e2e/rewrite.test.ts)
+      include("/rw", rewritePatterns, { name: "rw" }),
 
       // Auth boundary test (route mw vs global mw, actions, response routes)
       include("/auth-boundary", authBoundaryPatterns, {

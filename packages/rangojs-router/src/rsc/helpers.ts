@@ -24,6 +24,7 @@ import {
 import type { MiddlewareEntry, MiddlewareFn } from "../router/middleware.js";
 import { formatCacheSignalHeader } from "../router/telemetry.js";
 import type { RscPayload } from "./types.js";
+import { rewriteTrail, visitorUrl } from "../server/rewrite-trail.js";
 import type { HandlerContext } from "./handler-context.js";
 
 /**
@@ -155,6 +156,29 @@ export function createResponseWithMergedHeaders(
   });
 
   return drainOnResponseCallbacks(ctx, response);
+}
+
+/**
+ * An empty 200 carrying X-RSC-Reload: the client turns it into a document
+ * navigation (window.location.href). It points at the visitor's URL: the
+ * first URL of a rewritten request (server/rewrite-trail.ts visitorUrl),
+ * else `url` with the internal `_rsc*` params stripped, or `url` as given
+ * when it is a string the caller resolved (an action's referer).
+ */
+export function createReloadResponse(
+  reqCtx: RequestContext<any> | undefined,
+  url: URL | string,
+): Response {
+  const target =
+    rewriteTrail(reqCtx)?.[0] ??
+    (typeof url === "string" ? url : visitorUrl(undefined, url).href);
+  return createResponseWithMergedHeaders(null, {
+    status: 200,
+    headers: {
+      "X-RSC-Reload": target,
+      "content-type": "text/x-component;charset=utf-8",
+    },
+  });
 }
 
 /**

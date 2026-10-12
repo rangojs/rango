@@ -881,9 +881,21 @@ another, request-scoped APIs are guarded inside a cache scope:
 | Response writes: `ctx.headers.set()`, `setCookie()`, `setStatus()`, `onResponse()` | **throws** — response side effects lost on a hit           |
 | `ctx.get(var)` where the var is `{ cache: false }`                                 | **throws** on read                                         |
 | `ctx.theme`, `getRequestContext().theme`                                           | **throws** — the theme is the visitor's cookie             |
+| `ctx.rewrittenFrom` (any ctx, `getRequestContext().rewrittenFrom`)                 | **throws** — the visitor's URL of a rewritten request      |
 | `ctx.set(var, value)` for a cacheable var                                          | allowed (children are cached too)                          |
 | Any of the above **inside a registered loader** (`loader(...)`)                    | **allowed** — loaders always run fresh                     |
 | Any read in the boundary's own `key()`, `keyGenerator`, `condition()` or `tags()`  | **allowed** — it picks or labels the entry, never rendered |
+
+`ctx.rewrittenFrom` (the visitor's URL when middleware rewrote the request,
+`/middleware` → "Rewrite") throws on every read inside a `cache()` boundary
+or a `"use cache"` function, on a request nothing rewrote too, like
+`cookies()`: the entry would hold whichever URL the first caller came from,
+and a read that worked only on direct visits would break the first time a
+rewritten request reached it. A PPR shell capture and a render the document
+cache stores read it as `undefined` instead of throwing: those renders are
+the target page as a direct visit renders it, and the rewritten visitor's
+own render (outside them) still sees its URL. A response route under
+`cache()` whose handler read it is not stored.
 
 A loader body invoked from a handler with `await ctx.use(Loader)` may read
 `cookies()`/`headers()`/`ctx.request.headers`, but its response writes still throw: on a hit the
