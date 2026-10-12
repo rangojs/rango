@@ -109,6 +109,7 @@ import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
 import { getContext } from "../../server/context.js";
 import { executionStart } from "../../cache/tag-invalidation.js";
 import {
+  bindRes,
   createRequestContext,
   runWithRequestContext,
   type RequestContext,
@@ -166,9 +167,7 @@ export async function rerenderAndCacheRoute<TEnv>(
     themeConfig: requestCtx._themeConfig,
   });
   const renderCtx: RequestContext<TEnv> = Object.assign(
-    Object.create(requestCtx, {
-      res: Object.getOwnPropertyDescriptor(sink, "res")!,
-    }),
+    Object.create(requestCtx),
     {
       _handleStore: handleStore,
       _metricsStore: undefined,
@@ -185,6 +184,8 @@ export async function rerenderAndCacheRoute<TEnv>(
       _setKeepCacheDirective: sink._setKeepCacheDirective,
     },
   );
+  // ctx.res reads the sink's stub, not the live request's.
+  bindRes(renderCtx, () => sink.res);
   const store = Object.assign(Object.create(ctx.Store), { metrics: undefined });
   const runInStore = <T>(fn: () => T): T =>
     getContext().runWithStore(

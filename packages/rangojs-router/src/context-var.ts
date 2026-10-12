@@ -125,8 +125,38 @@ export function contextGet(
   return variables[keyOrVar.key];
 }
 
-/** Keys that must never be used as string variable names */
-const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+/**
+ * Keys that must never be used as string variable names, nor as a fetchable
+ * loader's request params (rsc/loader-fetch.ts).
+ */
+export const FORBIDDEN_KEYS: ReadonlySet<string> = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+]);
+
+/**
+ * `target[key] = value` as an own data property, `__proto__` included: that
+ * assignment would call Object.prototype's setter and replace the target's
+ * prototype, which Flight refuses to serialize (#1109). Loader data parsed
+ * from JSON, cookie names and the like can carry the key.
+ */
+export function assignOwn(
+  target: Record<string, unknown>,
+  key: string,
+  value: unknown,
+): void {
+  if (key === "__proto__") {
+    Object.defineProperty(target, key, {
+      value,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  } else {
+    target[key] = value;
+  }
+}
 
 export interface ContextSetOptions {
   /**
