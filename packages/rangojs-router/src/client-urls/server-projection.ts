@@ -32,6 +32,7 @@ import { createClientUrlsWhenRef } from "../transition-when-ref.js";
 import type {
   ClientTransitionConfig,
   ClientUrlInterceptRecord,
+  ClientUrlLoaderRecord,
   ClientUrlPatterns,
   ClientUrlRouteRecord,
 } from "./types.js";
@@ -121,6 +122,10 @@ export interface ClientUrlProjectionIntercept {
   readonly targetName: string;
   readonly loaderIds: readonly string[];
   readonly hasLoading: boolean;
+  /** As on a route (ClientUrlProjectionRoute.deferrableLoaderIndices). */
+  readonly deferrableLoaderIndices?: readonly number[];
+  /** As on a route (ClientUrlProjectionRoute.loaderRevalidate). */
+  readonly loaderRevalidate?: readonly (readonly string[])[];
 }
 
 export interface ClientUrlProjection {
@@ -310,28 +315,9 @@ function serializeRoute(
     return loader.$$id;
   });
 
-  const loaderRevalidate = route.loaders.map(({ loader, revalidate }) =>
-    revalidate.flatMap((entry) => {
-      if (isHoistedRevalidateRef(entry)) return [entry.$$rangoRevalidate];
-      if (options.hoisted) {
-        throw new Error(
-          `clientUrls() revalidate() on loader "${loader.$$id}" of route ` +
-            `"${route.pattern}" was not hoisted to the server: call the ` +
-            "builder's revalidate() helper with an inline function or an " +
-            "imported predicate.",
-        );
-      }
-      return [];
-    }),
-  );
-
   const awaitedLoaderIndices = indicesWhere(
     route.loaders,
     ({ ssr }) => ssr === false,
-  );
-  const deferrableLoaderIndices = indicesWhere(
-    route.loaders,
-    ({ prefetch }) => prefetch === false,
   );
 
   const transition = serializeTransition(route);
@@ -345,6 +331,49 @@ function serializeRoute(
     ...(awaitedLoaderIndices.length > 0
       ? { awaitedLoaderIndices: Object.freeze(awaitedLoaderIndices) }
       : {}),
+    ...serializeLoaderOptions(
+      route.loaders,
+      `route "${route.pattern}"`,
+      options,
+    ),
+    ...(transition ? { transition } : {}),
+    ...(typeof route.transition?.when === "function"
+      ? { transitionWhen: true as const }
+      : {}),
+  });
+}
+
+/**
+ * The loader options a route and an intercept project alike: the `prefetch:
+ * false` indices and each loader's hoisted revalidate() keys. Under
+ * `options.hoisted` a predicate the build left in place fails loudly.
+ */
+function serializeLoaderOptions(
+  loaders: readonly ClientUrlLoaderRecord[],
+  owner: string,
+  options: SerializeClientUrlPatternsOptions,
+): Pick<
+  ClientUrlProjectionRoute,
+  "deferrableLoaderIndices" | "loaderRevalidate"
+> {
+  const loaderRevalidate = loaders.map(({ loader, revalidate }) =>
+    revalidate.flatMap((entry) => {
+      if (isHoistedRevalidateRef(entry)) return [entry.$$rangoRevalidate];
+      if (options.hoisted) {
+        throw new Error(
+          `clientUrls() revalidate() on loader "${loader.$$id}" of ${owner} ` +
+            "was not hoisted to the server: call the builder's revalidate() " +
+            "helper with an inline function or an imported predicate.",
+        );
+      }
+      return [];
+    }),
+  );
+  const deferrableLoaderIndices = indicesWhere(
+    loaders,
+    ({ prefetch }) => prefetch === false,
+  );
+  return {
     ...(deferrableLoaderIndices.length > 0
       ? { deferrableLoaderIndices: Object.freeze(deferrableLoaderIndices) }
       : {}),
@@ -355,16 +384,13 @@ function serializeRoute(
           ),
         }
       : {}),
-    ...(transition ? { transition } : {}),
-    ...(typeof route.transition?.when === "function"
-      ? { transitionWhen: true as const }
-      : {}),
-  });
+  };
 }
 
 function serializeIntercept(
   record: ClientUrlInterceptRecord,
   index: number,
+  options: SerializeClientUrlPatternsOptions,
 ): ClientUrlProjectionIntercept {
   const loaderIds = record.loaders.map(({ loader }, loaderIndex) => {
     if (typeof loader.$$id !== "string" || loader.$$id.length === 0) {
@@ -381,6 +407,11 @@ function serializeIntercept(
     targetName: record.targetName,
     loaderIds: Object.freeze(loaderIds),
     hasLoading: record.loading !== undefined,
+    ...serializeLoaderOptions(
+      record.loaders,
+      `intercept ".${record.targetName}"`,
+      options,
+    ),
   });
 }
 
@@ -394,7 +425,9 @@ export function serializeClientUrlPatterns(
       patterns.routes.map((route) => serializeRoute(route, options)),
     ),
     intercepts: Object.freeze(
-      (patterns.intercepts ?? []).map(serializeIntercept),
+      (patterns.intercepts ?? []).map((record, index) =>
+        serializeIntercept(record, index, options),
+      ),
     ),
   });
 }
@@ -510,6 +543,23 @@ export function clearClientUrlProjections(): void {
   clientUrlProjections.clear();
 }
 
+/** The projected loaders of a route or an intercept. */
+interface ProjectedLoaders {
+  readonly projected: Pick<
+    ClientUrlProjectionRoute,
+    | "loaderIds"
+    | "loaderRevalidate"
+    | "awaitedLoaderIndices"
+    | "deferrableLoaderIndices"
+  >;
+  /** Names the owner in an error: `route "/a"`, `intercept ".b"`. */
+  readonly label: string;
+  /** The owner's loader records in a definition object. */
+  readonly inline: (
+    patterns: ClientUrlPatterns,
+  ) => readonly ClientUrlLoaderRecord[] | undefined;
+}
+
 /**
  * The revalidate() predicates of one materialized loader. A definition
  * object (unit tests, the testing primitives) carries its functions. A
@@ -519,15 +569,15 @@ export function clearClientUrlProjections(): void {
  */
 function loaderRevalidators(
   reference: ClientUrlDefinitionSource,
-  route: ClientUrlProjectionRoute,
+  { projected, label, inline }: ProjectedLoaders,
   loaderIndex: number,
 ): ShouldRevalidateFn<any, any>[] {
   const fromRegistry = (key: string): ShouldRevalidateFn<any, any> => {
     if (!getClientUrlRevalidator(key)) {
       const id = isClientUrlReference(reference) ? reference.$$id : "(inline)";
       throw new Error(
-        `clientUrls() revalidate() on loader "${route.loaderIds[loaderIndex]}" ` +
-          `of route "${route.pattern}" in "${id}" has no server ` +
+        `clientUrls() revalidate() on loader "${projected.loaderIds[loaderIndex]}" ` +
+          `of ${label} in "${id}" has no server ` +
           `registration (key "${key}"). The rango Vite plugin registers ` +
           "hoisted predicates when the group's module loads in the RSC " +
           "environment; a transform that changed the predicate's syntax " +
@@ -539,14 +589,13 @@ function loaderRevalidators(
     return (args) => getClientUrlRevalidator(key)!(args);
   };
   if (isClientUrlPatterns(reference)) {
-    const record = reference.routes.find(({ id }) => id === route.id);
-    return (record?.loaders[loaderIndex]?.revalidate ?? []).map((entry) =>
+    return (inline(reference)?.[loaderIndex]?.revalidate ?? []).map((entry) =>
       isHoistedRevalidateRef(entry)
         ? fromRegistry(entry.$$rangoRevalidate)
         : entry,
     );
   }
-  return (route.loaderRevalidate?.[loaderIndex] ?? []).map(fromRegistry);
+  return (projected.loaderRevalidate?.[loaderIndex] ?? []).map(fromRegistry);
 }
 
 function createLoaderStub(id: string): LoaderDefinition<unknown> {
@@ -609,6 +658,26 @@ function materializeRouteItems(
   // every route segment of the group by it (ResolvedSegment.clientGroup).
   const clientGroup = getUrlPrefix() || "/";
 
+  // The loader() items of a route's or an intercept's projected loaders: each
+  // stub with its `ssr: false` and `prefetch: false` flags and its
+  // revalidate() predicates.
+  const materializeLoaders = (owner: ProjectedLoaders) =>
+    owner.projected.loaderIds.map((id, loaderIndex) => {
+      const revalidators = loaderRevalidators(reference, owner, loaderIndex);
+      return loader(
+        createLoaderStub(id),
+        {
+          ...(owner.projected.awaitedLoaderIndices?.includes(loaderIndex) && {
+            ssr: false,
+          }),
+          ...(owner.projected.deferrableLoaderIndices?.includes(
+            loaderIndex,
+          ) && { prefetch: false }),
+        },
+        () => revalidators.map((fn) => revalidate(fn)),
+      );
+    });
+
   // Helper calls attach to the CURRENT ctx.parent as they execute, so these
   // builders must run where the items belong: at the module top level for the
   // flat (no-intercept) shape, or inside the group layout's children callback
@@ -626,24 +695,11 @@ function materializeRouteItems(
             }),
           materializedPathOptions(route, clientGroup),
           () => [
-            ...route.loaderIds.map((id, loaderIndex) => {
-              const revalidators = loaderRevalidators(
-                reference,
-                route,
-                loaderIndex,
-              );
-              return loader(
-                createLoaderStub(id),
-                {
-                  ...(route.awaitedLoaderIndices?.includes(loaderIndex) && {
-                    ssr: false,
-                  }),
-                  ...(route.deferrableLoaderIndices?.includes(loaderIndex) && {
-                    prefetch: false,
-                  }),
-                },
-                () => revalidators.map((fn) => revalidate(fn)),
-              );
+            ...materializeLoaders({
+              projected: route,
+              label: `route "${route.pattern}"`,
+              inline: (patterns) =>
+                patterns.routes.find(({ id }) => id === route.id)?.loaders,
             }),
             ...(route.hasLoading
               ? [
@@ -717,7 +773,12 @@ function materializeRouteItems(
             }),
           { when: isInGroupOrigin },
           () => [
-            ...record.loaderIds.map((id) => loader(createLoaderStub(id))),
+            ...materializeLoaders({
+              projected: record,
+              label: `intercept ".${record.targetName}"`,
+              inline: (patterns) =>
+                patterns.intercepts?.[interceptIndex]?.loaders,
+            }),
             ...(record.hasLoading
               ? [
                   loading(

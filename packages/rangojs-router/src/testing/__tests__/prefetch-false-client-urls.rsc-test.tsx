@@ -31,6 +31,8 @@ import { MemorySegmentCacheStore } from "../../cache/index.js";
 import group from "./fixtures/prefetch-false-client-urls.js";
 import {
   count,
+  ModalLoader,
+  NoteLoader,
   PriceLoader,
   ran,
   ReviewsLoader,
@@ -260,15 +262,75 @@ describe("clientUrls() routes: loader(Def, { prefetch: false })", () => {
     expect(payload.deferred).toEqual([payload.find(ReviewsLoader.$$id)!.id]);
   });
 
-  // A urls() intercept() ignores the flag (R8): a prefetch that resolves an
-  // intercept defers nothing. A clientUrls() intercept() is the same.
-  it("an intercept loader with the flag runs in a prefetch that resolves the intercept, as in urls()", async () => {
-    const { standingOn, prefetch } = setup();
+  // As in urls(): an in-group prefetch that resolves the intercept defers
+  // its flagged loader, and the fill of the intercept, from its source,
+  // runs only that loader.
+  it("an in-group prefetch of an intercept target defers the flagged intercept loader, and its fill runs it", async () => {
+    const { standingOn, prefetch, serve } = setup();
     const held = await standingOn("/cu");
 
     const result = await prefetch("/cu/detail/1", "/cu", held);
+    const prefetched = payloadOf(result);
+    const modal = prefetched.find(ModalLoader.$$id)!;
+    expect(modal.id).toMatch(/\.@modalD0\./);
+    expect(prefetched.deferred).toEqual([modal.id]);
+    expect(count("modal")).toBe(0);
+
+    const filled = payloadOf(
+      await serve("/cu/detail/1", {
+        partial: {
+          from: "/cu",
+          interceptSource: "/cu",
+          segments: prefetched.matched.filter((id) => id !== modal.id),
+          fill: true,
+        },
+      }),
+    );
     expect(count("modal")).toBe(1);
-    expect(payloadOf(result).deferred).toEqual([]);
-    expect(result.flight).not.toContain('"deferred"');
+    expect(filled.matched).toEqual(prefetched.matched);
+    expect(filled.ids).toEqual([modal.id]);
+    expect(present(filled.find(ModalLoader.$$id)!.loaderData)).toBe(true);
+  });
+});
+
+describe("clientUrls() intercepts: a loader's revalidate()", () => {
+  async function save(): Promise<string> {
+    return "saved";
+  }
+  async function discard(): Promise<string> {
+    return "discarded";
+  }
+
+  /** Open the note modal from /cu, then call `ref` from it. */
+  async function actionInModal(ref: () => Promise<string>) {
+    const { standingOn, serve } = setup();
+    const held = await standingOn("/cu");
+    const opened = payloadOf(
+      await serve("/cu/note/1", { partial: { from: "/cu", segments: held } }),
+    );
+    resetRuns();
+    const answered = payloadOf(
+      await serve("/cu/note/1", {
+        headers: { "X-RSC-Router-Intercept-Source": "/cu" },
+        action: {
+          ref,
+          id: `src/note.actions.ts#${ref.name}`,
+          segments: opened.matched,
+        },
+      }),
+    );
+    return { runs: count("note"), sent: answered.find(NoteLoader.$$id) };
+  }
+
+  it("runs on the server and sees the action's result: it keeps the loader for one result", async () => {
+    const { runs, sent } = await actionInModal(discard);
+    expect(runs).toBe(0);
+    expect(sent).toBeUndefined();
+  });
+
+  it("and re-runs it for the other", async () => {
+    const { runs, sent } = await actionInModal(save);
+    expect(runs).toBe(1);
+    expect(sent).toBeDefined();
   });
 });

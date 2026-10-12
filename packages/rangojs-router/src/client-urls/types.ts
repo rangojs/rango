@@ -71,11 +71,10 @@ export interface ClientUrlLoaderRecord {
    */
   readonly ssr?: false;
   /**
-   * loader(Def, { prefetch: false }): a prefetch of the route defers this
-   * loader and the click that adopts it runs it in its fill request (see
-   * {@link LoaderOptions}). Projected onto the materialized stub. Inside
-   * intercept() it is not recorded: intercept loaders ignore the flag, as in
-   * urls().
+   * loader(Def, { prefetch: false }): a prefetch of the route, or of an
+   * intercept's target from its source, defers this loader and the click
+   * that adopts it runs it in its fill request (see {@link LoaderOptions}).
+   * Projected onto the materialized stub.
    */
   readonly prefetch?: false;
 }
@@ -160,8 +159,8 @@ export interface ClientUrlHelpers {
    * the destination at once, commits the adopted prefetch with the other
    * loaders' data, and runs only the flagged loaders in its one fill
    * request. A `layout()` loader with the flag is flagged on every route
-   * below it. Inside intercept() the flag is accepted and ignored, as in
-   * urls().
+   * below it. Inside intercept() it defers the loader in a prefetch of the
+   * intercept from its source, as in urls().
    */
   readonly loader: <TData>(
     definition: LoaderDefinition<TData>,

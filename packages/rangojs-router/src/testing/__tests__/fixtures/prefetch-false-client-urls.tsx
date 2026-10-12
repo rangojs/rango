@@ -11,6 +11,7 @@ import {
   DetailLoader,
   ItemLoader,
   ModalLoader,
+  NoteLoader,
   PriceLoader,
   ReviewsLoader,
   ShellLoader,
@@ -37,9 +38,12 @@ function CuDetail(): null {
 function CuModal(): null {
   return null;
 }
+function CuNote(): null {
+  return null;
+}
 
 const group: ClientUrlPatterns = clientUrls(
-  ({ path, layout, loader, loading, intercept }) => [
+  ({ path, layout, loader, loading, intercept, revalidate }) => [
     path("/", CuHome, { name: "index" }),
     path("/loader", CuLoaderPage, { name: "loader" }, () => [
       loader(PriceLoader),
@@ -58,6 +62,15 @@ const group: ClientUrlPatterns = clientUrls(
     ]),
     intercept("@modal", ".detail", CuModal, () => [
       loader(ModalLoader, { prefetch: false }),
+    ]),
+    // An intercept loader's revalidate() runs on the server, as a route's.
+    path("/note/:id", CuNote, { name: "note" }),
+    intercept("@modal", ".note", CuModal, () => [
+      loader(NoteLoader, () => [
+        revalidate(({ actionResult }) =>
+          actionResult === undefined ? undefined : actionResult === "saved",
+        ),
+      ]),
     ]),
   ],
 );
