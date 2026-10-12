@@ -22,6 +22,7 @@ import {
   RSC_WIRE_MIME,
 } from "../router/content-negotiation.js";
 import { _getRequestContext } from "../server/request-context.js";
+import { renderedLocation } from "./full-payload.js";
 
 export type SSRSetup = readonly [SSRModule, SSRStreamMode];
 
@@ -110,7 +111,9 @@ export function createSsrHtmlStage<TEnv>(
       options.url,
       options.metricsStore,
     );
-    const renderErrors = _getRequestContext()?._renderErrors;
+    const reqCtx = _getRequestContext();
+    const renderErrors = reqCtx?._renderErrors;
+    const location = renderedLocation(reqCtx, options.url);
     return {
       render: () =>
         // search: the LIVE request's query string, threaded out-of-band into
@@ -121,11 +124,11 @@ export function createSsrHtmlStage<TEnv>(
         ssrModule.renderHTML(flight.stream, {
           ...options.render,
           streamMode,
-          search: options.url.search,
+          search: location.search,
           // origin: same out-of-band channel — seeds the SSR store location
           // so origin-dependent markup (Link's data-external) agrees with the
           // browser's window.location across hydration.
-          origin: options.url.origin,
+          origin: location.origin,
           // A component that throws inside a Suspense boundary leaves an
           // errored boundary in a completed document; the document cache
           // reads the list before storing it.

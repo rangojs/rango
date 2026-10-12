@@ -579,6 +579,7 @@ function createLoaderExecutor<TEnv>(
       pathname: ctx.pathname,
       url: ctx.url,
       originalUrl: ctx.originalUrl,
+      rewrittenFrom: ctx.rewrittenFrom && new URL(ctx.rewrittenFrom),
       env: ctx.env,
       waitUntil: ctx.waitUntil.bind(ctx),
       executionContext: ctx.executionContext,

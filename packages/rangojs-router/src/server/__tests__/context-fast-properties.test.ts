@@ -119,11 +119,13 @@ describe("request context", () => {
     const barrier = ctx._renderBarrier;
     expect(barrier).toBeInstanceOf(Promise);
     expect(ctx._renderBarrier).toBe(barrier);
+    // Configurable: a rewrite rewires the barrier on the same context
+    // (rebaseRequestContext).
     expect(Object.getOwnPropertyDescriptor(ctx, "_renderBarrier")).toEqual({
       value: barrier,
       writable: false,
       enumerable: true,
-      configurable: false,
+      configurable: true,
     });
     ctx._resolveRenderBarrier([{ type: "route", id: "M0" }]);
     await expect(barrier).resolves.toBeUndefined();

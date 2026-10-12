@@ -732,6 +732,20 @@ export interface RequestContext<
   _requestKind?: "prefetch" | "fill";
 
   /**
+   * @internal The visitor's clean URL once middleware rewrote the request
+   * (`throw rewrite()`, rebaseRequestContext). Set on the first rewrite and
+   * kept across later ones. `rewrittenFrom` on each context is a copy.
+   */
+  _rewrittenFrom?: URL;
+
+  /**
+   * @internal Set by renderedLocation (rsc/full-payload.ts) when the payload
+   * or the SSR seed shows the visitor's URL of a rewritten request. The
+   * document cache does not store that response: it is keyed by the target.
+   */
+  _payloadVisitorLocation?: boolean;
+
+  /**
    * Attach location state entries to the current response.
    *
    * For partial (SPA) requests, the state is included in the RSC payload
@@ -1032,6 +1046,8 @@ export type PublicRequestContext<
   | "_payloadVisitorTheme"
   | "_payloadDeferred"
   | "_requestKind"
+  | "_rewrittenFrom"
+  | "_payloadVisitorLocation"
   | "_locationState"
   | "_routeName"
   | "_prevRouteKey"
@@ -1530,6 +1546,7 @@ export function createRequestContext<TEnv>(
     request,
     url: cleanUrl,
     originalUrl,
+    rewrittenFrom: undefined,
     _requestKind: requestKind(request, originalUrl),
     pathname: url.pathname,
     searchParams: cleanUrl.searchParams,
@@ -1817,6 +1834,69 @@ export function createRequestContext<TEnv>(
 }
 
 /**
+ * Move a request context to a rewrite target for the next pass of the
+ * request (rsc/handler.ts, `throw rewrite()`). The context object stays the
+ * same, so what the visitor's pass set is still there: variables, the
+ * response stub (status, headers, cookies), location state, theme,
+ * `dynamic()`, metrics, request tags, onResponse callbacks.
+ *
+ * Moved to the target: the request (`rawUrl`, the visitor's `_rsc*` params
+ * included), url, originalUrl, pathname, searchParams and the request kind.
+ * Cleared for the target's match: params, route name, reverse, the
+ * classified route and request mode. A pass that unwound may have rendered
+ * (a middleware that rewrites after `await next()`), so the render state is
+ * reset and the handle store, loader memo and render barrier are new: the
+ * earlier pass's pushes and loader values never reach the target.
+ */
+export function rebaseRequestContext(
+  ctx: RequestContext<any>,
+  request: Request,
+  rawUrl: URL,
+): void {
+  ctx._rewrittenFrom ??= new URL(ctx.url);
+  ctx.rewrittenFrom = new URL(ctx._rewrittenFrom);
+  const cleanUrl = stripInternalParams(rawUrl);
+  ctx.request = guardRequestHeaders(request);
+  ctx.url = cleanUrl;
+  ctx.originalUrl = rawUrl;
+  ctx.pathname = cleanUrl.pathname;
+  ctx.searchParams = cleanUrl.searchParams;
+  ctx._requestKind = requestKind(request, rawUrl);
+  ctx.params = {};
+  ctx._routeName = undefined;
+  ctx.routeName = undefined;
+  ctx.reverse = createReverseFunction(getGlobalRouteMap(), undefined, {});
+  ctx._classifiedRoute = undefined;
+  ctx._requestMode = undefined;
+
+  ctx._renderErrors?.splice(0);
+  ctx._recoveredHandlerErrors = undefined;
+  ctx._documentCacheRender = undefined;
+  ctx._payloadVisitorTheme = undefined;
+  ctx._payloadVisitorLocation = undefined;
+  ctx._payloadDeferred = undefined;
+  ctx._transitionWhenRefs = undefined;
+  ctx._pprReplayPostMatchReason = undefined;
+  ctx._shellKey = undefined;
+  ctx._routeRecordWindow = undefined;
+  ctx._resolvedCacheKeys = undefined;
+  ctx._recordTagOwners = undefined;
+  ctx._recordLoaderTags = undefined;
+  ctx._cacheSignal = undefined;
+  ctx._renderForeground = undefined;
+  ctx._activeRoutine = undefined;
+
+  const handleStore = createHandleStore();
+  (ctx as { _handleStore: HandleStore })._handleStore = handleStore;
+  wireRenderBarrier(ctx, handleStore, RENDER_BARRIER_DESCRIPTOR);
+  ctx.use = createUseFunction({
+    handleStore,
+    loaderPromises: new Map(),
+    getContext: () => ctx,
+  });
+}
+
+/**
  * Wire a fresh render barrier onto `ctx`, closure-bound to THIS ctx and THIS
  * handle store. Called by createRequestContext for every fresh context, and by
  * deriveShellCaptureContext (rsc/shell-capture.ts) for the PPR capture's
@@ -1892,10 +1972,12 @@ export function wireRenderBarrier(
       : new Promise<void>((resolve) => {
           resolveBarrier = resolve;
         });
+    // Configurable: a rewrite rewires the barrier on the same context
+    // (rebaseRequestContext).
     Object.defineProperty(ctx, "_renderBarrier", {
       value: p,
       writable: false,
-      configurable: false,
+      configurable: true,
     });
     return p;
   });
@@ -2096,6 +2178,7 @@ export function createUseFunction<TEnv>(
       pathname: ctx.pathname,
       url: ctx.url,
       originalUrl: ctx.originalUrl,
+      rewrittenFrom: ctx._rewrittenFrom && new URL(ctx._rewrittenFrom),
       env: ctx.env as any,
       waitUntil: ctx.waitUntil.bind(ctx),
       executionContext: ctx.executionContext,

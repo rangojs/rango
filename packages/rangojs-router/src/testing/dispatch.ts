@@ -106,6 +106,12 @@ import {
   runWithRequestContext,
   setRequestContextParams,
 } from "../server/request-context.js";
+import {
+  applyRewrite,
+  isRewrite,
+  RewriteLoopError,
+  REWRITE_HEADER,
+} from "../route-definition/rewrite.js";
 import { resolveRouterVersions } from "../server/build-version-table.js";
 import { executeMiddleware, matchMiddleware } from "../router/middleware.js";
 import type {
@@ -321,6 +327,68 @@ function serializeResponseRouteError(
   });
 }
 
+/** What one pass of a dispatch matched (the visitor's URL, or a rewrite target). */
+interface DispatchPass<TEnv> {
+  req: Request;
+  url: URL;
+  redirectTo?: string;
+  isUnmatched: boolean;
+  preview: Awaited<ReturnType<DispatchableRouter<TEnv>["previewMatch"]>>;
+  responseType?: string;
+  handler?: Function;
+  params: Record<string, string>;
+  routeKey?: string;
+}
+
+async function matchDispatchPass<TEnv>(
+  router: DispatchableRouter<TEnv>,
+  req: Request,
+  env: TEnv,
+): Promise<DispatchPass<TEnv>> {
+  const url = new URL(req.url);
+  // findMatch carries trailing-slash/redirect targets and null on no match.
+  // previewMatch swallows redirects, so detect them here first.
+  const match = await router.findMatch(url.pathname);
+  const redirectTo = match?.redirectTo;
+  const isUnmatched = !match;
+
+  // previewMatch resolves responseType, the response-route handler, and the
+  // route middleware from the matched entry tree (with content negotiation).
+  // Skip it for a redirect/unmatched path — there is no response route to
+  // resolve, and previewMatch would return null / a redirect marker anyway.
+  const preview =
+    redirectTo || isUnmatched ? null : await router.previewMatch(req, { env });
+
+  // A bare match with no responseType is an RSC route. The RSC-route throw is a
+  // hard boundary of this primitive (no Flight runtime), distinct from the
+  // 308/404 outcomes, so it stays a pre-middleware guard.
+  const responseType = preview?.responseType;
+  const handler = preview?.handler;
+  if (
+    !redirectTo &&
+    !isUnmatched &&
+    (!responseType || typeof handler !== "function")
+  ) {
+    throw new Error(
+      `dispatch() does not render RSC routes — the route matched at ` +
+        `"${url.pathname}" is a React Server Component route, not a response ` +
+        `route. Use renderHandler/renderServerTree/renderToFlightString or an ` +
+        `e2e test to exercise component rendering.`,
+    );
+  }
+  return {
+    req,
+    url,
+    redirectTo,
+    isUnmatched,
+    preview,
+    responseType,
+    handler,
+    params: preview?.params ?? match?.params ?? {},
+    routeKey: preview?.routeKey ?? match?.routeKey,
+  };
+}
+
 /**
  * Run a request through the router in-process and return the Response.
  *
@@ -353,39 +421,10 @@ export async function dispatch<TEnv = any>(
     setRouterManifest(routerId, router.routeMap as Record<string, string>);
   }
 
-  // findMatch carries trailing-slash/redirect targets and null on no match.
-  // previewMatch swallows redirects, so detect them here first.
-  const match = await router.findMatch(url.pathname);
-  const redirectTo = match?.redirectTo;
-  const isUnmatched = !match;
-
-  // previewMatch resolves responseType, the response-route handler, and the
-  // route middleware from the matched entry tree (with content negotiation).
-  // Skip it for a redirect/unmatched path — there is no response route to
-  // resolve, and previewMatch would return null / a redirect marker anyway.
-  const preview =
-    redirectTo || isUnmatched ? null : await router.previewMatch(req, { env });
-
-  // A bare match with no responseType is an RSC route. The RSC-route throw is a
-  // hard boundary of this primitive (no Flight runtime), distinct from the
-  // 308/404 outcomes below, so it stays a pre-middleware guard.
-  const responseType = preview?.responseType;
-  const handler = preview?.handler;
-  const params = preview?.params ?? match?.params ?? {};
-  const routeKey = preview?.routeKey ?? match?.routeKey;
-
-  if (
-    !redirectTo &&
-    !isUnmatched &&
-    (!responseType || typeof handler !== "function")
-  ) {
-    throw new Error(
-      `dispatch() does not render RSC routes — the route matched at ` +
-        `"${url.pathname}" is a React Server Component route, not a response ` +
-        `route. Use renderHandler/renderServerTree/renderToFlightString or an ` +
-        `e2e test to exercise component rendering.`,
-    );
-  }
+  // The visitor's URL is matched before any middleware runs, so an RSC route
+  // fails here, before a middleware side effect. A rewrite target is matched
+  // the same way when the chain throws rewrite() (below).
+  let pass = await matchDispatchPass(router, req, env);
 
   const variables: Record<string, unknown> = {};
 
@@ -474,17 +513,21 @@ export async function dispatch<TEnv = any>(
     // Set params before middleware/handler run, so global middleware sees
     // ctx.params (production sets them during matching, before middleware).
     // On a redirect/unmatched path there are no route params.
-    if (routeKey !== undefined) {
-      setRequestContextParams(params, routeKey);
-    } else {
-      requestContext.params = params;
-    }
+    const recordPassParams = (): void => {
+      if (pass.routeKey !== undefined) {
+        setRequestContextParams(pass.params, pass.routeKey);
+      } else {
+        requestContext.params = pass.params;
+      }
+    };
+    recordPassParams();
 
     // The response-route handler (with its own route middleware) lives inside
     // coreHandler below, mirroring production where handleResponseRoute is
     // nested inside coreHandler. Built lazily so a redirect/404 path never
     // touches it.
     const callResponseRoute = async (): Promise<Response> => {
+      const { req, url, preview, params, responseType, handler } = pass;
       // Match production: a partial (client-navigation) request to a response
       // route is short-circuited to X-RSC-Reload (handleResponseRoute), BEFORE
       // route-level middleware runs. Route-level middleware is skipped on a
@@ -493,7 +536,9 @@ export async function dispatch<TEnv = any>(
         createResponseWithMergedHeaders(null, {
           status: 200,
           headers: {
-            "X-RSC-Reload": stripInternalParams(url).toString(),
+            "X-RSC-Reload": (
+              requestContext._rewrittenFrom ?? stripInternalParams(url)
+            ).toString(),
             "content-type": "text/x-component;charset=utf-8",
           },
         });
@@ -511,6 +556,9 @@ export async function dispatch<TEnv = any>(
         searchParams: cleanUrl.searchParams,
         url: cleanUrl,
         originalUrl: requestContext.originalUrl,
+        rewrittenFrom:
+          requestContext._rewrittenFrom &&
+          new URL(requestContext._rewrittenFrom),
         pathname: url.pathname,
         reverse,
         get: requestContext.get,
@@ -669,6 +717,7 @@ export async function dispatch<TEnv = any>(
     // through the global chain and finalizeResponse, identical to production
     // (handler.ts:857 returns handleTimeoutResponse into the same next() path).
     const runResponseRoute = async (): Promise<Response> => {
+      const { routeKey } = pass;
       const responseWork = callResponseRoute();
       const renderOutcome = await withTimeout(
         responseWork,
@@ -753,6 +802,7 @@ export async function dispatch<TEnv = any>(
     // runResponseRoute (below the chain), never covering the 308/404 paths —
     // production only wraps the response-route plan (handler.ts:834-856).
     const coreHandler = async (): Promise<Response> => {
+      const { redirectTo, isUnmatched, url } = pass;
       if (redirectTo) {
         return createResponseWithMergedHeaders(null, {
           status: 308,
@@ -790,18 +840,65 @@ export async function dispatch<TEnv = any>(
       // only the response-route unit inside coreHandler (see runResponseRoute),
       // mirroring handler.ts:845 so global middleware time is never counted
       // toward the deadline.
-      const globalMatches = matchMiddleware(url.pathname, router.middleware);
-      const mwResponse =
-        globalMatches.length === 0
-          ? await coreHandler()
-          : await executeMiddleware<TEnv>(
-              globalMatches,
-              req,
-              env,
-              variables,
-              coreHandler,
-              reverse,
+      // A throw rewrite() re-dispatches the same request context as the
+      // target, as the production handler's pass loop does (rsc/handler.ts).
+      let rewrittenTo: string | undefined;
+      let mwResponse: Response;
+      for (;;) {
+        const globalMatches = matchMiddleware(
+          pass.url.pathname,
+          router.middleware,
+        );
+        try {
+          mwResponse =
+            globalMatches.length === 0
+              ? await coreHandler()
+              : await executeMiddleware<TEnv>(
+                  globalMatches,
+                  pass.req,
+                  env,
+                  variables,
+                  coreHandler,
+                  reverse,
+                );
+          break;
+        } catch (error) {
+          if (!isRewrite(error)) throw error;
+          let nextRequest: Request;
+          try {
+            nextRequest = applyRewrite(
+              error,
+              pass.req,
+              requestContext,
+              router.routeMap as Record<string, string>,
+              router.basename,
+            ).request;
+          } catch (rewriteError) {
+            invokeOnError(
+              router.onError,
+              rewriteError,
+              "routing",
+              {
+                request: pass.req,
+                url: pass.url,
+                env,
+                handledByBoundary: false,
+              },
+              "RSC",
             );
+            if (!(rewriteError instanceof RewriteLoopError)) throw rewriteError;
+            rewrittenTo = undefined;
+            mwResponse = new Response("Loop Detected", {
+              status: 508,
+              headers: { "content-type": "text/plain;charset=utf-8" },
+            });
+            break;
+          }
+          pass = await matchDispatchPass(router, nextRequest, env);
+          recordPassParams();
+          rewrittenTo = requestContext.url.pathname;
+        }
+      }
 
       // Match production's global-chain exit (handler.ts): on a partial/action
       // request a middleware 3xx redirect is converted to a Flight-safe response
@@ -831,6 +928,16 @@ export async function dispatch<TEnv = any>(
         finalResponse = finalizeResponse(intercepted ?? mwResponse);
       } else {
         finalResponse = finalizeResponse(mwResponse);
+      }
+      if (
+        rewrittenTo !== undefined &&
+        !isWebSocketUpgradeResponse(finalResponse)
+      ) {
+        try {
+          finalResponse.headers.set(REWRITE_HEADER, rewrittenTo);
+        } catch {
+          // Immutable headers: the header is a debug signal.
+        }
       }
 
       // request.end closes the transaction. dispatch produces no RSC segments and

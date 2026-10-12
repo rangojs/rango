@@ -304,6 +304,8 @@ export function createHandlerContext<TEnv>(
     pathname,
     url,
     originalUrl: requestContext?.originalUrl ?? new URL(request.url),
+    rewrittenFrom:
+      requestContext?._rewrittenFrom && new URL(requestContext._rewrittenFrom),
     env: bindings,
     waitUntil: requestContext
       ? requestContext.waitUntil.bind(requestContext)

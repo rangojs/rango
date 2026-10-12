@@ -51,7 +51,7 @@ import {
 import type { HandlerContext } from "./handler-context.js";
 import { attachTransitionWhen } from "./attach-transition-when.js";
 import { publicRouteName } from "../route-name.js";
-import { buildFullPayload } from "./full-payload.js";
+import { buildFullPayload, renderedLocation } from "./full-payload.js";
 import {
   capShellWindow,
   lastStoredCaptureSeq,
@@ -845,7 +845,7 @@ function* preparePayloadPlan<TEnv>(
       kind: "payload",
       payload: {
         metadata: {
-          pathname: url.pathname,
+          pathname: renderedLocation(reqCtx, url).pathname,
           // routerId is serialized on every payload (including within-session
           // ones) so the frontend can read the current app/router identity. It
           // always equals the current app's id: a cross-app navigation is
@@ -1867,6 +1867,8 @@ function serveShellHit(
       payload.metadata.initialTheme = entry.initialTheme as
         | import("../theme/types.js").Theme
         | undefined;
+      // Same for the location: the capture rendered the target's.
+      payload.metadata.pathname = url.pathname;
     }
     // Full Flight render per request: hydration needs the whole payload (there
     // is no Flight-side resume — a React limitation, not ours).

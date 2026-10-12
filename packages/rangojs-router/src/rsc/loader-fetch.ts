@@ -11,6 +11,7 @@
  * has already extracted params from it.
  */
 
+import { isRewrite, rewriteNotSupported } from "../route-definition/rewrite.js";
 import { requestHeaders } from "../server/request-headers.js";
 import { FORBIDDEN_KEYS } from "../context-var.js";
 import { getLoaderLazy } from "../server/loader-registry.js";
@@ -340,7 +341,7 @@ export async function handleLoaderFetch<TEnv>(
 
     return buildLoaderErrorResponse(
       ctx,
-      error,
+      isRewrite(error) ? rewriteNotSupported(error, "loader-fetch") : error,
       { request, url, env, loaderId },
       "[RSC] Loader error:",
     );

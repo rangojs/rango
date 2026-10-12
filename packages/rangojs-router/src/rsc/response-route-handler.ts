@@ -70,7 +70,9 @@ export async function handleResponseRoute<TEnv>(
     return createResponseWithMergedHeaders(null, {
       status: 200,
       headers: {
-        "X-RSC-Reload": stripInternalParams(url).toString(),
+        "X-RSC-Reload": (
+          getRequestContext()._rewrittenFrom ?? stripInternalParams(url)
+        ).toString(),
         "content-type": "text/x-component;charset=utf-8",
       },
     });
@@ -86,6 +88,7 @@ export async function handleResponseRoute<TEnv>(
     searchParams: cleanUrl.searchParams,
     url: cleanUrl,
     originalUrl: reqCtx.originalUrl,
+    rewrittenFrom: reqCtx._rewrittenFrom && new URL(reqCtx._rewrittenFrom),
     pathname: url.pathname,
     reverse: createReverseFunction(handlerCtx.getRequiredRouteMap()),
     get: ((keyOrVar: any) => {

@@ -28,7 +28,7 @@ export type MergeRoutes<T extends unknown[]> = T extends [
  * Helper to safely extract route patterns from a routes object
  * Handles string values, { path, response } objects, and interface types (like RegisteredRoutes)
  */
-type RoutePatternFor<
+export type RoutePatternFor<
   TRoutes,
   TName extends keyof TRoutes,
 > = TRoutes[TName] extends string
@@ -53,7 +53,7 @@ export type IsEmptyObject<T> = keyof T extends never ? true : false;
  * Extract search schema from a route entry.
  * Returns {} if no search schema is defined.
  */
-type ExtractSearchSchema<
+export type ExtractSearchSchema<
   TRoutes,
   TName extends keyof TRoutes,
 > = TRoutes[TName] extends { readonly search: infer S extends SearchSchema }

@@ -17,6 +17,13 @@ import {
   createRequestContext,
   captureRequestEntryContext,
 } from "../server/request-context.js";
+import {
+  applyRewrite,
+  isRewrite,
+  RewriteLoopError,
+  REWRITE_HEADER,
+} from "../route-definition/rewrite.js";
+import { renderedLocation } from "./full-payload.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc/server";
 import type {
   RscPayload,
@@ -703,24 +710,73 @@ export function createRSCHandler<
         // latter is reserved for the low-cardinality template (OTel convention).
         span.setAttribute("url.path", url.pathname);
 
-        // Core handler logic (wrapped by middleware)
-        const coreHandler = async (): Promise<Response> => {
-          return coreRequestHandler(request, env, url, variables, nonce);
-        };
-
-        // Execute middleware chain if any, otherwise call core handler
-        // directly; the response is finalized below, inside the response span.
-        const hasMiddleware = matchedMiddleware.length > 0;
-        const downstream = hasMiddleware
-          ? await executeMiddleware(
-              matchedMiddleware,
-              request,
-              env,
-              variables,
-              coreHandler,
-              createReverseFunction(getRequiredRouteMap()),
-            )
-          : await coreHandler();
+        // One pass per URL: the global middleware chain matched on the pass's
+        // path, wrapping the core handler. A `throw rewrite()` from global or
+        // route middleware unwinds to this one catch, which re-dispatches the
+        // same request as the target from the top, as a direct visit would
+        // run it. The response is finalized below, inside the response span.
+        let passRequest = request;
+        let passUrl = url;
+        let passMiddleware = matchedMiddleware;
+        let rewrittenTo: string | undefined;
+        let downstream: Response;
+        for (;;) {
+          const coreRequest = passRequest;
+          const coreUrl = passUrl;
+          const coreHandler = (): Promise<Response> =>
+            coreRequestHandler(coreRequest, env, coreUrl, variables, nonce);
+          try {
+            downstream =
+              passMiddleware.length > 0
+                ? await executeMiddleware(
+                    passMiddleware,
+                    passRequest,
+                    env,
+                    variables,
+                    coreHandler,
+                    createReverseFunction(getRequiredRouteMap()),
+                  )
+                : await coreHandler();
+            break;
+          } catch (error) {
+            if (!isRewrite(error)) throw error;
+            try {
+              const next = applyRewrite(
+                error,
+                passRequest,
+                requestContext,
+                getRequiredRouteMap(),
+                router.basename,
+              );
+              passRequest = next.request;
+              passUrl = next.url;
+              span.setAttribute("rango.rewrite.target", next.target.pathname);
+              span.setAttribute("rango.rewrite.hops", next.hops);
+            } catch (rewriteError) {
+              callOnError(rewriteError, "routing", {
+                request: passRequest,
+                url: passUrl,
+                env,
+                handledByBoundary: false,
+              });
+              if (!(rewriteError instanceof RewriteLoopError)) {
+                throw rewriteError;
+              }
+              rewrittenTo = undefined;
+              downstream = new Response("Loop Detected", {
+                status: 508,
+                headers: { "content-type": "text/plain;charset=utf-8" },
+              });
+              break;
+            }
+            rewrittenTo = requestContext.url.pathname;
+            passMiddleware = matchMiddleware(
+              requestContext.url.pathname,
+              router.middleware,
+            );
+          }
+        }
+        const hasMiddleware = passMiddleware.length > 0;
 
         // Final response construction + host handoff, wrapped in rango.response
         // — the explicit stream-handoff marker. The callback is synchronous, so
@@ -794,6 +850,16 @@ export function createRSCHandler<
               // Immutable headers (e.g. a passed-through platform Response) — drop
               // the timing header, never the response. Instrumentation must not
               // 500 a request.
+            }
+          }
+          if (
+            rewrittenTo !== undefined &&
+            !isWebSocketUpgradeResponse(response)
+          ) {
+            try {
+              response.headers.set(REWRITE_HEADER, rewrittenTo);
+            } catch {
+              // Immutable headers: the header is a debug signal, never a 500.
             }
           }
 
@@ -956,18 +1022,21 @@ export function createRSCHandler<
       // which returns { redirect: url }. Fall through to full-render.
     }
 
+    // A rewritten request reloads the visitor's URL, never the target's.
+    const rewrittenFrom = getRequestContext()._rewrittenFrom;
+
     if (plan.mode === "version-mismatch") {
       console.log(
         `[RSC] Version mismatch: client=${url.searchParams.get("_rsc_v")}, server=${version}. Forcing reload.`,
       );
-      return createReloadResponse(plan.reloadUrl);
+      return createReloadResponse(rewrittenFrom?.href ?? plan.reloadUrl);
     }
 
     if (plan.mode === "app-switch") {
       // Cross-app SPA navigation crossed a host-router app boundary. Force a
       // real document navigation so the target app's document is re-established
       // (stylesheets, theme, warmup, prefetch-TTL). See request-classification.
-      return createReloadResponse(plan.reloadUrl);
+      return createReloadResponse(rewrittenFrom?.href ?? plan.reloadUrl);
     }
 
     // ---- 3. Origin guard (gate for action/loader/PE modes) ----
@@ -1136,7 +1205,8 @@ export function createRSCHandler<
       plan.mode === "pe-render" ||
       (mayNeedSSR(request, url) &&
         !isRscRequest(request, url, plan.mode === "partial-render"));
-    if (plan.mode !== "loader" && willRenderHtml) {
+    // A rewritten pass reuses the setup the visitor's pass started.
+    if (plan.mode !== "loader" && willRenderHtml && !variables[SSR_SETUP_VAR]) {
       const ssrSetup = startSSRSetup(
         handlerCtx,
         request,
@@ -1351,7 +1421,9 @@ export function createRSCHandler<
             return createResponseWithMergedHeaders(null, {
               status: 200,
               headers: {
-                "X-RSC-Reload": stripInternalParams(url).toString(),
+                "X-RSC-Reload": (
+                  getRequestContext()._rewrittenFrom ?? stripInternalParams(url)
+                ).toString(),
                 "content-type": "text/x-component;charset=utf-8",
               },
             });
@@ -1396,7 +1468,7 @@ export function createRSCHandler<
 
           const payload: RscPayload = {
             metadata: {
-              pathname: url.pathname,
+              pathname: renderedLocation(getRequestContext(), url).pathname,
               routerId: router.id,
               basename: router.basename,
               segments: [notFoundSegment],

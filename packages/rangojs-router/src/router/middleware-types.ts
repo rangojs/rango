@@ -8,6 +8,7 @@ import type { GlobalReverseFunction } from "../reverse.js";
 import type { Theme } from "../theme/types.js";
 import type { LocationStateEntry } from "../browser/react/location-state-shared.js";
 import type { RequestScope } from "../types/request-scope.js";
+import type { Rewrite } from "../route-definition/rewrite.js";
 
 type GetVariableFn = {
   <T>(contextVar: ContextVar<T>): T | undefined;
@@ -81,6 +82,21 @@ export interface MiddlewareContext<
 
   /** Global route names only; see {@link GlobalReverseFunction}. */
   reverse: GlobalReverseFunction<DefaultReverseRouteMap>;
+
+  /**
+   * Whether `value` is a `rewrite()` thrown downstream. A middleware that
+   * wraps `next()` in try/catch rethrows it, so the request re-dispatches:
+   *
+   * ```ts
+   * try {
+   *   return await next();
+   * } catch (error) {
+   *   if (ctx.isRewrite(error)) throw error;
+   *   return new Response("Error", { status: 500 });
+   * }
+   * ```
+   */
+  isRewrite(value: unknown): value is Rewrite;
 }
 
 export type MiddlewareFn<

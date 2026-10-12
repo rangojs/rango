@@ -38,7 +38,7 @@ export function buildFullPayload(
 ): RscPayload {
   return {
     metadata: {
-      pathname: url.pathname,
+      pathname: renderedLocation(reqCtx, url).pathname,
       routerId: ctx.router.id,
       basename: ctx.router.basename,
       segments: attachTransitionWhen(m.segments, reqCtx),
@@ -82,6 +82,41 @@ export function buildFullPayload(
       initialTheme: payloadInitialTheme(reqCtx),
     },
   };
+}
+
+/**
+ * The URL a render shows as the page's location (payload `pathname`, the SSR
+ * search and origin seed). For a request middleware rewrote, the visitor's
+ * URL, so the server markup and the hydrating client (which reads the address
+ * bar) agree on `usePathname()` and `useSearchParams()`. A render other
+ * visitors may be served shows `url`, the target, as a direct visit does: a
+ * shell capture, and a render the document cache stores (its key is the
+ * target). A render that shows the visitor's URL marks
+ * `_payloadVisitorLocation`, and the document cache does not store it.
+ */
+export function renderedLocation(
+  reqCtx:
+    | Pick<
+        RequestContext<any>,
+        | "_rewrittenFrom"
+        | "_shellCaptureRun"
+        | "_documentCacheRender"
+        | "_payloadVisitorLocation"
+        | "res"
+      >
+    | undefined,
+  url: URL,
+): URL {
+  const visitor = reqCtx?._rewrittenFrom;
+  if (
+    !visitor ||
+    reqCtx._shellCaptureRun ||
+    documentCacheStoresRender(reqCtx)
+  ) {
+    return url;
+  }
+  reqCtx._payloadVisitorLocation = true;
+  return visitor;
 }
 
 /**

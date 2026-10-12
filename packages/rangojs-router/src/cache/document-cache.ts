@@ -37,6 +37,7 @@ import {
   predatesInvalidation,
 } from "./tag-invalidation.js";
 import { observePhase, PHASES } from "../router/instrument.js";
+import { isRewrite } from "../route-definition/rewrite.js";
 import {
   SEGMENT_FRAGMENT_CAPABILITY_HEADER,
   SEGMENT_FRAGMENT_RECOVERY_HEADER,
@@ -125,7 +126,7 @@ function shouldCacheResponse(
   response: Response,
   requestCtx?: Pick<
     RequestContext,
-    "_payloadVisitorTheme" | "_payloadDeferred"
+    "_payloadVisitorTheme" | "_payloadDeferred" | "_payloadVisitorLocation"
   >,
 ): CacheDirectives | null {
   // Only cache successful responses
@@ -147,6 +148,12 @@ function shouldCacheResponse(
   // response opted in (a Cache-Control written after next()), so
   // payloadInitialTheme could not render the default.
   if (requestCtx?._payloadVisitorTheme) {
+    return null;
+  }
+
+  // A rewritten request's render shows the visitor's URL (renderedLocation,
+  // full-payload.ts); this entry is keyed by the rewrite target.
+  if (requestCtx?._payloadVisitorLocation) {
     return null;
   }
 
@@ -600,6 +607,8 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       noteWarmDocument(requestCtx, "not-cacheable");
       return originalResponse;
     } catch (error) {
+      // A rewrite() thrown downstream re-dispatches the request.
+      if (isRewrite(error)) throw error;
       reportCacheError(error, "cache-read", "[DocumentCache] middleware");
       if (handlerCalled) {
         // Post-handler failure (e.g. body.tee()): do not call next() again

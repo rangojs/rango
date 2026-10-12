@@ -6,6 +6,7 @@
  * reference. We detect these and return HTML instead of RSC stream.
  */
 
+import { rejectActionRewrite } from "../route-definition/rewrite.js";
 import { requestHeaders } from "../server/request-headers.js";
 import {
   getRequestContext,
@@ -186,7 +187,7 @@ async function handleProgressiveEnhancementInner<TEnv>(
       // Meter the no-JS form action as the action phase, same as the JS path.
       actionResult = await observePhase(
         PHASES.action(useActionStateId ?? "useActionState"),
-        () => boundAction(),
+        () => rejectActionRewrite(boundAction),
       );
     } catch (error) {
       // Handle thrown redirect (e.g., throw redirect('/path'))
@@ -241,7 +242,7 @@ async function handleProgressiveEnhancementInner<TEnv>(
     try {
       const loadedAction = await ctx.loadServerAction(directActionId);
       actionResult = await observePhase(PHASES.action(directActionId), () =>
-        loadedAction.apply(null, args),
+        rejectActionRewrite(() => loadedAction.apply(null, args)),
       );
     } catch (error) {
       // Handle thrown redirect (e.g., throw redirect('/path'))

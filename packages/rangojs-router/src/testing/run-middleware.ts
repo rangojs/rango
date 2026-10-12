@@ -13,6 +13,10 @@
  *
  * `nextCalled` counts how many times the terminal `next()` (the finalHandler)
  * ran: 0 when the chain short-circuited, 1 when it ran to completion.
+ *
+ * A `throw rewrite(target)` is reported as `result.rewrite` (the resolved
+ * target) instead of failing the run: production re-dispatches the request
+ * there, which this primitive does not do.
  */
 
 import {
@@ -31,6 +35,11 @@ import {
   type StateCookieSeed,
 } from "./internal/context.js";
 import type { ThemeConfig } from "../theme/types.js";
+import {
+  isRewrite,
+  resolveRewriteTarget,
+} from "../route-definition/rewrite.js";
+import { getGlobalRouteMap } from "../route-map-builder.js";
 import type { SegmentCacheStore } from "../cache/types.js";
 import type { CacheProfile } from "../cache/profile-registry.js";
 
@@ -94,6 +103,13 @@ export interface RunMiddlewareOptions<TEnv = any> {
   stateCookie?: StateCookieSeed;
 }
 
+/** A rewrite the chain threw (RunMiddlewareResult.rewrite). */
+export interface RunMiddlewareRewrite {
+  pathname: string;
+  search: string;
+  routeName?: string;
+}
+
 /**
  * Result of runMiddleware.
  */
@@ -109,6 +125,16 @@ export interface RunMiddlewareResult<TEnv = any> {
   ctx: RequestContext<TEnv>;
   /** Number of times the terminal handler ran (0 = short-circuited, 1 = passed through). */
   nextCalled: number;
+  /**
+   * The target of a `throw rewrite(...)` from the chain, resolved as
+   * production resolves it (a path basename-prefixed, a route name through
+   * `routeMap`): `pathname` and `search` of the URL the request would render,
+   * and `routeName` when the rewrite named a route. `undefined` when the chain
+   * did not rewrite. On a rewrite, `response` carries what the chain set
+   * before the throw (status, headers, cookies), which production keeps for
+   * the target's response.
+   */
+  rewrite?: RunMiddlewareRewrite;
   /**
    * Whether the chain called `ctx.dynamic()` (the PPR shell opt-out). The public
    * way to assert the opt-out without reading the `@internal` `ctx._dynamic`.
@@ -192,17 +218,37 @@ export async function runMiddleware<TEnv = any>(
       reverse as RequestContext<TEnv>["reverse"];
   }
 
-  const response = await runWithRequestContext(ctx, () =>
-    executeLoaderMiddleware<TEnv>(
-      mwArray,
-      builtRequest,
-      (opts.env ?? {}) as TEnv,
-      opts.params ?? {},
-      variables,
-      finalHandler,
-      reverse,
-    ),
-  );
+  let rewrite: RunMiddlewareRewrite | undefined;
+  const response = await runWithRequestContext(ctx, async () => {
+    try {
+      return await executeLoaderMiddleware<TEnv>(
+        mwArray,
+        builtRequest,
+        (opts.env ?? {}) as TEnv,
+        opts.params ?? {},
+        variables,
+        finalHandler,
+        reverse,
+      );
+    } catch (error) {
+      if (!isRewrite(error)) throw error;
+      const target = resolveRewriteTarget(
+        error,
+        opts.routeMap ?? getGlobalRouteMap(),
+        new URL(builtRequest.url),
+        ctx._basename,
+      );
+      rewrite = {
+        pathname: target.pathname,
+        search: target.search,
+        ...("name" in error.target && { routeName: error.target.name }),
+      };
+      return new Response(null, {
+        status: ctx.res.status,
+        headers: ctx.res.headers,
+      });
+    }
+  });
 
   const { cookies, locationState } = snapshotRunEffects(ctx);
   const headers = headersToObject(response.headers);
@@ -210,6 +256,7 @@ export async function runMiddleware<TEnv = any>(
     response,
     ctx,
     nextCalled,
+    ...(rewrite && { rewrite }),
     dynamic: ctx._dynamic === true,
     cookies,
     headers,

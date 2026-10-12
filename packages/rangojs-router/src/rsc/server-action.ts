@@ -15,6 +15,7 @@
  * wraps revalidation inside route middleware — identical to a normal render.
  */
 
+import { rejectActionRewrite } from "../route-definition/rewrite.js";
 import { requestHeaders } from "../server/request-headers.js";
 import {
   getRequestContext,
@@ -189,7 +190,7 @@ export async function executeServerAction<TEnv>(
 
   try {
     loadedAction = await ctx.loadServerAction(actionId);
-    let data = await loadedAction!.apply(null, args);
+    let data = await rejectActionRewrite(() => loadedAction!.apply(null, args));
 
     // Intercept redirect Responses: serializing one as the action returnValue
     // would fail, and revalidation would run needlessly.
