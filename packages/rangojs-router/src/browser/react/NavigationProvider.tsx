@@ -314,8 +314,9 @@ export interface NavigationProviderProps {
    * boundary. Then a transition changes HydrationBarrierContext alone, and
    * React commits it once every boundary has hydrated, one still suspended on
    * the client (a lazy chunk, a deferred-hydration gate) included. Until that
-   * commit location state is `undefined`, as SSR rendered it, and the store
-   * is locked; after it the entry's state lands in a transition of its own
+   * commit location state is `undefined`, as SSR rendered it, through any
+   * commit no payload follows (a shallow navigation), and the store is
+   * locked; after it the entry's state lands in a transition of its own
    * and the store is released (handle data lands in that release
    * notification). A navigation committed earlier releases the store before
    * its update, for the whole hold when the navigation is held: an old-page
@@ -466,11 +467,19 @@ export function NavigationProvider({
 
   // A commit no payload follows (a shallow navigation, a commit that keeps
   // every segment, merged server-set state): the tree on screen is already
-  // the entry's, so its state is taken with the commit's notification.
+  // the entry's, so its state is taken with the commit's notification. Not
+  // while the hydration window is open: a boundary of the document may still
+  // be dehydrated, an update a reader outside it takes commits around it, and
+  // it then hydrates against the new state. The barrier's effect gives the
+  // controller's state, this commit's included. The window stays open: this
+  // commit mounts nothing that must read the live store.
   useEffect(
     () =>
       eventController.subscribe(() => {
-        if (eventController.takeTreelessLocationState()) {
+        if (
+          eventController.takeTreelessLocationState() &&
+          !hydrationOpen.current
+        ) {
           setLocationState(eventController.getLocationState());
         }
       }),

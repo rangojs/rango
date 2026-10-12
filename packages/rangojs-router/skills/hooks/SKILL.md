@@ -118,6 +118,11 @@ cannot mismatch its server HTML.
   location state lands in a transition and handle data in the release
   notification. `useLocationState` readers re-render when the entry's
   state object changes; `useHandle` readers when their selection changes.
+- State set before then by a commit that renders no new page (a shallow
+  navigation with `revalidate: false`, Back/Forward or a revalidation that
+  keeps every segment, an action's location state) waits the same way: readers
+  keep `undefined` until every boundary has hydrated, then show the latest
+  entry's state.
 - A navigation that commits before then mounts its page with the live values
   from its first render. A boundary of the document that persists across that
   navigation and has not hydrated yet then hydrates against the live values;

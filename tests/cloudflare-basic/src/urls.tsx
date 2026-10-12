@@ -23,6 +23,7 @@ import {
 import {
   GatedHydrationInside,
   GatedHydrationOutside,
+  GatedHydrationShallow,
   GatedHydrationWriter,
 } from "./components/GatedHydration.js";
 import {
@@ -2693,6 +2694,7 @@ export const urlpatterns = urls(
           () => (
             <div>
               <GatedHydrationWriter />
+              <GatedHydrationShallow />
               <GatedHydrationOutside />
               <Suspense
                 fallback={<span data-testid="gated-fallback">loading</span>}

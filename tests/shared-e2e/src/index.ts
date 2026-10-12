@@ -840,6 +840,66 @@ export async function expectGatedBoundaryHydratesWithOutsideReader(
 }
 
 /**
+ * A shallow navigation (`revalidate: false`) that sets location state while a
+ * boundary is still dehydrated, its chunk held: a commit no payload follows.
+ * The boundary hydrates as the server rendered it, and the state reaches the
+ * readers once it has hydrated.
+ *
+ * Same fixture as expectGatedBoundaryHydratesWithOutsideReader, plus a
+ * `gated-shallow` button that navigates to `?shallow=1` with
+ * `{ label: "shallow-value" }` and a `gated-search` useSearchParams reader.
+ * The search reader takes the commit's notification in the batch the outside
+ * location-state reader would: once it shows `1`, a provider that gave the
+ * state at once has already rendered it.
+ */
+export async function expectGatedBoundaryHydratesAfterShallowNavigation(
+  page: Page,
+  url: string,
+): Promise<void> {
+  const outside = byTestId(page, "gated-outside");
+  const inside = byTestId(page, "gated-inside");
+  let outsideBeforeOpen: string | null;
+  {
+    using _ = guardHydrationErrors(page);
+    await page.goto(url);
+    await waitForShellHydration(page);
+    await expect(inside).toHaveText("empty");
+    await expect
+      .poll(async () => (await countDomBoundaryMarkers(page)).pending)
+      .toBe(0);
+
+    await byTestId(page, "gated-shallow").click();
+    await expect(byTestId(page, "gated-search")).toHaveText("1");
+    await expect(page).toHaveURL(/[?&]shallow=1/);
+    outsideBeforeOpen = await outside.textContent();
+    await page.evaluate(() => {
+      const scope = window as {
+        __gatedServerNode?: Element | null;
+        __openGatedHydrationChunk?: () => void;
+      };
+      scope.__gatedServerNode = document.querySelector(
+        '[data-testid="gated-inside"]',
+      );
+      scope.__openGatedHydrationChunk!();
+    });
+    await expect(inside).toHaveText("shallow-value");
+  }
+
+  // Hydrated, not client-rendered: the node is the server's.
+  expect(
+    await page.evaluate(
+      () =>
+        document.querySelector('[data-testid="gated-inside"]') ===
+        (window as { __gatedServerNode?: Element | null }).__gatedServerNode,
+    ),
+  ).toBe(true);
+  // Until the gated boundary hydrated, the outside reader showed what the
+  // server rendered.
+  expect(outsideBeforeOpen).toBe("empty");
+  await expect(outside).toHaveText("shallow-value");
+}
+
+/**
  * The entry's typed location-state slots, keyed by `<ExportName><suffix>`: the
  * tail of the injected key (`__rsc_ls_<path or hash>#<ExportName>`) that is
  * the same in dev and in a build, plus the suffix the definition's

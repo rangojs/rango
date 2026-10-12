@@ -7,6 +7,7 @@ import {
 import {
   GatedHydrationInside,
   GatedHydrationOutside,
+  GatedHydrationShallow,
   GatedHydrationWriter,
 } from "../components/GatedHydration.js";
 import { Link } from "@rangojs/router/client";
@@ -321,6 +322,7 @@ export const locationStatePatterns = urls(({ path, middleware, include }) => [
     () => (
       <div>
         <GatedHydrationWriter />
+        <GatedHydrationShallow />
         <GatedHydrationOutside />
         <Suspense fallback={<span data-testid="gated-fallback">loading</span>}>
           <GatedHydrationInside />

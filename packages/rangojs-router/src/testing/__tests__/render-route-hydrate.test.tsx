@@ -306,6 +306,71 @@ describe("renderRoute: hydrate", () => {
     },
   );
 
+  // A back/forward onto an entry while that boundary is still dehydrated is a
+  // commit no tree follows (renderRoute's popstate, as a traversal that keeps
+  // every segment in production). The entry's state waits for the boundary.
+  it.each([
+    { strict: false, label: "no StrictMode" },
+    { strict: true, label: "StrictMode" },
+  ])(
+    "a back/forward while a boundary is suspended on the client waits for it to hydrate ($label)",
+    async ({ strict }) => {
+      configure({ reactStrictMode: strict });
+      let open!: () => void;
+      const chunk = new Promise<void>((resolve) => (open = resolve));
+      function ClientChunk({ children }: { children: ReactNode }) {
+        if (currentPass() === "client") use(chunk);
+        return children;
+      }
+      const seen: Array<{ pass: Pass; count: number | undefined }> = [];
+      function Count({ testId }: { testId: string }) {
+        const state = useLocationState(GridState);
+        if (testId === "inside") {
+          seen.push({ pass: currentPass(), count: state?.count });
+        }
+        return <p data-testid={testId}>{state?.count ?? 0}</p>;
+      }
+      function Page() {
+        return (
+          <>
+            <Count testId="outside" />
+            <Suspense fallback={<i data-testid="fallback">loading</i>}>
+              <ClientChunk>
+                <Count testId="inside" />
+              </ClientChunk>
+            </Suspense>
+          </>
+        );
+      }
+
+      const { recoverableErrors, getByTestId, queryByTestId } =
+        await renderRoute([{ path: "/grid", Component: Page }], {
+          hydrate: true,
+          locationState: [[GridState, { count: 3 }]],
+        });
+      const inside = getByTestId("inside");
+
+      await act(async () => {
+        GridState.write({ count: 5 });
+        window.dispatchEvent(new Event("popstate"));
+      });
+      const beforeOpen = [
+        getByTestId("outside").textContent,
+        inside.textContent,
+        queryByTestId("fallback"),
+      ];
+
+      await act(async () => open());
+
+      expect(recoverableErrors).toEqual([]);
+      expect(getByTestId("inside")).toBe(inside);
+      expect(beforeOpen).toEqual(["0", "0", null]);
+      expect(seen.filter((s) => s.pass === "client")[0]?.count).toBeUndefined();
+      expect(getByTestId("outside").textContent).toBe("5");
+      expect(inside.textContent).toBe("5");
+    },
+  );
+
   it("lateHandles on a mounted tree replace the handle's seed after mount", async () => {
     const Notes = createHandle<string, string[]>(
       (segments) => segments.flat(),

@@ -3,6 +3,7 @@ import {
   expectClearOnReloadDropsCarriedState,
   expectClearOnReloadDropsStateOnTraversalLoad,
   expectEvictedSameRouteTraversalRestoresItsPage,
+  expectGatedBoundaryHydratesAfterShallowNavigation,
   expectGatedBoundaryHydratesWithOutsideReader,
   expectHeldLoadMoreShowsNoItemTwice,
   expectLateSuspenseReaderHydratesClean,
@@ -1487,6 +1488,15 @@ function gatedHydrationSuite(f: Fixture) {
     page,
   }) => {
     await expectGatedBoundaryHydratesWithOutsideReader(
+      page,
+      f.url("/location-state/gated-hydration"),
+    );
+  });
+
+  test("a shallow navigation while a boundary is still dehydrated waits for it to hydrate", async ({
+    page,
+  }) => {
+    await expectGatedBoundaryHydratesAfterShallowNavigation(
       page,
       f.url("/location-state/gated-hydration"),
     );

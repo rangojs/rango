@@ -1,7 +1,11 @@
 "use client";
 
 import { lazy } from "react";
-import { useLocationState } from "@rangojs/router/client";
+import {
+  useLocationState,
+  useRouter,
+  useSearchParams,
+} from "@rangojs/router/client";
 import { GatedHydrationState } from "../location-states.js";
 
 declare global {
@@ -39,6 +43,34 @@ export function GatedHydrationWriter() {
     >
       Write state
     </button>
+  );
+}
+
+/**
+ * A shallow navigation that sets the state: a commit no payload follows. The
+ * search param shows once its notification has reached the page.
+ */
+export function GatedHydrationShallow() {
+  const router = useRouter();
+  const [searchParams] = useSearchParams();
+  return (
+    <>
+      <button
+        type="button"
+        data-testid="gated-shallow"
+        onClick={() =>
+          void router.push(`${window.location.pathname}?shallow=1`, {
+            revalidate: false,
+            state: [GatedHydrationState({ label: "shallow-value" })],
+          })
+        }
+      >
+        Shallow navigation
+      </button>
+      <span data-testid="gated-search">
+        {searchParams.get("shallow") ?? "none"}
+      </span>
+    </>
   );
 }
 

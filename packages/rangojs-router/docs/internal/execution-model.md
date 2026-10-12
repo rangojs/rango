@@ -356,7 +356,20 @@ The decisions live in `router/segment-resolution/revalidation.ts` and ask
     changes), and handle data in the release notification (the waiting
     writes apply in order and `useHandle` readers whose selection changed
     re-render). A navigation committed before the reveal releases the store
-    before its update, so its page mounts against the live store. Trade-off: a held navigation whose
+    before its update, so its page mounts against the live store. A commit no
+    payload follows (`treeless`: a shallow navigation, a traversal or
+    revalidation that keeps every segment, an action's or a fill's
+    server-set state) does neither: it records the entry's state in the
+    controller, and while the window is open the provider's subscription
+    leaves it there for the barrier's effect to give. Handing it to readers
+    at once was the same failure through another door: an update a reader
+    outside a still-suspended boundary takes commits around that boundary
+    (next bullet), which then hydrates against the new state
+    (`location-state-hydration.test.tsx` "a treeless commit … waits",
+    `render-route-hydrate.test.tsx` "a back/forward while a boundary is
+    suspended…", `expectGatedBoundaryHydratesAfterShallowNavigation` in both
+    apps). The window stays open through it: the tree on screen is still the
+    document's, and nothing mounts that must read the live store. Trade-off: a held navigation whose
     history entry commits during the window releases the store for the whole
     hold, so an old-page boundary that hydrates during the hold reads the
     destination's values and can mismatch (React client-renders it).
