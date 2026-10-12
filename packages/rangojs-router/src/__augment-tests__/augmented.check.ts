@@ -19,6 +19,7 @@ import type {
 import type { DefaultRouteName } from "../types/global-namespace.js";
 import type { InterceptWhenFn } from "../server/context.js";
 import { href } from "../href-client.js";
+import { rewrite, type Rewrite } from "../route-definition/rewrite.js";
 import type { Money, TestBindings } from "./augment.js";
 
 type Expect<T extends true> = T;
@@ -67,6 +68,25 @@ function middlewareReverse(ctx: MiddlewareContext): void {
   ctx.reverse(".home");
 }
 void middlewareReverse;
+
+// rewrite() takes a path, or a global name with the params and search
+// ctx.reverse takes; ctx.isRewrite narrows a caught value to a Rewrite.
+function middlewareRewrite(ctx: MiddlewareContext, caught: unknown): void {
+  void rewrite("/maintenance?from=shop");
+  void rewrite("home");
+  void rewrite("blog.post", { slug: "hello" });
+  void rewrite("search", {}, { q: "hats" });
+  // @ts-expect-error - a route with params needs them
+  void rewrite("blog.post");
+  // @ts-expect-error - unknown global name is rejected
+  void rewrite("nope");
+  // @ts-expect-error - dot-local name; a rewrite resolves global names only
+  void rewrite(".home");
+  if (ctx.isRewrite(caught)) {
+    type _narrowed = Expect<Equal<typeof caught, Rewrite>>;
+  }
+}
+void middlewareRewrite;
 
 // routeName narrows to the generated route names.
 type _routeName = Expect<
