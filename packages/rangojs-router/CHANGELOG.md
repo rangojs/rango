@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.24.0 (2026-10-12)
 
 ### Added: `throw rewrite()` renders another route at the same URL from middleware
 
