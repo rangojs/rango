@@ -146,7 +146,9 @@ clears the shared error.
 **`load()` calls that stay local** (no broadcast, per-hook state, same
 semantics as the old per-component `useState`):
 
-- `load({ params: { ... } })` — explicit params.
+- `load({ params: { ... } })` — explicit params. They are string values; a
+  `__proto__`, `constructor` or `prototype` key or a non-string value is
+  rejected and `load()` fails with `Invalid loader params`.
 - `load({ method: "POST", body })` — mutations.
 - Any `load()` on a `useFetchLoader(loader)` whose loader is **not**
   registered on the current route. Two unrelated components calling

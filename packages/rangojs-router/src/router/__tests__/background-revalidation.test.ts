@@ -25,6 +25,8 @@ vi.mock("../logging.js", () => ({
 const { withBackgroundRevalidation } =
   await import("../match-middleware/background-revalidation.js");
 const { _getRequestContext } = await import("../../server/request-context.js");
+const { planPrefetchDeferral } =
+  await import("../segment-resolution/prefetch-deferral.js");
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -246,13 +248,18 @@ describe("withBackgroundRevalidation", () => {
   // handler of a segment the client holds, and the refresh re-renders every
   // handler of the route.
   describe("a fill that lands on a stale record", () => {
+    // The plan match-api builds for a tree with a flag, in each mode.
+    const flaggedRoute = {
+      type: "route",
+      id: "route",
+      shortCode: "R0",
+      loader: [{ loader: { $$id: "flagged" }, prefetch: false }],
+      layout: [],
+      parallel: {},
+    } as any;
     const plan = (mode: "fill" | "prefetch" | undefined) =>
       ({
-        _prefetchDeferral: {
-          mode,
-          scope: { loaders: new Set(), loaderIds: new Set(), units: new Map() },
-          storedFrom: 0,
-        },
+        _prefetchDeferral: planPrefetchDeferral([flaggedRoute], mode, {}, null),
       }) as any;
 
     it("does not schedule the refresh", async () => {

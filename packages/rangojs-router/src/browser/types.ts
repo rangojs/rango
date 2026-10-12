@@ -85,7 +85,11 @@ export interface RscMetadata {
    * positions and must complete at the handler barrier.
    */
   handlesLate?: AsyncGenerator<HandleData, void, unknown>;
-  /** Cached handle data (for back/forward navigation from cache) */
+  /**
+   * Handle data of the history-cache entry the update renders from (a
+   * back/forward restore, or a link to a cached page). It replaces the handle
+   * state, and `handles`, when present, merge onto it.
+   */
   cachedHandleData?: HandleData;
   /**
    * RSC version string from the server.

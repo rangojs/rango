@@ -1029,15 +1029,76 @@ which run made each one.
    A snapshot without pushedBy records (every value the handler's) merges
    exactly as before.
 
-### Not covered: a page shown from the history cache
+### Covered later: a page shown from the history cache
 
 A link navigation to a URL the history cache holds sends the cached segment
-ids, and the server re-renders only what revalidates. The merge base is the
-handle data of the page on screen, not the cached entry's (`partial-update.ts`
-passes `targetCacheHandleData` only when the response has no diff), so the
-pushes of the segments the navigation takes from the cache and the page on
-screen does not share are lost. That is a different cause from the one above
-(a wrong base, not a merge too coarse) and is not part of this change.
+ids, and the server re-renders only what revalidates. The merge used to start
+from the handle data of the page on screen, not the cached entry's:
+`partial-update.ts` handed `targetCacheHandleData` to the provider only when
+the response had no diff. So the pushes of the segments the navigation took
+from the cache and the page on screen did not share were lost. The repro: A,
+a link to B, a link back to A, a link to B again, with a loader on B that
+reruns on every visit; the second B showed neither its layout's crumb, nor its
+route's crumb, nor its title. A different cause from the one above (a wrong
+base, not a merge too coarse), fixed after it:
+
+1. **The base is the target's entry, as the bridge builds it**
+   (`browser/navigation-bridge.ts`). The bridge already takes a segment the
+   page on screen shares with the entry from the page on screen (it can be
+   fresher). That segment's handle buckets come from the page on screen too:
+   the mode carries `targetCacheHandleData`, a reader that answers the
+   entry's handle data with the buckets of those shared segments taken from
+   the page on screen (`withSegmentHandles` in `handles/pushed-by.ts`, every
+   handle and its pushedBy record alike). It reads the page on screen when it
+   is called, not at the click, so a push that page gets while the request is
+   in flight (a late document push, a stream still landing) is in it. During
+   the hydration window that read is the page's history entry, where late
+   pushes are written (`liveHandleDataForCache`). The segment itself is still
+   the one taken at the click: an action that re-renders a shared layout while
+   the request is in flight changes the pushes the commit reads, not the
+   segment, a gap older than this change.
+2. **Both partial branches read it at the commit** (`browser/partial-update.ts`).
+   Just before `tx.commit()`, the branch reads the base. `tx.commit()` records
+   the controller's handle state in the entry it commits (the document
+   snapshot during the hydration window), and for a link to the page on
+   screen's own URL that is the entry the read takes the page's pushes from,
+   so reading after it lost a late document push. After the commit the branch
+   writes the base over that record (`updateCacheHandleData`) and sets
+   `cachedHandleData` on the update's metadata. So a Back before the
+   response's first handle yield, then a Forward, restores the entry's pushes
+   for the segments the response did not re-run, not the page left's; a
+   segment it re-ran shows its previous visit's pushes there (the entry is not
+   marked stale). The no-diff branch did this with the click-time data; the
+   branch that renders the response did neither.
+3. **The provider starts from it** (`browser/react/NavigationProvider.tsx`).
+   An update that carries `cachedHandleData` replaces the handle state with it
+   first; its handle stream then merges onto it with `mergePartialHandleData`,
+   unchanged. Back/forward restores and the no-diff branch carry no stream, so
+   for them this is the replace they did before.
+
+Only a navigation no prefetch answered took this path with a diff: in dev
+(links do not prefetch by default), with `prefetch="none"`, on a click before
+its prefetch landed, and with `router.push()`. A prefetch is rendered against
+the page it was made from, so its answer re-renders every segment of the
+target that page does not share, with their pushes.
+
+Evidence: `src/__tests__/history-cache-handle-base.test.tsx` drives the real
+bridge, partial updater, store and provider with a faked server answer (ten
+tests). The first four fail on `8a843aae`; the fourth is the shared-segment
+base on a response with no diff, where the entry's older pushes used to win.
+The fifth (a push on the page on screen while the request is in flight) and
+the sixth (the entry the commit records) fail on the click-time version of
+this change. The seventh pins the no-diff branch's entry write (Back and
+Forward), the eighth the hydration-window read, and the last two (a link to
+the page on screen's own URL while it hydrates, with and without a re-render)
+fail when the base is read after `tx.commit()`.
+`src/handles/__tests__/pushed-by.test.ts` covers `withSegmentHandles` on its
+own. e2e `history cache handles (dev)` / `(production)` in the router test-app
+and `tests/cloudflare-basic` (body:
+`tests/shared-e2e/src/history-cache-handles-scenario.ts`) fail on `8a843aae`
+in both apps and both modes at the second visit to B. Its section re-renders
+on a navigation to A only and shows its run in its crumb, so the second B also
+pins that a shared segment's crumb comes from the page on screen.
 
 ### Evidence
 

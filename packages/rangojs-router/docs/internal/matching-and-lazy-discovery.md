@@ -173,8 +173,9 @@ wildcard`, with backtracking. The regex fallback matches in definition order, wh
   serves it, and redoes the pass when a runner full reload split it. A split pass used to
   install the projections on the old copy while `urls.tsx` read a fresh, empty one, so
   every `include()` of a clientUrls module failed and the dev server returned 500s until a
-  restart. A failed cold discovery now recovers too: the routes-manifest module replays the
-  projections it computed, and the route-file watcher re-runs discovery. The full story is
+  restart. A failed cold discovery now recovers too, on Node and on Cloudflare: the
+  routes-manifest module replays the projections it computed, and the route-file watcher
+  re-runs discovery on the next save. The full story is
   in [manifests.md](../manifests.md) ("Dev-boot module reload races"). Pinned by
   `discover-routers-reload.test.ts`. The route-file watcher ignores files in the
   directories every scan skips (dot-directories, `node_modules`, `dist`, `coverage`) unless
@@ -248,6 +249,9 @@ is the list:
 - `lazy-include-cost.bench.ts` — the LP1/LP3/LP4 timing benchmark.
 - `discover-routers-reload.test.ts` — a discovery pass split by a runner reload is redone,
   and a failed cold discovery recovers.
+- `dev-discovery-recovery.test.ts` — the dev server's side of that recovery: after a failed
+  cold discovery the next source save re-runs discovery, holds the routes-manifest module
+  until the pass commits, and invalidates it once (Node) or reloads the worker (Cloudflare).
 - `semantic-matrix.test.ts` — the router's core execution guarantees (middleware scope,
   handler-first ordering, PE/JS parity). If you change matching or discovery, keep this
   one green above all.

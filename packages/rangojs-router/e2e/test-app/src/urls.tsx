@@ -33,6 +33,7 @@ import { pprHeaderGuardPatterns } from "./urls/ppr-header-guard.js";
 import { shellCacheActionPatterns } from "./urls/shell-cache-action.js";
 import { shellPushOwnershipPatterns } from "./urls/shell-push-ownership.js";
 import { prerenderWarmPatterns } from "./urls/prerender-warm.js";
+import { requestKeyPatterns } from "./urls/request-keys.js";
 import { shellSecurePatterns } from "./urls/shell-secure.js";
 import { themePatterns } from "./urls/theme.js";
 import { hrefPatterns } from "./urls/href.js";
@@ -136,6 +137,7 @@ import clientUrlsTransitionPatterns from "./urls/client-urls-transition.js";
 import clientUrlsActionPatterns from "./urls/client-urls-action.js";
 import heldHandlesClientPatterns from "./urls/held-handles.client-urls.js";
 import { heldHandlesPatterns } from "./urls/held-handles.js";
+import { historyHandlesPatterns } from "./urls/history-handles.js";
 import clientUrlsSlowPatterns, { SlowChrome } from "./urls/client-urls-slow.js";
 import { getClientUrlsActionCount } from "./urls/client-urls-action.store.js";
 import { ClientUrlsItemLoader } from "./urls/client-urls.loader.js";
@@ -981,6 +983,9 @@ export const urlpatterns = urls(
         name: "heldHandlesClient",
       }),
       include("/", heldHandlesPatterns, { name: "" }),
+      // A link to a page the history cache holds keeps that page's handle
+      // pushes when the response re-renders part of it.
+      include("/", historyHandlesPatterns, { name: "" }),
       intercept(
         "@modal",
         ".clientIntercept.item",
@@ -1074,6 +1079,10 @@ export const urlpatterns = urls(
 
       // router.prerender() warm fixtures — /warm (issue #1062).
       include("/", prerenderWarmPatterns, { name: "" }),
+
+      // Request-derived names like `constructor` (issue #1109): /constructor,
+      // /__proto__ and /loader-params.
+      include("/", requestKeyPatterns, { name: "" }),
 
       // PPR guarding + scope-fidelity fixtures — /shell-secure (global auth
       // middleware, mounted in router.tsx) and /shell-secure-dsl (route DSL

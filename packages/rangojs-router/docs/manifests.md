@@ -323,10 +323,36 @@ informational warning when the dep optimizer's `browserHash` changed across the 
 reserving the loud, actionable error for a genuinely empty registry. A failed cold
 discovery commits nothing, so the routes-manifest module's no-manifest branch still replays
 `state.clientUrlProjectionMap` (the projections the failed pass computed), and the failure
-sets `lastDiscoveryError`: `canRefreshRuntimeDiscovery()` (discovery/state.ts) then lets the
-route-file watcher re-run discovery on a main runner, the recovery mode a failed HMR
-rediscovery already had. Before, the watcher required a committed manifest, so only a
-restart recovered.
+sets `lastDiscoveryError` (`recordDiscoveryFailure`): `canRefreshRuntimeDiscovery()`
+(discovery/state.ts) then lets the route-file watcher re-run discovery, the recovery mode a
+failed HMR rediscovery already had. Before, the watcher required a committed manifest, so
+only a restart recovered.
+
+Cloudflare needed the same recovery a second time. Its cold discovery runs on the temp Node
+server, and a failure there (the temp runner's entry import throwing, or `discoverRouters`
+giving up) recorded nothing, while `refreshRuntimeDiscovery` returned early with no
+committed manifest. That left the same 500s as on Node. The worker builds its dev trie from
+the live route tree (`buildRouterTrieFromUrlpatterns`), which evaluates every `include()`,
+and it gets its clientUrls projections only from the routes-manifest module. A cold failure
+before the projections were computed made that build throw
+`include() could not resolve the server projection` on every request, and no save cleared
+it. Both failures now record `lastDiscoveryError`. The recovering save re-runs discovery on
+the temp runner (`getOrCreateTempServer` creates a fresh one when the failed start closed
+it), and the worker reload that follows (`forceCloudflareWorkerReload`) invalidates the
+worker's whole module graph, routes-manifest module included, so the Node path's explicit
+invalidation is not needed there.
+
+That recovery has one cost we accepted: recovery mode re-runs discovery on every in-scan save
+until a pass succeeds. On Cloudflare, an app whose temp runner can never import the entry
+(an entry Node cannot evaluate) creates and closes a temp Vite server on each save while
+`lastDiscoveryError` stays set, and prints two warnings per save ("Failed to create temp
+runner", then "Runtime re-discovery failed"). It is one attempt per save, never a loop, and
+each server is closed. Such an app had no working discovery before this change either.
+
+Pinned by `src/vite/__tests__/dev-discovery-recovery.test.ts`, which drives the plugin's
+`configureServer` against fake Node and Cloudflare dev servers, and by
+`tests/cloudflare-basic/e2e/hmr-cold-discovery-recovery.test.ts` (local only, like the other
+route-edit e2e), which boots a real Cloudflare dev server on a discovery-only failure.
 
 ### A reload no file of the app asked for (why the watcher skips some directories)
 
@@ -353,8 +379,9 @@ literal: `isUniversallySkippedScanDir` in `scan-filter.ts` is the one predicate
 `findTsFiles`, `findRouterFiles` and `findHostRouterFiles` all build on, so the watcher
 and the scans cannot drift apart. It names dot-directories, `node_modules`, `dist` and
 `coverage`. `build`, `__tests__` and `__mocks__` are not in the set: each is skipped by
-only one of the scans (`findTsFiles` skips `build`; the router scans skip the other two),
-and on Cloudflare the worker's module graph is empty until the first request, so an edit
+only one of the scans (`findTsFiles` skips `build` through `isSkippedSourceScanDir`, the
+rule the build loader pre-scan in `expose-internal-ids.ts` shares; the router scans skip
+the other two), and on Cloudflare the worker's module graph is empty until the first request, so an edit
 to a router or `urls()` module under one of them must still re-run discovery.
 
 A nested checkout under `.claude/worktrees/` or a tool's working copy can no longer reload

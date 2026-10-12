@@ -12,6 +12,7 @@
  */
 
 import { requestHeaders } from "../server/request-headers.js";
+import { FORBIDDEN_KEYS } from "../context-var.js";
 import { getLoaderLazy } from "../server/loader-registry.js";
 import { isDataNotFoundError } from "../errors.js";
 import { executeLoaderMiddleware } from "../router/middleware.js";
@@ -33,18 +34,57 @@ import {
 } from "./helpers.js";
 import type { HandlerContext } from "./handler-context.js";
 
+interface LoaderErrorMeta<TEnv> {
+  request: Request;
+  url: URL;
+  env: TEnv;
+  loaderId: string;
+}
+
+/**
+ * A text/x-component Response carrying `{ loaderResult: null, loaderError }`,
+ * the payload `load()` turns into a rejection with `loaderError.message`. A
+ * plain-text body would reject with React's opaque "Connection closed.".
+ * Render failures report through onError("rendering").
+ */
+function renderLoaderError<TEnv>(
+  ctx: HandlerContext<TEnv>,
+  loaderError: { message: string; name: string },
+  status: number,
+  meta: LoaderErrorMeta<TEnv>,
+): Response {
+  const { request, url, env, loaderId } = meta;
+  const rscStream = ctx.renderToReadableStream(
+    { loaderResult: null, loaderError },
+    {
+      onError: (renderError: unknown) => {
+        ctx.callOnError(renderError, "rendering", {
+          request,
+          url,
+          env,
+          loaderName: loaderId,
+        });
+      },
+    },
+  );
+
+  return createResponseWithMergedHeaders(rscStream, {
+    status,
+    headers: { "content-type": "text/x-component;charset=utf-8" },
+  });
+}
+
 /**
  * Build the 500 RSC error Response for a failed fetchable loader. Shared by the
  * module-load-error catch (the import itself threw) and the loader-execution
- * error catch — both call onError("loader"), serialize the same dev-gated error
- * payload via renderToReadableStream (reporting render failures through
- * onError("rendering")), and return a 500 text/x-component Response. The only
- * per-site difference is the console.error label, passed in.
+ * error catch — both call onError("loader") and serialize the same dev-gated
+ * error payload. The only per-site difference is the console.error label,
+ * passed in.
  */
 function buildLoaderErrorResponse<TEnv>(
   ctx: HandlerContext<TEnv>,
   error: unknown,
-  meta: { request: Request; url: URL; env: TEnv; loaderId: string },
+  meta: LoaderErrorMeta<TEnv>,
   logLabel: string,
 ): Response {
   const { request, url, env, loaderId } = meta;
@@ -61,9 +101,9 @@ function buildLoaderErrorResponse<TEnv>(
   });
 
   const err = error instanceof Error ? error : new Error(String(error));
-  const errorPayload = {
-    loaderResult: null,
-    loaderError: {
+  return renderLoaderError(
+    ctx,
+    {
       message: isDev ? err.message : "An error occurred",
       // Gate err.name to dev. In production it leaks the consumer's error class
       // name (e.g. AuthError, PrismaClientKnownRequestError) to the client; the
@@ -71,22 +111,9 @@ function buildLoaderErrorResponse<TEnv>(
       // Matches sanitizeError's dev-only name contract.
       name: isDev ? err.name : "Error",
     },
-  };
-  const rscStream = ctx.renderToReadableStream(errorPayload, {
-    onError: (renderError: unknown) => {
-      ctx.callOnError(renderError, "rendering", {
-        request,
-        url,
-        env,
-        loaderName: loaderId,
-      });
-    },
-  });
-
-  return createResponseWithMergedHeaders(rscStream, {
-    status: 500,
-    headers: { "content-type": "text/x-component;charset=utf-8" },
-  });
+    500,
+    meta,
+  );
 }
 
 export async function handleLoaderFetch<TEnv>(
@@ -181,6 +208,21 @@ export async function handleLoaderFetch<TEnv>(
         );
       }
     }
+  }
+
+  // The params become ctx.params, so they hold what a route param can: string
+  // keys and string values, never a reserved key (#1109). The message is the
+  // router's own, so production sends it too.
+  if (!isLoaderParams(loaderParams)) {
+    return renderLoaderError(
+      ctx,
+      {
+        message: `Invalid loader params: expected an object of string values without the reserved keys ${[...FORBIDDEN_KEYS].join(", ")}`,
+        name: "Error",
+      },
+      400,
+      { request, url, env, loaderId },
+    );
   }
 
   // Execute the loader with middleware.
@@ -303,4 +345,17 @@ export async function handleLoaderFetch<TEnv>(
       "[RSC] Loader error:",
     );
   }
+}
+
+function isLoaderParams(value: unknown): value is Record<string, string> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  for (const key of Object.keys(value)) {
+    if (FORBIDDEN_KEYS.has(key)) return false;
+    if (typeof (value as Record<string, unknown>)[key] !== "string") {
+      return false;
+    }
+  }
+  return true;
 }
