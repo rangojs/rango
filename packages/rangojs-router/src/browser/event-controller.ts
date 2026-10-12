@@ -1037,6 +1037,9 @@ export function createEventController(
         // If not settled and not completed, this is an error case - force finalize
         if (!settled && inflightActions.has(id)) {
           actionCompleted = true;
+          // Done, as complete()/fail() would mark it: an action started in its
+          // settle window is sequential, not concurrent (#675).
+          entry.completed = true;
           streamingEnded = true;
           tryFinalize();
         }

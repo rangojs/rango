@@ -29,7 +29,11 @@ export type {
 } from "./streamed-boundary-scenarios.js";
 export { runHeldBoundaryTests } from "./held-boundary-scenario.js";
 export { runLateHandleHistoryTests } from "./late-handle-history-scenario.js";
+export { runActionFailureTests } from "./action-failure-scenario.js";
+export type { ActionFailureScenarioOptions } from "./action-failure-scenario.js";
 export { runHeldHandlesTests } from "./held-handles-scenario.js";
+export { runLoaderElementTests } from "./loader-element-scenario.js";
+export type { LoaderElementScenarioOptions } from "./loader-element-scenario.js";
 export type { HeldHandlesScenarioOptions } from "./held-handles-scenario.js";
 export { runHistoryCacheHandlesTests } from "./history-cache-handles-scenario.js";
 export type { HistoryCacheHandlesScenarioOptions } from "./history-cache-handles-scenario.js";

@@ -492,6 +492,11 @@ file-path-based revalidation predicates, define the action in a module-level
 `"use server"` file rather than inline. See `/loader` for the full revalidation
 contract (deferred returns, soft suggestions).
 
+A loader in a `clientUrls()` group takes the same predicate with the same
+arguments, `actionResult` and `formData` included: the build moves it out of
+the `"use client"` module and the server runs it (`/client-urls` →
+"Revalidation runs on the server").
+
 ### Cross-segment dependencies
 
 If a loader reads `ctx.get()` data set by an outer layout/handler, that
@@ -679,6 +684,28 @@ export async function deletePost(id: string): Promise<void> {
 
 For a recoverable "already gone" case, return a result the form can show
 (`{ error: "Post not found" }`) instead of throwing.
+
+### A loader that fails on the revalidation render
+
+A loader that throws while it reruns after the action does not undo the
+action, which has already run and returned. What follows depends on the route:
+
+- **No `loading()` on the route (and any `clientUrls()` route):** the action
+  call rejects with the loader's error, nothing of that revalidation commits,
+  and the page keeps its data and its React state. A `<form action>`,
+  `useActionState` or `useTransition` call hands that rejection to the nearest
+  React error boundary above the form.
+- **A `urls()` route with `loading()`:** the call resolves with the action's
+  result, the page renders, and the loader's read throws to the nearest React
+  error boundary.
+- **An `errorBoundary()` above the route:** its fallback replaces the route.
+
+For a failure the user can retry, return it from the loader as data
+(`{ ok: false, reason }`) and render it where the data goes. A failure returned
+as data is a value like any other, so a `cache()` on the loader (or a `ppr`
+bake, or a prerender) stores and serves it; a thrown error is never stored.
+See `/client-urls` → "A loader that fails on its rerun" for the table and an
+example.
 
 ### Authorization in actions
 

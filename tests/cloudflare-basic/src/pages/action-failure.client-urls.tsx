@@ -1,0 +1,30 @@
+"use client";
+
+import { clientUrls } from "@rangojs/router/client";
+import {
+  ActionFailureDataPage,
+  ActionFailureLoading,
+  ActionFailureThrowPage,
+} from "./action-failure.client.js";
+import {
+  ActionFailureDataLoader,
+  ActionFailureThrowLoader,
+} from "./action-failure.defs.js";
+
+// A group loader that fails on its rerun after an action (e2e/action-failure.test.ts):
+// /throw throws, /throw-loading throws under a loading(), /data returns the
+// failure as data.
+export default clientUrls(({ path, loader, loading }) => [
+  path("/throw", ActionFailureThrowPage, { name: "throw" }, () => [
+    loader(ActionFailureThrowLoader),
+  ]),
+  path(
+    "/throw-loading",
+    ActionFailureThrowPage,
+    { name: "throwLoading" },
+    () => [loader(ActionFailureThrowLoader), loading(<ActionFailureLoading />)],
+  ),
+  path("/data", ActionFailureDataPage, { name: "data" }, () => [
+    loader(ActionFailureDataLoader),
+  ]),
+]);

@@ -136,6 +136,13 @@ import { clientUrlsVarsMiddleware } from "./urls/client-urls-vars-shared.js";
 import clientUrlsInterceptPatterns from "./urls/client-urls-intercept.js";
 import clientUrlsTransitionPatterns from "./urls/client-urls-transition.js";
 import clientUrlsActionPatterns from "./urls/client-urls-action.js";
+import actionFailureClientPatterns from "./urls/action-failure.client-urls.js";
+import {
+  ActionFailureBoundedLayout,
+  ActionFailureErrorBoundary,
+  actionFailurePatterns,
+} from "./urls/action-failure.js";
+import clientUrlsLoaderElementPatterns from "./urls/client-urls-loader-element.js";
 import heldHandlesClientPatterns from "./urls/held-handles.client-urls.js";
 import { heldHandlesPatterns } from "./urls/held-handles.js";
 import { historyHandlesPatterns } from "./urls/history-handles.js";
@@ -232,6 +239,7 @@ export const urlpatterns = urls(
     transition,
     middleware,
     parallel,
+    errorBoundary,
   }) => [
     layout(RootLayout, () => [
       // === CORE ROUTES (inline for intercept support) ===
@@ -979,6 +987,25 @@ export const urlpatterns = urls(
           name: "clientAction",
         }),
       ]),
+      // A loader that fails on its rerun after an action, in a clientUrls()
+      // group and its urls() twin (action-failure.test.ts).
+      include("/action-failure-client", actionFailureClientPatterns, {
+        name: "actionFailureClient",
+      }),
+      include("/action-failure-server", actionFailurePatterns, {
+        name: "actionFailureServer",
+      }),
+      layout(ActionFailureBoundedLayout, () => [
+        errorBoundary(ActionFailureErrorBoundary),
+        include("/action-failure-bounded", actionFailureClientPatterns, {
+          name: "actionFailureBounded",
+        }),
+      ]),
+      // A no-script document whose inline <Suspense> draws a client component
+      // from a loader's answer (client-urls-loader-element.test.ts).
+      include("/client-urls-loader-element", clientUrlsLoaderElementPatterns, {
+        name: "clientLoaderElement",
+      }),
       // A loader whose rerun an action skips keeps its handle pushes (#1103):
       // clientUrls() group and the ordinary urls() twin.
       include("/held-handles-client", heldHandlesClientPatterns, {

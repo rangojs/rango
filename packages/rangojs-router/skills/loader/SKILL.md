@@ -335,6 +335,10 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 ]);
 ```
 
+In a `clientUrls()` group the same `loader(Def, () => [revalidate(fn)])` form
+runs on the server with these arguments; the build moves the predicate out of
+the `"use client"` module (`/client-urls` → "Revalidation runs on the server").
+
 ### `revalidate()` return shapes
 
 > **Scope: `revalidate()` is a partial-render concern, not a cache concern.**

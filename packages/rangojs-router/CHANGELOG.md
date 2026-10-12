@@ -127,6 +127,37 @@ With `createRouter({ basename: "/app" })`, `<Link to="/app?tab=1">`,
 a path that carries the basename followed by `/`, `?`, `#` or nothing is left
 as is. Other paths are prefixed as before.
 
+### Fixed: an action whose revalidation render failed no longer makes the next action re-run loaders `revalidate()` would hold
+
+When a loader threw while it re-ran after a server action, on a route without
+`loading()` the action call rejected with that error and the router left the
+action's tracking entry unfinished for its 100 ms settle window. An action
+started in that window counted it as running alongside, and finished with an
+extra refetch that left out the segments the failed action had re-rendered,
+so their loaders ran as new ones, whatever their `revalidate()` answered for
+the second action. `useAction` also reported no error for the rejected call.
+
+Now the failed action is finished as soon as its call rejects: the next action
+runs no extra refetch, and `useAction` reports the rejection as the action's
+`error`, as it does for an action that throws.
+
+### Fixed: in dev, a document renders a client component a loader's answer draws inside an inline `<Suspense>` in place, as a build does ([#1106](https://github.com/rangojs/rango/issues/1106))
+
+Before: on the dev server, most visibly with `preset: "cloudflare"`, a
+document whose inline `<Suspense>` drew a client component from a loader's
+answer (a loader returning `{ badge: <PriceBadge /> }`, where `PriceBadge` is a
+`"use client"` component) usually flushed the boundary's fallback first and
+swapped the content in with a script, so a browser without JavaScript showed
+only the fallback. A production build rendered the content in place. The dev server loaded that client component again for every
+request and finished after the first flush.
+
+Now: when a document's shell is ready, the dev server waits for the client
+components its payload has named and that are still loading, so the boundary
+renders in place in dev as in a build. It waits for nothing else: a
+`loading()` skeleton or a fallback whose data has not arrived still streams. A loader that settles after the first flush still streams
+its fallback, in dev and in a build; `loader(Def, { ssr: false })` guarantees
+the loader's data in the document. Production builds are unchanged.
+
 ### Fixed: names like `constructor`, `toString` or `__proto__` in a request or in loader data are ordinary keys ([#1109](https://github.com/rangojs/rango/issues/1109))
 
 Cookie names, URL segments and fetchable-loader params come from the request,

@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import React from "react";
 import { createSsrRootComponent, deserializeSsrPayload } from "./ssr-root.js";
 import { injectRSCPayloadEager } from "./inject-rsc-eager.js";
@@ -263,23 +264,40 @@ export interface SSRDependencies<TEnv = unknown> {
  */
 const activeCaptureClientLoads = new Set<Set<PromiseLike<unknown>>>();
 
-/** The loader wrapper {@link captureClientLoads} last installed. */
+/**
+ * Dev only: the client-reference loads requested by the Flight decode of the
+ * document render whose context this is (see settleDocumentClientLoads).
+ *
+ * Gated on `process.env.NODE_ENV`, the router's dev signal, not on the
+ * `import.meta.env.DEV` that adds plugin-rsc's cache tag: a build folds it
+ * (the app's NODE_ENV define, or the Cloudflare plugin), so the hold is
+ * compiled out. A server where the two disagree loses nothing: a dev server
+ * run with NODE_ENV=production streams as it did before the hold, and an
+ * unfolded production server collects only loads still pending, the first
+ * load of each module, bounded like any other.
+ */
+const documentClientLoads =
+  process.env.NODE_ENV !== "production"
+    ? new AsyncLocalStorage<Set<PromiseLike<unknown>>>()
+    : undefined;
+
+/** Bound on settleDocumentClientLoads; a later load flushes as before. */
+const DEV_DOCUMENT_CLIENT_LOAD_WAIT_MS = 5_000;
+
+/** The loader wrapper {@link installClientLoadRecorder} last installed. */
 let recordingClientReferenceLoader: ((id: string) => unknown) | undefined;
 
 /**
- * Start collecting the client-reference loads requested during a capture;
- * call the returned `stop` when the capture ends. Wraps plugin-rsc's SSR
- * loader (`globalThis.__vite_rsc_client_require__`, which
- * `__vite_rsc_require__` reads per call) on the first capture, so an isolate
- * that never captures keeps the bare loader. Wraps again when another wrapper
- * replaced this one (the build shell phase bridges hashed ids the same way,
+ * Wrap plugin-rsc's SSR loader (`globalThis.__vite_rsc_client_require__`,
+ * which `__vite_rsc_require__` reads per call) to collect pending loads into
+ * every running capture's set and the current dev document's set. Installed
+ * on the first capture or dev document, so a production isolate that never
+ * captures keeps the bare loader. Wraps again when another wrapper replaced
+ * this one (the build shell phase bridges hashed ids the same way,
  * vite/discovery/shell-prerender-phase.ts). Collects nothing without the
  * loader.
  */
-function captureClientLoads(): {
-  loads: Set<PromiseLike<unknown>>;
-  stop: () => void;
-} {
+function installClientLoadRecorder(): void {
   const g = globalThis as {
     __vite_rsc_client_require__?: (id: string) => unknown;
   };
@@ -287,22 +305,102 @@ function captureClientLoads(): {
   if (typeof load === "function" && load !== recordingClientReferenceLoader) {
     recordingClientReferenceLoader = (id) => {
       const loading = load(id);
+      const documentLoads = documentClientLoads?.getStore();
       // plugin-rsc memoizes one promise per id and the Flight client stamps
       // status "fulfilled" on it once loaded: a warm module is not collected.
       if (
-        activeCaptureClientLoads.size > 0 &&
+        (activeCaptureClientLoads.size > 0 || documentLoads) &&
         isThenable(loading) &&
         (loading as { status?: string }).status !== "fulfilled"
       ) {
         for (const loads of activeCaptureClientLoads) loads.add(loading);
+        if (documentLoads) {
+          // The document's set holds only loads still pending.
+          documentLoads.add(loading);
+          const drop = (): void => {
+            documentLoads.delete(loading);
+          };
+          loading.then(drop, drop);
+        }
       }
       return loading;
     };
     g.__vite_rsc_client_require__ = recordingClientReferenceLoader;
   }
+}
+
+/**
+ * Start collecting the client-reference loads requested during a capture;
+ * call the returned `stop` when the capture ends.
+ */
+function captureClientLoads(): {
+  loads: Set<PromiseLike<unknown>>;
+  stop: () => void;
+} {
+  installClientLoadRecorder();
   const loads = new Set<PromiseLike<unknown>>();
   activeCaptureClientLoads.add(loads);
   return { loads, stop: () => activeCaptureClientLoads.delete(loads) };
+}
+
+/**
+ * Dev only: when the shell is ready, hold the first flush until the
+ * client-reference loads still pending at that moment have settled, so a
+ * boundary waiting on one completes in place, as in a build (#1106).
+ *
+ * plugin-rsc tags client reference ids with a per-render cache tag in dev
+ * (createClientManifest in @vitejs/plugin-rsc core/rsc.js), so its SSR loader
+ * memo misses on every request and each reference loads through the module
+ * runner again: an RPC per import on workerd. A client component a loader's
+ * answer draws under an inline <Suspense> resolved after the shell flushed,
+ * and the document streamed the fallback, which a browser without JavaScript
+ * never replaces. A build loads each reference once per isolate and reads it
+ * synchronously after that.
+ *
+ * Only that snapshot is waited for: a load starts when the row naming it
+ * arrives, so its data is already in the payload. A load requested later
+ * belongs to data that arrives after the shell, which streams as in a build,
+ * and nothing pending means no wait at all: the router adds no wait of its
+ * own, so a loading() skeleton or an inline fallback still streams.
+ */
+async function settleDocumentClientLoads(
+  pending: Set<PromiseLike<unknown>>,
+): Promise<void> {
+  const snapshot = [...pending];
+  if (snapshot.length === 0) return;
+  const deadline = createCancelableTimeout(DEV_DOCUMENT_CLIENT_LOAD_WAIT_MS);
+  try {
+    const expired = await Promise.race([
+      Promise.allSettled(snapshot).then(() => false),
+      deadline.promise.then(() => true),
+    ]);
+    if (expired) return;
+    // A settled load pings the Fizz task that waited on it, which retries on
+    // a setTimeout(0) turn (pingTask).
+    await macrotask();
+    await macrotask();
+  } finally {
+    deadline.cancel();
+  }
+}
+
+/**
+ * Run a document's Flight decode. In dev it runs in its own client-load set,
+ * and `settle` holds the first flush until the loads pending when the shell
+ * is ready have settled (settleDocumentClientLoads); a build gets the decode
+ * alone.
+ */
+function trackDocumentClientLoads<T>(decode: () => T): {
+  value: T;
+  settle?: () => Promise<void>;
+} {
+  if (!documentClientLoads) return { value: decode() };
+  installClientLoadRecorder();
+  const loads = new Set<PromiseLike<unknown>>();
+  return {
+    value: documentClientLoads.run(loads, decode),
+    settle: () => settleDocumentClientLoads(loads),
+  };
 }
 
 /**
@@ -708,10 +806,10 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
       // The parallel no-op catch keeps a payload rejection off the
       // unhandledRejection path if fizz errors before consuming the promise;
       // SsrRoot's React.use() on the SAME promise still observes the rejection.
-      const payload = deserializeSsrPayload(
-        createFromReadableStream,
-        rscStream1,
-      );
+      const { value: payload, settle: settleClientLoads } =
+        trackDocumentClientLoads(() =>
+          deserializeSsrPayload(createFromReadableStream, rscStream1),
+        );
       payload.catch(() => {});
 
       const SsrRoot = createSsrRootComponent({
@@ -762,6 +860,10 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
           }),
         }),
       );
+
+      // Dev only: the client-reference loads the decode requested settle
+      // before the first flush (trackDocumentClientLoads).
+      if (settleClientLoads) await settleClientLoads();
 
       // Wait for all Suspense boundaries to resolve when streamMode is "allReady".
       // This buffers the entire HTML before flushing — used for bots that

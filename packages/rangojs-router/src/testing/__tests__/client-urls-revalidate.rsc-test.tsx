@@ -31,7 +31,9 @@ import { createRouter, urls } from "../../index.rsc.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
 import group from "./fixtures/client-urls-revalidate.js";
 import {
+  breakAction,
   count,
+  flaky,
   resetRuns,
   resultAction,
   scopeAction,
@@ -39,6 +41,7 @@ import {
 
 const RESULT_ACTION = "src/shop.actions.ts#resultAction";
 const SCOPE_ACTION = "src/shop.actions.ts#scopeAction";
+const BREAK_ACTION = "src/shop.actions.ts#breakAction";
 
 const errors: string[] = [];
 
@@ -62,18 +65,63 @@ const router = createRouter({
   ]),
 );
 
+/**
+ * A router that mounts the group under an errorBoundary(), the only place a
+ * group's loader errors reach one.
+ */
+const boundedRouter = createRouter({
+  onError: ({ error }) => {
+    errors.push(error instanceof Error ? error.message : String(error));
+  },
+}).routes(
+  urls(({ layout, errorBoundary, include }) => [
+    layout(
+      () => <main>shell</main>,
+      () => [
+        errorBoundary(() => <p>The page failed to load</p>),
+        include("/shop", group, { name: "shop" }),
+      ],
+    ),
+  ]),
+);
+
 function matchedOf(result: ServeShellRequestResult): string[] {
   const row = result.flight?.split("\n").find((line) => line.startsWith("0:"));
   expect(row, "a Flight payload").toBeDefined();
   return (JSON.parse(row!.slice(2)).metadata as { matched: string[] }).matched;
 }
 
-function setup() {
+/** The JSON rows of a Flight payload, by row id. */
+function jsonRows(result: ServeShellRequestResult): Map<string, any> {
+  const rows = new Map<string, any>();
+  for (const line of result.flight?.split("\n") ?? []) {
+    const match = /^([0-9a-f]+):(\{.*\})$/.exec(line);
+    if (match) rows.set(match[1], JSON.parse(match[2]));
+  }
+  return rows;
+}
+
+/** An action response's return value and its loader entries, in order. */
+function actionAnswer(result: ServeShellRequestResult): {
+  returnValue: unknown;
+  loaders: unknown[];
+} {
+  const rows = jsonRows(result);
+  const root = rows.get("0");
+  return {
+    returnValue: root.returnValue,
+    loaders: (root.metadata.segments as { type: string; loaderData: string }[])
+      .filter((segment) => segment.type === "loader")
+      .map((segment) => rows.get(segment.loaderData.slice(2))),
+  };
+}
+
+function setup(target: Parameters<typeof serveShellRequest>[0] = router) {
   const cacheStore = new MemorySegmentCacheStore();
   const serve = (
     url: string,
     extra: Omit<ServeShellRequestOptions, "cacheStore"> = {},
-  ) => serveShellRequest(router, url, { cacheStore, ...extra });
+  ) => serveShellRequest(target, url, { cacheStore, ...extra });
   /** The segment ids a page holds after a navigation to it; runs reset. */
   const standingOn = async (at: string): Promise<string[]> => {
     const matched = matchedOf(await serve(at, { partial: { from: "/" } }));
@@ -85,6 +133,7 @@ function setup() {
 
 beforeEach(async () => {
   resetRuns();
+  flaky.failing = false;
   errors.length = 0;
   await resetShellTestState();
 });
@@ -190,5 +239,90 @@ describe("clientUrls() loader revalidate() runs on the server", () => {
       scoped: 1,
     });
     expect(errors).toEqual([]);
+  });
+});
+
+describe("clientUrls() loader revalidate() answers on navigation", () => {
+  it("a predicate that answers true reruns its loader where the default holds it", async () => {
+    const { serve, standingOn } = setup();
+    const held = await standingOn("/shop/items/a");
+    await serve("/shop/items/a", {
+      partial: { from: "/shop/items/a", segments: held },
+    });
+    // Nothing changed: the default holds ItemLoader; revalidate(() => true)
+    // reruns ForcedLoader.
+    expect({ forced: count("forced"), item: count("item") }).toEqual({
+      forced: 1,
+      item: 0,
+    });
+    expect(errors).toEqual([]);
+  });
+
+  it("a stale back/forward revalidation runs it with stale: true", async () => {
+    const { serve, standingOn } = setup();
+    let held = await standingOn("/shop/items/a");
+    await serve("/shop/items/a", {
+      partial: { from: "/shop/items/a", segments: held },
+    });
+    expect(count("stale")).toBe(0);
+
+    held = await standingOn("/shop/items/a");
+    // The browser marks a stale back/forward revalidation with _rsc_stale.
+    await serve("/shop/items/a?_rsc_stale=true", {
+      partial: { from: "/shop/items/a", segments: held },
+    });
+    expect(count("stale")).toBe(1);
+    expect(errors).toEqual([]);
+  });
+});
+
+describe("clientUrls() loader that fails on its rerun after an action", () => {
+  const breakCall = (segments: string[]): ServeShellRequestOptions => ({
+    action: { ref: breakAction, id: BREAK_ACTION, args: [], segments },
+  });
+
+  it("the response carries the action's result, the thrown error as the loader's entry, and the failure returned as data", async () => {
+    const { serve, standingOn } = setup();
+    const held = await standingOn("/shop/flaky");
+
+    const result = await serve("/shop/flaky", breakCall(held));
+    expect(result.response.status).toBe(200);
+    const { returnValue, loaders } = actionAnswer(result);
+    // The action ran and returned.
+    expect(returnValue).toEqual({ ok: true, data: { saved: true } });
+    expect(loaders).toEqual([
+      // No errorBoundary() above the route: no fallback, so the browser's
+      // commit of this revalidation fails and the action call rejects. A
+      // build redacts the message; onError gets the error itself.
+      expect.objectContaining({
+        __loaderResult: true,
+        ok: false,
+        error: expect.objectContaining({ message: "An error occurred" }),
+        fallback: null,
+      }),
+      // A failure returned as data is an ordinary answer.
+      {
+        __loaderResult: true,
+        ok: true,
+        data: { ok: false, reason: "price service unavailable" },
+      },
+    ]);
+    expect(errors).toEqual(["stock service unavailable"]);
+    expect({ flaky: count("flaky"), data: count("flaky-data") }).toEqual({
+      flaky: 1,
+      data: 1,
+    });
+  });
+
+  it("an errorBoundary() around the mount renders its fallback into the thrown loader's entry", async () => {
+    const { serve, standingOn } = setup(boundedRouter);
+    const held = await standingOn("/shop/flaky");
+
+    const result = await serve("/shop/flaky", breakCall(held));
+    const { returnValue, loaders } = actionAnswer(result);
+    expect(returnValue).toEqual({ ok: true, data: { saved: true } });
+    expect(loaders[0]).toMatchObject({ ok: false });
+    expect((loaders[0] as { fallback: unknown }).fallback).not.toBeNull();
+    expect(result.flight).toContain("The page failed to load");
   });
 });

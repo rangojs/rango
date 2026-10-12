@@ -287,6 +287,80 @@ Two scars worth copying:
   actions (`isAction(CartActions)`) while product/related loaders hold —
   three freshness outcomes in a single commit, decided per loader.
 
+## After an action: what the server decides
+
+The browser sends the action with the ids of the segments the page holds.
+Everything after that is decided on the server, while it handles that request:
+
+- **The action** runs there, and its return value is what the call resolves
+  with (`await action()`, `useActionState`).
+- **Which loaders rerun.** Each group loader's own `revalidate()` answers, with
+  the action's `actionResult` and `formData` (above). A loader that holds keeps
+  the data the page shows.
+- **The browser's caches.** When the response arrives the browser marks its
+  history cache stale and drops its prefetches, unless the action called
+  `keepClientCache()` (`/server-actions` → "Client Cache After an Action").
+- **A loader that fails on its rerun** reaches your `onError` on the server and
+  the page as an error, below.
+
+A form's React state survives an action's revalidation in a group, as on a
+`urls()` route: the commit renders into the mounted page instead of remounting
+it, so a controlled input keeps what the user typed.
+
+### A loader that fails on its rerun
+
+The action has already run when its loaders rerun, so a loader that throws
+there does not undo it. Where the error lands decides what the user sees:
+
+| The route                                                  | Called directly (`await action()`)                                                                                                                                                             | From `<form action>`, `useActionState` or `useTransition`                                                                                             |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A group route, or a `urls()` route without `loading()`     | The call rejects with the loader's error (`"An error occurred"` in a build), although the action returned. Nothing of that revalidation commits: the page keeps its data and its React state.  | React hands the rejection to the nearest React error boundary above the form. With none of yours, the router's root error boundary replaces the page. |
+| A `urls()` route with `loading()`                          | The call resolves with the action's result. The commit renders, the loader's read throws, and the nearest React error boundary catches it; with none of yours, the root one replaces the page. | The same.                                                                                                                                             |
+| Under an `errorBoundary()` (for a group, around the mount) | Its fallback replaces the route: the page and its form state unmount.                                                                                                                          | The same.                                                                                                                                             |
+
+A group route's `loading()` does not change the first row. For a failure the
+user can retry (a flaky upstream, a rate limit), return it as data instead of
+throwing, and render it where the data goes:
+
+```tsx
+// stock.loader.ts
+export const StockLoader = createLoader(async (ctx) => {
+  try {
+    return { ok: true as const, stock: await inventory.count(ctx.params.sku) };
+  } catch {
+    return { ok: false as const, reason: "Stock is unavailable. Try again." };
+  }
+});
+
+// in the group's "use client" module
+function Stock() {
+  const { data } = useLoader(StockLoader);
+  return data.ok ? (
+    <p>{data.stock} in stock</p>
+  ) : (
+    <p role="status">{data.reason}</p>
+  );
+}
+```
+
+The action resolves with its result, the page and its form state stay, and the
+next action or navigation that reruns the loader replaces the message. Keep
+throwing for a failure that should stop the page, with an `errorBoundary()`
+around the mount for it.
+
+A failure returned as data is an ordinary value, so whatever stores the
+loader's value stores it too: a `cache()` on the loader serves it for its TTL,
+a `ppr` shell bakes an `ssr: false` loader's value, and a prerender stores it
+at build time. A thrown error is never stored (a stale entry keeps serving).
+To cache the expensive part, cache the call the loader makes (`"use cache"` on
+that function: a call that throws stores nothing) and turn the throw into
+data in a loader that is not cached itself.
+
+Pinned by dev + production e2e in the router repository (a group, its `urls()`
+twin, each with and without `loading()`, and the group under an
+`errorBoundary()`), and by a `serveShellRequest({ action })` test of the
+response.
+
 ## Loaders are full citizens: signals and handles
 
 Everything a DSL loader can do in the server tree works here — the loader body
@@ -372,6 +446,16 @@ fast (existence checks before expensive fetches) and flag the loaders that
 need it, not the route.
 
 Pinned end to end by dev + production e2e in the router repository.
+
+**Without JavaScript.** A boundary that is not complete at the first flush
+ships its fallback and swaps the content in with a script, which a browser
+without JavaScript never runs. That includes a client component a loader's
+answer draws under an inline `<Suspense>`: a fast loader's answer usually
+makes the first flush, and `ssr: false` guarantees the loader's data does. It
+does not cover the client component's module: the first document a build's
+fresh server renders can still be waiting for it. The dev server matches a
+build here: when the shell is ready, it waits for the client components the
+payload has named and that are still loading, and for nothing else.
 
 ## `prefetch: false` — keep a loader out of prefetches
 
