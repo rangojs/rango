@@ -273,6 +273,15 @@ function rewriteTests(f: Fixture) {
     expect(await response.text()).not.toContain('data-testid="rw-shop"');
   });
 
+  test("a rewrite after a next() that failed after rendering is an error", async ({
+    request,
+  }) => {
+    const response = await request.get(f.url("/rw/boom"));
+    expect(response.status()).toBe(500);
+    expect(response.headers()["x-rango-rewrite"]).toBeUndefined();
+    expect(await response.text()).not.toContain('data-testid="rw-shop"');
+  });
+
   test("a rewrite loop answers 508 and reports the trail", async ({
     request,
   }) => {

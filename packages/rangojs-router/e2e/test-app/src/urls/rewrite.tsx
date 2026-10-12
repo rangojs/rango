@@ -79,6 +79,20 @@ export const rwClientUrlsLockMiddleware: Middleware = async (_ctx, next) => {
   throw rewrite("rw.maintenance");
 };
 
+/**
+ * An error page that rewrites any failure (mounted on /rw/boom in
+ * router.tsx). /rw/boom fails after its route rendered, so the rewrite is an
+ * error: the route already pushed into the request's handle store.
+ */
+export const rwErrorPageMiddleware: Middleware = async (ctx, next) => {
+  try {
+    return await next();
+  } catch (error) {
+    if (ctx.isRewrite(error)) throw error;
+    throw rewrite("rw.shop");
+  }
+};
+
 /** Pattern-scoped guard for /rw/guarded/* (mounted in router.tsx). */
 export const rwGuardMiddleware: Middleware = async (_ctx, next) => {
   if (cookies().get("rw-auth")?.value !== "1") {
@@ -214,6 +228,17 @@ export const rewritePatterns = urls(({ path, layout, middleware }) => [
     ),
     path("/global-to-guarded", () => <h1>never rendered</h1>),
     path("/after", () => <h1 data-testid="rw-after">after page</h1>),
+    path(
+      "/boom",
+      () => <h1>boom page</h1>,
+      {},
+      () => [
+        middleware(async (_ctx, next) => {
+          await next();
+          throw new Error("boom after render");
+        }),
+      ],
+    ),
     path("/self", () => <h1>self</h1>),
     path("/handler-throws", () => {
       throw rewrite("/rw/shop");

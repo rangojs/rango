@@ -15,6 +15,7 @@ import { shellSecureAuthMiddleware } from "./urls/shell-secure.js";
 import {
   rwClientUrlsLockMiddleware,
   rwCountMiddleware,
+  rwErrorPageMiddleware,
   rwGuardMiddleware,
   rwLockMiddleware,
 } from "./urls/rewrite.js";
@@ -417,6 +418,7 @@ export const router = createRouter<AppEnv>({
   .use("/rw/*", rwCountMiddleware)
   .use("/rw/*", rwLockMiddleware)
   .use("/rw/guarded/*", rwGuardMiddleware)
+  .use("/rw/boom", rwErrorPageMiddleware)
   .use("/client-urls-e2e/items/*", rwClientUrlsLockMiddleware)
   .routes(urlpatterns);
 
