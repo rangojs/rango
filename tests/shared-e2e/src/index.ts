@@ -19,6 +19,7 @@ export type {
   ExistingServerIdentity,
   ExistingServerKind,
 } from "./assert-existing-server.js";
+export { acquireE2eSlot } from "./e2e-slot.js";
 export { createDeployFixture, readBuiltVersions } from "./deploy-fixture.js";
 export type { DeployFixture, DeployFixtureOptions } from "./deploy-fixture.js";
 export { runCacheVersionScenario } from "./cache-version-scenario.js";

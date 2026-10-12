@@ -1,5 +1,12 @@
 import { defineConfig, devices } from "@playwright/test";
-import { assertExistingServerIsOurs, checkoutPortOffset } from "@shared/e2e";
+import {
+  acquireE2eSlot,
+  assertExistingServerIsOurs,
+  checkoutPortOffset,
+} from "@shared/e2e";
+
+// Waits for a machine-wide e2e slot before any webServer starts.
+acquireE2eSlot("cloudflare-basic");
 
 const isUIMode = process.argv.includes("--ui");
 
