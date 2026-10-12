@@ -201,16 +201,27 @@ describe("generateRoutesManifestModule — client URL projections", () => {
     function ProductPage(): null {
       return null;
     }
+    const marker = { $$rangoRevalidate: "k-modal" } as never;
     const projection = serializeClientUrlPatterns(
-      clientUrls(({ path, loader }) => [
-        path("/product/:slug", ProductPage, () => [
+      clientUrls(({ path, loader, intercept, revalidate }) => [
+        path("/product/:slug", ProductPage, { name: "product" }, () => [
           loader({ __brand: "loader", $$id: "loaders#price" }),
           loader(
             { __brand: "loader", $$id: "loaders#reviews" },
             { ssr: false, prefetch: false },
           ),
         ]),
+        intercept("@modal", ".product", ProductPage, () => [
+          loader({ __brand: "loader", $$id: "loaders#modal" }, () => [
+            revalidate(marker),
+          ]),
+          loader(
+            { __brand: "loader", $$id: "loaders#notes" },
+            { prefetch: false },
+          ),
+        ]),
       ]),
+      { hoisted: true },
     );
     const s = makeManifestState(true);
     s.clientUrlSourceByReferenceId = new Map([["ref-a", "ref-a"]]);
@@ -221,9 +232,13 @@ describe("generateRoutesManifestModule — client URL projections", () => {
       /setClientUrlProjection\("ref-a", JSON\.parse\('(.*)'\)\);/,
     );
     expect(replayed).not.toBeNull();
-    const route = JSON.parse(replayed![1]!).routes[0];
+    const replay = JSON.parse(replayed![1]!);
+    const route = replay.routes[0];
     expect(route.awaitedLoaderIndices).toEqual([1]);
     expect(route.deferrableLoaderIndices).toEqual([1]);
+    const [intercept] = replay.intercepts;
+    expect(intercept.deferrableLoaderIndices).toEqual([1]);
+    expect(intercept.loaderRevalidate).toEqual([["k-modal"], []]);
   });
 
   // The map fills in transform order, which differs between two builds of the

@@ -1,9 +1,12 @@
 /**
- * R9 of docs/design/prefetch-false.md: a prefetch response for a route that
- * declares no `prefetch: false` is byte-identical to what it was before the
+ * R9 of docs/design/prefetch-false.md: a route or intercept with no flag
+ * defers nothing: its prefetch carries no deferred segment and needs no fill.
+ * For a route the response is byte-identical to what it was before the
  * option existed. The snapshot below was recorded on main 844ccda5, before
  * any of the feature was built; the test fails if a prefetch of an unflagged
- * route ever carries a deferred marker, a new header or a changed `vary`.
+ * route ever carries a deferred marker, a new header or a changed `vary`. An
+ * intercept's response changed shape when its loaders became loader segments
+ * of its slot; it is pinned by what it carries instead.
  */
 import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,6 +23,7 @@ vi.mock(
 
 import { resetShellTestState, serveShellRequest } from "../flight.entry.js";
 import { createLoader, createRouter, urls } from "../../index.rsc.js";
+import { deserializeResult } from "../../cache/segment-codec.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
 
 const PriceLoader = createLoader(async () => ({ price: 12 }));
@@ -83,5 +87,43 @@ describe("a prefetch of a route with no prefetch: false", () => {
     expect(prefetched.vary).toBe(navigated.vary);
     expect(navigated.cacheControl).toBeNull();
     expect(prefetched.cacheControl).toMatch(/^private, max-age=/);
+  });
+});
+
+describe("a prefetch that resolves an intercept with no prefetch: false", () => {
+  const ModalLoader = createLoader(async () => ({ modal: true }));
+  const interceptRouter = createRouter({ id: "unflagged-intercept" }).routes(
+    urls(({ path, layout, loader, loading, intercept }) => [
+      layout(
+        () => <main>shell</main>,
+        () => [
+          path("/", () => <ul>home</ul>, { name: "home" }),
+          path("/photo/:id", () => <article>photo</article>, {
+            name: "photo",
+          }),
+          intercept(
+            "@modal",
+            ".photo",
+            () => <dialog>modal</dialog>,
+            () => [loader(ModalLoader), loading(<p>modal-loading</p>)],
+          ),
+        ],
+      ),
+    ]),
+  );
+
+  it("defers nothing: no deferred segment, so no fill follows", async () => {
+    const result = await serveShellRequest(interceptRouter, "/photo/1", {
+      cacheStore: new MemorySegmentCacheStore(),
+      partial: { from: "/", prefetch: true },
+    });
+    const { metadata } = await deserializeResult<{
+      metadata: { segments: { id: string; deferred?: boolean }[] };
+    }>(result.flight!);
+    expect(metadata.segments.map((s) => s.id)).toContain(
+      `${metadata.segments.find((s) => s.id.endsWith(".@modal"))!.id}D0.${ModalLoader.$$id}`,
+    );
+    expect(metadata.segments.some((s) => s.deferred)).toBe(false);
+    expect(await result.readDeferred()).toEqual([]);
   });
 });

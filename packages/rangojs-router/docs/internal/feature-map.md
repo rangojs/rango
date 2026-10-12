@@ -444,7 +444,13 @@ server projection.
   `registerDeferredLoader`, `startDeferredLoader` from `createLoaderExecutor`,
   `loaderOwner`), wire markers in `prefetch-markers.ts`,
   `segment-resolution/revalidation.ts`; stored routes (`cache()`, `ppr`,
-  `Prerender`) defer loaders only. Browser: `browser/partial-update.ts`
+  `Prerender`) defer loaders only. An `intercept()`'s loaders are loader
+  segments of its slot, resolved by the same funnel
+  (`resolveOwnerLoaders` with a `LoaderOwner`); a prefetch that resolves an
+  intercept defers its flagged loaders only
+  (`resolveInterceptDeferralScope`), its fill carries the intercept source,
+  and the browser folds the loader segments onto the slot
+  (`foldInterceptLoaders`, `segment-system.tsx`). Browser: `browser/partial-update.ts`
   (`armHoles`, `fillHoles`), `browser/defer.ts` (`Defer`, `readDefer`,
   `asStream`), read in `route-content-wrapper.tsx` (`Suspender`),
   `use-loader.tsx`, `segment-system.tsx` and `client.tsx`
@@ -456,7 +462,9 @@ server projection.
   (`cache/document-cache.ts`). In a `clientUrls()` group the flag is
   honoured on `loader()`: the DSL records it on the loader record
   (`ClientUrlLoaderRecord.prefetch`), the projection carries
-  `deferrableLoaderIndices` and materialization flags the stub; a group
+  `deferrableLoaderIndices` and materialization flags the stub, an
+  `intercept()`'s too (with its hoisted `revalidate()` keys,
+  `loaderRevalidate`); a group
   route's chain counts loader flags only, the group's and a server layout's
   above it, never a flagged `loading()` (`resolveDeferralScope`). An
   in-group click presents its destination, then commits the adopted

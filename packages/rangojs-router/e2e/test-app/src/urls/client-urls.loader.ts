@@ -43,6 +43,20 @@ export const ClientUrlsResultLoader = createLoader(async () => {
   return { runs: clientUrlsResultRuns };
 });
 
+// The clientUrls() intercept's modal (client-urls-intercept.tsx): a loader
+// whose revalidate() reads the action's result, and a flagged one.
+let clientUrlsModalResultRuns = 0;
+export const ClientUrlsModalResultLoader = createLoader(async () => {
+  clientUrlsModalResultRuns += 1;
+  return { runs: clientUrlsModalResultRuns };
+});
+
+let clientUrlsModalNoteRuns = 0;
+export const ClientUrlsModalNoteLoader = createLoader(async () => {
+  clientUrlsModalNoteRuns += 1;
+  return { runs: clientUrlsModalNoteRuns };
+});
+
 let clientUrlsScopedRuns = 0;
 export const ClientUrlsScopedLoader = createLoader(async () => {
   clientUrlsScopedRuns += 1;

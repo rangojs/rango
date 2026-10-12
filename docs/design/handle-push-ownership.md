@@ -199,7 +199,7 @@ A promise-carrying `ssr: false` loader (it runs on every replay):
 | Pinned, the navigation does not revalidate the loader             | no value sent / pin           | same           | same                         |
 
 The last row is the one place where the value side skips the pin without the
-push side following: `resolveLoadersWithRevalidation` drops a loader the
+push side following: `resolveOwnerLoaders` drops a loader the
 navigation does not revalidate before it reaches `resolveLoaderData`, and the
 record's copy of its push still stands. That is right when the value the
 client keeps came from this shell (a HIT or a replay of it), which is the

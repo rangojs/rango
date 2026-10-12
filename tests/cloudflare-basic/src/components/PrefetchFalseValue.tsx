@@ -1,6 +1,7 @@
 "use client";
 
 import { invalidateClientCache } from "@rangojs/router";
+import { useEffect, useState } from "react";
 import { useLoader, useNavigation } from "@rangojs/router/client";
 import type { LoaderDefinition } from "@rangojs/router/client";
 
@@ -65,5 +66,21 @@ export function PrefetchFalseInvalidate() {
       hidden
       onClick={() => invalidateClientCache()}
     />
+  );
+}
+
+/**
+ * A mount marker: a random id set once mounted. Another value is another
+ * mount of the element (an intercept's source page under its modal).
+ */
+export function PrefetchFalseInstance({ testId }: { testId: string }) {
+  const [instance, setInstance] = useState("");
+  useEffect(() => {
+    setInstance((prev) => prev || Math.random().toString(36).slice(2));
+  }, []);
+  return (
+    <span data-testid={testId} hidden>
+      {instance}
+    </span>
   );
 }

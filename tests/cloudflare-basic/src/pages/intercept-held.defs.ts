@@ -25,3 +25,10 @@ export const InterceptPushLoader = createLoader(async (ctx) => {
   ctx.use(InterceptHeldCrumbs)(`modal-loader:${ctx.params.id}`);
   return { id: ctx.params.id };
 });
+
+// A loader that pushes a crumb and skips revalidate(), under a handler that
+// pushes one too: an action from its modal re-runs the handler alone.
+export const InterceptHeldPushLoader = createLoader(async (ctx) => {
+  ctx.use(InterceptHeldCrumbs)(`held-loader:${ctx.params.id}`);
+  return { id: ctx.params.id };
+});

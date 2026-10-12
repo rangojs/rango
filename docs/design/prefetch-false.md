@@ -167,6 +167,21 @@ Three words carry the rest of this document:
 | Action revalidation, popstate, no-JS (PE)                            | unchanged                                   | unchanged                                    |
 | Shell capture, warm request, on-demand prerender, `_rsc_loader` lane | unchanged (none is a prefetch)              | unchanged                                    |
 
+For a loader inside `intercept()`, in `urls()` or `clientUrls()` ("Intercepts"
+below). Its loaders are loader segments of the intercept's slot.
+
+| Request kind                                           | Flagged intercept loader                                                       | Unflagged intercept loader        |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------ | --------------------------------- |
+| Document request of the target                         | no intercept renders (unchanged)                                               | no intercept renders              |
+| Navigation from the source, no prefetch                | runs (one request)                                                             | runs                              |
+| Prefetch from the source (slot new)                    | not executed, marked deferred (R1)                                             | runs                              |
+| Prefetch with the modal open (slot and loader held)    | runs when it revalidates (R14)                                                 | runs when it revalidates          |
+| Click that adopts the source's prefetch                | the modal and its `loading()` at the click; one fill with the intercept source | its value in the slot's aggregate |
+| Fill                                                   | executes                                                                       | skipped, no predicate (R5)        |
+| Action with the modal open                             | its `revalidate()`, per loader                                                 | its `revalidate()`, per loader    |
+| Leaving the intercept, back/forward                    | unchanged                                                                      | unchanged                         |
+| `loading(…, { prefetch: false })` inside `intercept()` | ignored: the slot is never a unit                                              | ignored                           |
+
 The same for a route of a `clientUrls()` group, whose `loading()` takes no
 options. "In-group click" is a click from one route of the group to another
 route of the same group mount: the click that presents its destination
@@ -183,7 +198,7 @@ optimistically ("`clientUrls()` routes" below).
 | Click into the group from a server page, adopted               | the server-route path: urgent commit with the hole, one fill                                                                   |
 | Fill request                                                   | executes; only the deferred loader segments are emitted (R5)                                                                   |
 | Back/forward, action refetch                                   | unchanged                                                                                                                      |
-| Intercept target                                               | unchanged: the optimistic presentation declines, and a prefetch that resolves an intercept defers nothing (R8)                 |
+| Intercept target                                               | the optimistic presentation declines: as the intercept table above, its flagged loaders deferred from the group's source       |
 
 ## The rules
 
@@ -273,12 +288,15 @@ prefetch, as before. Never missing data, never a hole with no fill. On a
 route of a `clientUrls()` group the flag is honoured on `loader()`: a group
 route's own `loader(Def, { prefetch: false })` (a group `layout()`'s
 included), and a flagged `loader()` on a server layout above the group. A
-flagged `loading()` defers nothing on a group route, and neither does any
-loader inside `intercept()`, in `urls()` or in `clientUrls()`.
+flagged `loading()` defers nothing on a group route, and neither does a
+flagged `loading()` inside `intercept()`, in `urls()` or in `clientUrls()`.
 
-**R9. No change without the flag.** A prefetch response for a route with no
-flag is byte-identical to what it was. Pinned by
-`src/testing/__tests__/prefetch-false-unflagged.rsc-test.tsx`. Such a route
+**R9. No change without the flag.** A route or intercept with no flag defers
+nothing: its prefetch carries no deferred segment and is followed by no fill.
+For a route the response is byte-identical to what it was. Pinned by
+`src/testing/__tests__/prefetch-false-unflagged.rsc-test.tsx` (an intercept's
+response changed shape when its loaders became loader segments of its slot,
+and is pinned there by what it carries). Such a route
 also does one document-cache read per request and answers with the `vary` and
 `cache-control` it has on main (`prefetch-false.rsc-test.tsx`, "a route with
 no flag answers a prefetch and a navigation as it does without the feature").
@@ -386,11 +404,10 @@ And never when:
   React a promise in place of the optimistic destination the visitor is
   already looking at. A loader's own flag (1) counts wherever it sits in that
   chain: the group's own, and a server layout's above the group.
-- The loader is declared inside `intercept()`, in `urls()` or in
-  `clientUrls()`. Intercept loaders do not go through the shared funnel
-  (`intercept-resolution.ts` calls `resolveLoaderData` itself), and a
-  prefetch that resolves an intercept is not deferred at all (R8). Both DSLs
-  accept the option there and ignore it.
+
+A loader declared inside `intercept()`, in `urls()` or in `clientUrls()`, is
+deferrable by its own flag (1) alone, in a request that resolves that
+intercept ("Intercepts" below). A flagged `loading()` there defers nothing.
 
 "Deferrable" is a static property of the registration. Whether a deferrable
 loader is actually deferred is decided per request, by R14: `defersLoader()`
@@ -429,7 +446,7 @@ the request is a fill:
 - `scope`: the memoized static answer above (deferrable `LoaderEntry` set,
   their `$$id`s, unit candidates).
 - `mode`: `"prefetch"` for a GET partial request with `X-Rango-Prefetch` that
-  is not an action, not a shell capture and resolves no intercept; `"fill"`
+  is not an action and not a shell capture; `"fill"`
   when a GET's raw URL carries `_rsc_fill`; otherwise unset. A request of
   another method that carries either marker is a normal request. The header
   and the param are read once, when the request context is created
@@ -478,7 +495,7 @@ prefetch.
 All of it is in `src/router/segment-resolution/revalidation.ts`, the partial
 path. The document path (`fresh.ts`) never defers.
 
-- `resolveLoadersWithRevalidation` is the one place a navigation kicks a DSL
+- `resolveOwnerLoaders` is the one place a navigation kicks a DSL
   loader off. A loader `defersLoader()` says yes to (R14) is registered
   (`registerDeferredLoader`) and emitted as `{ type: "loader", deferred: true }`
   with no `loaderData`. Registering starts nothing: `resolveLoaderData` is
@@ -597,7 +614,7 @@ under the same layout dropped the push.
 Stored routes need no special path. A `cache()` HIT, a `ppr` partial replay
 and a prerender store hit all resolve their loaders through
 `resolveLoadersOnlyWithRevalidation`, which is
-`resolveLoadersWithRevalidation` in a loop, so the same check defers them. A
+`resolveOwnerLoaders` in a loop, so the same check defers them. A
 `ppr` prefetch that defers live loaders still schedules its navigation capture
 as before; the capture is a document render on a derived context and never
 sees the plan.
@@ -1903,7 +1920,7 @@ loader is flattened onto every route below it, flag included);
 the indices of the flagged loaders as `deferrableLoaderIndices`, beside
 `awaitedLoaderIndices`; materialization passes `{ prefetch: false }` to the
 server `loader()` of each stub. From there the stub is any flagged loader:
-`resolveLoadersWithRevalidation` emits it deferred on a segment new to the
+`resolveOwnerLoaders` emits it deferred on a segment new to the
 client and never calls it. The route segment renders, because its handler is
 the cheap `ClientUrlsRoot` element, so the prefetch carries the group segment
 with its `clientGroup` key, the unflagged loaders' data and one placeholder
@@ -2002,13 +2019,57 @@ retry, as the plain click's loader reveal is. An async include of a
 `clientUrls()` module goes through the same adapter
 (`clientUrlIncludePatterns`), so the projected field rides through.
 
-`intercept()` is not built: its loaders ignore the flag in both DSLs (R8).
-Supporting them would take the flag on the intercept's loader record
-(`collectIntercepts`), a `deferrableLoaderIndices` on
-`ClientUrlProjectionIntercept` materialized onto the intercept's stubs, and
-on the server a deferral path for intercept loaders, which today resolve
-outside the shared funnel and are never deferred because
-`partialDeferralMode` gives a request that resolves an intercept no mode.
+`intercept()` in a group takes the flag and a server-run `revalidate()` on
+its loaders, as a route does: `collectIntercepts` keeps the flag on the
+intercept's loader record, and `ClientUrlProjectionIntercept` carries
+`deferrableLoaderIndices` and `loaderRevalidate` (the hoisted keys), which
+materialization puts on the intercept's stubs (`server-projection.ts`). An
+in-group click to an intercept target takes the server-route path, since the
+optimistic presentation declines for it ("Intercepts" below).
+
+### Intercepts
+
+An intercept's loaders are loader segments of its slot,
+`${parent}.${slot}D${i}.${$$id}`, resolved by the partial lane's one funnel
+(`resolveOwnerLoaders` in `segment-resolution/revalidation.ts`, with an
+intercept `LoaderOwner`). Deferral, fill skipping, the `ctx.use()` delivery
+(`deliverStartedLoaders`), per-loader revalidation and handle attribution
+come from it as for a route's loaders.
+
+A prefetch that resolves an intercept defers the intercept's flagged loaders
+and nothing else: its plan's scope is the intercept entry's
+(`resolveInterceptDeferralScope` in `prefetch-deferral.ts`), so the target
+chain's layouts below the declaring entry, which such a request renders and
+whose ids its `matched` leaves out, are never deferred. The click that adopts
+it commits the source page with the modal at once: the modal's layout and,
+while its aggregate waits on the hole, its `loading()`. Its one fill carries
+the intercept source (`X-RSC-Router-Intercept-Source`) and names the source
+as the page it is sent from, since from the target itself nothing
+intercepts. In the fill the intercept's handler and layout do not run (the
+client holds the slot), only the loaders the client lacks run, and every
+target-chain entry the client does not hold is skipped. Its middleware runs
+when the slot resolves live; a runtime `cache()` hit or a `Prerender()` target
+runs none, in a fill or not (a known gap).
+
+An intercept's `matched` is the client's ids without any of the slot's, then
+the slot's own in declaration order (`match-result.ts`): one order for the
+prefetch, its fill, an action and a revisit, so a fill's identity check
+passes.
+
+The browser folds the loader segments back onto the slot before it builds the
+tree (`foldInterceptLoaders` in `segment-system.tsx`): one aggregate,
+memoized on the loaders' data, read by the slot's `LoaderBoundary` as before.
+Walked as loaders they would attach to the slot's parent, whose subtree (the
+page under the modal) would change shape and remount. The aggregate is
+settled before the commit when nothing in it is deferred and the slot has no
+`loading()`, or the lane settles loaders, so a modal with no `loading()`
+commits whole, as when the server awaited its loaders (it still does).
+
+A modal with no `loading()` and a deferred loader shows an empty slot from
+the click until the fill: `LoaderBoundary`'s own `<Suspense fallback={null}>`
+is new in that commit. The modal then shows when a plain click's would. The
+slot's loaders resolve together, as before: no per-loader streams for a
+slot.
 
 ### Where it is pinned
 
@@ -2038,9 +2099,20 @@ outside the shared funnel and are never deferred because
   apps in a dev and a `(production)` describe. The `clientUrls()` bodies
   (titles starting `clientUrls():`) run against the fixture's group at
   `/prefetch-false/cu`.
+- Intercepts: `src/testing/__tests__/prefetch-false-intercept.rsc-test.tsx`
+  (a prefetch from the source, its fill, the modal open, `ctx.use()`, a
+  navigation and an action inside the modal, through `serveShellRequest`
+  with `partial.interceptSource`), `prefetch-false.rsc-test.tsx` ("a prefetch
+  that resolves an intercept defers its flagged loader"),
+  `src/router/match-middleware/__tests__/intercept-cache-hit.test.ts`,
+  `src/router/__tests__/match-result.test.ts`,
+  `src/__tests__/segment-system.test.tsx` (the fold),
+  `src/__tests__/partial-update-fill.test.ts` ("an intercept adoption"), and
+  the `intercept():` bodies of `tests/shared-e2e/src/prefetch-false.ts`
+  against the fixture's `ix` pages.
 - `clientUrls()` routes: `src/client-urls/__tests__/client-urls.test.ts` (the
-  DSL records the flag, a `layout()`'s on every route below it, and accepts
-  and ignores it inside `intercept()`),
+  DSL records the flag, a `layout()`'s on every route below it, and inside
+  `intercept()`),
   `src/client-urls/__tests__/server-projection.test.tsx` and
   `src/vite/discovery/__tests__/virtual-module-codegen.test.ts` (the flag
   crosses the projection and its replay),
@@ -2245,9 +2317,12 @@ segments. A fill refuses `rendered()` outright for the same reason R12 exists.
   one run, start the read before the first `await`, or drop the flag from a
   loader the page cannot render without.
 
-- Loaders inside `intercept()`, in `urls()` and in `clientUrls()`, ignore
-  the flag, and so does a flagged `loading()` on a `clientUrls()` route or on
-  a server layout above a group ("Which loaders are deferrable").
+- A flagged `loading()` inside `intercept()`, in `urls()` and in
+  `clientUrls()`, defers nothing, and neither does one on a `clientUrls()`
+  route or on a server layout above a group ("Which loaders are
+  deferrable").
+- An intercept's loaders resolve together: its modal shows its `loading()`
+  until every one has arrived, a flagged one's fill included ("Intercepts").
 - A fill does not refresh a stale `cache()` record (see "Where the decisions
   are made"). The record waits for the next request that reads it.
 - Values a held handler would have set with `ctx.set()` are not visible to

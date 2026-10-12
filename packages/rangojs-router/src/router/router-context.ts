@@ -25,7 +25,7 @@ import type { ResolveSegmentOptions } from "./segment-resolution.js";
  * Revalidation context passed to segment resolution
  */
 export interface RevalidationContext {
-  clientSegmentIds: Set<string>;
+  clientSegmentIds: ReadonlySet<string>;
   prevParams: Record<string, string>;
   request: Request;
   prevUrl: URL;
@@ -37,7 +37,7 @@ export interface RevalidationContext {
     actionResult?: any;
     formData?: FormData;
   };
-  stale: boolean;
+  stale?: boolean;
 }
 
 /**
@@ -250,23 +250,10 @@ export interface RouterContext<TEnv = any> {
   resolveInterceptLoadersOnly?: (
     intercept: InterceptEntry,
     entry: EntryData,
-    params: Record<string, string>,
     handlerContext: HandlerContext<any, TEnv>,
     belongsToRoute: boolean,
-    revalidationContext: {
-      clientSegmentIds: Set<string>;
-      prevParams: Record<string, string>;
-      request: Request;
-      prevUrl: URL;
-      nextUrl: URL;
-      routeKey: string;
-      actionContext?: any;
-      stale?: boolean;
-    },
-  ) => Promise<{
-    loaderDataPromise: Promise<any[]> | any[];
-    loaderIds: string[];
-  } | null>;
+    revalidationContext: RevalidationContext,
+  ) => Promise<ResolvedSegment[]>;
 }
 
 const routerContext = new AsyncLocalStorage<RouterContext<any>>();

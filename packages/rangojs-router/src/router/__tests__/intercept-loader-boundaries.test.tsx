@@ -91,7 +91,14 @@ async function interceptLoaderResults(pathname: string): Promise<any[]> {
   );
   const modal = result.segments.find((s: any) => s.slot === "@modal");
   expect(modal).toBeDefined();
-  return modal.loaderDataPromise;
+  // The modal's loaders are loader segments of its slot.
+  return Promise.all(
+    result.segments
+      .filter(
+        (s: any) => s.type === "loader" && s.id.startsWith(`${modal.id}D`),
+      )
+      .map((s: any) => s.loaderData),
+  );
 }
 
 describe("intercept loader errors resolve against the declaring layout", () => {

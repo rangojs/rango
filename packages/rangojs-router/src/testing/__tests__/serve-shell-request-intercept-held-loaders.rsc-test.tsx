@@ -1,17 +1,17 @@
 /**
- * A held intercept slot whose loaders all skip revalidate(), through
- * serveShellRequest's JS `action` call and the browser's own reconcile step.
+ * A held intercept slot whose loaders skip revalidate(), through
+ * serveShellRequest's JS `action` call and the browser's own reconcile and
+ * fold steps.
  *
- * An intercept's loaders ride on the slot segment as one aggregate
- * (`loaderIds` + `loaderDataPromise`, router/intercept-resolution.ts), not as
- * loader segments of their own. A loader whose revalidate() answers false is
- * left out of it; when every loader is, the slot is sent with an EMPTY
- * aggregate. The browser's action reconcile (browser/segment-reconciler.ts)
- * merges a partial aggregate into the one it holds (`needsLoaderMerge`,
- * browser/merge-segment-loaders.ts). A slot sent with no aggregate at all
- * replaced the cached one: renderSlotContent (client.tsx) found no
- * `loaderDataPromise && loaderIds`, mounted the slot with no LoaderBoundary,
- * and the modal's `useLoader()` threw "data not found in context".
+ * An intercept's loaders are loader segments of its slot
+ * (`${parent}.@modalD${i}.${$$id}`, router/intercept-resolution.ts), each
+ * revalidated on its own. A loader whose revalidate() answers false is left
+ * out of the response; the browser keeps its cached segment (it is in
+ * `matched`) and folds every loader segment back onto the slot as one
+ * aggregate (segment-system.tsx foldInterceptLoaders), so renderSlotContent
+ * (client.tsx) mounts the slot's LoaderBoundary with all of them. Before the
+ * loaders were segments, a slot sent with none of them replaced the cached
+ * aggregate and the modal's `useLoader()` threw "data not found in context".
  *
  * The request is the one the browser sends from an open modal: the page URL,
  * the held segment ids and the intercept source header
@@ -19,10 +19,8 @@
  *
  * Over a `Prerender()` target the modal is served from the build's intercept
  * variant, on the action too (match-middleware/cache-lookup.ts
- * yieldFromStore). The stored slot is re-sent with its handler output, as on
- * the runtime cache path. Kept instead (component null), the response left the
- * slot out (match-result.ts drops a null segment the client holds), so the
- * loaders that re-ran never reached the modal.
+ * yieldFromStore). The stored slot is kept like any held stored segment; its
+ * loaders, never stored, run as loader segments of it.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -46,6 +44,7 @@ import {
 import { MemorySegmentCacheStore } from "../../cache/index.js";
 import { deserializeResult } from "../../cache/segment-codec.js";
 import { reconcileSegments } from "../../browser/segment-reconciler.js";
+import { foldInterceptLoaders } from "../../segment-system.js";
 import type { ResolvedSegment } from "../../types.js";
 
 const runs = { a: 0, b: 0 };
@@ -119,7 +118,8 @@ async function metadataOf(flight: string | undefined): Promise<Metadata> {
 /**
  * Open the modal from /list, then call a server action from it (the
  * intercept source still names /list). Returns the modal slot as the browser
- * holds it after reconciling the action's response.
+ * renders it after reconciling the action's response (folded, on the action
+ * lane).
  */
 async function slotAfterAction(a: Mode, b: Mode, target: Target = "live") {
   const router = makeRouter(a, b, target);
@@ -132,7 +132,7 @@ async function slotAfterAction(a: Mode, b: Mode, target: Target = "live") {
       })
     ).flight,
   );
-  const cachedSlot = opened.segments.find((s) => s.slot === "@modal")!;
+  const openedSlot = await foldedSlot(opened.segments);
 
   const answered = await metadataOf(
     (
@@ -156,8 +156,22 @@ async function slotAfterAction(a: Mode, b: Mode, target: Target = "live") {
     serverSegments: answered.segments,
     cachedSegments: opened.segments,
   });
-  const slot = reconciled.segments.find((s) => s.slot === "@modal")!;
-  return { cachedSlot, sentSlot, slot };
+  const slot = await foldedSlot(reconciled.interceptSegments);
+  const sentLoaders = answered.segments
+    .filter((s) => s.type === "loader" && s.id.includes(".@modalD"))
+    .map((s) => s.loaderId);
+  return { openedSlot, sentSlot, sentLoaders, slot };
+}
+
+/** The modal slot `segments` render, its loader segments folded onto it. */
+async function foldedSlot(
+  segments: ResolvedSegment[],
+): Promise<ResolvedSegment> {
+  const intercept = segments.filter((s) =>
+    s.namespace?.startsWith("intercept:"),
+  );
+  const folded = await foldInterceptLoaders(intercept, true);
+  return folded.find((s) => s.slot === "@modal")!;
 }
 
 beforeEach(async () => {
@@ -168,27 +182,27 @@ beforeEach(async () => {
 });
 
 describe("a modal held across a server action keeps its loader data", () => {
-  it("control: loaders that follow the default re-run and ride on the slot", async () => {
-    const { cachedSlot, sentSlot, slot } = await slotAfterAction(
+  it("control: loaders that follow the default re-run and reach the slot", async () => {
+    const { openedSlot, sentLoaders, slot } = await slotAfterAction(
       "rerun",
       "rerun",
     );
-    expect(sentSlot?.loaderIds).toEqual(cachedSlot.loaderIds);
-    expect(slot.loaderIds).toEqual(cachedSlot.loaderIds);
+    expect(sentLoaders).toEqual([LoaderA.$$id, LoaderB.$$id]);
+    expect(slot.loaderIds).toEqual(openedSlot.loaderIds);
     expect(await slot.loaderDataPromise).toMatchObject([
       { data: { a: "a-run-2" } },
       { data: { b: "b-run-2" } },
     ]);
   });
 
-  it("one held loader and one re-run: the re-run merges into the cached aggregate, the handler's re-render applies", async () => {
-    const { cachedSlot, sentSlot, slot } = await slotAfterAction(
+  it("one held loader and one re-run: the slot has the re-run's data and the held one's, the handler's re-render applies", async () => {
+    const { openedSlot, sentSlot, sentLoaders, slot } = await slotAfterAction(
       "skip",
       "rerun",
     );
-    expect(sentSlot?.loaderIds).toHaveLength(1);
+    expect(sentLoaders).toEqual([LoaderB.$$id]);
     expect(slot.component).toBe(sentSlot!.component);
-    expect(slot.loaderIds).toEqual(cachedSlot.loaderIds);
+    expect(slot.loaderIds).toEqual(openedSlot.loaderIds);
     expect(await slot.loaderDataPromise).toMatchObject([
       { data: { a: "a-run-1" } },
       { data: { b: "b-run-2" } },
@@ -196,17 +210,17 @@ describe("a modal held across a server action keeps its loader data", () => {
     expect(runs).toEqual({ a: 1, b: 2 });
   });
 
-  it("every loader held: the slot keeps the aggregate it was opened with", async () => {
-    const { cachedSlot, sentSlot, slot } = await slotAfterAction(
+  it("every loader held: the slot keeps the data it was opened with", async () => {
+    const { openedSlot, sentSlot, sentLoaders, slot } = await slotAfterAction(
       "skip",
       "skip",
     );
     expect(runs).toEqual({ a: 1, b: 1 });
-    expect(sentSlot?.loaderIds).toEqual([]);
+    expect(sentLoaders).toEqual([]);
     // The handler's re-render applies, as when the loaders re-run.
     expect(slot.component).toBe(sentSlot!.component);
     // renderSlotContent mounts the slot's LoaderBoundary only when both are set.
-    expect(slot.loaderIds).toEqual(cachedSlot.loaderIds);
+    expect(slot.loaderIds).toEqual(openedSlot.loaderIds);
     expect(await slot.loaderDataPromise).toMatchObject([
       { data: { a: "a-run-1" } },
       { data: { b: "b-run-1" } },
@@ -214,23 +228,23 @@ describe("a modal held across a server action keeps its loader data", () => {
   });
 });
 
-describe("over a Prerender() target, the stored modal is re-sent across a server action", () => {
+describe("over a Prerender() target, the stored modal keeps its loaders' data across a server action", () => {
   for (const [a, b] of [
     ["skip", "rerun"],
     ["rerun", "rerun"],
     ["skip", "skip"],
   ] as const) {
     it(`loaders ${a}/${b}: the re-run loaders' data reaches the stored modal`, async () => {
-      const { sentSlot, slot } = await slotAfterAction(a, b, "prerender");
+      const { openedSlot, slot } = await slotAfterAction(a, b, "prerender");
       // The bake rendered the modal; neither request ran its handler.
       expect(modalRenders.count).toBe(1);
       expect(await slot.loaderDataPromise).toMatchObject([
         { data: { a: a === "skip" ? "a-run-1" : "a-run-2" } },
         { data: { b: b === "skip" ? "b-run-1" : "b-run-2" } },
       ]);
-      // Re-sent with the stored handler output, never as a kept (null) slot.
-      expect(sentSlot?.component).toBeTruthy();
-      expect(slot.component).toBe(sentSlot!.component);
+      // The stored handler output the modal opened with.
+      expect(slot.component).toBeTruthy();
+      expect(slot.component).toBe(openedSlot.component);
     });
   }
 });

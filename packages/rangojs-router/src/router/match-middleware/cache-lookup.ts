@@ -101,6 +101,7 @@ import { treeHasStreaming } from "./segment-resolution.js";
 import { loaderPins } from "../segment-resolution/loader-cache.js";
 import {
   fillSends,
+  interceptFillSkips,
   recordUse,
 } from "../segment-resolution/prefetch-deferral.js";
 import type { PrerenderStore, PrerenderEntry } from "../../prerender/store.js";
@@ -127,6 +128,7 @@ import { ShellRecordUnavailableError } from "../../cache/shell-snapshot.js";
 import { prerenderStoreShortCircuits } from "../navigation-snapshot.js";
 import { paramsEqual } from "../params-util.js";
 import { requestHeaders } from "../../server/request-headers.js";
+import { isInterceptSegment } from "../../browser/intercept-utils.js";
 
 // Lazily initialized prerender store singleton and dynamically imported deps.
 // Dynamic imports prevent pulling in @vitejs/plugin-rsc/rsc virtual module at
@@ -207,6 +209,7 @@ async function* resolveFreshLoadersAndYield<TEnv>(
   resolveLoadersOnlyWithRevalidation: RouterContext<TEnv>["resolveLoadersOnlyWithRevalidation"],
 ): AsyncGenerator<ResolvedSegment> {
   const loaderStart = performance.now();
+  entries = entries.filter((e) => !interceptFillSkips(ctx, e.shortCode));
 
   if (ctx.isFullMatch) {
     if (resolveLoadersOnly) {
@@ -347,14 +350,8 @@ async function* yieldFromStore<TEnv>(
     !ctx.isFullMatch && !paramsEqual(ctx.matched.params, ctx.prevParams);
   const resendRouteSegments = replaceable === true && ctx.isAction;
   for (const segment of segments) {
-    if (
-      !ctx.isFullMatch &&
-      ctx.clientSegmentSet.has(segment.id) &&
-      // A stored intercept segment is re-sent, as on the runtime cache path:
-      // its loaders run (handleCacheHitIntercept), and a kept (null) one would
-      // be left out of the response with its loaders' new data.
-      !segment.namespace?.startsWith("intercept:")
-    ) {
+    if (interceptFillSkips(ctx, segment)) continue;
+    if (!ctx.isFullMatch && ctx.clientSegmentSet.has(segment.id)) {
       // A fill keeps it (fillSends); otherwise it is sent again when the
       // params changed or an action re-sends the route's own segments.
       const sends =
@@ -916,6 +913,7 @@ export function withCacheLookup<TEnv>(
     yield* liveSegments;
 
     for (const segment of cacheResult.segments) {
+      if (interceptFillSkips(ctx, segment)) continue;
       if (!ctx.clientSegmentSet.has(segment.id)) {
         if (isTraceActive()) {
           pushRevalidationTraceEntry({
@@ -932,17 +930,17 @@ export function withCacheLookup<TEnv>(
         continue;
       }
 
-      if (segment.namespace?.startsWith("intercept:")) {
-        yield segment;
-        continue;
-      }
-
-      // A fill keeps a held segment outright (fillSends).
+      // A fill keeps a held segment outright (fillSends), an intercept's
+      // included.
       if (
         fillSends(ctx.handlerContext, segment.id, ctx.clientSegmentSet) ===
         false
       ) {
         keepClientSegment(segment);
+        yield segment;
+        continue;
+      }
+      if (isInterceptSegment(segment)) {
         yield segment;
         continue;
       }

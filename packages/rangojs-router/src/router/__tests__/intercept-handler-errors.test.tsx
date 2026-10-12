@@ -239,7 +239,12 @@ describe("intercept handler errors render the declaring layout's boundary", () =
       500,
       "async loader-branch modal failed",
     );
-    expect(nav.modal.loaderIds).toEqual(["test#InterceptHandlerOkLoader"]);
+    // Its loader is a loader segment of the slot.
+    expect(
+      nav.result.segments
+        .filter((s: any) => s.id.startsWith(`${nav.modal.id}D`))
+        .map((s: any) => s.loaderId),
+    ).toEqual(["test#InterceptHandlerOkLoader"]);
   });
 
   // Issue #897: the handler promise is awaited only after the intercept layout

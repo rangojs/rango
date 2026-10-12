@@ -30,6 +30,7 @@ import {
   buildLoaderPromise,
   getMemoizedLoaderPromise,
 } from "./segment-loader-promise.js";
+import { loaderParentId } from "./browser/react/filter-segment-order.js";
 import {
   auditSegmentElement,
   finishTreeAudit,
@@ -104,6 +105,60 @@ export function restoreParallelLoaderMarkers(
   }
 
   return nextSegments ?? segments;
+}
+
+/**
+ * An intercept's loaders arrive as loader segments of its slot
+ * (`${slot.id}D${i}.${$$id}`, router/intercept-resolution.ts). Folded back
+ * onto the slot before the tree walk, as one aggregate the slot's
+ * LoaderBoundary reads (client.tsx renderSlotContent): walked as loaders they
+ * would attach to the slot's parent, whose subtree (the page under the modal)
+ * would change shape and remount. Any other loader segment passes through; a
+ * list with nothing to fold is returned as it is, synchronously.
+ * The slot is a new object (rule 6, suspense-contract.md); its aggregate is
+ * memoized on the loaders' data (rule 1). Settled before the commit when
+ * nothing in it is deferred and the slot has no loading() or the lane settles
+ * loaders (forceAwait, action): a modal with no loading() commits whole, as
+ * when the server awaited its loaders.
+ */
+export function foldInterceptLoaders(
+  segments: ResolvedSegment[],
+  settleLoaders: boolean,
+): ResolvedSegment[] | Promise<ResolvedSegment[]> {
+  const loadersBySlot = new Map<string, ResolvedSegment[]>();
+  const rest: ResolvedSegment[] = [];
+  for (const segment of segments) {
+    // Only a slot's loader has a slot id, `${shortCode}.@${name}`, as parent.
+    const parentId =
+      segment.type === "loader" && segment.id.includes(".@")
+        ? loaderParentId(segment.id)
+        : "";
+    if (parentId.includes(".@")) pushToGroup(loadersBySlot, parentId, segment);
+    else rest.push(segment);
+  }
+  if (loadersBySlot.size === 0) return segments;
+  const fold = async (
+    slot: ResolvedSegment,
+    loaders: ResolvedSegment[],
+  ): Promise<ResolvedSegment> => {
+    const aggregate = getMemoizedLoaderPromise(loaders);
+    return {
+      ...slot,
+      loaderIds: loaders.map((l) => l.loaderId!),
+      loaderDataPromise: settlesLoaders(
+        loaders,
+        settleLoaders || !isRenderableLoading(slot.loading),
+      )
+        ? await aggregate
+        : aggregate,
+    };
+  };
+  return Promise.all(
+    rest.map((slot) => {
+      const loaders = loadersBySlot.get(slot.id);
+      return loaders ? fold(slot, loaders) : slot;
+    }),
+  );
 }
 
 /**
@@ -260,7 +315,7 @@ function wrapDefaultOutletContent(
  * replaces the whole page (an ancestor reading the loader would still throw).
  *
  * `settle` is the forceAwait/action lane of a loader set that holds a
- * deferred loader (`prefetch: false`, see hasDeferred): every other loader is
+ * deferred loader (`prefetch: false`, see settlesLoaders): every other loader is
  * settled like a flagged one, so the commit stays whole for them, and the
  * deferred one keeps its hole for the read site to suspend on. A settled
  * error with no boundary is left to the read site there, where the aggregate
@@ -303,14 +358,15 @@ async function buildLoaderStreams(
 }
 
 /**
- * A loader set that holds a deferred loader (`prefetch: false`): its
+ * Whether a loader set is settled before the commit: its lane asks for it
+ * and nothing in it is deferred. A deferred loader's (`prefetch: false`)
  * `loaderData` is a hole (browser/defer.ts) the browser resolves when the
  * fill request lands (browser/partial-update.ts fillHoles), so no lane may
  * await the set as a whole. The
  * tree build would wait for a request that is only sent once it returns.
  */
-function hasDeferred(loaders: ResolvedSegment[]): boolean {
-  return loaders.some(isPlaceholder);
+function settlesLoaders(loaders: ResolvedSegment[], lane: boolean): boolean {
+  return lane && !loaders.some(isPlaceholder);
 }
 
 function isLoaderRedirectNode(node: ReactNode): boolean {
@@ -378,10 +434,8 @@ export async function renderSegments(
     transitionGatedOff,
   } = options || {};
   // forceAwait and action lanes settle loader data before the commit, except
-  // a set that holds a deferred loader (hasDeferred).
+  // a set that holds a deferred loader (settlesLoaders).
   const settleLoaders = !!(forceAwait || isAction);
-  const settleAll = (loaders: ResolvedSegment[]): boolean =>
-    settleLoaders && !hasDeferred(loaders);
 
   const segDebug = INTERNAL_RANGO_DEBUG;
   const segDebugStart = segDebug ? performance.now() : 0;
@@ -395,10 +449,16 @@ export async function renderSegments(
   }
 
   const temporalLazyRefs: Promise<any>[] = [];
-  const normalizedSegments = restoreParallelLoaderMarkers(segments);
-  const normalizedInterceptSegments = interceptSegments
-    ? restoreParallelLoaderMarkers(interceptSegments)
-    : undefined;
+  // Back/forward restores an intercept entry unsplit (navigation-bridge.ts).
+  // Awaited only when there is something to fold: no extra microtask.
+  let folded = foldInterceptLoaders(segments, settleLoaders);
+  if (folded instanceof Promise) folded = await folded;
+  const normalizedSegments = restoreParallelLoaderMarkers(folded);
+  let normalizedInterceptSegments =
+    interceptSegments && foldInterceptLoaders(interceptSegments, settleLoaders);
+  if (normalizedInterceptSegments instanceof Promise) {
+    normalizedInterceptSegments = await normalizedInterceptSegments;
+  }
 
   /**
    * Registers promises from lazy/async components for awaiting.
@@ -648,7 +708,7 @@ export async function renderSegments(
       // for content-suspending routes (segment-loader-promise.ts).
       let boundaryLoaderStreams: Record<string, unknown> | undefined;
       let boundaryAwaitedLoaderIds: string[] | undefined;
-      if (settleAll(loaderEntries)) {
+      if (settlesLoaders(loaderEntries, settleLoaders)) {
         const awaitStart = segDebug ? performance.now() : 0;
         boundaryLoaderData =
           loaderDataPromise instanceof Promise
@@ -732,7 +792,7 @@ export async function renderSegments(
       let errorFallback: ReactNode = null;
       let loaderStreams: Record<string, unknown> | undefined;
       let awaitedLoaderIds: string[] | undefined;
-      if (settleAll(layoutLoaders)) {
+      if (settlesLoaders(layoutLoaders, settleLoaders)) {
         const layoutAwaitStart = segDebug ? performance.now() : 0;
         const resolvedData = await buildLoaderPromise(layoutLoaders);
         if (segDebug) {
@@ -813,10 +873,11 @@ export async function renderSegments(
           // Flagged (ssr:false) delivery still holds: when every owned
           // loader paid the pre-flush await, settle the aggregate so
           // LoaderResolver decodes the array without a Flight-chunk use().
-          const settleParallelAggregate =
-            (settleLoaders ||
-              ownedLoaders.every((l) => l.awaitBeforeFlush === true)) &&
-            !hasDeferred(ownedLoaders);
+          const settleParallelAggregate = settlesLoaders(
+            ownedLoaders,
+            settleLoaders ||
+              ownedLoaders.every((l) => l.awaitBeforeFlush === true),
+          );
           if (settleParallelAggregate) {
             const parallelAwaitStart = segDebug ? performance.now() : 0;
             p.loaderDataPromise =
@@ -974,20 +1035,6 @@ export async function renderSegments(
  * @param segments - Main segments from the route tree
  * @param interceptSegments - Optional intercept segments to inject
  */
-// Loader segment ids have the grammar `${parentId}D${index}.${loaderId}`.
-// parentId is the parent shortCode (M/L/P/R/C + digits, never "D") for normal
-// loaders, or `${shortCode}.${slotName}` for intercept-slot loaders, where the
-// slot name is user-controlled (`@${string}`) and may contain an uppercase "D"
-// (e.g. "@Detail"). Strip from the first `D<index>.` separator so the slot name
-// is preserved; splitting on a bare "D" mis-cut "@Detail" to "@" and silently
-// dropped the loader's data. The first-`D<index>.` strip is only correct because
-// slot names cannot contain "." -- assertValidSlotName (route-definition/
-// dsl-helpers.ts) rejects a "." at definition time, so a name like "@D3.foo"
-// (which WOULD mis-cut here) can never reach this function.
-function loaderParentId(loaderSegmentId: string): string {
-  return loaderSegmentId.replace(/D\d+\..*$/, "");
-}
-
 // Append a value to the array stored under `key`, creating the array on first
 // use. Single Map lookup (vs the has/get!().push double-lookup idiom).
 function pushToGroup<K, V>(map: Map<K, V[]>, key: K, value: V): void {
@@ -1032,18 +1079,14 @@ function* segmentTreeWalk(
     }
   }
 
-  // INTERCEPT SEGMENTS: Explicitly inject into parent's parallel array
-  // Intercept segments are passed separately for explicit handling
+  // INTERCEPT SEGMENTS: Explicitly inject into parent's parallel array.
+  // Their loaders are on the slot already (foldInterceptLoaders).
   if (interceptSegments && interceptSegments.length > 0) {
     for (const intercept of interceptSegments) {
       if (intercept.type === "parallel" && intercept.slot) {
         // Extract parent ID from intercept ID (e.g., "M4L0L0L2.@modal" → "M4L0L0L2")
         const parentId = intercept.id.split(".")[0];
         pushToGroup(parallelsByParent, parentId, intercept);
-      } else if (intercept.type === "loader") {
-        // Intercept loaders - extract parent from loader ID (slot name preserved)
-        const parentId = loaderParentId(intercept.id);
-        pushToGroup(loadersByParent, parentId, intercept);
       }
     }
   }
@@ -1061,15 +1104,6 @@ function* segmentTreeWalk(
     // Lookup parallels and loaders that belong to this segment by ID prefix
     const parallel = parallelsByParent.get(segment.id) || [];
     const loaders = loadersByParent.get(segment.id) || [];
-
-    // Also include loaders from parallel segments (e.g., intercept loaders)
-    // These have parent IDs like "M9L0L1.@modal" which match the parallel segment ID
-    for (const p of parallel) {
-      const parallelLoaders = loadersByParent.get(p.id);
-      if (parallelLoaders) {
-        loaders.push(...parallelLoaders);
-      }
-    }
 
     yield { segment, parallel, loaders };
   }

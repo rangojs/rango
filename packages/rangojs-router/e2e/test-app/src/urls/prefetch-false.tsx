@@ -13,6 +13,7 @@ import {
 } from "../components/PrefetchFalseCounts.js";
 import { PrefetchFalseNotes } from "../components/PrefetchFalseNotes.js";
 import {
+  PrefetchFalseInstance,
   PrefetchFalseInvalidate,
   PrefetchFalseNav,
   PrefetchFalseValue,
@@ -89,6 +90,17 @@ import {
 // a Suspense with pf-cu/above-fallback) and whose loading() is flagged too:
 // a flagged loading() defers nothing on a group route. Test ids and counters
 // of a group route `cu/<route>` are `pf-cu/<route>-*` and `cu/<route>.*`.
+//
+// `ix` is an intercept's source page (pf-ix-page, its loader pf-ix-value,
+// counter `ix.data`, and pf-ix-instance, a mount marker): `ix/item/<id>`,
+// `ix/bare/<id>` and `ix/plain/<id>` open over it in the @modal slot of the
+// ix layout (pf-ix-layout), from a page inside that layout only (when()).
+// `ix/item` is a modal with loading() (pf-ix-item-fallback), an unflagged
+// loader (pf-ix-item-a, counter `ix-item.a`) and a flagged one
+// (pf-ix-item-value, counter `ix-item.data`); `ix/bare` a flagged loader and
+// no loading(); `ix/plain` no flag. Each modal counts its handler
+// (`<c>.modal`); loaded as a document, each target is a full page
+// (pf-<c>-page) reading the same loaders.
 //
 // pf-nav mirrors useNavigation() as data-state / data-streaming / data-path
 // (its location's pathname), and pf-outlet is the box the page renders in.
@@ -254,6 +266,19 @@ export const PfOuterEarlyLoader = createLoader((ctx) =>
 export const PfOuterLoader = createLoader((ctx) =>
   work(ctx, "outer.data", 100),
 );
+export const PfIxLoader = createLoader((ctx) => work(ctx, "ix.data", 100));
+export const PfIxItemALoader = createLoader((ctx) =>
+  work(ctx, "ix-item.a", 100),
+);
+export const PfIxItemLoader = createLoader((ctx) =>
+  work(ctx, "ix-item.data", 100),
+);
+export const PfIxBareLoader = createLoader((ctx) =>
+  work(ctx, "ix-bare.data", 100),
+);
+export const PfIxPlainLoader = createLoader((ctx) =>
+  work(ctx, "ix-plain.data", 100),
+);
 // &hslow=1 makes it take 600 ms: the inner layout's own work, while the
 // response it streams in has answered long before.
 export const PfOuterInnerLoader = createLoader((ctx) =>
@@ -304,6 +329,11 @@ const CASES = [
   ["section-read", "inside the flagged layout, its loader read in a Suspense"],
   ["outer", "a flagged loader above a flagged layout, read in a Suspense"],
   ["read-cached", "flagged loader with its own cache(), read by the handler"],
+  ["ix", "an intercept's source: its ix/ links open in a modal over it"],
+  ["ix/item/1", "from ix, a modal: a flagged loader beside one, loading()"],
+  ["ix/item/2", "from ix, the same modal for another item"],
+  ["ix/bare/1", "from ix, a modal: a flagged loader, no loading()"],
+  ["ix/plain/1", "from ix, a modal with no flag"],
   ["cu", "a clientUrls() group: its origin route, no loaders"],
   ["cu/loader", "group route: a flagged loader beside an unflagged one"],
   ["cu/bare", "group route: a flagged loader, no boundary"],
@@ -812,6 +842,52 @@ function SsrFalsePage() {
   );
 }
 
+// An intercept's source page and the layout that holds its @modal slot.
+function IxLayout(ctx: any) {
+  countRun(runOf(ctx), "ix.layout");
+  return (
+    <section data-testid="pf-ix-layout">
+      <Outlet />
+      <ParallelOutlet name="@modal" />
+    </section>
+  );
+}
+
+function IxPage(ctx: any) {
+  countRun(runOf(ctx), "ix.handler");
+  return (
+    <div data-testid="pf-ix-page">
+      <PrefetchFalseInstance testId="pf-ix-instance" />
+      <PrefetchFalseValue loader={PfIxLoader} testId="pf-ix-value" />
+    </div>
+  );
+}
+
+// An intercepted target: as a modal over its source (`<c>.modal`), or as a
+// full page (`<c>.handler`), each reading the loaders it lists.
+const ixTarget =
+  (name: string, kind: "modal" | "page", loaders: any[]) => (ctx: any) => {
+    countRun(runOf(ctx), `${name}.${kind === "modal" ? "modal" : "handler"}`);
+    return (
+      <div data-testid={`pf-${name}-${kind}`}>
+        {loaders.map(([loader, testId]) => (
+          <PrefetchFalseValue key={testId} loader={loader} testId={testId} />
+        ))}
+      </div>
+    );
+  };
+const IX_ITEM = [
+  [PfIxItemALoader, "pf-ix-item-a"],
+  [PfIxItemLoader, "pf-ix-item-value"],
+];
+const IX_BARE = [[PfIxBareLoader, "pf-ix-bare-value"]];
+const IX_PLAIN = [[PfIxPlainLoader, "pf-ix-plain-value"]];
+
+// An intercept applies from a page inside the ix layout only: from anywhere
+// else its target is a page (the slot's layout would not be on screen).
+const fromIx = ({ from }: { from: { url: URL } }): boolean =>
+  /\/prefetch-false\/ix(\/|$)/.test(from.url.pathname);
+
 function ControlPage() {
   return (
     <div data-testid="pf-control-page">
@@ -833,6 +909,7 @@ export const prefetchFalsePatterns = urls(
     transition,
     errorBoundary,
     notFoundBoundary,
+    intercept,
   }) => [
     middleware(serverDelay),
     path.json(
@@ -1175,6 +1252,55 @@ export const prefetchFalsePatterns = urls(
       // no loading(): nothing holds the click.
       path("/own", OwnPage, { name: "own" }, () => [
         loader(PfOwnLoader, { prefetch: false }),
+      ]),
+
+      // Intercepts from a source page: their loaders are loader segments of
+      // the @modal slot, a flagged one deferred by the source's prefetch.
+      layout(IxLayout, () => [
+        path("/ix", IxPage, { name: "ix" }, () => [loader(PfIxLoader)]),
+        path(
+          "/ix/item/:id",
+          ixTarget("ix-item", "page", IX_ITEM),
+          { name: "ixItem" },
+          () => [loader(PfIxItemALoader), loader(PfIxItemLoader)],
+        ),
+        path(
+          "/ix/bare/:id",
+          ixTarget("ix-bare", "page", IX_BARE),
+          { name: "ixBare" },
+          () => [loader(PfIxBareLoader)],
+        ),
+        path(
+          "/ix/plain/:id",
+          ixTarget("ix-plain", "page", IX_PLAIN),
+          { name: "ixPlain" },
+          () => [loader(PfIxPlainLoader)],
+        ),
+        intercept(
+          "@modal",
+          ".ixItem",
+          ixTarget("ix-item", "modal", IX_ITEM),
+          { when: fromIx },
+          () => [
+            loader(PfIxItemALoader),
+            loader(PfIxItemLoader, { prefetch: false }),
+            loading(fallback("ix-item")),
+          ],
+        ),
+        intercept(
+          "@modal",
+          ".ixBare",
+          ixTarget("ix-bare", "modal", IX_BARE),
+          { when: fromIx },
+          () => [loader(PfIxBareLoader, { prefetch: false })],
+        ),
+        intercept(
+          "@modal",
+          ".ixPlain",
+          ixTarget("ix-plain", "modal", IX_PLAIN),
+          { when: fromIx },
+          () => [loader(PfIxPlainLoader), loading(fallback("ix-plain"))],
+        ),
       ]),
 
       // No flag: a prefetch runs everything and the click sends nothing.

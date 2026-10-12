@@ -10,6 +10,19 @@ export function isLoaderSegmentId(id: string): boolean {
 }
 
 /**
+ * The parent of a loader sub-id (`${parentId}D${index}.${loaderId}`); any
+ * other id unchanged. parentId is a shortCode (never "D"), or
+ * `${shortCode}.${slotName}` for an intercept slot's loaders, where the
+ * user-chosen name may hold an uppercase "D" ("@Detail"). Strip from the first
+ * `D<index>.`: splitting on a bare "D" mis-cut "@Detail" to "@" and silently
+ * dropped the loader's data. Correct only because slot names cannot contain
+ * "." (assertValidSlotName, route-definition/dsl-helpers.ts).
+ */
+export function loaderParentId(id: string): string {
+  return id.replace(/D\d+\..*$/, "");
+}
+
+/**
  * Build the handle-collection segment order from a raw `matched` list.
  *
  * Two responsibilities:

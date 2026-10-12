@@ -1,12 +1,13 @@
 "use client";
 
-import { useHandle, useLoader } from "@rangojs/router/client";
+import { Link, useHandle, useLoader } from "@rangojs/router/client";
 import type { LoaderDefinition } from "@rangojs/router";
 import { Modal } from "../components/Modal.js";
 import { interceptHeldAction } from "./intercept-held.actions.js";
 import {
   InterceptHeldCrumbs,
   InterceptHeldLoader,
+  InterceptHeldPushLoader,
   InterceptPushLoader,
   InterceptRerunLoader,
 } from "./intercept-held.defs.js";
@@ -73,6 +74,14 @@ export function InterceptHeldMixedModal({
       <p data-testid="ih-modal-runs">{held.data.runs}</p>
       <p data-testid="ih-modal-rerun-runs">{rerun.data.runs}</p>
       <ActionButton />
+      {/* Another intercepted route whose modal reads the held loader. */}
+      <Link
+        to="/intercept-held/loader/1"
+        prefetch="none"
+        data-testid="ih-modal-to-loader"
+      >
+        Open the held-loader modal
+      </Link>
     </Modal>
   );
 }
@@ -82,6 +91,23 @@ export function InterceptPushModal({ id }: { id: string }) {
   return (
     <Modal testId="ih-push-modal">
       <p data-testid="ih-push-modal-id">{data.id ?? id}</p>
+    </Modal>
+  );
+}
+
+export function InterceptHeldPushModal({
+  id,
+  renders,
+}: {
+  id: string;
+  renders: number;
+}) {
+  const { data } = useLoader(InterceptHeldPushLoader);
+  return (
+    <Modal testId="ih-held-push-modal">
+      <p data-testid="ih-held-push-modal-id">{data.id ?? id}</p>
+      <p data-testid="ih-held-push-renders">{renders}</p>
+      <ActionButton />
     </Modal>
   );
 }

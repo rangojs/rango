@@ -367,17 +367,20 @@ describe("clientUrls", () => {
   // A urls() intercept() takes loader(Def, { prefetch: false }) and ignores
   // it: an intercept prefetch defers nothing (R8). A clientUrls() intercept()
   // does the same: no rejection, and nothing recorded to project.
-  it("accepts prefetch: false inside intercept() and ignores it, as urls() does", () => {
+  it("records prefetch: false inside intercept(), as urls() does", () => {
     const DetailLoader = loader("loaders#detail");
+    const PlainLoader = loader("loaders#plain");
     const patterns = clientUrls(({ path, intercept, loader: useLoader }) => [
       path("/items/:id", AccountPage, { name: "detail" }),
       intercept("@modal", ".detail", AccountLayout, () => [
         useLoader(DetailLoader, { prefetch: false }),
+        useLoader(PlainLoader),
       ]),
     ]);
 
     expect(patterns.intercepts[0].loaders).toEqual([
-      { loader: DetailLoader, revalidate: [] },
+      { loader: DetailLoader, revalidate: [], prefetch: false },
+      { loader: PlainLoader, revalidate: [] },
     ]);
   });
 

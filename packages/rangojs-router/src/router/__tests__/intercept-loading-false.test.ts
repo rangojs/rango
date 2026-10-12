@@ -92,79 +92,60 @@ function makeInterceptEntry(
   };
 }
 
+const revalidationContext = (clientSegmentIds: string[] = []) => ({
+  clientSegmentIds: new Set(clientSegmentIds),
+  prevParams: {},
+  request: new Request("http://localhost/"),
+  prevUrl: new URL("http://localhost/prev"),
+  nextUrl: new URL("http://localhost/next"),
+  routeKey: "test",
+});
+
+/**
+ * Deps whose loader results settle only when `release` is called: whether
+ * resolveInterceptLoadersOnly returned before or after that shows whether it
+ * awaited them.
+ */
+function gatedDeps() {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  let settled = false;
+  const deps = makeDeps();
+  deps.wrapLoaderPromise = vi.fn(async (promise: any) => {
+    await gate;
+    settled = true;
+    return { data: await promise, error: null };
+  }) as any;
+  return { deps, release, settled: () => settled };
+}
+
 describe("resolveInterceptLoadersOnly loading: false parity", () => {
-  it("loading: false awaits loaders (loaderDataPromise is resolved array)", async () => {
-    const entry = makeInterceptEntry(false);
-    const result = await resolveInterceptLoadersOnly(
-      entry,
-      makeParentEntry(),
-      {},
-      makeContext(),
-      true,
-      makeDeps(),
-      {
-        clientSegmentIds: new Set(),
-        prevParams: {},
-        request: new Request("http://localhost/"),
-        prevUrl: new URL("http://localhost/prev"),
-        nextUrl: new URL("http://localhost/next"),
-        routeKey: "test",
-      },
-    );
-
-    expect(result).not.toBeNull();
-    // When loading is false, loaderDataPromise should be a resolved array
-    // (the function awaited Promise.all), not a pending Promise
-    expect(Array.isArray(result!.loaderDataPromise)).toBe(true);
-  });
-
-  it("loading: truthy defers loaders (loaderDataPromise is a Promise)", async () => {
-    const loadingComponent = "LoadingSpinner" as any;
-    const entry = makeInterceptEntry(loadingComponent);
-    const result = await resolveInterceptLoadersOnly(
-      entry,
-      makeParentEntry(),
-      {},
-      makeContext(),
-      true,
-      makeDeps(),
-      {
-        clientSegmentIds: new Set(),
-        prevParams: {},
-        request: new Request("http://localhost/"),
-        prevUrl: new URL("http://localhost/prev"),
-        nextUrl: new URL("http://localhost/next"),
-        routeKey: "test",
-      },
-    );
-
-    expect(result).not.toBeNull();
-    // When loading is truthy, loaderDataPromise should be a Promise (not awaited)
-    expect(result!.loaderDataPromise).toBeInstanceOf(Promise);
-  });
-
-  it("loading: undefined awaits loaders (same as false)", async () => {
-    const entry = makeInterceptEntry(undefined);
-    const result = await resolveInterceptLoadersOnly(
-      entry,
-      makeParentEntry(),
-      {},
-      makeContext(),
-      true,
-      makeDeps(),
-      {
-        clientSegmentIds: new Set(),
-        prevParams: {},
-        request: new Request("http://localhost/"),
-        prevUrl: new URL("http://localhost/prev"),
-        nextUrl: new URL("http://localhost/next"),
-        routeKey: "test",
-      },
-    );
-
-    expect(result).not.toBeNull();
-    expect(Array.isArray(result!.loaderDataPromise)).toBe(true);
-  });
+  // The slot's loaders are loader segments of it; with no loading() they are
+  // settled before the slot is built, so a plain click's modal arrives whole.
+  for (const [label, loading, awaits] of [
+    ["loading: false awaits loaders", false, true],
+    ["loading: truthy streams loaders", "LoadingSpinner", false],
+    ["loading: undefined awaits loaders (same as false)", undefined, true],
+  ] as const) {
+    it(label, async () => {
+      const { deps, release, settled } = gatedDeps();
+      const done = resolveInterceptLoadersOnly(
+        makeInterceptEntry(loading as InterceptEntry["loading"]),
+        makeParentEntry(),
+        makeContext(),
+        true,
+        deps,
+        revalidationContext(),
+      );
+      setTimeout(release, 5);
+      const segments = await done;
+      expect(segments.map((s) => s.id)).toEqual(["L0R0.@modalD0.test-loader"]);
+      expect(settled()).toBe(awaits);
+      await expect(segments[0]!.loaderData).resolves.toMatchObject({
+        data: { data: "loader-result" },
+      });
+    });
+  }
 
   it("flags isPartial:true in the loader errorContext (cache-hit partial path)", async () => {
     // resolveInterceptLoadersOnly is only called on the cache-hit partial-update
@@ -175,18 +156,10 @@ describe("resolveInterceptLoadersOnly loading: false parity", () => {
     await resolveInterceptLoadersOnly(
       entry,
       makeParentEntry(),
-      {},
       makeContext(),
       true,
       deps,
-      {
-        clientSegmentIds: new Set(),
-        prevParams: {},
-        request: new Request("http://localhost/"),
-        prevUrl: new URL("http://localhost/prev"),
-        nextUrl: new URL("http://localhost/next"),
-        routeKey: "test",
-      },
+      revalidationContext(),
     );
 
     // The 5th arg to wrapLoaderPromise is the errorContext that drives onError +
@@ -197,30 +170,35 @@ describe("resolveInterceptLoadersOnly loading: false parity", () => {
 });
 
 describe("resolveInterceptLoadersOnly on a slot the client holds", () => {
-  const revalidationContext = (clientSegmentIds: string[]) => ({
-    clientSegmentIds: new Set(clientSegmentIds),
-    prevParams: {},
-    request: new Request("http://localhost/"),
-    prevUrl: new URL("http://localhost/prev"),
-    nextUrl: new URL("http://localhost/next"),
-    routeKey: "test",
-  });
-
-  it("every loader held: the empty aggregate, not null (the cached one would be sent)", async () => {
+  it("every loader held and skipped: no loader segment is sent, the client keeps its own", async () => {
     vi.mocked(evaluateRevalidation).mockResolvedValueOnce(false);
     const deps = makeDeps();
-    const result = await resolveInterceptLoadersOnly(
+    const segments = await resolveInterceptLoadersOnly(
       makeInterceptEntry(false),
       makeParentEntry(),
-      {},
       makeContext(),
       true,
       deps,
+      revalidationContext(["L0R0.@modal", "L0R0.@modalD0.test-loader"]),
+    );
+
+    expect(segments).toEqual([]);
+    expect(deps.wrapLoaderPromise).not.toHaveBeenCalled();
+  });
+
+  it("a loader the client lacks runs although the slot is held", async () => {
+    vi.mocked(evaluateRevalidation).mockClear();
+    const segments = await resolveInterceptLoadersOnly(
+      makeInterceptEntry(false),
+      makeParentEntry(),
+      makeContext(),
+      true,
+      makeDeps(),
       revalidationContext(["L0R0.@modal"]),
     );
 
-    expect(result).toEqual({ loaderDataPromise: [], loaderIds: [] });
-    expect(deps.wrapLoaderPromise).not.toHaveBeenCalled();
+    expect(segments.map((s) => s.id)).toEqual(["L0R0.@modalD0.test-loader"]);
+    expect(evaluateRevalidation).not.toHaveBeenCalled();
   });
 
   it("pins the slot's id as the loaders' handle push owner at their kickoff", async () => {
@@ -233,11 +211,10 @@ describe("resolveInterceptLoadersOnly on a slot the client holds", () => {
     await resolveInterceptLoadersOnly(
       makeInterceptEntry(false),
       makeParentEntry(),
-      {},
       context,
       true,
       makeDeps(),
-      revalidationContext([]),
+      revalidationContext(),
     );
 
     expect(owners).toEqual(["L0R0.@modal"]);
@@ -273,5 +250,58 @@ describe("resolveInterceptEntry handle push owner", () => {
       loader: ["L0R0.@modal"],
       handler: ["L0R0.@modal"],
     });
+  });
+});
+
+describe("resolveInterceptEntry: the slot and its loader segments", () => {
+  const twoLoaders = (): InterceptEntry => ({
+    ...makeInterceptEntry("Loading"),
+    handler: vi.fn(() => "modal") as any,
+    layout: vi.fn(() => "chrome") as any,
+    loader: [
+      { loader: { $$id: "first" } as any, revalidate: [] },
+      { loader: { $$id: "second" } as any, revalidate: [] },
+    ],
+  });
+
+  it("emits the slot with no aggregate, then one loader segment per loader in declaration order", async () => {
+    const segments = await resolveInterceptEntry(
+      twoLoaders(),
+      makeParentEntry(),
+      {},
+      makeContext(),
+      true,
+      makeDeps(),
+      revalidationContext(),
+    );
+    expect(segments.map((s) => [s.id, s.type])).toEqual([
+      ["L0R0.@modal", "parallel"],
+      ["L0R0.@modalD0.first", "loader"],
+      ["L0R0.@modalD1.second", "loader"],
+    ]);
+    expect(segments[0]).not.toHaveProperty("loaderDataPromise");
+    expect(segments[0]).not.toHaveProperty("loaderIds");
+    expect(segments[1]!.namespace).toBe("intercept:test");
+  });
+
+  it("in a fill with the slot held, runs neither handler nor layout, only the loaders the client lacks", async () => {
+    const entry = twoLoaders();
+    const context = makeContext();
+    context._prefetchDeferral = { mode: "fill", held: new Set() };
+    const segments = await resolveInterceptEntry(
+      entry,
+      makeParentEntry(),
+      {},
+      context,
+      true,
+      makeDeps(),
+      revalidationContext(["L0R0.@modal", "L0R0.@modalD0.first"]),
+    );
+    expect(entry.handler).not.toHaveBeenCalled();
+    expect(entry.layout).not.toHaveBeenCalled();
+    expect(segments.map((s) => [s.id, s.component])).toEqual([
+      ["L0R0.@modal", null],
+      ["L0R0.@modalD1.second", null],
+    ]);
   });
 });

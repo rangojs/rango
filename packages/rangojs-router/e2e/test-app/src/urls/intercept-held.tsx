@@ -5,11 +5,13 @@ import {
   InterceptHeldCrumbsBar,
   InterceptHeldLoaderModal,
   InterceptHeldMixedModal,
+  InterceptHeldPushModal,
   InterceptPushModal,
 } from "./intercept-held.client.js";
 import {
   InterceptHeldCrumbs,
   InterceptHeldLoader,
+  InterceptHeldPushLoader,
   InterceptPushLoader,
   InterceptRerunLoader,
 } from "./intercept-held.defs.js";
@@ -23,7 +25,10 @@ import {
 //  - /rerun/:id   control: the same modal, its loader following the default;
 //  - /mixed/:id   one loader held, one following the default;
 //  - /push/:id    the modal's loader pushes a crumb;
-//  - /handler/:id the modal's handler pushes a crumb.
+//  - /handler/:id the modal's handler pushes a crumb;
+//  - /push-held/:id the modal's handler pushes a crumb, and its loader,
+//                 which skips revalidate(), pushes one.
+// The /mixed modal links to /loader/1: both modals read the held loader.
 // The layout shows the crumb handle; it pushes "layout" itself.
 function InterceptHeldLayout() {
   return (
@@ -72,6 +77,13 @@ function InterceptHeldIndex() {
         data-testid="ih-open-handler"
       >
         Open handler-push modal
+      </Link>
+      <Link
+        to="/intercept-held/push-held/1"
+        prefetch="none"
+        data-testid="ih-open-push-held"
+      >
+        Open held-loader-push modal
       </Link>
     </div>
   );
@@ -149,6 +161,26 @@ export const interceptHeldPatterns = urls(
           ".pushItem",
           (ctx) => <InterceptPushModal id={ctx.params.id} />,
           () => [loader(InterceptPushLoader)],
+        ),
+
+        path("/push-held/:id", FullPage("ih-push-held-page"), {
+          name: "pushHeldItem",
+        }),
+        intercept(
+          "@modal",
+          ".pushHeldItem",
+          (ctx) => {
+            const renders = ++modalRenders;
+            ctx.use(InterceptHeldCrumbs)(
+              `held-handler:${ctx.params.id}:${renders}`,
+            );
+            return (
+              <InterceptHeldPushModal id={ctx.params.id} renders={renders} />
+            );
+          },
+          () => [
+            loader(InterceptHeldPushLoader, () => [revalidate(() => false)]),
+          ],
         ),
 
         path("/handler/:id", FullPage("ih-handler-page"), {

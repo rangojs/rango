@@ -379,6 +379,29 @@ const matrixRows: SemanticMatrixRow[] = [
     },
   },
   {
+    id: "I3",
+    contract:
+      "an action inside a modal re-runs only the intercept loaders whose revalidate() says so; the modal keeps the rest",
+    transport: "js",
+    execution: "action-followup",
+    scope: "n/a",
+    url: "/intercept-held",
+    assert: async ({ page }) => {
+      // The mixed modal: one loader whose revalidate() answers false, one
+      // that follows the action default (fixture: urls/intercept-held.tsx).
+      await testId(page, "ih-open-mixed").click();
+      await expect(testId(page, "ih-modal")).toBeVisible();
+      const held = await readTestIdText(page, "ih-modal-runs");
+      const rerun = await readTestIdText(page, "ih-modal-rerun-runs");
+
+      await testId(page, "ih-modal-action").click();
+
+      await expect(testId(page, "ih-modal-rerun-runs")).not.toHaveText(rerun);
+      await expect(testId(page, "ih-modal-runs")).toHaveText(held);
+      await expect(testId(page, "ih-index")).toBeVisible();
+    },
+  },
+  {
     id: "W1",
     contract: "when() returning false prevents intercept on soft navigation",
     transport: "js",

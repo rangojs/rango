@@ -43,6 +43,7 @@ import {
   deferUnit,
   fillSends,
   getPrefetchDeferral,
+  interceptFillSkips,
   registerDeferredLoader,
 } from "./prefetch-deferral.js";
 import {
@@ -155,7 +156,7 @@ const deferredLoaderRuns = new WeakMap<ResolvedSegment, () => unknown>();
  * awaits; a streamed handler that reads the loader later is not seen, and
  * that loader runs again in the fill.
  */
-function deliverStartedLoaders<TEnv>(
+export function deliverStartedLoaders<TEnv>(
   ctx: HandlerContext<any, TEnv>,
   segments: ResolvedSegment[],
 ): void {
@@ -179,14 +180,51 @@ function deliverStartedLoaders<TEnv>(
 // ---------------------------------------------------------------------------
 
 /**
- * Resolve loaders with revalidation awareness (for partial rendering).
- * Returns both segments to render AND all matched segment IDs.
+ * Whose loaders a resolveOwnerLoaders call resolves: a route entry's (or the
+ * entry its loaders are inherited into), or an intercept's, whose loaders are
+ * loader segments of its slot (`${parent}.${slot}D${i}.${$$id}`).
  */
-export async function resolveLoadersWithRevalidation<TEnv>(
+export interface LoaderOwner {
+  readonly loaders: readonly LoaderEntry[];
+  /** The segments' namespace: the entry id, or `intercept:${routeName}`. */
+  readonly namespace: string;
+  /** The segment id the loader ids extend and the handle pushes file under. */
+  readonly segmentPrefix: string;
+  /** Where a loader error renders (wrapLoaderPromise). */
+  readonly boundary: EntryData;
+  /**
+   * resolveLoaderData's PPR bake/seed key for every loader (loader-cache.ts).
+   * False for an intercept: never a document.
+   */
+  readonly bakeLane: boolean;
+  readonly traceSource: "loader" | "intercept-loader";
+}
+
+/** A route entry as a LoaderOwner, under `shortCodeOverride` when inherited. */
+export function ownerOf(
   entry: EntryData,
+  shortCodeOverride?: string,
+): LoaderOwner {
+  return {
+    loaders: entry.loader ?? [],
+    namespace: entry.id,
+    segmentPrefix: shortCodeOverride ?? entry.shortCode,
+    boundary: entry,
+    bakeLane: !entryLoadingMasksLoaders(entry.loading),
+    traceSource: "loader",
+  };
+}
+
+/**
+ * The partial lane's one loader funnel: each loader is a segment, run when
+ * the client lacks it, asked its revalidate() when held, kept outright in a
+ * fill (fillSends), deferred in a prefetch that defers it (defersLoader).
+ */
+export async function resolveOwnerLoaders<TEnv>(
+  owner: LoaderOwner,
   ctx: HandlerContext<any, TEnv>,
   belongsToRoute: boolean,
-  clientSegmentIds: Set<string>,
+  clientSegmentIds: ReadonlySet<string>,
   prevParams: Record<string, string>,
   request: Request,
   prevUrl: URL,
@@ -194,13 +232,12 @@ export async function resolveLoadersWithRevalidation<TEnv>(
   routeKey: string,
   deps: SegmentResolutionDeps<TEnv>,
   actionContext?: ActionContext,
-  shortCodeOverride?: string,
   stale?: boolean,
 ): Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }> {
-  const loaderEntries = entry.loader ?? [];
+  const loaderEntries = owner.loaders;
   if (loaderEntries.length === 0) return { segments: [], matchedIds: [] };
 
-  const shortCode = shortCodeOverride ?? entry.shortCode;
+  const shortCode = owner.segmentPrefix;
 
   // Pin `_currentSegmentId` to the OWNING entry before the kickoffs below —
   // createLoaderExecutor captures it synchronously for ctx.use(Handle) push
@@ -237,7 +274,7 @@ export async function resolveLoadersWithRevalidation<TEnv>(
                   segmentId,
                   segmentType: "loader",
                   belongsToRoute,
-                  source: "loader",
+                  source: owner.traceSource,
                   defaultShouldRevalidate: true,
                   finalShouldRevalidate: true,
                   reason: "new-segment",
@@ -248,7 +285,7 @@ export async function resolveLoadersWithRevalidation<TEnv>(
 
             const dummySegment: ResolvedSegment = {
               id: segmentId,
-              namespace: entry.id,
+              namespace: owner.namespace,
               type: "loader",
               index,
               component: null,
@@ -265,14 +302,14 @@ export async function resolveLoadersWithRevalidation<TEnv>(
               prevUrl,
               nextUrl,
               revalidations: loaderRevalidateFns.map((fn, j) => ({
-                name: `loader-revalidate${j}`,
+                name: `${owner.traceSource}-revalidate${j}`,
                 fn,
               })),
               routeKey,
               context: ctx,
               actionContext,
               stale,
-              traceSource: "loader",
+              traceSource: owner.traceSource,
               held: clientSegmentIds,
             });
           },
@@ -297,7 +334,7 @@ export async function resolveLoadersWithRevalidation<TEnv>(
   // Outside capture the key only activates the _shellLoaderSeed overlay,
   // which serveShellHit seeds for a document HIT and the PPR partial replay
   // (matchPartialWithPprReplay) seeds once its doc record hits.
-  const bakeLane = !entryLoadingMasksLoaders(entry.loading);
+  const bakeLane = owner.bakeLane;
 
   const kickoff = (
     loaderEntry: LoaderEntry,
@@ -324,7 +361,7 @@ export async function resolveLoadersWithRevalidation<TEnv>(
   ) =>
     deps.wrapLoaderPromise(
       kickoff(loaderEntry, segmentId, loaderId),
-      entry,
+      owner.boundary,
       segmentId,
       ctx.pathname,
       errorContext,
@@ -335,7 +372,7 @@ export async function resolveLoadersWithRevalidation<TEnv>(
     ({ loaderEntry, loader, segmentId, index }) => {
       const base = {
         id: segmentId,
-        namespace: entry.id,
+        namespace: owner.namespace,
         type: "loader" as const,
         index,
         component: null,
@@ -408,8 +445,8 @@ export async function resolveLoadersOnlyWithRevalidation<TEnv>(
         seenIds.has(`${sc}D${i}.${le.loader.$$id}`),
       );
     if (!allAlreadySeen) {
-      const { segments, matchedIds } = await resolveLoadersWithRevalidation(
-        entry,
+      const { segments, matchedIds } = await resolveOwnerLoaders(
+        ownerOf(entry, shortCodeOverride),
         context,
         belongsToRoute,
         clientSegmentIds,
@@ -420,7 +457,6 @@ export async function resolveLoadersOnlyWithRevalidation<TEnv>(
         routeKey,
         deps,
         actionContext,
-        shortCodeOverride,
         stale,
       );
       for (const seg of segments) {
@@ -451,8 +487,8 @@ export async function resolveLoadersOnlyWithRevalidation<TEnv>(
         entry.loader.length > 0 &&
         Object.keys(layoutEntry.parallel).length > 0
       ) {
-        const inherited = await resolveLoadersWithRevalidation(
-          entry,
+        const inherited = await resolveOwnerLoaders(
+          ownerOf(entry, layoutEntry.shortCode),
           context,
           childBelongsToRoute,
           clientSegmentIds,
@@ -463,7 +499,6 @@ export async function resolveLoadersOnlyWithRevalidation<TEnv>(
           routeKey,
           deps,
           actionContext,
-          layoutEntry.shortCode,
           stale,
         );
         for (const seg of inherited.segments) {
@@ -694,8 +729,8 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
     // emitted either before or after the slot segment per loaderOrder.
     const resolveSlotLoaders = async () => {
       if (resolvedParallelEntries.has(parallelEntry.id)) return;
-      const loaderResult = await resolveLoadersWithRevalidation(
-        parallelEntry,
+      const loaderResult = await resolveOwnerLoaders(
+        ownerOf(parallelEntry, entry.shortCode),
         context,
         belongsToRoute,
         clientSegmentIds,
@@ -706,7 +741,6 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
         routeKey,
         deps,
         actionContext,
-        entry.shortCode,
         stale,
       );
       segments.push(...loaderResult.segments);
@@ -1092,8 +1126,8 @@ export async function resolveSegmentWithRevalidation<TEnv>(
 
   const belongsToRoute = entry.type === "route";
 
-  const loaderResult = await resolveLoadersWithRevalidation(
-    entry,
+  const loaderResult = await resolveOwnerLoaders(
+    ownerOf(entry),
     context,
     belongsToRoute,
     clientSegmentIds,
@@ -1104,7 +1138,6 @@ export async function resolveSegmentWithRevalidation<TEnv>(
     routeKey,
     deps,
     actionContext,
-    undefined,
     stale,
   );
   segments.push(...loaderResult.segments);
@@ -1263,8 +1296,8 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
   const segments: ResolvedSegment[] = [];
   const matchedIds: string[] = [];
 
-  const loaderResult = await resolveLoadersWithRevalidation(
-    orphan,
+  const loaderResult = await resolveOwnerLoaders(
+    ownerOf(orphan),
     context,
     belongsToRoute,
     clientSegmentIds,
@@ -1275,7 +1308,6 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
     routeKey,
     deps,
     actionContext,
-    undefined,
     stale,
   );
   segments.push(...loaderResult.segments);
@@ -1289,8 +1321,8 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
     parentRouteEntry.loader.length > 0 &&
     Object.keys(orphan.parallel).length > 0
   ) {
-    const inheritedResult = await resolveLoadersWithRevalidation(
-      parentRouteEntry,
+    const inheritedResult = await resolveOwnerLoaders(
+      ownerOf(parentRouteEntry, orphan.shortCode),
       context,
       belongsToRoute,
       clientSegmentIds,
@@ -1301,7 +1333,6 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
       routeKey,
       deps,
       actionContext,
-      orphan.shortCode,
       stale,
     );
     // Tag as inherited so buildMatchResult can deduplicate when safe
@@ -1488,6 +1519,11 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
   latchPprHeaderScopeForEntries(entries, routeKey);
 
   const telemetry = getRouterContext()?.telemetry;
+  const fillMatch = {
+    handlerContext: context,
+    isIntercept: !!interceptResult,
+    clientSegmentSet,
+  };
 
   for (const entry of entries) {
     if (entry.type === "route" && interceptResult) {
@@ -1505,6 +1541,7 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
       }
       continue;
     }
+    if (interceptFillSkips(fillMatch, entry.shortCode)) continue;
 
     const nonParallelEntry = entry as Exclude<EntryData, { type: "parallel" }>;
     // Same latch as resolveAllSegments (fresh.ts), route-level cache() included.

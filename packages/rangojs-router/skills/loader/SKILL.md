@@ -1276,9 +1276,16 @@ The limits:
   data with the URL, and one fill runs the flagged loaders (see
   `/client-urls` → "`prefetch: false`"). A flagged `loading()` defers nothing
   on a group route, from the group or from a server layout above it.
-- **No effect inside `intercept()`.** Its loaders accept the flag and ignore
-  it, in `urls()` and in `clientUrls()`: a prefetch that resolves an
-  intercept defers nothing.
+- **Inside `intercept()`.** In `urls()` and in `clientUrls()`, a prefetch of
+  the intercept's target from its source page defers the flagged loader: the
+  click opens the modal at once, with its `loading()`, and one fill, sent
+  from the source, runs the loader. The page under the modal stays. With no
+  `loading()` the slot is empty until the fill answers, as on a plain click
+  until its response. The modal's loaders resolve together: it shows its
+  `loading()` until every one has arrived. A flagged `loading()` inside
+  `intercept()` defers nothing. Each intercept loader also runs its own
+  `revalidate()`, so an action from the modal re-runs only those that say so
+  (see `/intercept`).
 - **`ppr` and `ssr: false`.** On a `ppr` route an `ssr: false` loader is the
   bake lane and is served from the shell, so `prefetch: false` is ignored for
   it and development logs a warning. Under `cache()` and `Prerender` the flag

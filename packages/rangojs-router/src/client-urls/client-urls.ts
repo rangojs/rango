@@ -702,12 +702,13 @@ function collectIntercepts(
       let loading: ReactNode | undefined;
       for (const useItem of item.use) {
         if (useItem.type === "loader") {
-          // `prefetch` is not carried: an intercept prefetch defers nothing,
-          // so the flag is accepted and ignored, as on a urls() intercept().
           loaders.push(
             Object.freeze({
               loader: useItem.definition,
               revalidate: Object.freeze([...useItem.revalidate]),
+              ...(useItem.prefetch === false
+                ? { prefetch: false as const }
+                : {}),
             }),
           );
         } else if (useItem.type === "loading") {

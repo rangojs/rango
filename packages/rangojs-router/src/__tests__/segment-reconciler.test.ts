@@ -433,78 +433,40 @@ describe("segment-reconciler", () => {
       });
     });
 
-    describe("loader merging", () => {
-      it("merges loaders for action actor when server has fewer loaders", () => {
-        const cached = seg("L0", {
-          type: "layout",
-          loaderIds: ["a", "b"],
-          loaderDataPromise: Promise.resolve(["dataA", "dataB"]),
-        });
-        const server = seg("L0", {
-          type: "layout",
-          loaderIds: ["a"],
-          loaderDataPromise: Promise.resolve(["freshA"]),
-        });
+    describe("loaders the server skipped", () => {
+      // Every loader is a segment of its own, an intercept's too: one the
+      // server skipped is the cached segment in `matched`, on every actor.
+      it.each(["action", "navigation", "stale-revalidation"] as const)(
+        "keeps a held loader segment the server did not send (%s)",
+        (actor) => {
+          const slot = seg("L0.@modal", {
+            type: "parallel",
+            namespace: "intercept:item",
+          });
+          const held = seg("L0.@modalD0.a", {
+            type: "loader",
+            namespace: "intercept:item",
+            loaderId: "a",
+            loaderData: "cachedA",
+          });
+          const rerun = seg("L0.@modalD1.b", {
+            type: "loader",
+            namespace: "intercept:item",
+            loaderId: "b",
+            loaderData: "freshB",
+          });
 
-        const result = reconcileSegments({
-          actor: "action",
-          matched: ["L0"],
-          diff: ["L0"],
-          serverSegments: [server],
-          cachedSegments: [cached],
-        });
+          const result = reconcileSegments({
+            actor,
+            matched: ["L0", slot.id, held.id, rerun.id],
+            diff: [rerun.id],
+            serverSegments: [rerun],
+            cachedSegments: [seg("L0", { type: "layout" }), slot, held],
+          });
 
-        // Should have merged - loaderIds should be from cache
-        expect(result.segments[0].loaderIds).toEqual(["a", "b"]);
-      });
-
-      it("does NOT merge loaders for navigation actor", () => {
-        const cached = seg("L0", {
-          type: "layout",
-          loaderIds: ["a", "b"],
-          loaderDataPromise: Promise.resolve(["dataA", "dataB"]),
-        });
-        const server = seg("L0", {
-          type: "layout",
-          loaderIds: ["a"],
-          loaderDataPromise: Promise.resolve(["freshA"]),
-        });
-
-        const result = reconcileSegments({
-          actor: "navigation",
-          matched: ["L0"],
-          diff: ["L0"],
-          serverSegments: [server],
-          cachedSegments: [cached],
-        });
-
-        // Should NOT merge - loaderIds should be from server
-        expect(result.segments[0].loaderIds).toEqual(["a"]);
-      });
-
-      it("merges loaders for stale-revalidation actor", () => {
-        const cached = seg("L0", {
-          type: "layout",
-          loaderIds: ["a", "b"],
-          loaderDataPromise: Promise.resolve(["dataA", "dataB"]),
-        });
-        const server = seg("L0", {
-          type: "layout",
-          loaderIds: ["a"],
-          loaderDataPromise: Promise.resolve(["freshA"]),
-        });
-
-        const result = reconcileSegments({
-          actor: "stale-revalidation",
-          matched: ["L0"],
-          diff: ["L0"],
-          serverSegments: [server],
-          cachedSegments: [cached],
-        });
-
-        // Should merge - loaderIds should be from cache
-        expect(result.segments[0].loaderIds).toEqual(["a", "b"]);
-      });
+          expect(result.interceptSegments).toEqual([slot, held, rerun]);
+        },
+      );
     });
 
     describe("intercept splitting", () => {

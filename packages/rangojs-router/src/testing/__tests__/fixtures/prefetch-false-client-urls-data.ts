@@ -30,3 +30,4 @@ export const DetailLoader: LoaderDefinition<{ value: string }> =
   counted("detail");
 export const ModalLoader: LoaderDefinition<{ value: string }> =
   counted("modal");
+export const NoteLoader: LoaderDefinition<{ value: string }> = counted("note");

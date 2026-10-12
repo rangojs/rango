@@ -18,6 +18,20 @@ export const ClientUrlsResultLoader = createLoader(async () => {
   return { runs: resultRuns };
 });
 
+// The clientUrls() intercept's modal (intercept.tsx): a loader whose
+// revalidate() reads the action's result, and a flagged one.
+let modalResultRuns = 0;
+export const ClientUrlsModalResultLoader = createLoader(async () => {
+  modalResultRuns += 1;
+  return { runs: modalResultRuns };
+});
+
+let modalNoteRuns = 0;
+export const ClientUrlsModalNoteLoader = createLoader(async () => {
+  modalNoteRuns += 1;
+  return { runs: modalNoteRuns };
+});
+
 export const ClientUrlsDetailLoader = createLoader(
   async (ctx): Promise<{ slug: string }> => {
     await new Promise((resolve) => setTimeout(resolve, 800));

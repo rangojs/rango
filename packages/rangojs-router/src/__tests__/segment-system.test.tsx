@@ -47,7 +47,7 @@ vi.mock("../root-error-boundary.js", () => ({
   RootErrorBoundary: MockRootErrorBoundary,
 }));
 
-import { renderSegments } from "../segment-system";
+import { foldInterceptLoaders, renderSegments } from "../segment-system";
 import { Defer } from "../browser/defer";
 import { LoaderRedirect } from "../loader-redirect";
 import {
@@ -847,29 +847,128 @@ describe("segment-system", () => {
         expect(layoutOutlet.props.parallel[0].slot).toBe("@modal");
       });
 
-      it("injects intercept loader segments into parent loader group", async () => {
-        const segments: ResolvedSegment[] = [
-          seg({ id: "L0", type: "layout" }),
-          seg({ id: "L0R0", type: "route" }),
-        ];
-
-        const interceptSegments: ResolvedSegment[] = [
+      // An intercept's loaders are loader segments of its slot
+      // (router/intercept-resolution.ts); folded back onto the slot, the
+      // page under the modal keeps its element tree (foldInterceptLoaders).
+      const modalSegments = (
+        loaderData: unknown[],
+        loading?: ReactNode,
+      ): ResolvedSegment[] => [
+        seg({
+          id: "L0.@modal",
+          namespace: "intercept:item",
+          type: "parallel",
+          slot: "@modal",
+          loading,
+        }),
+        ...loaderData.map((data, i) =>
           seg({
-            id: "L0D0.modal-data",
+            id: `L0.@modalD${i}.loader${i}`,
+            namespace: "intercept:item",
             type: "loader",
-            loaderId: "modal-loader",
-            loaderData: { modal: true },
+            loaderId: `loader${i}`,
+            loaderData: data,
           }),
-        ];
+        ),
+      ];
+      const page = (): ResolvedSegment[] => [
+        seg({ id: "L0", type: "layout" }),
+        seg({ id: "L0R0", type: "route" }),
+      ];
+      const layoutOf = (result: ReactNode) =>
+        collectByType(toTreeNode(result), MockOutletProvider).find(
+          (o) => o.props.segment.id === "L0",
+        )!;
+      /** Element types from the root down to the layout's outlet. */
+      const chainTo = (result: ReactNode, id: string): unknown[] => {
+        const path: unknown[] = [];
+        const walk = (node: TreeNode | null): boolean => {
+          if (!node) return false;
+          path.push(node.type);
+          if (node.props.segment?.id === id) return true;
+          if (node.children.some(walk)) return true;
+          path.pop();
+          return false;
+        };
+        walk(toTreeNode(result));
+        return path;
+      };
 
-        const result = await renderSegments(segments, { interceptSegments });
-        const tree = toTreeNode(result);
-        const outlets = collectByType(tree, MockOutletProvider);
-
-        const layoutOutlet = outlets.find((o) => o.props.segment.id === "L0")!;
-        expect(layoutOutlet.props.loaderStreams).toEqual({
-          "modal-loader": { modal: true },
+      it("folds intercept loader segments onto their slot, not the parent's loader group", async () => {
+        const result = await renderSegments(page(), {
+          interceptSegments: modalSegments([{ a: 1 }, { b: 2 }]),
         });
+        const layout = layoutOf(result);
+        expect(layout.props.loaderStreams).toBeUndefined();
+        expect(
+          findAll(toTreeNode(result), MockStreamedLoaderErrorBoundary),
+        ).toEqual([]);
+        const [slot] = layout.props.parallel;
+        expect(slot.loaderIds).toEqual(["loader0", "loader1"]);
+        // No loading(): settled before the commit, as the server's await was.
+        expect(slot.loaderDataPromise).toEqual([{ a: 1 }, { b: 2 }]);
+      });
+
+      it("keeps the element types along the source layout's chain with the modal open", async () => {
+        const closed = await renderSegments(page());
+        const open = await renderSegments(page(), {
+          interceptSegments: modalSegments([Promise.resolve({ a: 1 })]),
+        });
+        expect(chainTo(open, "L0R0")).toEqual(chainTo(closed, "L0R0"));
+      });
+
+      it("hands a slot with loading() one memoized aggregate while it is pending", async () => {
+        const pending = new Promise(() => {});
+        const loaders = modalSegments([pending], "loading");
+        const first = layoutOf(
+          await renderSegments(page(), { interceptSegments: loaders }),
+        );
+        const second = layoutOf(
+          await renderSegments(page(), {
+            interceptSegments: loaders.map((s) => ({ ...s })),
+          }),
+        );
+        const slot = first.props.parallel[0];
+        expect(slot.loaderDataPromise).toBeInstanceOf(Promise);
+        expect(second.props.parallel[0].loaderDataPromise).toBe(
+          slot.loaderDataPromise,
+        );
+        // A new slot object: the one in the entry is never written.
+        expect(loaders[0]).not.toHaveProperty("loaderIds");
+      });
+
+      it("does not settle a slot whose loaders hold a deferred one", async () => {
+        const hole = new Defer<unknown>();
+        const segments = modalSegments([{ a: 1 }, hole]);
+        segments[2] = { ...segments[2]!, deferred: true };
+        const layout = layoutOf(
+          await renderSegments(page(), {
+            interceptSegments: segments,
+            forceAwait: true,
+          }),
+        );
+        expect(layout.props.parallel[0].loaderDataPromise).toBeInstanceOf(
+          Promise,
+        );
+      });
+
+      it("folds a slot restored unsplit from the history cache (back/forward)", async () => {
+        const result = await renderSegments(
+          [...page(), ...modalSegments([{ a: 1 }])],
+          { forceAwait: true },
+        );
+        const layout = layoutOf(result);
+        expect(layout.props.loaderStreams).toBeUndefined();
+        expect(layout.props.parallel[0].loaderIds).toEqual(["loader0"]);
+        expect(layout.props.parallel[0].loaderDataPromise).toEqual([{ a: 1 }]);
+      });
+
+      it("hands back a list with nothing to fold as it is, synchronously", () => {
+        const plain = [
+          ...page(),
+          seg({ id: "L0D0.x", type: "loader", loaderId: "x" }),
+        ];
+        expect(foldInterceptLoaders(plain, true)).toBe(plain);
       });
 
       it("attaches an intercept slot loader whose slot name contains an uppercase 'D'", async () => {
@@ -878,11 +977,6 @@ describe("segment-system", () => {
         // `${parent}.${slotName}D${i}.${loaderId}`, a slot name containing an
         // uppercase 'D' (e.g. @Detail) cut inside the slot name, so the loader
         // matched no parent and its data was silently dropped.
-        const segments: ResolvedSegment[] = [
-          seg({ id: "L0", type: "layout" }),
-          seg({ id: "L0R0", type: "route" }),
-        ];
-
         const interceptSegments: ResolvedSegment[] = [
           seg({ id: "L0.@Detail", type: "parallel", slot: "@Detail" }),
           seg({
@@ -893,14 +987,10 @@ describe("segment-system", () => {
           }),
         ];
 
-        const result = await renderSegments(segments, { interceptSegments });
-        const tree = toTreeNode(result);
-        const outlets = collectByType(tree, MockOutletProvider);
-
-        const layoutOutlet = outlets.find((o) => o.props.segment.id === "L0")!;
-        expect(layoutOutlet.props.loaderStreams).toEqual({
-          "detail-loader": { detail: true },
-        });
+        const result = await renderSegments(page(), { interceptSegments });
+        const [slot] = layoutOf(result).props.parallel;
+        expect(slot.loaderIds).toEqual(["detail-loader"]);
+        expect(slot.loaderDataPromise).toEqual([{ detail: true }]);
       });
 
       it("wraps a layout's outlet content with ViewTransition, not the layout component itself", async () => {
@@ -1345,7 +1435,7 @@ describe("segment-system", () => {
     });
 
     describe("parallel segment loaders", () => {
-      it("includes loaders from parallel segments in parent loader list", async () => {
+      it("folds a slot-prefixed loader onto its slot, not the parent's loader list", async () => {
         const segments: ResolvedSegment[] = [
           seg({ id: "L0", type: "layout" }),
           seg({ id: "L0R0", type: "route" }),
@@ -1366,12 +1456,11 @@ describe("segment-system", () => {
         const tree = toTreeNode(result);
         const outlets = collectByType(tree, MockOutletProvider);
 
-        // The layout should have sidebar loader data accessible
-        // (loaders from parallels are merged into parent's loaders)
         const layoutOutlet = outlets.find((o) => o.props.segment.id === "L0")!;
-        // The sidebar loader is grouped under the parallel "L0.@sidebar"
-        // which is a child of L0, so it gets included in L0's loader streams
-        expect(layoutOutlet.props.loaderStreams).toBeDefined();
+        expect(layoutOutlet.props.loaderStreams).toBeUndefined();
+        expect(layoutOutlet.props.parallel[0].loaderIds).toEqual([
+          "sidebar-loader",
+        ]);
       });
 
       it("reconstructs missing parallel loader markers for layout-owned parallels", async () => {

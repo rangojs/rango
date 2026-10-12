@@ -212,7 +212,12 @@ const bridge = () => ({
 });
 
 function setup(
-  adoption: { payload: unknown; layout?: ResolvedSegment },
+  adoption: {
+    payload: unknown;
+    layout?: ResolvedSegment;
+    /** The page on screen, when more than `layout`. */
+    page?: ResolvedSegment[];
+  },
   options?: {
     fill?: ReturnType<typeof bridge>;
     /** The payload a request with nothing held is answered with. */
@@ -224,7 +229,9 @@ function setup(
     mode?: UpdateMode;
   },
 ) {
-  const store = createStore(adoption.layout ? [adoption.layout] : []);
+  const store = createStore(
+    adoption.page ?? (adoption.layout ? [adoption.layout] : []),
+  );
   const { client, fill, calls } = createClient(
     adoption.payload,
     options?.whole,
@@ -525,6 +532,115 @@ function unitAdoption(overrides?: Partial<ResolvedSegment>) {
 // rango-optimistic-commit, and the presentation ends with that commit: the
 // fill after it does not count toward useOutlet().pending
 // (docs/design/prefetch-false.md, "`clientUrls()` routes").
+/**
+ * A prefetch of an intercept target from the page on screen (the source):
+ * the modal's slot, its unflagged loader, and its flagged loader deferred.
+ * The loaders are loader segments of the slot (router/intercept-resolution.ts).
+ */
+function interceptAdoption() {
+  const layout = seg("L0", { type: "layout", component: "layout" });
+  const source = seg("L0R1", { component: "list" });
+  const intercept = (id: string, overrides: Partial<ResolvedSegment>) =>
+    seg(id, { namespace: "intercept:item", ...overrides });
+  const slot = intercept("L0.@modal", {
+    type: "parallel",
+    slot: "@modal",
+    component: "modal",
+    loading: "modal-loading",
+  });
+  const a = intercept("L0.@modalD0.a", {
+    type: "loader",
+    component: null,
+    loaderId: "a",
+    loaderData: { a: 1 },
+  });
+  const b = intercept("L0.@modalD1.b", {
+    type: "loader",
+    component: null,
+    loaderId: "b",
+    deferred: true,
+  });
+  const matched = ["L0", "L0R1", slot.id, a.id, b.id];
+  return {
+    page: [layout, source],
+    slot,
+    a,
+    b,
+    matched,
+    payload: {
+      metadata: {
+        isPartial: true,
+        segments: [slot, a, b],
+        matched,
+        diff: [slot.id, a.id, b.id],
+        slots: { "@modal": { active: true, segments: [slot, a, b] } },
+      },
+    },
+  };
+}
+
+describe("an intercept adoption", () => {
+  it("commits the source page with the modal at once and fills from the source, with the intercept source", async () => {
+    const adoption = interceptAdoption();
+    const { adopt, onUpdate, renderSegments, calls, tx } = setup(adoption);
+    await adopt();
+
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+    expect(renderSegments).toHaveBeenCalledTimes(1);
+    expect(renderSegments.mock.calls[0][1]?.interceptSegments).toEqual([
+      adoption.slot,
+      adoption.a,
+      adoption.b,
+    ]);
+    expect(tx.commit.mock.calls[0][0]).toEqual(
+      adoption.matched.filter((id) => id !== adoption.b.id),
+    );
+    // From the target nothing intercepts: the fill names the source.
+    expect(calls[1]).toMatchObject({
+      fill: true,
+      previousUrl: "http://localhost/",
+      interceptSourceUrl: "http://localhost/",
+      segmentIds: adoption.matched.filter((id) => id !== adoption.b.id),
+    });
+  });
+
+  it("resolves the deferred intercept loader with the fill's value; the entry keeps the fill's segment", async () => {
+    const adoption = interceptAdoption();
+    const { adopt, fill, onUpdate, store } = setup(adoption);
+    const { navigation } = await adopt();
+    const hole = deferOf(adoption.b);
+
+    const filledB = seg(adoption.b.id, {
+      namespace: "intercept:item",
+      type: "loader",
+      component: null,
+      loaderId: "b",
+      loaderData: { b: 2 },
+    });
+    fill.resolve(fillPayload([filledB], adoption.matched) as any);
+    await navigation;
+
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+    expect(hole.status).toBe("fulfilled");
+    expect(await hole.promise).toEqual({ b: 2 });
+    expect(store.cache.get("/product")!.segments).toContain(filledB);
+    expect(store.setSegmentIds).toHaveBeenLastCalledWith(adoption.matched);
+  });
+
+  it("renders a fill answered without the slot as the navigation's outcome", async () => {
+    const adoption = interceptAdoption();
+    const { adopt, fill, onUpdate } = setup(adoption);
+    const { navigation } = await adopt();
+
+    // when() declined the intercept in the fill: the full target page.
+    const target = seg("L0R0", { component: "item" });
+    fill.resolve(fillPayload([target], ["L0", "L0R0"]) as any);
+    await navigation;
+
+    expect(onUpdate).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("a clientUrls() click that presented its destination", () => {
   it("commits once in the optimistic-commit transition, clears the presentation after the hand-over and before the fill answers, then resolves the deferred", async () => {
     const adoption = loaderAdoption();

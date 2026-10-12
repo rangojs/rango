@@ -351,6 +351,7 @@ import {
 import mixedClientUrls from "./mixed-client/urls.js";
 import pureClientUrls from "./client-urls/urls.js";
 import { rewritePatterns } from "./pages/rewrite.js";
+import clientUrlsInterceptPatterns from "./client-urls/intercept.js";
 import slowClientUrls, { SlowChrome } from "./client-urls/slow.js";
 import layoutLoaderClientUrls from "./client-urls-layout-loader/urls.js";
 import clientUrlsVarsPatterns from "./client-urls-vars/urls.js";
@@ -1227,6 +1228,11 @@ export const urlpatterns = urls(
           loader(MirrorVehicleLoader),
           include("/__client-urls", pureClientUrls),
         ]),
+        // A clientUrls() group with a module-local intercept whose loaders
+        // take prefetch: false and a server-run revalidate().
+        include("/__client-urls-intercept", clientUrlsInterceptPatterns, {
+          name: "clientUrlsIntercept",
+        }),
         // Route middleware vars (createVar token + string key) reach a group
         // loader on the document and partial lanes; the fetch lane is pinned
         // separately (e2e/client-urls-vars.test.ts).

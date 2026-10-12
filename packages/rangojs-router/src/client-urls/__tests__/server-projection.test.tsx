@@ -250,8 +250,8 @@ describe("client URL server projection", () => {
     expect(product!.awaitedLoaderIndices).toEqual([3]);
     // The layout's flagged loader flattens onto every route below it.
     expect(plain!.deferrableLoaderIndices).toEqual([0]);
-    // An intercept's loaders ignore the flag (R8): nothing to project.
-    expect(JSON.stringify(projection.intercepts)).not.toContain("deferrable");
+    // An intercept's flagged loader projects as a route's does.
+    expect(projection.intercepts![0]!.deferrableLoaderIndices).toEqual([0]);
     expect(JSON.parse(JSON.stringify(projection))).toEqual(projection);
 
     // A projection serialized before the option existed has no field.
@@ -298,7 +298,7 @@ describe("client URL server projection", () => {
     ]);
     const groupLayout = entry.parent!;
     const interceptEntry = groupLayout.intercept[0]!;
-    expect(interceptEntry.loader.map((l) => l.prefetch)).toEqual([undefined]);
+    expect(interceptEntry.loader.map((l) => l.prefetch)).toEqual([false]);
   });
 
   it("projects ppr (true and JSON config), rejects malformed ppr values", () => {
@@ -892,6 +892,62 @@ describe("client URL server projection", () => {
       expect(
         await runRevalidate(scoped.revalidate, { vars: { flag: "on" } }),
       ).toBe(true);
+    });
+
+    it("projects an intercept loader's hoisted keys and runs them on the server with the action result", async () => {
+      const source = clientUrls(({ path, intercept, loader, revalidate }) => [
+        path("/items/:id", AccountPage, { name: "item" }),
+        intercept("@modal", ".item", AccountPage, () => [
+          loader(loaderDefinition("loaders#modal"), () => [
+            revalidate(marker("k-modal")),
+          ]),
+          loader(loaderDefinition("loaders#plain")),
+        ]),
+      ]);
+      registerClientUrlRevalidators({
+        "k-modal": ({ actionResult }) => actionResult?.ok === true,
+      });
+      const projection = serializeClientUrlPatterns(source, { hoisted: true });
+      expect(projection.intercepts![0]!.loaderRevalidate).toEqual([
+        ["k-modal"],
+        [],
+      ]);
+      expect(JSON.parse(JSON.stringify(projection))).toEqual(projection);
+
+      const entry = materializeRoute(
+        clientReference("app.urls#intercept-hoisted"),
+        projection,
+        "item",
+      );
+      const [modal, plain] = entry.parent!.intercept[0]!.loader;
+      expect(plain!.revalidate).toEqual([]);
+      const action = (result: unknown) => ({
+        action: { ref: "src/modal.ts#save", result },
+        currentUrl: "http://localhost/items/1",
+      });
+      expect(await runRevalidate(modal!.revalidate, action({ ok: true }))).toBe(
+        true,
+      );
+      expect(
+        await runRevalidate(modal!.revalidate, action({ ok: false })),
+      ).toBe(false);
+
+      // An unhoisted predicate on an intercept loader fails as a route's does.
+      expect(() =>
+        serializeClientUrlPatterns(
+          clientUrls(({ path, intercept, loader, revalidate }) => [
+            path("/items/:id", AccountPage, { name: "item" }),
+            intercept("@modal", ".item", AccountPage, () => [
+              loader(loaderDefinition("loaders#modal"), () => [
+                revalidate(() => false),
+              ]),
+            ]),
+          ]),
+          { hoisted: true },
+        ),
+      ).toThrow(
+        'clientUrls() revalidate() on loader "loaders#modal" of intercept ".item" was not hoisted to the server',
+      );
     });
 
     it("fails at materialization when a hoisted key has no server registration", () => {

@@ -273,10 +273,10 @@ with the ternary above instead (same rule as a server-tree loader). A bare
 `isAction(refs)` is a hard `false` on navigation too, so the loader stops
 refetching when params change.
 
-`intercept()` loaders inside `clientUrls()` do not apply their `revalidate()`
-yet (a known gap, left for a follow-up). The build still checks those
-predicates like any other, so one that captures a binding of the `"use client"`
-module fails the build although nothing runs it: import it, or drop it.
+`intercept()` loaders inside `clientUrls()` take `revalidate()` the same way:
+the build moves the predicate to the server, and it runs there with the same
+arguments, `actionResult` included, so an action from the modal re-runs only
+the loaders whose predicate says so.
 
 Two scars worth copying:
 
@@ -485,7 +485,9 @@ only a segment new to the page is deferred, so a same-route click
   that layout is new to the page (entering the group from outside).
 - `loading()` in `clientUrls()` takes no options, and a flagged `loading()`
   on a server layout above the group defers nothing for the group's routes.
-- `intercept()` loaders accept the flag and ignore it, as in `urls()`.
+- On an `intercept()` loader the flag works as in `urls()`: an in-group
+  prefetch of the intercept's target defers it, and the click opens the modal
+  at once with one fill for it.
 - With `ssr: false` on a `ppr` group route the flag is ignored (the bake
   lane), as on a server route.
 - Test it with `serveShellRequest` in the Flight project: mount the module
