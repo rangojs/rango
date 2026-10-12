@@ -44,16 +44,17 @@ The `ctx` your middleware reads. Notable fields:
 
 ### Returns — `RunMiddlewareResult<TEnv>`
 
-| Field             | Type                      | Meaning                                                                                                                                                                                                                                                      |
-| ----------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `response`        | `Response`                | The final Response: the downstream response, or a middleware short-circuit.                                                                                                                                                                                  |
-| `ctx`             | `RequestContext<TEnv>`    | The underlying RequestContext (NOT a per-middleware `MiddlewareContext`). Use `ctx.get(...)` for anything the envelope above doesn't surface.                                                                                                                |
-| `nextCalled`      | `number`                  | Times the terminal handler ran: `0` on short-circuit, `1` on pass-through.                                                                                                                                                                                   |
-| `dynamic`         | `boolean`                 | Whether the chain called `ctx.dynamic()` (the PPR shell opt-out).                                                                                                                                                                                            |
-| `cookies`         | `Record<string, string>`  | Effective cookie view: request cookies merged with chain sets/deletes (last-write-wins), as `{ name: value }`.                                                                                                                                               |
-| `headers`         | `Record<string, string>`  | Final response headers as `{ name: value }`, lowercased, EXCLUDING `set-cookie` (use `cookies`).                                                                                                                                                             |
-| `locationState`   | `Record<string, unknown>` | Flat `{ key: value }` state set via `setLocationState()` / `redirect({ state })` (empty when none).                                                                                                                                                          |
-| `stateCookieName` | `string`                  | The resolved rango state cookie name seeded for the run (default `rango-state_router_0`). Assert a middleware's `invalidateClientCache()` rotation against it without recomputing — parity with `runInRequestContext` / `runLoaderResult` / `renderHandler`. |
+| Field             | Type                      | Meaning                                                                                                                                                                                                                                                                     |
+| ----------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `response`        | `Response`                | The final Response: the downstream response, or a middleware short-circuit.                                                                                                                                                                                                 |
+| `ctx`             | `RequestContext<TEnv>`    | The underlying RequestContext (NOT a per-middleware `MiddlewareContext`). Use `ctx.get(...)` for anything the envelope above doesn't surface.                                                                                                                               |
+| `nextCalled`      | `number`                  | Times the terminal handler ran: `0` on short-circuit, `1` on pass-through.                                                                                                                                                                                                  |
+| `rewrite`         | `RunMiddlewareRewrite?`   | The target of a `throw rewrite(...)`: `{ pathname, search, routeName? }`, resolved as production resolves it (a path basename-prefixed, a name through `routeMap`). `undefined` when nothing rewrote. On a rewrite, `response` carries what the chain set before the throw. |
+| `dynamic`         | `boolean`                 | Whether the chain called `ctx.dynamic()` (the PPR shell opt-out).                                                                                                                                                                                                           |
+| `cookies`         | `Record<string, string>`  | Effective cookie view: request cookies merged with chain sets/deletes (last-write-wins), as `{ name: value }`.                                                                                                                                                              |
+| `headers`         | `Record<string, string>`  | Final response headers as `{ name: value }`, lowercased, EXCLUDING `set-cookie` (use `cookies`).                                                                                                                                                                            |
+| `locationState`   | `Record<string, unknown>` | Flat `{ key: value }` state set via `setLocationState()` / `redirect({ state })` (empty when none).                                                                                                                                                                         |
+| `stateCookieName` | `string`                  | The resolved rango state cookie name seeded for the run (default `rango-state_router_0`). Assert a middleware's `invalidateClientCache()` rotation against it without recomputing — parity with `runInRequestContext` / `runLoaderResult` / `renderHandler`.                |
 
 ## Recipe
 
@@ -88,6 +89,26 @@ describe("requireUser", () => {
 ```
 
 Pass an array to run several in order. Cookies set inside middleware via the standalone `cookies().set(...)` (imported from `@rangojs/router`, NOT a `ctx` method) surface on the result's `cookies` and on the merged response `Set-Cookie`.
+
+### A middleware that rewrites
+
+A `throw rewrite(target)` (see `/middleware` → "Rewrite") does not fail the run: `result.rewrite` names the target, and the values and cookies the chain set before the throw are on `result.ctx` and `result.cookies`, as production keeps them for the target. `runMiddleware` does not run the target; `dispatch` (response routes) and `serveShellRequest` (component routes) re-dispatch it as the router does.
+
+```ts
+it("rewrites a locked page to the maintenance route", async () => {
+  const result = await runMiddleware(maintenance, {
+    request: "/shop",
+    routeMap: { maintenance: "/maintenance" },
+  });
+  expect(result.rewrite).toEqual({
+    pathname: "/maintenance",
+    search: "",
+    routeName: "maintenance",
+  });
+  expect(result.nextCalled).toBe(0);
+  expect(result.ctx.get(Lock)).toEqual({ until: "12:00" });
+});
+```
 
 ## Caveats
 

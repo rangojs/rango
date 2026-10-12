@@ -1,6 +1,6 @@
 ---
 name: middleware
-description: Define global (router.use) and route (middleware()) middleware in @rangojs/router — auth gates, logging, response headers, context variables, redirects. Use when gating routes behind auth checks, logging requests, setting headers or ctx variables before a handler runs, or deciding whether middleware wraps server actions.
+description: Define global (router.use) and route (middleware()) middleware in @rangojs/router — auth gates, logging, response headers, context variables, redirects, rewrites (throw rewrite() renders another route at the same URL). Use when gating routes behind auth checks, logging requests, setting headers or ctx variables before a handler runs, showing a maintenance page at the visitor's URL, or deciding whether middleware wraps server actions.
 argument-hint: [middleware-name]
 ---
 
@@ -19,7 +19,7 @@ There are two levels of middleware with different execution scopes:
 
 ### Global middleware (`router.use()`)
 
-Registered on the router instance. Wraps the **entire request**, including server actions, rendering, and progressive enhancement (PE) re-renders.
+Registered on the router instance. Wraps the **entire request**, including server actions, rendering, and progressive enhancement (PE) re-renders. A request a middleware rewrites (`throw rewrite()`, below) runs the chain again for the target: once per pass.
 
 ```typescript
 const router = createRouter<AppEnv>({})
@@ -257,6 +257,8 @@ export const myMiddleware: Middleware = async (ctx, next) => {
   ctx.headers; // response Headers (stub before next(), the real response after)
   ctx.setLocationState(FlashMessage({ text: "Saved" })); // history state for the client
   ctx.reverse("home"); // URL for a global route name (no ".name", no param auto-fill)
+  ctx.rewrittenFrom; // the visitor's URL when this request was rewritten, else undefined
+  ctx.isRewrite(error); // true for a thrown rewrite() (rethrow it from a try/catch)
 
   // Opt the current request out of PPR shell lookup/capture.
   ctx.dynamic();
@@ -427,6 +429,132 @@ export const requireAuthMiddleware: Middleware = async (ctx, next) => {
 Read the flash on the target page with `useLocationState(FlashMessage)`. The `{ flash: true }` option makes it auto-clear after first render. See `/hooks`.
 
 A redirect is followed on a link click, `router.push()`, and Back/Forward to an entry the client has to fetch. On Back/Forward the redirect replaces the history entry it was triggered from: Back from the target lands on the entry before the redirecting one, not on the redirecting one again. The client follows at most 20 redirects in one navigation; a loop (two pages redirecting to each other) stops there with the error boundary and a `[rango] Server redirect loop` console error.
+
+## Rewrite: another route at the same URL
+
+`throw rewrite(target)` renders another route while the address bar keeps the
+visitor's URL: a maintenance or lock page, a deploy migration, a URL override,
+an A/B or geo split. A redirect changes the URL; a rewrite does not.
+
+```typescript
+import { getRequestContext, rewrite } from "@rangojs/router";
+import type { Middleware } from "@rangojs/router";
+
+export const maintenance: Middleware = async (ctx, next) => {
+  if (!locked || ctx.pathname === "/maintenance") return next();
+  // Mutations get a Response: a rewrite cannot answer a server action or a form post.
+  if (ctx.request.method !== "GET") {
+    return new Response("Maintenance", {
+      status: 503,
+      headers: { "Retry-After": "600" },
+    });
+  }
+  ctx.set(Lock, { until });
+  throw rewrite("maintenance");
+};
+
+// urls.tsx — the target sets its own status
+path("/maintenance", MaintenancePage, { name: "maintenance" }, () => [
+  middleware(async (ctx, next) => {
+    getRequestContext().setStatus(503);
+    ctx.header("Retry-After", "600");
+    await next();
+  }),
+]);
+```
+
+Targets, like `ctx.reverse` with a path form:
+
+```typescript
+throw rewrite("/maintenance"); // a path (basename-prefixed like redirect())
+throw rewrite("/maintenance?from=shop"); // a path with search
+throw rewrite("maintenance"); // a global route name without params
+throw rewrite("product", { slug }); // with params
+throw rewrite("product", { slug }, { tab: "reviews" }); // and search
+```
+
+**How it runs.** The throw unwinds the request to the router, which runs it
+again as the target, from the top, as a direct visit would: global middleware
+matched on the target's path (a `.use("/admin/*", guard)` or an inline
+`ctx.pathname` check decides on the rendered route), the target's route
+middleware, its render. Code after `await next()` in the pass that rewrote
+never runs, and global middleware runs once per pass: guard work you want
+once per request with `if (!ctx.rewrittenFrom)`.
+
+**Same request context.** Values you `ctx.set()` before the throw are
+readable in the target's middleware, handlers and loaders; cookies, headers
+and the status you set stay on the response; location state, theme and
+`ctx.dynamic()` carry over. The request, URLs, params and route name are the
+target's, and handle pushes start empty.
+
+**Old and new URL.** `ctx.url`, `ctx.pathname` and `ctx.searchParams` are
+the target's; `ctx.rewrittenFrom` is the visitor's URL (search included; the
+first URL after several rewrites; `undefined` when nothing rewrote).
+`usePathname()` and `useSearchParams()` show the visitor's URL in the server
+HTML and after hydration; `useParams()` and the route name are the target's.
+The response carries `x-rango-rewrite: <target pathname>`.
+
+**Throw it, don't return it.** A returned rewrite is an error. Where a
+rewrite cannot be honored it is an error that names the rule: a route
+handler, a loader (`ssr: false` included), a server action (use
+`redirect()`), intercept middleware, a loader fetch (`useFetchLoader`,
+`load()`) or its middleware, and middleware handling a non-GET request (a
+JS action or a no-JS form post: return a `Response`).
+
+**try/catch around next().** A thrown rewrite passes through your
+middleware's `catch`. Rethrow it:
+
+```typescript
+export const errorPage: Middleware = async (ctx, next) => {
+  try {
+    return await next();
+  } catch (error) {
+    if (ctx.isRewrite(error)) throw error;
+    return new Response("Something went wrong", { status: 500 });
+  }
+};
+```
+
+**Loops.** More than 5 rewrites in one request, or a rewrite to the URL the
+request is on, answers 508 and reports a `RewriteLoopError` (its message has
+the trail, `/a -> /b -> /a`) through `onError` with phase `"routing"`.
+
+**Caches.**
+
+- The document cache keys a rewritten request by the target's URL, as a
+  direct visit. Register the rewriting middleware **before**
+  `createDocumentCacheMiddleware()`: a cache hit for the visitor's URL would
+  be served before your middleware runs. A cached target page (and a PPR
+  shell of the target) carries the target's pathname, so a component that
+  renders `usePathname()` can mismatch on hydration at the visitor's URL.
+- The client's prefetch and history caches keep a rewritten page under the
+  visitor's URL, and nothing tells them about the rewrite: a page prefetched
+  during a lock shows the lock page for up to `prefetchCacheTTL` after the
+  lock lifts. `invalidateClientCache()` drops a client's caches, for the
+  client that receives the response; mark the clients that saw the lock and
+  call it on their first response after it lifts:
+
+  ```typescript
+  import { cookies, invalidateClientCache, rewrite } from "@rangojs/router";
+
+  export const maintenance: Middleware = async (ctx, next) => {
+    if (!locked) {
+      if (cookies().get("saw-lock")) {
+        cookies().delete("saw-lock");
+        invalidateClientCache();
+      }
+      return next();
+    }
+    cookies().set("saw-lock", "1", { path: "/" });
+    // ...the lock as above
+    throw rewrite("maintenance");
+  };
+  ```
+
+**Testing.** `runMiddleware` reports a thrown rewrite as `result.rewrite`
+(`{ pathname, search, routeName? }`); `dispatch` re-dispatches it like the
+router does; `renderRoute(..., { request: "/shop", rewrite: "/maintenance" })`
+renders the target's route at the visitor's URL. See `/testing`.
 
 ## Authentication Middleware
 

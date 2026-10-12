@@ -2,6 +2,94 @@
 
 ## Unreleased
 
+### Added: `throw rewrite()` renders another route at the same URL from middleware
+
+A middleware can now answer a request with another route while the address
+bar keeps the visitor's URL: a maintenance or lock page, a deploy migration, a
+URL override, an A/B or geo split.
+
+Before, the choices were a redirect (the URL changes, and the visitor lands on
+`/maintenance`) or a hand-built `Response` (no layouts, no loaders, no
+client navigation):
+
+```ts
+router.use(async (ctx, next) => {
+  if (!locked) return next();
+  return redirect("/maintenance"); // the address bar shows /maintenance
+});
+```
+
+Now:
+
+```ts
+import { rewrite } from "@rangojs/router";
+
+router.use(async (ctx, next) => {
+  if (!locked) return next();
+  throw rewrite("maintenance"); // the address bar keeps /shop
+});
+```
+
+The maintenance recipe, with the status set by the target and mutations
+answered with a `Response`:
+
+```ts
+router.use(async (ctx, next) => {
+  if (!locked || ctx.pathname === "/maintenance") return next();
+  if (ctx.request.method !== "GET") {
+    return new Response("Maintenance", {
+      status: 503,
+      headers: { "Retry-After": "600" },
+    });
+  }
+  ctx.set(Lock, { until });
+  throw rewrite("maintenance");
+});
+
+path("/maintenance", MaintenancePage, { name: "maintenance" }, () => [
+  middleware(async (ctx, next) => {
+    getRequestContext().setStatus(503);
+    ctx.header("Retry-After", "600");
+    await next();
+  }),
+]);
+```
+
+What a rewrite does:
+
+- The request runs again as the target, from the top: global middleware
+  matched on the target's path (so a guard scoped to it runs), the target's
+  route middleware, its render. Code after `await next()` of the pass that
+  rewrote never runs.
+- The request context is the same object: a value you `ctx.set()` before the
+  throw is readable in the target's middleware, handlers and loaders, and
+  cookies and headers you set are on the response.
+- `ctx.url`, `ctx.pathname` and `ctx.searchParams` are the target's;
+  `ctx.rewrittenFrom` is the visitor's URL (`undefined` when nothing
+  rewrote). `usePathname()` shows the visitor's URL on the server and after
+  hydration. The response carries `x-rango-rewrite: <target pathname>`.
+- `rewrite("/path?search")` takes a path in your app (basename-prefixed like
+  `redirect()`), `rewrite("name", params, search)` a global route name.
+- More than 5 rewrites, or a rewrite to the URL the request is on, answers 508
+  and reports a `RewriteLoopError` through `onError` (phase `"routing"`).
+- Throw it, don't return it: a returned rewrite is an error. Throwing it from a
+  route handler, a loader, a server action (use `redirect()`), intercept
+  middleware, a loader fetch, or from middleware handling a non-GET request (a
+  mutation: return a `Response`) is an error that names the rule.
+- A middleware that wraps `next()` in `try`/`catch` rethrows a rewrite with
+  `ctx.isRewrite(error)`; the document cache middleware does.
+- Register the rewriting middleware before `createDocumentCacheMiddleware()`:
+  a cache hit for the visitor's URL would skip the lock. The client's prefetch
+  and history caches keep the lock page under the visitor's URL; calling
+  `invalidateClientCache()` in the first response a client gets after the
+  lock lifts drops it (the `/middleware` skill has the recipe).
+
+Testing: `runMiddleware` reports a thrown rewrite as `result.rewrite`
+(`{ pathname, search, routeName? }`) instead of failing, `dispatch` runs the
+rewritten request like the router does, and `renderRoute` takes
+`rewrite: "/target"` to render a rewritten page at the visitor's URL. See
+`/middleware` → "Rewrite".
+
 ### Fixed: names like `constructor`, `toString` or `__proto__` in a request or in loader data are ordinary keys ([#1109](https://github.com/rangojs/rango/issues/1109))
 
 Cookie names, URL segments and fetchable-loader params come from the request,
