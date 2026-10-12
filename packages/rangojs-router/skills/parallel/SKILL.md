@@ -206,9 +206,9 @@ parallel(
   () => [
     // The loader keeps its own revalidation: by default it re-runs after
     // every action. Scope it here to stop that.
-    loader(CategoriesLoader, () => [revalidate(() => false)]),
+    loader(CategoriesLoader, () => [revalidate(false)]),
     loading(<SidebarSkeleton />),
-    revalidate(() => false), // the slot component renders once, then is kept
+    revalidate(false), // the slot component renders once, then is kept
   ]
 )
 ```
@@ -430,7 +430,7 @@ boundary above it: the route's `loading()`, replacing the entire route content
 with the route skeleton while one slot refetches. Either scope the slot's
 `revalidate()` (share the route's named contract, as above) or give the slot
 its own `loading()` so the fallback stays local. Don't reach for a bare
-`revalidate(() => false)`: the slot then never refreshes on param changes
+`revalidate(false)`: the slot then never refreshes on param changes
 either, and keeps the previous param's content on e.g. a product-to-product
 navigation.
 
@@ -438,7 +438,7 @@ navigation.
 it the first time. A slot the browser has not rendered yet has nothing to keep
 showing, so on that first render the decision is clamped to `true` and your
 callback's `false` is ignored; from then on it is honored and the browser keeps
-the copy it already has. So `revalidate(() => false)` means "render once, then
+the copy it already has. So `revalidate(false)` means "render once, then
 never re-render", never "don't appear".
 
 Revalidate callbacks must be synchronous. A callback that returns a Promise is
@@ -565,7 +565,7 @@ export const shopPatterns = urls(({
       { "@sidebar": () => <CategorySidebar /> },
       () => [
         loader(CategoriesLoader),
-        revalidate(() => false),
+        revalidate(false),
       ]
     ),
 

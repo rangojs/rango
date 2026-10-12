@@ -180,7 +180,7 @@ A loader that throws while it re-runs after the action is a different case: the 
 
 After an action finishes, Rango runs a server-side revalidation render for the matched route so handlers and loaders see the new state. The defaults:
 
-- Every loader re-runs. Opt a loader out with `revalidate(() => false)`.
+- Every loader re-runs. Opt a loader out with `revalidate(false)`.
 - The matched route's own entry re-runs — its handler plus the layouts and parallels that belong to it.
 - Outer layouts are skipped. A layout that shows data the action changed has to opt in.
 
@@ -200,7 +200,7 @@ export const urlpatterns = urls(({ layout, path, loader, revalidate }) => [
     path("/cart", CartPage, { name: "cart" }, () => [loader(CartLoader)]),
     path("/", HomePage, { name: "home" }, () => [
       // Static content: skip the re-run after every action.
-      loader(HomepageLoader, () => [revalidate(() => false)]),
+      loader(HomepageLoader, () => [revalidate(false)]),
     ]),
   ]),
 ]);

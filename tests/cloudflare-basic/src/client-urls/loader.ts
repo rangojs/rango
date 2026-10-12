@@ -32,6 +32,20 @@ export const ClientUrlsModalNoteLoader = createLoader(async () => {
   return { runs: modalNoteRuns };
 });
 
+// revalidate(true) / revalidate(false) probes (urls.tsx): the first re-runs
+// on every request, the second renders once and then holds.
+let alwaysRuns = 0;
+export const ClientUrlsAlwaysLoader = createLoader(async () => {
+  alwaysRuns += 1;
+  return { runs: alwaysRuns };
+});
+
+let heldRuns = 0;
+export const ClientUrlsHeldLoader = createLoader(async () => {
+  heldRuns += 1;
+  return { runs: heldRuns };
+});
+
 export const ClientUrlsDetailLoader = createLoader(
   async (ctx): Promise<{ slug: string }> => {
     await new Promise((resolve) => setTimeout(resolve, 800));

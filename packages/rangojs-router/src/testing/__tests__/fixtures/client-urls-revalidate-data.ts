@@ -25,6 +25,14 @@ export const ResultLoader: Counted = counted("result");
 export const ScopedLoader: Counted = counted("scoped");
 export const ForcedLoader: Counted = counted("forced");
 export const StaleLoader: Counted = counted("stale");
+// revalidate(true) / revalidate(false) / no revalidate(), in the group and
+// on a server route.
+export const AlwaysLoader: Counted = counted("always");
+export const NeverLoader: Counted = counted("never");
+export const DefaultLoader: Counted = counted("default");
+export const ServerAlwaysLoader: Counted = counted("server-always");
+export const ServerNeverLoader: Counted = counted("server-never");
+export const ServerDefaultLoader: Counted = counted("server-default");
 
 export async function resultAction(ok: boolean): Promise<{ ok: boolean }> {
   return { ok };

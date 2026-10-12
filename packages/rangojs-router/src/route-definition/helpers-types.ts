@@ -183,7 +183,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * // With loaders and revalidation (revalidate() goes on the loader;
    * // an intercept-level revalidate() throws)
    * intercept("@modal", "card", () => <CardModal />, () => [
-   *   loader(CardModalLoader, () => [revalidate(() => false)]),
+   *   loader(CardModalLoader, () => [revalidate(false)]),
    * ])
    *
    * // Conditional activation via the config object's `when` selector
@@ -288,6 +288,9 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * revalidate(({ defaultShouldRevalidate }) =>
    *   ({ defaultShouldRevalidate: true })
    * )
+   *
+   * // Shorthand for a constant hard decision: revalidate(() => false)
+   * revalidate(false)
    * ```
    * Not valid directly inside intercept() use() (throws at definition time):
    * intercepts only revalidate their loaders, so attach it there with
@@ -298,8 +301,10 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *     for downstream revalidators),
    *   - or nothing / `null` / `undefined` (defer — leaves the suggestion
    *     unchanged and continues to the next revalidator).
+   *   Or `true` / `false`: shorthand for `() => true` / `() => false`. A
+   *   defer has no shorthand; write the function.
    */
-  revalidate: (fn: ShouldRevalidateFn<any, TEnv>) => RevalidateItem;
+  revalidate: (fn: ShouldRevalidateFn<any, TEnv> | boolean) => RevalidateItem;
   /**
    * Attach a data loader to the current route/layout
    * ```typescript

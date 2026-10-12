@@ -40,6 +40,38 @@ does. It was unset before.
 source header the browser sends from an open modal and with an intercept's
 fill, so a test can serve both.
 
+### Added: `revalidate(true)` and `revalidate(false)` shorthand in `urls()` and `clientUrls()`
+
+`revalidate()` now takes a boolean as well as a predicate, wherever it is
+accepted: on a route, layout, parallel or loader in `urls()`, and on a loader
+in a `clientUrls()` group, an intercept's loader included in both.
+`revalidate(true)` means `revalidate(() => true)`: re-run on every navigation
+and action. `revalidate(false)` means `revalidate(() => false)`: keep the
+client's copy once it holds one.
+
+Before:
+
+```ts
+loader(SessionLoader, () => [revalidate(() => false)]),
+loader(TickerLoader, () => [revalidate(() => true)]),
+```
+
+Now:
+
+```ts
+loader(SessionLoader, () => [revalidate(false)]),
+loader(TickerLoader, () => [revalidate(true)]),
+```
+
+The decisions are the same as the function form. To defer to the default,
+still write a predicate that returns `undefined`: `revalidate(undefined)` and
+any other non-function, non-boolean argument now throw when `urls()` is
+built. Before, the router called it like a predicate on each request, logged
+the `TypeError` and deferred. In a `clientUrls()` module the build leaves a
+boolean literal in place, and moves any other argument to the server as
+before; an imported boolean (`revalidate(FLAG)`) works there too.
+`runRevalidate` from `@rangojs/router/testing` takes the booleans as well.
+
 ### Fixed: a modal keeps the data of a loader that skips `revalidate()` when a link in it opens another modal
 
 **Before.** A link in an open modal to another intercepted route whose modal

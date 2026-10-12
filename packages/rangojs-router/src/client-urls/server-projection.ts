@@ -19,6 +19,7 @@ import type {
 import type { PathHelpers } from "../urls/path-helper-types.js";
 import type { AllUseItems } from "../route-types.js";
 import { urls } from "../urls/urls-function.js";
+import { toShouldRevalidateFn } from "../router/revalidation.js";
 import { isHoistedRevalidateRef } from "./hoisted-revalidate.js";
 import { getClientUrlRevalidator } from "./revalidate-registry.js";
 import {
@@ -102,11 +103,11 @@ export interface ClientUrlProjectionRoute {
    *  loader(), so a prefetch of the route defers them. Absent (= none) in
    *  projections serialized before the option existed. */
   readonly deferrableLoaderIndices?: readonly number[];
-  /** Per loader (aligned with loaderIds), the keys of its hoisted
-   *  revalidate() predicates in declaration order; materialization attaches
-   *  the registered predicates (revalidate-registry.ts). Absent when no
-   *  loader declares one. */
-  readonly loaderRevalidate?: readonly (readonly string[])[];
+  /** Per loader (aligned with loaderIds), its revalidate() arguments in
+   *  declaration order: a hoisted predicate's key, whose registration
+   *  materialization attaches (revalidate-registry.ts), or a boolean
+   *  literal. Absent when no loader declares one. */
+  readonly loaderRevalidate?: readonly (readonly (string | boolean)[])[];
   /** Data-only transition config (never `when`); absent in projections
    *  serialized before transition support. */
   readonly transition?: Readonly<ClientTransitionConfig>;
@@ -125,7 +126,7 @@ export interface ClientUrlProjectionIntercept {
   /** As on a route (ClientUrlProjectionRoute.deferrableLoaderIndices). */
   readonly deferrableLoaderIndices?: readonly number[];
   /** As on a route (ClientUrlProjectionRoute.loaderRevalidate). */
-  readonly loaderRevalidate?: readonly (readonly string[])[];
+  readonly loaderRevalidate?: readonly (readonly (string | boolean)[])[];
 }
 
 export interface ClientUrlProjection {
@@ -345,8 +346,8 @@ function serializeRoute(
 
 /**
  * The loader options a route and an intercept project alike: the `prefetch:
- * false` indices and each loader's hoisted revalidate() keys. Under
- * `options.hoisted` a predicate the build left in place fails loudly.
+ * false` indices and each loader's revalidate() keys and boolean literals.
+ * Under `options.hoisted` a predicate the build left in place fails loudly.
  */
 function serializeLoaderOptions(
   loaders: readonly ClientUrlLoaderRecord[],
@@ -357,13 +358,15 @@ function serializeLoaderOptions(
   "deferrableLoaderIndices" | "loaderRevalidate"
 > {
   const loaderRevalidate = loaders.map(({ loader, revalidate }) =>
-    revalidate.flatMap((entry) => {
+    revalidate.flatMap((entry): (string | boolean)[] => {
       if (isHoistedRevalidateRef(entry)) return [entry.$$rangoRevalidate];
+      if (typeof entry === "boolean") return [entry];
       if (options.hoisted) {
         throw new Error(
           `clientUrls() revalidate() on loader "${loader.$$id}" of ${owner} ` +
             "was not hoisted to the server: call the builder's revalidate() " +
-            "helper with an inline function or an imported predicate.",
+            "helper with an inline function, an imported predicate or a " +
+            "boolean.",
         );
       }
       return [];
@@ -561,11 +564,12 @@ interface ProjectedLoaders {
 }
 
 /**
- * The revalidate() predicates of one materialized loader. A definition
- * object (unit tests, the testing primitives) carries its functions. A
- * client reference resolves the projection's content keys in the registry
- * the group's hoisted module filled when it loaded; a key with no
- * registration fails loudly here, at materialization, never at a request.
+ * The revalidate() predicates of one materialized loader, a boolean as its
+ * constant predicate. A definition object (unit tests, the testing
+ * primitives) carries its functions. A client reference resolves the
+ * projection's content keys in the registry the group's hoisted module
+ * filled when it loaded; a key with no registration fails loudly here, at
+ * materialization, never at a request.
  */
 function loaderRevalidators(
   reference: ClientUrlDefinitionSource,
@@ -580,8 +584,9 @@ function loaderRevalidators(
           `of ${label} in "${id}" has no server ` +
           `registration (key "${key}"). The rango Vite plugin registers ` +
           "hoisted predicates when the group's module loads in the RSC " +
-          "environment; a transform that changed the predicate's syntax " +
-          "in one environment only also causes this.",
+          "environment; an argument that evaluated to neither a function " +
+          "nor a boolean there, or a transform that changed its syntax in " +
+          "one environment only, also causes this.",
       );
     }
     // Looked up per call: a dev re-evaluation of the hoisted module
@@ -592,10 +597,14 @@ function loaderRevalidators(
     return (inline(reference)?.[loaderIndex]?.revalidate ?? []).map((entry) =>
       isHoistedRevalidateRef(entry)
         ? fromRegistry(entry.$$rangoRevalidate)
-        : entry,
+        : toShouldRevalidateFn(entry),
     );
   }
-  return (projected.loaderRevalidate?.[loaderIndex] ?? []).map(fromRegistry);
+  return (projected.loaderRevalidate?.[loaderIndex] ?? []).map((entry) =>
+    toShouldRevalidateFn(
+      typeof entry === "boolean" ? entry : fromRegistry(entry),
+    ),
+  );
 }
 
 function createLoaderStub(id: string): LoaderDefinition<unknown> {

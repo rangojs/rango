@@ -264,9 +264,10 @@ layout(LocaleLayout, () => [
 ])
 ```
 
-`revalidate(() => false)` on a standalone layout only restates the default.
+`revalidate(false)` on a standalone layout only restates the default.
 The return shapes (hard boolean, soft `{ defaultShouldRevalidate }`, or defer)
-are covered in `/loader` → "`revalidate()` return shapes".
+and the `revalidate(true | false)` shorthand are covered in `/loader` →
+"`revalidate()` return shapes".
 
 If child segments read data that was established by this layout or by a
 route handler above them, revalidate the outer segment too. Partial

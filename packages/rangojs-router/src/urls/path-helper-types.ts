@@ -346,9 +346,11 @@ export type PathHelpers<TEnv> = {
   };
 
   /**
-   * Control when a segment should revalidate during navigation
+   * Control when a segment should revalidate during navigation.
+   * `revalidate(true)` / `revalidate(false)` are shorthand for
+   * `revalidate(() => true)` / `revalidate(() => false)`.
    */
-  revalidate: (fn: ShouldRevalidateFn<any, TEnv>) => RevalidateItem;
+  revalidate: (fn: ShouldRevalidateFn<any, TEnv> | boolean) => RevalidateItem;
 
   /**
    * Attach a data loader to the current route/layout.

@@ -52,6 +52,7 @@ import {
   validateInterceptUseItems,
 } from "./resolve-handler-use.js";
 import { ALL_USE_ITEM_TYPES } from "./use-item-types.js";
+import { toShouldRevalidateFn } from "../router/revalidation.js";
 
 /**
  * Check if an item contains routes (directly or inside nested wrappers).
@@ -189,6 +190,10 @@ const revalidate: RouteHelpers<any, any>["revalidate"] = (fn) => {
   const { store, ctx } = requireDslContext(
     "revalidate() must be called inside urls()",
   );
+  invariant(
+    typeof fn === "function" || typeof fn === "boolean",
+    `revalidate() expects a predicate or a boolean, got ${fn === null ? "null" : typeof fn}`,
+  );
 
   // Attach to last entry in stack
   const parent = ctx.parent;
@@ -196,7 +201,7 @@ const revalidate: RouteHelpers<any, any>["revalidate"] = (fn) => {
     invariant(false, "No parent entry available for revalidate()");
   }
   const name = `$${store.getNextIndex("revalidate")}`;
-  parent.revalidate.push(fn);
+  parent.revalidate.push(toShouldRevalidateFn(fn));
   return { name, type: "revalidate" } as RevalidateItem;
 };
 

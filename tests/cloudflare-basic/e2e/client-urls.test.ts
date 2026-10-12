@@ -282,6 +282,43 @@ function runClientUrlsSpec(f: Fixture): void {
     );
   });
 
+  test("revalidate(true) re-runs a group loader where the default holds; revalidate(false) holds where the default re-runs", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(f.url("/__client-urls"));
+    await waitForHydration(page);
+    await using __ = await expectNoReload(page);
+
+    // Each value on screen changes only when its loader re-ran.
+    const read = (id: string) => (): Promise<number> =>
+      getNumericContent(testId(page, id));
+    const readAlways = read("cu-always-runs");
+    const readResult = read("cu-result-runs");
+    const held = await read("cu-held-runs")();
+
+    // An action: the default re-runs the result loader (onResultOk defers
+    // on any other action) and revalidate(true) re-runs too; revalidate(false)
+    // holds.
+    const always = await readAlways();
+    const result = await readResult();
+    await testId(page, "cu-is-action-target").click();
+    await expect.poll(readResult).toBeGreaterThan(result);
+    await expect.poll(readAlways).toBeGreaterThan(always);
+    await expect(testId(page, "cu-held-runs")).toHaveText(String(held));
+
+    // A same-URL navigation: same params and search, so the default holds
+    // the result loader; revalidate(true) re-runs.
+    const alwaysAfterAction = await readAlways();
+    const resultAfterAction = await readResult();
+    await testId(page, "cu-self").click();
+    await expect.poll(readAlways).toBeGreaterThan(alwaysAfterAction);
+    await expect(testId(page, "cu-result-runs")).toHaveText(
+      String(resultAfterAction),
+    );
+    await expect(testId(page, "cu-held-runs")).toHaveText(String(held));
+  });
+
   test("ssr:false document render keeps the large awaited grid in-place (no outlining)", async ({
     request,
   }) => {

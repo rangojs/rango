@@ -2,7 +2,7 @@ import { urls } from "@rangojs/router";
 import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 
 /**
- * Regression: revalidate(() => false) on a route-scoped parallel() slot must
+ * Regression: revalidate(false) on a route-scoped parallel() slot must
  * not blank the slot on the soft navigation that first introduces it.
  *
  * Workerd twin of packages/rangojs-router/e2e/test-app/src/urls/
@@ -45,7 +45,7 @@ export const parallelNewSlotRevalPatterns = urls(
                 ),
               },
               // The exact opt-out that used to blank the slot.
-              () => [revalidate(() => false)],
+              () => [revalidate(false)],
             ),
           ],
         ),

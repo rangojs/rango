@@ -8,7 +8,7 @@ import {
 } from "./helper";
 
 /**
- * revalidate(() => false) on a parallel() slot must not blank the slot on the
+ * revalidate(false) on a parallel() slot must not blank the slot on the
  * soft navigation that first introduces it. Node dev-server + preview coverage;
  * the workerd twin is tests/cloudflare-basic/e2e/parallel-new-slot-reval.test.ts
  * and the originally-reported app case is

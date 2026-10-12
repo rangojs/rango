@@ -446,8 +446,8 @@ import * as CartActions from "./actions/cart";
 
 urls(({ path, loader, revalidate }) => [
   path("/", HomePage, { name: "home" }, () => [
-    // Loader data re-runs by default after any action. Opt out with revalidate(() => false).
-    loader(StaticHomepageLoader, () => [revalidate(() => false)]),
+    // Loader data re-runs by default after any action. Opt out with revalidate(false).
+    loader(StaticHomepageLoader, () => [revalidate(false)]),
   ]),
 
   // Re-render the cart page handler AND re-resolve its loader only after cart

@@ -7,6 +7,9 @@
  * The group is mounted as an app mounts it: include() receives the default
  * export of a "use client" module, a client reference here, whose projection
  * and predicates rangoUseClientTransform installed (vitest.rsc.config.ts).
+ *
+ * The revalidate(true) / revalidate(false) shorthand is pinned for a group
+ * loader and for a server route's loader side by side.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -31,6 +34,9 @@ import { createRouter, urls } from "../../index.rsc.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
 import group from "./fixtures/client-urls-revalidate.js";
 import {
+  ServerAlwaysLoader,
+  ServerDefaultLoader,
+  ServerNeverLoader,
   breakAction,
   count,
   flaky,
@@ -50,7 +56,7 @@ const router = createRouter({
     errors.push(error instanceof Error ? error.message : String(error));
   },
 }).routes(
-  urls(({ path, layout, middleware, include }) => [
+  urls(({ path, layout, middleware, include, loader, revalidate }) => [
     layout(
       () => <main>shell</main>,
       () => [
@@ -60,6 +66,16 @@ const router = createRouter({
         }),
         path("/", () => <p>home</p>, { name: "home" }),
         include("/shop", group, { name: "shop" }),
+        path(
+          "/constant",
+          () => <p>constant</p>,
+          { name: "constant" },
+          () => [
+            loader(ServerAlwaysLoader, () => [revalidate(true)]),
+            loader(ServerNeverLoader, () => [revalidate(false)]),
+            loader(ServerDefaultLoader),
+          ],
+        ),
       ],
     ),
   ]),
@@ -273,6 +289,59 @@ describe("clientUrls() loader revalidate() answers on navigation", () => {
     });
     expect(count("stale")).toBe(1);
     expect(errors).toEqual([]);
+  });
+});
+
+describe.each([
+  {
+    surface: "a clientUrls() group loader",
+    url: "/shop/constant",
+    names: { always: "always", never: "never", plain: "default" },
+  },
+  {
+    surface: "a urls() route loader",
+    url: "/constant",
+    names: {
+      always: "server-always",
+      never: "server-never",
+      plain: "server-default",
+    },
+  },
+])("revalidate(true) and revalidate(false) on $surface", ({ url, names }) => {
+  const counts = () => ({
+    always: count(names.always),
+    never: count(names.never),
+    plain: count(names.plain),
+  });
+
+  it("a same-URL navigation re-runs revalidate(true) where the default holds; revalidate(false) holds", async () => {
+    const { serve, standingOn } = setup();
+    const held = await standingOn(url);
+    await serve(url, { partial: { from: url, segments: held } });
+    expect(counts()).toEqual({ always: 1, never: 0, plain: 0 });
+    expect(errors).toEqual([]);
+  });
+
+  it("an action re-runs revalidate(true) and the default; revalidate(false) holds", async () => {
+    const { serve, standingOn } = setup();
+    const held = await standingOn(url);
+    const result = await serve(url, {
+      action: {
+        ref: resultAction,
+        id: RESULT_ACTION,
+        args: [true],
+        segments: held,
+      },
+    });
+    expect(result.response.status).toBe(200);
+    expect(counts()).toEqual({ always: 1, never: 0, plain: 1 });
+    expect(errors).toEqual([]);
+  });
+
+  it("a document request renders every loader, revalidate(false) included", async () => {
+    const { serve } = setup();
+    await serve(url);
+    expect(counts()).toEqual({ always: 1, never: 1, plain: 1 });
   });
 });
 

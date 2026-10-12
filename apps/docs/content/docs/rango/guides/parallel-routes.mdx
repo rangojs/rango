@@ -228,11 +228,11 @@ parallel({ "@cart": () => <CartSummary /> }, () => [
 ]);
 ```
 
-A `revalidate()` in the slot's `use()` decides whether the **slot component** re-renders. It does not gate the slot's loaders: each `loader()` is revalidated separately, with its own `revalidate()` items and the loader defaults (loaders re-run after every action by default). To scope a loader, give it its own rule, as in `loader(CategoriesLoader, () => [revalidate(() => false)])`.
+A `revalidate()` in the slot's `use()` decides whether the **slot component** re-renders. It does not gate the slot's loaders: each `loader()` is revalidated separately, with its own `revalidate()` items and the loader defaults (loaders re-run after every action by default). To scope a loader, give it its own rule, as in `loader(CategoriesLoader, () => [revalidate(false)])`.
 
 A `revalidate()` callback may return a hard `boolean`, a soft `{ defaultShouldRevalidate }` object, or nothing (`void` / `null` / `undefined`) to defer to the next revalidator. It is the same contract as `loader()`, `path()`, and `layout()`; see [Loaders](/docs/rango/features/loaders). Callbacks must be synchronous: a returned Promise is ignored and dev logs a warning.
 
-`revalidate()` decides whether to _re_-render a slot, never whether to render it the first time. A slot the browser has not rendered yet always renders, so `revalidate(() => false)` means "render once, then keep", never "don't appear".
+`revalidate()` decides whether to _re_-render a slot, never whether to render it the first time. A slot the browser has not rendered yet always renders, so `revalidate(false)` means "render once, then keep", never "don't appear".
 
 In either position, revalidating only the parallel does not re-run outer handlers or layouts. If the slot reads `ctx.get()` data established above it, put the same named revalidation contract on both the producer and the slot:
 
@@ -254,7 +254,7 @@ layout(CartLayout, () => [
 
 ## Pitfalls
 
-- **A route-scoped slot without `loading()` can blank the route.** A slot under a `path()` re-renders on any params or search change, including query-only navigations (`?tab=...`) its content doesn't depend on. With no `loading()` of its own, that refresh suspends at the route's `loading()` and replaces the whole route with its skeleton. Give the slot its own `loading()`, or scope its `revalidate()` with the route's named contract. A bare `revalidate(() => false)` goes too far: the slot then keeps the previous param's content on a product-to-product navigation.
+- **A route-scoped slot without `loading()` can blank the route.** A slot under a `path()` re-renders on any params or search change, including query-only navigations (`?tab=...`) its content doesn't depend on. With no `loading()` of its own, that refresh suspends at the route's `loading()` and replaces the whole route with its skeleton. Give the slot its own `loading()`, or scope its `revalidate()` with the route's named contract. A bare `revalidate(false)` goes too far: the slot then keeps the previous param's content on a product-to-product navigation.
 - **Slot-level `transition()` is not applied at render time.** The item is allowed in the slot allow-list, but only layout and route wraps take effect. For a modal-only or slot-only morph, use an element-level React `<ViewTransition>` inside the slot's component. Conversely, a layout-level `transition()` fires when the layout's default outlet content changes but **not** when a `<ParallelOutlet />` mounts new content. See [View Transitions](/docs/rango/guides/view-transitions).
 - **Under a shared artifact** (`cache()`, `"use cache"`, a PPR shell), a server-side `await ctx.use(CartLoader)` in the slot is baked in: the value at capture time freezes into the artifact. Consume the loader client-side (`useLoader` in a `"use client"` component) to keep the slot live per request. See [use cache](/docs/rango/guides/use-cache) and [PPR](/docs/rango/guides/ppr).
 - **Broadcast `loading()` clobbers slot defaults.** A single `loading()` in the shared `use()` lands on every slot. Scope it with the slot descriptor form.

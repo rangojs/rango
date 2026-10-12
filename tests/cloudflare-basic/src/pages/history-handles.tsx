@@ -79,9 +79,7 @@ export const historyHandlesPatterns = urls(
             );
           },
           { name: "historyHandlesB" },
-          () => [
-            loader(HistoryHandlesTickLoader, () => [revalidate(() => true)]),
-          ],
+          () => [loader(HistoryHandlesTickLoader, () => [revalidate(true)])],
         ),
       ]),
     ]),

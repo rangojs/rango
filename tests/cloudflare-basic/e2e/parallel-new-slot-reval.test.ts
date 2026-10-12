@@ -4,7 +4,7 @@ import { waitForHydration, expectNoPageError, testId } from "./helper";
 
 /**
  * Workerd twin of packages/rangojs-router/e2e/parallel-new-slot-reval.test.ts:
- * revalidate(() => false) on a route-scoped parallel() slot must not blank the
+ * revalidate(false) on a route-scoped parallel() slot must not blank the
  * slot on the soft navigation that first introduces it. Pins the fix on the
  * Cloudflare runtime, not just the node dev server.
  *

@@ -321,7 +321,7 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 
   // Loader with revalidation control
   loader(RelatedProductsLoader, () => [
-    revalidate(() => false), // Never revalidate
+    revalidate(false), // Never revalidate
   ]),
 
   // Loader that re-runs only after cart actions. Loaders re-run after every
@@ -355,6 +355,7 @@ chain continues:
 ```typescript
 // 1) Hard decision — short-circuits the chain, used as the final answer.
 revalidate(() => true);
+revalidate(true); // shorthand for () => true; revalidate(false) for () => false
 revalidate(({ actionId }) => actionId?.includes("Cart") ?? false);
 
 // 2) Soft decision — updates the running suggestion for downstream
@@ -376,6 +377,14 @@ revalidate(() => null); // explicit defer
 
 If every revalidator on a segment defers, the segment default is used
 (`defaultShouldRevalidate`, see the table below).
+
+`revalidate(true)` and `revalidate(false)` are shorthand for the constant hard
+decisions `revalidate(() => true)` and `revalidate(() => false)`: `true`
+re-runs the segment on every navigation and action, `false` keeps the client's
+copy once it holds one. A defer has no shorthand: write the function. The
+shorthand works everywhere `revalidate()` does, `clientUrls()` loaders
+included. There the build checks the argument: a literal at its call site,
+any other expression when the server mounts the group.
 
 The callback must be **synchronous**. A returned Promise is ignored (dev
 warning) and the running suggestion is kept, so move async work into a loader.

@@ -78,6 +78,14 @@ import {
  * LOUD error naming file:line. Imports stay in the "use client" module too
  * (they are not pruned). Vitest does not run the plugin, so in unit tests the
  * predicate stays a plain function.
+ *
+ * `revalidate(true)` / `revalidate(false)` LITERALS stay in place: the
+ * projection carries the boolean and materialization turns it into the
+ * constant predicate. Any other argument is hoisted whatever it evaluates
+ * to, because an imported boolean and an imported predicate are both
+ * identifiers to the build: the server evaluates the expression, and a
+ * boolean result means the same constant answer (`revalidate(FLAG)` with an
+ * imported `FLAG`). Materialization rejects a value that is neither.
  */
 
 const CLIENT_URLS_REVALIDATE_QUERY = "rango-revalidate";
@@ -254,8 +262,8 @@ interface HoistClientUrlsRevalidateResult {
 
 /**
  * Hoist every clientUrls() `revalidate()` predicate of a "use client"
- * module. Returns null when there is none. Throws, naming file:line, for a
- * predicate that is not pure.
+ * module. Returns null when there is none (boolean literals stay in place).
+ * Throws, naming file:line, for a predicate that is not pure.
  */
 export async function hoistClientUrlsRevalidates(
   code: string,
@@ -294,16 +302,18 @@ export async function hoistClientUrlsRevalidates(
         file,
         code,
         call,
-        "`revalidate()` takes exactly one predicate.",
+        "`revalidate()` takes exactly one predicate or boolean.",
       );
     }
     const value = unwrapExpression(arg);
+    // The same constant in every environment: nothing to move.
+    if (value.type === "Literal" && typeof value.value === "boolean") continue;
     if (NOT_A_FUNCTION.has(value.type)) {
       throw revalidateError(
         file,
         code,
         value,
-        "`revalidate()` expects a predicate function.",
+        "`revalidate()` expects a predicate function or a boolean.",
       );
     }
     if (isFunctionLiteral(value) && (value.async || value.generator)) {
@@ -390,6 +400,8 @@ export async function hoistClientUrlsRevalidates(
       `{ ${HOISTED_REVALIDATE_KEY}: ${JSON.stringify(key)} }`,
     );
   }
+
+  if (entries.size === 0) return null;
 
   const importLines = await emitImports(used, imports, () => {});
   const module = [

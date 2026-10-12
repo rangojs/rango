@@ -299,6 +299,82 @@ export default clientUrls(({ path }) => [path("/", P)]);
     ).toBeNull();
   });
 
+  it("leaves a boolean literal in place and hoists the predicates beside it", async () => {
+    const predicate = "({ stale }) => stale === true";
+    const result =
+      await hoist(`${HEAD}export default clientUrls(({ path, loader, revalidate }) => [
+  path("/cart", Cart, () => [
+    loader(A, () => [revalidate(true)]),
+    loader(B, () => [revalidate(false as const)]),
+    loader(C, () => [revalidate((false)), revalidate(${predicate})]),
+  ]),
+]);
+`);
+    expect(result!.code).toContain("loader(A, () => [revalidate(true)])");
+    expect(result!.code).toContain(
+      "loader(B, () => [revalidate(false as const)])",
+    );
+    expect(result!.code).toContain(
+      `revalidate((false)), revalidate({ $$rangoRevalidate: "${key(predicate)}" })`,
+    );
+    expect(result!.keys).toEqual([key(predicate)]);
+    expect(result!.module).toBe(
+      [
+        'import { registerClientUrlRevalidators as __rango_registerClientUrlRevalidators } from "@rangojs/router/server";',
+        "__rango_registerClientUrlRevalidators({",
+        `  ${JSON.stringify(key(predicate))}: ${predicate},`,
+        "});",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("leaves a module alone whose every revalidate() is a boolean literal", async () => {
+    expect(await hoist(group("true"))).toBeNull();
+    expect(await hoist(group("false"))).toBeNull();
+  });
+
+  it("hoists a non-literal argument whatever it evaluates to: the server evaluates it", async () => {
+    // An imported boolean and an imported predicate are both identifiers to
+    // the build; materialization accepts a boolean value and rejects others.
+    const result = await hoist(
+      `${HEAD}import { HOLD } from "./flags";
+export default clientUrls(({ path, loader, revalidate }) => [
+  path("/cart", Cart, () => [
+    loader(A, () => [revalidate(HOLD)]),
+    loader(B, () => [revalidate(!import.meta.env.DEV)]),
+    loader(C, () => [revalidate(HOLD ? true : false), revalidate(!HOLD)]),
+  ]),
+]);
+`,
+    );
+    expect(result!.keys).toEqual([
+      key("HOLD"),
+      key("!import.meta.env.DEV"),
+      key("HOLD ? true : false"),
+      key("!HOLD"),
+    ]);
+    expect(result!.module).toContain('import { HOLD } from "./flags";');
+    expect(result!.module).toContain(`  ${JSON.stringify(key("HOLD"))}: HOLD,`);
+    expect(result!.code).toContain(
+      `revalidate({ $$rangoRevalidate: "${key("!import.meta.env.DEV")}" })`,
+    );
+  });
+
+  it("rejects a boolean bound in the use client module, naming file:line", async () => {
+    const error = await hoistError(`${HEAD}const HOLD = false;
+export default clientUrls(({ path, loader, revalidate }) => [
+  path("/cart", Cart, () => [loader(A, () => [revalidate(HOLD)])]),
+]);
+`);
+    expect(error.message).toMatch(
+      /^\[rango\] clientUrls\(\) revalidate\(\) at \/app\/src\/urls\/shop\.client\.tsx:5:/,
+    );
+    expect(error.message).toContain(
+      '`HOLD` is declared in this "use client" module.',
+    );
+  });
+
   it("allows globals, import.meta.env, and a use server, node: or server-only import", async () => {
     const result = await hoist(
       group(
@@ -380,15 +456,15 @@ export default clientUrls(({ path, loader, revalidate }) => [
       ).toContain("a generator function returns an iterator");
     });
 
-    it("a spread, a second argument, no argument, or a value that is not a function", async () => {
-      for (const args of ["...fns", "() => true, extra", ""]) {
+    it("a spread, a second argument, no argument, or a value that is neither a function nor a boolean", async () => {
+      for (const args of ["...fns", "() => true, extra", "", "true, false"]) {
         expect((await hoistError(group(args))).message).toContain(
-          "`revalidate()` takes exactly one predicate.",
+          "`revalidate()` takes exactly one predicate or boolean.",
         );
       }
-      for (const value of ["{ ok: true }", "'yes'", "[]"]) {
+      for (const value of ["{ ok: true }", "'yes'", "[]", "0", "null", "`x`"]) {
         expect((await hoistError(group(value))).message).toContain(
-          "`revalidate()` expects a predicate function.",
+          "`revalidate()` expects a predicate function or a boolean.",
         );
       }
     });
@@ -595,6 +671,25 @@ describe("clientUrlsRevalidateHoistPlugin", () => {
       plain,
     );
     expect(await register.call(env("rsc"), proxy, plain)).toBeUndefined();
+  });
+
+  it("leaves a module of boolean literals as is, and drops the registration import once an edit leaves only literals", async () => {
+    const { transform, register } = hooks(dir);
+    const id = `${dir}/literal.client.tsx`;
+    const proxy =
+      'import * as $$ReactServer from "x";\nexport default $$ReactServer.registerClientReference(() => {}, "/literal.client.tsx", "default");\n';
+    for (const name of ["client", "ssr", "rsc"]) {
+      expect(
+        await transform.call(env(name), group("false"), id),
+      ).toBeUndefined();
+    }
+    expect(await register.call(env("rsc"), proxy, id)).toBeUndefined();
+
+    // A predicate edited into a literal (HMR re-transforms the file).
+    await transform.call(env("rsc"), group("() => false"), id);
+    expect(await register.call(env("rsc"), proxy, id)).toBeDefined();
+    await transform.call(env("rsc"), group("false"), id);
+    expect(await register.call(env("rsc"), proxy, id)).toBeUndefined();
   });
 
   it("registers its post transform in the rsc environment only", () => {
