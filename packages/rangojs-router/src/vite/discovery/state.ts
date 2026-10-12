@@ -196,28 +196,36 @@ export interface DiscoveryState {
   buildEnvDispose?: (() => Promise<void> | void) | null;
 
   /**
-   * Set when the most recent discovery threw: an HMR re-discovery, or the
-   * cold dev discovery on a main RSC runner. Cleared on the next successful
-   * discovery. While set, the route-file watcher treats any in-scan source
-   * change as a rediscovery trigger (recovery mode).
+   * Set when the most recent dev discovery failed: an HMR re-discovery, or the
+   * cold discovery on the Node RSC runner or the Cloudflare temp runner.
+   * Cleared on the next successful discovery. While set, the route-file
+   * watcher treats any in-scan source change as a rediscovery trigger
+   * (recovery mode).
    */
   lastDiscoveryError?: { message: string; at: number } | null;
 }
 
+/** Record a failed dev discovery (lastDiscoveryError): recovery mode. */
+export function recordDiscoveryFailure(
+  state: Pick<DiscoveryState, "lastDiscoveryError">,
+  err: unknown,
+): void {
+  state.lastDiscoveryError = {
+    message: (err as { message?: string } | null)?.message ?? String(err),
+    at: Date.now(),
+  };
+}
+
 /**
- * Whether the route-file watcher can re-run runtime discovery. A committed
- * manifest is the usual precondition. A failed cold discovery commits none,
- * so on a main RSC runner its recorded failure qualifies too; without that
- * the dev server stayed broken until a restart.
+ * Whether the route-file watcher can re-run runtime discovery: a committed
+ * manifest, or a recorded failure. A failed cold discovery commits none, and
+ * without its recorded failure the dev server stayed broken until a restart,
+ * on the Node runner and on Cloudflare alike.
  */
 export function canRefreshRuntimeDiscovery(
   state: Pick<DiscoveryState, "perRouterManifests" | "lastDiscoveryError">,
-  hasMainRunner: boolean,
 ): boolean {
-  return (
-    state.perRouterManifests.length > 0 ||
-    (hasMainRunner && !!state.lastDiscoveryError)
-  );
+  return state.perRouterManifests.length > 0 || !!state.lastDiscoveryError;
 }
 
 export function createDiscoveryState(

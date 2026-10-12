@@ -36,6 +36,29 @@ string values without the reserved keys __proto__, constructor, prototype`
   few built-ins, can be passed to Client Components", because copying it set
   the copy's prototype. Now the key stays ordinary data.
 
+### Fixed: the Cloudflare dev server recovers from a failed startup route discovery once you fix the cause
+
+Before: with `preset: "cloudflare"`, when route discovery failed as `vite dev` started,
+saving your fix did not run it again, and only a restart recovered:
+
+- If discovery failed before it read your `clientUrls()` modules, every request returned a
+  500, even though the worker had started:
+
+  ```
+  [vite] Internal server error: [@rangojs/router] Failed to resolve include at prefix "/your-prefix" during route discovery: include() could not resolve the server projection for clientUrls() module "/src/client-urls.tsx#default" ...
+  ```
+
+- If it failed on an error in your routes, such as an `include()`d `urls()` handler that
+  threw, pages worked again after the fix, but from the next save on
+  `router.named-routes.gen.ts` lost the routes only discovery sees, such as the ones a
+  factory function creates.
+
+In 0.23.0, recovery on save covered the Node dev server only.
+
+Now: on Cloudflare too, the next save of a source file after a failed startup discovery
+runs it again, reloads the worker, and the server serves your routes. Nothing changes in
+your code or in production builds.
+
 ## 0.23.0 (2026-10-11)
 
 ### Breaking: a `clientUrls()` loader's `revalidate()` runs on the server, with the same arguments as in `urls()`

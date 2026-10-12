@@ -76,8 +76,17 @@ export function isInSkippedScanDir(
 }
 
 /**
+ * Directory names the source-file scans skip: findTsFiles() and the build
+ * loader pre-scan (expose-internal-ids.ts). The isUniversallySkippedScanDir()
+ * set plus `build`, which the router scans still enter.
+ */
+export function isSkippedSourceScanDir(name: string): boolean {
+  return isUniversallySkippedScanDir(name) || name === "build";
+}
+
+/**
  * Recursively find .ts/.tsx files under a directory, skipping the directories
- * isUniversallySkippedScanDir() names, `build`, and .gen. files.
+ * isSkippedSourceScanDir() names and .gen. files.
  */
 export function findTsFiles(dir: string, filter?: ScanFilter): string[] {
   const results: string[] = [];
@@ -93,9 +102,7 @@ export function findTsFiles(dir: string, filter?: ScanFilter): string[] {
   for (const entry of entries) {
     const fullPath = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (isUniversallySkippedScanDir(entry.name) || entry.name === "build") {
-        continue;
-      }
+      if (isSkippedSourceScanDir(entry.name)) continue;
       results.push(...findTsFiles(fullPath, filter));
     } else if (
       (entry.name.endsWith(".ts") ||
