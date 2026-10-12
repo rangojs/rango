@@ -35,10 +35,8 @@ import {
   type StateCookieSeed,
 } from "./internal/context.js";
 import type { ThemeConfig } from "../theme/types.js";
-import {
-  isRewrite,
-  resolveRewriteTarget,
-} from "../route-definition/rewrite.js";
+import { isRewrite } from "../route-definition/rewrite.js";
+import { resolveRewriteTarget } from "../rsc/rewrite-passes.js";
 import { getGlobalRouteMap } from "../route-map-builder.js";
 import type { SegmentCacheStore } from "../cache/types.js";
 import type { CacheProfile } from "../cache/profile-registry.js";

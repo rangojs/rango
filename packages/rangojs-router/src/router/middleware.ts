@@ -39,6 +39,7 @@ import {
   rewriteNotSupported,
   type Rewrite,
 } from "../route-definition/rewrite.js";
+import { defineRewrittenFrom } from "../server/rewrite-trail.js";
 
 // Re-export types consumed through this module's path.
 export type {
@@ -310,7 +311,6 @@ export function createMiddlewareContext<TEnv>(
     request,
     url,
     originalUrl: reqCtx?.originalUrl ?? new URL(request.url),
-    rewrittenFrom: reqCtx?._rewrittenFrom && new URL(reqCtx._rewrittenFrom),
     pathname: url.pathname,
     searchParams: url.searchParams,
     env: env as MiddlewareContext<TEnv>["env"],
@@ -409,8 +409,19 @@ export function createMiddlewareContext<TEnv>(
   Object.defineProperty(ctx, "headers", MIDDLEWARE_ACCESSORS.headers);
   Object.defineProperty(ctx, "setTheme", MIDDLEWARE_ACCESSORS.setTheme);
   Object.defineProperty(ctx, "theme", MIDDLEWARE_ACCESSORS.theme);
+  defineRewrittenFrom(ctx, reqCtx, "middleware");
   (ctx as any)[NOCACHE_SYMBOL] = true;
   return ctx;
+}
+
+/** A middleware threw a Rewrite after its next() let the downstream run. */
+function rewriteAfterNextError(handler: Function, rewrite: Rewrite): Error {
+  return new Error(
+    `Middleware "${handler.name || "(anonymous)"}" threw rewrite() after ` +
+      `calling next(): the route already rendered. throw rewrite() before ` +
+      `await next().`,
+    { cause: rewrite },
+  );
 }
 
 /** A middleware returned a Rewrite: only a thrown one re-dispatches. */
@@ -624,6 +635,9 @@ export async function executeMiddleware<TEnv>(
     // downstream chain and overwrite responseHolder.response.
     let nextPromise: Promise<Response> | null = null;
     let nextResolvedAt: number | undefined;
+    // Whether next() rejected: the downstream chain unwound, so a rewrite
+    // thrown after it re-dispatches nothing the downstream started.
+    let nextRejected = false;
     const wrappedNext = (): Promise<Response> => {
       if (nextPromise) {
         throw new Error(
@@ -639,6 +653,7 @@ export async function executeMiddleware<TEnv>(
         },
         (err) => {
           nextResolvedAt = performance.now();
+          nextRejected = true;
           throw err;
         },
       );
@@ -683,6 +698,13 @@ export async function executeMiddleware<TEnv>(
       // Settle the middleware own-time metric once on both the success and
       // error paths (idempotent guard in finishMiddleware).
       finishMiddleware();
+    }
+    // A rewrite after this middleware's next() started the downstream chain
+    // (resolved or still running) would leave that render running against
+    // the context the next pass moves, and drop the response it built. Only
+    // a rewrite the downstream threw (next() rejected with it) unwinds.
+    if (rewrite && nextPromise && !nextRejected) {
+      throw rewriteAfterNextError(entry.handler, rewrite);
     }
     if (rewrite) throw rewrite;
     if (isRewrite(result)) throw returnedRewriteError(entry.handler);

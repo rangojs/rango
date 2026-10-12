@@ -19,6 +19,7 @@
  * type-only import (erased at build).
  */
 
+import { isRewrite } from "../route-definition/rewrite.js";
 import type { CacheScope } from "../cache/cache-scope.js";
 import {
   _getRequestContext,
@@ -206,6 +207,8 @@ export async function serveResponseRouteWithCache(
           const fresh = finalizeResponse(await executeHandler());
           if (canStore(fresh)) await putFresh(store, fresh, start);
         } catch (error) {
+          // The route now rewrites: nothing to refresh this entry with.
+          if (isRewrite(error)) return;
           reportCacheError(
             error,
             "stale-revalidation",
@@ -227,7 +230,17 @@ export async function serveResponseRouteWithCache(
 
   // Cache miss: execute the handler and cache the result when storeable.
   const start = executionStart();
-  const response = finalizeResponse(await executeHandler());
+  let response: Response;
+  try {
+    response = finalizeResponse(await executeHandler());
+  } catch (error) {
+    // Route middleware rewrote: the request runs again as the target, whose
+    // response runs these pre-handler callbacks.
+    if (isRewrite(error)) {
+      reqCtx._onResponseCallbacks.unshift(...savedCallbacks);
+    }
+    throw error;
+  }
   if (canStore(response)) {
     // Clone SYNCHRONOUSLY here, before returning. The original `response` is
     // handed back to the middleware chain, where mergeResponse rebuilds it as

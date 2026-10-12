@@ -11,7 +11,6 @@
  * has already extracted params from it.
  */
 
-import { isRewrite, rewriteNotSupported } from "../route-definition/rewrite.js";
 import { requestHeaders } from "../server/request-headers.js";
 import { FORBIDDEN_KEYS } from "../context-var.js";
 import { getLoaderLazy } from "../server/loader-registry.js";
@@ -35,7 +34,7 @@ import {
 } from "./helpers.js";
 import type { HandlerContext } from "./handler-context.js";
 
-interface LoaderErrorMeta<TEnv> {
+export interface LoaderErrorMeta<TEnv> {
   request: Request;
   url: URL;
   env: TEnv;
@@ -48,7 +47,7 @@ interface LoaderErrorMeta<TEnv> {
  * plain-text body would reject with React's opaque "Connection closed.".
  * Render failures report through onError("rendering").
  */
-function renderLoaderError<TEnv>(
+export function renderLoaderError<TEnv>(
   ctx: HandlerContext<TEnv>,
   loaderError: { message: string; name: string },
   status: number,
@@ -341,7 +340,7 @@ export async function handleLoaderFetch<TEnv>(
 
     return buildLoaderErrorResponse(
       ctx,
-      isRewrite(error) ? rewriteNotSupported(error, "loader-fetch") : error,
+      error,
       { request, url, env, loaderId },
       "[RSC] Loader error:",
     );

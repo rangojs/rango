@@ -39,6 +39,8 @@ export const SSR_SETUP_VAR = "__ssrSetup";
  * lazily so stores created after kickoff are still captured). Without a
  * getter the promises run bare — no `.then()` microtasks, no
  * `performance.now()` calls — keeping the non-debug hot path lean.
+ * `ssrModule` reuses a load already started (a rewritten request's earlier
+ * pass).
  */
 export function startSSRSetup<TEnv>(
   ctx: HandlerContext<TEnv>,
@@ -46,16 +48,17 @@ export function startSSRSetup<TEnv>(
   env: TEnv,
   url: URL,
   getMetricsStore?: () => MetricsStore | undefined,
+  ssrModule?: Promise<SSRModule>,
 ): Promise<SSRSetup> {
   if (!getMetricsStore) {
     return Promise.all([
-      ctx.loadSSRModule(),
+      ssrModule ?? ctx.loadSSRModule(),
       ctx.resolveStreamMode(request, env, url),
     ]);
   }
   const start = performance.now();
   return Promise.all([
-    ctx.loadSSRModule().then((mod) => {
+    (ssrModule ?? ctx.loadSSRModule()).then((mod) => {
       appendMetric(
         getMetricsStore(),
         "ssr:module-load",

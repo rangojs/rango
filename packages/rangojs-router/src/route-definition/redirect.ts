@@ -8,6 +8,7 @@ import {
   attachRedirectState,
   markExternalRedirect,
 } from "../redirect-origin.js";
+import { prefixBasename } from "../router/basename.js";
 
 /**
  * Create a soft redirect Response for middleware short-circuit
@@ -84,21 +85,7 @@ export function redirect(
   }
 
   // Auto-prefix root-relative URLs with basename for app-local redirects.
-  // Treat the URL as already-prefixed when the basename is followed by a path
-  // separator, a query, a fragment, or end-of-string, so "/admin?tab=x" and
-  // "/admin#frag" are not double-prefixed into "/admin/admin?tab=x".
-  const bn = _getRequestContext()?._basename;
-  let resolvedUrl = url;
-  if (
-    bn &&
-    url.startsWith("/") &&
-    url !== bn &&
-    !url.startsWith(bn + "/") &&
-    !url.startsWith(bn + "?") &&
-    !url.startsWith(bn + "#")
-  ) {
-    resolvedUrl = url === "/" ? bn : bn + url;
-  }
+  const resolvedUrl = prefixBasename(url, _getRequestContext()?._basename);
 
   const headers: Record<string, string> = {
     Location: resolvedUrl,

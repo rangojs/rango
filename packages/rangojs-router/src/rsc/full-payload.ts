@@ -14,7 +14,11 @@ import type { HandlerContext } from "./handler-context.js";
 import type { RequestContext } from "../server/request-context.js";
 import type { HandleStore } from "../server/handle-store.js";
 import type { Theme } from "../theme/types.js";
-import { documentCacheStoresRender } from "../cache/document-cache.js";
+import {
+  rendersForSharedAudience,
+  rewriteTrail,
+  visitorUrl,
+} from "../server/rewrite-trail.js";
 import { attachTransitionWhen } from "./attach-transition-when.js";
 import { publicRouteName } from "../route-name.js";
 import { resolvedHandleStream } from "../handles/deferred-resolution.js";
@@ -98,7 +102,7 @@ export function renderedLocation(
   reqCtx:
     | Pick<
         RequestContext<any>,
-        | "_rewrittenFrom"
+        | "_variables"
         | "_shellCaptureRun"
         | "_documentCacheRender"
         | "_payloadVisitorLocation"
@@ -107,16 +111,11 @@ export function renderedLocation(
     | undefined,
   url: URL,
 ): URL {
-  const visitor = reqCtx?._rewrittenFrom;
-  if (
-    !visitor ||
-    reqCtx._shellCaptureRun ||
-    documentCacheStoresRender(reqCtx)
-  ) {
+  if (!reqCtx || !rewriteTrail(reqCtx) || rendersForSharedAudience(reqCtx)) {
     return url;
   }
   reqCtx._payloadVisitorLocation = true;
-  return visitor;
+  return visitorUrl(reqCtx, url);
 }
 
 /**
@@ -151,9 +150,7 @@ export function payloadInitialTheme(
 ): Theme | undefined {
   const config = reqCtx._themeConfig;
   if (!config) return undefined;
-  if (reqCtx._shellCaptureRun || documentCacheStoresRender(reqCtx)) {
-    return config.defaultTheme;
-  }
+  if (rendersForSharedAudience(reqCtx)) return config.defaultTheme;
   const theme = reqCtx._readTheme();
   if (theme !== config.defaultTheme) reqCtx._payloadVisitorTheme = true;
   return theme;

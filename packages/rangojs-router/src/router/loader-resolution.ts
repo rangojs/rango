@@ -55,6 +55,7 @@ import {
 } from "../server/handle-store.js";
 import { getFetchableLoader } from "../server/fetchable-loader-store.js";
 import { _getRequestContext } from "../server/request-context.js";
+import { defineRewrittenFrom } from "../server/rewrite-trail.js";
 import {
   firstUnitCandidate,
   loaderOwner,
@@ -579,7 +580,6 @@ function createLoaderExecutor<TEnv>(
       pathname: ctx.pathname,
       url: ctx.url,
       originalUrl: ctx.originalUrl,
-      rewrittenFrom: ctx.rewrittenFrom && new URL(ctx.rewrittenFrom),
       env: ctx.env,
       waitUntil: ctx.waitUntil.bind(ctx),
       executionContext: ctx.executionContext,
@@ -778,6 +778,7 @@ function createLoaderExecutor<TEnv>(
         return renderedPromise;
       },
     };
+    defineRewrittenFrom(loaderCtx, reqCtxRef ?? _getRequestContext());
     (loaderCtx as any)[NOCACHE_SYMBOL] = true;
 
     // Meter this loader once via observePhase (loader:<id> perf metric +
