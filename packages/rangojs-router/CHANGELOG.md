@@ -59,6 +59,23 @@ Now: on Cloudflare too, the next save of a source file after a failed startup di
 runs it again, reloads the worker, and the server serves your routes. Nothing changes in
 your code or in production builds.
 
+### Fixed: a link back to a page you visited keeps that page's breadcrumbs and title
+
+A link to a URL you visited earlier in the tab is answered from the page the
+browser kept for it: the server re-renders only what revalidates, and the rest
+comes from the kept page. When no prefetch had answered the link (in dev, where
+links do not prefetch by default; with `prefetch="none"`; on a click before
+its prefetch landed; with `router.push()`) and the server re-rendered anything
+(a loader with `revalidate(() => true)`, a layout whose `revalidate()` answered
+`true`), the handles of everything it did not re-render were taken from the
+page you were leaving instead of the kept page. So on page A, a link to B, a
+link back to A and a link to B again showed B without the breadcrumb its layout
+pushed, the breadcrumb its route pushed and the title it set, and with nothing
+in their place. Now the page you land on starts from the handles it was kept
+with, and the response's pushes replace only those of what re-ran, as on any
+other navigation. A layout the two pages share keeps the pushes it has on the
+page you left, as they are when the new page appears.
+
 ## 0.23.0 (2026-10-11)
 
 ### Breaking: a `clientUrls()` loader's `revalidate()` runs on the server, with the same arguments as in `urls()`

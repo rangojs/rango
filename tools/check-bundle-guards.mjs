@@ -141,7 +141,15 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // revalidate-chain.ts, revalidation-protocol.ts, the decision code in
 // navigation.ts and browser/partial-update.ts). Measured on
 // feat/prefetch-false-0.23 76751f37: 49815B -> 49207B (-608B gzip).
-const ROUTER_CHUNK_GZIP_MAX = 48 * 1024 + 128;
+//
+// Raised 48.125KB -> 48.375KB on 2026-10-12 for three bug fixes after 0.23.0,
+// measured on main 49251B: a history-cache navigation merges handles onto
+// the target's cached handles (pushed-by.ts withSegmentHandles, the commit-
+// time reader in navigation-bridge.ts) +137B; an intercept slot's held
+// loaders merge with the server render (merge-segment-loaders.ts,
+// thenable-status.ts settledValue) +69B; treeless location state waits for
+// the reveal barrier (NavigationProvider.tsx) +11B. Together ~49468B.
+const ROUTER_CHUNK_GZIP_MAX = 48 * 1024 + 384;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

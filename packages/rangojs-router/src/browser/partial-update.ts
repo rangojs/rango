@@ -32,7 +32,7 @@ import {
   IS_BROWSER_DEBUG,
 } from "./logging.js";
 import { validatePayloadRedirect } from "./validate-redirect-origin.js";
-import type { NavigationUpdate, RscMetadata } from "./types.js";
+import type { HandleData, NavigationUpdate, RscMetadata } from "./types.js";
 import { OPTIMISTIC_COMMIT_TRANSITION_TYPE } from "./optimistic-commit.js";
 import type { LoaderStore } from "../loader-store.js";
 import { setActiveInterceptTargets } from "../client-urls/navigation.js";
@@ -200,9 +200,11 @@ export type UpdateMode =
        * when we send cached segment IDs to the server - if the server returns empty diff,
        * we use the same segments we told the server we have. */
       targetCacheSegments?: ResolvedSegment[];
-      /** Cached handle data for the target URL. When server returns empty diff and we're
-       * rendering from cache, this is passed to the UI to restore breadcrumbs etc. */
-      targetCacheHandleData?: Record<string, Record<string, unknown[]>>;
+      /** The handle state of `targetCacheSegments`: the entry's pushes, and
+       * the live pushes of the page on screen for each segment taken from it.
+       * Read at commit; the page starts from it and the response's handles,
+       * when it has any, merge onto it (NavigationProvider). */
+      targetCacheHandleData?: () => HandleData;
       /** Source URL for intercept restore (popstate cache miss) */
       interceptSourceUrl?: string;
       /**
@@ -643,6 +645,16 @@ export function createPartialUpdater(
         : undefined;
     const cachedSegs = targetCache ?? getCurrentCachedSegments();
     const cachedSegsSource = targetCache ? "history-cache" : "current-page";
+    // Rendered from the history cache, the page starts from the entry's
+    // pushes whether or not the response re-renders. Read before tx.commit():
+    // it records the controller's handle state (the document snapshot during
+    // the hydration window) in the entry it commits, which for a link to the
+    // page on screen's own URL is the entry this reads. Written over that
+    // record after it.
+    const readCachedHandleData =
+      targetCache && mode.type === "navigate"
+        ? mode.targetCacheHandleData
+        : undefined;
     if (IS_BROWSER_DEBUG) {
       debugLog(
         `[Browser] cachedSegs source: ${cachedSegsSource} (${cachedSegs.length} segments: ${cachedSegs.map((s) => s.id).join(", ")})`,
@@ -739,16 +751,16 @@ export function createPartialUpdater(
           });
           if (signal?.aborted) return;
 
+          const cachedHandleData = readCachedHandleData?.();
           const { scroll: commitScroll } = tx.commit(
             matchedIds,
             existingSegments,
             { routeName: payload.metadata.routeName },
           );
-
-          if (mode.targetCacheHandleData) {
+          if (cachedHandleData) {
             store.updateCacheHandleData(
               store.getHistoryKey(),
-              mode.targetCacheHandleData,
+              cachedHandleData,
             );
           }
 
@@ -756,10 +768,7 @@ export function createPartialUpdater(
             payload.metadata!;
           const cachedUpdate = {
             root: newTree,
-            metadata: {
-              ...metadataWithoutHandles,
-              cachedHandleData: mode.targetCacheHandleData,
-            },
+            metadata: { ...metadataWithoutHandles, cachedHandleData },
             ...(commitScroll && { scroll: commitScroll }),
           };
 
@@ -1064,11 +1073,15 @@ export function createPartialUpdater(
         }),
         ...(serverLocationState && { serverState: serverLocationState }),
       };
+      const cachedHandleData = readCachedHandleData?.();
       const { scroll: navScroll } = tx.commit(
         heldIds,
         reconciled.segments,
         overrides,
       );
+      if (cachedHandleData) {
+        store.updateCacheHandleData(store.getHistoryKey(), cachedHandleData);
+      }
       const hasTransition = shouldStartViewTransition(
         reconciled.segments,
         gatedOff,
@@ -1118,7 +1131,9 @@ export function createPartialUpdater(
       // navigation-transaction.ts CommitResult.
       const update: NavigationUpdate = {
         root: newTree,
-        metadata: payload.metadata!,
+        metadata: cachedHandleData
+          ? { ...payload.metadata, cachedHandleData }
+          : payload.metadata!,
         ...(navScroll && { scroll: navScroll }),
       };
       if (process.env.NODE_ENV !== "production") {

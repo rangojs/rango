@@ -316,6 +316,7 @@ import { renderedBarrierPatterns } from "./pages/rendered-barrier.js";
 import { prefetchTransitionPatterns } from "./pages/prefetch-transition.js";
 import { lateHistoryPatterns } from "./pages/late-history.js";
 import { heldHandlesPatterns } from "./pages/held-handles.js";
+import { historyHandlesPatterns } from "./pages/history-handles.js";
 import heldHandlesClientPatterns from "./pages/held-handles.client-urls.js";
 import { heldBoundaryPatterns } from "./pages/held-boundary.js";
 import { peFormStatePatterns } from "./pages/pe-form-state.js";
@@ -2903,6 +2904,9 @@ export const urlpatterns = urls(
           name: "heldHandlesClient",
         }),
         include("/", heldHandlesPatterns, { name: "" }),
+        // A link to a page the history cache holds keeps that page's handle
+        // pushes when the response re-renders part of it.
+        include("/", historyHandlesPatterns, { name: "" }),
         include("/", peFormStatePatterns, { name: "" }),
         include("/", suspenseCasesPatterns, { name: "sc" }),
         // prefetch: false on loader() and loading(): one page per case with
