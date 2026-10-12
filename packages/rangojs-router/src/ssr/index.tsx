@@ -314,7 +314,14 @@ function installClientLoadRecorder(): void {
         (loading as { status?: string }).status !== "fulfilled"
       ) {
         for (const loads of activeCaptureClientLoads) loads.add(loading);
-        documentLoads?.add(loading);
+        if (documentLoads) {
+          // The document's set holds only loads still pending.
+          documentLoads.add(loading);
+          const drop = (): void => {
+            documentLoads.delete(loading);
+          };
+          loading.then(drop, drop);
+        }
       }
       return loading;
     };
@@ -337,9 +344,9 @@ function captureClientLoads(): {
 }
 
 /**
- * Dev only: hold a document's first flush until the client-reference loads
- * its Flight decode requested have settled, so a boundary waiting on one
- * completes in place, as in a build (#1106).
+ * Dev only: when the shell is ready, hold the first flush until the
+ * client-reference loads still pending at that moment have settled, so a
+ * boundary waiting on one completes in place, as in a build (#1106).
  *
  * plugin-rsc tags client reference ids with a per-render cache tag in dev
  * (createClientManifest in @vitejs/plugin-rsc core/rsc.js), so its SSR loader
@@ -348,30 +355,30 @@ function captureClientLoads(): {
  * answer draws under an inline <Suspense> resolved after the shell flushed,
  * and the document streamed the fallback, which a browser without JavaScript
  * never replaces. A build loads each reference once per isolate and reads it
- * synchronously after that. Slow loaders still stream: a load starts only
- * when the row naming it arrives.
+ * synchronously after that.
+ *
+ * Only that snapshot is waited for: a load starts when the row naming it
+ * arrives, so its data is already in the payload. A load requested later
+ * belongs to data that arrives after the shell, which streams as in a build,
+ * and nothing pending means no wait at all: the router adds no wait of its
+ * own, so a loading() skeleton or an inline fallback still streams.
  */
 async function settleDocumentClientLoads(
-  loads: Set<PromiseLike<unknown>>,
+  pending: Set<PromiseLike<unknown>>,
 ): Promise<void> {
-  if (loads.size === 0) return;
+  const snapshot = [...pending];
+  if (snapshot.length === 0) return;
   const deadline = createCancelableTimeout(DEV_DOCUMENT_CLIENT_LOAD_WAIT_MS);
-  const timedOut = deadline.promise.then(() => true);
   try {
-    let seen = -1;
-    while (loads.size !== seen) {
-      seen = loads.size;
-      const expired = await Promise.race([
-        Promise.allSettled(loads).then(() => false),
-        timedOut,
-      ]);
-      if (expired) return;
-      // A settled load pings the Fizz task that waited on it, which retries
-      // on a setTimeout(0) turn (pingTask), and a row read meanwhile can
-      // request further loads.
-      await macrotask();
-      await macrotask();
-    }
+    const expired = await Promise.race([
+      Promise.allSettled(snapshot).then(() => false),
+      deadline.promise.then(() => true),
+    ]);
+    if (expired) return;
+    // A settled load pings the Fizz task that waited on it, which retries on
+    // a setTimeout(0) turn (pingTask).
+    await macrotask();
+    await macrotask();
   } finally {
     deadline.cancel();
   }
@@ -379,8 +386,9 @@ async function settleDocumentClientLoads(
 
 /**
  * Run a document's Flight decode. In dev it runs in its own client-load set,
- * and `settle` holds the first flush until those loads have settled
- * (settleDocumentClientLoads); a build gets the decode alone.
+ * and `settle` holds the first flush until the loads pending when the shell
+ * is ready have settled (settleDocumentClientLoads); a build gets the decode
+ * alone.
  */
 function trackDocumentClientLoads<T>(decode: () => T): {
   value: T;

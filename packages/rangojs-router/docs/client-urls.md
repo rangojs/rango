@@ -708,11 +708,18 @@ dev. plugin-rsc tags client reference ids with a per-render cache tag in dev, so
 its SSR loader memo missed on every request and each reference loaded through
 the module runner again, an RPC per import on workerd; the boundary completed
 after the shell flushed. `renderHTML` (`src/ssr/index.tsx`,
-`settleDocumentClientLoads`) now holds a dev document's first flush until the
-client-reference loads its Flight decode requested have settled, bounded at 5
-seconds. Loads are attributed per document through an `AsyncLocalStorage`
-entered around the decode, so a concurrent render's loads never hold it. A
-build does not run it: its loader memo hits after the first load per isolate.
+`settleDocumentClientLoads`) now holds a dev document's first flush, when the
+shell is ready, until the client-reference loads still pending at that moment
+have settled, bounded at 5 seconds. Only that snapshot counts: a load starts
+when the row naming it arrives, so its data is already in hand, while a load
+a later row requests belongs to data the first flush would not carry in a
+build. With nothing pending there is no wait at all. The first version kept
+waiting until no new load appeared, and that let late data into the first
+flush: a `loading()` skeleton and a streamed error's fallback stopped
+streaming in dev (`e2e/loading-fn.test.ts`, `e2e/error-boundary.test.ts`).
+Loads are attributed per document through an `AsyncLocalStorage` entered
+around the decode, so a concurrent render's loads never hold it. A build does
+not run it: its loader memo hits after the first load per isolate.
 Pinned dev+prod in `e2e/client-urls-loader-element.test.ts` and
 `tests/cloudflare-basic/e2e/client-urls-loader-element.test.ts` (body
 `tests/shared-e2e/src/loader-element-scenario.ts`), and by

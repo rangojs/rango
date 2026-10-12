@@ -380,7 +380,7 @@ By default every loader streams, so nothing a slow loader produces is guaranteed
 - Intercept loaders reject the option, because intercepts only render on client navigations.
 - Every document load pays the flagged loader's latency before the first byte. Keep flagged loaders fast.
 
-Without JavaScript, a browser sees only what the first flush carries. A boundary that isn't complete by then ships its fallback and swaps the content in with a script, which never runs without JavaScript. That includes a client component a loader's answer draws under an inline `<Suspense>`. A fast loader's answer usually makes the first flush, and `ssr: false` guarantees that the loader's data does. It doesn't cover the client component's module: the first document a freshly started production server renders can still be waiting for it. The dev server behaves like a production build here: before the first flush, it waits for the client components the document's payload has named so far.
+Without JavaScript, a browser sees only what the first flush carries. A boundary that isn't complete by then ships its fallback and swaps the content in with a script, which never runs without JavaScript. That includes a client component a loader's answer draws under an inline `<Suspense>`. A fast loader's answer usually makes the first flush, and `ssr: false` guarantees that the loader's data does. It doesn't cover the client component's module: the first document a freshly started production server renders can still be waiting for it. The dev server behaves like a production build here: when the shell is ready, it waits for the client components the payload has named and that are still loading, and for nothing else.
 
 ### `prefetch: false`
 

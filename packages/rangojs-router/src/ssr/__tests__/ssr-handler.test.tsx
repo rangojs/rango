@@ -715,31 +715,32 @@ describe("createSSRHandler", () => {
 
       const metadata = { pathname: "/", params: {}, matched: ["/"] };
 
-      it("a load requested in the turns after another settles is waited for too", async () => {
+      it("a load requested after the shell is ready is not waited for", async () => {
         const order: string[] = [];
         let resolveFirst!: () => void;
         const first = new Promise<void>((r) => {
           resolveFirst = r;
         });
-        let resolveSecond!: () => void;
-        const second = new Promise<void>((r) => {
-          resolveSecond = r;
+        let resolveLate!: () => void;
+        const late = new Promise<void>((r) => {
+          resolveLate = r;
         });
         const modules: Record<string, Promise<void>> = {
           "/src/a.tsx#A": first,
-          "/src/b.tsx#B": second,
+          "/src/late.tsx#Late": late,
         };
         g.__vite_rsc_client_require__ = (id) => modules[id];
         const deps = createMockDeps({
           createFromReadableStream: vi.fn().mockImplementation(async () => {
             void g.__vite_rsc_client_require__!("/src/a.tsx#A");
-            // A row read a task after the first module settled names another.
+            // A row that arrives while the first load is held names another
+            // reference: its data was not there when the shell was ready.
             void first.then(() =>
               setTimeout(() => {
-                void g.__vite_rsc_client_require__!("/src/b.tsx#B");
+                void g.__vite_rsc_client_require__!("/src/late.tsx#Late");
                 setTimeout(() => {
-                  order.push("second settled");
-                  resolveSecond();
+                  order.push("late load settled");
+                  resolveLate();
                 }, 10);
               }, 0),
             );
@@ -757,7 +758,62 @@ describe("createSSRHandler", () => {
 
         await createSSRHandler(deps)(createMockRscStream());
         order.push("stream returned");
-        expect(order).toEqual(["second settled", "stream returned"]);
+        expect(order).toEqual(["stream returned"]);
+      });
+
+      it("with nothing pending when the shell is ready, the first flush is not held", async () => {
+        const order: string[] = [];
+        g.__vite_rsc_client_require__ = () => Promise.resolve();
+        const deps = createMockDeps({
+          createFromReadableStream: vi.fn().mockImplementation(async () => {
+            void g.__vite_rsc_client_require__!("/src/a.tsx#A");
+            return { metadata };
+          }),
+          renderToReadableStream: vi.fn().mockImplementation(async () => {
+            await new Promise((r) => setTimeout(r, 5));
+            // The next task, which the router must not wait for.
+            setTimeout(() => order.push("next task"), 0);
+            return new ReadableStream({
+              start(controller) {
+                controller.close();
+              },
+            });
+          }),
+        });
+
+        await createSSRHandler(deps)(createMockRscStream());
+        order.push("stream returned");
+        expect(order).toEqual(["stream returned"]);
+      });
+
+      it("a load pending when the shell is ready gets the turn Fizz retries in", async () => {
+        const order: string[] = [];
+        let resolveLoad!: () => void;
+        const load = new Promise<void>((r) => {
+          resolveLoad = r;
+        });
+        g.__vite_rsc_client_require__ = () => load;
+        // Fizz's ping: a settled load schedules the waiting task's retry on a
+        // setTimeout(0) turn.
+        void load.then(() => setTimeout(() => order.push("fizz retried"), 0));
+        const deps = createMockDeps({
+          createFromReadableStream: vi.fn().mockImplementation(async () => {
+            void g.__vite_rsc_client_require__!("/src/a.tsx#A");
+            return { metadata };
+          }),
+          renderToReadableStream: vi.fn().mockImplementation(async () => {
+            setTimeout(resolveLoad, 10);
+            return new ReadableStream({
+              start(controller) {
+                controller.close();
+              },
+            });
+          }),
+        });
+
+        await createSSRHandler(deps)(createMockRscStream());
+        order.push("stream returned");
+        expect(order).toEqual(["fizz retried", "stream returned"]);
       });
 
       it("a load that never settles holds the first flush for 5 seconds, then the document flushes as before", async () => {

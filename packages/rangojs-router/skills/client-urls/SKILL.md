@@ -454,8 +454,8 @@ answer draws under an inline `<Suspense>`: a fast loader's answer usually
 makes the first flush, and `ssr: false` guarantees the loader's data does. It
 does not cover the client component's module: the first document a build's
 fresh server renders can still be waiting for it. The dev server matches a
-build here: before the first flush it waits for the client components the
-document's payload has named so far.
+build here: when the shell is ready, it waits for the client components the
+payload has named and that are still loading, and for nothing else.
 
 ## `prefetch: false` — keep a loader out of prefetches
 

@@ -26,9 +26,10 @@ swapped the content in with a script, so a browser without JavaScript showed
 only the fallback. A production build rendered the content in place. The dev server loaded that client component again for every
 request and finished after the first flush.
 
-Now: before a document's first flush, the dev server waits for the client
-components its payload has named so far, so the boundary renders in place in
-dev as in a build. A loader that settles after the first flush still streams
+Now: when a document's shell is ready, the dev server waits for the client
+components its payload has named and that are still loading, so the boundary
+renders in place in dev as in a build. It waits for nothing else: a
+`loading()` skeleton or a fallback whose data has not arrived still streams. A loader that settles after the first flush still streams
 its fallback, in dev and in a build; `loader(Def, { ssr: false })` guarantees
 the loader's data in the document. Production builds are unchanged.
 
