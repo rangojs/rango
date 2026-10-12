@@ -267,6 +267,14 @@ const activeCaptureClientLoads = new Set<Set<PromiseLike<unknown>>>();
 /**
  * Dev only: the client-reference loads requested by the Flight decode of the
  * document render whose context this is (see settleDocumentClientLoads).
+ *
+ * Gated on `process.env.NODE_ENV`, the router's dev signal, not on the
+ * `import.meta.env.DEV` that adds plugin-rsc's cache tag: a build folds it
+ * (the app's NODE_ENV define, or the Cloudflare plugin), so the hold is
+ * compiled out. A server where the two disagree loses nothing: a dev server
+ * run with NODE_ENV=production streams as it did before the hold, and an
+ * unfolded production server collects only loads still pending, the first
+ * load of each module, bounded like any other.
  */
 const documentClientLoads =
   process.env.NODE_ENV !== "production"
@@ -348,23 +356,43 @@ async function settleDocumentClientLoads(
 ): Promise<void> {
   if (loads.size === 0) return;
   const deadline = createCancelableTimeout(DEV_DOCUMENT_CLIENT_LOAD_WAIT_MS);
-  let expired = false;
-  void deadline.promise.then(() => {
-    expired = true;
-  });
+  const timedOut = deadline.promise.then(() => true);
   try {
     let seen = -1;
-    while (!expired && loads.size !== seen) {
+    while (loads.size !== seen) {
       seen = loads.size;
-      await Promise.race([Promise.allSettled(loads), deadline.promise]);
+      const expired = await Promise.race([
+        Promise.allSettled(loads).then(() => false),
+        timedOut,
+      ]);
+      if (expired) return;
       // A settled load pings the Fizz task that waited on it, which retries
-      // on a setTimeout(0) turn (pingTask) and can request further loads.
+      // on a setTimeout(0) turn (pingTask), and a row read meanwhile can
+      // request further loads.
       await macrotask();
       await macrotask();
     }
   } finally {
     deadline.cancel();
   }
+}
+
+/**
+ * Run a document's Flight decode. In dev it runs in its own client-load set,
+ * and `settle` holds the first flush until those loads have settled
+ * (settleDocumentClientLoads); a build gets the decode alone.
+ */
+function trackDocumentClientLoads<T>(decode: () => T): {
+  value: T;
+  settle?: () => Promise<void>;
+} {
+  if (!documentClientLoads) return { value: decode() };
+  installClientLoadRecorder();
+  const loads = new Set<PromiseLike<unknown>>();
+  return {
+    value: documentClientLoads.run(loads, decode),
+    settle: () => settleDocumentClientLoads(loads),
+  };
 }
 
 /**
@@ -770,17 +798,10 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
       // The parallel no-op catch keeps a payload rejection off the
       // unhandledRejection path if fizz errors before consuming the promise;
       // SsrRoot's React.use() on the SAME promise still observes the rejection.
-      // In dev the decode runs in its own client-load set, settled before the
-      // first flush (settleDocumentClientLoads).
-      const clientLoads =
-        documentClientLoads && new Set<PromiseLike<unknown>>();
-      if (clientLoads) installClientLoadRecorder();
-      const decode = () =>
-        deserializeSsrPayload(createFromReadableStream, rscStream1);
-      const payload =
-        documentClientLoads && clientLoads
-          ? documentClientLoads.run(clientLoads, decode)
-          : decode();
+      const { value: payload, settle: settleClientLoads } =
+        trackDocumentClientLoads(() =>
+          deserializeSsrPayload(createFromReadableStream, rscStream1),
+        );
       payload.catch(() => {});
 
       const SsrRoot = createSsrRootComponent({
@@ -832,7 +853,9 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
         }),
       );
 
-      if (clientLoads) await settleDocumentClientLoads(clientLoads);
+      // Dev only: the client-reference loads the decode requested settle
+      // before the first flush (trackDocumentClientLoads).
+      if (settleClientLoads) await settleClientLoads();
 
       // Wait for all Suspense boundaries to resolve when streamMode is "allReady".
       // This buffers the entire HTML before flushing — used for bots that

@@ -3,6 +3,7 @@ import { urls } from "@rangojs/router";
 import { Outlet } from "@rangojs/router/client";
 import {
   ActionFailureDataPage,
+  ActionFailureLoading,
   ActionFailureThrowPage,
 } from "./action-failure.client.js";
 import {
@@ -11,12 +12,18 @@ import {
 } from "./action-failure.defs.js";
 
 // urls() twin of action-failure.client-urls.tsx (e2e/action-failure.test.ts).
-export const actionFailurePatterns = urls(({ path, loader }) => [
+export const actionFailurePatterns = urls(({ path, loader, loading }) => [
   path(
     "/throw",
     () => <ActionFailureThrowPage />,
     { name: "throw" },
     () => [loader(ActionFailureThrowLoader)],
+  ),
+  path(
+    "/throw-loading",
+    () => <ActionFailureThrowPage />,
+    { name: "throwLoading" },
+    () => [loader(ActionFailureThrowLoader), loading(<ActionFailureLoading />)],
   ),
   path(
     "/data",

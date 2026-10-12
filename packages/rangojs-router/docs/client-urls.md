@@ -621,39 +621,59 @@ action commit renders into the mounted tree (`server-action-bridge.ts`, the
 ### A loader that fails on its rerun after an action
 
 The action has run and returned by the time its loaders rerun, so the failure
-cannot undo it. What the browser does depends on whether an `errorBoundary()`
-sits above the route, which for a group means around the `include()` mount:
+cannot undo it. What the browser does depends on two things: whether an
+`errorBoundary()` sits above the route (for a group, around the `include()`
+mount), and, for a `urls()` route, whether the route has a `loading()`:
 
-| Above the route                    | Action called directly (`await action()`)                                                                                                         | From `<form action>`, `useActionState`, `useTransition`                                                                                     |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| No `errorBoundary()`               | The call rejects with the loader's error (`"An error occurred"` in a build); nothing of that revalidation commits; page data and React state stay | React hands the rejection to the nearest React error boundary above the form; with none of the app's, `RootErrorBoundary` replaces the page |
-| `errorBoundary()` around the mount | Its fallback replaces the route; the page and its form state unmount                                                                              | The same                                                                                                                                    |
+| The route                                                  | Action called directly (`await action()`)                                                                                                         | From `<form action>`, `useActionState`, `useTransition`                                                                                     |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| A group route, or a `urls()` route without `loading()`     | The call rejects with the loader's error (`"An error occurred"` in a build); nothing of that revalidation commits; page data and React state stay | React hands the rejection to the nearest React error boundary above the form; with none of the app's, `RootErrorBoundary` replaces the page |
+| A `urls()` route with `loading()`                          | The call resolves; the commit renders, the read throws, and the nearest React error boundary catches it (`RootErrorBoundary` if the app has none) | The same                                                                                                                                    |
+| Under an `errorBoundary()` (for a group, around the mount) | Its fallback replaces the route; the page and its form state unmount                                                                              | The same                                                                                                                                    |
 
-Why the first row rejects: the action lane settles loader data before it
-commits (`renderSegments` with `isAction`, `server-action-bridge.ts:849`). A
-loader entry with `ok: false` and no fallback makes `decodeLoaderResults`
-throw (`decode-loader-results.ts:121`, called from `segment-system.tsx:745`),
-so `renderSegments` rejects before `onUpdate`, and the rejection becomes the
-action call's. With an `errorBoundary()`, `loader-resolution.ts` renders its
-fallback into the entry, `decodeLoaderResults` takes it as the segment's
-`errorFallback` (`decode-loader-results.ts:109`), and the commit renders it in
-place of the route. A `urls()` route takes the same path. One side effect to
-know about: the rejected action's entry is disposed without `complete()` or
-`fail()`, so it lingers uncompleted for its 100 ms settle window
-(`event-controller.ts`, `doSettle`), and an action started in that window
-counts it as concurrent and adds one consolidation refetch.
+Why the rows differ. The action lane settles loader data before it commits
+(`renderSegments` with `isAction`, `server-action-bridge.ts:848`). Without
+`loading()` the segment's loaders take the aggregate path: a loader entry with
+`ok: false` and no fallback makes `decodeLoaderResults` throw
+(`decode-loader-results.ts:121`, called from `segment-system.tsx:745`), so
+`renderSegments` rejects before `onUpdate`, the commit is dropped, and the
+rejection becomes the action call's. With `loading()` on a `urls()` route the
+lane awaits the same data (`segment-system.tsx:651-662`) but hands it to
+`LoaderBoundary`, which decodes it while React renders
+(`route-content-wrapper.tsx:351`): `renderSegments` resolves, the action
+resolves, and the throw happens in the committed render. A group route never
+takes that branch (`segment-system.tsx:638`, `!clientGroup && loading`), so
+its `loading()` changes nothing here. With an `errorBoundary()`,
+`loader-resolution.ts` renders its fallback into the entry,
+`decodeLoaderResults` takes it as the segment's `errorFallback`
+(`decode-loader-results.ts:109`), and the commit renders it in place of the
+route.
+
+The rejected call is the action's error for `useAction` too: the bridge's
+`catch` calls `handle.fail(error)`, and the event controller marks a disposed
+action completed, so an action started in its 100 ms settle window is not
+counted as concurrent (no consolidation refetch, #675).
 
 The pattern to recommend for a failure the user can retry: return it from the
 loader as data (`{ ok: false, reason }`) and render it at the read. The action
 resolves, the page and its state stay, and the next rerun replaces the
-message. The skill carries the example.
+message. The skill carries the example. One caveat: the failure is then an
+ordinary value, so a `cache()` on the loader, a `ppr` bake of an `ssr: false`
+loader, or a prerender stores and serves it like any other. A thrown error is
+never stored: the miss path stores only what `execute()` returned
+(`cache/read-through-swr.ts:159`), and a background revalidation that throws
+keeps the stale entry. Cache the call the loader makes instead and convert the
+throw in an uncached loader.
 
 Pinned dev+prod in `e2e/action-failure.test.ts` (router test-app) and
 `tests/cloudflare-basic/e2e/action-failure.test.ts`, body
-`tests/shared-e2e/src/action-failure-scenario.ts`: a group, its `urls()`
-twin, and the group under an `errorBoundary()`. The response itself is pinned
-through `serveShellRequest({ action })` in
-`src/testing/__tests__/client-urls-revalidate.rsc-test.tsx`.
+`tests/shared-e2e/src/action-failure-scenario.ts`: a group and its `urls()`
+twin, each with and without `loading()`, and the group under an
+`errorBoundary()`. The response itself is pinned through
+`serveShellRequest({ action })` in
+`src/testing/__tests__/client-urls-revalidate.rsc-test.tsx`; the settle-window
+fix in `src/__tests__/event-controller.test.ts` and
+`src/__tests__/server-action-bridge.test.ts`.
 
 `intercept()` loaders inside `clientUrls()` do not apply their `revalidate()`
 yet (a known gap, left for a follow-up), so do not rely on it there. The build
@@ -681,7 +701,9 @@ A browser without JavaScript sees only what the first flush carries: a
 boundary that completes later ships its fallback and swaps the content in with
 a script that never runs. A client component a loader's answer draws under an
 inline `<Suspense>` is in the first flush when the loader settles before it
-(a fast loader usually does; `ssr: false` guarantees it). That used to differ in
+(a fast loader usually does; `ssr: false` guarantees the loader's data, not
+the module load a build's first render of a reference still waits for). That
+used to differ in
 dev. plugin-rsc tags client reference ids with a per-render cache tag in dev, so
 its SSR loader memo missed on every request and each reference loaded through
 the module runner again, an RPC per import on workerd; the boundary completed

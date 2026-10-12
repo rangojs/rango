@@ -334,12 +334,13 @@ A form's React state survives an action's revalidation in a group, as it does on
 
 The action has already run when its loaders re-run, so a loader that throws then does not undo it. Where the error lands decides what the user sees:
 
-| Above the route                    | Action called directly (`await action()`)                                                                                                                                                                | Action from `<form action>`, `useActionState`, or `useTransition`                                                                                   |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| No `errorBoundary()`               | The call rejects with the loader's error (`"An error occurred"` in a production build), although the action returned. Nothing of that revalidation commits: the page keeps its data and its React state. | React hands the rejection to the nearest React error boundary above the form. If you have none, the router's root error boundary replaces the page. |
-| `errorBoundary()` around the mount | Its fallback replaces the route, so the page and its form state unmount.                                                                                                                                 | The same.                                                                                                                                           |
+| The route                                                  | Action called directly (`await action()`)                                                                                                                                                                      | Action from `<form action>`, `useActionState`, or `useTransition`                                                                                   |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A group route, or a `urls()` route without `loading()`     | The call rejects with the loader's error (`"An error occurred"` in a production build), although the action returned. Nothing of that revalidation commits: the page keeps its data and its React state.       | React hands the rejection to the nearest React error boundary above the form. If you have none, the router's root error boundary replaces the page. |
+| A `urls()` route with `loading()`                          | The call resolves with the action's result. The page renders, the loader's read throws, and the nearest React error boundary catches it. If you have none, the router's root error boundary replaces the page. | The same.                                                                                                                                           |
+| Under an `errorBoundary()` (for a group, around the mount) | Its fallback replaces the route, so the page and its form state unmount.                                                                                                                                       | The same.                                                                                                                                           |
 
-A `urls()` route behaves the same way. For a failure the user can retry, such as a flaky upstream or a rate limit, return the failure as data instead of throwing, and render it where the data goes:
+A `loading()` on a group route doesn't change the first row. For a failure the user can retry, such as a flaky upstream or a rate limit, return the failure as data instead of throwing, and render it where the data goes:
 
 ```tsx
 // src/catalog/stock.loader.ts
@@ -369,6 +370,8 @@ function Stock() {
 
 The action resolves with its result, the page and its form state stay, and the next action or navigation that re-runs the loader replaces the message. Keep throwing for a failure that should stop the page, and put an `errorBoundary()` around the mount for it.
 
+A failure returned as data is an ordinary value, so anything that stores the loader's value stores it too: a `cache()` on the loader serves it until its TTL runs out, a `ppr` shell bakes the value of an `ssr: false` loader, and a prerender stores it at build time. A thrown error is never stored, and a stale entry keeps serving. To cache the expensive part, cache the call the loader makes, with `"use cache"` on that function (a call that throws stores nothing), and turn the throw into data in a loader that isn't cached itself.
+
 ### `ssr: false`
 
 By default every loader streams, so nothing a slow loader produces is guaranteed to be in the server-rendered HTML: its data, its handle pushes, or the 404 status from a thrown `notFound()`. `loader(Def, { ssr: false })` makes document renders wait for that loader before the first flush. Client navigations still stream it. The option applies to one loader, and unflagged siblings keep streaming behind their boundaries.
@@ -377,7 +380,7 @@ By default every loader streams, so nothing a slow loader produces is guaranteed
 - Intercept loaders reject the option, because intercepts only render on client navigations.
 - Every document load pays the flagged loader's latency before the first byte. Keep flagged loaders fast.
 
-Without JavaScript, a browser sees only what the first flush carries. A boundary that isn't complete by then ships its fallback and swaps the content in with a script, which never runs without JavaScript. That includes a client component a loader's answer draws under an inline `<Suspense>`. A fast loader's answer usually makes the first flush, and `ssr: false` guarantees it. The dev server behaves like a production build here: before the first flush, it waits for the client components the document's payload has named so far.
+Without JavaScript, a browser sees only what the first flush carries. A boundary that isn't complete by then ships its fallback and swaps the content in with a script, which never runs without JavaScript. That includes a client component a loader's answer draws under an inline `<Suspense>`. A fast loader's answer usually makes the first flush, and `ssr: false` guarantees that the loader's data does. It doesn't cover the client component's module: the first document a freshly started production server renders can still be waiting for it. The dev server behaves like a production build here: before the first flush, it waits for the client components the document's payload has named so far.
 
 ### `prefetch: false`
 

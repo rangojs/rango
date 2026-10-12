@@ -13,18 +13,23 @@ import {
 } from "./action-failure.defs.js";
 
 // The draft is a form's React state; the outcome is what the action call
-// resolved or rejected with.
+// resolved or rejected with, also written to <html data-af-outcome> so it
+// stays readable after the page unmounts.
 function ActionFailureControls(): ReactNode {
   const [search] = useSearchParams();
   const run = search.get("run") ?? "none";
   const [draft, setDraft] = useState("");
   const [outcome, setOutcome] = useState("idle");
+  const report = (value: string): void => {
+    document.documentElement.dataset.afOutcome = value;
+    setOutcome(value);
+  };
   const call = (fail: boolean): void => {
-    setOutcome("pending");
+    report("pending");
     actionFailureSwitch(run, fail).then(
-      (result) => setOutcome(`resolved:${result.saved}`),
+      (result) => report(`resolved:${result.saved}`),
       (error: unknown) =>
-        setOutcome(
+        report(
           `rejected:${error instanceof Error ? error.message : String(error)}`,
         ),
     );
@@ -80,4 +85,8 @@ export function ActionFailureDataPage(): ReactNode {
       )}
     </div>
   );
+}
+
+export function ActionFailureLoading(): ReactNode {
+  return <p data-testid="af-loading">Loading the page</p>;
 }
