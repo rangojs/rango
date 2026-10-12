@@ -620,6 +620,14 @@ in the same commit; `isAction(target)` vs `isAction(* as Actions)` pin
 identity; an `actionResult` predicate, a `formData` predicate, and a
 prefetched param navigation) and in `semantic-matrix.test.ts` row R2.
 
+`intercept()` loaders inside `clientUrls()` apply their `revalidate()` the
+same way: the build moves each predicate to the server, the projection carries
+its keys on the intercept (`ClientUrlProjectionIntercept.loaderRevalidate`)
+and materialization attaches them to the intercept's loader stubs, so an action
+from the modal re-runs only the loaders whose predicate says so. Pinned dev+prod
+in `e2e/client-urls.test.ts` ("a clientUrls() intercept loader's revalidate()
+sees the action result") in both apps.
+
 ### After an action
 
 A common misread is that a group hands the server only a verdict and the
@@ -695,12 +703,6 @@ twin, each with and without `loading()`, and the group under an
 fix in `src/__tests__/event-controller.test.ts` and
 `src/__tests__/server-action-bridge.test.ts`.
 
-`intercept()` loaders inside `clientUrls()` do not apply their `revalidate()`
-yet (a known gap, left for a follow-up), so do not rely on it there. The build
-still checks those predicates like any other, so one that captures a binding of
-the `"use client"` module fails the build although nothing runs it: import it
-from a module without `"use client"`, or drop it.
-
 `loader(Def, { ssr: false }, use?)` is the SSR-completeness opt-in.
 By default every loader streams on every render, so nothing a slow loader
 produces is guaranteed to be in the SSR'd HTML — its section SSRs as the
@@ -759,10 +761,14 @@ with that commit, and one fill request runs only the flagged loaders. A
 flagged `loader()` on a server layout above the group is deferred too while
 that layout is new to the client. `loading()` inside `clientUrls()` takes no
 options, a flagged `loading()` on a server layout above the group defers
-nothing for its routes, and `intercept()` loaders accept the flag and ignore
-it, as in `urls()`. Pinned dev+prod by the `clientUrls():` cases of
-`tests/shared-e2e/src/prefetch-false.ts` in the router test-app and
-cloudflare-basic.
+nothing for its routes. On an `intercept()` loader the flag works as in
+`urls()`: the projection carries it on the intercept
+(`ClientUrlProjectionIntercept.deferrableLoaderIndices`), and an in-group
+prefetch of the intercept's target defers the loader; the click, which takes
+the server-route path (the optimistic presentation declines for an intercept
+target), opens the modal at once and one fill runs it. Pinned dev+prod by the
+`clientUrls():` cases of `tests/shared-e2e/src/prefetch-false.ts` and
+`e2e/client-urls.test.ts` in the router test-app and cloudflare-basic.
 
 INSIDE `clientUrls()` the DSL is deliberately minimal: client route groups
 exist for transition performance — instant optimistic presentation, held

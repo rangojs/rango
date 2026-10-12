@@ -317,7 +317,7 @@ A predicate can be an inline arrow or function, an imported predicate (`revalida
 
 A `server-only` or `node:` import works on the server, but the import also stays in the `"use client"` module, which is not pruned for the browser, so it must still load there.
 
-Vitest does not run the build, so in a unit test the predicate is a plain function. Test it with `runRevalidate` from `@rangojs/router/testing`, which serves predicates in `urls()` and in `clientUrls()` alike. A predicate decides only whether a loader re-runs. It never skips middleware. `intercept()` loaders inside a group do not apply their `revalidate()` yet.
+Vitest does not run the build, so in a unit test the predicate is a plain function. Test it with `runRevalidate` from `@rangojs/router/testing`, which serves predicates in `urls()` and in `clientUrls()` alike. A predicate decides only whether a loader re-runs. It never skips middleware. `intercept()` loaders inside a group apply their `revalidate()` the same way: an action from the modal re-runs only the loaders whose predicate says so, and the modal keeps the data of the others.
 
 ### After an action
 
@@ -400,7 +400,7 @@ A click inside the group still shows the destination at once. When the prefetch 
 - Only data the page does not have yet is skipped. On a click between two params of the same route (`/product/a` to `/product/b`), the prefetch runs the loader as usual.
 - On a `layout()` loader, the option applies to every route inside the layout. A flagged `loader()` on a server layout above the group is skipped too, while that layout is new to the page.
 - `loading()` in a group takes no options, and `loading(fallback, { prefetch: false })` on a server layout above the group skips nothing for the group's routes.
-- Intercept loaders accept the option and ignore it.
+- Inside `intercept()`, a prefetch from the source page skips the flagged loader. The click opens the modal at once with its `loading()`, and one follow-up request runs that loader. A modal with no `loading()` shows its slot empty until that request answers. `loading(fallback, { prefetch: false })` inside `intercept()` is ignored.
 
 ### Shell caching with `ppr`
 

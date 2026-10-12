@@ -1,5 +1,66 @@
 # Changelog
 
+## Unreleased
+
+### Added: `prefetch: false` and `revalidate()` on an `intercept()`'s loaders, in `urls()` and `clientUrls()`
+
+`loader(Def, { prefetch: false })` inside `intercept()` was accepted and
+ignored: a prefetch of the intercept's target from its source page ran every
+loader of the modal. Now a prefetch from the source skips the flagged loader,
+as it does on a route:
+
+```tsx
+intercept("@modal", ".photo", PhotoModal, () => [
+  loader(PhotoLoader),
+  loader(CommentsLoader, { prefetch: false }), // skipped in a prefetch
+  loading(<ModalSkeleton />),
+]);
+```
+
+The click that adopts the prefetch opens the modal at once over the page, with
+its `loading()` while one fill request, sent from the source page, runs the
+flagged loader. The page under the modal is not re-rendered or remounted. A
+modal with no `loading()` shows its slot empty until the fill answers, as a
+plain click shows nothing until its response. A hard load of the target, a
+click with nothing prefetched, back/forward and an action behave as before.
+`loading(fallback, { prefetch: false })` inside `intercept()` is still ignored.
+
+Each loader of an intercept now runs its own `revalidate()`: an action called
+from a modal re-runs only the loaders whose predicate says so, and the modal
+keeps the data of the others. In `clientUrls()`, an intercept loader's
+`revalidate()` was checked by the build and never applied; it now runs on the
+server with the same arguments as a route loader's, `actionResult` included,
+and `loader(Def, { prefetch: false })` there is honoured too.
+
+An intercept loader that throws on a navigation now reaches the router's
+`onError` with `isPartial: true`, as a route loader's error on a navigation
+does. It was unset before.
+
+`serveShellRequest({ partial: { interceptSource } })` sends the intercept
+source header the browser sends from an open modal and with an intercept's
+fill, so a test can serve both.
+
+### Fixed: a modal keeps the data of a loader that skips `revalidate()` when a link in it opens another modal
+
+**Before.** A link in an open modal to another intercepted route whose modal
+reads the same loader (or back/forward between two such modals) re-ran the
+loaders whose `revalidate()` allowed it and left out the others, and the
+browser dropped the data it held for those: the new modal's `useLoader()`
+threw "data not found in context". A server action from the modal was not
+affected.
+
+**Now.** The modal keeps the data of every loader the server skipped, on a
+navigation as on an action.
+
+### Fixed: a server action from a modal keeps the handle pushes of a loader it did not re-run
+
+**Before.** An action called from a modal re-runs the intercept's handler. A
+loader of the intercept whose `revalidate()` answered `false` kept its data,
+but its handle pushes (a breadcrumb, a title) were counted as the handler's and
+dropped from the page with them.
+
+**Now.** They stay, as a skipped route loader's do.
+
 ## 0.24.2 (2026-10-13)
 
 ### Fixed: a `clientUrls()` group layout that reads its own loader keeps the instant page change on navigations between its routes

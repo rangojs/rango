@@ -20,13 +20,13 @@ A `Prerender` route is served as in production: from the artifact `router.matchF
 
 ### Options — `ServeShellRequestOptions`
 
-| Field        | Type                                                                                 | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| ------------ | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cacheStore` | `SegmentCacheStore`                                                                  | The store for this request, in place of the store your `createRouter({ cache })` config returns. The rest of that config (`enabled`, `searchParams`) still applies. Omit it to use the router's own store.                                                                                                                                                                                                                                                                         |
-| `env`        | `TEnv`                                                                               | Bindings, as `router.fetch(request, { env })` passes them. A function `cache` config receives them.                                                                                                                                                                                                                                                                                                                                                                                |
-| `headers`    | `HeadersInit`                                                                        | Request headers (e.g. `cookie`). A document request defaults `accept` to `text/html`.                                                                                                                                                                                                                                                                                                                                                                                              |
-| `partial`    | `true \| { from?: string; segments?: string[]; prefetch?: boolean; fill?: boolean }` | Serve the navigation request the browser sends instead of a document GET: from `from` (default the site root) with `segments` mounted (default none). `prefetch: true` sends it as a `<Link>` prefetch (`X-Rango-Prefetch`), so `prefetch: false` work is deferred. `fill: true` sends the follow-up request (`_rsc_fill=1`) the browser makes after adopting a prefetch; pass the prefetch's delivered ids, without the deferred ones, as `segments`, and the same URL as `from`. |
-| `action`     | `{ ref: Function; id: string; args?: unknown[]; segments?: string[] }`               | Send the request a JS server action call makes from the page at `url`: a POST of `args` (encoded as the browser encodes them) with `?_rsc_action`, the `rsc-action` header, `X-RSC-Router-Client-Path` and `_rsc_segments` (the page's mounted segment ids, default none). Registers `ref` under `id` (`<module id>#<export name>`). Not with `partial` or `form`.                                                                                                                 |
+| Field        | Type                                                                                                           | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------------ | -------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cacheStore` | `SegmentCacheStore`                                                                                            | The store for this request, in place of the store your `createRouter({ cache })` config returns. The rest of that config (`enabled`, `searchParams`) still applies. Omit it to use the router's own store.                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `env`        | `TEnv`                                                                                                         | Bindings, as `router.fetch(request, { env })` passes them. A function `cache` config receives them.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `headers`    | `HeadersInit`                                                                                                  | Request headers (e.g. `cookie`). A document request defaults `accept` to `text/html`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `partial`    | `true \| { from?: string; segments?: string[]; prefetch?: boolean; fill?: boolean; interceptSource?: string }` | Serve the navigation request the browser sends instead of a document GET: from `from` (default the site root) with `segments` mounted (default none). `prefetch: true` sends it as a `<Link>` prefetch (`X-Rango-Prefetch`), so `prefetch: false` work is deferred. `fill: true` sends the follow-up request (`_rsc_fill=1`) the browser makes after adopting a prefetch; pass the prefetch's delivered ids, without the deferred ones, as `segments`, and the same URL as `from`. `interceptSource` sends the intercept source (`X-RSC-Router-Intercept-Source`) the browser sends with the fill of an intercept, whose `from` is that source too. |
+| `action`     | `{ ref: Function; id: string; args?: unknown[]; segments?: string[] }`                                         | Send the request a JS server action call makes from the page at `url`: a POST of `args` (encoded as the browser encodes them) with `?_rsc_action`, the `rsc-action` header, `X-RSC-Router-Client-Path` and `_rsc_segments` (the page's mounted segment ids, default none). Registers `ref` under `id` (`<module id>#<export name>`). Not with `partial` or `form`.                                                                                                                                                                                                                                                                                  |
 
 ### Returns — `ServeShellRequestResult`
 
@@ -276,6 +276,33 @@ expect(await fill.readDeferred()).toEqual([]); // a fill defers nothing
 
 `deliveredIds` is the payload's `metadata.matched`, read from `prefetch.flight`. Count the loader's runs in your own fixture: the prefetch ran it zero times, the fill once.
 
+### Intercepts
+
+A prefetch of an `intercept()`'s target from its source page defers the intercept's flagged loaders, loader segments of its slot (`${parent}.@modalD${i}.${$$id}`). The browser sends the fill of an intercept from the source, with the intercept source header: pass both.
+
+```ts
+// intercept("@modal", ".item", ItemModal, () => [
+//   loader(PriceLoader),
+//   loader(ReviewsLoader, { prefetch: false }),
+// ])
+const prefetch = await serveShellRequest(router, "/item/1", {
+  partial: { from: "/list", segments: listHeld, prefetch: true },
+});
+expect(await prefetch.readDeferred()).toHaveLength(1); // ReviewsLoader's segment
+
+const fill = await serveShellRequest(router, "/item/1", {
+  partial: {
+    from: "/list",
+    interceptSource: "/list",
+    segments: held, // the prefetch's metadata.matched without the deferred id
+    fill: true,
+  },
+});
+// The fill runs ReviewsLoader alone: not the modal's handler, nor PriceLoader.
+```
+
+The pinned example is `src/testing/__tests__/prefetch-false-intercept.rsc-test.tsx`.
+
 ### `clientUrls()` routes
 
 A router that mounts a `clientUrls()` group serves its routes here as in your app. The group is the default export of a `"use client"` module, a client reference in this project, and `rangoUseClientTransform()` ([`./setup.md`](./setup.md)) installs its server projection as the rango plugin's discovery does. Mount the module itself:
@@ -295,7 +322,7 @@ const prefetch = await serveShellRequest(router, "/shop/product/1", {
 expect(await prefetch.readDeferred()).toHaveLength(1); // ReviewsLoader's segment
 ```
 
-`held` is the `metadata.matched` of a navigation to `/shop`. On a group route only a loader's own flag defers (the group's, and a server layout's above the group); a flagged `loading()` defers nothing there. Loaders inside the group's `intercept()` ignore the flag, as in `urls()`. `dispatch` matches the group's routes through the same projection.
+`held` is the `metadata.matched` of a navigation to `/shop`. On a group route only a loader's own flag defers (the group's, and a server layout's above the group); a flagged `loading()` defers nothing there. A loader inside the group's `intercept()` takes the flag, as in `urls()` ("Intercepts" above). `dispatch` matches the group's routes through the same projection.
 
 The transform also registers each group loader's `revalidate()` predicates, which Vitest leaves as plain functions in the module, so the server runs them as the hoisted predicates run in your app. A `partial` navigation, or an `action` with the page's `segments`, reaches them with the `urls()` arguments, `actionResult` and `formData` included.
 

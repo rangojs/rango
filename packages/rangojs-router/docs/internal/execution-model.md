@@ -58,8 +58,25 @@ Flight stream. Pinned by the `[P1]` semantic matrix row.
 global middleware
   -> route middleware
   -> intercept middleware
-  -> intercept handler / intercept loaders
+  -> intercept loaders (loader segments of the slot), then the intercept handler
 ```
+
+An intercept's loaders are loader segments of its slot,
+`${parent}.${slot}D${i}.${$$id}`, resolved by the same funnel as a route's
+(`resolveOwnerLoaders`, `router/segment-resolution/revalidation.ts`). So each
+one is revalidated on its own: an action inside a modal re-runs only the
+intercept loaders whose `revalidate()` says so, and the browser keeps the
+rest, as it keeps a route loader it holds (pinned by the `[I3]` semantic matrix
+row). The intercept handler re-runs on every request that resolves the
+intercept, except a fill (flow 5) in which the client holds the slot: there
+neither the handler nor the intercept's layout runs, only the loaders the
+client lacks run, and its middleware runs when the slot resolves live. A
+runtime `cache()` hit or a `Prerender()` target serves the stored slot and runs
+no intercept middleware, in a fill or not: only `resolveInterceptEntry` calls
+`executeInterceptMiddleware`, and that is a known gap. The browser folds the
+loader segments back onto the slot before it builds the tree
+(`segment-system.tsx` `foldInterceptLoaders`), so the page under the modal
+keeps its element tree.
 
 ### 5) Prefetch, then fill (`prefetch: false`)
 
@@ -117,6 +134,13 @@ Three things to keep in mind, because each looks like a bug the first time:
   nothing is emitted for it. What renders is exactly the set of ids missing
   from `_rsc_segments`, which is the first-render guarantee below doing the
   work.
+
+A prefetch that resolves an intercept (flow 4) defers the intercept's own
+flagged loaders and nothing of the target chain: its plan's scope is built
+from the intercept entry alone. Its fill names the intercept's source, as a
+request from the open modal does, and skips every target-chain entry the
+client does not hold. A flagged `loading()` inside `intercept()` defers
+nothing.
 
 Every other request kind is untouched by the flag: a document request, a
 navigation with no prefetch to adopt, an action revalidation, back/forward, a

@@ -136,7 +136,11 @@ re-render every time the intercept resolves live — each intercepted
 navigation, and each action submitted while the modal is open. When the
 segment cache or a prerendered intercept variant serves the modal, the stored
 handler output is reused and only the loaders run. Each loader decides for
-itself through its own `revalidate()`, with the normal loader defaults.
+itself through its own `revalidate()`, with the normal loader defaults: an
+action from the modal re-runs only the loaders whose predicate says so, and
+the modal keeps the data of the others, as it does on a link to another
+intercepted route that reads the same loader. In `clientUrls()` the predicate
+runs on the server too (`/client-urls`).
 
 A `revalidate()` placed directly in the intercept's `use()` (or returned from
 its handler's `.use`) throws at definition time. Attach it to the loader:
@@ -243,6 +247,29 @@ rango client sends on every navigation. A partial request without it falls
 back to `Referer`, and only when that `Referer` is on the request's own origin
 (scheme, host and port). A request with no usable navigation context is not
 intercepted: it gets the full page.
+
+### `prefetch: false` on an intercept's loaders
+
+`loader(Def, { prefetch: false })` inside `intercept()` keeps that loader out
+of a prefetch of the target from the source page:
+
+```typescript
+intercept("@modal", "product", <ProductModal />, () => [
+  loader(ProductLoader),
+  loader(ReviewsLoader, { prefetch: false }), // skipped in the prefetch
+  loading(<ModalSkeleton />),
+]);
+```
+
+The click that adopts the prefetch opens the modal at once over the page, with
+its `loading()` while one fill request, sent from the source page, runs the
+flagged loader. The page under the modal is not re-rendered or remounted.
+Without `loading()` the slot shows nothing until the fill answers, as a plain
+click shows nothing until its response. The modal's loaders resolve together,
+so its `loading()` shows until the last one arrives. A handler that reads the
+flagged loader with `ctx.use()` before its first `await` (or one with no
+`loading()`) gets it run in the prefetch instead: one run, no fill for it.
+`loading(…, { prefetch: false })` inside `intercept()` defers nothing.
 
 A prefetch of a route an intercept targets is stored per source page, whether
 or not the intercept applies from that page (`rsc-rendering.ts`
