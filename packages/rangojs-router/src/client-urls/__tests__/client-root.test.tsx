@@ -43,6 +43,83 @@ afterEach(() => {
   clearClientUrlNavigationRegistry();
 });
 
+describe("ClientUrlsRoot layout identity (#1124)", () => {
+  function Shell(): ReactNode {
+    const outlet = useOutlet();
+    const [count, setCount] = useState(0);
+    return (
+      <div data-testid="shell">
+        <button onClick={() => setCount((value) => value + 1)}>{count}</button>
+        {outlet.content}
+      </div>
+    );
+  }
+  function Inner(): ReactNode {
+    const outlet = useOutlet();
+    return <section data-testid="inner">{outlet.content}</section>;
+  }
+  function A(): ReactNode {
+    return <p>a</p>;
+  }
+  function B(): ReactNode {
+    return <p>b</p>;
+  }
+  function C(): ReactNode {
+    return <p>c</p>;
+  }
+  function D(): ReactNode {
+    return <p>d</p>;
+  }
+  const definition = clientUrls(({ layout, path }) => [
+    layout(Shell, () => [
+      path("/a", A),
+      path("/b", B),
+      layout(Inner, () => [path("/c", C)]),
+    ]),
+    layout(Shell, () => [path("/d", D)]),
+  ]);
+
+  it("keeps a layout() mounted across its routes; only the route component and layouts below the shared part mount anew", () => {
+    const result = render(
+      <ClientUrlsRoot definition={definition} routeId="client-route-0" />,
+    );
+    const shell = result.getByTestId("shell");
+    for (let i = 0; i < 3; i++) fireEvent.click(result.getByRole("button"));
+    shell.setAttribute("data-marker", "kept");
+
+    result.rerender(
+      <ClientUrlsRoot definition={definition} routeId="client-route-1" />,
+    );
+    expect(result.getByText("b")).toBeDefined();
+    expect(result.getByTestId("shell")).toBe(shell);
+    expect(shell.dataset.marker).toBe("kept");
+    expect(result.getByRole("button").textContent).toBe("3");
+
+    result.rerender(
+      <ClientUrlsRoot definition={definition} routeId="client-route-2" />,
+    );
+    expect(result.getByText("c")).toBeDefined();
+    expect(result.getByTestId("inner")).toBeDefined();
+    expect(result.getByTestId("shell")).toBe(shell);
+    expect(result.getByRole("button").textContent).toBe("3");
+  });
+
+  it("mounts a different layout() of the same component anew", () => {
+    const result = render(
+      <ClientUrlsRoot definition={definition} routeId="client-route-0" />,
+    );
+    const shell = result.getByTestId("shell");
+    fireEvent.click(result.getByRole("button"));
+
+    result.rerender(
+      <ClientUrlsRoot definition={definition} routeId="client-route-3" />,
+    );
+    expect(result.getByText("d")).toBeDefined();
+    expect(result.getByTestId("shell")).not.toBe(shell);
+    expect(result.getByRole("button").textContent).toBe("0");
+  });
+});
+
 describe("ClientUrlsRoot", () => {
   // Shared by the optimistic-destination tests below.
   const AccountLoader = {

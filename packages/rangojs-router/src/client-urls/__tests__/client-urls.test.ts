@@ -181,9 +181,39 @@ describe("clientUrls", () => {
       options: undefined,
       component: AccountPage,
       layouts: [],
+      layoutKeys: [],
       loaders: [{ loader: AccountLoader, revalidate: [] }],
       loading: "Loading account",
     });
+  });
+
+  it("keys each layout() by its ordinal among sibling layouts, shared by every route under it (#1124)", () => {
+    function Shell(): null {
+      return null;
+    }
+    function Inner(): null {
+      return null;
+    }
+    // loading() and path() items don't count: adding one before a layout()
+    // keeps its key.
+    const patterns = clientUrls(({ layout, loading, path }) => [
+      path("/", AccountPage),
+      layout(Shell, () => [
+        loading("Loading"),
+        path("/a", AccountPage),
+        path("/b", AccountPage),
+        layout(Inner, () => [path("/c", AccountPage)]),
+      ]),
+      layout(Shell, () => [path("/d", AccountPage)]),
+    ]);
+
+    expect(patterns.routes.map((route) => route.layoutKeys)).toEqual([
+      [],
+      [0],
+      [0],
+      [0, 0],
+      [1],
+    ]);
   });
 
   it("stores the ssr flag from loader(Def, { ssr: false }, use?)", () => {
@@ -365,6 +395,7 @@ describe("clientUrls", () => {
       | "options"
       | "component"
       | "layouts"
+      | "layoutKeys"
       | "loaders"
       | "loading"
       | "transition"

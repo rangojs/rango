@@ -105,6 +105,14 @@ export interface ClientUrlRouteRecord {
   readonly options: Readonly<ClientPathOptions> | undefined;
   readonly component: ComponentType;
   readonly layouts: readonly ComponentType[];
+  /**
+   * One per entry in `layouts`: the layout() item's ordinal among its sibling
+   * layout()s, its React key. Routes under the same layout() share it, so
+   * ClientUrlsRoot keeps that layout's instance across them (#1124). Keys only
+   * need to be unique among siblings: a differing parent layout remounts the
+   * whole subtree anyway.
+   */
+  readonly layoutKeys: readonly number[];
   readonly loaders: readonly ClientUrlLoaderRecord[];
   readonly loading: ReactNode | undefined;
   readonly transition: Readonly<ClientTransitionConfig> | undefined;

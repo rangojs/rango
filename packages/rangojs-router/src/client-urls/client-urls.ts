@@ -154,12 +154,14 @@ interface LoadingItem extends ItemBase {
 
 interface FlattenContext {
   readonly layouts: readonly ComponentType[];
+  readonly layoutKeys: readonly number[];
   readonly loaders: readonly ClientUrlLoaderRecord[];
   readonly loading: ReactNode | undefined;
 }
 
 const EMPTY_CONTEXT: FlattenContext = {
   layouts: [],
+  layoutKeys: [],
   loaders: [],
   loading: undefined,
 };
@@ -588,6 +590,7 @@ function applyConfig(
 
   return {
     layouts: context.layouts,
+    layoutKeys: context.layoutKeys,
     loaders,
     loading,
   };
@@ -614,6 +617,7 @@ function addPathRecord(
       options,
       component: item.component,
       layouts: Object.freeze([...routeContext.layouts]),
+      layoutKeys: Object.freeze([...routeContext.layoutKeys]),
       loaders: Object.freeze([...routeContext.loaders]),
       loading: routeContext.loading,
       transition: transitionItem
@@ -625,6 +629,7 @@ function addPathRecord(
 
 function flattenLayout(
   item: LayoutItem,
+  ordinal: number,
   context: FlattenContext,
   routes: ClientUrlRouteRecord[],
 ): void {
@@ -633,6 +638,7 @@ function flattenLayout(
     {
       ...context,
       layouts: [...context.layouts, item.component],
+      layoutKeys: [...context.layoutKeys, ordinal],
     },
     item.children,
   );
@@ -650,11 +656,12 @@ function flattenRoutes(
   context: FlattenContext,
   routes: ClientUrlRouteRecord[],
 ): void {
+  let layoutOrdinal = 0;
   for (const item of items) {
     if (item.type === "path") {
       addPathRecord(item, context, routes);
     } else if (item.type === "layout") {
-      flattenLayout(item, context, routes);
+      flattenLayout(item, layoutOrdinal++, context, routes);
     }
   }
 }

@@ -526,7 +526,8 @@ a hard load of the target URL renders the full route.
   reconciles instead of remounting. The canonical commit runs in a
   `startTransition` when no new segments mount, and the wrapping layout sees
   `useOutlet().pending === true` for the held window; a route-level
-  `loading()` does not re-flash there. `transition()` is not needed for the
+  `loading()` does not re-flash there. Across different routes, a `layout()`
+  keeps its instance while the navigation stays under it. `transition()` is not needed for the
   hold; it adds the view-transition animation. Inline `<Suspense>` above each
   `useLoader` read is still the finer-grained tool when different reads on
   one route should wait independently.

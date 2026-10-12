@@ -81,6 +81,47 @@ function runClientUrlsSpec(f: Fixture): void {
     await expect(page).toHaveURL(f.url("/__client-urls"));
   });
 
+  test("a layout() keeps its DOM across navigations between its routes (#1124)", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(f.url("/__client-urls"));
+    await waitForHydration(page);
+    await expect(testId(page, "client-urls-index")).toBeVisible();
+    // A remount replaces the element, and the attribute goes with it.
+    await testId(page, "client-urls-layout").evaluate((el) =>
+      el.setAttribute("data-e2e-kept", "1"),
+    );
+
+    await using __ = await expectNoReload(page);
+    await testId(page, "client-urls-detail-link").click();
+    await expectResolvedDetail(page, "deterministic-slug");
+    await expect(testId(page, "client-urls-layout")).toHaveAttribute(
+      "data-e2e-kept",
+      "1",
+    );
+
+    await page.goBack();
+    await expect(testId(page, "client-urls-index")).toBeVisible();
+    await expect(testId(page, "client-urls-layout")).toHaveAttribute(
+      "data-e2e-kept",
+      "1",
+    );
+
+    // A server action in the group re-runs its loaders, not its layout.
+    const runs = await getNumericContent(
+      testId(page, "cu-is-action-target-runs"),
+    );
+    await testId(page, "cu-is-action-target").click();
+    await expect
+      .poll(() => getNumericContent(testId(page, "cu-is-action-target-runs")))
+      .toBeGreaterThan(runs);
+    await expect(testId(page, "client-urls-layout")).toHaveAttribute(
+      "data-e2e-kept",
+      "1",
+    );
+  });
+
   test("a group loader's revalidate() isAction() matches a target action and a namespace import", async ({
     page,
   }) => {
