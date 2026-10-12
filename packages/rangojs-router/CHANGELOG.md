@@ -76,6 +76,56 @@ with, and the response's pushes replace only those of what re-ran, as on any
 other navigation. A layout the two pages share keeps the pushes it has on the
 page you left, as they are when the new page appears.
 
+### Fixed: a Suspense boundary still suspended on the client hydrates as the server rendered it when location state is read outside it
+
+**Before.** On a document load with location state in the history entry (after
+a reload, or Back to a page that loads its document), a `<Suspense>` boundary
+that could not hydrate yet could be client-rendered over its server HTML. A
+boundary is in that state when something on the client suspends it after the
+document has finished streaming: its client code still loading (a
+`React.lazy` chunk, a slow client component chunk), or a deferred-hydration
+gate such as a hydrate-when-visible island. It happened when a
+`useLocationState` reader outside the boundary, rendered next to it, had
+state: the reader received the entry's state while the boundary was still
+waiting, and when the boundary hydrated it rendered against that state
+instead of what the server rendered. React reported `Hydration failed because
+the server rendered text didn't match the client` (minified error #418 in a
+production build) and replaced the boundary's DOM. A `useHandle` reader in the
+boundary could mismatch the same way, since late handle pushes were applied at
+that moment too.
+
+**Now.** Location state and late handle data wait until every boundary of the
+document has hydrated, any boundary still suspended on the client included,
+and only then reach their readers. The boundary hydrates as the server
+rendered it. A reader outside it keeps the server's value (`undefined`) until
+then, which is what `useLocationState` already promised for the rest of the
+page. That wait has no upper bound when a deferred-hydration gate holds a
+boundary: a hydrate-when-visible island that stays off screen keeps location
+state `undefined` until it hydrates. Late handle data already waited for such
+a boundary whenever no location-state reader sat outside it.
+
+### Fixed: a shallow navigation that sets location state before the document has hydrated no longer client-renders a boundary still waiting to hydrate
+
+**Before.** While a `<Suspense>` boundary of the document was still suspended
+on the client (a `React.lazy` chunk loading, a deferred-hydration gate), a
+commit that renders no new page and sets location state reached a
+`useLocationState` reader outside the boundary at once. Such a commit is a
+shallow navigation (`router.push(url, { revalidate: false, state })`, or a
+`<Link revalidate={false} state>`), a Back/Forward or revalidation where every
+segment is kept, or an action that sets location state. When the boundary then
+hydrated it rendered against the new state instead of what the server
+rendered: React reported `Hydration failed because the server rendered text
+didn't match the client` (minified error #418 in a production build) and
+replaced the boundary's DOM.
+
+**Now.** That state waits like the entry's own state on a document load:
+readers keep `undefined` until every boundary has hydrated, then show the
+latest state. The boundary hydrates as the server rendered it. The URL, and
+hooks that do not read location state (`useSearchParams`, `usePathname`), update
+at once as before. A deferred-hydration gate that stays shut (a
+hydrate-when-visible island off screen) holds such state with no upper bound,
+while the URL and search params already show the new entry.
+
 ## 0.23.0 (2026-10-11)
 
 ### Breaking: a `clientUrls()` loader's `revalidate()` runs on the server, with the same arguments as in `urls()`
