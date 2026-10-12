@@ -1,0 +1,240 @@
+/**
+ * `throw rewrite()` through the public testing primitives a consumer uses:
+ * runMiddleware reports the rewrite, dispatch re-dispatches as production
+ * does (response routes; dispatch renders no RSC route).
+ */
+import { describe, expect, it, vi } from "vitest";
+
+function pluginRscMock() {
+  return {
+    createFromReadableStream: vi.fn(),
+    renderToReadableStream: vi.fn(),
+    loadServerAction: vi.fn(),
+    decodeReply: vi.fn(),
+    decodeAction: vi.fn(),
+    decodeFormState: vi.fn(),
+    createTemporaryReferenceSet: vi.fn(),
+  };
+}
+vi.mock("@vitejs/plugin-rsc/rsc/server", pluginRscMock);
+vi.mock("@vitejs/plugin-rsc/rsc/client", pluginRscMock);
+
+import { dispatch, runMiddleware } from "../index.js";
+import {
+  cookies,
+  createRouter,
+  createVar,
+  getRequestContext,
+  rewrite,
+  urls,
+  type MiddlewareFn,
+  type OnErrorContext,
+} from "../../index.rsc.js";
+
+const Lock = createVar<{ until: string }>();
+
+const lockMiddleware: MiddlewareFn = async (ctx, next) => {
+  if (ctx.request.headers.get("x-lock") !== "on") return next();
+  if (ctx.pathname === "/api/maintenance") return next();
+  if (ctx.request.method !== "GET") {
+    return new Response("Maintenance", {
+      status: 503,
+      headers: { "Retry-After": "600" },
+    });
+  }
+  ctx.set(Lock, { until: "12:00" });
+  cookies().set("lock-seen", "1");
+  throw rewrite("api.maintenance");
+};
+
+describe("runMiddleware reports a thrown rewrite", () => {
+  it("resolves a route-name target through routeMap", async () => {
+    const result = await runMiddleware(lockMiddleware, {
+      request: new Request("http://localhost/api/orders", {
+        headers: { "x-lock": "on" },
+      }),
+      routeMap: { "api.maintenance": "/api/maintenance" },
+    });
+    expect(result.rewrite).toEqual({
+      pathname: "/api/maintenance",
+      search: "",
+      routeName: "api.maintenance",
+    });
+    expect(result.nextCalled).toBe(0);
+    expect(result.ctx.get(Lock)).toEqual({ until: "12:00" });
+    expect(result.cookies["lock-seen"]).toBe("1");
+  });
+
+  it("resolves a path target with the basename and search", async () => {
+    const mw: MiddlewareFn = () => {
+      throw rewrite("/maintenance?from=shop");
+    };
+    const result = await runMiddleware(mw, {
+      request: "/app/shop",
+      basename: "/app",
+    });
+    expect(result.rewrite).toEqual({
+      pathname: "/app/maintenance",
+      search: "?from=shop",
+    });
+  });
+
+  it("leaves rewrite undefined when the chain does not rewrite", async () => {
+    const result = await runMiddleware(lockMiddleware, {
+      request: "/api/orders",
+    });
+    expect(result.rewrite).toBeUndefined();
+    expect(result.nextCalled).toBe(1);
+  });
+
+  it("returns the mutation's Response instead of rewriting", async () => {
+    const result = await runMiddleware(lockMiddleware, {
+      request: new Request("http://localhost/api/orders", {
+        method: "POST",
+        headers: { "x-lock": "on" },
+      }),
+    });
+    expect(result.rewrite).toBeUndefined();
+    expect(result.response.status).toBe(503);
+    expect(result.headers["retry-after"]).toBe("600");
+  });
+});
+
+describe("dispatch re-dispatches a rewritten request", () => {
+  const errors: OnErrorContext[] = [];
+  const router = createRouter({
+    onError: (context) => {
+      errors.push(context);
+    },
+  })
+    .use(lockMiddleware)
+    .use("/api/admin/*", async (ctx, next) => {
+      if (ctx.request.headers.get("x-admin") !== "yes") {
+        return new Response("Unauthorized", { status: 401 });
+      }
+      return next();
+    })
+    .use("/api/loop/*", async (ctx) => {
+      throw rewrite(
+        ctx.pathname === "/api/loop/a" ? "/api/loop/b" : "/api/loop/a",
+      );
+    })
+    .routes(
+      urls(({ path, middleware }) => [
+        path.json("/api/orders", () => ({ orders: [] }), {
+          name: "api.orders",
+        }),
+        path.json(
+          "/api/maintenance",
+          (ctx) => ({
+            maintenance: true,
+            until: ctx.get(Lock)?.until ?? null,
+            at: ctx.pathname,
+            from: ctx.rewrittenFrom?.pathname ?? null,
+          }),
+          { name: "api.maintenance" },
+          () => [
+            middleware(async (_ctx, next) => {
+              getRequestContext().setStatus(503);
+              await next();
+            }),
+          ],
+        ),
+        path.json("/api/admin/stats", () => ({ stats: 1 }), {
+          name: "api.admin",
+        }),
+        path.json(
+          "/api/report",
+          () => ({ never: true }),
+          {},
+          () => [
+            middleware(() => {
+              throw rewrite("api.admin");
+            }),
+          ],
+        ),
+        path.json("/api/loop/a", () => ({ a: true })),
+        path.json("/api/loop/b", () => ({ b: true })),
+      ]),
+    );
+
+  it("renders the target with the same context at the visitor's URL", async () => {
+    const res = await dispatch(router, {
+      request: new Request("http://localhost/api/orders", {
+        headers: { "x-lock": "on" },
+      }),
+    });
+    expect(res.status).toBe(503);
+    expect(res.headers.get("x-rango-rewrite")).toBe("/api/maintenance");
+    expect(res.headers.getSetCookie().join()).toContain("lock-seen=1");
+    expect(await res.json()).toEqual({
+      maintenance: true,
+      until: "12:00",
+      at: "/api/maintenance",
+      from: "/api/orders",
+    });
+  });
+
+  it("serves the visitor's own route when nothing rewrites", async () => {
+    const res = await dispatch(router, { request: "/api/orders" });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-rango-rewrite")).toBeNull();
+    expect(await res.json()).toEqual({ orders: [] });
+  });
+
+  it("runs the target's pattern-scoped global middleware", async () => {
+    const denied = await dispatch(router, { request: "/api/report" });
+    expect(denied.status).toBe(401);
+
+    const allowed = await dispatch(router, {
+      request: new Request("http://localhost/api/report", {
+        headers: { "x-admin": "yes" },
+      }),
+    });
+    expect(allowed.status).toBe(200);
+    expect(allowed.headers.get("x-rango-rewrite")).toBe("/api/admin/stats");
+    expect(await allowed.json()).toEqual({ stats: 1 });
+  });
+
+  it("answers a loop with 508 and reports it through onError", async () => {
+    errors.length = 0;
+    const res = await dispatch(router, { request: "/api/loop/a" });
+    expect(res.status).toBe(508);
+    expect(errors.map((e) => [e.phase, e.error.name])).toEqual([
+      ["routing", "RewriteLoopError"],
+    ]);
+  });
+
+  it("refuses a rewrite of a mutation with a clear error", async () => {
+    errors.length = 0;
+    const thrower = createRouter({
+      onError: (context) => {
+        errors.push(context);
+      },
+    })
+      .use(() => {
+        throw rewrite("/api/maintenance");
+      })
+      .routes(
+        urls(({ path }) => [
+          path.json("/api/maintenance", () => ({})),
+          path.json("/api/orders", () => ({})),
+        ]),
+      );
+    await expect(
+      dispatch(thrower, {
+        request: new Request("http://localhost/api/orders", { method: "POST" }),
+      }),
+    ).rejects.toThrow("Return a Response for mutations instead");
+    expect(errors[0]?.phase).toBe("routing");
+  });
+
+  it("reloads a partial request at the visitor's URL", async () => {
+    const res = await dispatch(router, {
+      request: new Request("http://localhost/api/orders?_rsc_partial=true", {
+        headers: { "x-lock": "on" },
+      }),
+    });
+    expect(res.headers.get("x-rsc-reload")).toBe("http://localhost/api/orders");
+  });
+});
