@@ -48,7 +48,9 @@ replaced the boundary's DOM.
 readers keep `undefined` until every boundary has hydrated, then show the
 latest state. The boundary hydrates as the server rendered it. The URL, and
 hooks that do not read location state (`useSearchParams`, `usePathname`), update
-at once as before.
+at once as before. A deferred-hydration gate that stays shut (a
+hydrate-when-visible island off screen) holds such state with no upper bound,
+while the URL and search params already show the new entry.
 
 ## 0.23.0 (2026-10-11)
 

@@ -359,12 +359,13 @@ The decisions live in `router/segment-resolution/revalidation.ts` and ask
     before its update, so its page mounts against the live store. A commit no
     payload follows (`treeless`: a shallow navigation, a traversal or
     revalidation that keeps every segment, an action's or a fill's
-    server-set state) does neither: it records the entry's state in the
-    controller, and while the window is open the provider's subscription
-    leaves it there for the barrier's effect to give. Handing it to readers
+    server-set state) neither releases the store nor mounts a page: it
+    records the entry's state in the controller, and while the window is
+    open the provider's subscription leaves it there for the barrier's effect
+    to give. Handing it to readers
     at once was the same failure through another door: an update a reader
-    outside a still-suspended boundary takes commits around that boundary
-    (next bullet), which then hydrates against the new state
+    outside a still-suspended boundary takes commits around that boundary,
+    which then hydrates against the new state
     (`location-state-hydration.test.tsx` "a treeless commit … waits",
     `render-route-hydrate.test.tsx` "a back/forward while a boundary is
     suspended…", `expectGatedBoundaryHydratesAfterShallowNavigation` in both
