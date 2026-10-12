@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.24.1 (2026-10-12)
 
 ### Fixed: a `clientUrls()` `layout()` keeps its instance across navigations between its routes ([#1124](https://github.com/rangojs/rango/issues/1124))
 
