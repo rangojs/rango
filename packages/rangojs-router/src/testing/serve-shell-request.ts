@@ -29,7 +29,8 @@
  *
  * A `Prerender` route serves its handler layer from the artifact
  * `router.matchForPrerender` bakes for the URL (on its first request, kept
- * until resetShellTestState), through the production prerender store. Its
+ * until resetShellTestState), through the production prerender store; an
+ * intercept of it serves from the intercept variant the bake keeps. Its
  * first `ppr` request is a MISS with a runtime capture, as a URL without a
  * build-time shell is in production; build-time shells are e2e-only. An
  * on-demand route (`Prerender(..., { onDemand })`) bakes nothing here: it
@@ -415,10 +416,22 @@ async function servePrerenderArtifacts(
     const { hashParams } = await import("../prerender/param-hash.js");
     baked.add(pathname);
     if (result && !result.passthrough) {
+      const key = `${result.routeName}/${hashParams(result.params)}`;
       payloads.set(
-        `${result.routeName}/${hashParams(result.params)}`,
+        key,
         JSON.stringify({ segments: result.segments, handles: result.handles }),
       );
+      // The intercept variant, keyed and shaped as the build writes it
+      // (vite/discovery/prerender-collection.ts).
+      if (result.interceptSegments?.length) {
+        payloads.set(
+          `${key}/i`,
+          JSON.stringify({
+            segments: [...result.segments, ...result.interceptSegments],
+            handles: result.interceptHandles ?? "",
+          }),
+        );
+      }
     }
   }
   const [{ createPrerenderStore }, { setPrerenderStoreForTests }] =

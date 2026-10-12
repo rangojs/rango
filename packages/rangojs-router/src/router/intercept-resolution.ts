@@ -262,13 +262,23 @@ export async function resolveInterceptEntry<TEnv>(
 
   latchPprHeaderScopeForInterceptTarget(interceptEntry);
 
+  // The intercept segment's id: the tag scope its handler and layout record in
+  // (#957, cache-tag.ts runInSegmentTagScope) and the owner of its handler's
+  // and loaders' handle pushes, pinned before the loader kickoffs as
+  // fresh.ts/revalidation.ts pin theirs (createLoaderExecutor captures it at
+  // kickoff; a handler's ctx.use(Handle) reads it when called).
+  const slotSegmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}`;
+  (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
+    slotSegmentId;
+  const hasLoaders = interceptEntry.loader.length > 0;
+
   const loaderPromises: Promise<any>[] = [];
   const loaderIds: string[] = [];
 
   for (let i = 0; i < interceptEntry.loader.length; i++) {
     const loaderEntry = interceptEntry.loader[i];
     const { loader, revalidate: loaderRevalidateFns } = loaderEntry;
-    const segmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}D${i}.${loader.$$id}`;
+    const segmentId = `${slotSegmentId}D${i}.${loader.$$id}`;
 
     if (revalidationContext) {
       const {
@@ -282,8 +292,7 @@ export async function resolveInterceptEntry<TEnv>(
         stale,
       } = revalidationContext;
 
-      const interceptSegmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}`;
-      if (clientSegmentIds.has(interceptSegmentId)) {
+      if (clientSegmentIds.has(slotSegmentId)) {
         const dummySegment: ResolvedSegment = {
           id: segmentId,
           namespace: `intercept:${interceptEntry.routeName}`,
@@ -345,9 +354,6 @@ export async function resolveInterceptEntry<TEnv>(
     );
   }
 
-  // The intercept segment's id, and the tag scope its handler and layout
-  // record in (#957, cache-tag.ts runInSegmentTagScope).
-  const slotSegmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}`;
   let handlerResult: ReactNode;
   try {
     const handler = interceptEntry.handler;
@@ -399,7 +405,7 @@ export async function resolveInterceptEntry<TEnv>(
   const streamedComponent = (promise: Promise<unknown>): ReactNode =>
     trackStreamedHandler(deps, promise, {
       boundaryEntry: parentEntry,
-      segmentId: `${parentEntry.shortCode}.${interceptEntry.slotName}`,
+      segmentId: slotSegmentId,
       segmentType: "parallel",
       context,
       routeKey: interceptEntry.routeName,
@@ -442,6 +448,13 @@ export async function resolveInterceptEntry<TEnv>(
     }
   }
 
+  // The aggregate lists the loaders that ran; empty, not absent, when the
+  // client holds the slot and all skipped. Absent replaces the client's
+  // aggregate, empty merges into it (merge-segment-loaders.ts).
+  if (hasLoaders && loaderPromises.length === 0) {
+    loaderDataPromise = [];
+  }
+
   const interceptSegment = {
     id: slotSegmentId,
     namespace: `intercept:${interceptEntry.routeName}`,
@@ -455,7 +468,7 @@ export async function resolveInterceptEntry<TEnv>(
     belongsToRoute,
     parallelName: `intercept:${interceptEntry.routeName}.${interceptEntry.slotName}`,
     loaderDataPromise,
-    loaderIds: loaderIds.length > 0 ? loaderIds : undefined,
+    loaderIds: hasLoaders ? loaderIds : undefined,
   };
   segments.push(interceptSegment);
 
@@ -498,6 +511,10 @@ export async function resolveInterceptLoadersOnly<TEnv>(
 
   latchPprHeaderScopeForInterceptTarget(interceptEntry);
 
+  // The loaders' handle push owner, as in resolveInterceptEntry.
+  const slotSegmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}`;
+  (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
+    slotSegmentId;
   const loaderPromises: Promise<any>[] = [];
   const loaderIds: string[] = [];
 
@@ -515,10 +532,9 @@ export async function resolveInterceptLoadersOnly<TEnv>(
   for (let i = 0; i < interceptEntry.loader.length; i++) {
     const loaderEntry = interceptEntry.loader[i];
     const { loader, revalidate: loaderRevalidateFns } = loaderEntry;
-    const segmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}D${i}.${loader.$$id}`;
+    const segmentId = `${slotSegmentId}D${i}.${loader.$$id}`;
 
-    const interceptSegmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}`;
-    if (clientSegmentIds.has(interceptSegmentId)) {
+    if (clientSegmentIds.has(slotSegmentId)) {
       const dummySegment: ResolvedSegment = {
         id: segmentId,
         namespace: `intercept:${interceptEntry.routeName}`,
@@ -581,8 +597,9 @@ export async function resolveInterceptLoadersOnly<TEnv>(
     );
   }
 
+  // Every loader held: the empty aggregate (see resolveInterceptEntry).
   if (loaderPromises.length === 0) {
-    return null;
+    return { loaderDataPromise: [], loaderIds };
   }
 
   // Match fresh-path semantics: only defer (no await) when loading is truthy.

@@ -347,7 +347,14 @@ async function* yieldFromStore<TEnv>(
     !ctx.isFullMatch && !paramsEqual(ctx.matched.params, ctx.prevParams);
   const resendRouteSegments = replaceable === true && ctx.isAction;
   for (const segment of segments) {
-    if (!ctx.isFullMatch && ctx.clientSegmentSet.has(segment.id)) {
+    if (
+      !ctx.isFullMatch &&
+      ctx.clientSegmentSet.has(segment.id) &&
+      // A stored intercept segment is re-sent, as on the runtime cache path:
+      // its loaders run (handleCacheHitIntercept), and a kept (null) one would
+      // be left out of the response with its loaders' new data.
+      !segment.namespace?.startsWith("intercept:")
+    ) {
       // A fill keeps it (fillSends); otherwise it is sent again when the
       // params changed or an action re-sends the route's own segments.
       const sends =

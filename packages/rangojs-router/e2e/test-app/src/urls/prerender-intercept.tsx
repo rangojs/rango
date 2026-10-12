@@ -6,6 +6,8 @@ import { FreshDataDisplay } from "../components/FreshDataDisplay.js";
 import { Modal } from "../components/Modal.js";
 import { InterceptCrumbs } from "./intercept-crumbs.handle.js";
 import { InterceptHandleDisplay } from "../components/InterceptHandleDisplay.js";
+import { PrerenderInterceptHeldPanel } from "./prerender-intercept.client.js";
+import { PrerenderInterceptHeldLoader } from "./prerender-intercept.defs.js";
 import type { Handler } from "@rangojs/router";
 
 // Index page with links to pre-rendered items
@@ -73,6 +75,7 @@ function PrerenderInterceptModalHandler(ctx: {
       <p data-testid="pri-modal-render-time">{renderTime}</p>
       <InterceptHandleDisplay />
       <FreshDataDisplay loader={FreshTimestampLoader} />
+      <PrerenderInterceptHeldPanel />
       <Link
         to={`/prerender-intercept/${ctx.params.slug}`}
         data-testid="pri-view-full"
@@ -84,7 +87,7 @@ function PrerenderInterceptModalHandler(ctx: {
 }
 
 export const prerenderInterceptPatterns = urls(
-  ({ path, layout, intercept, loader }) => [
+  ({ path, layout, intercept, loader, revalidate }) => [
     layout(PrerenderInterceptLayout, () => [
       path("/", PrerenderInterceptIndex, { name: "index" }),
 
@@ -113,7 +116,12 @@ export const prerenderInterceptPatterns = urls(
           when: ({ from }) =>
             from.url.pathname.startsWith("/prerender-intercept"),
         },
-        () => [loader(FreshTimestampLoader)],
+        // The held loader keeps its data across a server action called from
+        // the modal; FreshTimestampLoader re-runs.
+        () => [
+          loader(FreshTimestampLoader),
+          loader(PrerenderInterceptHeldLoader, () => [revalidate(() => false)]),
+        ],
       ),
     ]),
   ],
