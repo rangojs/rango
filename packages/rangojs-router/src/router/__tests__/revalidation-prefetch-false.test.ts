@@ -543,6 +543,50 @@ describe("a fill: held is skipped outright", () => {
     ).toEqual(["R1D0.reviews"]);
   });
 
+  // revalidation.decision in a fill: every loader and slot decision is
+  // observed, a held entry or orphan layout is not.
+  it("observes a held loader and slot, and no held entry or orphan layout", async () => {
+    const { getRouterContext } = await import("../router-context.js");
+    const { safeEmit } = await import("../telemetry.js");
+    vi.mocked(getRouterContext).mockReturnValue({ telemetry: {} } as any);
+    vi.mocked(safeEmit).mockClear();
+    try {
+      const orphan = entry("layout", "R1L0");
+      const slot = entry("parallel", "P0", {
+        handler: { "@side": vi.fn(() => "slot") },
+      });
+      const route = entry("route", "R1", {
+        layout: [orphan],
+        parallel: { "@side": slot },
+        loader: [
+          loaderEntry("price"),
+          loaderEntry("reviews", { prefetch: false }),
+        ],
+      });
+      await resolve([entry("layout", "L0"), route], "fill", [
+        "L0",
+        "R1",
+        "R1L0",
+        "R1.@side",
+        "R1D0.price",
+      ]);
+
+      const decisions = vi
+        .mocked(safeEmit)
+        .mock.calls.map(([, event]) => event as any)
+        .filter((event) => event.type === "revalidation.decision")
+        .map((event) => [event.segmentId, event.shouldRevalidate])
+        .sort();
+      expect(decisions).toEqual([
+        ["R1.@side", false],
+        ["R1D0.price", false],
+        ["R1D1.reviews", true],
+      ]);
+    } finally {
+      vi.mocked(getRouterContext).mockReturnValue(null as any);
+    }
+  });
+
   it("renders an orphan layout the client does not hold", async () => {
     const orphan = entry("layout", "R1L0");
     const route = entry("route", "R1", { layout: [orphan] });

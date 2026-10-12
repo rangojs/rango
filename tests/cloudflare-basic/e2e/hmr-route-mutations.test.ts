@@ -102,7 +102,9 @@ test.describe.serial("hmr-route-mutations (types + live serving)", () => {
           try {
             const res = await fetch(f.url(route), {
               headers: { Accept: "text/html" },
-              signal: AbortSignal.timeout(1_000),
+              // Covers the body too: /__client-urls pages stream for ~1.2 s
+              // (MirrorVehicleLoader), so 1 s never saw their marker.
+              signal: AbortSignal.timeout(5_000),
             });
             const body = await res.text();
             return body.includes(`data-testid="${marker}"`);

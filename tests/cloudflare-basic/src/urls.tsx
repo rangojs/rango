@@ -179,6 +179,7 @@ import {
   PprShortMetaLayout,
 } from "./pages/ppr-slow-meta.js";
 import { OrphanFetchTest } from "./components/OrphanFetchTest.js";
+import { LoaderParamsProbe } from "./components/LoaderParamsProbe.js";
 import { RenderStabilityRoute } from "./pages/render-stability.js";
 import { FeatureDetailPage, FeaturesShell } from "./pages/features.js";
 import {
@@ -1972,6 +1973,22 @@ export const urlpatterns = urls(
         // never registered with loader(), never imported by the worker entry.
         path("/orphan-fetch", () => <OrphanFetchTest />, {
           name: "orphanFetch",
+        }),
+        // Request-derived names like `constructor` (#1109): static segments
+        // match their own routes, and a fetchable loader's params are string
+        // values (request-keys.test.ts).
+        path(
+          "/constructor",
+          () => <p data-testid="request-key-page">constructor route</p>,
+          { name: "requestKeyConstructor" },
+        ),
+        path(
+          "/__proto__",
+          () => <p data-testid="request-key-page">__proto__ route</p>,
+          { name: "requestKeyProto" },
+        ),
+        path("/loader-params", () => <LoaderParamsProbe />, {
+          name: "loaderParams",
         }),
         path("/render-stability/p/:id", RenderStabilityRoute, {
           name: "renderStability",

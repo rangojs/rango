@@ -35,6 +35,7 @@ import {
 } from "../../cache/cache-tag.js";
 import { createHandlerContext } from "../../router/handler-context.js";
 import { requestHeaders } from "../request-headers.js";
+import { parseCookiesFromHeader } from "../cookie-parse.js";
 import { createMiddlewareContext } from "../../router/middleware.js";
 import { payloadInitialTheme } from "../../rsc/full-payload.js";
 import { resolveThemeConfig } from "../../theme/constants.js";
@@ -343,6 +344,61 @@ describe("cookies()", () => {
   describe("throws outside request context", () => {
     it("cookies() throws when called outside request scope", () => {
       expect(() => cookies()).toThrow();
+    });
+  });
+});
+
+// Cookie names come from the request, so a lookup must see only the cookies
+// the request sent, never a member of Object.prototype (#1109).
+describe("cookie names named like Object.prototype members", () => {
+  const MEMBERS = ["constructor", "toString", "valueOf", "hasOwnProperty"];
+
+  it("parses the Cookie header into a null-prototype map", () => {
+    const parsed = parseCookiesFromHeader("a=1; b=2");
+    expect(Object.getPrototypeOf(parsed)).toBeNull();
+    expect({ ...parsed }).toEqual({ a: "1", b: "2" });
+    for (const name of MEMBERS) expect(parsed[name]).toBeUndefined();
+  });
+
+  it.each([
+    ["no response cookies", undefined],
+    ["a same-request write", "late=1"],
+  ])("cookies() sees only sent names (%s)", (_label, write) => {
+    withContext({ cookieHeader: "a=1" }, () => {
+      if (write) cookies().set("late", "1");
+      for (const name of MEMBERS) {
+        expect(cookies().has(name)).toBe(false);
+        expect(cookies().get(name)).toBeUndefined();
+        expect(cookies().getAll(name)).toEqual([]);
+        expect(getRequestContext()._readCookie(name)).toBeUndefined();
+      }
+      expect(cookies().get("a")).toEqual({ name: "a", value: "1" });
+    });
+  });
+
+  it.each([
+    ["no response cookies", undefined],
+    ["a same-request write", "late=1"],
+  ])("a cookie named __proto__ is an ordinary cookie (%s)", (_label, write) => {
+    withContext({ cookieHeader: "__proto__=x; a=1" }, () => {
+      if (write) cookies().set("late", "1");
+      expect(cookies().get("__proto__")).toEqual({
+        name: "__proto__",
+        value: "x",
+      });
+      const all = getRequestContext().cookies();
+      expect(Object.getPrototypeOf(all)).toBe(Object.prototype);
+      expect(Object.hasOwn(all, "__proto__")).toBe(true);
+      expect(all.a).toBe("1");
+    });
+  });
+
+  it("cookies() still returns a plain object", () => {
+    withContext({ cookieHeader: "a=1" }, () => {
+      const all = getRequestContext().cookies();
+      expect(Object.getPrototypeOf(all)).toBe(Object.prototype);
+      expect(all).toEqual({ a: "1" });
+      expect(cookies().getAll()).toEqual([{ name: "a", value: "1" }]);
     });
   });
 });

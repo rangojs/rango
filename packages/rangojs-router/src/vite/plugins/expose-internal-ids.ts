@@ -12,6 +12,7 @@ import {
   transformInlineHandlers,
   type VirtualHandlerEntry,
 } from "../utils/ast-handler-extract.js";
+import { isSkippedSourceScanDir } from "../../build/route-types/scan-filter.js";
 
 import type {
   HandlerTransformConfig,
@@ -297,8 +298,6 @@ ${lazyImports.join(",\n")}
 
       const fs = await import("node:fs/promises");
 
-      const SKIP_DIRS = new Set(["node_modules", "dist", "build", "coverage"]);
-
       async function scanDir(dir: string): Promise<string[]> {
         const results: string[] = [];
         try {
@@ -306,7 +305,7 @@ ${lazyImports.join(",\n")}
           for (const entry of entries) {
             const fullPath = path.join(dir, entry.name);
             if (entry.isDirectory()) {
-              if (!SKIP_DIRS.has(entry.name) && !entry.name.startsWith(".")) {
+              if (!isSkippedSourceScanDir(entry.name)) {
                 results.push(...(await scanDir(fullPath)));
               }
             } else if (/\.(ts|tsx|js|jsx)$/.test(entry.name)) {

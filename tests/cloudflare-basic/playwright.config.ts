@@ -142,6 +142,8 @@ export default defineConfig({
           testMatch: ["**/hmr*.test.ts"],
           use: { ...devices["Desktop Chrome"] },
           fullyParallel: false,
+          // Each hmr file edits shared sources under src/ and restores them.
+          workers: 1,
         },
       ]
     : [
@@ -189,6 +191,8 @@ export default defineConfig({
           testMatch: ["**/hmr*.test.ts"],
           use: { ...devices["Desktop Chrome"] },
           fullyParallel: false,
+          // Each hmr file edits shared sources under src/ and restores them.
+          workers: 1,
           dependencies: ["dev", "production"],
         },
       ],

@@ -26,6 +26,7 @@
 
 import { isValidElement, type ReactElement } from "react";
 import { isThenable } from "../../handles/is-thenable.js";
+import { assignOwn } from "../../context-var.js";
 import {
   cloneElementWithProps,
   isPlainDataObject,
@@ -178,7 +179,7 @@ async function elideNested(
     for (const key of Object.keys(source)) {
       const r = await elideNested(source[key], seen);
       if (r.state === "rejected") return r;
-      out[key] = r.value;
+      assignOwn(out, key, r.value);
       if (r.value !== source[key]) changed = true;
       result.hasHole ||= r.hasHole;
     }
@@ -301,13 +302,21 @@ export function overlayLoaderContainer(
     // Shape drift (fresh not a plain object): markers fall back to undefined.
     const freshObj = isPlainDataObject(fresh) ? fresh : undefined;
     let out: Record<string, unknown> | undefined;
+    // Own keys only: a key named like an Object.prototype member is data.
+    // The spread copies an own `__proto__` as data, so assigning a recorded
+    // key writes it; a fresh-only key goes through assignOwn.
     for (const key of Object.keys(recorded)) {
-      const next = overlayLoaderContainer(freshObj?.[key], recorded[key]);
+      const next = overlayLoaderContainer(
+        freshObj && Object.hasOwn(freshObj, key) ? freshObj[key] : undefined,
+        recorded[key],
+      );
       if (next !== recorded[key]) (out ??= { ...recorded })[key] = next;
     }
     if (freshObj) {
       for (const key of Object.keys(freshObj)) {
-        if (!(key in recorded)) (out ??= { ...recorded })[key] = freshObj[key];
+        if (!Object.hasOwn(recorded, key)) {
+          assignOwn((out ??= { ...recorded }), key, freshObj[key]);
+        }
       }
     }
     return out ?? recorded;
@@ -341,7 +350,12 @@ function overlayProps(
   const props = recorded.props;
   let changed: Record<string, unknown> | undefined;
   for (const key of Object.keys(props)) {
-    const next = overlayLoaderContainer(freshProps?.[key], props[key]);
+    const next = overlayLoaderContainer(
+      freshProps && Object.hasOwn(freshProps, key)
+        ? freshProps[key]
+        : undefined,
+      props[key],
+    );
     if (next !== props[key]) (changed ??= {})[key] = next;
   }
   return changed ? cloneElementWithProps(recorded, changed) : recorded;

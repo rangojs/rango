@@ -10,6 +10,8 @@
  * keeps the object a real Request, and those operations never call it.
  */
 
+import { defineHidden } from "./slot-accessors.js";
+
 /** The Headers each shadowed request's getter returns. */
 const RAW_HEADERS = new WeakMap<Request, Headers>();
 
@@ -93,12 +95,12 @@ export function shadowRequestHeaders(
     configurable: true,
   });
   const clone = request.clone;
-  defineMethod(request, "clone", function (this: Request): Request {
+  defineHidden(request, "clone", function (this: Request): Request {
     return shadowRequestHeaders(clone.call(this), beforeRead);
   });
   const inspect = (request as unknown as Record<symbol, unknown>)[INSPECT];
   if (typeof inspect === "function") {
-    defineMethod(
+    defineHidden(
       request,
       INSPECT,
       function (this: Request, ...args: unknown[]) {
@@ -107,18 +109,6 @@ export function shadowRequestHeaders(
     );
   }
   return request;
-}
-
-function defineMethod(
-  target: object,
-  key: PropertyKey,
-  value: (...args: never[]) => unknown,
-): void {
-  Object.defineProperty(target, key, {
-    value,
-    configurable: true,
-    writable: true,
-  });
 }
 
 /** The getter `key` resolves to on `target`'s prototype chain, if any. */

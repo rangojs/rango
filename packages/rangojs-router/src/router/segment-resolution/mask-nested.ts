@@ -8,10 +8,12 @@
  *
  * Deliberately a LEAF module: loader-mask (the other natural home) imports
  * request-context, so any funnel importing the mask from there inherits that
- * graph. This module imports only is-thenable and react.
+ * graph. This module imports only react and two leaves, is-thenable and
+ * context-var.
  */
 
 import { cloneElement, isValidElement, type ReactElement } from "react";
+import { assignOwn } from "../../context-var.js";
 import { isThenable } from "../../handles/is-thenable.js";
 
 /**
@@ -52,7 +54,8 @@ type KeyValidated = { _store?: { validated?: unknown } };
  * keyless child of a static children list (validated at creation) would warn
  * "Each child in a list should have a unique key" once cloned. Pass only the
  * props that change: cloneElement re-parents the element (owner) when its
- * config carries `ref`.
+ * config carries `ref`. cloneElement copies props by assignment, so a prop
+ * key named `__proto__` can't survive a clone; prop copies don't use assignOwn.
  */
 export function cloneElementWithProps(
   element: ReactElement,
@@ -206,8 +209,9 @@ export function maskNestedContainerThenables(
     seen.set(value, out);
     let changed = false;
     for (const key of Object.keys(source)) {
-      out[key] = maskNestedContainerThenables(source[key], seen, report);
-      if (out[key] !== source[key]) changed = true;
+      const masked = maskNestedContainerThenables(source[key], seen, report);
+      assignOwn(out, key, masked);
+      if (masked !== source[key]) changed = true;
     }
     if (changed) return out;
     seen.set(value, value);

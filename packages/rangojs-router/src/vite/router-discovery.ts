@@ -53,6 +53,7 @@ import { extractHandlerExportsFromChunk } from "./utils/bundle-analysis.js";
 import {
   canRefreshRuntimeDiscovery,
   createDiscoveryState,
+  recordDiscoveryFailure,
   VIRTUAL_ROUTES_MANIFEST_ID,
   type DiscoveryState,
   type PluginOptions,
@@ -1050,12 +1051,20 @@ export function createRouterDiscoveryPlugin(
               acquireBuildEnv(s, viteCommand, viteMode),
             );
 
-            tempRscEnv = (
-              await timed(debugDiscovery, "getOrCreateTempServer", () =>
-                getOrCreateTempServer(),
-              )
-            ).env;
-            if (tempRscEnv) {
+            const temp = await timed(
+              debugDiscovery,
+              "getOrCreateTempServer",
+              () => getOrCreateTempServer(),
+            );
+            tempRscEnv = temp.env;
+            if (!tempRscEnv) {
+              // Recovery mode, as in the catch below. getOrCreateTempServer
+              // already logged why the temp runner failed.
+              recordDiscoveryFailure(
+                s,
+                temp.error ?? "temp runner unavailable for discovery",
+              );
+            } else {
               optimizerHashBefore =
                 tempRscEnv.depsOptimizer?.metadata?.browserHash;
               await timed(debugDiscovery, "discoverRouters (cloudflare)", () =>
@@ -1070,6 +1079,7 @@ export function createRouterDiscoveryPlugin(
               );
             }
           } catch (err: any) {
+            recordDiscoveryFailure(s, err);
             emitDiscoveryFailure(
               err,
               optimizerHashBefore,
@@ -1140,10 +1150,7 @@ export function createRouterDiscoveryPlugin(
         } catch (err: any) {
           // Recovery mode: the next in-scan source change re-runs discovery
           // (canRefreshRuntimeDiscovery) instead of waiting for a restart.
-          s.lastDiscoveryError = {
-            message: err?.message ?? String(err),
-            at: Date.now(),
-          };
+          recordDiscoveryFailure(s, err);
           emitDiscoveryFailure(
             err,
             optimizerHashBefore,
@@ -1744,13 +1751,6 @@ export function createRouterDiscoveryPlugin(
         const refreshRuntimeDiscovery = async () => {
           const rscEnv = (server.environments as any)?.rsc;
           const hasMainRunner = !!rscEnv?.runner;
-          // Cloudflare HMR has no main RSC runner (workerd is a separate
-          // runtime). When we have a populated runtime manifest from cold
-          // start, we can re-discover via the temp Node runner — the same
-          // mechanism getOrCreateTempServer() uses at startup. Without a
-          // populated manifest there's nothing useful to do, so bail
-          // before involving the gate machine at all.
-          if (!hasMainRunner && s.perRouterManifests.length === 0) return;
           let previousRouteShape = routeShapeSignature();
           await gate.runRefreshCycle(async () => {
             const hmrStart = performance.now();
@@ -1770,11 +1770,16 @@ export function createRouterDiscoveryPlugin(
                 // no gen-file import, so no gen write ever invalidates it.
                 if (recoveringColdStart) invalidateRoutesManifestModule(rscEnv);
               } else {
-                // Cloudflare HMR: invalidate the temp server's RSC module
-                // graph (or close+recreate as a fallback) so the runner
-                // re-reads the freshly edited source. Keeping the same
+                // Cloudflare HMR has no main RSC runner (workerd is a separate
+                // runtime): re-discover on the temp Node runner. Invalidate its
+                // RSC module graph (or close+recreate as a fallback) so the
+                // runner re-reads the freshly edited source. Keeping the same
                 // Vite instance alive avoids disrupting workerd's transport
-                // during the first post-cold-start module-fetch window.
+                // during the first post-cold-start module-fetch window. After
+                // a cold start whose temp runner failed there is none, and
+                // getOrCreateTempServer creates one. A recovering cycle needs
+                // no routes-manifest invalidation here: the worker reload below
+                // invalidates its whole module graph.
                 const tempRscEnv = await timed(
                   debugDiscovery,
                   "hmr refreshTempRscEnv (cloudflare)",
@@ -1830,10 +1835,7 @@ export function createRouterDiscoveryPlugin(
                 forceCloudflareWorkerReload(rscEnv, expectedEpoch);
               }
             } catch (err: any) {
-              s.lastDiscoveryError = {
-                message: err?.message ?? String(err),
-                at: Date.now(),
-              };
+              recordDiscoveryFailure(s, err);
               // An invalid transition({ when }) is a definition error the
               // user must see: terminal error plus the browser's Vite overlay,
               // not a warning while the last-good route tree keeps serving.
@@ -2025,7 +2027,7 @@ export function createRouterDiscoveryPlugin(
             // Async: re-run runtime discovery to refresh factory-generated
             // routes that the static parser cannot resolve. Resolves the
             // discovery gate when complete.
-            if (canRefreshRuntimeDiscovery(s, !!rscEnv?.runner)) {
+            if (canRefreshRuntimeDiscovery(s)) {
               // The cloudflare workerd reload fires inside refreshRuntimeDiscovery
               // on the successful cycle (see forceCloudflareWorkerReload call
               // there) so queued follow-up cycles also trigger it.
@@ -2228,7 +2230,7 @@ export function createRouterDiscoveryPlugin(
             // observe a stale resolved gate from cold-start). Resolved
             // by the trailing refreshRuntimeDiscovery() cycle, which runs
             // under the same predicate.
-            if (canRefreshRuntimeDiscovery(s, !!mainRscEnv?.runner)) {
+            if (canRefreshRuntimeDiscovery(s)) {
               gate.noteRouteEvent();
             }
             scheduleRouteRegeneration();
