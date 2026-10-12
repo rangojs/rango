@@ -264,9 +264,13 @@ The public DOM seam is
 - `prefetch: false` is owned by
   [router/segment-resolution/prefetch-deferral.ts](../../src/router/segment-resolution/prefetch-deferral.ts)
   (the per-route plan: which loaders and handler units a prefetch defers,
-  `deferUnit`; the wire markers `PREFETCH_HEADER` and `FILL_PARAM` live in the
-  dependency-free [prefetch-markers.ts](../../src/prefetch-markers.ts), which
-  the browser imports too). The
+  `deferUnit`; a fill's keep-or-send rule, `fillSends`; how the request may
+  use the route's `cache()` record, `recordUse`, read by
+  `router/match-middleware/cache-lookup.ts`, `cache-store.ts` and
+  `background-revalidation.ts`; the wire markers `PREFETCH_HEADER` and
+  `FILL_PARAM` live in the dependency-free
+  [prefetch-markers.ts](../../src/prefetch-markers.ts), which the browser
+  imports too). The
   decisions sit in the grouped `router/segment-resolution/*` row
   (`revalidation.ts`), the cache-skip rules in
   [cache/document-cache.ts](../../src/cache/document-cache.ts), the adoption

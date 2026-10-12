@@ -446,10 +446,12 @@ the request is a fill:
   same-route render from an intercept source. Deferring on the forced set
   skipped the handler of a route the response then left out as held, so the
   click got nothing for it.
-- `skipped` and `skipsChain`: for a prefetch, the segment ids of the units
-  this request skips, and whether one of them is a chain entry. `defersUnit()`
-  and `defersAboveRecord()` are lookups on them. One computation, so the
-  resolver and the cache middleware cannot disagree about what was skipped.
+- `skipped` and `record`: for a prefetch, the segment ids of the units this
+  request skips, and how the request may use the route's `cache()` record
+  (`RecordUse`: `read`, `write` and `refresh`). `defersUnit()` is a lookup on
+  `skipped`, and the cache middleware reads `record` through `recordUse()`.
+  One computation, so the resolver and the cache middleware cannot disagree
+  about what was skipped.
 - `storedFrom`: the first chain index whose handler output is stored. `0` for
   a `ppr` leaf and for `Prerender` routes, the `cache()` boundary's index when
   the route's scope is enabled, `Infinity` otherwise. A `Prerender` route
@@ -517,19 +519,26 @@ path. The document path (`fresh.ts`) never defers.
   `RequestContext._payloadDeferred` and sets its `cache-control` (R7).
 
 In a fill, every one of those decision points answers
-`!clientSegmentIds.has(id)` and nothing else. The two store paths in
-`src/router/match-middleware/cache-lookup.ts` (the `cache()` HIT loop and
-`yieldFromStore`) keep a held segment without consulting predicates or the
-params comparison.
+`!clientSegmentIds.has(id)` and nothing else. That answer is one function,
+`fillSends()` in `prefetch-deferral.ts`. `revalidation.ts` asks it through
+`revalidateHeld()` for a held loader, entry or orphan layout, and directly
+for a slot, where the fill decides a slot the client lacks as well. The two
+store paths in `src/router/match-middleware/cache-lookup.ts` (the `cache()`
+HIT loop and `yieldFromStore`) ask it too, so they keep a held segment
+without consulting predicates or the params comparison. Each path keeps its
+own rule for every other request, and the two differ: `yieldFromStore`
+ignores a search change, re-sends every held segment when the params
+changed and the route's own segments on an action, while the HIT loop re-sends a route's own segments when the params
+or the search changed and asks `revalidate()` where a segment declares one.
 
 A fill also leaves a stale `cache()` record alone. A stale hit normally
 schedules a background re-render of the whole route
 (`withBackgroundRevalidation`), and so did a fill at first: the layout and
 the route handler ran again behind a request whose rule is that no handler of
 a held segment runs. The fill now skips the refresh, as it skips the
-proactive re-render in `withCacheStore`. Nothing is lost: the record is refreshed
-by the next request that reads it, and the prefetch that came before the
-fill was already one.
+proactive re-render in `withCacheStore`: its plan's `record.refresh` is
+false. Nothing is lost: the record is refreshed by the next request that
+reads it, and the prefetch that came before the fill was already one.
 
 ### Handlers that read a flagged loader
 
@@ -595,11 +604,12 @@ sees the plan.
 
 One case does need care. A flagged layout above a `cache()` boundary is not
 stored, so it can be a unit, and a unit skips everything below it, the cached
-part included. When this request defers such a layout (`defersAboveRecord()`:
-a flagged, unstored chain entry the client does not hold), `withCacheLookup`
-does not read the route cache and `withCacheStore` does not write it. Reading
-would restore the record's handle pushes for segments the response does not
-carry, and a write could only ever store an incomplete record.
+part included. When this request defers such a layout (a flagged, unstored
+chain entry the client does not hold), its plan's `record` has `read` and
+`write` false: `withCacheLookup` does not read the route cache and
+`withCacheStore` does not write it. Reading would restore the record's handle
+pushes for segments the response does not carry, and a write could only ever
+store an incomplete record.
 
 That is decided per request, from what the client holds, and that is scar
 tissue. It used to be decided per tree (`chainUnitPossible()`): any prefetch
