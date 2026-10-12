@@ -216,15 +216,15 @@ describe("executeMiddleware: a rewrite after next()", () => {
       ),
     );
 
-  it("is an error once next() resolved: the route already rendered", async () => {
+  it("is an error once next() resolved", async () => {
     const ctx = contextFor("http://localhost/shop");
     const late: MiddlewareFn<unknown> = async function late(_mwCtx, next) {
       await next();
       throw rewrite("/custom-404");
     };
     await expect(run(ctx, [late])).rejects.toThrow(
-      'Middleware "late" threw rewrite() after calling next(): the route ' +
-        "already rendered. throw rewrite() before await next().",
+      'Middleware "late" threw rewrite() after calling next(). Throw ' +
+        "rewrite() before await next().",
     );
   });
 
@@ -244,7 +244,7 @@ describe("executeMiddleware: a rewrite after next()", () => {
     release();
   });
 
-  it("passes a rewrite the downstream threw, and one thrown after next() rejected", async () => {
+  it("passes a rewrite the downstream threw, and one thrown after next() rejected with a rewrite", async () => {
     const ctx = contextFor("http://localhost/shop");
     const outer: MiddlewareFn<unknown> = async (_mwCtx, next) => next();
     const inner: MiddlewareFn<unknown> = () => {
@@ -254,10 +254,32 @@ describe("executeMiddleware: a rewrite after next()", () => {
       name: "Rewrite",
     });
 
-    const errorPage: MiddlewareFn<unknown> = async (_mwCtx, next) => {
+    // Nothing rendered: the downstream rewrote before its own next().
+    const redirectRewrite: MiddlewareFn<unknown> = async (_mwCtx, next) => {
       try {
         return await next();
       } catch {
+        throw rewrite("/elsewhere");
+      }
+    };
+    await expect(run(ctx, [redirectRewrite, inner])).rejects.toMatchObject({
+      name: "Rewrite",
+      target: { path: "/elsewhere" },
+    });
+  });
+
+  it("is an error after next() rejected with anything but a rewrite", async () => {
+    const ctx = contextFor("http://localhost/shop");
+    // The route may have rendered before it failed (a route middleware that
+    // throws after its own next(), the render's own error).
+    const errorPage: MiddlewareFn<unknown> = async function errorPage(
+      mwCtx,
+      next,
+    ) {
+      try {
+        return await next();
+      } catch (error) {
+        if (mwCtx.isRewrite(error)) throw error;
         throw rewrite("/error-page");
       }
     };
@@ -265,10 +287,9 @@ describe("executeMiddleware: a rewrite after next()", () => {
       run(ctx, [errorPage], async () => {
         throw new Error("render failed");
       }),
-    ).rejects.toMatchObject({
-      name: "Rewrite",
-      target: { path: "/error-page" },
-    });
+    ).rejects.toThrow(
+      'Middleware "errorPage" threw rewrite() after calling next().',
+    );
   });
 });
 
@@ -314,6 +335,44 @@ describe("executeInterceptMiddleware: rewrite is not supported", () => {
 });
 
 describe("ctx.rewrittenFrom", () => {
+  it("a middleware reads the visitor's URL in a render the document cache stores; a handler does not", async () => {
+    const ctx = contextFor("http://localhost/shop");
+    await runWithRequestContext(ctx, async () => {
+      applyRewrite(rewrite("/maintenance"), ctx.request, ctx, {}, undefined);
+      // The document cache will store this render: it opted in before next().
+      ctx._documentCacheRender = true;
+      ctx.header("Cache-Control", "s-maxage=60");
+    });
+    let seenByMiddleware: string | undefined;
+    const reader: MiddlewareFn<unknown> = async (mwCtx, next) => {
+      seenByMiddleware = mwCtx.rewrittenFrom?.href;
+      return next();
+    };
+    await runWithRequestContext(ctx, () =>
+      executeMiddleware(
+        [entry(reader)],
+        ctx.request,
+        {},
+        ctx._variables,
+        async () => new Response("page"),
+      ),
+    );
+    expect(seenByMiddleware).toBe("http://localhost/shop");
+    expect(ctx._payloadVisitorLocation).toBeUndefined();
+
+    const handlerCtx = runWithRequestContext(ctx, () =>
+      createHandlerContext(
+        {},
+        ctx.request,
+        ctx.searchParams,
+        ctx.pathname,
+        ctx.url,
+      ),
+    );
+    expect(handlerCtx.rewrittenFrom).toBeUndefined();
+    expect(ctx._payloadVisitorLocation).toBeUndefined();
+  });
+
   it("is undefined until a rewrite, then the visitor's URL, a copy per context", async () => {
     const ctx = contextFor("http://localhost/shop?q=1");
     const seen: Array<URL | undefined> = [];

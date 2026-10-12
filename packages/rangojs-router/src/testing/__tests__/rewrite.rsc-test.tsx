@@ -30,7 +30,9 @@ import {
   getRequestContext,
   rewrite,
   urls,
+  createHandle,
   type HandlerContext,
+  type Middleware,
   type OnErrorContext,
   type OTelActiveSpanTracer,
   type OTelSpan,
@@ -565,16 +567,64 @@ describe("a rewrite after next() (B2)", () => {
       ]),
     );
 
-  it("is an error: the route already rendered, and nothing re-dispatches", async () => {
+  it("is an error after next() rendered the route, and nothing re-dispatches", async () => {
     for (const url of ["/after", "/after-pre"]) {
       await expect(
         serveShellRequest(afterRouter, url, {
           cacheStore: new MemorySegmentCacheStore(),
         }),
       ).rejects.toThrow(
-        "threw rewrite() after calling next(): the route already rendered. throw rewrite() before await next().",
+        "threw rewrite() after calling next(). Throw rewrite() before await next().",
       );
     }
+  });
+
+  it("is an error after a next() that failed after the route rendered", async () => {
+    const Crumb = createHandle<string>();
+    const errorPage = async function errorPage(
+      ctx: Parameters<Middleware>[0],
+      next: Parameters<Middleware>[1],
+    ): Promise<Response> {
+      try {
+        return await next();
+      } catch (error) {
+        if (ctx.isRewrite(error)) throw error;
+        throw rewrite("/oops");
+      }
+    };
+    const boomRouter = createRouter({})
+      .use(errorPage)
+      .routes(
+        urls(({ path, layout, middleware }) => [
+          layout(
+            (ctx: HandlerContext) => {
+              ctx.use(Crumb)("layout");
+              return <main>layout</main>;
+            },
+            () => [
+              path(
+                "/boom",
+                () => <p>boom page</p>,
+                {},
+                () => [
+                  middleware(async (_ctx, next) => {
+                    await next();
+                    throw new Error("boom after render");
+                  }),
+                ],
+              ),
+              path("/oops", () => <p>oops page</p>),
+            ],
+          ),
+        ]),
+      );
+    await expect(
+      serveShellRequest(boomRouter, "/boom", {
+        cacheStore: new MemorySegmentCacheStore(),
+      }),
+    ).rejects.toThrow(
+      'Middleware "errorPage" threw rewrite() after calling next(). Throw rewrite() before await next().',
+    );
   });
 });
 

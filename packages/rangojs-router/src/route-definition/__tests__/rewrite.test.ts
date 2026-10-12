@@ -396,6 +396,20 @@ describe("applyRewrite", () => {
       ),
     ).toThrow("during a loader fetch");
     expect(loader.ctx.pathname).toBe("/cart");
+
+    // load() with a body is a POST: still the loader fetch's refusal.
+    const loaderPost = contextFor("https://shop.test/cart?_rsc_loader=L", {
+      method: "POST",
+    });
+    expect(() =>
+      applyRewrite(
+        rewrite("/m"),
+        loaderPost.ctx.request,
+        loaderPost.ctx,
+        ROUTES,
+        undefined,
+      ),
+    ).toThrow("during a loader fetch");
   });
 
   it("resolves names with no param auto-fill from the current route", async () => {

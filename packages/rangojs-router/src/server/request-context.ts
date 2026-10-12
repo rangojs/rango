@@ -1845,8 +1845,9 @@ export function createRequestContext<TEnv>(
  * (its middleware runs again for the target). The loader memo behind
  * `getRequestContext().use()` is new: a loader that middleware started in
  * the visitor's pass read the visitor's URL. A pass never renders before it
- * rewrites (router/middleware.ts refuses a rewrite after next()), so there
- * is no render state to reset.
+ * rewrites: router/middleware.ts refuses a rewrite thrown after a next()
+ * unless that next() rejected with a Rewrite (a downstream middleware
+ * rewrote before its own next()), so there is no render state to reset.
  */
 export function rebaseRequestContext(
   ctx: RequestContext<any>,

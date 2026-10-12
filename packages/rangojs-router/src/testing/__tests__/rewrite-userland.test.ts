@@ -266,6 +266,65 @@ describe("dispatch re-dispatches a rewritten request", () => {
     expect(res.headers.get("x-pre-handler")).toBe("ran");
   });
 
+  it("a cached response route a rewritten request read the visitor's URL in is not stored", async () => {
+    const cacheStore = new MemorySegmentCacheStore();
+    const itemRouter = createRouter({ cache: { store: cacheStore } })
+      .use("/api/promo", () => {
+        throw rewrite("/api/item");
+      })
+      .routes(
+        urls(({ path, cache }) => [
+          cache({ ttl: 60 }, () => [
+            path.json("/api/item", (ctx) => ({
+              from: ctx.rewrittenFrom?.pathname ?? "direct",
+            })),
+          ]),
+          path.json("/api/promo", () => ({ never: true })),
+        ]),
+      );
+    const rewritten = await dispatch(itemRouter, { request: "/api/promo" });
+    expect(await rewritten.json()).toEqual({ from: "/api/promo" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const direct = await dispatch(itemRouter, { request: "/api/item" });
+    expect(await direct.json()).toEqual({ from: "direct" });
+  });
+
+  it("a stale cached response route that now rewrites reports nothing", async () => {
+    let locked = false;
+    const staleErrors: OnErrorContext[] = [];
+    const staleRouter = createRouter({
+      cache: { store: new MemorySegmentCacheStore() },
+      onError: (context) => {
+        staleErrors.push(context);
+      },
+    }).routes(
+      urls(({ path, cache, middleware }) => [
+        cache({ ttl: 0, swr: 300 }, () => [
+          path.json(
+            "/api/feed",
+            () => ({ feed: true }),
+            {},
+            () => [
+              middleware(async (_ctx, next) => {
+                if (locked) throw rewrite("/api/lock");
+                return next();
+              }),
+            ],
+          ),
+        ]),
+        path.json("/api/lock", () => ({ lock: true })),
+      ]),
+    );
+    await dispatch(staleRouter, { request: "/api/feed" });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    locked = true;
+    const stale = await dispatch(staleRouter, { request: "/api/feed" });
+    expect(await stale.json()).toEqual({ feed: true });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(staleErrors).toEqual([]);
+  });
+
   it("reloads a partial request at the visitor's URL", async () => {
     const res = await dispatch(router, {
       request: new Request("http://localhost/api/orders?_rsc_partial=true", {

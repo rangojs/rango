@@ -160,10 +160,13 @@ export async function serveResponseRouteWithCache(
   // Finding #3 as document-cache.ts shouldCacheResponse.
   // Only store GET: HEAD may branch on method; sharing a write slot with GET
   // can poison subsequent GET bodies. HEAD still reads the GET key below.
+  // Nor a body a rewritten request built from the visitor's URL
+  // (ctx.rewrittenFrom, server/rewrite-trail.ts): the key is the target's.
   const canStore = (response: Response): boolean =>
     method === "GET" &&
     isCacheableStatus(response.status) &&
-    !hasPerClientSignal(response.headers);
+    !hasPerClientSignal(response.headers) &&
+    !reqCtx._payloadVisitorLocation;
 
   // Reject unsafe persisted entries on read (pre-upgrade poison / store bugs).
   const canServeCached = (response: Response): boolean =>

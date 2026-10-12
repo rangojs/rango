@@ -414,12 +414,11 @@ export function createMiddlewareContext<TEnv>(
   return ctx;
 }
 
-/** A middleware threw a Rewrite after its next() let the downstream run. */
+/** A middleware threw a Rewrite after its next() started the downstream. */
 function rewriteAfterNextError(handler: Function, rewrite: Rewrite): Error {
   return new Error(
     `Middleware "${handler.name || "(anonymous)"}" threw rewrite() after ` +
-      `calling next(): the route already rendered. throw rewrite() before ` +
-      `await next().`,
+      `calling next(). Throw rewrite() before await next().`,
     { cause: rewrite },
   );
 }
@@ -635,9 +634,12 @@ export async function executeMiddleware<TEnv>(
     // downstream chain and overwrite responseHolder.response.
     let nextPromise: Promise<Response> | null = null;
     let nextResolvedAt: number | undefined;
-    // Whether next() rejected: the downstream chain unwound, so a rewrite
-    // thrown after it re-dispatches nothing the downstream started.
-    let nextRejected = false;
+    // Whether next() rejected with a Rewrite: only then did nothing render
+    // (a downstream middleware rewrote before its own next()). Any other
+    // rejection can come after the route rendered (a route middleware that
+    // throws after its next(), the render's own error), so a rewrite thrown
+    // after it would re-dispatch onto the used handle store.
+    let nextRejectedWithRewrite = false;
     const wrappedNext = (): Promise<Response> => {
       if (nextPromise) {
         throw new Error(
@@ -653,7 +655,7 @@ export async function executeMiddleware<TEnv>(
         },
         (err) => {
           nextResolvedAt = performance.now();
-          nextRejected = true;
+          nextRejectedWithRewrite = isRewrite(err);
           throw err;
         },
       );
@@ -700,10 +702,11 @@ export async function executeMiddleware<TEnv>(
       finishMiddleware();
     }
     // A rewrite after this middleware's next() started the downstream chain
-    // (resolved or still running) would leave that render running against
-    // the context the next pass moves, and drop the response it built. Only
-    // a rewrite the downstream threw (next() rejected with it) unwinds.
-    if (rewrite && nextPromise && !nextRejected) {
+    // (resolved, still running, or failed) would leave that render running
+    // against the context the next pass moves, or re-dispatch onto what it
+    // already pushed, and drop the response it built. Only a rewrite after
+    // next() rejected with a Rewrite (nothing rendered) unwinds.
+    if (rewrite && nextPromise && !nextRejectedWithRewrite) {
       throw rewriteAfterNextError(entry.handler, rewrite);
     }
     if (rewrite) throw rewrite;

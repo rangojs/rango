@@ -12,6 +12,7 @@ import { contextGet, contextSet, createVar } from "../context-var.js";
 import { RewriteLoopError } from "../errors.js";
 import { documentCacheStoresRender } from "../cache/document-cache-policy.js";
 import { guardIdentityRead, type IdentityReadWording } from "./context.js";
+import { stripInternalParams } from "../router/handler-context.js";
 import type { RequestContext } from "./request-context.js";
 
 /** Most rewrites one request may take; the next one is a RewriteLoopError. */
@@ -80,12 +81,7 @@ export function rendersForSharedAudience(reqCtx: AudienceContext): boolean {
  */
 export function visitorUrl(reqCtx: TrailContext | undefined, url: URL): URL {
   const first = rewriteTrail(reqCtx)?.[0];
-  if (first) return new URL(first);
-  const clean = new URL(url);
-  for (const key of [...clean.searchParams.keys()]) {
-    if (key.startsWith("_rsc")) clean.searchParams.delete(key);
-  }
-  return clean;
+  return first ? new URL(first) : stripInternalParams(url);
 }
 
 const REWRITTEN_FROM_FIX =

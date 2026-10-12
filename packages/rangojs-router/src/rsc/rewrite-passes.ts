@@ -15,7 +15,10 @@ import {
   type Rewrite,
 } from "../route-definition/rewrite.js";
 import { prefixBasename } from "../router/basename.js";
-import { createReverseFunction } from "../router/handler-context.js";
+import {
+  createReverseFunction,
+  stripInternalParams,
+} from "../router/handler-context.js";
 import {
   rebaseRequestContext,
   type RequestContext,
@@ -51,7 +54,7 @@ export function resolveRewriteTarget(
           target.params ?? {},
           target.search,
         );
-  const resolved = new URL(path, base.origin);
+  const resolved = stripInternalParams(new URL(path, base.origin));
   if (resolved.origin !== base.origin) {
     throw new TypeError(
       `${describeRewriteTarget(target)} must name a path in this app, not another origin.`,
@@ -65,9 +68,6 @@ export function resolveRewriteTarget(
     throw new TypeError(
       `${describeRewriteTarget(target)} resolves to ${resolved.pathname}, outside the router's basename ${basename}.`,
     );
-  }
-  for (const key of [...resolved.searchParams.keys()]) {
-    if (key.startsWith("_rsc")) resolved.searchParams.delete(key);
   }
   resolved.hash = "";
   return resolved;
@@ -109,11 +109,13 @@ export function applyRewrite(
   routeMap: Record<string, string>,
   basename: string | undefined,
 ): RewritePass {
-  if (passRequest.method !== "GET" && passRequest.method !== "HEAD") {
-    throw rewriteNotSupported(rewrite, "mutation");
-  }
+  // A loader fetch first: `load()` with a body is a POST, and its refusal
+  // is the loader fetch's.
   if (reqCtx.originalUrl.searchParams.has("_rsc_loader")) {
     throw rewriteNotSupported(rewrite, "loader-fetch");
+  }
+  if (passRequest.method !== "GET" && passRequest.method !== "HEAD") {
+    throw rewriteNotSupported(rewrite, "mutation");
   }
   const target = resolveRewriteTarget(rewrite, routeMap, reqCtx.url, basename);
   const hops = recordRewriteHop(reqCtx, reqCtx.url, target);
