@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { StrictMode, useState, type ReactNode } from "react";
+import { StrictMode, Suspense, use, useState, type ReactNode } from "react";
 import { createRoot, hydrateRoot, type Root } from "react-dom/client";
 import { act, cleanup } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
@@ -136,6 +136,7 @@ async function hydrate(
   node: ReactNode,
   serverHtml: string,
   strict: boolean,
+  beforeReveal?: () => Promise<void>,
 ): Promise<{ container: HTMLDivElement; recoverable: string[] }> {
   const container = document.createElement("div");
   container.innerHTML = serverHtml;
@@ -150,6 +151,7 @@ async function hydrate(
       },
     });
   });
+  await beforeReveal?.();
   // The document is revealed, then the barrier transition applies the entry's
   // state; flush both inside act so the assertion sees the settled value.
   await act(async () => {
@@ -236,6 +238,157 @@ describe("useLocationState late hydration (#992)", () => {
       ).toBe("3");
       expect(window.history.state).not.toHaveProperty(FlashCount.__rsc_ls_key);
       expect(window.history.state).toMatchObject({ idx: 4 });
+    },
+  );
+
+  // A boundary that suspends on the client only (a lazy chunk still loading)
+  // is dehydrated when the document is revealed. The reader outside it gets
+  // the entry's state only after it has hydrated (execution-model.md, "The
+  // reveal barrier is alone in its lane"; this case is close to a minimal
+  // repro of what breaks otherwise).
+  it.each([
+    { strict: true, label: "StrictMode" },
+    { strict: false, label: "no StrictMode" },
+  ])(
+    "a boundary suspended on the client at reveal hydrates as rendered when a reader outside it has state ($label)",
+    async ({ strict }) => {
+      let open!: () => void;
+      const chunk = new Promise<void>((resolve) => (open = resolve));
+      function ClientChunk({ children }: { children: ReactNode }) {
+        use(chunk);
+        return children;
+      }
+      const inside: Array<number | undefined> = [];
+      function Count({ testId }: { testId: string }) {
+        const state = useLocationState(GridState);
+        if (testId === "inside") inside.push(state?.count);
+        return <p data-testid={testId}>{state?.count ?? 0}</p>;
+      }
+
+      // A component, as a route renders one, with the boundary beside the
+      // reader. Placed directly under NavigationProvider's RootErrorBoundary,
+      // which re-renders in the barrier transition, the boundary would be
+      // skipped even with the barrier alone in its lane: no ancestor bails out
+      // to propagate. A routed tree sits under renderSegments' own
+      // RootErrorBoundary element, which bails out.
+      function Page() {
+        return (
+          <>
+            <Count testId="outside" />
+            <Suspense fallback={null}>
+              <ClientChunk>
+                <Count testId="inside" />
+              </ClientChunk>
+            </Suspense>
+          </>
+        );
+      }
+
+      await seedHydrated({ [GridState.__rsc_ls_key]: { count: 3 } });
+      const { container, recoverable } = await hydrate(
+        <Page />,
+        '<p data-testid="outside">0</p><!--$--><p data-testid="inside">0</p><!--/$-->',
+        strict,
+      );
+      const text = (testId: string): string | null | undefined =>
+        container.querySelector(`[data-testid='${testId}']`)?.textContent;
+      const serverNode = container.querySelector("[data-testid='inside']");
+
+      // Revealed, and the barrier waits for the boundary.
+      const beforeOpen = [text("outside"), text("inside")];
+
+      await act(async () => open());
+
+      expect(recoverable).toEqual([]);
+      expect(inside[0]).toBeUndefined();
+      expect(container.querySelector("[data-testid='inside']")).toBe(
+        serverNode,
+      );
+      expect(beforeOpen).toEqual(["0", "0"]);
+      expect(text("outside")).toBe("3");
+      expect(text("inside")).toBe("3");
+    },
+  );
+
+  // A commit no payload follows (a shallow navigation, a traversal that keeps
+  // every segment, merged server-set state) while that boundary is still
+  // dehydrated: its state waits for the boundary too, before or after the
+  // document is revealed.
+  it.each([
+    { strict: true, when: "after" as const },
+    { strict: false, when: "after" as const },
+    { strict: true, when: "before" as const },
+    { strict: false, when: "before" as const },
+  ])(
+    "a treeless commit $when reveal waits for a boundary suspended on the client (strict: $strict)",
+    async ({ strict, when }) => {
+      let open!: () => void;
+      const chunk = new Promise<void>((resolve) => (open = resolve));
+      function ClientChunk({ children }: { children: ReactNode }) {
+        use(chunk);
+        return children;
+      }
+      const inside: Array<number | undefined> = [];
+      function Count({ testId }: { testId: string }) {
+        const state = useLocationState(GridState);
+        if (testId === "inside") inside.push(state?.count);
+        return <p data-testid={testId}>{state?.count ?? 0}</p>;
+      }
+      function Page() {
+        return (
+          <>
+            <Count testId="outside" />
+            <Suspense fallback={<i data-testid="fallback" />}>
+              <ClientChunk>
+                <Count testId="inside" />
+              </ClientChunk>
+            </Suspense>
+          </>
+        );
+      }
+
+      const shallow = { [GridState.__rsc_ls_key]: { count: 5 } };
+      // "before": a boundary of the document still streaming holds the reveal
+      // until the commit has happened.
+      const streaming = document.createComment("$?");
+      if (when === "before") document.body.appendChild(streaming);
+      await seedHydrated({ [GridState.__rsc_ls_key]: { count: 3 } });
+      let revealed = false;
+      void app.documentRevealed.then(() => (revealed = true));
+      let revealedAtCommit: boolean | undefined;
+      const { container, recoverable } = await hydrate(
+        <Page />,
+        '<p data-testid="outside">0</p><!--$--><p data-testid="inside">0</p><!--/$-->',
+        strict,
+        when === "before"
+          ? async () => {
+              revealedAtCommit = revealed;
+              await commitEntry(shallow);
+              streaming.data = "$";
+            }
+          : undefined,
+      );
+      if (when === "before") expect(revealedAtCommit).toBe(false);
+      if (when === "after") await commitEntry(shallow);
+      const text = (testId: string): string | null | undefined =>
+        container.querySelector(`[data-testid='${testId}']`)?.textContent;
+      const serverNode = container.querySelector("[data-testid='inside']");
+      const beforeOpen = [
+        text("outside"),
+        text("inside"),
+        container.querySelector("[data-testid='fallback']"),
+      ];
+
+      await act(async () => open());
+
+      expect(recoverable).toEqual([]);
+      expect(beforeOpen).toEqual(["0", "0", null]);
+      expect(inside[0]).toBeUndefined();
+      expect(container.querySelector("[data-testid='inside']")).toBe(
+        serverNode,
+      );
+      expect(text("outside")).toBe("5");
+      expect(text("inside")).toBe("5");
     },
   );
 

@@ -311,13 +311,17 @@ export interface NavigationProviderProps {
    * The document this provider hydrates (initBrowserApp; renderRoute with
    * `hydrate: true`), whose store EventController.lockHydration locked.
    * `settled` resolves once the stream has ended and React has revealed every
-   * boundary. Until then location state is `undefined`, as SSR rendered it;
-   * then one transition gives the entry's state and changes
-   * HydrationBarrierContext, and the store is released after that commit
-   * (handle data lands in that release notification). A navigation committed
-   * earlier releases the store before its update, for the whole hold when the
-   * navigation is held: an old-page boundary hydrating meanwhile reads
-   * the destination's values and can mismatch.
+   * boundary. Then a transition changes HydrationBarrierContext alone, and
+   * React commits it once every boundary has hydrated, one still suspended on
+   * the client (a lazy chunk, a deferred-hydration gate) included. Until that
+   * commit location state is `undefined`, as SSR rendered it, through any
+   * commit no payload follows (a shallow navigation), and the store is
+   * locked; after it the entry's state lands in a transition of its own
+   * and the store is released (handle data lands in that release
+   * notification). A navigation committed earlier releases the store before
+   * its update, for the whole hold when the navigation is held: an old-page
+   * boundary hydrating meanwhile reads the destination's values and can
+   * mismatch.
    * Absent for a provider mounted on the client.
    */
   hydration?: { settled: Promise<void> };
@@ -432,18 +436,18 @@ export function NavigationProvider({
     return startConnectionWarmup();
   }, [warmupEnabled]);
 
-  // The document has been revealed: one transition gives the entry's location
-  // state and moves the barrier, so React hydrates every boundary still
-  // dehydrated before it commits.
+  // The document has been revealed. The barrier must be the only update in
+  // its transition lane: then React holds the commit until every boundary
+  // still dehydrated beneath it has hydrated. Any other update in the lane
+  // (location state in its own startTransition here included) can let React
+  // commit around a boundary still suspended on the client. Why:
+  // docs/internal/execution-model.md, "The reveal barrier is alone in its lane".
   useEffect(() => {
     if (!hydration) return;
     let cancelled = false;
     void hydration.settled.then(() => {
       if (cancelled || !hydrationOpen.current) return;
-      startTransition(() => {
-        setLocationState(eventController.getLocationState());
-        setHydrationBarrier((n) => n + 1);
-      });
+      startTransition(() => setHydrationBarrier((n) => n + 1));
     });
     return () => {
       cancelled = true;
@@ -451,20 +455,31 @@ export function NavigationProvider({
   }, []);
 
   // After the barrier's commit no boundary under this provider is dehydrated:
-  // release the store, and its handle writes reach their readers.
+  // the entry's location state lands in a transition of its own, and the
+  // store is released so its handle writes reach their readers. A navigation
+  // that committed first has done both (store onUpdate below).
   useEffect(() => {
-    if (hydrationBarrier === 0) return;
+    if (hydrationBarrier === 0 || !hydrationOpen.current) return;
     hydrationOpen.current = false;
+    startTransition(() => setLocationState(eventController.getLocationState()));
     eventController.releaseHydrationLock();
   }, [hydrationBarrier]);
 
   // A commit no payload follows (a shallow navigation, a commit that keeps
   // every segment, merged server-set state): the tree on screen is already
-  // the entry's, so its state is taken with the commit's notification.
+  // the entry's, so its state is taken with the commit's notification. Not
+  // while the hydration window is open: a boundary of the document may still
+  // be dehydrated, an update a reader outside it takes commits around it, and
+  // it then hydrates against the new state. The barrier's effect gives the
+  // controller's state, this commit's included. The window stays open: this
+  // commit mounts nothing that must read the live store.
   useEffect(
     () =>
       eventController.subscribe(() => {
-        if (eventController.takeTreelessLocationState()) {
+        if (
+          eventController.takeTreelessLocationState() &&
+          !hydrationOpen.current
+        ) {
           setLocationState(eventController.getLocationState());
         }
       }),

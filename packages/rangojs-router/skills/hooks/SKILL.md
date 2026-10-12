@@ -112,12 +112,17 @@ cannot mismatch its server HTML.
 - Navigation state, params and action state: the component shows the live
   value right after it hydrates.
 - Handle data a loader pushed late, and the entry's location state: both wait
-  until the whole document has streamed and been revealed. Location state
-  lands in the barrier commit (one transition that also hydrates every
-  boundary still dehydrated); handle data lands in the release notification
-  right after that commit. `useLocationState` readers re-render when the
-  entry's state object changes; `useHandle` readers when their selection
-  changes.
+  until the whole document has streamed and been revealed, and every boundary
+  has hydrated, including any boundary still suspended on the client (a lazy
+  chunk, a deferred-hydration gate; that wait has no upper bound). Then
+  location state lands in a transition and handle data in the release
+  notification. `useLocationState` readers re-render when the entry's
+  state object changes; `useHandle` readers when their selection changes.
+- State set before then by a commit that renders no new page (a shallow
+  navigation with `revalidate: false`, Back/Forward or a revalidation that
+  keeps every segment, an action's location state) waits the same way: readers
+  keep `undefined` until every boundary has hydrated, then show the latest
+  entry's state.
 - A navigation that commits before then mounts its page with the live values
   from its first render. A boundary of the document that persists across that
   navigation and has not hydrated yet then hydrates against the live values;

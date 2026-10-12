@@ -86,6 +86,10 @@ export const TxWhenState = createLocationState<TxWhenStateShape>();
 // that hydrates after the root (#992).
 export const LateSuspenseState = createLocationState<{ label: string }>();
 
+// Read on both sides of a Suspense boundary whose lazy chunk the e2e holds on
+// the client: the boundary is still dehydrated when the document is revealed.
+export const GatedHydrationState = createLocationState<{ label: string }>();
+
 // #994 "load more": the items of the pages already on screen ride along on the
 // Link. The server renders only the page its URL names, so the slot must not
 // come back after a document load.

@@ -3,6 +3,8 @@ import {
   expectClearOnReloadDropsCarriedState,
   expectClearOnReloadDropsStateOnTraversalLoad,
   expectEvictedSameRouteTraversalRestoresItsPage,
+  expectGatedBoundaryHydratesAfterShallowNavigation,
+  expectGatedBoundaryHydratesWithOutsideReader,
   expectHeldLoadMoreShowsNoItemTwice,
   expectLateSuspenseReaderHydratesClean,
   expectLoadMoreTraversalRestoresEntryWithItsPage,
@@ -1479,6 +1481,36 @@ test.describe("location-state.late-suspense", () => {
 test.describe("location-state.late-suspense (production)", () => {
   const f = useFixture({ root: "./e2e/test-app", mode: "build" });
   lateSuspenseSuite(f);
+});
+
+function gatedHydrationSuite(f: Fixture) {
+  test("a boundary still dehydrated at reveal hydrates as rendered with a reader outside it", async ({
+    page,
+  }) => {
+    await expectGatedBoundaryHydratesWithOutsideReader(
+      page,
+      f.url("/location-state/gated-hydration"),
+    );
+  });
+
+  test("a shallow navigation while a boundary is still dehydrated waits for it to hydrate", async ({
+    page,
+  }) => {
+    await expectGatedBoundaryHydratesAfterShallowNavigation(
+      page,
+      f.url("/location-state/gated-hydration"),
+    );
+  });
+}
+
+test.describe("location-state.gated-hydration", () => {
+  const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
+  gatedHydrationSuite(f);
+});
+
+test.describe("location-state.gated-hydration (production)", () => {
+  const f = useFixture({ root: "./e2e/test-app", mode: "build" });
+  gatedHydrationSuite(f);
 });
 
 // #994: createLocationState({ clearOnReload }) and the app version every

@@ -1,4 +1,5 @@
 import {
+  errors,
   expect,
   type ConsoleMessage,
   type Locator,
@@ -585,18 +586,21 @@ export function countHtmlBoundaryMarkers(html: string): number {
  * countHtmlBoundaryMarkers(document) exactly when every boundary adopted the
  * server HTML. A boundary that errored after its placeholder flushed becomes
  * `$!` (never `$`); counted separately so a loader error does not read as a
- * lost adoption.
+ * lost adoption. `pending` counts the boundaries React has not revealed yet
+ * (`$?` while streaming, `$~` once its reveal is queued), the markers the
+ * router's documentRevealed waits on.
  */
 export function countDomBoundaryMarkers(
   page: Page,
-): Promise<{ adopted: number; errored: number }> {
+): Promise<{ adopted: number; errored: number; pending: number }> {
   return page.evaluate(() => {
     const walker = document.createTreeWalker(document, NodeFilter.SHOW_COMMENT);
-    const counts = { adopted: 0, errored: 0 };
+    const counts = { adopted: 0, errored: 0, pending: 0 };
     while (walker.nextNode()) {
       const data = (walker.currentNode as Comment).data;
       if (data === "$") counts.adopted++;
       else if (data === "$!") counts.errored++;
+      else if (data === "$?" || data === "$~") counts.pending++;
     }
     return counts;
   });
@@ -755,6 +759,148 @@ export async function expectLateSuspenseReaderHydratesClean(
 
   await loadHeld(() => page.reload({ waitUntil: "commit" }));
   await expect(byTestId(page, "late-ls-value")).toHaveText("stored-value");
+}
+
+/** expectGatedBoundaryHydratesWithOutsideReader's bound on the early commit. */
+const GATED_REVEAL_GRACE_MS = 3_000;
+
+/**
+ * A `<Suspense>` boundary still dehydrated when the document is revealed (its
+ * lazy chunk has not loaded) hydrates as the server rendered it, with a
+ * useLocationState reader outside it and state in the entry.
+ *
+ * The fixture (both apps) renders a reader outside the boundary and one inside
+ * it, from a chunk the client loads only once this body calls
+ * `window.__openGatedHydrationChunk()`. The provider must not give the
+ * entry's state while that boundary is dehydrated: it would hydrate against
+ * it ("Hydration failed", #418 in a build) and React would replace the
+ * server's nodes. The outside reader keeps the server's value until every
+ * boundary has hydrated.
+ *
+ * Nothing on the page signals that the reveal transition has run, so once the
+ * document is revealed the body waits until either the outside reader shows
+ * the entry's state (the provider gave it early: the chunk then opens onto
+ * the mismatch) or GATED_REVEAL_GRACE_MS passes. The reveal transition runs
+ * within one 50 ms poll of the reveal, so the bound only matters on code that
+ * holds it.
+ */
+export async function expectGatedBoundaryHydratesWithOutsideReader(
+  page: Page,
+  url: string,
+): Promise<void> {
+  await page.goto(url);
+  await waitForShellHydration(page);
+  await byTestId(page, "gated-write").click();
+
+  const outside = byTestId(page, "gated-outside");
+  const inside = byTestId(page, "gated-inside");
+  let outsideBeforeOpen: string | null;
+  {
+    using _ = guardHydrationErrors(page);
+    await page.reload();
+    await waitForShellHydration(page);
+    await expect(inside).toHaveText("empty");
+    // Revealed: parsed (reload waits for load), no boundary left to reveal.
+    await expect
+      .poll(async () => (await countDomBoundaryMarkers(page)).pending)
+      .toBe(0);
+    await page
+      .waitForFunction(
+        () =>
+          document.querySelector('[data-testid="gated-outside"]')
+            ?.textContent !== "empty",
+        undefined,
+        { timeout: GATED_REVEAL_GRACE_MS },
+      )
+      .catch((error: unknown) => {
+        if (!(error instanceof errors.TimeoutError)) throw error;
+      });
+    outsideBeforeOpen = await outside.textContent();
+    await page.evaluate(() => {
+      const scope = window as {
+        __gatedServerNode?: Element | null;
+        __openGatedHydrationChunk?: () => void;
+      };
+      scope.__gatedServerNode = document.querySelector(
+        '[data-testid="gated-inside"]',
+      );
+      scope.__openGatedHydrationChunk!();
+    });
+    await expect(inside).toHaveText("stored-value");
+  }
+
+  // Hydrated, not client-rendered: the node is the server's.
+  expect(
+    await page.evaluate(
+      () =>
+        document.querySelector('[data-testid="gated-inside"]') ===
+        (window as { __gatedServerNode?: Element | null }).__gatedServerNode,
+    ),
+  ).toBe(true);
+  // Until the gated boundary hydrated, the outside reader showed what the
+  // server rendered (`undefined`).
+  expect(outsideBeforeOpen).toBe("empty");
+  await expect(outside).toHaveText("stored-value");
+}
+
+/**
+ * A shallow navigation (`revalidate: false`) that sets location state while a
+ * boundary is still dehydrated, its chunk held: a commit no payload follows.
+ * The boundary hydrates as the server rendered it, and the state reaches the
+ * readers once it has hydrated.
+ *
+ * Same fixture as expectGatedBoundaryHydratesWithOutsideReader, plus a
+ * `gated-shallow` button that navigates to `?shallow=1` with
+ * `{ label: "shallow-value" }` and a `gated-search` useSearchParams reader.
+ * The search reader takes the commit's notification in the batch the outside
+ * location-state reader would: once it shows `1`, a provider that gave the
+ * state at once has already rendered it.
+ */
+export async function expectGatedBoundaryHydratesAfterShallowNavigation(
+  page: Page,
+  url: string,
+): Promise<void> {
+  const outside = byTestId(page, "gated-outside");
+  const inside = byTestId(page, "gated-inside");
+  let outsideBeforeOpen: string | null;
+  {
+    using _ = guardHydrationErrors(page);
+    await page.goto(url);
+    await waitForShellHydration(page);
+    await expect(inside).toHaveText("empty");
+    await expect
+      .poll(async () => (await countDomBoundaryMarkers(page)).pending)
+      .toBe(0);
+
+    await byTestId(page, "gated-shallow").click();
+    await expect(byTestId(page, "gated-search")).toHaveText("1");
+    await expect(page).toHaveURL(/[?&]shallow=1/);
+    outsideBeforeOpen = await outside.textContent();
+    await page.evaluate(() => {
+      const scope = window as {
+        __gatedServerNode?: Element | null;
+        __openGatedHydrationChunk?: () => void;
+      };
+      scope.__gatedServerNode = document.querySelector(
+        '[data-testid="gated-inside"]',
+      );
+      scope.__openGatedHydrationChunk!();
+    });
+    await expect(inside).toHaveText("shallow-value");
+  }
+
+  // Hydrated, not client-rendered: the node is the server's.
+  expect(
+    await page.evaluate(
+      () =>
+        document.querySelector('[data-testid="gated-inside"]') ===
+        (window as { __gatedServerNode?: Element | null }).__gatedServerNode,
+    ),
+  ).toBe(true);
+  // Until the gated boundary hydrated, the outside reader showed what the
+  // server rendered.
+  expect(outsideBeforeOpen).toBe("empty");
+  await expect(outside).toHaveText("shallow-value");
 }
 
 /**

@@ -805,14 +805,17 @@ unchanged.
   `$?` or `$~` boundary is left (Fizz reveals streamed boundaries up to
   300 ms after parsing ends), it changes `HydrationBarrierContext` in a
   transition. No component reads that context: React hydrates a dehydrated
-  boundary first when a provider above it changes. After that commit the
-  provider releases the store; the waiting writes apply in order and one
-  notification reaches the readers, so a reader re-renders only when its
-  selection changed. A navigation committed before the reveal releases the
-  store before its update, so the page it mounts reads the live store. A
-  boundary of the document that persists across that navigation and is
-  still dehydrated then hydrates against the live store, and React reports
-  a mismatch where that differs from its HTML.
+  boundary first when a provider above it changes, and it is the only update
+  in its lane (`packages/rangojs-router/docs/internal/execution-model.md`,
+  "The reveal barrier is alone in its lane"). After that commit the provider
+  gives the location state in a transition of its own and releases the store;
+  the waiting writes apply in order and one notification reaches the readers,
+  so a reader re-renders only when its selection changed. A navigation
+  committed before the reveal releases the store before its update, so the
+  page it mounts reads the live store. A boundary of the document that
+  persists across that navigation and is still dehydrated then hydrates
+  against the live store, and React reports a mismatch where that differs from
+  its HTML.
 - The first version told a hydrating render from a client render with
   `useSyncExternalStore`'s server snapshot. External stores are forbidden in
   this repo (AGENTS.md Hard rule 8); the window above replaced it.
