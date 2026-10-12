@@ -478,28 +478,54 @@ again as the target, from the top, as a direct visit would: global middleware
 matched on the target's path (a `.use("/admin/*", guard)` or an inline
 `ctx.pathname` check decides on the rendered route), the target's route
 middleware, its render. Code after `await next()` in the pass that rewrote
-never runs, and global middleware runs once per pass: guard work you want
-once per request with `if (!ctx.rewrittenFrom)`.
+never runs, and global middleware runs once per pass.
+
+**Never skip a guard on a rewritten pass.** Authorization, auth and
+rate-limit checks run on every pass, as written: the target's guards
+deciding on the rendered route is what keeps a rewrite from becoming a way
+around them. `if (!ctx.rewrittenFrom)` is only for side effects you want
+once per request, such as a counter or a log line:
+
+```typescript
+export const countVisit: Middleware = async (ctx, next) => {
+  if (!ctx.rewrittenFrom) visits.increment(); // once per request
+  return next();
+};
+```
+
+**Throw it before `await next()`.** Once your `next()` ran the route, the
+page has rendered: a `throw rewrite()` after it (a "rewrite on 404" after
+`const res = await next()`) is an error, "throw rewrite() before await
+next()". Decide before calling `next()`. A rewrite thrown further down
+passes through your `await next()` as usual.
 
 **Same request context.** Values you `ctx.set()` before the throw are
 readable in the target's middleware, handlers and loaders; cookies, headers
 and the status you set stay on the response; location state, theme and
 `ctx.dynamic()` carry over. The request, URLs, params and route name are the
-target's, and handle pushes start empty.
+target's.
 
 **Old and new URL.** `ctx.url`, `ctx.pathname` and `ctx.searchParams` are
 the target's; `ctx.rewrittenFrom` is the visitor's URL (search included; the
 first URL after several rewrites; `undefined` when nothing rewrote).
 `usePathname()` and `useSearchParams()` show the visitor's URL in the server
-HTML and after hydration; `useParams()` and the route name are the target's.
-The response carries `x-rango-rewrite: <target pathname>`.
+HTML and after hydration, except in a render other visitors are served (see
+Caches); `useParams()` and the route name are the target's. The response
+carries `x-rango-rewrite: <target pathname>`.
+
+**`ctx.rewrittenFrom` is request identity**, like `cookies()`: reading it
+inside a `cache()` boundary or a `"use cache"` function throws (pass what
+you need in from middleware), and a render other visitors may be served (a
+PPR shell capture, a page the document cache stores) reads `undefined`, as a
+direct visit does.
 
 **Throw it, don't return it.** A returned rewrite is an error. Where a
 rewrite cannot be honored it is an error that names the rule: a route
-handler, a loader (`ssr: false` included), a server action (use
-`redirect()`), intercept middleware, a loader fetch (`useFetchLoader`,
-`load()`) or its middleware, and middleware handling a non-GET request (a
-JS action or a no-JS form post: return a `Response`).
+handler, a loader (`ssr: false` included; not supported yet), a server
+action (use `redirect()`), intercept middleware, a loader fetch
+(`useFetchLoader`, `load()`: it rejects with the rule) or its middleware,
+and middleware handling a non-GET request (a JS action or a no-JS form post:
+return a `Response`).
 
 **try/catch around next().** A thrown rewrite passes through your
 middleware's `catch`. Rethrow it:
@@ -524,9 +550,12 @@ the trail, `/a -> /b -> /a`) through `onError` with phase `"routing"`.
 - The document cache keys a rewritten request by the target's URL, as a
   direct visit. Register the rewriting middleware **before**
   `createDocumentCacheMiddleware()`: a cache hit for the visitor's URL would
-  be served before your middleware runs. A cached target page (and a PPR
-  shell of the target) carries the target's pathname, so a component that
-  renders `usePathname()` can mismatch on hydration at the visitor's URL.
+  be served before your middleware runs. A page the document cache stores,
+  and a PPR shell of the target, are rendered as a direct visit to the
+  target: they carry the target's pathname and `ctx.rewrittenFrom` is
+  `undefined` there, so a component that renders `usePathname()` can
+  mismatch on hydration at the visitor's URL when such a page is served to
+  a rewritten request.
 - The client's prefetch and history caches keep a rewritten page under the
   visitor's URL, and nothing tells them about the rewrite: a page prefetched
   during a lock shows the lock page for up to `prefetchCacheTTL` after the
@@ -552,9 +581,13 @@ the trail, `/a -> /b -> /a`) through `onError` with phase `"routing"`.
   ```
 
 **Testing.** `runMiddleware` reports a thrown rewrite as `result.rewrite`
-(`{ pathname, search, routeName? }`); `dispatch` re-dispatches it like the
-router does; `renderRoute(..., { request: "/shop", rewrite: "/maintenance" })`
-renders the target's route at the visitor's URL. See `/testing`.
+(`{ pathname, search, routeName? }`). `serveShellRequest` takes a rewritten
+page request through the full production pipeline (document or `partial`
+navigation): the target's middleware, render, status and `x-rango-rewrite`.
+`dispatch` re-dispatches too, for response routes only: it matches the
+visitor's URL first and throws on a component (RSC) route.
+`renderRoute(..., { request: "/shop", rewrite: "/maintenance" })` renders
+the target's route at the visitor's URL. See `/testing`.
 
 ## Authentication Middleware
 

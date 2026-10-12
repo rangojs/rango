@@ -92,7 +92,7 @@ Pass an array to run several in order. Cookies set inside middleware via the sta
 
 ### A middleware that rewrites
 
-A `throw rewrite(target)` (see `/middleware` → "Rewrite") does not fail the run: `result.rewrite` names the target, and the values and cookies the chain set before the throw are on `result.ctx` and `result.cookies`, as production keeps them for the target. `runMiddleware` does not run the target; `dispatch` (response routes) and `serveShellRequest` (component routes) re-dispatch it as the router does.
+A `throw rewrite(target)` (see `/middleware` → "Rewrite") does not fail the run: `result.rewrite` names the target, and the values and cookies the chain set before the throw are on `result.ctx` and `result.cookies`, as production keeps them for the target. `runMiddleware` does not run the target. To test what a rewritten page renders, use `serveShellRequest` (`./serve-shell-request.md` → "A page middleware rewrites"): it takes the request through the full production pipeline, the target's middleware, render, status and `x-rango-rewrite` included. `dispatch` re-dispatches only between response routes: it matches the visitor's URL before middleware runs and throws on a component (RSC) route.
 
 ```ts
 it("rewrites a locked page to the maintenance route", async () => {

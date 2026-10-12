@@ -60,22 +60,33 @@ What a rewrite does:
 - The request runs again as the target, from the top: global middleware
   matched on the target's path (so a guard scoped to it runs), the target's
   route middleware, its render. Code after `await next()` of the pass that
-  rewrote never runs.
+  rewrote never runs. Guards run on every pass; skip only side effects (a
+  counter, a log line) with `if (!ctx.rewrittenFrom)`.
+- Throw it before `await next()`: once `next()` ran the route, a rewrite is an
+  error ("throw rewrite() before await next()").
 - The request context is the same object: a value you `ctx.set()` before the
   throw is readable in the target's middleware, handlers and loaders, and
   cookies and headers you set are on the response.
 - `ctx.url`, `ctx.pathname` and `ctx.searchParams` are the target's;
   `ctx.rewrittenFrom` is the visitor's URL (`undefined` when nothing
-  rewrote). `usePathname()` shows the visitor's URL on the server and after
-  hydration. The response carries `x-rango-rewrite: <target pathname>`.
+  rewrote). It is request identity, like `cookies()`: reading it inside a
+  `cache()` boundary or a `"use cache"` function throws.
+- `usePathname()` shows the visitor's URL on the server and after hydration,
+  except when the target's render is one other visitors are served (a page
+  the document cache stores, a PPR shell): that render shows the target's
+  URL, as a direct visit does, and reads `ctx.rewrittenFrom` as `undefined`.
+  The response carries `x-rango-rewrite: <target pathname>`.
 - `rewrite("/path?search")` takes a path in your app (basename-prefixed like
-  `redirect()`), `rewrite("name", params, search)` a global route name.
+  `redirect()`, and kept under the basename), `rewrite("name", params,
+search)` a global route name.
 - More than 5 rewrites, or a rewrite to the URL the request is on, answers 508
   and reports a `RewriteLoopError` through `onError` (phase `"routing"`).
 - Throw it, don't return it: a returned rewrite is an error. Throwing it from a
   route handler, a loader, a server action (use `redirect()`), intercept
-  middleware, a loader fetch, or from middleware handling a non-GET request (a
-  mutation: return a `Response`) is an error that names the rule.
+  middleware, or from middleware handling a non-GET request (a mutation:
+  return a `Response`) is an error that names the rule. A loader fetch
+  (`load()`, `useFetchLoader`) under a rewriting middleware rejects with the
+  rule as its message.
 - A middleware that wraps `next()` in `try`/`catch` rethrows a rewrite with
   `ctx.isRewrite(error)`; the document cache middleware does.
 - Register the rewriting middleware before `createDocumentCacheMiddleware()`:
@@ -85,10 +96,10 @@ What a rewrite does:
   lock lifts drops it (the `/middleware` skill has the recipe).
 
 Testing: `runMiddleware` reports a thrown rewrite as `result.rewrite`
-(`{ pathname, search, routeName? }`) instead of failing, `dispatch` runs the
-rewritten request like the router does, and `renderRoute` takes
-`rewrite: "/target"` to render a rewritten page at the visitor's URL. See
-`/middleware` → "Rewrite".
+(`{ pathname, search, routeName? }`) instead of failing. `serveShellRequest`
+takes a rewritten page through the full pipeline; `dispatch` re-dispatches
+between response routes; `renderRoute` takes `rewrite: "/target"` to render a
+rewritten page at the visitor's URL. See `/middleware` → "Rewrite".
 
 ### Fixed: names like `constructor`, `toString` or `__proto__` in a request or in loader data are ordinary keys ([#1109](https://github.com/rangojs/rango/issues/1109))
 

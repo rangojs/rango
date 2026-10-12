@@ -617,20 +617,26 @@ Route-local schema definitions (`search` option), typed route param types (`Rout
   `safeSameOriginLanding`, `resolveSoftRedirectUrl`) back both the client
   validators and the server 3xx/soft paths. See
   `docs/internal/security-checklist.md`.
-- `throw rewrite(target)` from middleware renders another route at the same
-  URL: a path (basename-prefixed) or a global route name with params and
-  search. The `Rewrite` unwinds to one catch around the global middleware
-  chain (`rsc/handler.ts`), which moves the same request context to the
-  target (`applyRewrite`, `rebaseRequestContext`) and runs the request again:
-  global middleware on the target path, the target's route middleware and
-  render. `ctx.rewrittenFrom` (visitor URL), `ctx.isRewrite()`, the payload
-  pathname and SSR seed at the visitor's URL (`renderedLocation`),
-  `x-rango-rewrite`, `rango.rewrite.target`/`hops` span attributes. More than
-  5 hops or a same-URL rewrite is a `RewriteLoopError` (onError "routing",
-  508). Rejected with a site error: mutations, server actions, loader fetches,
-  intercept middleware; a handler's or loader's throw is its own error UI.
-  `runMiddleware` reports it, `dispatch` re-dispatches it, `renderRoute`
-  takes `rewrite`. See `docs/internal/execution-model.md` → "Rewrite".
+- `throw rewrite(target)` from middleware (before `await next()`) renders
+  another route at the same URL: a path (basename-prefixed, kept under the
+  basename) or a global route name with params and search. The `Rewrite`
+  unwinds to one catch around the global middleware chain
+  (`rsc/rewrite-passes.ts` `runRewritePasses`, shared by `rsc/handler.ts` and
+  `dispatch`), which moves the same request context to the target
+  (`applyRewrite`, `rebaseRequestContext`) and runs the request again: global
+  middleware on the target path, the target's route middleware and render.
+  `ctx.rewrittenFrom` (the visitor URL from the trail in
+  `server/rewrite-trail.ts`; guarded like `cookies()`, `undefined` in a
+  shared render), `ctx.isRewrite()`, the payload pathname and SSR seed at the
+  visitor's URL (`renderedLocation`), `x-rango-rewrite`,
+  `rango.rewrite.target`/`hops` span attributes. More than 5 hops or a
+  same-URL rewrite is a `RewriteLoopError` (onError "routing", 508). Refused
+  with a site error: a rewrite after `next()`, mutations, intercept
+  middleware; a loader fetch answers with the `loaderError` `load()` rejects
+  with; a handler's, loader's or server action's throw is its own error.
+  `runMiddleware` reports it, `dispatch` and `serveShellRequest` re-dispatch
+  it, `renderRoute` takes `rewrite`. See `docs/internal/execution-model.md` →
+  "Rewrite".
 - Typed error model: `RouteNotFoundError`, `DataNotFoundError`, etc.
 - Not-found and error boundary propagation across the route tree
 - Streamed-handler error recovery: a route handler or parallel/intercept slot
